@@ -1,40 +1,14 @@
-# Agent Instructions
+# Agent Instructions — репо `app` («Кольцо»)
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+**Канонические правила этого репозитория — в [CLAUDE.md](CLAUDE.md)** (структура, зоны
+ответственности, CRITICAL RULES ADR-002 §4, пять правил, процесс и гейты). Этот файл их
+не дублирует — прочитай CLAUDE.md полностью перед любой работой.
 
-## Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
-```
+Каноника уровня проекта — в родительском каталоге: `../AGENT.md`, ADR — `../ADR/`.
 
 ## Non-Interactive Shell Commands
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
-
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
-
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
-
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
-
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts (`cp -f`, `mv -f`, `rm -f`, `apt-get -y`, `ssh -o BatchMode=yes`) — `cp`/`mv`/`rm` may be aliased to `-i` mode.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
@@ -82,3 +56,8 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+⚠ К блоку выше: `bd dolt push` не настроен — beads синхронизируется через
+`.beads/issues.jsonl` в git; `git push` обязателен. Remote: `origin` =
+`https://github.com/AlexanderBrolin/ring_app.git` (только HTTPS + gh credential helper,
+SSH к github.com с этой машины виснет).
