@@ -1,13 +1,14 @@
-# CLAUDE.md — репо `app` («Кольцо»: игра)
+# CLAUDE.md — `ring_app` («Кольцо»: игра)
 
-Репозиторий игры: `client/` — Unity 6-проект (клиент + headless game-сервер из одного кода
-симуляции), `server/` — FastAPI-мета (auth, сташ, комнаты, матчмейкер, приём результатов).
+Единственный репозиторий проекта (решение владельца 2026-07-31): `client/` — Unity
+6-проект (клиент + headless game-сервер из одного кода симуляции), `server/` —
+FastAPI-мета (auth, сташ, комнаты, матчмейкер; появится на Этапе 5).
 
-Родительский каталог (`../`) содержит канонические правила (`AGENT.md`, `CLAUDE.md`),
-ADR и координационные файлы (`CROSS_REPO.md`, handoff'ы) — читать оттуда. Дизайн и
-техрешения: `../ADR/ADR-001-Концепт.md`, `../ADR/ADR-002-Разработка.md`.
-⚠ При пуше в отдельный репозиторий решить вопрос переноса ADR внутрь (`docs/adr/`) —
-без них репо несамодостаточен для коллег.
+**Обязательное чтение:** `docs/adr/ADR-001-Концепт.md` (геймдизайн),
+`docs/adr/ADR-002-Разработка.md` (техрешения, этапы, критические правила),
+`docs/adr/SETUP-ПО.md` (тулинг). ADR — источник истины; отклонение — только записанным
+amendment'ом. Правила клиентского трека — `client/CLAUDE.md`; handoff клиентского
+трека — `docs/handoffs/client.md`.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
@@ -111,13 +112,19 @@ app/
     # uv-проект; docker-compose дев-контура живёт здесь, прод-деплой — в репо infra
 ```
 
-## Зоны ответственности (граница — asmdef + ревью)
+## Зоны ответственности и координация с коллегами
 
-- **Только мы (server-ownership):** `Simulation/`, `Networking/`, `AI/`, `Server/`,
-  `Tests/`, `client/docker/`, весь `server/`.
-- **Возможна передача коллегам (client-ownership):** `Presentation/`, `Meta/` (UI),
-  `Art/`, `Audio/`, визуальные префабы/сцены.
+- **Server-трек (владелец):** `Simulation/` (включая AI), `Networking/`, `Server/`,
+  `Tests/`, `client/docker/`, весь `server/`, ADR и правила.
+- **Клиентский трек (коллеги + их Claude-агенты):** `Presentation/`, `Meta/` (UI),
+  `Art/`, `Audio/`, визуальные префабы/сцены — детальные правила в `client/CLAUDE.md`
+  (подхватывается их агентами автоматически при работе в `client/`).
 - **Совместно:** `Assets/Data/` — правки баланса отдельными PR с ревью server-стороны.
+- **Жёсткая граница — `.github/CODEOWNERS` + branch protection:** PR в server-ownership
+  пути не мержится без апрува владельца; Presentation/Art коллеги ревьюят друг друга.
+- **Координация задач — общий bd-трекер этого репо** (jsonl синхронизируется через git).
+  Просьба одного трека к другому = bd-issue с описанием контракта + зависимость,
+  не устная договорённость.
 
 ## Пять правил (инвариант)
 
@@ -147,9 +154,9 @@ app/
 
 ## Если ты впервые в репо
 
-1. Прочитать целиком: свой handoff (`../handoff_app_server.md` или
-   `../handoff_app_client.md`), три файла `../ADR/`, `../AGENT.md`, этот файл.
+1. Прочитать целиком: свой handoff (server-трек — `handoff_app_server.md` в локальном
+   родительском каталоге владельца; клиентский трек — `docs/handoffs/client.md`),
+   три файла `docs/adr/`, этот файл (+ `client/CLAUDE.md`, если работаешь в client/).
 2. `bd ready` + `bd prime` — что готово к работе; `bd show <эпик>` текущего этапа.
-3. `../CROSS_REPO.md` — что ждём от infra / что infra ждёт от нас.
-4. `git log --oneline -10` + последний PR (`gh pr list --state merged --limit 5`).
-5. Самый свежий spec/plan в `docs/superpowers/` — что делалось последним.
+3. `git log --oneline -10` + последний PR (`gh pr list --state merged --limit 5`).
+4. Самый свежий spec/plan в `docs/superpowers/` — что делалось последним.

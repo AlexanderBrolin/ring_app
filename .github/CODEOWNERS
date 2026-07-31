@@ -1,0 +1,23 @@
+# Server-ownership — PR в эти пути требует апрува владельца проекта.
+# Граница треков: см. корневой CLAUDE.md и client/CLAUDE.md.
+
+# Авторитетная симуляция, сеть, серверный bootstrap, упаковка game-сервера
+/client/Assets/Scripts/Simulation/ @AlexanderBrolin
+/client/Assets/Scripts/Networking/ @AlexanderBrolin
+/client/Assets/Scripts/Server/     @AlexanderBrolin
+/client/Tests/                     @AlexanderBrolin
+/client/docker/                    @AlexanderBrolin
+
+# Баланс — правки только отдельным PR с ревью server-стороны
+/client/Assets/Data/               @AlexanderBrolin
+
+# Мета (FastAPI) целиком
+/server/                           @AlexanderBrolin
+
+# Правила, процессы, ADR, CI-конфигурация
+# (.beads/ намеренно НЕ здесь — jsonl-дрифт трекера коммитят все)
+/CLAUDE.md                         @AlexanderBrolin
+/AGENTS.md                         @AlexanderBrolin
+/client/CLAUDE.md                  @AlexanderBrolin
+/docs/adr/                         @AlexanderBrolin
+/.github/                          @AlexanderBrolin
