@@ -18,5 +18,10 @@ namespace Ring.Data
         [Range(0, 100)] public int FallbackSlots = 24;
         [Range(0f, 1f)] public float GunnerShareBase = 0.2f;
         [Range(0f, 1f)] public float GunnerShareGrowth = 0.05f;
+
+        // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
+#if UNITY_EDITOR
+        void OnValidate() => RingDataChanged.Raise();
+#endif
     }
 }

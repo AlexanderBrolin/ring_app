@@ -30,6 +30,15 @@ namespace Ring.Presentation
         public RenderSnapshot Prev, Curr;
         public float Alpha;
 
+        /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
+        /// this render frame's `Update` sampled below — `MuzzleFlashView`/
+        /// `AudioDirector`'s per-frame prediction reads `FireHeld` off THIS
+        /// instead of calling `InputSampler.SampleFrame()` a second time, which
+        /// would double-sample Input System and could double-latch the dash edge
+        /// (`InputSampler._dashLatch`, spec §3.8 — a same-frame dash press must
+        /// only ever be consumed once).
+        public SimInput LastFrameInput { get; private set; }
+
         // Task 25 (Приложение П-7): the SOLE point every interpolating view
         // (ViewRegistry, PlayerView, CameraRig) reads — `Prev`/`Curr`/`Alpha`
         // above are the raw double-buffer this class itself owns and keeps
@@ -56,6 +65,27 @@ namespace Ring.Presentation
         public SimulationWorld World => _world;
         public long Seed { get; private set; }
         public bool ConfigTweaked;
+
+        /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): true when this frame's
+        /// cached input predicts the weapon fires on the NEXT tick — single
+        /// source of truth for `MuzzleFlashView`/`AudioDirector`'s per-frame
+        /// prediction, so the two components' decisions can never drift apart.
+        /// Mirrors `WeaponSystem.Update`'s own `canFire` gate exactly (`FireHeld
+        /// && Alive && (CanFireWhileDash || DashTimer <= 0)`), but reads it off
+        /// `RenderCurr` — the last COMPLETE tick's state — instead of any
+        /// Simulation internals, per client/CLAUDE.md's "клиент не решает
+        /// игровые исходы" boundary (this predicts client-local cosmetics only;
+        /// the authoritative shot still comes from the tick's own
+        /// `ProjectileFired` event).
+        public bool WouldFireThisFrame
+        {
+            get
+            {
+                PlayerState p = RenderCurr.Player;
+                return LastFrameInput.FireHeld && p.Alive && p.FireCooldown <= 0f
+                    && (_weapon.CanFireWhileDash || p.DashTimer <= 0f);
+            }
+        }
 
         bool _paused;
 
@@ -113,9 +143,26 @@ namespace Ring.Presentation
             RestartNewSeed();
         }
 
-        void OnEnable() => _sampler?.Enable();
+        void OnEnable()
+        {
+            _sampler?.Enable();
+            // Task 28 (spec §3.9): the hot-tweak subscription itself is a dev
+            // workflow, not a shipped gameplay feature (unlike ImmediateMuzzleFeedback
+            // below, which stays unguarded) — OnValidate never fires outside the
+            // Editor anyway, but guarding the subscription keeps a Release build
+            // from ever wiring up to an event no production code raises.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            RingDataChanged.Changed += RequestApplyConfig;
+#endif
+        }
 
-        void OnDisable() => _sampler?.Disable();
+        void OnDisable()
+        {
+            _sampler?.Disable();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            RingDataChanged.Changed -= RequestApplyConfig;
+#endif
+        }
 
         void Update()
         {
@@ -132,6 +179,9 @@ namespace Ring.Presentation
                 {
                     // Arena topology changed under hot-tweak — spec §3.9 forbids in-place
                     // migration for that case; the only safe recovery is a full restart.
+                    Debug.Log("SimulationRunner: arena topology changed under hot-tweak " +
+                        "(ArenaConfig.Radius/Obstacles) — ApplyConfig rejected it, restarting " +
+                        "with the same seed instead.");
                     Restart(Seed);
                 }
             }
@@ -139,6 +189,7 @@ namespace Ring.Presentation
             if (_paused) return;
 
             SimInput frame = _sampler.SampleFrame();
+            LastFrameInput = frame; // Task 28 — see the property's own doc above.
             int ticks = _acc.Advance(Time.unscaledDeltaTime);
             for (int i = 0; i < ticks; i++)
             {

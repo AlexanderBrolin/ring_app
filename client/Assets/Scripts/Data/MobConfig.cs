@@ -31,5 +31,10 @@ namespace Ring.Data
         [Range(0f, 50f)] public float SeparationStrength = 6f;
         [Range(0f, 10f)] public float AvoidLookahead = 3f;
         [Range(0f, 5f)] public float AvoidMargin = 1f;
+
+        // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
+#if UNITY_EDITOR
+        void OnValidate() => RingDataChanged.Raise();
+#endif
     }
 }

@@ -117,6 +117,16 @@ namespace Ring.Editor
     /// `GameFeelConfig` fields (client/CLAUDE.md: "все числа game feel — в
     /// ScriptableObjects") — this file's spark-prefab calls now read
     /// `gameFeel.*` instead of literals for those three.
+    /// Task 28 (spec §3.9/§3.11) rewires `MuzzleFlashView`'s `_runner`/
+    /// `_gameFeel` slots (ImmediateMuzzleFeedback's per-frame prediction path
+    /// needs them; the event-driven burst still doesn't) — the migration
+    /// helper `HasStaleSerializedField` this section used to self-heal the
+    /// object's leftover YAML key is removed along with it, since the field is
+    /// no longer stale. Every other Task 28 change (`RingDataChanged`,
+    /// `OnValidate` on the 7 SO classes, `SimulationRunner.LastFrameInput`/
+    /// `WouldFireThisFrame`, `AudioDirector`'s predicted-play path) is pure C#
+    /// with no new scene objects/references, so no other wiring section here
+    /// changes.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -211,10 +221,12 @@ namespace Ring.Editor
             // back to the C# field initializer at load time either way, so this
             // is a traceability fix, not a correctness one: the owner should see
             // real numbers to hot-tweak in the Inspector/YAML, not an absent
-            // key). Checked via a direct text read (same technique as
-            // HasStaleSerializedField below, inverted: detects a MISSING key
-            // instead of a stale one) so this is a one-time sync, not an
-            // unconditional touch every run.
+            // key). Checked via a direct text read (same technique the now-removed
+            // HasStaleSerializedField migration helper used — Task 28 dropped it
+            // once its one caller, MuzzleFlashView's `_runner` field, went from
+            // stale-to-detect back to legitimately wired — inverted here: detects
+            // a MISSING key instead of a stale one) so this is a one-time sync,
+            // not an unconditional touch every run.
             if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("CasingImpulseUpMin"))
                 EditorUtility.SetDirty(gameFeel);
 
@@ -795,21 +807,21 @@ namespace Ring.Editor
                 muzzleRenderer.sharedMaterial = muzzleMat;
                 sceneDirty = true;
             }
-            // MuzzleFlashView takes no serialized references (fix-round app-2pl
-            // round 2 — direction now comes from the event's own Amount field,
-            // not a SimulationRunner snapshot), so no SerializedObject wiring here.
-            // The already-committed scene still carries the removed `_runner`
-            // field's data as an orphaned YAML key, though — `SerializedObject`
-            // only ever reflects the CURRENT class layout, so there is no
-            // supported API to diff against the stale value; `HasStaleField`
-            // below reads the scene text directly to detect it (existence-guarded
-            // like everything else here: once the field is gone, this is false
-            // forever, so re-running `Apply()` stays a no-op again after this
-            // one migration run drops it via the ordinary SaveScene path).
+            // Task 28 (spec §3.11, ImmediateMuzzleFeedback): MuzzleFlashView
+            // regains a SimulationRunner/GameFeelConfig reference — removed in
+            // fix-round app-2pl round 2 (direction for the EVENT-driven burst
+            // comes from the event's own Amount field, not a runner snapshot),
+            // re-added here only for the SEPARATE per-frame prediction path
+            // (RenderCurr.Player + WouldFireThisFrame); HandleEvent's own
+            // tick-exact direction logic still needs neither.
             MuzzleFlashView muzzleFlash = muzzleGo.GetComponent<MuzzleFlashView>();
-            if (HasStaleSerializedField("Ring.Presentation.MuzzleFlashView", "_runner"))
+            var muzzleSo = new SerializedObject(muzzleFlash);
+            bool muzzleRefsChanged = false;
+            muzzleRefsChanged |= SetRef(muzzleSo, "_runner", runner);
+            muzzleRefsChanged |= SetRef(muzzleSo, "_gameFeel", gameFeel);
+            if (muzzleRefsChanged)
             {
-                EditorUtility.SetDirty(muzzleFlash);
+                muzzleSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -1642,23 +1654,6 @@ namespace Ring.Editor
                 throw new System.InvalidOperationException(
                     $"StageOneSceneBootstrap: no material at '{path}'.");
             return mat;
-        }
-
-        /// One-off migration helper (fix-round app-2pl round 2): detects a
-        /// serialized field's leftover YAML key for a given `MonoBehaviour` type
-        /// after the field itself was removed from the C# class. `SerializedObject`
-        /// cannot see this — it only ever reflects the type's CURRENT field
-        /// layout — so this reads `Main.unity`'s text directly instead, scoped to
-        /// a small window right after the type's `m_EditorClassIdentifier` line so
-        /// an unrelated component that happens to share the same field name (e.g.
-        /// `CameraRig._runner`) never false-positives.
-        static bool HasStaleSerializedField(string classIdentifier, string fieldName)
-        {
-            string text = System.IO.File.ReadAllText(ScenePath);
-            int idx = text.IndexOf(classIdentifier, System.StringComparison.Ordinal);
-            if (idx < 0) return false;
-            int windowLen = System.Math.Min(200, text.Length - idx);
-            return text.Substring(idx, windowLen).Contains(fieldName + ":");
         }
 
         static SimulationRunner FindRunner(Scene scene)

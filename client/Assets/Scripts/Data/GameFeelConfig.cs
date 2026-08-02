@@ -56,5 +56,23 @@ namespace Ring.Data
 
         public bool ImmediateMuzzleFeedback = true;
         public bool ExtrapolateLocalPlayer = false;
+
+        // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
+        // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc
+        // above), so SimulationRunner's ApplyConfig reaction to this Raise() just
+        // rebuilds an unchanged SimConfig — harmless, not skipped, since telling
+        // GameFeelConfig's OnValidate apart from the six balance SOs' would need
+        // a second event/subscriber and buys nothing. The Presentation-only
+        // fields here (hitstop/shake/pooling/ImmediateMuzzleFeedback) are read
+        // fresh every frame by their own consumers regardless (class doc above),
+        // so they hot-tweak with no reaction to this event at all — EXCEPT the
+        // handful of numbers GameFeelDirector/PersistentPropsDirector/
+        // CorpseView/StageOneSceneBootstrap bake into a PREFAB at bootstrap time
+        // (spark lifetime/speed/size, decal size, T27) — those only pick up an
+        // edit after a fresh bootstrap re-run, not live in PlayMode; documented
+        // limitation, not a bug (task-28-report.md).
+#if UNITY_EDITOR
+        void OnValidate() => RingDataChanged.Raise();
+#endif
     }
 }

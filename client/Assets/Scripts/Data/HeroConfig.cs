@@ -17,5 +17,14 @@ namespace Ring.Data
         [Range(0.1f, 10f)] public float DashCooldown = 1.2f;
         [Range(0f, 1f)] public float DashIframes = 0.2f;
         [Range(0f, 0.5f)] public float DashBufferWindow = 0.15f;
+
+        // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
+        // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a
+        // full match restart. Editor-only (OnValidate never runs in a player
+        // build regardless of this guard); RingDataChanged.Raise() is a no-op
+        // with zero subscribers outside Editor/dev builds either way.
+#if UNITY_EDITOR
+        void OnValidate() => RingDataChanged.Raise();
+#endif
     }
 }

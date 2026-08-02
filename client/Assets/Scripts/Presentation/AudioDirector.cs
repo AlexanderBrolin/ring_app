@@ -6,8 +6,9 @@ namespace Ring.Presentation
 {
     /// SFX layer (П-2): a round-robin pool of `AudioSource` voices, one clip
     /// per event kind, pitch randomized by `GameFeelConfig.PitchRange`. Driven
-    /// exclusively by `SimEventRouter`'s `HandleEvent` fan-out (П-1) — never
-    /// subscribes to `TicksFlushed` itself.
+    /// exclusively by `SimEventRouter`'s `HandleEvent` fan-out (П-1) for the
+    /// authoritative per-event playback — never subscribes to `TicksFlushed`
+    /// itself.
     /// Task 27 (Приложение П-2) extends the Task 17 placeholder with the two
     /// numbers this class always had reserved fields for but never consumed:
     /// `GameFeelConfig.VoicesPerSfx` caps how many voices currently playing
@@ -23,9 +24,29 @@ namespace Ring.Presentation
     /// 8 → 16 (T27 brief Interfaces) so the per-kind cap of 6 across up to 5
     /// distinct clip kinds has realistic headroom instead of starving on a
     /// physical pool smaller than a single kind's own cap.
+    ///
+    /// Task 28 (spec §3.11, ImmediateMuzzleFeedback) adds a SEPARATE per-frame
+    /// `Update` path alongside the event-driven one: plays `_shotClip` in the
+    /// frame the player presses Fire, ahead of the authoritative tick's
+    /// `ProjectileFired` event, which can land up to one 30Hz tick later (spec
+    /// §3.2). See `MuzzleFlashView`'s class doc — same
+    /// `SimulationRunner.WouldFireThisFrame` heuristic, same
+    /// predicted-latch-with-TTL suppression shape, independent state (each
+    /// component owns its own latch) so the two never interfere with each
+    /// other's bookkeeping. `PlayClip` below is shared by both paths so
+    /// `MinSfxInterval`/`VoicesPerSfx` gate the predicted attempt exactly like
+    /// a real one — and its `bool` return means the latch is only armed when a
+    /// voice actually played, never when the predicted attempt itself got
+    /// gated out (armed-but-silent would wrongly consume the real event too,
+    /// losing the shot's sound entirely instead of gating it once).
     public sealed class AudioDirector : MonoBehaviour
     {
         const int VoiceCount = 16;
+
+        // ~1.5 tick periods (33ms/tick @ 30Hz, spec §3.2) — see
+        // MuzzleFlashView.PredictedTtlSeconds's doc for the exact rationale;
+        // kept identical here so the two components' windows can't drift.
+        const float PredictedTtlSeconds = 0.05f;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
@@ -45,6 +66,13 @@ namespace Ring.Presentation
         // indexed by (int)SimEventKind — MinSfxInterval anti-phasing gate.
         float[] _lastPlayTime;
         int _nextVoice;
+
+        // Task 28 (ImmediateMuzzleFeedback): latches a predicted shot-sound
+        // play until either the matching real ProjectileFired event consumes
+        // it (HandleEvent) or PredictedTtlSeconds elapses unconfirmed — see
+        // the class doc above and MuzzleFlashView's for the full rationale.
+        bool _predicted;
+        float _predictedExpireAt;
 
         void Awake()
         {
@@ -80,27 +108,68 @@ namespace Ring.Presentation
             for (int i = 0; i < _voices.Length; i++) _voices[i].Stop();
         }
 
+        /// Task 28: per-frame prediction — see the class doc above and
+        /// `MuzzleFlashView.Update`'s doc for the shared heuristic's full
+        /// rationale.
+        void Update()
+        {
+            if (!_gameFeel.ImmediateMuzzleFeedback) return;
+            if (_predicted && Time.unscaledTime > _predictedExpireAt) _predicted = false;
+            if (_predicted) return;
+            if (!_runner.WouldFireThisFrame) return;
+
+            if (PlayClip(_shotClip, SimEventKind.ProjectileFired, _runner.RenderCurr.Player.Pos))
+            {
+                _predicted = true;
+                _predictedExpireAt = Time.unscaledTime + PredictedTtlSeconds;
+            }
+            // PlayClip returning false (MinSfxInterval/VoicesPerSfx gated the
+            // predicted attempt out) leaves `_predicted` false — the real event
+            // still gets its own ordinary chance at HandleEvent below instead of
+            // being wrongly suppressed for a sound that never actually played.
+        }
+
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer
         /// (П-1 fan-out). Task 27 (Приложение П-2): two drop-only gates ahead
         /// of the existing round-robin voice pick — `MinSfxInterval` first
         /// (cheapest check, and independent of how many voices happen to be
-        /// free right now), then the per-kind `VoicesPerSfx` cap.
+        /// free right now), then the per-kind `VoicesPerSfx` cap; both now live
+        /// in `PlayClip` below (Task 28), shared with the predicted path above.
         public void HandleEvent(in SimEvent e)
         {
-            AudioClip clip = ClipFor(e.Kind);
-            if (clip == null) return;
+            if (e.Kind == SimEventKind.ProjectileFired
+                && _predicted && Time.unscaledTime <= _predictedExpireAt)
+            {
+                // Already played this shot's sound ahead of time (Update above)
+                // — consume the latch instead of a duplicate PlayOneShot (Task 28).
+                _predicted = false;
+                return;
+            }
+
+            PlayClip(ClipFor(e.Kind), e.Kind, e.Pos);
+        }
+
+        /// Shared by the event-driven `HandleEvent` and the predicted `Update`
+        /// path (Task 28): `MinSfxInterval`/`VoicesPerSfx` drop-only gates, then
+        /// the round-robin voice pick. Returns whether a voice actually started
+        /// playing — the predicted path only arms its suppression latch on
+        /// `true` (see `Update`'s doc above for why).
+        bool PlayClip(AudioClip clip, SimEventKind kind, Unity.Mathematics.float2 simPos)
+        {
+            if (clip == null) return false;
 
             float now = Time.unscaledTime;
-            if (now - _lastPlayTime[(int)e.Kind] < _gameFeel.MinSfxInterval) return;
-            if (CountActiveVoices(e.Kind) >= _gameFeel.VoicesPerSfx) return;
+            if (now - _lastPlayTime[(int)kind] < _gameFeel.MinSfxInterval) return false;
+            if (CountActiveVoices(kind) >= _gameFeel.VoicesPerSfx) return false;
 
             AudioSource source = _voices[_nextVoice];
-            _voiceKind[_nextVoice] = e.Kind;
+            _voiceKind[_nextVoice] = kind;
             _nextVoice = (_nextVoice + 1) % _voices.Length;
-            source.transform.position = SimSpace.ToWorld(e.Pos);
+            source.transform.position = SimSpace.ToWorld(simPos);
             source.pitch = 1f + Random.Range(-_gameFeel.PitchRange, _gameFeel.PitchRange);
             source.PlayOneShot(clip);
-            _lastPlayTime[(int)e.Kind] = now;
+            _lastPlayTime[(int)kind] = now;
+            return true;
         }
 
         /// How many physical voices are RIGHT NOW playing a one-shot for

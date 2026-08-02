@@ -18,5 +18,10 @@ namespace Ring.Data
         [Range(0f, 1f)] public float RecoilMaxRad = 0.07f;
         [Range(0f, 5f)] public float MuzzleOffset = 0.6f;
         public bool CanFireWhileDash = false;
+
+        // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
+#if UNITY_EDITOR
+        void OnValidate() => RingDataChanged.Raise();
+#endif
     }
 }

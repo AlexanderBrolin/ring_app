@@ -34,5 +34,16 @@ namespace Ring.Data
         /// SimConfigBuilder.Validate — it does not exist on ArenaSimConfig, which stays
         /// a plain Simulation-side struct.
         [Range(0.5f, 5f)] public float SpawnClearance = 1f;
+
+        // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
+        // Arena topology (Radius/Obstacles) is a special case: SimulationRunner's
+        // ApplyConfig path catches SimulationWorld's ArgumentException for this
+        // one and falls back to a full Restart(Seed) instead of an in-place
+        // migration (spec §3.9 forbids migrating topology) — this OnValidate
+        // still fires the same generic signal, the RESTART decision is entirely
+        // SimulationRunner's, not this asset's.
+#if UNITY_EDITOR
+        void OnValidate() => RingDataChanged.Raise();
+#endif
     }
 }
