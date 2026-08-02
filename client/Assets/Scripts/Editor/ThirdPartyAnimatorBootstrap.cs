@@ -183,7 +183,7 @@ namespace Ring.Editor
                 Debug.Log("[ThirdPartyAnimators] exists, skipped: " + Ual2CheckControllerPath);
                 return;
             }
-            string ual2 = TP.Ual2Root + "UAL2_Standard.fbx";
+            string ual2 = TP.Ual2StandardPath;
             Dictionary<string, AnimationClip> clips = ClipsOf(ual2);
             var controller = AnimatorController.CreateAnimatorControllerAtPath(Ual2CheckControllerPath);
             AnimatorState def = controller.AddMotion(Require(clips, "Zombie_Walk_Fwd_Loop"), 0);

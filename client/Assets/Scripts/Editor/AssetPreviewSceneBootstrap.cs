@@ -24,11 +24,11 @@ namespace Ring.Editor
         public const string ObsoleteDirectorMatPath = TA.MaterialsRoot + "DirectorDark.mat";
         public const string FloorMatPath = TA.MaterialsRoot + "PreviewFloor.mat";
         // Milestone feedback numbers (preview cosmetics, not gameplay SO).
-        const float MechScale = 0.4f;    // мехи «в 2,5 раза меньше» (веха 1)
-        const float EliteScale = 1.5f;   // элита «в 1,5 раза больше» (веха 1)
-        const float TriloScale = EliteScale * 0.5f; // «самый большой справа — в 2 раза меньше» (веха 3)
-        const float DirectorScale = 3.5f;           // «Директора в 2 раза больше» (веха 3)
-        const float RobotYaw = 180f;     // «роботы стоят задом к Сборщикам» (веха 3)
+        const float MechScale = 0.4f;    // milestone 1: mechs 2.5x smaller
+        const float EliteScale = 1.5f;   // milestone 1: elites 1.5x bigger
+        const float TriloScale = EliteScale * 0.5f; // milestone 3: biggest elite halved
+        const float DirectorScale = 3.5f;           // milestone 3: director doubled
+        const float RobotYaw = 180f;     // milestone 3: robots face the collectors
 
         [MenuItem("Ring/Bootstrap/Asset Preview Scene")]
         public static void Apply()
@@ -71,8 +71,8 @@ namespace Ring.Editor
                 TP.MechRoot + "Models/Stan.fbx", null, MechScale);
 
             GameObject elites = GetOrCreateRoot("EliteRobots", new Vector3(0f, 0f, 8f), RobotYaw);
-            // Flying drone hovers (веха 3: спавнился наполовину в полу).
-            // Phase B: hover height must come from the mob's view wiring.
+            // Flying drone hovers (milestone 3: it spawned half-sunk into the
+            // floor). Phase B: hover height comes from the mob's view wiring.
             BuildEntityUnder(elites, "EyeDrone", new Vector3(-2.5f, 1.5f, 0f),
                 TP.SciFiRoot + "Models/Enemy_EyeDrone.fbx", null, EliteScale);
             BuildEntityUnder(elites, "QuadShell", new Vector3(0f, 0f, 0f),

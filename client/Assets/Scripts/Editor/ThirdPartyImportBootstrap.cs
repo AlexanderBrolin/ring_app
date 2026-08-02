@@ -9,9 +9,11 @@ using TP = Ring.Editor.ThirdPartyAssetPostprocessor;
 namespace Ring.Editor
 {
     /// Idempotent validator of Assets/ThirdParty imports (assets-mvp plan T5).
-    /// The postprocessor is the single writer of import settings; on mismatch
-    /// this class re-triggers it via a ForceUpdate reimport and re-checks —
-    /// it never assigns importer fields itself. Failures throw: thrown from an
+    /// The postprocessor is the single writer of import SETTINGS; on mismatch
+    /// this class re-triggers it via a ForceUpdate reimport and re-checks.
+    /// Material remaps (RemapPackMaterials) are a separate channel: they can
+    /// only exist post-import, when artifact materials are enumerable.
+    /// Failures throw: thrown from an
     /// -executeMethod, that yields a non-zero batch exit code (unlike exceptions
     /// inside the import pipeline, which Unity swallows).
     public static class ThirdPartyImportBootstrap

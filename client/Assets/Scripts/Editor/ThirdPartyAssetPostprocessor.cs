@@ -23,6 +23,8 @@ namespace Ring.Editor
         public const string ScenePath = "Assets/Scenes/AssetPreview.unity";
         /// Single FBX carrying both the doll mesh and its 43 takes (INSPECTION.md).
         public const string DollPath = UalRoot + "UAL1_Standard.fbx";
+        /// UAL2 clip container (same rig as the doll, 43 takes).
+        public const string Ual2StandardPath = Ual2Root + "UAL2_Standard.fbx";
         /// Female mannequin (mesh-only, same bone set): gets its OWN avatar —
         /// humanoid retarget plays shared clips on it without avatar sharing.
         public const string FemaleDollPath = Ual2Root + "Mannequin_F.fbx";
