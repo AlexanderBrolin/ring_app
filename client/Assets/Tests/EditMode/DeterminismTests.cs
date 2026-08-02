@@ -17,6 +17,33 @@ namespace Ring.Simulation.Tests
             return world.StateHash();
         }
 
+        /// Scripted input generator (Task 29 Interfaces) — a separate Random in
+        /// TEST code is fine, this is not Simulation. Drives every input axis so
+        /// the determinism/golden runs below exercise movement, aiming, firing
+        /// and dashing together instead of just idle-input replay.
+        static SimInput Scripted(ref Unity.Mathematics.Random rng)
+        {
+            return new SimInput
+            {
+                MoveDir = rng.NextFloat2Direction() * rng.NextFloat(),
+                AimPoint = rng.NextFloat2(new float2(-30f, -30f), new float2(30f, 30f)),
+                FireHeld = rng.NextFloat() < 0.7f,
+                DashRequested = rng.NextFloat() < 0.05f
+            };
+        }
+
+        /// Fixed world seed (42, same as the other tests in this file) driven by
+        /// scripted input from an independently-seeded rng — isolates
+        /// input-driven determinism from world-seed-driven determinism.
+        static ulong RunScripted(uint inputSeed, int ticks)
+        {
+            var world = new SimulationWorld(42, TestConfigs.Default());
+            var rng = new Random(inputSeed);
+            for (int i = 0; i < ticks; i++)
+                world.Tick(Scripted(ref rng));
+            return world.StateHash();
+        }
+
         [Test]
         public void SameSeed_SameHash_After1000Ticks()
         {
@@ -94,6 +121,24 @@ namespace Ring.Simulation.Tests
                 return w.StateHash();
             }
             Assert.AreEqual(Run(), Run()); // two independent worlds, same hash
+        }
+
+        [Test]
+        public void ScriptedRun_SameSeed_SameHash()
+        {
+            Assert.AreEqual(RunScripted(123, Ticks), RunScripted(123, Ticks));
+            Assert.AreNotEqual(RunScripted(123, Ticks), RunScripted(43, Ticks));
+        }
+
+        [Test]
+        public void GoldenHash_ScriptedScenario()
+        {
+            // Pin against a silent simulation-behaviour change (spec §3.13 п.14):
+            // world seed 42, scripted input from Random(123), 1000 ticks. First
+            // run: the constant below is 0, this assert fails and NUnit prints
+            // the actual hash — paste that value in and rerun for a green PASS.
+            const ulong GoldenHash = 0x89609433B9F5147BUL; // = 9899074930844439675
+            Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
     }
 }
