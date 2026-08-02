@@ -131,6 +131,51 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Gunner_LongApproach_FiresAtMostOnceOnFirstWindow()
+        {
+            // F-1 regression: MobAiSystem.UpdateGunner decrements FireCooldown every
+            // tick with no floor clamp, unlike the player's WeaponSystem (WeaponSystem.
+            // cs:29, `p.FireCooldown = math.max(0f, p.FireCooldown);` while not firing).
+            // A gunner spending several seconds in Reposition (outside PreferredRange
+            // +-RangeTolerance) racks up a negative "debt" on FireCooldown; the instant
+            // it steps inside the tolerance band (LoS is unobstructed the whole way in
+            // this open arena), the un-clamped debt lets it fire on several consecutive
+            // ticks instead of the single "shoot immediately on acquiring the target"
+            // shot the FSM intends.
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c);
+            // Far enough that closing into the tolerance band (PreferredRange 9 +-
+            // RangeTolerance 1.5) takes several seconds of pure Reposition — long
+            // enough for the un-clamped cooldown to rack up multiple FireIntervals
+            // (1.6s) of "debt" before it ever gets a legal shot.
+            w.SpawnMobForTest(MobType.Gunner, new float2(60f, 0f));
+
+            int windowFired = 0;
+            int windowTicksLeft = -1;
+            for (int i = 0; i < 600 && windowTicksLeft != 0; i++)
+            {
+                w.ClearEvents();
+                w.Tick(Idle);
+                int firedThisTick = 0;
+                for (int e = 0; e < w.EventCount; e++)
+                    if (w.GetEvent(e).Kind == SimEventKind.ProjectileFired) firedThisTick++;
+
+                if (windowTicksLeft < 0 && firedThisTick > 0)
+                    windowTicksLeft = 5; // opens the 5-tick observation window on the first shot
+
+                if (windowTicksLeft > 0)
+                {
+                    windowFired += firedThisTick;
+                    windowTicksLeft--;
+                }
+            }
+
+            Assert.Greater(windowFired, 0); // sanity: the gunner did eventually get a shot off
+            Assert.LessOrEqual(windowFired, 1,
+                "gunner volley-fired its FireCooldown backlog instead of exactly one shot on LoS acquisition (F-1)");
+        }
+
+        [Test]
         public void PlayerDead_MobsGoIdle()
         {
             var c = TestConfigs.Open();

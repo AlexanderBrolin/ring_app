@@ -32,3 +32,4 @@ MonoBehaviour:
   SeparationRadius: 1.2
   SeparationStrength: 6
   AvoidLookahead: 3
+  AvoidMargin: 1

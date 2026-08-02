@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Ring.Simulation.Core;
+using Unity.Mathematics;
 
 namespace Ring.Simulation.Tests
 {
@@ -33,9 +34,17 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void EveryPlayerAndStatsFieldAffectsHash() // спека §3.13 п.12 / §3.3
+        public void EveryPlayerAndStatsFieldAffectsHash() // spec §3.13 item 12 / §3.3
         {
             var w = new SimulationWorld(3, TestConfigs.Default());
+            // F-4 fix-round: one live mob and one live projectile, spawned via the
+            // test seams BEFORE SaveState, so the MobState/ProjectileState passes
+            // below have a slot 0 to bump/restore/re-assert against — the
+            // PlayerState/MatchStats passes above needed no such fixture (the
+            // player always exists).
+            w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(1f, 0f), new float2(1f, 0f),
+                10f, 0.1f, 1f);
             w.Tick(default);
             WorldSave save = w.SaveState();
             ulong baseline = w.StateHash();
@@ -55,8 +64,35 @@ namespace Ring.Simulation.Tests
                 w.SetStatsForTest((MatchStats)boxed);
                 Assert.AreNotEqual(baseline, w.StateHash(), $"MatchStats.{field.Name} не в хеше");
             }
-            // аналогичные проходы для MobState/ProjectileState/WaveState добавляются
-            // в Task 16/22 швами SetMobForTest/SetProjectileForTest/SetWaveForTest
+            // F-4 fix-round: the three passes the old comment here said were
+            // deferred to Task 16/22 — SetMobForTest/SetProjectileForTest/
+            // SetWaveForTest now exist (SimulationWorld.cs), completing coverage
+            // from 21/44 fields to all 44 (PlayerState 12 + MatchStats 9 +
+            // MobState 9 + ProjectileState 8 + WaveState 6).
+            foreach (var field in typeof(MobState).GetFields())
+            {
+                w.RestoreState(save);
+                object boxed = w.Mobs[0];
+                field.SetValue(boxed, Bump(field.GetValue(boxed)));
+                w.SetMobForTest(0, (MobState)boxed);
+                Assert.AreNotEqual(baseline, w.StateHash(), $"MobState.{field.Name} не в хеше");
+            }
+            foreach (var field in typeof(ProjectileState).GetFields())
+            {
+                w.RestoreState(save);
+                object boxed = w.Projectiles[0];
+                field.SetValue(boxed, Bump(field.GetValue(boxed)));
+                w.SetProjectileForTest(0, (ProjectileState)boxed);
+                Assert.AreNotEqual(baseline, w.StateHash(), $"ProjectileState.{field.Name} не в хеше");
+            }
+            foreach (var field in typeof(WaveState).GetFields())
+            {
+                w.RestoreState(save);
+                object boxed = w.WaveRef; // ref-return read: an ordinary value copy here
+                field.SetValue(boxed, Bump(field.GetValue(boxed)));
+                w.SetWaveForTest((WaveState)boxed);
+                Assert.AreNotEqual(baseline, w.StateHash(), $"WaveState.{field.Name} не в хеше");
+            }
         }
 
         static object Bump(object v) => v switch
@@ -64,9 +100,22 @@ namespace Ring.Simulation.Tests
             float f => f + 1f,
             int i => i + 1,
             bool b => !b,
-            Unity.Mathematics.float2 f2 => f2 + new Unity.Mathematics.float2(1f, 0f),
+            float2 f2 => f2 + new float2(1f, 0f),
+            // MobType/MobAiState/WavePhase (F-4 fix-round): step to the next
+            // declared enum value, wrapping — every one of these enums has more
+            // than one member, so the wrapped value is always different from the
+            // original, which is all Bump's callers need (they only check the
+            // hash changed, never a specific new value).
+            System.Enum e => BumpEnum(e),
             _ => throw new System.NotSupportedException(v.GetType().Name)
         };
+
+        static object BumpEnum(System.Enum e)
+        {
+            System.Array values = System.Enum.GetValues(e.GetType());
+            int index = System.Array.IndexOf(values, e);
+            return values.GetValue((index + 1) % values.Length);
+        }
 
         [Test]
         public void Snapshot_CopiesPlayerAndCounts()

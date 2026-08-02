@@ -143,6 +143,20 @@ namespace Ring.Simulation.AI
             in PlayerState player, in ArenaSimConfig arena, float dt)
         {
             m.FireCooldown -= dt;
+            // Floor clamp — mirrors WeaponSystem.cs's guarded player cooldown
+            // (`p.FireCooldown = math.max(0f, p.FireCooldown);` while not firing).
+            // Without it, every tick spent in Reposition or without LoS (the branches
+            // below never touch FireCooldown) lets the decrement run unchecked into
+            // negative "debt"; the instant the gunner re-acquires range+LoS, the debt
+            // pays itself off as a several-shots-in-as-many-ticks volley instead of the
+            // single immediate shot the FSM intends (F-1, up to ~4 shots in 0.13s
+            // observed on a 5s approach — see MobAiTests.
+            // Gunner_LongApproach_FiresAtMostOnceOnFirstWindow). Clamping to exactly 0
+            // (rather than preserving the negative remainder) trades a fraction of a
+            // tick's precision on the long-run average fire rate for that guarantee —
+            // acceptable here since, unlike WeaponSystem's while-loop, this gate only
+            // ever fires once per tick anyway.
+            if (m.FireCooldown < 0f) m.FireCooldown = 0f;
 
             float2 toPlayer = player.Pos - m.Pos;
             float dist = math.length(toPlayer);

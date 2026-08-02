@@ -37,7 +37,20 @@ namespace Ring.Presentation
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
         // its sole SimEventRouter subscriber) — direct subscription, same shape
         // as the deleted PracticeTargets' pattern.
-        void OnEnable() => _runner.WorldRestarted += HandleWorldRestarted;
+        void OnEnable()
+        {
+            _runner.WorldRestarted += HandleWorldRestarted;
+            // F-2 fix: OnDisable below unsubscribes TickAdvanced and closes the log
+            // writer whenever the toggle was on, but never flips `_logTickHash` back
+            // off — so a disable/enable cycle left the GUI toggle reading ON while
+            // silently logging nothing (the exact "no silent loss" violation the
+            // toggle's own OFF-branch doc already calls out for
+            // HandleWorldRestarted). SetLogTickHash(true) both resubscribes and
+            // reopens a fresh writer (the old one was already closed/disposed in
+            // OnDisable, so plain resubscription alone would NRE on the first
+            // LogTick call) — same call the GUI's own toggle-flip path uses.
+            if (_logTickHash) SetLogTickHash(true);
+        }
 
         void OnDisable()
         {

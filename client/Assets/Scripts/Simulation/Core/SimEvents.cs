@@ -34,5 +34,15 @@ namespace Ring.Simulation.Core
         /// `TicksFlushed` time is wrong for this during a multi-tick catch-up
         /// flush; unused (0) for every other kind.
         public float Amount;
+        /// F-3 fix-round: who fired the shot behind a ProjectileFired event
+        /// (`SimulationWorld.SpawnProjectile`) — without this, Presentation had no
+        /// way to tell a mob's gunfire from the player's own, so a Gunner's shot
+        /// spawned the player's own shell casing, played the player's `_shotClip`
+        /// (eating into its `MinSfxInterval`/`VoicesPerSfx` budget), and could
+        /// wrongly consume `MuzzleFlashView`/`AudioDirector`'s predicted-shot latch
+        /// (bd app-ai2). Defaults to `ProjectileOwner.Player` (its zero value) and
+        /// is meaningless for every other `Kind`, same "unused for every other
+        /// kind" contract as `Amount` above.
+        public ProjectileOwner Owner;
     }
 }

@@ -20,6 +20,12 @@ namespace Ring.Simulation.Tests
             // loop emits one MobSpawned event per mob, still buffered — nothing
             // in the 100-tick warm-up clears events).
             Assert.AreEqual(config.Arena.MaxMobs, TestEvents.CountOf(w, SimEventKind.MobSpawned));
+            // F-4 fix-round (ledger T29): the fixture's whole point is a world
+            // under sustained fire — its 100-tick hold-fire warm-up must have
+            // actually produced live projectiles for the allocation measurement
+            // below to be exercising the projectile hot path at all, not just an
+            // idle mob crowd.
+            Assert.Greater(w.ProjectileCount, 0);
 
             var input = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f) };
             Assert.That(() =>

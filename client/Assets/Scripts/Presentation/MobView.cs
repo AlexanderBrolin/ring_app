@@ -30,14 +30,16 @@ namespace Ring.Presentation
 
         // Telegraph pulse (Chaser windup — spec §3.6, "base for dodging"): a
         // warm amber accent, distinct from the white `FlashAccent` hit-flash, that
-        // ramps in linearly over `TelegraphRampSeconds` (approximates the Chaser's
-        // default `MobConfig.TelegraphSeconds` = 0.35s so the ramp reads as
-        // "fully charged" right as the strike lands) while oscillating at
+        // ramps in linearly over the Chaser's actual `MobConfig.TelegraphSeconds`
+        // (passed into `Sync` by `ViewRegistry`, L-13 fix-round — see that call
+        // site's doc; previously a local `TelegraphRampSeconds` const duplicated
+        // this number, so a balance re-tune of `MobConfig.TelegraphSeconds` would
+        // silently desync the ramp from the real windup) so the ramp reads as
+        // "fully charged" right as the strike lands, while oscillating at
         // `TelegraphPulseHz` so it reads as a pulse, not a flat fade-in.
         // `TelegraphPulseFloor` keeps the wave from dipping to fully-off once
         // ramped, so the tell stays legible even at a trough.
         static readonly Color TelegraphAccent = new Color(3f, 2.4f, 0.3f);
-        const float TelegraphRampSeconds = 0.35f;
         const float TelegraphPulseHz = 6f;
         const float TelegraphPulseFloor = 0.35f;
 
@@ -99,14 +101,17 @@ namespace Ring.Presentation
         /// hit-flash decay on top of that. Called once per render frame by
         /// `ViewRegistry.SyncMobs` for every live view (new AND continuing) — the
         /// sole place `ApplyEmission` is invoked from, so there is exactly one
-        /// write to the property block per view per frame.
-        public void Sync(in MobState m)
+        /// write to the property block per view per frame. `telegraphSeconds`
+        /// (L-13 fix-round) is `ViewRegistry`'s own read of
+        /// `_runner.World.Config.Chaser.TelegraphSeconds` — the single source of
+        /// truth the ramp now tracks instead of a locally-duplicated constant.
+        public void Sync(in MobState m, float telegraphSeconds)
         {
             Color emission = _baseEmission;
 
             if (m.Ai == MobAiState.Telegraph)
             {
-                float ramp = Mathf.Clamp01(m.StateTimer / TelegraphRampSeconds);
+                float ramp = Mathf.Clamp01(m.StateTimer / telegraphSeconds);
                 float wave = 0.5f + 0.5f * Mathf.Sin(m.StateTimer * TelegraphPulseHz * Mathf.PI * 2f);
                 float intensity = ramp * Mathf.Lerp(TelegraphPulseFloor, 1f, wave);
                 emission += TelegraphAccent * intensity;

@@ -16,7 +16,7 @@ namespace Ring.Presentation
     ///    lerps between its position in `Prev` (falling back to `Curr` if that Id
     ///    isn't in `Prev`) and `Curr` by `Alpha`; an Id that drops out of `Curr`
     ///    returns its view to the pool. Every live mob (new or continuing) also
-    ///    gets `MobView.Sync(in MobState)` called here (Task 21, resolution "Bind
+    ///    gets `MobView.Sync(in MobState, float)` called here (Task 21, resolution "Bind
     ///    contract") — the per-frame telegraph-pulse/Fire-glint accent read, same
     ///    "no new subscriber" rule (П-1) as everything else in this class.
     ///  - `HandleEvent` (called by `SimEventRouter`, П-1's ordered fan-out — never
@@ -149,6 +149,12 @@ namespace Ring.Presentation
             RenderSnapshot curr = _runner.RenderCurr;
             RenderSnapshot prev = _runner.RenderPrev;
             float alpha = _runner.RenderAlpha;
+            // L-13 fix-round: read once per frame (not baked into MobView as a
+            // duplicated constant) so a balance re-tune of MobConfig.TelegraphSeconds
+            // (hot-tweak, spec §3.9) is reflected in the telegraph pulse immediately —
+            // `_runner.World` is guaranteed non-null here, LateUpdate's own guard above
+            // already returned early otherwise.
+            float telegraphSeconds = _runner.World.Config.Chaser.TelegraphSeconds;
 
             _seenMobIds.Clear();
             for (int i = 0; i < curr.MobCount; i++)
@@ -167,7 +173,7 @@ namespace Ring.Presentation
                     // Sync right away (Task 21 Bind/Sync contract) so a mob that's
                     // already mid-Telegraph the instant it becomes visible reads
                     // correctly this same frame, not one frame late.
-                    view.Sync(in m);
+                    view.Sync(in m, telegraphSeconds);
                     _activeMobs.Add(m.Id, view);
                     continue;
                 }
@@ -185,7 +191,7 @@ namespace Ring.Presentation
                     Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
                     view.transform.position = world + MobOffset;
                 }
-                view.Sync(in m);
+                view.Sync(in m, telegraphSeconds);
             }
 
             _staleIdsScratch.Clear();

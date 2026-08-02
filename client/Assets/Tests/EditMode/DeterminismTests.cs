@@ -133,11 +133,17 @@ namespace Ring.Simulation.Tests
         [Test]
         public void GoldenHash_ScriptedScenario()
         {
-            // Pin against a silent simulation-behaviour change (spec §3.13 п.14):
+            // Pin against a silent simulation-behaviour change (spec §3.13 item 14):
             // world seed 42, scripted input from Random(123), 1000 ticks. First
             // run: the constant below is 0, this assert fails and NUnit prints
             // the actual hash — paste that value in and rerun for a green PASS.
-            const ulong GoldenHash = 0x89609433B9F5147BUL; // = 9899074930844439675
+            // Re-pinned by the final-fix-wave review round (F-1): MobAiSystem's
+            // gunner FireCooldown now floor-clamps to 0 every tick (previously
+            // unclamped, letting a Reposition/no-LoS stretch accrue negative
+            // "debt" that paid off as a several-shots volley on LoS acquisition)
+            // — the scripted scenario's waves spawn gunners, so this legitimately
+            // changes their FireCooldown trace and therefore the hash.
+            const ulong GoldenHash = 0x39B4C57694AD8770UL; // = 4158165469061023600
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
     }

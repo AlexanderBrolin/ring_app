@@ -150,6 +150,18 @@ namespace Ring.Presentation
         /// in `PlayClip` below (Task 28), shared with the predicted path above.
         public void HandleEvent(in SimEvent e)
         {
+            if (e.Kind == SimEventKind.ProjectileFired && e.Owner != ProjectileOwner.Player)
+            {
+                // F-3 fix-round: a mob's shot has no clip of its own yet — until one
+                // exists, skip audio entirely rather than borrowing the player's
+                // `_shotClip` (which also ate into the player's own
+                // MinSfxInterval/VoicesPerSfx budget under the old owner-blind
+                // event). Returning here BEFORE the predicted-latch check below is
+                // also what keeps a mob's shot from ever wrongly consuming the
+                // player's own predicted-shot latch (the audio side of bd app-ai2 —
+                // MuzzleFlashView.HandleEvent gets the matching fix).
+                return;
+            }
             if (e.Kind == SimEventKind.ProjectileFired
                 && _predicted && Time.unscaledTime <= _predictedExpireAt)
             {

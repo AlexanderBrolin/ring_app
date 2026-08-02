@@ -33,9 +33,9 @@ namespace Ring.Presentation
 
             _hpFill.fillAmount = player.Hp / hero.MaxHp;
             _dashFill.fillAmount = 1f - player.DashCooldown / Mathf.Max(hero.DashCooldown, CooldownEps);
-            // Technical placeholder string, not world-dictionary text — real UI copy
-            // for the wave counter arrives with Task 24.
-            _waveText.text = "WAVE " + _runner.Curr.Wave.WaveIndex;
+            // F-8 fix: user-facing strings are Russian (ADR-003 §9 word list) — the
+            // old "WAVE " placeholder predates the settled world vocabulary.
+            _waveText.text = "ВОЛНА " + _runner.Curr.Wave.WaveIndex;
         }
     }
 }

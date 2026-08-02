@@ -178,7 +178,12 @@ namespace Ring.Presentation
             switch (e.Kind)
             {
                 case SimEventKind.ProjectileFired:
-                    SpawnCasing(in e);
+                    // F-3 fix-round: a mob's shot has no casing of its own (the
+                    // sim doesn't model gunner brass) — gating on Owner keeps a
+                    // Gunner's gunfire from spawning the PLAYER's shell casing at
+                    // its own muzzle, which is what an owner-blind event let
+                    // through before this field existed.
+                    if (e.Owner == ProjectileOwner.Player) SpawnCasing(in e);
                     break;
                 case SimEventKind.ProjectileHit:
                     PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);

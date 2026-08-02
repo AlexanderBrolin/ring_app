@@ -39,5 +39,55 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(cap, w.EventCount);
             Assert.AreEqual(10, w.DroppedEvents);
         }
+
+        [Test]
+        public void ProjectileFired_CarriesOwner_PlayerAndMob()
+        {
+            // F-3 regression: SimEvent now threads ProjectileOwner through
+            // (SimulationWorld.SpawnProjectile) so Presentation can tell a mob's
+            // shot from the player's own — before this field existed, a Gunner's
+            // shot spawned the player's own shell casing, played the player's
+            // muzzle sound, and could steal the player's predicted-shot latch (bd
+            // app-ai2). Spawns through the real production paths (WeaponSystem for
+            // the player, MobAiSystem for a Gunner) rather than the raw
+            // SpawnProjectileForTest seam, so this pins the actual call sites, not
+            // just the Emit plumbing.
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c);
+            w.Tick(new SimInput { AimPoint = new float2(10f, 0f), FireHeld = true }); // player's first shot is instant
+
+            SimEvent playerShot = default;
+            bool foundPlayer = false;
+            for (int i = 0; i < w.EventCount; i++)
+            {
+                if (w.GetEvent(i).Kind != SimEventKind.ProjectileFired) continue;
+                playerShot = w.GetEvent(i);
+                foundPlayer = true;
+                break;
+            }
+            Assert.IsTrue(foundPlayer);
+            Assert.AreEqual(ProjectileOwner.Player, playerShot.Owner);
+
+            // A Gunner well inside PreferredRange+-RangeTolerance with clear LoS
+            // fires on its first eligible tick (F-1's own fix keeps this to exactly
+            // one shot — see MobAiTests.Gunner_LongApproach_FiresAtMostOnceOnFirstWindow).
+            w.SpawnMobForTest(MobType.Gunner, new float2(9f, 0f));
+            SimEvent mobShot = default;
+            bool foundMob = false;
+            for (int i = 0; i < 60 && !foundMob; i++)
+            {
+                w.ClearEvents();
+                w.Tick(default);
+                for (int e = 0; e < w.EventCount; e++)
+                {
+                    if (w.GetEvent(e).Kind != SimEventKind.ProjectileFired) continue;
+                    mobShot = w.GetEvent(e);
+                    foundMob = true;
+                    break;
+                }
+            }
+            Assert.IsTrue(foundMob);
+            Assert.AreEqual(ProjectileOwner.Mob, mobShot.Owner);
+        }
     }
 }

@@ -201,17 +201,26 @@ namespace Ring.Editor
             HeroConfig hero = GetOrCreate<HeroConfig>("HeroConfig");
             WeaponConfig weapon = GetOrCreate<WeaponConfig>("WeaponConfig");
             MobConfig chaser = GetOrCreate<MobConfig>("MobChaserConfig");
-            MobConfig gunner = GetOrCreate<MobConfig>("MobGunnerConfig");
+            MobConfig gunner = GetOrCreate<MobConfig>("MobGunnerConfig", out bool gunnerCreated);
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
             GameFeelConfig gameFeel = GetOrCreate<GameFeelConfig>("GameFeelConfig");
             CameraConfig camera = GetOrCreate<CameraConfig>("CameraConfig");
 
-            // Reapplied unconditionally (not just on first creation) so a stale
-            // existing asset self-heals — fix-round 1: melee fields must read 0,
-            // not chaser's contact-combat numbers (gunner never melees, spec §3.9
-            // baseline is TestConfigs.Default().Gunner, where they're unset -> 0).
-            bool gunnerChanged = ApplyGunnerDefaults(gunner);
+            // F-5 fix-round: applied ONLY on first creation, not on every Apply()
+            // — this used to be reapplied unconditionally so a stale existing
+            // asset would self-heal (fix-round 1: melee fields must read 0, not
+            // chaser's contact-combat numbers — gunner never melees, spec §3.9
+            // baseline is TestConfigs.Default().Gunner, where they're unset -> 0),
+            // but "unconditionally" also meant it silently stomped any owner
+            // hand-tweak of MobGunnerConfig.asset on the very next bootstrap run —
+            // a "баланс в ScriptableObjects" violation (AGENT.md §6): the SO is
+            // supposed to be the tunable source of truth, not something this
+            // script keeps overwriting. `gunnerCreated` is only true for a
+            // brand-new asset (e.g. a fresh clone with no committed asset at all),
+            // where every field is still MobConfig's own chaser-mirrored class
+            // default and genuinely needs the gunner numbers seeded once.
+            bool gunnerChanged = gunnerCreated && ApplyGunnerDefaults(gunner);
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
 
             // Task 27 review fix-round (extended by the milestone-4 DoD
@@ -1025,13 +1034,21 @@ namespace Ring.Editor
         }
 
         static T GetOrCreate<T>(string assetName) where T : ScriptableObject
+            => GetOrCreate<T>(assetName, out _);
+
+        /// F-5 fix-round overload: reports whether THIS call actually created the
+        /// asset (as opposed to finding it already on disk) — see the `gunner`
+        /// call site's doc for why that distinction matters. The bare overload
+        /// above is unchanged for every caller that doesn't need it.
+        static T GetOrCreate<T>(string assetName, out bool created) where T : ScriptableObject
         {
             string path = $"{DataDir}/{assetName}.asset";
             var existing = AssetDatabase.LoadAssetAtPath<T>(path);
-            if (existing != null) return existing;
+            if (existing != null) { created = false; return existing; }
 
             var asset = ScriptableObject.CreateInstance<T>();
             AssetDatabase.CreateAsset(asset, path);
+            created = true;
             return asset;
         }
 
@@ -1378,7 +1395,21 @@ namespace Ring.Editor
             {
                 var bursts = new ParticleSystem.Burst[emission.burstCount];
                 emission.GetBursts(bursts);
-                currentBurstCount = bursts[0].minCount;
+                // F-6 fix: ConfigureBurstParticles below writes the burst as a
+                // CONSTANT-mode MinMaxCurve (`new ParticleSystem.Burst(0f, (short)
+                // burstCount)`), but `Burst.minCount` reads back the curve's
+                // constantMIN, a distinct backing value that a hand-authored
+                // min/max burst (e.g. a prefab built before this bake path
+                // existed, or edited by hand in the Inspector) can leave sitting
+                // at a stale value unrelated to what was actually written here —
+                // `.count.constant` is what a constant-mode curve was actually SET
+                // to, so it's the only read that round-trips this method's own
+                // write. The old `minCount` read always disagreed with a
+                // constant-mode `burstCount` (e.g. prefabs authored with
+                // minScalar=30), so every Apply() saw "differs" and re-baked
+                // (rebuilding the prefab, discarding an owner's Inspector tweak)
+                // even when nothing had actually changed.
+                currentBurstCount = (int)bursts[0].count.constant;
             }
             return currentBurstCount != burstCount;
         }
@@ -1560,7 +1591,21 @@ namespace Ring.Editor
         static TMP_Text GetOrCreateWaveText(Transform parent, ref bool sceneDirty)
         {
             Transform existing = parent.Find(WaveTextObjectName);
-            if (existing != null) return existing.GetComponent<TMP_Text>();
+            if (existing != null)
+            {
+                TMP_Text existingText = existing.GetComponent<TMP_Text>();
+                // F-8 fix: self-heals an already-committed scene's stale English
+                // placeholder ("WAVE 0", predates the settled ADR-003 §9 word
+                // list) the same way the HP/dash bars' fillSprite check above
+                // self-heals — checked unconditionally so a scene saved by an
+                // older bootstrap run picks up the fix, not just a fresh one.
+                if (existingText.text.StartsWith("WAVE"))
+                {
+                    existingText.text = "ВОЛНА 0";
+                    sceneDirty = true;
+                }
+                return existingText;
+            }
 
             var go = new GameObject(WaveTextObjectName, typeof(RectTransform));
             go.transform.SetParent(parent, false);
@@ -1572,7 +1617,7 @@ namespace Ring.Editor
             rect.sizeDelta = new Vector2(240f, 40f);
 
             var tmp = go.AddComponent<TextMeshProUGUI>();
-            tmp.text = "WAVE 0";
+            tmp.text = "ВОЛНА 0";
             tmp.fontSize = 28f;
             tmp.alignment = TextAlignmentOptions.TopRight;
             tmp.color = Color.white;

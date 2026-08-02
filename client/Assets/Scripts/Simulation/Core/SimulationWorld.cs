@@ -160,14 +160,19 @@ namespace Ring.Simulation.Core
         /// per-frame buffer is preallocated to Arena.MaxEventsPerFrame; once full,
         /// further events are dropped (no allocation, no growth) and counted
         /// cumulatively in DroppedEvents so overflow is deterministic and visible.
-        internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType, float amount)
+        /// `owner` (F-3 fix-round) is meaningful only for ProjectileFired — every
+        /// other call site omits it and gets the default `ProjectileOwner.Player`,
+        /// same "unused for every other kind" contract `SimEvent.Owner`'s own doc
+        /// describes.
+        internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType, float amount,
+            ProjectileOwner owner = ProjectileOwner.Player)
         {
             if (_eventCount < _events.Length)
             {
                 _events[_eventCount++] = new SimEvent
                 {
                     Kind = kind, Tick = _tick, Pos = pos,
-                    EntityId = entityId, MobType = mobType, Amount = amount
+                    EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner
                 };
             }
             else
@@ -227,9 +232,11 @@ namespace Ring.Simulation.Core
             // snapshot is wrong during a multi-tick catch-up flush (Curr reflects
             // only the batch's LAST tick, not necessarily the tick this shot fired
             // on) — this event field is the only tick-exact source available.
-            // Events are excluded from StateHash (spec §3.7), so this adds no new
+            // Owner (F-3 fix-round) lets Presentation tell a mob's shot from the
+            // player's own — see SimEvent.Owner's doc. Events are excluded from
+            // StateHash (spec §3.7), so neither field adds any new
             // determinism/replay surface.
-            Emit(SimEventKind.ProjectileFired, pos, id, default, math.atan2(vel.y, vel.x));
+            Emit(SimEventKind.ProjectileFired, pos, id, default, math.atan2(vel.y, vel.x), owner);
             return id;
         }
 
@@ -399,10 +406,19 @@ namespace Ring.Simulation.Core
             _stats = save.Stats;
         }
 
-        /// Test-only seam for EveryPlayerAndStatsFieldAffectsHash (spec §3.13 п.12).
+        /// Test-only seam for EveryPlayerAndStatsFieldAffectsHash (spec §3.13 item 12).
         /// Not a public API — no *ForTest wrapper ships in the battle surface.
         internal void SetPlayerForTest(in PlayerState p) => _players[0] = p;
         internal void SetStatsForTest(in MatchStats s) => _stats = s;
+
+        /// F-4 fix-round: three more test-only seams, same contract as
+        /// SetPlayerForTest/SetStatsForTest above — mutate a live slot directly
+        /// (RestoreState already handles the "reset to a saved snapshot" half) so
+        /// EveryPlayerAndStatsFieldAffectsHash's per-field bump/assert pattern can
+        /// be extended to MobState/ProjectileState/WaveState.
+        internal void SetMobForTest(int index, in MobState m) => _mobs[index] = m;
+        internal void SetProjectileForTest(int index, in ProjectileState p) => _projectiles[index] = p;
+        internal void SetWaveForTest(in WaveState w) => _wave = w;
 
         /// Canonical order (spec §3.3): tick → rng → nextEntityId → player →
         /// mobCount+mobs → projectileCount+projectiles → wave → stats.

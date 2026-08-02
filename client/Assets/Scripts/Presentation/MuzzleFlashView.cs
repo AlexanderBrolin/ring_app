@@ -40,20 +40,21 @@ namespace Ring.Presentation
     /// releases Fire between the predicting frame and the confirming tick), the
     /// latch just times out: one extra burst with no matching shot, an accepted
     /// rare cosmetic artifact (spec-acknowledged, task-28-report.md). The
-    /// suppression also cannot distinguish a player shot from a mob's (this
-    /// component already shares one flash prop across both, pre-Task-28 —
-    /// `HandleEvent` never filtered by owner, `SimEvent` carries no
-    /// `ProjectileOwner`) — fix-round review #4: if a MOB's real event lands
-    /// inside the TTL window instead of the player's own, `HandleEvent` wrongly
-    /// treats IT as the confirmation (consumes the latch), which both drops
-    /// that mob shot's own burst AND leaves the predicted burst unconsumed, so
-    /// the player's own real event (arriving moments later, same or next flush)
-    /// bursts AGAIN on top of it — a double burst for the player's shot plus a
-    /// missing one for the mob's, not merely "the mob's gets swallowed". Out of
-    /// this task's scope to fix properly (would need `ProjectileOwner` on
-    /// `SimEvent`, a `Ring.Simulation` change) — tracked as a follow-up, kept
-    /// rare by `ImmediatePredictionTtlSeconds` staying close to one tick's
-    /// length.
+    /// suppression originally could not distinguish a player shot from a
+    /// mob's (this component already shares one flash prop across both,
+    /// pre-Task-28 — `HandleEvent` never filtered by owner, `SimEvent` carried
+    /// no `ProjectileOwner`) — fix-round review #4 found that a MOB's real
+    /// event landing inside the TTL window instead of the player's own made
+    /// `HandleEvent` wrongly treat IT as the confirmation (consumes the
+    /// latch), which both dropped that mob shot's own burst AND left the
+    /// predicted burst unconsumed, so the player's own real event (arriving
+    /// moments later, same or next flush) burst AGAIN on top of it — a double
+    /// burst for the player's shot plus a missing one for the mob's, not
+    /// merely "the mob's gets swallowed" (bd app-ai2). Fixed by the F-3
+    /// fix-round: `SimEvent` now carries `Owner`
+    /// (`SimulationWorld.SpawnProjectile`), and `HandleEvent` below only lets
+    /// a PLAYER-owned event consume the latch — a mob's shot always bursts,
+    /// unconditionally, and never touches `_predicted`.
     public sealed class MuzzleFlashView : MonoBehaviour
     {
         const int BurstCount = 8;
@@ -104,7 +105,14 @@ namespace Ring.Presentation
         {
             if (e.Kind != SimEventKind.ProjectileFired) return;
 
-            if (_predicted && Time.unscaledTime <= _predictedExpireAt)
+            // F-3 fix-round (bd app-ai2): the predicted latch is only ever armed
+            // from the PLAYER's own state (Update above reads `_runner.RenderCurr.
+            // Player`), so only a player-owned event may consume it — a mob's shot
+            // landing inside the TTL window must always burst on its own instead of
+            // being wrongly swallowed as "the" confirmation (see the class doc above
+            // for the double-burst-plus-missing-burst bug this used to cause).
+            if (e.Owner == ProjectileOwner.Player
+                && _predicted && Time.unscaledTime <= _predictedExpireAt)
             {
                 // Already shown this shot's feedback ahead of time (Update above)
                 // — consume the latch instead of bursting a visible duplicate

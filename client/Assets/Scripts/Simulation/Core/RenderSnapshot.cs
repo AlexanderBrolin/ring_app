@@ -1,6 +1,6 @@
 namespace Ring.Simulation.Core
 {
-    /// Preallocated render view of one tick. Matching by entity Id (спека §3.7).
+    /// Preallocated render view of one tick. Matching by entity Id (spec §3.7).
     public sealed class RenderSnapshot
     {
         public int Tick;

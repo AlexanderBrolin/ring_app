@@ -24,7 +24,8 @@ namespace Ring.Presentation
             _dash = asset.FindAction("Gameplay/Dash", true);
             _aimProvider = aimProvider;
 
-            // Stored so Disable() can unsubscribe the exact same delegate instance.
+            // Stored so Enable()/Disable() can (re)subscribe the exact same delegate
+            // instance.
             _onDashPerformed = _ => _dashLatch = true;
             _dash.performed += _onDashPerformed;
         }
@@ -35,6 +36,15 @@ namespace Ring.Presentation
             _aim.Enable();
             _fire.Enable();
             _dash.Enable();
+            // F-2 fix: Disable() below unsubscribes _onDashPerformed but Enable()
+            // never resubscribed it — after one disable->enable cycle the dash edge
+            // latch was dead for the rest of the session (SampleFrame's DashRequested
+            // stayed permanently false; held-value reads like MoveDir kept working
+            // since those don't depend on a subscription). `-=` first guards against a
+            // double subscription if Enable() is ever called twice without an
+            // intervening Disable().
+            _dash.performed -= _onDashPerformed;
+            _dash.performed += _onDashPerformed;
         }
 
         public void Disable()
