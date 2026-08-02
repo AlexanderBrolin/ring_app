@@ -67,12 +67,17 @@ namespace Ring.Simulation.Core
         {
             SimInput input = Sanitize(rawInput);
             _tick++;
-            _players[0].AimPoint = input.AimPoint;
             // Death semantics (spec §3.12, Task 23): once dead, input/dash/weapon
             // are inert — the body just decelerates under friction and keeps
-            // resolving collisions, it never reacts to input again.
+            // resolving collisions, it never reacts to input again. AimPoint is
+            // part of that: it must stay pinned at its value at death, not keep
+            // tracking the raw (still-arriving) mouse input — it also feeds
+            // HashPlayer, so a live AimPoint would make the post-death state
+            // (and therefore the replay hash) depend on input the player can no
+            // longer act on.
             if (_players[0].Alive)
             {
+                _players[0].AimPoint = input.AimPoint;
                 if (PlayerMovementSystem.Update(ref _players[0], in input, in _config))
                 {
                     _stats.DashesUsed++;

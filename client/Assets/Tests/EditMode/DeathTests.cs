@@ -33,12 +33,14 @@ namespace Ring.Simulation.Tests
         {
             var w = DeadWorld(out _);
             float2 pos = w.Player.Pos;
+            float2 aim = w.Player.AimPoint;
             int t0 = w.CurrentTick;
             for (int i = 0; i < 30; i++)
                 w.Tick(new SimInput { MoveDir = new float2(1f, 0f), FireHeld = true,
-                                      DashRequested = true });
+                                      DashRequested = true, AimPoint = new float2(20f, -15f) });
             Assert.AreEqual(t0 + 30, w.CurrentTick);
             Assert.AreEqual(pos, w.Player.Pos);
+            Assert.AreEqual(aim, w.Player.AimPoint); // aim also freezes — no reaction to input
             Assert.AreEqual(0, w.Stats.ShotsFired);
             Assert.AreEqual(0, w.Stats.DashesUsed);
         }
