@@ -58,8 +58,15 @@ namespace Ring.Editor
     /// fan-out instead), and — editor/dev-build only — a `PracticeTargets` object
     /// that spawns milestone-2 target dummies via `SimulationWorld.DevSpawnMob`.
     /// Task 21 (spec §3.6, П-11) adds a `DevOverlay` object — the dev-spawn-buttons
-    /// stub Task 24 will grow into the full overlay — wired to the same `runner`
+    /// stub Task 24 grows into the full overlay — wired to the same `runner`
     /// and `aimProvider` references as everything else above.
+    /// Task 24 (spec Interfaces): a `DeathPanel`/`PausePanel` pair of modal
+    /// overlays under the existing `HUD` canvas, carried by new `DeathOverlay`/
+    /// `PauseMenu` root objects (`DeathOverlayController`/`PauseController`);
+    /// `SimEventRouter` gains a wired `_deathOverlay` slot. The milestone-2
+    /// `PracticeTargets` object is retired — self-healed out of the scene
+    /// outright (its class no longer exists) now that real wave spawning
+    /// (Task 22) makes the placeholder dummies redundant.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -94,6 +101,12 @@ namespace Ring.Editor
 
         // Task 21.
         const string DevOverlayObjectName = "DevOverlay";
+
+        // Task 24.
+        const string DeathPanelObjectName = "DeathPanel";
+        const string DeathOverlayObjectName = "DeathOverlay";
+        const string PausePanelObjectName = "PausePanel";
+        const string PauseControllerObjectName = "PauseMenu";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -321,6 +334,7 @@ namespace Ring.Editor
             }
             var greyboxSo = new SerializedObject(greyboxBuilder);
             bool greyboxRefsChanged = false;
+            greyboxRefsChanged |= SetRef(greyboxSo, "_runner", runner);
             greyboxRefsChanged |= SetRef(greyboxSo, "_arena", arena);
             greyboxRefsChanged |= SetRef(greyboxSo, "_floor", floorMat);
             greyboxRefsChanged |= SetRef(greyboxSo, "_wall", wallMat);
@@ -412,6 +426,80 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // Task 24 (spec Interfaces): death screen + pause menu panels, both
+            // children of the same HUD canvas the bars/wave-text above live on
+            // (later sibling order in the same Canvas renders them on top).
+            // Both panels start hidden; DeathOverlayController/PauseController's
+            // own Awake also enforces this defensively every play session.
+            GameObject deathPanelGo = GetOrCreateOverlayPanel(hudGo.transform, DeathPanelObjectName, ref sceneDirty);
+            GetOrCreateOverlayText(deathPanelGo.transform, "Title", "Носитель потерян",
+                new Vector2(0f, 160f), new Vector2(700f, 70f), 42f, ref sceneDirty);
+            TMP_Text deathMetrics = GetOrCreateOverlayText(deathPanelGo.transform, "Metrics", "",
+                new Vector2(0f, -10f), new Vector2(700f, 260f), 24f, ref sceneDirty);
+            GetOrCreateOverlayText(deathPanelGo.transform, "Hint", "R — заново · Shift+R — тот же seed",
+                new Vector2(0f, -170f), new Vector2(700f, 30f), 18f, ref sceneDirty);
+            Button deathRestartButton = GetOrCreateOverlayButton(deathPanelGo.transform, "RestartButton", "Заново",
+                new Vector2(0f, -230f), new Vector2(220f, 50f), ref sceneDirty);
+
+            GameObject deathOverlayGo = FindRootObject(scene, DeathOverlayObjectName);
+            if (deathOverlayGo == null)
+            {
+                deathOverlayGo = new GameObject(DeathOverlayObjectName);
+                sceneDirty = true;
+            }
+            DeathOverlayController deathOverlay = deathOverlayGo.GetComponent<DeathOverlayController>();
+            if (deathOverlay == null)
+            {
+                deathOverlay = deathOverlayGo.AddComponent<DeathOverlayController>();
+                sceneDirty = true;
+            }
+            var deathOverlaySo = new SerializedObject(deathOverlay);
+            bool deathOverlayRefsChanged = false;
+            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_runner", runner);
+            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_panel", deathPanelGo);
+            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_metricsText", deathMetrics);
+            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_restartButton", deathRestartButton);
+            if (deathOverlayRefsChanged)
+            {
+                deathOverlaySo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            GameObject pausePanelGo = GetOrCreateOverlayPanel(hudGo.transform, PausePanelObjectName, ref sceneDirty);
+            GetOrCreateOverlayText(pausePanelGo.transform, "Title", "Пауза",
+                new Vector2(0f, 160f), new Vector2(400f, 70f), 42f, ref sceneDirty);
+            Button resumeButton = GetOrCreateOverlayButton(pausePanelGo.transform, "ResumeButton", "Продолжить",
+                new Vector2(0f, 50f), new Vector2(240f, 50f), ref sceneDirty);
+            Button pauseRestartButton = GetOrCreateOverlayButton(pausePanelGo.transform, "RestartButton",
+                "Начать заново", new Vector2(0f, -20f), new Vector2(240f, 50f), ref sceneDirty);
+            Button quitButton = GetOrCreateOverlayButton(pausePanelGo.transform, "QuitButton", "Выйти",
+                new Vector2(0f, -90f), new Vector2(240f, 50f), ref sceneDirty);
+
+            GameObject pauseControllerGo = FindRootObject(scene, PauseControllerObjectName);
+            if (pauseControllerGo == null)
+            {
+                pauseControllerGo = new GameObject(PauseControllerObjectName);
+                sceneDirty = true;
+            }
+            PauseController pauseController = pauseControllerGo.GetComponent<PauseController>();
+            if (pauseController == null)
+            {
+                pauseController = pauseControllerGo.AddComponent<PauseController>();
+                sceneDirty = true;
+            }
+            var pauseSo = new SerializedObject(pauseController);
+            bool pauseRefsChanged = false;
+            pauseRefsChanged |= SetRef(pauseSo, "_runner", runner);
+            pauseRefsChanged |= SetRef(pauseSo, "_menu", pausePanelGo);
+            pauseRefsChanged |= SetRef(pauseSo, "_resumeButton", resumeButton);
+            pauseRefsChanged |= SetRef(pauseSo, "_restartButton", pauseRestartButton);
+            pauseRefsChanged |= SetRef(pauseSo, "_quitButton", quitButton);
+            if (pauseRefsChanged)
+            {
+                pauseSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
             // Task 17 (spec §3.6/§3.7, П-1/П-2): pooled mob/projectile views matched
             // by Id, placeholder SFX + muzzle flash fanned out from a single
             // TicksFlushed subscriber, and milestone-2 practice targets to shoot at.
@@ -475,6 +563,7 @@ namespace Ring.Editor
             }
             var audioSo = new SerializedObject(audioDirector);
             bool audioRefsChanged = false;
+            audioRefsChanged |= SetRef(audioSo, "_runner", runner);
             audioRefsChanged |= SetRef(audioSo, "_gameFeel", gameFeel);
             audioRefsChanged |= SetRef(audioSo, "_shotClip", shotClip);
             audioRefsChanged |= SetRef(audioSo, "_hitClip", hitClip);
@@ -543,39 +632,31 @@ namespace Ring.Editor
             routerRefsChanged |= SetRef(routerSo, "_audioDirector", audioDirector);
             routerRefsChanged |= SetRef(routerSo, "_muzzleFlash", muzzleFlash);
             routerRefsChanged |= SetRef(routerSo, "_viewRegistry", viewRegistry);
+            routerRefsChanged |= SetRef(routerSo, "_deathOverlay", deathOverlay);
             if (routerRefsChanged)
             {
                 routerSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            // Milestone-2 target dummies (Task 17) — dev/editor only, same
-            // compile guard as `PracticeTargets` itself; deleted outright in
-            // Phase 7 once the real WaveSystem exists.
-            GameObject practiceGo = FindRootObject(scene, PracticeTargetsObjectName);
-            if (practiceGo == null)
+            // Task 24 (spec Interfaces): milestone-2 target dummies are retired
+            // now that real wave spawning exists (Task 22) — self-heals a scene
+            // saved by an older bootstrap run by removing any leftover
+            // `PracticeTargets` object outright (existence-guard inverted:
+            // PRESENCE, not absence, is what triggers a sceneDirty change here).
+            // The `PracticeTargets` class/type itself is deleted from the
+            // codebase, so this can only ever find a stale scene object, never
+            // recreate the component.
+            GameObject stalePracticeGo = FindRootObject(scene, PracticeTargetsObjectName);
+            if (stalePracticeGo != null)
             {
-                practiceGo = new GameObject(PracticeTargetsObjectName);
+                Object.DestroyImmediate(stalePracticeGo);
                 sceneDirty = true;
             }
-            PracticeTargets practiceTargets = practiceGo.GetComponent<PracticeTargets>();
-            if (practiceTargets == null)
-            {
-                practiceTargets = practiceGo.AddComponent<PracticeTargets>();
-                sceneDirty = true;
-            }
-            var practiceSo = new SerializedObject(practiceTargets);
-            if (SetRef(practiceSo, "_runner", runner))
-            {
-                practiceSo.ApplyModifiedPropertiesWithoutUndo();
-                sceneDirty = true;
-            }
-#endif
 
             // Task 21 (spec §3.6, resolution П-11): a `DevOverlay` object carrying
-            // the dev-spawn-buttons stub. Unlike `PracticeTargets` right above,
-            // this wiring is NOT wrapped in a `#if` guard — `StageOneSceneBootstrap`
+            // the dev-spawn-buttons stub, since grown into the full overlay
+            // (Task 24). This wiring is NOT wrapped in a `#if` guard — `StageOneSceneBootstrap`
             // itself only ever compiles for the Editor (it lives under
             // `Assets/Scripts/Editor`, which Unity excludes from every player
             // build outright, guard or not), so re-guarding the reference here
@@ -890,6 +971,87 @@ namespace Ring.Editor
 
             sceneDirty = true;
             return tmp;
+        }
+
+        /// A full-screen darkened background panel for a modal overlay (Task 24:
+        /// death screen, pause menu) — a single `Image` stretched to fill its
+        /// parent Canvas, starting hidden. Existence-guarded like everything
+        /// else in this file: an owner's in-Editor tweak (e.g. background tint)
+        /// survives a re-run.
+        static GameObject GetOrCreateOverlayPanel(Transform parent, string name, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(name);
+            if (existing != null) return existing.gameObject;
+
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            StretchToFillParent((RectTransform)go.transform);
+            go.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.75f);
+            go.SetActive(false);
+
+            sceneDirty = true;
+            return go;
+        }
+
+        /// A centered `TextMeshProUGUI` label inside a modal overlay panel (Task
+        /// 24) — anchored to the panel's center with a pixel offset, so callers
+        /// stack lines (title/metrics/hint) purely via `anchoredPos`.
+        /// Existence-guarded like everything else in this file.
+        static TMP_Text GetOrCreateOverlayText(Transform parent, string name, string defaultText,
+            Vector2 anchoredPos, Vector2 size, float fontSize, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(name);
+            if (existing != null) return existing.GetComponent<TMP_Text>();
+
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = anchoredPos;
+            rect.sizeDelta = size;
+
+            var tmp = go.AddComponent<TextMeshProUGUI>();
+            tmp.text = defaultText;
+            tmp.fontSize = fontSize;
+            tmp.alignment = TextAlignmentOptions.Center;
+            tmp.color = Color.white;
+
+            sceneDirty = true;
+            return tmp;
+        }
+
+        /// A centered uGUI `Button` (background `Image` + `TextMeshProUGUI`
+        /// label) inside a modal overlay panel (Task 24). Existence-guarded like
+        /// everything else in this file.
+        static Button GetOrCreateOverlayButton(Transform parent, string name, string label,
+            Vector2 anchoredPos, Vector2 size, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(name);
+            if (existing != null) return existing.GetComponent<Button>();
+
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = anchoredPos;
+            rect.sizeDelta = size;
+            go.GetComponent<Image>().color = new Color(0.15f, 0.15f, 0.18f, 0.9f);
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(go.transform, false);
+            StretchToFillParent((RectTransform)labelGo.transform);
+            var tmp = labelGo.AddComponent<TextMeshProUGUI>();
+            tmp.text = label;
+            tmp.fontSize = 22f;
+            tmp.alignment = TextAlignmentOptions.Center;
+            tmp.color = Color.white;
+
+            sceneDirty = true;
+            return go.GetComponent<Button>();
         }
 
         static void StretchToFillParent(RectTransform rect)

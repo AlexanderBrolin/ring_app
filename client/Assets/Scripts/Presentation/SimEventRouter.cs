@@ -11,15 +11,17 @@ namespace Ring.Presentation
     /// relative order:
     ///   GameFeelDirector → PersistentPropsDirector → AudioDirector →
     ///   ViewRegistry (retire only) → DeathOverlayController.
-    /// Only `AudioDirector`, `MuzzleFlashView` and `ViewRegistry` exist as of Task
-    /// 17 — the other three slots are Phase 7/8 work; their place in the order is
-    /// marked below instead of being stubbed out with empty classes.
+    /// `AudioDirector`, `MuzzleFlashView` and `ViewRegistry` exist as of Task 17;
+    /// `DeathOverlayController` (Task 24) slots in last. GameFeelDirector/
+    /// PersistentPropsDirector are still Phase 8 work — their place in the order
+    /// is marked below instead of being stubbed out with empty classes.
     public sealed class SimEventRouter : MonoBehaviour
     {
         [SerializeField] SimulationRunner _runner;
         [SerializeField] AudioDirector _audioDirector;
         [SerializeField] MuzzleFlashView _muzzleFlash;
         [SerializeField] ViewRegistry _viewRegistry;
+        [SerializeField] DeathOverlayController _deathOverlay;
 
         void OnEnable() => _runner.TicksFlushed += OnTicksFlushed;
 
@@ -38,7 +40,7 @@ namespace Ring.Presentation
                 _audioDirector.HandleEvent(in e);
                 _muzzleFlash.HandleEvent(in e); // shot feedback, same pass (П-2)
                 _viewRegistry.HandleEvent(in e); // retire only — mapping/lerp is ViewRegistry's own LateUpdate
-                // DeathOverlayController (death-screen fade) — Phase 7: slots in here last.
+                _deathOverlay.HandleEvent(in e); // death-screen show, last slot (Task 24, П-1)
             }
         }
     }

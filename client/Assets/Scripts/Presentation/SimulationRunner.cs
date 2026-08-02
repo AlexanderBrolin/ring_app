@@ -33,6 +33,33 @@ namespace Ring.Presentation
         public long Seed { get; private set; }
         public bool ConfigTweaked;
 
+        bool _paused;
+
+        /// Task 24 (spec Interfaces): the sole pause gate for the whole project —
+        /// `Time.timeScale` is never touched (class doc above). Setting this true
+        /// resets the fixed-step accumulator (so no backlog of real time is
+        /// waiting to burst-tick once unpaused) and, from that point on, `Update`
+        /// skips input sampling and tick advancement entirely — `Alpha` is left
+        /// exactly as it was at the moment pause started, so interpolated views
+        /// hold their last visual position instead of snapping toward `Prev`.
+        /// Setting it back to false does not itself resume ticking on the same
+        /// frame; `Update` simply stops early-returning starting next frame.
+        public bool Paused
+        {
+            get => _paused;
+            set
+            {
+                if (_paused == value) return;
+                _paused = value;
+                if (_paused) _acc.Reset();
+            }
+        }
+
+        /// DevOverlay's seam into the accumulator's dropped-time counter (Task 24
+        /// Приложение П-6) — `FixedStepAccumulator` itself has no UnityEngine
+        /// dependency and isn't otherwise exposed outside this class.
+        public float AccumulatorDroppedTime => _acc.DroppedTime;
+
         public event System.Action TicksFlushed;
         public event System.Action WorldRestarted;
 
@@ -65,6 +92,8 @@ namespace Ring.Presentation
                 }
             }
 
+            if (_paused) return;
+
             SimInput frame = _sampler.SampleFrame();
             int ticks = _acc.Advance(Time.unscaledDeltaTime);
             for (int i = 0; i < ticks; i++)
@@ -95,6 +124,12 @@ namespace Ring.Presentation
             Alpha = 0f;
             ConfigTweaked = false;
             _pendingApplyConfig = false;
+            // A fresh match never starts paused (Task 24) — covers a restart
+            // requested while paused (dev-overlay forced-seed restart, or the
+            // death overlay's R/Shift+R firing during an unlikely death+pause
+            // overlap) without every restart call-site having to remember to
+            // clear this itself.
+            _paused = false;
             WorldRestarted?.Invoke();
         }
 

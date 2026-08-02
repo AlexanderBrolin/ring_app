@@ -69,6 +69,41 @@ namespace Ring.Presentation
             _staleIdsScratch = new List<int>(math.max(mobCap, projCap));
         }
 
+        // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
+        // its sole SimEventRouter subscriber) — direct subscription here, same
+        // shape as the deleted PracticeTargets' pattern. Awake above always runs
+        // before this object's own OnEnable, so the dictionaries below are never
+        // null by the time this can fire, regardless of cross-object Awake/
+        // OnEnable ordering against SimulationRunner.
+        void OnEnable() => _runner.WorldRestarted += Clear;
+
+        void OnDisable() => _runner.WorldRestarted -= Clear;
+
+        /// Returns every active view to its pool (Task 24 spec Interfaces): a
+        /// match restart swaps in a brand-new `SimulationWorld` with entity Ids
+        /// starting back at 1, so any views still keyed by the OLD world's Ids
+        /// would otherwise leak (never retired by the ordinary diff/HandleEvent
+        /// paths above, which only ever see the new world's snapshots) and a
+        /// fresh Id could collide with one still marked active here. Idempotent:
+        /// safe to call on an already-empty registry (e.g. a restart before any
+        /// mob/projectile ever spawned).
+        public void Clear()
+        {
+            foreach (KeyValuePair<int, MobView> kv in _activeMobs)
+            {
+                kv.Value.gameObject.SetActive(false);
+                _mobPool.Push(kv.Value);
+            }
+            _activeMobs.Clear();
+
+            foreach (KeyValuePair<int, ProjectileView> kv in _activeProjectiles)
+            {
+                kv.Value.gameObject.SetActive(false);
+                _projectilePool.Push(kv.Value);
+            }
+            _activeProjectiles.Clear();
+        }
+
         void LateUpdate()
         {
             // One-frame ordering edge case before the runner's own Awake has run

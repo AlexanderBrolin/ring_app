@@ -8,12 +8,14 @@ namespace Ring.Presentation
     /// pool of `AudioSource` voices, one clip per event kind, pitch randomized by
     /// `GameFeelConfig.PitchRange`. Driven exclusively by `SimEventRouter`'s
     /// `HandleEvent` fan-out (П-1) — never subscribes to `TicksFlushed` itself.
-    /// Voice-count limits, `MinSfxInterval` throttling and `StopAll` are Phase 8
-    /// (T27), intentionally not implemented here.
+    /// Voice-count limits and `MinSfxInterval` throttling are Phase 8 (T27); a
+    /// minimal `StopAll` (Task 24 spec Interfaces, restart cleanup — full voice
+    /// management is still T27) is implemented below.
     public sealed class AudioDirector : MonoBehaviour
     {
         const int VoiceCount = 8;
 
+        [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] AudioClip _shotClip;
         [SerializeField] AudioClip _hitClip;
@@ -36,6 +38,24 @@ namespace Ring.Presentation
                 source.spatialBlend = 1f;
                 _voices[i] = source;
             }
+        }
+
+        // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
+        // its sole SimEventRouter subscriber) — direct subscription, same shape
+        // as the deleted PracticeTargets' pattern. This object's own Awake above
+        // always runs before its own OnEnable, so `_voices` is never null here.
+        void OnEnable() => _runner.WorldRestarted += StopAll;
+
+        void OnDisable() => _runner.WorldRestarted -= StopAll;
+
+        /// Cuts every currently-playing voice short (Task 24 spec Interfaces):
+        /// a match restart shouldn't leave the previous run's gunfire/death
+        /// stingers still ringing out over the new one. `Stop()` on an idle
+        /// `AudioSource` is a harmless no-op, so this is safe to call whether or
+        /// not anything was actually playing.
+        public void StopAll()
+        {
+            for (int i = 0; i < _voices.Length; i++) _voices[i].Stop();
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer

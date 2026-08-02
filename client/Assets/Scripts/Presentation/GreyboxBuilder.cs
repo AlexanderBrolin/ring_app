@@ -20,11 +20,15 @@ namespace Ring.Presentation
     ///
     /// Idempotent by child count: `Build()` runs once from `Awake` and does
     /// nothing if this transform already has children (e.g. a second `Awake` from
-    /// a domain reload without a scene reopen). It never rebuilds afterwards —
-    /// arena topology is off-limits to hot-tweak while the match is running;
-    /// `Object.DestroyImmediate` isn't available outside the Editor either, so
-    /// there is no in-place "clear and rebuild" path here. Task 28 owns rebuilding
-    /// on match restart.
+    /// a domain reload without a scene reopen). Arena topology is off-limits to
+    /// hot-tweak while the match is running (`SimulationWorld.ApplyConfig` throws
+    /// on a topology change, spec §3.9) — the only place topology legitimately
+    /// changes is across a full match restart, which is what `Rebuild()` (Task
+    /// 24 spec Interfaces) below is for: destroys whatever primitives currently
+    /// exist and reconstructs from the CURRENT `ArenaConfig` values, so a restart
+    /// that followed a hot-tweak fallback (`SimulationRunner.Update`'s
+    /// `ArgumentException` catch) never leaves the greybox showing stale geometry
+    /// that no longer matches what Simulation collides against.
     public sealed class GreyboxBuilder : MonoBehaviour
     {
         const int WallSegments = 48;
@@ -42,6 +46,7 @@ namespace Ring.Presentation
         /// User layer 8 — named "Cosmetics" in `ProjectSettings/TagManager.asset`.
         const int CosmeticsLayer = 8;
 
+        [SerializeField] SimulationRunner _runner;
         [SerializeField] ArenaConfig _arena;
         [SerializeField] Material _floor;
         [SerializeField] Material _wall;
@@ -52,10 +57,38 @@ namespace Ring.Presentation
             Build();
         }
 
+        // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
+        // its sole SimEventRouter subscriber) — direct subscription, same shape
+        // as the deleted PracticeTargets' pattern.
+        void OnEnable() => _runner.WorldRestarted += Rebuild;
+
+        void OnDisable() => _runner.WorldRestarted -= Rebuild;
+
         public void Build()
         {
             if (transform.childCount > 0) return;
 
+            BuildContent();
+        }
+
+        /// Task 24 spec Interfaces — see class doc. Safe no matter how many times
+        /// or in what order this fires relative to `Awake`'s own `Build()` call
+        /// (cross-object Awake/OnEnable ordering against `SimulationRunner` isn't
+        /// guaranteed, same caveat as the deleted `PracticeTargets`): always ends
+        /// with exactly one fresh set of primitives, `Build()`'s own child-count
+        /// guard included — worst case (this subscription catching the very
+        /// first `WorldRestarted` before this object's own `Awake` runs) is one
+        /// harmless extra destroy-and-rebuild pass over zero children.
+        public void Rebuild()
+        {
+            for (int i = transform.childCount - 1; i >= 0; i--)
+                Destroy(transform.GetChild(i).gameObject);
+
+            BuildContent();
+        }
+
+        void BuildContent()
+        {
             BuildFloor();
             BuildWall();
             BuildObstacles();
