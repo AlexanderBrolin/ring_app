@@ -18,8 +18,15 @@ namespace Ring.Editor
     /// "Visual" child together with the Animator (applyRootMotion = false).
     public static class AssetPreviewSceneBootstrap
     {
-        public const string DirectorMatPath = TA.MaterialsRoot + "DirectorDark.mat";
+        /// Clone of the pack's textured QuadShell material, darkened + red
+        /// emission (owner feedback: a flat dark override lost the texture).
+        public const string DirectorSkinPath = TA.MaterialsRoot + "DirectorSkin.mat";
+        public const string ObsoleteDirectorMatPath = TA.MaterialsRoot + "DirectorDark.mat";
         public const string FloorMatPath = TA.MaterialsRoot + "PreviewFloor.mat";
+        // Milestone-1 feedback numbers (preview cosmetics, not gameplay SO).
+        const float MechScale = 0.4f;   // мехи «в 2,5 раза меньше»
+        const float EliteScale = 1.5f;  // элита «в 1,5 раза больше»
+        const float DirectorScale = 1.75f;
 
         [MenuItem("Ring/Bootstrap/Asset Preview Scene")]
         public static void Apply()
@@ -38,39 +45,41 @@ namespace Ring.Editor
                 EditorSceneManager.SaveScene(scene, TP.ScenePath);
             }
 
-            Material directorMat = GetOrCreateMaterial(DirectorMatPath,
-                new Color(0.08f, 0.08f, 0.1f), new Color(2f, 0.1f, 0.1f));
             Material floorMat = GetOrCreateMaterial(FloorMatPath,
                 new Color(0.12f, 0.12f, 0.14f), Color.black);
+            Material directorMat = GetOrCreateDirectorSkin();
 
             BuildEntity("Player", new Vector3(0f, 0f, 0f),
                 TP.DollPath, TA.PlayerControllerPath);
+            // UAL2 rig check runs on the PROVEN male doll (the production case:
+            // UAL2 clips on the collector rig). Mannequin_F stays imported with
+            // its own avatar — its Unity export turned out invisible on stage
+            // (milestone-1 feedback), needs a look before reuse.
             BuildEntity("Ual2Check", new Vector3(2f, 0f, 0f),
-                TP.Ual2Root + "Mannequin_F.fbx", TA.Ual2CheckControllerPath);
+                TP.DollPath, TA.Ual2CheckControllerPath);
 
             GameObject mechs = GetOrCreateRoot("Mechs", new Vector3(0f, 0f, 4f));
             BuildEntityUnder(mechs, "George", new Vector3(-3f, 0f, 0f),
-                TP.MechRoot + "Models/George.fbx");
+                TP.MechRoot + "Models/George.fbx", null, MechScale);
             BuildEntityUnder(mechs, "Leela", new Vector3(-1f, 0f, 0f),
-                TP.MechRoot + "Models/Leela.fbx");
+                TP.MechRoot + "Models/Leela.fbx", null, MechScale);
             BuildEntityUnder(mechs, "Mike", new Vector3(1f, 0f, 0f),
-                TP.MechRoot + "Models/Mike.fbx");
+                TP.MechRoot + "Models/Mike.fbx", null, MechScale);
             BuildEntityUnder(mechs, "Stan", new Vector3(3f, 0f, 0f),
-                TP.MechRoot + "Models/Stan.fbx");
+                TP.MechRoot + "Models/Stan.fbx", null, MechScale);
 
             GameObject elites = GetOrCreateRoot("EliteRobots", new Vector3(0f, 0f, 8f));
-            BuildEntityUnder(elites, "EyeDrone", new Vector3(-2f, 0f, 0f),
-                TP.SciFiRoot + "Models/Enemy_EyeDrone.fbx");
+            BuildEntityUnder(elites, "EyeDrone", new Vector3(-2.5f, 0f, 0f),
+                TP.SciFiRoot + "Models/Enemy_EyeDrone.fbx", null, EliteScale);
             BuildEntityUnder(elites, "QuadShell", new Vector3(0f, 0f, 0f),
-                TP.SciFiRoot + "Models/Enemy_QuadShell.fbx");
-            BuildEntityUnder(elites, "Trilobite", new Vector3(2f, 0f, 0f),
-                TP.SciFiRoot + "Models/Enemy_Trilobite.fbx");
+                TP.SciFiRoot + "Models/Enemy_QuadShell.fbx", null, EliteScale);
+            BuildEntityUnder(elites, "Trilobite", new Vector3(2.5f, 0f, 0f),
+                TP.SciFiRoot + "Models/Enemy_Trilobite.fbx", null, EliteScale);
 
             GameObject director = BuildEntity("DirectorStub", new Vector3(0f, 0f, 12f),
                 TP.SciFiRoot + "Models/Enemy_QuadShell.fbx",
-                TA.ControllerPathFor("Enemy_QuadShell.fbx"));
+                TA.ControllerPathFor("Enemy_QuadShell.fbx"), DirectorScale);
             Transform directorVisual = director.transform.Find("Visual");
-            directorVisual.localScale = Vector3.one * 1.75f;
             foreach (Renderer renderer in
                      directorVisual.GetComponentsInChildren<Renderer>())
                 renderer.sharedMaterials = Enumerable.Repeat(
@@ -105,22 +114,23 @@ namespace Ring.Editor
         }
 
         static GameObject BuildEntity(string name, Vector3 position,
-            string modelPath, string controllerPath)
+            string modelPath, string controllerPath, float visualScale = 1f)
         {
             GameObject root = GetOrCreateRoot(name, position);
-            EnsureVisual(root, modelPath, controllerPath);
+            EnsureVisual(root, modelPath, controllerPath, visualScale);
             return root;
         }
 
         static void BuildEntityUnder(GameObject parent, string name,
-            Vector3 localPosition, string modelPath, string controllerPath = null)
+            Vector3 localPosition, string modelPath, string controllerPath = null,
+            float visualScale = 1f)
         {
             Transform existing = parent.transform.Find(name);
             GameObject root = existing != null ? existing.gameObject : new GameObject(name);
             root.transform.SetParent(parent.transform, false);
             root.transform.localPosition = localPosition;
             EnsureVisual(root, modelPath,
-                controllerPath ?? DefaultControllerFor(modelPath));
+                controllerPath ?? DefaultControllerFor(modelPath), visualScale);
         }
 
         static string DefaultControllerFor(string modelPath)
@@ -130,9 +140,24 @@ namespace Ring.Editor
                 .AnimatorController>(path) != null ? path : null;
         }
 
-        static void EnsureVisual(GameObject root, string modelPath, string controllerPath)
+        static void EnsureVisual(GameObject root, string modelPath,
+            string controllerPath, float visualScale = 1f)
         {
             Transform visualTf = root.transform.Find("Visual");
+            // A visual instantiated from a DIFFERENT model (e.g. after feedback
+            // swaps) is torn down and rebuilt — idempotent otherwise.
+            if (visualTf != null)
+            {
+                UnityEngine.Object source =
+                    PrefabUtility.GetCorrespondingObjectFromSource(visualTf.gameObject);
+                string sourcePath = source != null
+                    ? AssetDatabase.GetAssetPath(source) : null;
+                if (sourcePath != modelPath)
+                {
+                    UnityEngine.Object.DestroyImmediate(visualTf.gameObject);
+                    visualTf = null;
+                }
+            }
             GameObject visual;
             if (visualTf == null)
             {
@@ -149,6 +174,7 @@ namespace Ring.Editor
             {
                 visual = visualTf.gameObject;
             }
+            visual.transform.localScale = Vector3.one * visualScale;
             if (controllerPath == null) return; // static props carry no Animator
             var controller = AssetDatabase.LoadAssetAtPath<UnityEditor.Animations
                 .AnimatorController>(controllerPath);
@@ -159,6 +185,31 @@ namespace Ring.Editor
             if (animator == null) animator = visual.AddComponent<Animator>();
             animator.runtimeAnimatorController = controller;
             animator.applyRootMotion = false; // motion is never animation-driven
+        }
+
+        /// DirectorSkin = clone of the QuadShell's imported (textured) material,
+        /// darkened, with red emission on top — the texture survives, unlike the
+        /// flat dark override of the first milestone pass.
+        static Material GetOrCreateDirectorSkin()
+        {
+            if (AssetDatabase.LoadAssetAtPath<Material>(ObsoleteDirectorMatPath) != null)
+                AssetDatabase.DeleteAsset(ObsoleteDirectorMatPath);
+            var existing = AssetDatabase.LoadAssetAtPath<Material>(DirectorSkinPath);
+            if (existing != null) return existing;
+            GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(
+                TP.SciFiRoot + "Models/Enemy_QuadShell.fbx");
+            Material source = model == null ? null
+                : model.GetComponentInChildren<Renderer>()?.sharedMaterial;
+            if (source == null)
+                throw new InvalidOperationException(
+                    "AssetPreviewSceneBootstrap: QuadShell source material not found");
+            var mat = new Material(source);
+            mat.SetColor("_BaseColor", new Color(0.45f, 0.45f, 0.5f));
+            mat.EnableKeyword("_EMISSION");
+            mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+            mat.SetColor("_EmissionColor", new Color(1.6f, 0.08f, 0.08f));
+            AssetDatabase.CreateAsset(mat, DirectorSkinPath);
+            return mat;
         }
 
         static Material GetOrCreateMaterial(string path, Color baseColor, Color emission)

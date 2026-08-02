@@ -23,6 +23,9 @@ namespace Ring.Editor
         public const string ScenePath = "Assets/Scenes/AssetPreview.unity";
         /// Single FBX carrying both the doll mesh and its 43 takes (INSPECTION.md).
         public const string DollPath = UalRoot + "UAL1_Standard.fbx";
+        /// Female mannequin (mesh-only, same bone set): gets its OWN avatar —
+        /// humanoid retarget plays shared clips on it without avatar sharing.
+        public const string FemaleDollPath = Ual2Root + "Mannequin_F.fbx";
 
         /// Robot FBX files with embedded clips → Generic rig; every other model
         /// under Mech/SciFi roots is a static prop/gun → no avatar at all.
@@ -34,7 +37,7 @@ namespace Ring.Editor
         };
 
         /// Bump to force mass reimport when rules/constants change.
-        public override uint GetVersion() => 1;
+        public override uint GetVersion() => 2;
 
         public static bool IsHumanoidPath(string path) =>
             path.StartsWith(UalRoot, StringComparison.Ordinal)
@@ -115,7 +118,7 @@ namespace Ring.Editor
             if (IsHumanoidPath(assetPath))
             {
                 importer.animationType = ModelImporterAnimationType.Human;
-                if (assetPath == DollPath)
+                if (assetPath == DollPath || assetPath == FemaleDollPath)
                 {
                     importer.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
                     return;

@@ -92,6 +92,14 @@ namespace Ring.Editor
             {
                 if (importer.animationType != ModelImporterAnimationType.Human)
                 { why = "animationType != Human"; return false; }
+                if (path == TP.FemaleDollPath)
+                {
+                    Avatar own = AssetDatabase.LoadAllAssetsAtPath(path)
+                        .OfType<Avatar>().FirstOrDefault();
+                    if (own == null || !own.isValid || !own.isHuman)
+                    { why = "female mannequin avatar invalid"; return false; }
+                    return true;
+                }
                 if (doll != null && importer.sourceAvatar != doll)
                 { why = "sourceAvatar != doll avatar"; return false; }
                 return true;
