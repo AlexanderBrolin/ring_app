@@ -977,11 +977,38 @@ namespace Ring.Editor
         /// set only at creation — existence-guarded like everything else in this
         /// file, so an owner's in-Editor tweak survives a re-run. Returns the `Fill`
         /// Image, which is what `HudController` drives every frame.
+        ///
+        /// bd app-yi9 (owner-found bug, milestone 3, diagnosis confirmed by
+        /// reading the scene YAML directly): `Image.OnPopulateMesh` checks
+        /// `overrideSprite == null` BEFORE it ever looks at `type` — with no
+        /// sprite it falls straight through to `Graphic`'s own base mesh (a
+        /// plain full-rect quad) for EVERY type, `Filled` included, so
+        /// `fillAmount`/`fillMethod`/`fillOrigin` are silently ignored outright;
+        /// the bar always rendered 100% full no matter what `HudController` set.
+        /// `Image.Type.Simple` (the `Vignette` full-screen overlay from Task 25)
+        /// is unaffected — its own null-sprite rendering already IS a plain
+        /// full-rect quad, so the "fallback" path looks identical either way;
+        /// only the fill TYPES actually need one. Fixed two ways: `fillSprite`
+        /// is assigned at creation below for any FUTURE bar, and the early
+        /// existence-guard return now self-heals an already-committed scene
+        /// (checked unconditionally, same shape as this file's muzzle-particle
+        /// material check) instead of trusting a stale `Fill` object as-is.
         static Image GetOrCreateBar(Transform parent, string name, Vector2 anchoredPos, Vector2 size,
             Color backgroundColor, Color fillColor, ref bool sceneDirty)
         {
+            Sprite fillSprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+
             Transform existing = parent.Find(name);
-            if (existing != null) return existing.Find(FillObjectName).GetComponent<Image>();
+            if (existing != null)
+            {
+                Image existingFill = existing.Find(FillObjectName).GetComponent<Image>();
+                if (existingFill.sprite == null)
+                {
+                    existingFill.sprite = fillSprite;
+                    sceneDirty = true;
+                }
+                return existingFill;
+            }
 
             var barGo = new GameObject(name, typeof(RectTransform));
             barGo.transform.SetParent(parent, false);
@@ -1002,6 +1029,7 @@ namespace Ring.Editor
             StretchToFillParent((RectTransform)fillGo.transform);
             Image fillImage = fillGo.GetComponent<Image>();
             fillImage.color = fillColor;
+            fillImage.sprite = fillSprite;
             fillImage.type = Image.Type.Filled;
             fillImage.fillMethod = Image.FillMethod.Horizontal;
             fillImage.fillOrigin = (int)Image.OriginHorizontal.Left;
