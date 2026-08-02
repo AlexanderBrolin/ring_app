@@ -5,11 +5,12 @@
 /client/Assets/Scripts/Simulation/ @AlexanderBrolin
 /client/Assets/Scripts/Networking/ @AlexanderBrolin
 /client/Assets/Scripts/Server/     @AlexanderBrolin
-/client/Tests/                     @AlexanderBrolin
+/client/Assets/Tests/              @AlexanderBrolin
 /client/docker/                    @AlexanderBrolin
 
 # Баланс — правки только отдельным PR с ревью server-стороны
 /client/Assets/Data/               @AlexanderBrolin
+/client/Assets/Scripts/Data/       @AlexanderBrolin
 
 # Мета (FastAPI) целиком
 /server/                           @AlexanderBrolin

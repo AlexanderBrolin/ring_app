@@ -1,0 +1,14 @@
+{
+    "name": "Ring.Data",
+    "rootNamespace": "Ring.Data",
+    "references": ["Ring.Simulation", "Unity.Mathematics"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
