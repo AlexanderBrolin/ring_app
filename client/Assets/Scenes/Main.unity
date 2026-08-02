@@ -1555,6 +1555,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fc052fc61230b4b6ebe40fc3121c1448, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Ring.Presentation::Ring.Presentation.MuzzleFlashView
+  _runner: {fileID: 1959383180}
 --- !u!199 &1828108799
 ParticleSystemRenderer:
   serializedVersion: 7

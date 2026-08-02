@@ -110,8 +110,11 @@ namespace Ring.Presentation
                 if (!_activeMobs.TryGetValue(m.Id, out MobView view))
                 {
                     view = RentMob();
-                    view.Bind(m.Type);
+                    // Position before Bind (spec/П-2 fix-round, app-2pl): canonical
+                    // order for a freshly-rented view — see the matching comment on
+                    // the projectile branch below for why this order matters at all.
                     view.transform.position = SimSpace.ToWorld(m.Pos) + MobOffset;
+                    view.Bind(m.Type);
                     _activeMobs.Add(m.Id, view);
                     continue;
                 }
@@ -144,8 +147,17 @@ namespace Ring.Presentation
                 if (!_activeProjectiles.TryGetValue(p.Id, out ProjectileView view))
                 {
                     view = RentProjectile();
-                    view.Bind(_gameFeel.TracerFadeSeconds);
+                    // Position BEFORE Bind (fix-round, app-2pl/bd app-2pl): Bind
+                    // calls TrailRenderer.Clear(), which seeds the trail's first
+                    // point at the transform's CURRENT position. Clearing before
+                    // the teleport left that first point at the pooled view's old
+                    // (pre-rent) position — typically wherever the previous
+                    // projectile died — so the trail drew a spurious segment from
+                    // there to the new spawn point every time a view came out of
+                    // the pool: exactly the "rays at ~20° off the aim direction on
+                    // almost every shot" the owner saw in the milestone-2 playtest.
                     view.transform.position = SimSpace.ToWorld(p.Pos) + ProjectileOffset;
+                    view.Bind(_gameFeel.TracerFadeSeconds);
                     _activeProjectiles.Add(p.Id, view);
                     continue;
                 }

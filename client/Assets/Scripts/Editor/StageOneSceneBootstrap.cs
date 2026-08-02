@@ -502,6 +502,12 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
             MuzzleFlashView muzzleFlash = muzzleGo.GetComponent<MuzzleFlashView>();
+            var muzzleSo = new SerializedObject(muzzleFlash);
+            if (SetRef(muzzleSo, "_runner", runner))
+            {
+                muzzleSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
 
             GameObject routerGo = FindRootObject(scene, EventRouterObjectName);
             if (routerGo == null)
@@ -726,19 +732,35 @@ namespace Ring.Editor
         /// the caller every run, see the `muzzleRenderer.sharedMaterial` check
         /// above) because `AddComponent<ParticleSystem>()` leaves it empty and
         /// that needs to fix an already-committed object too, not just a fresh one.
+        /// Fix-round (app-2pl): the owner's milestone-2 playtest read the burst as
+        /// unreadable chaos — a narrow forward cone (`ShapeModule`, ~18°) replaces
+        /// the previous unconfigured (effectively omnidirectional-reading) shape,
+        /// paired with a smaller size/shorter lifetime and `MuzzleFlashView` now
+        /// orienting `transform` to the shot's actual direction before `Emit`
+        /// (this module setup only shapes the cone in the emitter's own local
+        /// space — it says nothing about which way that local space points).
         static void ConfigureMuzzleParticles(ParticleSystem particles)
         {
             ParticleSystem.MainModule main = particles.main;
             main.loop = false;
             main.playOnAwake = false;
-            main.startLifetime = 0.15f;
+            main.startLifetime = 0.12f;
             main.startSpeed = 3f;
-            main.startSize = 0.15f;
+            main.startSize = 0.08f;
             main.startColor = new Color(1f, 0.6f, 0.15f);
             main.simulationSpace = ParticleSystemSimulationSpace.World;
 
             ParticleSystem.EmissionModule emission = particles.emission;
             emission.rateOverTime = 0f;
+
+            // Narrow forward cone (local +Z, i.e. `transform.forward`) instead of
+            // the wide/undefined default shape — this is what makes the burst
+            // read as "a directed spark", not a scatter, once MuzzleFlashView
+            // orients the transform to the shot direction before emitting.
+            ParticleSystem.ShapeModule shape = particles.shape;
+            shape.shapeType = ParticleSystemShapeType.Cone;
+            shape.angle = 18f;
+            shape.radius = 0.05f;
         }
 
         /// Loads a hand-placed placeholder `.wav` from `Assets/Audio/Placeholders`
