@@ -2,6 +2,7 @@ using System.Text;
 using Ring.Simulation.Core;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
 using UnityEngine.InputSystem;
@@ -67,6 +68,11 @@ namespace Ring.Presentation
             _shownAtUnscaledTime = Time.unscaledTime;
             _metricsText.text = BuildMetricsText();
             _panel.SetActive(true);
+            // Review round (Minor): without an explicit selection, UI/Submit has
+            // nothing to fire on until the owner first moves the mouse over the
+            // button — gamepad/keyboard Submit would silently do nothing.
+            if (EventSystem.current != null)
+                EventSystem.current.SetSelectedGameObject(_restartButton.gameObject);
         }
 
         void HandleWorldRestarted()

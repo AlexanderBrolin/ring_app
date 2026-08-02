@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
 using UnityEngine.InputSystem;
@@ -64,6 +65,11 @@ namespace Ring.Presentation
         {
             _runner.Paused = true;
             _menu.SetActive(true);
+            // Review round (Minor): without an explicit selection, UI/Submit has
+            // nothing to fire on until the owner first moves the mouse over a
+            // button — gamepad/keyboard Submit would silently do nothing.
+            if (EventSystem.current != null)
+                EventSystem.current.SetSelectedGameObject(_resumeButton.gameObject);
         }
 
         void Resume()

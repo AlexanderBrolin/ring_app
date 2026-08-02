@@ -60,5 +60,16 @@ namespace Ring.Simulation.Tests
             acc.Reset();
             Assert.AreEqual(0f, acc.Alpha);
         }
+
+        [Test]
+        public void ResetAccumulatorOnly_ZeroesAlpha_PreservesDroppedTime()
+        {
+            var acc = new FixedStepAccumulator();
+            acc.Advance(2f); // same spike as FrameSpike_CappedAndReported — DroppedTime = 1.75
+            acc.ResetAccumulatorOnly();
+
+            Assert.AreEqual(0f, acc.Alpha);
+            Assert.AreEqual(1.75f, acc.DroppedTime, 1e-4f); // NOT cleared — unlike Reset()
+        }
     }
 }

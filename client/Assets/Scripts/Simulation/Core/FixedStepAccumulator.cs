@@ -22,5 +22,15 @@ namespace Ring.Simulation.Core
         }
 
         public void Reset() { _acc = 0f; DroppedTime = 0f; }
+
+        /// Zeroes the phase accumulator only, leaving `DroppedTime` untouched
+        /// (Presentation's pause gate, Task 24 review round): entering pause
+        /// should discard any fractional-tick backlog of real time so resuming
+        /// doesn't burst-catch-up, but it must not erase the dropped-time
+        /// diagnostic DevOverlay surfaces (spec §3.7 — no silent loss). `Reset()`
+        /// above stays the one used for a full match restart, where zeroing
+        /// `DroppedTime` too is correct — a fresh run starts its own diagnostic
+        /// count from zero.
+        public void ResetAccumulatorOnly() { _acc = 0f; }
     }
 }

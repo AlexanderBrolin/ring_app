@@ -33,7 +33,6 @@ namespace Ring.Presentation
         string _forcedSeedText = "";
         bool _logTickHash;
         StreamWriter _logWriter;
-        int _lastLoggedTick = -1;
 
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
         // its sole SimEventRouter subscriber) — direct subscription, same shape
@@ -43,6 +42,7 @@ namespace Ring.Presentation
         void OnDisable()
         {
             _runner.WorldRestarted -= HandleWorldRestarted;
+            if (_logTickHash) _runner.TickAdvanced -= LogTick;
             CloseLogWriter();
         }
 
@@ -58,26 +58,15 @@ namespace Ring.Presentation
                 _fpsAccum = 0f;
                 _fpsFrames = 0;
             }
-
-            // Polled here rather than event-driven — П-1 forbids a new
-            // TicksFlushed subscriber, and this only needs to notice "the tick
-            // counter moved since last render frame", not react to individual
-            // sim events. During a multi-tick catch-up flush this logs only the
-            // LAST tick of that batch: `SimulationWorld.StateHash()` reflects
-            // the world's CURRENT state only, there is no per-tick history to
-            // read back after the fact. Accepted scope for this dev diagnostic
-            // (П-9 — "заложи в код", full smoke coverage lands at the milestone
-            // playtest) — not a complete per-tick trace.
-            if (_logTickHash && _logWriter != null && _runner.World != null)
-            {
-                int tick = _runner.World.CurrentTick;
-                if (tick != _lastLoggedTick)
-                {
-                    _lastLoggedTick = tick;
-                    _logWriter.WriteLine($"{tick}\t{_runner.World.StateHash():X16}");
-                }
-            }
         }
+
+        /// `SimulationRunner.TickAdvanced` subscriber (review round: replaces an
+        /// earlier per-render-frame poll that only ever saw a catch-up batch's
+        /// LAST tick — exactly the kind of hitch most likely to hide a
+        /// determinism divergence). Subscribed only while the toggle is on
+        /// (`SetLogTickHash`), so `TickAdvanced`'s `StateHash()` call stays
+        /// guarded/free the rest of the time.
+        void LogTick(int tick, ulong hash) => _logWriter.WriteLine($"{tick}\t{hash:X16}");
 
         void OnGUI()
         {
@@ -148,10 +137,11 @@ namespace Ring.Presentation
             {
                 string path = Path.Combine(Application.persistentDataPath, TickHashLogFileName);
                 _logWriter = new StreamWriter(path, append: false) { AutoFlush = false };
-                _lastLoggedTick = -1;
+                _runner.TickAdvanced += LogTick;
             }
             else
             {
+                _runner.TickAdvanced -= LogTick;
                 CloseLogWriter();
             }
         }
@@ -170,9 +160,9 @@ namespace Ring.Presentation
             // "on" with a null writer doing nothing — spec §3.7's "no silent
             // loss" principle applies here too: a toggle that reads ON but stops
             // logging would be exactly that kind of silent, invisible failure.
+            if (_logTickHash) _runner.TickAdvanced -= LogTick;
             CloseLogWriter();
             _logTickHash = false;
-            _lastLoggedTick = -1;
         }
     }
 }

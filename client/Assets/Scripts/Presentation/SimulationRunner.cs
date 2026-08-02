@@ -37,13 +37,17 @@ namespace Ring.Presentation
 
         /// Task 24 (spec Interfaces): the sole pause gate for the whole project —
         /// `Time.timeScale` is never touched (class doc above). Setting this true
-        /// resets the fixed-step accumulator (so no backlog of real time is
-        /// waiting to burst-tick once unpaused) and, from that point on, `Update`
-        /// skips input sampling and tick advancement entirely — `Alpha` is left
-        /// exactly as it was at the moment pause started, so interpolated views
-        /// hold their last visual position instead of snapping toward `Prev`.
-        /// Setting it back to false does not itself resume ticking on the same
-        /// frame; `Update` simply stops early-returning starting next frame.
+        /// zeroes only the accumulator's phase (`ResetAccumulatorOnly` — review
+        /// round: plain `Reset()` would also zero `DroppedTime`, silently erasing
+        /// the dropped-time diagnostic DevOverlay surfaces every time the owner
+        /// pauses, which is exactly the "silent loss" spec §3.7 forbids) so no
+        /// backlog of real time is waiting to burst-tick once unpaused; from that
+        /// point on, `Update` skips input sampling and tick advancement entirely
+        /// — `Alpha` is left exactly as it was at the moment pause started, so
+        /// interpolated views hold their last visual position instead of
+        /// snapping toward `Prev`. Setting it back to false does not itself
+        /// resume ticking on the same frame; `Update` simply stops
+        /// early-returning starting next frame.
         public bool Paused
         {
             get => _paused;
@@ -51,17 +55,33 @@ namespace Ring.Presentation
             {
                 if (_paused == value) return;
                 _paused = value;
-                if (_paused) _acc.Reset();
+                if (_paused) _acc.ResetAccumulatorOnly();
             }
         }
 
         /// DevOverlay's seam into the accumulator's dropped-time counter (Task 24
         /// Приложение П-6) — `FixedStepAccumulator` itself has no UnityEngine
-        /// dependency and isn't otherwise exposed outside this class.
+        /// dependency and isn't otherwise exposed outside this class. Survives
+        /// pause (see `Paused` above); only a full match restart (`Restart`'s
+        /// plain `_acc.Reset()`) zeroes it.
         public float AccumulatorDroppedTime => _acc.DroppedTime;
 
         public event System.Action TicksFlushed;
         public event System.Action WorldRestarted;
+
+        /// Fires once per individual tick (tick number, `StateHash()` at that
+        /// tick) — Task 24 review round, П-9's tick→hash dev-log: `TicksFlushed`
+        /// only fires once per RENDER frame (after a whole multi-tick catch-up
+        /// batch), which would silently skip every tick but the last one in a
+        /// batch — exactly the catch-up hitches most likely to hide a
+        /// determinism divergence. This is a distinct event from `TicksFlushed`,
+        /// not a new subscriber to it, so it doesn't touch П-1's "sole
+        /// `TicksFlushed` subscriber is `SimEventRouter`" invariant.
+        /// `StateHash()` walks every live mob/projectile — not free — so the
+        /// call below is guarded on `TickAdvanced != null`: with no subscriber
+        /// (the common case — dev-only, logging toggle off), this costs one
+        /// null check per tick and nothing else.
+        public event System.Action<int, ulong> TickAdvanced;
 
         void Awake()
         {
@@ -101,6 +121,9 @@ namespace Ring.Presentation
                 _world.Tick(SimInputFrame.ForTick(frame, i)); // защёлка — первому тику
                 (Prev, Curr) = (Curr, Prev);
                 _world.CaptureSnapshot(Curr);
+                // Guarded — see TickAdvanced's doc comment: StateHash() is only
+                // ever computed when something is actually subscribed.
+                if (TickAdvanced != null) TickAdvanced.Invoke(_world.CurrentTick, _world.StateHash());
             }
             Alpha = _acc.Alpha;
             if (ticks > 0)
