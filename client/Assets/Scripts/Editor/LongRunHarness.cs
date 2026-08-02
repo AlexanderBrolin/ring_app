@@ -21,16 +21,20 @@ namespace Ring.Editor
     /// currently tuned in the project, the same source SimulationRunner itself
     /// reads at play time, so a hot-tweak drift would show up here too.
     ///
-    /// Known limitation (observed, not fixed — see Task 31 report): the T29
-    /// Scripted() bot is a random walk with no evasion, so at current balance
-    /// numbers it typically dies a couple of minutes in; once dead, WeaponSystem
-    /// stops (spec §3.12) and surviving mobs go idle, so most of the 36000 ticks
-    /// run with a frozen world rather than genuinely sustained 20-minute combat.
-    /// The logged PlayerAlive/PlayerHp/Kills/WaveIndex columns make that visible
-    /// instead of silently conflating "stable" with "idle". The counters/memory
-    /// checks below are still meaningful for what they DO cover (no exceptions,
-    /// no unbounded growth up to whatever load was reached); reaching the Arena
-    /// hard caps under real 20-minute survival is not exercised by this run.
+    /// Immortal bot, deliberately (Task 31 review round): the T29 Scripted() input
+    /// is a random walk with no evasion, so at real balance numbers the bot died
+    /// a couple of minutes in — once dead, WeaponSystem stops (spec §3.12) and
+    /// surviving mobs go idle, so ~94% of a first-pass 36000-tick run sat on a
+    /// frozen world instead of testing anything. This harness's whole point is a
+    /// cap/memory stress test, not a balance/survivability check, so after
+    /// building the config from the real assets, `Hero.MaxHp` is overwritten to
+    /// 1e9f (effectively unkillable) purely for THIS run — every other number
+    /// (movement, weapon, mob, wave, arena) stays exactly what's tuned in
+    /// Assets/Data. That keeps the bot fighting continuously for the full 20
+    /// minutes so waves actually ramp and caps get exercised, without touching
+    /// balance assets or Simulation. StateHash determinism is unaffected — the
+    /// override happens on the plain SimConfig struct before SimulationWorld
+    /// construction, so it's just another (fixed) config value.
     public static class LongRunHarness
     {
         const string DataDir = "Assets/Data";
@@ -48,14 +52,13 @@ namespace Ring.Editor
             var rng = new Unity.Mathematics.Random(InputSeed);
 
             Debug.Log($"LongRunHarness: starting {TotalTicks}-tick run " +
-                $"(20 min @ 30 Hz, worldSeed={WorldSeed}, inputSeed={InputSeed}).");
+                $"(20 min @ 30 Hz, worldSeed={WorldSeed}, inputSeed={InputSeed}, " +
+                $"Hero.MaxHp overridden to {cfg.Hero.MaxHp} — immortal bot, cap/memory " +
+                $"stress only, see class doc).");
             // PlayerAlive/PlayerHp/Kills/WaveIndex are extra columns beyond the
-            // brief's minimum set — the scripted bot (random walk, no dodge logic)
-            // can die well before 20 minutes are up, at which point WeaponSystem
-            // stops running and mobs go idle (spec §3.12): MobCount/ProjectileCount
-            // then read as "frozen", not "stabilized under sustained fire". These
-            // columns make that distinction visible in the log instead of silently
-            // conflating the two.
+            // brief's minimum set — kept even with the immortal-bot override so a
+            // regression in the override (or a future change to it) stays visible
+            // in the log instead of silently reverting to the frozen-world case.
             Debug.Log("LongRunHarness,tick,MobCount,ProjectileCount,EventCount," +
                 "DroppedEvents,MobSpawnsSkipped,ProjectileSpawnsSkipped,GCTotalMemory," +
                 "PlayerAlive,PlayerHp,Kills,WaveIndex");
@@ -91,8 +94,9 @@ namespace Ring.Editor
         /// Same scripted-input shape as DeterminismTests.Scripted (Task 29) — drives
         /// movement, aiming, firing and dashing together instead of idle replay, so
         /// mobs get engaged/killed/respawned across waves instead of the player
-        /// standing still. No evasion logic, by design (matches T29 exactly) — see
-        /// the class doc's "Known limitation" note for what that means at scale.
+        /// standing still. No evasion logic, by design (matches T29 exactly) — the
+        /// bot still doesn't dodge, it just can't die (see the class doc's
+        /// "Immortal bot" note) — so it keeps fighting for the full 20 minutes.
         static SimInput Scripted(ref Unity.Mathematics.Random rng)
         {
             return new SimInput
@@ -104,6 +108,9 @@ namespace Ring.Editor
             };
         }
 
+        /// See the class doc's "Immortal bot" note: every number here comes from the
+        /// real battle SO assets EXCEPT Hero.MaxHp, overwritten after Build() so this
+        /// one run can't die and freeze — Assets/Data itself is never touched.
         static SimConfig BuildBattleConfig()
         {
             HeroConfig hero = Load<HeroConfig>("HeroConfig");
@@ -112,7 +119,9 @@ namespace Ring.Editor
             MobConfig gunner = Load<MobConfig>("MobGunnerConfig");
             WaveConfig wave = Load<WaveConfig>("WaveConfig");
             ArenaConfig arena = Load<ArenaConfig>("ArenaConfig");
-            return SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena);
+            SimConfig cfg = SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena);
+            cfg.Hero.MaxHp = 1e9f;
+            return cfg;
         }
 
         static T Load<T>(string name) where T : UnityEngine.Object
