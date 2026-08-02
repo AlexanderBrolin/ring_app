@@ -51,10 +51,11 @@ namespace Ring.Editor
                 ValidateModel(path, null, errors, ref healed);
             if (doll != null && AssetImporter.GetAtPath(TP.DollPath) is ModelImporter dollImporter)
                 ValidateClips(TP.DollPath, dollImporter, errors, ref healed);
+            int remapped = RemapPackMaterials(robots);
 
             Debug.Log($"[ThirdParty] validation done: {humanoids.Length} humanoid, " +
                       $"{robots.Length} robot/prop models, healed {healed}, " +
-                      $"errors {errors.Count}");
+                      $"remapped {remapped}, errors {errors.Count}");
             if (errors.Count > 0)
                 throw new InvalidOperationException(
                     "ThirdPartyImportBootstrap: validation failed:\n  " +
@@ -157,6 +158,108 @@ namespace Ring.Editor
             if (events > 0)
                 Debug.Log($"[ThirdParty] {path}: {events} AnimationEvents " +
                           "(never wired to gameplay — visual-only policy)");
+        }
+
+        /// Milestone-2 fix: the packs' FBX material descriptions reference
+        /// external textures that Unity does not bind (mech pack, some prop
+        /// atlases) — models render flat grey. For every artifact material
+        /// without a base map we create a URP Lit material in _Ring/Materials/
+        /// wired to the pack texture found by naming convention, and remap the
+        /// importer to it (persistent — Phase B instantiations get it for free).
+        /// UAL mannequins are authored textureless and are not touched.
+        static int RemapPackMaterials(string[] robotModels)
+        {
+            int remapped = 0;
+            foreach (string path in robotModels)
+            {
+                if (!(AssetImporter.GetAtPath(path) is ModelImporter importer)) continue;
+                bool changed = false;
+                foreach (Material artifact in AssetDatabase.LoadAllAssetsAtPath(path)
+                             .OfType<Material>())
+                {
+                    if (artifact.HasProperty("_BaseMap")
+                        && artifact.GetTexture("_BaseMap") != null) continue;
+                    Texture baseMap = FindPackTexture(path, artifact.name, "_BaseColor")
+                        ?? FindPackTexture(path, artifact.name, "");
+                    if (baseMap == null)
+                    {
+                        Debug.LogWarning("[ThirdParty] no conventional texture for " +
+                            $"material '{artifact.name}' of {path} — left as is");
+                        continue;
+                    }
+                    Texture emissive = FindPackTexture(path, artifact.name, "_Emissive");
+                    Material remap = GetOrCreateRemapMaterial(
+                        artifact.name, baseMap, emissive);
+                    importer.AddRemap(new AssetImporter.SourceAssetIdentifier(
+                        typeof(Material), artifact.name), remap);
+                    changed = true;
+                }
+                if (changed)
+                {
+                    importer.SaveAndReimport();
+                    remapped++;
+                    Debug.Log("[ThirdParty] materials remapped: " + path);
+                }
+            }
+            return remapped;
+        }
+
+        /// Convention lookup in the pack's Textures/ folder:
+        /// "George_Texture" (+"") → George_Texture.png;
+        /// "MI_Trim_02" (+"_BaseColor") → T_Trim_02_BaseColor.png.
+        static Texture FindPackTexture(string modelPath, string matName, string suffix)
+        {
+            string root = modelPath.StartsWith(TP.MechRoot, StringComparison.Ordinal)
+                ? TP.MechRoot : TP.SciFiRoot;
+            string dir = root + "Textures/";
+            string stripped = matName;
+            foreach (string prefix in new[] { "MI_", "M_", "T_" })
+                if (stripped.StartsWith(prefix, StringComparison.Ordinal))
+                { stripped = stripped.Substring(prefix.Length); break; }
+            string[] candidates =
+            {
+                dir + matName + suffix + ".png",
+                dir + "T_" + stripped + suffix + ".png",
+            };
+            foreach (string candidate in candidates)
+            {
+                var tex = AssetDatabase.LoadAssetAtPath<Texture>(candidate);
+                if (tex != null) return tex;
+            }
+            return null;
+        }
+
+        static Material GetOrCreateRemapMaterial(string matName,
+            Texture baseMap, Texture emissive)
+        {
+            string safe = new string(matName
+                .Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+            string path = TP.RingRoot + "Materials/" + safe + ".mat";
+            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (existing != null) return existing;
+            EnsureFolder(TP.RingRoot);
+            EnsureFolder(TP.RingRoot + "Materials/");
+            var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            mat.SetTexture("_BaseMap", baseMap);
+            if (emissive != null)
+            {
+                mat.EnableKeyword("_EMISSION");
+                mat.globalIlluminationFlags =
+                    MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                mat.SetTexture("_EmissionMap", emissive);
+                mat.SetColor("_EmissionColor", Color.white);
+            }
+            AssetDatabase.CreateAsset(mat, path);
+            return mat;
+        }
+
+        static void EnsureFolder(string path)
+        {
+            string trimmed = path.TrimEnd('/');
+            if (AssetDatabase.IsValidFolder(trimmed)) return;
+            AssetDatabase.CreateFolder(
+                Path.GetDirectoryName(trimmed).Replace('\\', '/'),
+                Path.GetFileName(trimmed));
         }
 
         /// Spec §7.4 junk gate, single implementation: no Resources/,

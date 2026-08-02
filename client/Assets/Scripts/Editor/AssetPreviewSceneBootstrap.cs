@@ -187,29 +187,61 @@ namespace Ring.Editor
             animator.applyRootMotion = false; // motion is never animation-driven
         }
 
-        /// DirectorSkin = clone of the QuadShell's imported (textured) material,
-        /// darkened, with red emission on top — the texture survives, unlike the
-        /// flat dark override of the first milestone pass.
+        /// DirectorSkin = FRESH URP Lit material: cloning the importer's artifact
+        /// material both lost the texture and triggered Unity's "materials
+        /// created in an older version" prompt (milestone-2 feedback). The
+        /// pack's maps are wired explicitly — base color texture plus the
+        /// EMISSIVE MASK, so the red glow sits in the authored zones instead of
+        /// flooding the whole mesh.
         static Material GetOrCreateDirectorSkin()
         {
             if (AssetDatabase.LoadAssetAtPath<Material>(ObsoleteDirectorMatPath) != null)
                 AssetDatabase.DeleteAsset(ObsoleteDirectorMatPath);
             var existing = AssetDatabase.LoadAssetAtPath<Material>(DirectorSkinPath);
-            if (existing != null) return existing;
-            GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(
-                TP.SciFiRoot + "Models/Enemy_QuadShell.fbx");
-            Material source = model == null ? null
-                : model.GetComponentInChildren<Renderer>()?.sharedMaterial;
-            if (source == null)
+            bool healthy = existing != null
+                && existing.GetTexture("_BaseMap") != null
+                && existing.GetTexture("_EmissionMap") != null; // v1 flooded red: no mask
+            if (healthy) return existing; // idempotent skip
+            if (existing != null) AssetDatabase.DeleteAsset(DirectorSkinPath);
+
+            Texture baseMap = LoadEnemyTexture("_BaseColor");
+            Texture emissiveMap = LoadEnemyTexture("_Emissive");
+            if (baseMap == null)
+            {
+                // Fall back to whatever the importer bound for QuadShell.
+                GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(
+                    TP.SciFiRoot + "Models/Enemy_QuadShell.fbx");
+                Material source = model == null ? null
+                    : model.GetComponentInChildren<Renderer>()?.sharedMaterial;
+                if (source != null && source.HasProperty("_BaseMap"))
+                    baseMap = source.GetTexture("_BaseMap");
+            }
+            if (baseMap == null)
                 throw new InvalidOperationException(
-                    "AssetPreviewSceneBootstrap: QuadShell source material not found");
-            var mat = new Material(source);
-            mat.SetColor("_BaseColor", new Color(0.45f, 0.45f, 0.5f));
+                    "AssetPreviewSceneBootstrap: no base texture found for DirectorSkin");
+
+            var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            mat.SetTexture("_BaseMap", baseMap);
+            mat.SetColor("_BaseColor", new Color(0.55f, 0.55f, 0.6f)); // darkened tint
             mat.EnableKeyword("_EMISSION");
             mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
-            mat.SetColor("_EmissionColor", new Color(1.6f, 0.08f, 0.08f));
+            if (emissiveMap != null) mat.SetTexture("_EmissionMap", emissiveMap);
+            mat.SetColor("_EmissionColor", new Color(2.2f, 0.12f, 0.12f));
             AssetDatabase.CreateAsset(mat, DirectorSkinPath);
+            Debug.Log($"[AssetPreview] DirectorSkin rebuilt: baseMap={baseMap.name}, " +
+                      $"emissiveMap={(emissiveMap ? emissiveMap.name : "none")}");
             return mat;
+        }
+
+        /// Enemy atlas lookup: prefers the Large variant (QuadShell is a large
+        /// enemy), falls back to the regular atlas.
+        static Texture LoadEnemyTexture(string suffix)
+        {
+            string dir = TP.SciFiRoot + "Textures/";
+            return AssetDatabase.LoadAssetAtPath<Texture>(
+                       dir + "T_Enemies_Large" + suffix + ".png")
+                ?? AssetDatabase.LoadAssetAtPath<Texture>(
+                       dir + "T_Enemies" + suffix + ".png");
         }
 
         static Material GetOrCreateMaterial(string path, Color baseColor, Color emission)
@@ -316,6 +348,16 @@ namespace Ring.Editor
                             Debug.LogWarning("[AssetPreview] emission check FAILED: " +
                                 $"{root.name}/{renderer.name} mat '{mat.name}' " +
                                 $"shader '{(mat.shader ? mat.shader.name : "null")}'");
+                        // Texture-binding diagnostic (milestone-2): a model whose
+                        // material lost its albedo map renders flat grey. The UAL
+                        // mannequins are authored textureless (colored materials) —
+                        // not a defect, skip them.
+                        bool mannequin = root.name == "Player" || root.name == "Ual2Check";
+                        bool hasBaseMap = mat.HasProperty("_BaseMap")
+                            && mat.GetTexture("_BaseMap") != null;
+                        if (!hasBaseMap && !mannequin && mat.name != "PreviewFloor")
+                            Debug.LogWarning("[AssetPreview] NO BASE TEXTURE: " +
+                                $"{root.name}/{renderer.name} mat '{mat.name}'");
                     }
                 }
             }

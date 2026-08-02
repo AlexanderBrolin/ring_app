@@ -3,7 +3,12 @@ guid: d654582a32d043f76b097555cf68935f
 ModelImporter:
   serializedVersion: 24300
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: Leela_Texture
+    second: {fileID: 2100000, guid: f273cb3e5b2d6562d8ca9e387241a08f, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
