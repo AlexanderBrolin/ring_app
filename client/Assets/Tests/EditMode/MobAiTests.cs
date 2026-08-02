@@ -142,5 +142,23 @@ namespace Ring.Simulation.Tests
             w.CaptureSnapshot(snap);
             Assert.AreEqual(MobAiState.Idle, snap.Mobs[0].Ai);
         }
+
+        [Test]
+        public void Separation_PreventsStackingSymmetrically()
+        {
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c);
+            w.SpawnMobForTest(MobType.Chaser, new float2(11.9f, 10f));
+            w.SpawnMobForTest(MobType.Chaser, new float2(12.1f, 10f));
+            w.KillPlayerForTest(); // mobs go Idle — only separation acts
+            for (int i = 0; i < 60; i++) w.Tick(default);
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            float dist = math.distance(snap.Mobs[0].Pos, snap.Mobs[1].Pos);
+            Assert.Greater(dist, 1.0f); // pushed apart
+            // symmetry: the pair's midpoint hasn't drifted
+            float2 mid = (snap.Mobs[0].Pos + snap.Mobs[1].Pos) * 0.5f;
+            Assert.AreEqual(12f, mid.x, 0.05f);
+        }
     }
 }

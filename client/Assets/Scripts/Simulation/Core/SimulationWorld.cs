@@ -22,6 +22,11 @@ namespace Ring.Simulation.Core
         // now so the hot path never allocates once systems start filling them.
         MobState[] _mobs;
         int _mobCount;
+        // Scratch buffer for SeparationSystem's per-tick pairwise impulses (Task
+        // 20) — preallocated here so the hot path never allocates; recomputed
+        // from scratch every tick, so it carries no state across ticks and is
+        // deliberately excluded from SaveState/RestoreState and StateHash.
+        readonly float2[] _sepForces;
         ProjectileState[] _projectiles;
         int _projectileCount;
         WaveState _wave;
@@ -48,6 +53,7 @@ namespace Ring.Simulation.Core
             _config = config;
             _players[0] = new PlayerState { Hp = config.Hero.MaxHp, Alive = true };
             _mobs = new MobState[config.Arena.MaxMobs];
+            _sepForces = new float2[config.Arena.MaxMobs];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
         }
@@ -63,9 +69,14 @@ namespace Ring.Simulation.Core
                 Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
             }
             WeaponSystem.Update(this, ref _players[0], in input);
-            // Canonical tick order (spec Interfaces, Task 16/19): movement → weapon →
-            // mobs (Phase 6) → projectiles → (waves, Phase 6+).
+            // Canonical tick order (spec Interfaces, Task 16/19/20): movement →
+            // weapon → mobs (Phase 6) → mob separation → projectiles → (waves,
+            // Phase 6+). Separation runs right after MobAiSystem so it sees this
+            // tick's post-movement positions; its Vel addition only shows up as
+            // motion on the next tick's MoveWithCollisions call (see
+            // SeparationSystem's doc comment).
             MobAiSystem.Update(this);
+            SeparationSystem.Apply(this);
             ProjectileSystem.Update(this);
         }
 
@@ -159,6 +170,10 @@ namespace Ring.Simulation.Core
         /// MobAiSystem's seam into the per-archetype balance numbers (Task 19).
         internal MobSimConfig MobConfigFor(MobType type)
             => type == MobType.Chaser ? _config.Chaser : _config.Gunner;
+
+        /// SeparationSystem's seam into its preallocated per-tick force buffer
+        /// (Task 20) — sized to Arena.MaxMobs, recomputed every tick, never grown.
+        internal float2[] SepForces => _sepForces;
 
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
         /// once full, spawns are skipped and counted rather than growing the array,
