@@ -1,3 +1,4 @@
+using Ring.Simulation.Combat;
 using Ring.Simulation.Movement;
 using Unity.Mathematics;
 
@@ -54,13 +55,13 @@ namespace Ring.Simulation.Core
         {
             SimInput input = Sanitize(rawInput);
             _tick++;
-            _rng.NextUInt(); // every tick consumes RNG so an idle world still hashes alive
             _players[0].AimPoint = input.AimPoint;
             if (PlayerMovementSystem.Update(ref _players[0], in input, in _config))
             {
                 _stats.DashesUsed++;
                 Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
             }
+            WeaponSystem.Update(this, ref _players[0], in input);
         }
 
         /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
@@ -133,6 +134,34 @@ namespace Ring.Simulation.Core
             {
                 DroppedEvents++;
             }
+        }
+
+        /// Combat systems' seam into the single world RNG (Critical Rule: one shared
+        /// Random, no ad-hoc Unity.Mathematics.Random instances in Simulation).
+        internal ref Random Rng => ref _rng;
+
+        /// Combat systems' seam into per-match counters (ShotsFired, skip counts, ...).
+        internal ref MatchStats StatsRef => ref _stats;
+
+        /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
+        /// once full, spawns are skipped and counted rather than growing the array,
+        /// keeping the cap degradation allocation-free and deterministic.
+        internal int SpawnProjectile(ProjectileOwner owner, float2 pos, float2 vel,
+            float damage, float radius, float ttl)
+        {
+            if (_projectileCount >= _projectiles.Length)
+            {
+                _stats.ProjectileSpawnsSkipped++;
+                return -1;
+            }
+            int id = _nextEntityId++;
+            _projectiles[_projectileCount++] = new ProjectileState
+            {
+                Id = id, Owner = owner, Pos = pos, PrevPos = pos, Vel = vel,
+                Damage = damage, Radius = radius, Ttl = ttl
+            };
+            Emit(SimEventKind.ProjectileFired, pos, id, default, 0f);
+            return id;
         }
 
         public SimEvent GetEvent(int i) => _events[i];
