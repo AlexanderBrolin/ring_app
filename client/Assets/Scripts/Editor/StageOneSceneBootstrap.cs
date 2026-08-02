@@ -1,10 +1,14 @@
 using Ring.Data;
 using Ring.Presentation;
+using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 namespace Ring.Editor
 {
@@ -31,6 +35,17 @@ namespace Ring.Editor
     /// actual geometry is built at runtime by `GreyboxBuilder.Awake()`, not here —
     /// this method only wires the component references, same as everywhere else in
     /// this file.
+    /// Task 14 (spec §3.10) adds the HUD skeleton: an `EventSystem` object carrying
+    /// `InputSystemUIInputModule` (never `StandaloneInputModule` — the project's
+    /// `activeInputHandler` is Input System Package only), and a `HUD` Canvas
+    /// (Screen Space Overlay, `CanvasScaler` at 1920x1080) with an HP bar, a dash
+    /// cooldown bar and a wave-number `TextMeshProUGUI`, wired to a `HudController`
+    /// on the `HUD` object itself. TMP Essential Resources are not available via
+    /// `AssetDatabase.ImportPackage` in `-batchmode` (verified empirically: the
+    /// import job never completes synchronously, even across a full process
+    /// lifetime — see task-14 report), so they're vendored ahead of time at
+    /// `Assets/TextMesh Pro/` (same guids as a real interactive import, extracted
+    /// from the ugui package's own `.unitypackage`) instead of generated here.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -43,6 +58,13 @@ namespace Ring.Editor
         const string CrosshairObjectName = "Crosshair";
         const string MarkerObjectName = "Marker";
         const string ArenaObjectName = "Arena";
+        const string EventSystemObjectName = "EventSystem";
+        const string HudObjectName = "HUD";
+        const string HpBarObjectName = "HpBar";
+        const string DashBarObjectName = "DashBar";
+        const string WaveTextObjectName = "WaveText";
+        const string BackgroundObjectName = "Background";
+        const string FillObjectName = "Fill";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -280,6 +302,87 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // Task 14 (spec §3.10): HUD skeleton. EventSystem first — its
+            // InputSystemUIInputModule needs no wiring beyond AddComponent: it
+            // self-assigns the package's default UI action map in OnEnable when
+            // no actionsAsset is set (InputSystemUIInputModule.AssignDefaultActions,
+            // called from HasNoActions()), same as the "GameObject > UI > Event
+            // System" menu item produces.
+            GameObject eventSystemGo = FindRootObject(scene, EventSystemObjectName);
+            if (eventSystemGo == null)
+            {
+                eventSystemGo = new GameObject(EventSystemObjectName);
+                sceneDirty = true;
+            }
+            if (eventSystemGo.GetComponent<EventSystem>() == null)
+            {
+                eventSystemGo.AddComponent<EventSystem>();
+                sceneDirty = true;
+            }
+            if (eventSystemGo.GetComponent<InputSystemUIInputModule>() == null)
+            {
+                eventSystemGo.AddComponent<InputSystemUIInputModule>();
+                sceneDirty = true;
+            }
+
+            GameObject hudGo = FindRootObject(scene, HudObjectName);
+            if (hudGo == null)
+            {
+                hudGo = new GameObject(HudObjectName, typeof(RectTransform));
+                sceneDirty = true;
+            }
+            Canvas hudCanvas = hudGo.GetComponent<Canvas>();
+            if (hudCanvas == null)
+            {
+                hudCanvas = hudGo.AddComponent<Canvas>();
+                hudCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                sceneDirty = true;
+            }
+            CanvasScaler hudScaler = hudGo.GetComponent<CanvasScaler>();
+            if (hudScaler == null)
+            {
+                hudScaler = hudGo.AddComponent<CanvasScaler>();
+                hudScaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+                hudScaler.referenceResolution = new Vector2(1920f, 1080f);
+                sceneDirty = true;
+            }
+            if (hudGo.GetComponent<GraphicRaycaster>() == null)
+            {
+                hudGo.AddComponent<GraphicRaycaster>();
+                sceneDirty = true;
+            }
+
+            // HP top-left, dash bar directly beneath it, both left-anchored so the
+            // fill grows rightward from a fixed origin (spec resolution П-2:
+            // fillOrigin Left, 1 = ready/full).
+            Image hpFill = GetOrCreateBar(hudGo.transform, HpBarObjectName,
+                anchoredPos: new Vector2(24f, -24f), size: new Vector2(320f, 28f),
+                backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
+                fillColor: new Color(0.85f, 0.2f, 0.2f), ref sceneDirty);
+            Image dashFill = GetOrCreateBar(hudGo.transform, DashBarObjectName,
+                anchoredPos: new Vector2(24f, -60f), size: new Vector2(320f, 14f),
+                backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
+                fillColor: new Color(0.3f, 0.7f, 0.9f), ref sceneDirty);
+            TMP_Text waveText = GetOrCreateWaveText(hudGo.transform, ref sceneDirty);
+
+            HudController hud = hudGo.GetComponent<HudController>();
+            if (hud == null)
+            {
+                hud = hudGo.AddComponent<HudController>();
+                sceneDirty = true;
+            }
+            var hudSo = new SerializedObject(hud);
+            bool hudRefsChanged = false;
+            hudRefsChanged |= SetRef(hudSo, "_runner", runner);
+            hudRefsChanged |= SetRef(hudSo, "_hpFill", hpFill);
+            hudRefsChanged |= SetRef(hudSo, "_dashFill", dashFill);
+            hudRefsChanged |= SetRef(hudSo, "_waveText", waveText);
+            if (hudRefsChanged)
+            {
+                hudSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
             if (sceneDirty)
             {
                 EditorSceneManager.MarkSceneDirty(scene);
@@ -365,6 +468,82 @@ namespace Ring.Editor
             mat.SetColor("_EmissionColor", emissionColor);
             AssetDatabase.CreateAsset(mat, path);
             return mat;
+        }
+
+        /// A HUD bar (Task 14): a container `RectTransform` (top-left anchored) with
+        /// a dark `Background` Image behind a `Fill` Image (`Image.Type.Filled`,
+        /// `FillMethod.Horizontal`, origin `Left`) on top. Colors/anchors/sizing are
+        /// set only at creation — existence-guarded like everything else in this
+        /// file, so an owner's in-Editor tweak survives a re-run. Returns the `Fill`
+        /// Image, which is what `HudController` drives every frame.
+        static Image GetOrCreateBar(Transform parent, string name, Vector2 anchoredPos, Vector2 size,
+            Color backgroundColor, Color fillColor, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(name);
+            if (existing != null) return existing.Find(FillObjectName).GetComponent<Image>();
+
+            var barGo = new GameObject(name, typeof(RectTransform));
+            barGo.transform.SetParent(parent, false);
+            var barRect = (RectTransform)barGo.transform;
+            barRect.anchorMin = new Vector2(0f, 1f);
+            barRect.anchorMax = new Vector2(0f, 1f);
+            barRect.pivot = new Vector2(0f, 1f);
+            barRect.anchoredPosition = anchoredPos;
+            barRect.sizeDelta = size;
+
+            var bgGo = new GameObject(BackgroundObjectName, typeof(RectTransform), typeof(Image));
+            bgGo.transform.SetParent(barGo.transform, false);
+            StretchToFillParent((RectTransform)bgGo.transform);
+            bgGo.GetComponent<Image>().color = backgroundColor;
+
+            var fillGo = new GameObject(FillObjectName, typeof(RectTransform), typeof(Image));
+            fillGo.transform.SetParent(barGo.transform, false);
+            StretchToFillParent((RectTransform)fillGo.transform);
+            Image fillImage = fillGo.GetComponent<Image>();
+            fillImage.color = fillColor;
+            fillImage.type = Image.Type.Filled;
+            fillImage.fillMethod = Image.FillMethod.Horizontal;
+            fillImage.fillOrigin = (int)Image.OriginHorizontal.Left;
+            fillImage.fillAmount = 1f;
+
+            sceneDirty = true;
+            return fillImage;
+        }
+
+        /// The wave-number label (Task 14), top-right anchored. TMP Essential
+        /// Resources are vendored at `Assets/TextMesh Pro/` (see class doc), so a
+        /// plain `AddComponent<TextMeshProUGUI>()` resolves `TMP_Settings.
+        /// defaultFontAsset` on its own — no explicit font wiring needed here.
+        static TMP_Text GetOrCreateWaveText(Transform parent, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(WaveTextObjectName);
+            if (existing != null) return existing.GetComponent<TMP_Text>();
+
+            var go = new GameObject(WaveTextObjectName, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(1f, 1f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(1f, 1f);
+            rect.anchoredPosition = new Vector2(-24f, -24f);
+            rect.sizeDelta = new Vector2(240f, 40f);
+
+            var tmp = go.AddComponent<TextMeshProUGUI>();
+            tmp.text = "WAVE 0";
+            tmp.fontSize = 28f;
+            tmp.alignment = TextAlignmentOptions.TopRight;
+            tmp.color = Color.white;
+
+            sceneDirty = true;
+            return tmp;
+        }
+
+        static void StretchToFillParent(RectTransform rect)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
         }
 
         /// Loads a hand-authored `.mat` from `Assets/Art/Materials` — Task 13's

@@ -1,7 +1,8 @@
 {
     "name": "Ring.Editor",
     "rootNamespace": "Ring.Editor",
-    "references": ["Ring.Data", "Ring.Presentation", "Unity.InputSystem"],
+    "references": ["Ring.Data", "Ring.Presentation", "Unity.InputSystem",
+                   "UnityEngine.UI", "Unity.TextMeshPro"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
