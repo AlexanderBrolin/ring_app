@@ -54,6 +54,21 @@ namespace Ring.Data
         [Range(0f, 20f)] public float DeathBurstSpeed = 4f;
         [Range(0f, 2f)] public float DeathBurstSize = 0.12f;
 
+        // Milestone-4 DoD iteration (owner playtest feedback: "немного больше
+        // искр при попадании снаряда по ботам/стенам") — burstCount was still
+        // a bootstrap-local literal (fix-round doc explicitly called out
+        // density/count as a deliberate non-SO technical constant); the owner
+        // asking to retune it makes it a feel number after all, same
+        // precedent as the fix-round's lifetime/speed/size migration.
+        // Defaults are the previous literals × ~1.5 ("немного больше"):
+        // HitSpark 10→15, BlockSpark 12→18. DeathBurst (24) untouched — no
+        // complaint about it. Baked into the prefab at bootstrap-creation
+        // time, same as HitSparkLifetime/etc. above — StageOneSceneBootstrap's
+        // GetOrCreateSparkPrefab self-heals an already-committed prefab
+        // whose baked burst count no longer matches this field.
+        [Range(1, 64)] public int HitSparkBurstCount = 15;
+        [Range(1, 64)] public int BlockSparkBurstCount = 18;
+
         public bool ImmediateMuzzleFeedback = true;
         public bool ExtrapolateLocalPlayer = false;
 

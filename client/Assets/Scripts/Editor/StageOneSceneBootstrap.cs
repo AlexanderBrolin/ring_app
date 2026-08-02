@@ -214,20 +214,26 @@ namespace Ring.Editor
             bool gunnerChanged = ApplyGunnerDefaults(gunner);
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
 
-            // Task 27 review fix-round: an already-committed GameFeelConfig.asset
-            // predates the new casing/spark/corpse/decal feel fields this round
-            // adds — Unity only writes a ScriptableObject's CURRENT field set to
-            // disk when something marks it dirty (missing keys silently fall
-            // back to the C# field initializer at load time either way, so this
-            // is a traceability fix, not a correctness one: the owner should see
+            // Task 27 review fix-round (extended by the milestone-4 DoD
+            // iteration): an already-committed GameFeelConfig.asset predates
+            // whichever feel fields most recently landed — Unity only writes
+            // a ScriptableObject's CURRENT field set to disk when something
+            // marks it dirty (missing keys silently fall back to the C#
+            // field initializer at load time either way, so this is a
+            // traceability fix, not a correctness one: the owner should see
             // real numbers to hot-tweak in the Inspector/YAML, not an absent
-            // key). Checked via a direct text read (same technique the now-removed
-            // HasStaleSerializedField migration helper used — Task 28 dropped it
-            // once its one caller, MuzzleFlashView's `_runner` field, went from
-            // stale-to-detect back to legitimately wired — inverted here: detects
-            // a MISSING key instead of a stale one) so this is a one-time sync,
-            // not an unconditional touch every run.
-            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("CasingImpulseUpMin"))
+            // key). Checked via a direct text read (same technique the now-
+            // removed HasStaleSerializedField migration helper used — Task 28
+            // dropped it once its one caller, MuzzleFlashView's `_runner`
+            // field, went from stale-to-detect back to legitimately wired —
+            // inverted here: detects a MISSING key instead of a stale one) so
+            // this is a one-time sync, not an unconditional touch every run.
+            // The marker key is always the MOST RECENTLY added field
+            // (currently `HitSparkBurstCount`, milestone-4 DoD iteration —
+            // was `CasingImpulseUpMin` before that) so a fresh field addition
+            // is what re-triggers the sync, regardless of which older fields
+            // an already-committed asset already happens to carry.
+            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("HitSparkBurstCount"))
                 EditorUtility.SetDirty(gameFeel);
 
             AssetDatabase.SaveAssets();
@@ -841,20 +847,24 @@ namespace Ring.Editor
             CasingView casingPrefab = GetOrCreateCasingPrefab(casingMat);
             DecalProjector decalPrefab = GetOrCreateDecalPrefab(decalMat, gameFeel.DecalSize);
             CorpseView corpsePrefab = GetOrCreateCorpsePrefab(corpseMat);
-            // lifetime/speed/size read from GameFeelConfig at prefab-creation
-            // time (review fix-round — same "creation-time SO read" contract
-            // as TracerFadeSeconds/GetOrCreateProjectilePrefab above); burst
-            // COUNT/cone angle stay bootstrap-local literals — density/shape,
-            // not something GameFeelConfig grew a field for (see
-            // PersistentPropsDirector's pool-capacity consts doc for why the
-            // line between "feel number" and "technical constant" was drawn
-            // here).
+            // lifetime/speed/size/burstCount read from GameFeelConfig at
+            // prefab-creation time (review fix-round — same "creation-time SO
+            // read" contract as TracerFadeSeconds/GetOrCreateProjectilePrefab
+            // above; milestone-4 DoD iteration moved HitSpark/BlockSpark
+            // burstCount into the same bucket after the owner asked to
+            // retune it on playtest). Cone angle stays a bootstrap-local
+            // literal — pure shape, never asked to be tunable. DeathBurst's
+            // burstCount (24) also stays a literal — no owner complaint about
+            // it, so it wasn't promoted (see PersistentPropsDirector's
+            // pool-capacity consts doc for the original "feel number vs
+            // technical constant" line, now updated by this iteration for
+            // the two counts the owner DID ask about).
             ParticleSystem hitSparkPrefab = GetOrCreateSparkPrefab(HitSparkPrefabPath, "HitSpark", hitSparkMat,
                 lifetime: gameFeel.HitSparkLifetime, speed: gameFeel.HitSparkSpeed, size: gameFeel.HitSparkSize,
-                burstCount: 10, coneAngle: 35f);
+                burstCount: gameFeel.HitSparkBurstCount, coneAngle: 35f);
             ParticleSystem blockSparkPrefab = GetOrCreateSparkPrefab(BlockSparkPrefabPath, "BlockSpark", blockSparkMat,
                 lifetime: gameFeel.BlockSparkLifetime, speed: gameFeel.BlockSparkSpeed, size: gameFeel.BlockSparkSize,
-                burstCount: 12, coneAngle: 25f);
+                burstCount: gameFeel.BlockSparkBurstCount, coneAngle: 25f);
             ParticleSystem deathBurstPrefab = GetOrCreateSparkPrefab(DeathBurstPrefabPath, "DeathBurst", deathBurstMat,
                 lifetime: gameFeel.DeathBurstLifetime, speed: gameFeel.DeathBurstSpeed, size: gameFeel.DeathBurstSize,
                 burstCount: 24, coneAngle: 90f);
@@ -1309,11 +1319,31 @@ namespace Ring.Editor
         /// calls `Play()`, so the burst has to be self-triggering) and sets
         /// `stopAction = Callback` so `ParticleReturnToPool.
         /// OnParticleSystemStopped` fires once the burst finishes.
+        /// Milestone-4 DoD iteration: `lifetime`/`speed`/`size`/`burstCount`
+        /// are all baked into the prefab ONCE at creation time, unlike
+        /// `CasingView`/`CorpseView`'s runtime parameters — so once the owner
+        /// asked to retune `burstCount` post-creation, "existence-guarded,
+        /// never touched again" started conflicting with "GameFeelConfig is
+        /// the source of truth for baked numbers" (fix-round precedent, same
+        /// resolution applied here: `SparkParamsDiffer` below decides which
+        /// wins). An already-committed prefab now self-heals whenever its
+        /// baked values drift from the CURRENT `GameFeelConfig` call-site
+        /// values — same "config wins, prefab catches up" policy the T27
+        /// fix-round already established for `Casing.prefab`'s layer.
         static ParticleSystem GetOrCreateSparkPrefab(string path, string objectName, Material mat,
             float lifetime, float speed, float size, int burstCount, float coneAngle)
         {
             var existing = AssetDatabase.LoadAssetAtPath<ParticleSystem>(path);
-            if (existing != null) return existing;
+            if (existing != null)
+            {
+                if (SparkParamsDiffer(existing, lifetime, speed, size, burstCount))
+                {
+                    ConfigureBurstParticles(existing, lifetime, speed, size, burstCount, coneAngle);
+                    EditorUtility.SetDirty(existing);
+                    AssetDatabase.SaveAssets();
+                }
+                return existing;
+            }
 
             var go = new GameObject(objectName);
             ParticleSystem particles = go.AddComponent<ParticleSystem>();
@@ -1324,6 +1354,33 @@ namespace Ring.Editor
             GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, path);
             Object.DestroyImmediate(go);
             return asset.GetComponent<ParticleSystem>();
+        }
+
+        /// True if an already-baked prefab's module values (lifetime/speed/
+        /// size/burstCount — everything `ConfigureBurstParticles` writes
+        /// that also has a `GameFeelConfig` source) no longer match the
+        /// CURRENT config call-site values, so `GetOrCreateSparkPrefab`
+        /// knows to re-bake. `coneAngle` is deliberately excluded (never
+        /// config-sourced, see call-site doc) — comparing it would make an
+        /// unrelated literal tweak here look like a "config drift" self-heal
+        /// in the log/diff.
+        static bool SparkParamsDiffer(ParticleSystem particles, float lifetime, float speed, float size,
+            int burstCount)
+        {
+            ParticleSystem.MainModule main = particles.main;
+            if (!Mathf.Approximately(main.startLifetime.constant, lifetime)) return true;
+            if (!Mathf.Approximately(main.startSpeed.constant, speed)) return true;
+            if (!Mathf.Approximately(main.startSize.constant, size)) return true;
+
+            ParticleSystem.EmissionModule emission = particles.emission;
+            int currentBurstCount = 0;
+            if (emission.burstCount > 0)
+            {
+                var bursts = new ParticleSystem.Burst[emission.burstCount];
+                emission.GetBursts(bursts);
+                currentBurstCount = bursts[0].minCount;
+            }
+            return currentBurstCount != burstCount;
         }
 
         static void ConfigureBurstParticles(ParticleSystem particles, float lifetime, float speed, float size,
