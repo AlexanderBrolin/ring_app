@@ -1,0 +1,211 @@
+using System.Collections.Generic;
+using Ring.Data;
+using Ring.Simulation.Core;
+using Unity.Mathematics;
+using UnityEngine;
+
+namespace Ring.Presentation
+{
+    /// Sole owner of `MobView`/`ProjectileView` lifecycle (П-1): maps the runner's
+    /// live snapshot to a pool of views purely by entity Id (spec §3.7). Two
+    /// independent responsibilities:
+    ///  - `LateUpdate` (self-driven, every render frame — not a `TicksFlushed`
+    ///    subscription, same shape as `PlayerView`/`CameraRig`): diffs `Curr`
+    ///    against the tracked Id set. A new Id rents a view from the pool and snaps
+    ///    it straight to `Curr` (no interpolation, spec §3.7); a continuing Id
+    ///    lerps between its position in `Prev` (falling back to `Curr` if that Id
+    ///    isn't in `Prev`) and `Curr` by `Alpha`; an Id that drops out of `Curr`
+    ///    returns its view to the pool.
+    ///  - `HandleEvent` (called by `SimEventRouter`, П-1's ordered fan-out — never
+    ///    subscribed directly to any runner event): retires a view the instant its
+    ///    entity's terminal event fires (MobDied / ProjectileHit / ProjectileBlocked
+    ///    / ProjectileExpired), ahead of that frame's `LateUpdate` diff. This is
+    ///    redundant with the diff on a normal frame (the Id is already gone from
+    ///    `Curr` by then too) — it exists so retirement is explicit and immediate
+    ///    rather than only an incidental side effect of diffing.
+    /// Dictionaries/pools/scratch buffers are pre-sized from `ArenaConfig`'s caps in
+    /// `Awake` and never rebuilt — steady-state play allocates nothing (spec §3.7).
+    public sealed class ViewRegistry : MonoBehaviour
+    {
+        static readonly Vector3 MobOffset = Vector3.up * 1f;
+        static readonly Vector3 ProjectileOffset = Vector3.up * 1f;
+
+        [SerializeField] SimulationRunner _runner;
+        [SerializeField] GameFeelConfig _gameFeel;
+        [SerializeField] ArenaConfig _arena;
+        [SerializeField] MobView _mobPrefab;
+        [SerializeField] ProjectileView _projectilePrefab;
+
+        Dictionary<int, MobView> _activeMobs;
+        Dictionary<int, ProjectileView> _activeProjectiles;
+        Stack<MobView> _mobPool;
+        Stack<ProjectileView> _projectilePool;
+
+        // Per-frame scratch buffers, cleared and reused every call — no allocation
+        // once warmed up.
+        HashSet<int> _seenMobIds;
+        HashSet<int> _seenProjectileIds;
+        List<int> _staleIdsScratch;
+
+        void Awake()
+        {
+            int mobCap = _arena.MaxMobs;
+            int projCap = _arena.MaxProjectiles;
+
+            _activeMobs = new Dictionary<int, MobView>(mobCap);
+            _activeProjectiles = new Dictionary<int, ProjectileView>(projCap);
+            _mobPool = new Stack<MobView>(mobCap);
+            _projectilePool = new Stack<ProjectileView>(projCap);
+            _seenMobIds = new HashSet<int>(mobCap);
+            _seenProjectileIds = new HashSet<int>(projCap);
+            _staleIdsScratch = new List<int>(math.max(mobCap, projCap));
+        }
+
+        void LateUpdate()
+        {
+            // One-frame ordering edge case before the runner's own Awake has run
+            // (mirrors HudController) — skip rather than throw.
+            if (_runner.World == null) return;
+
+            SyncMobs();
+            SyncProjectiles();
+        }
+
+        /// Called by `SimEventRouter` for every event in this tick-flush's buffer
+        /// (П-1 fan-out) — retirement only, see class doc.
+        public void HandleEvent(in SimEvent e)
+        {
+            switch (e.Kind)
+            {
+                case SimEventKind.MobDied:
+                    RetireMob(e.EntityId);
+                    break;
+                case SimEventKind.ProjectileHit:
+                case SimEventKind.ProjectileBlocked:
+                case SimEventKind.ProjectileExpired:
+                    RetireProjectile(e.EntityId);
+                    break;
+            }
+        }
+
+        void SyncMobs()
+        {
+            RenderSnapshot curr = _runner.Curr;
+            RenderSnapshot prev = _runner.Prev;
+            float alpha = _runner.Alpha;
+
+            _seenMobIds.Clear();
+            for (int i = 0; i < curr.MobCount; i++)
+            {
+                MobState m = curr.Mobs[i];
+                _seenMobIds.Add(m.Id);
+
+                if (!_activeMobs.TryGetValue(m.Id, out MobView view))
+                {
+                    view = RentMob();
+                    view.Bind(m.Type);
+                    view.transform.position = SimSpace.ToWorld(m.Pos) + MobOffset;
+                    _activeMobs.Add(m.Id, view);
+                    continue;
+                }
+
+                float2 prevPos = FindMobPrevPos(prev, m.Id, m.Pos);
+                Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
+                view.transform.position = world + MobOffset;
+            }
+
+            _staleIdsScratch.Clear();
+            foreach (KeyValuePair<int, MobView> kv in _activeMobs)
+            {
+                if (!_seenMobIds.Contains(kv.Key)) _staleIdsScratch.Add(kv.Key);
+            }
+            for (int i = 0; i < _staleIdsScratch.Count; i++) RetireMob(_staleIdsScratch[i]);
+        }
+
+        void SyncProjectiles()
+        {
+            RenderSnapshot curr = _runner.Curr;
+            RenderSnapshot prev = _runner.Prev;
+            float alpha = _runner.Alpha;
+
+            _seenProjectileIds.Clear();
+            for (int i = 0; i < curr.ProjectileCount; i++)
+            {
+                ProjectileState p = curr.Projectiles[i];
+                _seenProjectileIds.Add(p.Id);
+
+                if (!_activeProjectiles.TryGetValue(p.Id, out ProjectileView view))
+                {
+                    view = RentProjectile();
+                    view.Bind(_gameFeel.TracerFadeSeconds);
+                    view.transform.position = SimSpace.ToWorld(p.Pos) + ProjectileOffset;
+                    _activeProjectiles.Add(p.Id, view);
+                    continue;
+                }
+
+                float2 prevPos = FindProjectilePrevPos(prev, p.Id, p.Pos);
+                Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(p.Pos), alpha);
+                view.transform.position = world + ProjectileOffset;
+            }
+
+            _staleIdsScratch.Clear();
+            foreach (KeyValuePair<int, ProjectileView> kv in _activeProjectiles)
+            {
+                if (!_seenProjectileIds.Contains(kv.Key)) _staleIdsScratch.Add(kv.Key);
+            }
+            for (int i = 0; i < _staleIdsScratch.Count; i++) RetireProjectile(_staleIdsScratch[i]);
+        }
+
+        static float2 FindMobPrevPos(RenderSnapshot prev, int id, float2 fallback)
+        {
+            for (int i = 0; i < prev.MobCount; i++)
+                if (prev.Mobs[i].Id == id) return prev.Mobs[i].Pos;
+            return fallback;
+        }
+
+        static float2 FindProjectilePrevPos(RenderSnapshot prev, int id, float2 fallback)
+        {
+            for (int i = 0; i < prev.ProjectileCount; i++)
+                if (prev.Projectiles[i].Id == id) return prev.Projectiles[i].Pos;
+            return fallback;
+        }
+
+        MobView RentMob()
+        {
+            if (_mobPool.Count > 0)
+            {
+                MobView v = _mobPool.Pop();
+                v.gameObject.SetActive(true);
+                return v;
+            }
+            return Instantiate(_mobPrefab, transform);
+        }
+
+        ProjectileView RentProjectile()
+        {
+            if (_projectilePool.Count > 0)
+            {
+                ProjectileView v = _projectilePool.Pop();
+                v.gameObject.SetActive(true);
+                return v;
+            }
+            return Instantiate(_projectilePrefab, transform);
+        }
+
+        void RetireMob(int id)
+        {
+            if (!_activeMobs.TryGetValue(id, out MobView view)) return;
+            _activeMobs.Remove(id);
+            view.gameObject.SetActive(false);
+            _mobPool.Push(view);
+        }
+
+        void RetireProjectile(int id)
+        {
+            if (!_activeProjectiles.TryGetValue(id, out ProjectileView view)) return;
+            _activeProjectiles.Remove(id);
+            view.gameObject.SetActive(false);
+            _projectilePool.Push(view);
+        }
+    }
+}

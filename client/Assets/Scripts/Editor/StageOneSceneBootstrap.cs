@@ -46,6 +46,17 @@ namespace Ring.Editor
     /// lifetime — see task-14 report), so they're vendored ahead of time at
     /// `Assets/TextMesh Pro/` (same guids as a real interactive import, extracted
     /// from the ugui package's own `.unitypackage`) instead of generated here.
+    /// Task 17 (spec §3.6/§3.7, П-1/П-2) adds the last pieces for the milestone-2
+    /// playtest: `MobView`/`ProjectileView` prefabs (built here via
+    /// `PrefabUtility.SaveAsPrefabAsset`, existence-guarded like the SO assets and
+    /// materials above — never overwritten once created), a `Views` object
+    /// carrying `ViewRegistry`, an `AudioDirector` object wired to five
+    /// hand-placed placeholder clips under `Assets/Audio/Placeholders`, a
+    /// `MuzzleFlash` object carrying a `ParticleSystem` + `MuzzleFlashView`, an
+    /// `EventRouter` object carrying `SimEventRouter` (the sole `TicksFlushed`
+    /// subscriber, П-1 — everything else above is driven through its per-event
+    /// fan-out instead), and — editor/dev-build only — a `PracticeTargets` object
+    /// that spawns milestone-2 target dummies via `SimulationWorld.DevSpawnMob`.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -65,6 +76,18 @@ namespace Ring.Editor
         const string WaveTextObjectName = "WaveText";
         const string BackgroundObjectName = "Background";
         const string FillObjectName = "Fill";
+
+        // Task 17.
+        const string PrefabsDir = "Assets/Prefabs";
+        const string AudioDir = "Assets/Audio/Placeholders";
+        const string ProjectilePrefabPath = PrefabsDir + "/ProjectileView.prefab";
+        const string MobPrefabPath = PrefabsDir + "/MobView.prefab";
+        const string ViewsObjectName = "Views";
+        const string AudioDirectorObjectName = "AudioDirector";
+        const string MuzzleFlashObjectName = "MuzzleFlash";
+        const string EventRouterObjectName = "EventRouter";
+        const string PracticeTargetsObjectName = "PracticeTargets";
+        const float ProjectileDiameter = 0.24f;
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -383,6 +406,139 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // Task 17 (spec §3.6/§3.7, П-1/П-2): pooled mob/projectile views matched
+            // by Id, placeholder SFX + muzzle flash fanned out from a single
+            // TicksFlushed subscriber, and milestone-2 practice targets to shoot at.
+            Material mobMat = GetOrCreateMaterial(
+                "MobEmissive",
+                baseColor: new Color(0.06f, 0.06f, 0.06f),
+                emissionColor: new Color(0.15f, 0.15f, 0.15f));
+            Material projectileMat = GetOrCreateMaterial(
+                "ProjectileEmissive",
+                baseColor: new Color(0.02f, 0.03f, 0.04f),
+                emissionColor: new Color(2.5f, 3f, 3.5f));
+            Material tracerMat = GetOrCreateUnlitMaterial("TracerTrail", new Color(2.5f, 3f, 3.5f));
+
+            MobView mobPrefab = GetOrCreateMobPrefab(mobMat);
+            ProjectileView projectilePrefab =
+                GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
+
+            GameObject viewsGo = FindRootObject(scene, ViewsObjectName);
+            if (viewsGo == null)
+            {
+                viewsGo = new GameObject(ViewsObjectName);
+                sceneDirty = true;
+            }
+            ViewRegistry viewRegistry = viewsGo.GetComponent<ViewRegistry>();
+            if (viewRegistry == null)
+            {
+                viewRegistry = viewsGo.AddComponent<ViewRegistry>();
+                sceneDirty = true;
+            }
+            var viewsSo = new SerializedObject(viewRegistry);
+            bool viewsRefsChanged = false;
+            viewsRefsChanged |= SetRef(viewsSo, "_runner", runner);
+            viewsRefsChanged |= SetRef(viewsSo, "_gameFeel", gameFeel);
+            viewsRefsChanged |= SetRef(viewsSo, "_arena", arena);
+            viewsRefsChanged |= SetRef(viewsSo, "_mobPrefab", mobPrefab);
+            viewsRefsChanged |= SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
+            if (viewsRefsChanged)
+            {
+                viewsSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            AudioClip shotClip = LoadAudioClip("shot.wav");
+            AudioClip hitClip = LoadAudioClip("hit.wav");
+            AudioClip mobDeathClip = LoadAudioClip("mob_death.wav");
+            AudioClip dashClip = LoadAudioClip("dash.wav");
+            AudioClip playerHitClip = LoadAudioClip("player_hit.wav");
+
+            GameObject audioGo = FindRootObject(scene, AudioDirectorObjectName);
+            if (audioGo == null)
+            {
+                audioGo = new GameObject(AudioDirectorObjectName);
+                sceneDirty = true;
+            }
+            AudioDirector audioDirector = audioGo.GetComponent<AudioDirector>();
+            if (audioDirector == null)
+            {
+                audioDirector = audioGo.AddComponent<AudioDirector>();
+                sceneDirty = true;
+            }
+            var audioSo = new SerializedObject(audioDirector);
+            bool audioRefsChanged = false;
+            audioRefsChanged |= SetRef(audioSo, "_gameFeel", gameFeel);
+            audioRefsChanged |= SetRef(audioSo, "_shotClip", shotClip);
+            audioRefsChanged |= SetRef(audioSo, "_hitClip", hitClip);
+            audioRefsChanged |= SetRef(audioSo, "_mobDeathClip", mobDeathClip);
+            audioRefsChanged |= SetRef(audioSo, "_dashClip", dashClip);
+            audioRefsChanged |= SetRef(audioSo, "_playerHitClip", playerHitClip);
+            if (audioRefsChanged)
+            {
+                audioSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            GameObject muzzleGo = FindRootObject(scene, MuzzleFlashObjectName);
+            if (muzzleGo == null)
+            {
+                muzzleGo = new GameObject(MuzzleFlashObjectName);
+                ParticleSystem particles = muzzleGo.AddComponent<ParticleSystem>();
+                ConfigureMuzzleParticles(particles);
+                muzzleGo.AddComponent<MuzzleFlashView>();
+                sceneDirty = true;
+            }
+            MuzzleFlashView muzzleFlash = muzzleGo.GetComponent<MuzzleFlashView>();
+
+            GameObject routerGo = FindRootObject(scene, EventRouterObjectName);
+            if (routerGo == null)
+            {
+                routerGo = new GameObject(EventRouterObjectName);
+                sceneDirty = true;
+            }
+            SimEventRouter router = routerGo.GetComponent<SimEventRouter>();
+            if (router == null)
+            {
+                router = routerGo.AddComponent<SimEventRouter>();
+                sceneDirty = true;
+            }
+            var routerSo = new SerializedObject(router);
+            bool routerRefsChanged = false;
+            routerRefsChanged |= SetRef(routerSo, "_runner", runner);
+            routerRefsChanged |= SetRef(routerSo, "_audioDirector", audioDirector);
+            routerRefsChanged |= SetRef(routerSo, "_muzzleFlash", muzzleFlash);
+            routerRefsChanged |= SetRef(routerSo, "_viewRegistry", viewRegistry);
+            if (routerRefsChanged)
+            {
+                routerSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // Milestone-2 target dummies (Task 17) — dev/editor only, same
+            // compile guard as `PracticeTargets` itself; deleted outright in
+            // Phase 7 once the real WaveSystem exists.
+            GameObject practiceGo = FindRootObject(scene, PracticeTargetsObjectName);
+            if (practiceGo == null)
+            {
+                practiceGo = new GameObject(PracticeTargetsObjectName);
+                sceneDirty = true;
+            }
+            PracticeTargets practiceTargets = practiceGo.GetComponent<PracticeTargets>();
+            if (practiceTargets == null)
+            {
+                practiceTargets = practiceGo.AddComponent<PracticeTargets>();
+                sceneDirty = true;
+            }
+            var practiceSo = new SerializedObject(practiceTargets);
+            if (SetRef(practiceSo, "_runner", runner))
+            {
+                practiceSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+#endif
+
             if (sceneDirty)
             {
                 EditorSceneManager.MarkSceneDirty(scene);
@@ -468,6 +624,118 @@ namespace Ring.Editor
             mat.SetColor("_EmissionColor", emissionColor);
             AssetDatabase.CreateAsset(mat, path);
             return mat;
+        }
+
+        /// Task 17's tracer material: URP Unlit rather than Lit (like
+        /// `GetOrCreateMaterial` above) so the trail reads as a flat glowing streak
+        /// regardless of scene lighting — a `TrailRenderer`'s strip geometry isn't
+        /// meant to be shaded. Existence-guarded the same way.
+        static Material GetOrCreateUnlitMaterial(string assetName, Color color)
+        {
+            string path = $"{MaterialsDir}/{assetName}.mat";
+            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (existing != null) return existing;
+
+            if (!AssetDatabase.IsValidFolder(MaterialsDir))
+                AssetDatabase.CreateFolder(ArtDir, "Materials");
+
+            Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null)
+                throw new System.InvalidOperationException(
+                    "StageOneSceneBootstrap: URP Unlit shader not found — is URP installed?");
+
+            var mat = new Material(shader) { name = assetName };
+            mat.SetColor("_BaseColor", color);
+            AssetDatabase.CreateAsset(mat, path);
+            return mat;
+        }
+
+        /// Task 17: the shared `MobView` prefab — a bare capsule, no per-type
+        /// scale/color baked in (`MobView.Bind` sets the accent color at runtime
+        /// via `MaterialPropertyBlock`, spec/П-2). Existence-guarded like the SO
+        /// assets/materials above: once the `.prefab` exists on disk, this is
+        /// never re-authored, so an owner's in-Editor tweak (e.g. hand-adjusted
+        /// scale) survives a re-run.
+        static MobView GetOrCreateMobPrefab(Material mobMat)
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<MobView>(MobPrefabPath);
+            if (existing != null) return existing;
+
+            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            go.name = "MobView";
+            RemoveCollider(go);
+            go.GetComponent<MeshRenderer>().sharedMaterial = mobMat;
+            go.AddComponent<MobView>();
+
+            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, MobPrefabPath);
+            Object.DestroyImmediate(go);
+            return asset.GetComponent<MobView>();
+        }
+
+        /// Task 17: the shared `ProjectileView` prefab — a small emissive sphere
+        /// (~0.24 diameter) plus a `TrailRenderer` tracer. `TrailRenderer.time` is
+        /// only seeded here from the `GameFeelConfig` value at bootstrap time;
+        /// `ProjectileView.Bind` re-applies it live every spawn so PlayMode
+        /// hot-tweaking `TracerFadeSeconds` (spec §3.9) still takes effect.
+        /// Existence-guarded the same way as `GetOrCreateMobPrefab`.
+        static ProjectileView GetOrCreateProjectilePrefab(Material sphereMat, Material trailMat,
+            float tracerFadeSeconds)
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<ProjectileView>(ProjectilePrefabPath);
+            if (existing != null) return existing;
+
+            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            go.name = "ProjectileView";
+            RemoveCollider(go);
+            go.transform.localScale = Vector3.one * ProjectileDiameter;
+            go.GetComponent<MeshRenderer>().sharedMaterial = sphereMat;
+
+            TrailRenderer trail = go.AddComponent<TrailRenderer>();
+            trail.time = tracerFadeSeconds;
+            trail.startWidth = 0.06f;
+            trail.endWidth = 0f;
+            trail.minVertexDistance = 0.05f;
+            trail.sharedMaterial = trailMat;
+
+            go.AddComponent<ProjectileView>();
+
+            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, ProjectilePrefabPath);
+            Object.DestroyImmediate(go);
+            return asset.GetComponent<ProjectileView>();
+        }
+
+        /// Task 17: one-time module setup for the `MuzzleFlash` object's
+        /// `ParticleSystem` — a short warm-colored burst, triggered manually via
+        /// `Emit` from `MuzzleFlashView.HandleEvent` (no continuous emission, no
+        /// auto-play). Only ever called once, at creation (existence-guarded by
+        /// the caller), so an owner's in-Editor tweak of these modules survives a
+        /// re-run.
+        static void ConfigureMuzzleParticles(ParticleSystem particles)
+        {
+            ParticleSystem.MainModule main = particles.main;
+            main.loop = false;
+            main.playOnAwake = false;
+            main.startLifetime = 0.15f;
+            main.startSpeed = 3f;
+            main.startSize = 0.15f;
+            main.startColor = new Color(1f, 0.6f, 0.15f);
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+            ParticleSystem.EmissionModule emission = particles.emission;
+            emission.rateOverTime = 0f;
+        }
+
+        /// Loads a hand-placed placeholder `.wav` from `Assets/Audio/Placeholders`
+        /// (Task 17) — a missing file is a hard setup error, same treatment as
+        /// `LoadMaterial` below for the greybox materials.
+        static AudioClip LoadAudioClip(string fileName)
+        {
+            string path = $"{AudioDir}/{fileName}";
+            var clip = AssetDatabase.LoadAssetAtPath<AudioClip>(path);
+            if (clip == null)
+                throw new System.InvalidOperationException(
+                    $"StageOneSceneBootstrap: no audio clip at '{path}'.");
+            return clip;
         }
 
         /// A HUD bar (Task 14): a container `RectTransform` (top-left anchored) with
