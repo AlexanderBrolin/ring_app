@@ -15,4 +15,4 @@ MonoBehaviour:
   PitchDeg: 55
   Distance: 18
   LookAhead: 0.25
-  Damp: 0.15
+  Damp: 0.08

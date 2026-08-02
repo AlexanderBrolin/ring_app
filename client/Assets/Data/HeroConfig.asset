@@ -12,13 +12,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5cf5eb02c1a43e885987cda2ffa5ba88, type: 3}
   m_Name: HeroConfig
   m_EditorClassIdentifier: Ring.Data::Ring.Data.HeroConfig
-  MaxSpeed: 7
-  Accel: 40
-  Friction: 30
+  MaxSpeed: 7.5
+  Accel: 90
+  Friction: 70
   Radius: 0.45
   MaxHp: 100
-  DashSpeed: 22
-  DashDuration: 0.15
-  DashCooldown: 1.2
+  DashSpeed: 30
+  DashDuration: 0.18
+  DashCooldown: 0.9
   DashIframes: 0.2
   DashBufferWindow: 0.15
