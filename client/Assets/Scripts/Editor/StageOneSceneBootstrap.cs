@@ -15,11 +15,25 @@ namespace Ring.Editor
     /// owner hand-tweaks asset numbers in the Editor. Task 11 (spec §3.8) extends it
     /// to also add `AimProvider` to the same `Simulation` object and wire the scene's
     /// Main Camera plus the project-wide `InputSystem_Actions` asset into the runner.
+    /// Task 12 (spec §3.7/§3.11) extends it further: a `Player` capsule (`PlayerView`)
+    /// and a `Crosshair` marker (`CrosshairView`) are added at scene root, and
+    /// `Main Camera` is reparented under a new `CameraRig` object that carries the
+    /// `CameraRig` component — the camera itself stays at local zero. Two placeholder
+    /// emissive materials (`PlayerEmissive`, `CrosshairEmissive`) are created under
+    /// `Assets/Art/Materials` the same way the SO assets are: existence-guarded,
+    /// never overwritten once created, so an owner's in-Editor color tweak survives
+    /// a re-run.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
+        const string ArtDir = "Assets/Art";
+        const string MaterialsDir = "Assets/Art/Materials";
         const string ScenePath = "Assets/Scenes/Main.unity";
         const string ActionsAssetPath = "Assets/InputSystem_Actions.inputactions";
+        const string PlayerObjectName = "Player";
+        const string CameraRigObjectName = "CameraRig";
+        const string CrosshairObjectName = "Crosshair";
+        const string MarkerObjectName = "Marker";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -103,6 +117,128 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // Task 12 (spec §3.7/§3.11): placeholder emissive materials, then the
+            // Player capsule, the CameraRig (parent of Main Camera) and the Crosshair
+            // marker. Colors are greybox placeholders — Task 13+ owns the real art
+            // pass; only the emissive channel matters here (dark-neon readability).
+            Material playerMat = GetOrCreateMaterial(
+                "PlayerEmissive",
+                baseColor: new Color(0.03f, 0.03f, 0.04f),
+                emissionColor: new Color(0f, 2.5f, 3f));
+            Material crosshairMat = GetOrCreateMaterial(
+                "CrosshairEmissive",
+                baseColor: new Color(0.04f, 0.02f, 0f),
+                emissionColor: new Color(3.5f, 1.2f, 0f));
+
+            GameObject playerGo = FindRootObject(scene, PlayerObjectName);
+            if (playerGo == null)
+            {
+                playerGo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                playerGo.name = PlayerObjectName;
+                RemoveCollider(playerGo);
+                sceneDirty = true;
+            }
+            MeshRenderer playerRenderer = playerGo.GetComponent<MeshRenderer>();
+            if (playerRenderer.sharedMaterial != playerMat)
+            {
+                playerRenderer.sharedMaterial = playerMat;
+                sceneDirty = true;
+            }
+            PlayerView playerView = playerGo.GetComponent<PlayerView>();
+            if (playerView == null)
+            {
+                playerView = playerGo.AddComponent<PlayerView>();
+                sceneDirty = true;
+            }
+            var playerSo = new SerializedObject(playerView);
+            bool playerRefsChanged = false;
+            playerRefsChanged |= SetRef(playerSo, "_runner", runner);
+            playerRefsChanged |= SetRef(playerSo, "_aimProvider", aimProvider);
+            if (playerRefsChanged)
+            {
+                playerSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // CameraRig is the parent: it carries position/rotation, Main Camera
+            // stays a child at local zero (П-3 resolution). Reparenting an existing
+            // camera is itself guarded so a second run is a no-op.
+            GameObject cameraRigGo = FindRootObject(scene, CameraRigObjectName);
+            if (cameraRigGo == null)
+            {
+                cameraRigGo = new GameObject(CameraRigObjectName);
+                sceneDirty = true;
+            }
+            if (mainCamera.transform.parent != cameraRigGo.transform)
+            {
+                mainCamera.transform.SetParent(cameraRigGo.transform, worldPositionStays: false);
+                mainCamera.transform.localPosition = Vector3.zero;
+                mainCamera.transform.localRotation = Quaternion.identity;
+                sceneDirty = true;
+            }
+            CameraRig cameraRig = cameraRigGo.GetComponent<CameraRig>();
+            if (cameraRig == null)
+            {
+                cameraRig = cameraRigGo.AddComponent<CameraRig>();
+                sceneDirty = true;
+            }
+            var cameraRigSo = new SerializedObject(cameraRig);
+            bool cameraRigRefsChanged = false;
+            cameraRigRefsChanged |= SetRef(cameraRigSo, "_config", camera);
+            cameraRigRefsChanged |= SetRef(cameraRigSo, "_runner", runner);
+            cameraRigRefsChanged |= SetRef(cameraRigSo, "_aimProvider", aimProvider);
+            if (cameraRigRefsChanged)
+            {
+                cameraRigSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            GameObject crosshairGo = FindRootObject(scene, CrosshairObjectName);
+            if (crosshairGo == null)
+            {
+                crosshairGo = new GameObject(CrosshairObjectName);
+                sceneDirty = true;
+            }
+            CrosshairView crosshairView = crosshairGo.GetComponent<CrosshairView>();
+            if (crosshairView == null)
+            {
+                crosshairView = crosshairGo.AddComponent<CrosshairView>();
+                sceneDirty = true;
+            }
+            Transform markerTf = crosshairGo.transform.Find(MarkerObjectName);
+            GameObject markerGo;
+            if (markerTf == null)
+            {
+                markerGo = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                markerGo.name = MarkerObjectName;
+                RemoveCollider(markerGo);
+                markerGo.transform.SetParent(crosshairGo.transform, false);
+                // Quad's default normal faces -Z; lay it flat, normal up, for a
+                // top-down ¾ camera.
+                markerGo.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+                markerGo.transform.localScale = Vector3.one * 0.5f;
+                sceneDirty = true;
+            }
+            else
+            {
+                markerGo = markerTf.gameObject;
+            }
+            MeshRenderer markerRenderer = markerGo.GetComponent<MeshRenderer>();
+            if (markerRenderer.sharedMaterial != crosshairMat)
+            {
+                markerRenderer.sharedMaterial = crosshairMat;
+                sceneDirty = true;
+            }
+            var crosshairSo = new SerializedObject(crosshairView);
+            bool crosshairRefsChanged = false;
+            crosshairRefsChanged |= SetRef(crosshairSo, "_marker", markerGo.transform);
+            crosshairRefsChanged |= SetRef(crosshairSo, "_aimProvider", aimProvider);
+            if (crosshairRefsChanged)
+            {
+                crosshairSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
             if (sceneDirty)
             {
                 EditorSceneManager.MarkSceneDirty(scene);
@@ -164,6 +300,32 @@ namespace Ring.Editor
             return asset;
         }
 
+        /// Existence-guarded like `GetOrCreate<T>`: once the `.mat` exists on disk,
+        /// its colors are never reapplied — an owner's in-Editor hand-tweak survives
+        /// a re-run, same contract as the SO assets above.
+        static Material GetOrCreateMaterial(string assetName, Color baseColor, Color emissionColor)
+        {
+            string path = $"{MaterialsDir}/{assetName}.mat";
+            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (existing != null) return existing;
+
+            if (!AssetDatabase.IsValidFolder(MaterialsDir))
+                AssetDatabase.CreateFolder(ArtDir, "Materials");
+
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null)
+                throw new System.InvalidOperationException(
+                    "StageOneSceneBootstrap: URP Lit shader not found — is URP installed?");
+
+            var mat = new Material(shader) { name = assetName };
+            mat.SetColor("_BaseColor", baseColor);
+            mat.EnableKeyword("_EMISSION");
+            mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+            mat.SetColor("_EmissionColor", emissionColor);
+            AssetDatabase.CreateAsset(mat, path);
+            return mat;
+        }
+
         static SimulationRunner FindRunner(Scene scene)
         {
             foreach (GameObject root in scene.GetRootGameObjects())
@@ -186,12 +348,27 @@ namespace Ring.Editor
             return null;
         }
 
+        static GameObject FindRootObject(Scene scene, string name)
+        {
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                if (root.name == name) return root;
+            }
+            return null;
+        }
+
+        static void RemoveCollider(GameObject go)
+        {
+            Collider collider = go.GetComponent<Collider>();
+            if (collider != null) Object.DestroyImmediate(collider);
+        }
+
         static bool SetRef(SerializedObject so, string fieldName, Object value)
         {
             SerializedProperty prop = so.FindProperty(fieldName);
             if (prop == null)
                 throw new System.InvalidOperationException(
-                    $"StageOneSceneBootstrap: SimulationRunner has no serialized field '{fieldName}'.");
+                    $"StageOneSceneBootstrap: {so.targetObject.GetType().Name} has no serialized field '{fieldName}'.");
             if (prop.objectReferenceValue == value) return false;
             prop.objectReferenceValue = value;
             return true;

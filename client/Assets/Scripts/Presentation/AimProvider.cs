@@ -5,9 +5,8 @@ using UnityEngine.InputSystem;
 namespace Ring.Presentation
 {
     /// Maps the mouse cursor to a point on the arena's y=0 ground plane (spec §3.8).
-    /// This file and any view code that turns sim `(x, y)` back into a world position
-    /// are the only places allowed to know the sim-to-world axis mapping:
-    /// world = (sim.x, 0, sim.y).
+    /// The sim-to-world axis mapping itself lives in `SimSpace` — this class only
+    /// consumes `SimSpace.ToSim`, it does not redefine the mapping.
     public sealed class AimProvider : MonoBehaviour
     {
         [SerializeField] Camera _camera;
@@ -33,7 +32,7 @@ namespace Ring.Presentation
                 if (t <= 0f) return _lastValid;
 
                 Vector3 world = ray.origin + ray.direction * t;
-                _lastValid = new float2(world.x, world.z);
+                _lastValid = SimSpace.ToSim(world);
                 return _lastValid;
             }
         }
