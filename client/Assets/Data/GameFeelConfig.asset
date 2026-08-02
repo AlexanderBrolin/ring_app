@@ -31,5 +31,20 @@ MonoBehaviour:
   MaxCorpses: 64
   VoicesPerSfx: 6
   MinSfxInterval: 0.03
+  CasingImpulseUpMin: 1.2
+  CasingImpulseUpMax: 2.2
+  CasingImpulseSideMax: 1.2
+  CasingTorqueScale: 0.02
+  CorpseGlowFadeSeconds: 3
+  DecalSize: 0.6
+  HitSparkLifetime: 0.15
+  HitSparkSpeed: 3.5
+  HitSparkSize: 0.06
+  BlockSparkLifetime: 0.18
+  BlockSparkSpeed: 3
+  BlockSparkSize: 0.07
+  DeathBurstLifetime: 0.3
+  DeathBurstSpeed: 4
+  DeathBurstSize: 0.12
   ImmediateMuzzleFeedback: 1
   ExtrapolateLocalPlayer: 0

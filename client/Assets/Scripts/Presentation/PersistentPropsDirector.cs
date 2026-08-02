@@ -37,17 +37,25 @@ namespace Ring.Presentation
     /// reposition/reset work each event needs (zero allocation once warmed
     /// up, global constraint).
     ///
-    /// Cosmetics-layer self-collision (Context resolution — decided here,
-    /// documented, not left as an open question): `Physics.
-    /// IgnoreLayerCollision(CosmeticsLayer, CosmeticsLayer, true)` is called
-    /// once in `Awake`, a plain runtime call rather than a
-    /// `ProjectSettings/DynamicsManager.asset` edit — it needs no extra
-    /// idempotent asset patch, and it's scoped to exactly the lifetime of
-    /// whichever scene actually carries this director. Casings share layer 8
-    /// with the arena's own floor/wall/obstacle colliders (T13,
-    /// `GreyboxBuilder.CosmeticsLayer`) so they physically bounce off the
-    /// greybox geometry, but up to `GameFeelConfig.MaxCasings` of them must
-    /// never push each other around.
+    /// Casing self-collision (Context resolution — decided here, documented,
+    /// not left as an open question): `Physics.IgnoreLayerCollision(
+    /// CasingsLayer, CasingsLayer, true)` is called once in `Awake`, a plain
+    /// runtime call rather than a `ProjectSettings/DynamicsManager.asset`
+    /// edit — it needs no extra idempotent asset patch, and it's scoped to
+    /// exactly the lifetime of whichever scene actually carries this
+    /// director.
+    /// Review fix-round bug: casings originally shared `GreyboxBuilder.
+    /// CosmeticsLayer` (8) with the arena's own floor/wall/obstacle colliders
+    /// — `IgnoreLayerCollision(8, 8, true)` silently disabled BOTH
+    /// casing-vs-casing AND casing-vs-arena collision (it's a single
+    /// layer-pair toggle, it can't distinguish "which objects" share the
+    /// layer), so casings fell straight through the floor. Casings now get
+    /// their OWN dedicated `CasingsLayer` (9, `StageOneSceneBootstrap.
+    /// EnsureCasingsLayer` — user layer 9 was empty, verified against
+    /// `ProjectSettings/TagManager.asset` before claiming it) — only
+    /// 9×9 (casing-vs-casing) is disabled; 9×8 (casing-vs-arena) is left at
+    /// Unity's default "collide" and is exactly what makes casings bounce off
+    /// the greybox geometry at all.
     ///
     /// `ProjectileBlocked`'s decal/block-spark normal is computed purely
     /// analytically from `ArenaConfig` (spec/resolution: "нормаль — от
@@ -66,13 +74,18 @@ namespace Ring.Presentation
     /// two `Random` types would otherwise collide).
     public sealed class PersistentPropsDirector : MonoBehaviour
     {
+        /// User layer 9 — "Casings" in `ProjectSettings/TagManager.asset`
+        /// (review fix-round: dedicated layer, split off `GreyboxBuilder.
+        /// CosmeticsLayer` — see class doc). Public so `StageOneSceneBootstrap`
+        /// (prefab layer assignment + `EnsureCasingsLayer`'s TagManager patch)
+        /// shares this exact constant instead of redeclaring the literal `9`.
+        public const int CasingsLayer = 9;
+
+        // Structural spawn-positioning offsets — NOT feel numbers (owner
+        // guidance, review fix-round: these stay code constants, only the
+        // actual game-feel numbers below moved into GameFeelConfig).
         const float CasingSpawnLift = 0.25f;
         const float CasingLateralOffset = 0.15f;
-        const float CasingImpulseUpMin = 1.2f;
-        const float CasingImpulseUpMax = 2.2f;
-        const float CasingImpulseSideMax = 1.2f;
-        const float CasingTorqueScale = 0.02f;
-
         const float DecalHeightOffset = 1f;
         const float DecalNearOffset = 0.1f;
 
@@ -83,7 +96,24 @@ namespace Ring.Presentation
         // of clipping halfway through it.
         const float CorpseLift = 0.5f;
 
-        const int SparkPoolPrewarm = 16;
+        // Particle pool capacities (review fix-round: were a single shared
+        // `SparkPoolPrewarm = 16`, too small for a dense fight — a maxed-out
+        // pool forces `ObjectPool.Get()`/`Release()` to fall back to
+        // `Instantiate`/`Destroy` mid-play, breaking the "zero allocation
+        // after warmup" constraint). Sized off the player's own default fire
+        // rate (`WeaponConfig.FireInterval = 0.12s` ⇒ ~8.3 shots/s) times a
+        // generous burst-lifetime window, then padded well past the naive
+        // peak for safety margin (multiple mobs clustered, a hitstop-adjacent
+        // frame catching up several ticks at once, etc.) — NOT SO fields:
+        // this is a technical/performance sizing decision, not a "feel" knob
+        // the owner would hot-tweak on a playtest (unlike the burst
+        // lifetime/speed/size numbers in `GameFeelConfig`, which are).
+        // Hit/block sparks: ~8.3/s × ~0.2s lifetime ≈ 1.7 naive concurrent
+        // peak → 32 is ~19× that. Death bursts are far rarer (a mob dying,
+        // not every shot) → 16 is still generous.
+        const int HitSparkPoolCapacity = 32;
+        const int BlockSparkPoolCapacity = 32;
+        const int DeathBurstPoolCapacity = 16;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
@@ -104,7 +134,7 @@ namespace Ring.Presentation
 
         void Awake()
         {
-            Physics.IgnoreLayerCollision(GreyboxBuilder.CosmeticsLayer, GreyboxBuilder.CosmeticsLayer, true);
+            Physics.IgnoreLayerCollision(CasingsLayer, CasingsLayer, true);
 
             _casings = new RingBuffer<CasingView>(_gameFeel.MaxCasings, CreateCasing);
             _decals = new RingBuffer<DecalProjector>(_gameFeel.MaxDecals, CreateDecal);
@@ -113,12 +143,12 @@ namespace Ring.Presentation
             _decals.Prewarm();
             _corpses.Prewarm();
 
-            _hitSparkPool = CreateParticlePool(_hitSparkPrefab);
-            _blockSparkPool = CreateParticlePool(_blockSparkPrefab);
-            _deathBurstPool = CreateParticlePool(_deathBurstPrefab);
-            PrewarmParticlePool(_hitSparkPool, SparkPoolPrewarm);
-            PrewarmParticlePool(_blockSparkPool, SparkPoolPrewarm);
-            PrewarmParticlePool(_deathBurstPool, SparkPoolPrewarm);
+            _hitSparkPool = CreateParticlePool(_hitSparkPrefab, HitSparkPoolCapacity);
+            _blockSparkPool = CreateParticlePool(_blockSparkPrefab, BlockSparkPoolCapacity);
+            _deathBurstPool = CreateParticlePool(_deathBurstPrefab, DeathBurstPoolCapacity);
+            PrewarmParticlePool(_hitSparkPool, HitSparkPoolCapacity);
+            PrewarmParticlePool(_blockSparkPool, BlockSparkPoolCapacity);
+            PrewarmParticlePool(_deathBurstPool, DeathBurstPoolCapacity);
         }
 
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
@@ -169,11 +199,12 @@ namespace Ring.Presentation
                 CasingSpawnLift,
                 Random.Range(-CasingLateralOffset, CasingLateralOffset));
             Vector3 pos = SimSpace.ToWorld(e.Pos) + lateral;
+            float sideMax = _gameFeel.CasingImpulseSideMax;
             Vector3 impulse = new Vector3(
-                Random.Range(-CasingImpulseSideMax, CasingImpulseSideMax),
-                Random.Range(CasingImpulseUpMin, CasingImpulseUpMax),
-                Random.Range(-CasingImpulseSideMax, CasingImpulseSideMax));
-            Vector3 torque = Random.insideUnitSphere * CasingTorqueScale;
+                Random.Range(-sideMax, sideMax),
+                Random.Range(_gameFeel.CasingImpulseUpMin, _gameFeel.CasingImpulseUpMax),
+                Random.Range(-sideMax, sideMax));
+            Vector3 torque = Random.insideUnitSphere * _gameFeel.CasingTorqueScale;
 
             CasingView view = _casings.Rent();
             view.Spawn(pos, impulse, torque, _gameFeel.CasingPhysicsSeconds);
@@ -199,7 +230,7 @@ namespace Ring.Presentation
             Vector3 pos = SimSpace.ToWorld(e.Pos) + Vector3.up * CorpseLift;
 
             CorpseView corpse = _corpses.Rent();
-            corpse.Spawn(pos, e.MobType);
+            corpse.Spawn(pos, e.MobType, _gameFeel.CorpseGlowFadeSeconds);
 
             PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
         }
@@ -233,7 +264,7 @@ namespace Ring.Presentation
             return view;
         }
 
-        ObjectPool<ParticleSystem> CreateParticlePool(ParticleSystem prefab)
+        ObjectPool<ParticleSystem> CreateParticlePool(ParticleSystem prefab, int capacity)
         {
             ObjectPool<ParticleSystem> pool = null;
             pool = new ObjectPool<ParticleSystem>(
@@ -248,8 +279,8 @@ namespace Ring.Presentation
                 actionOnRelease: ps => ps.gameObject.SetActive(false),
                 actionOnDestroy: ps => Destroy(ps.gameObject),
                 collectionCheck: true,
-                defaultCapacity: SparkPoolPrewarm,
-                maxSize: SparkPoolPrewarm);
+                defaultCapacity: capacity,
+                maxSize: capacity);
             return pool;
         }
 

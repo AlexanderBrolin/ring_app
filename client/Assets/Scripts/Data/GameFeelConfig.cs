@@ -29,6 +29,31 @@ namespace Ring.Data
         [Range(1, 512)] public int MaxCorpses = 64;
         [Range(1, 32)] public int VoicesPerSfx = 6;
         [Range(0f, 1f)] public float MinSfxInterval = 0.03f;
+
+        // Task 27 fix-round (review): feel numbers the owner will hot-tweak on
+        // the milestone-4 playtest, pulled out of PersistentPropsDirector/
+        // CorpseView/StageOneSceneBootstrap literals per client/CLAUDE.md's
+        // "все числа game feel — в ScriptableObjects" rule. Structural spawn
+        // offsets (lateral/vertical spawn nudges, decal near-offset/height —
+        // positioning epsilons, not feel) deliberately stay as code constants,
+        // same split the rest of this file already makes (e.g. `MobOffset`/
+        // `ProjectileOffset` in ViewRegistry are also never SO fields).
+        [Range(0f, 10f)] public float CasingImpulseUpMin = 1.2f;
+        [Range(0f, 10f)] public float CasingImpulseUpMax = 2.2f;
+        [Range(0f, 10f)] public float CasingImpulseSideMax = 1.2f;
+        [Range(0f, 1f)] public float CasingTorqueScale = 0.02f;
+        [Range(0.1f, 20f)] public float CorpseGlowFadeSeconds = 3f;
+        [Range(0.05f, 3f)] public float DecalSize = 0.6f;
+        [Range(0.01f, 2f)] public float HitSparkLifetime = 0.15f;
+        [Range(0f, 20f)] public float HitSparkSpeed = 3.5f;
+        [Range(0f, 2f)] public float HitSparkSize = 0.06f;
+        [Range(0.01f, 2f)] public float BlockSparkLifetime = 0.18f;
+        [Range(0f, 20f)] public float BlockSparkSpeed = 3f;
+        [Range(0f, 2f)] public float BlockSparkSize = 0.07f;
+        [Range(0.01f, 2f)] public float DeathBurstLifetime = 0.3f;
+        [Range(0f, 20f)] public float DeathBurstSpeed = 4f;
+        [Range(0f, 2f)] public float DeathBurstSize = 0.12f;
+
         public bool ImmediateMuzzleFeedback = true;
         public bool ExtrapolateLocalPlayer = false;
     }

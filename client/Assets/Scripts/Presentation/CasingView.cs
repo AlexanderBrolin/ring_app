@@ -8,11 +8,18 @@ namespace Ring.Presentation
     /// (`isKinematic = true`) for the rest of the match — casings never
     /// explicitly despawn, only get FIFO-reused once `PersistentPropsDirector`'s
     /// `RingBuffer&lt;CasingView&gt;` wraps around (spec: "живут до конца
-    /// захода"). Lives on the Cosmetics layer (T13, `GreyboxBuilder.
-    /// CosmeticsLayer` — the arena's floor/wall/obstacle colliders share it) so
-    /// it physically bounces off the greybox geometry; `PersistentPropsDirector.
-    /// Awake` disables Cosmetics-vs-Cosmetics collision globally so up to
-    /// `GameFeelConfig.MaxCasings` casings never push each other around.
+    /// захода"). Lives on its own dedicated `PersistentPropsDirector.
+    /// CasingsLayer` (9, review fix-round — NOT `GreyboxBuilder.
+    /// CosmeticsLayer`/8, which the arena's floor/wall/obstacle colliders use:
+    /// sharing a layer with the arena would mean disabling that layer's
+    /// self-collision also disables casing-vs-arena collision, since
+    /// `Physics.IgnoreLayerCollision` toggles a whole layer PAIR, not
+    /// specific objects — casings fell through the floor under the original,
+    /// single-layer version of this design). `PersistentPropsDirector.Awake`
+    /// disables Casings-vs-Casings collision (only that one pair) so up to
+    /// `GameFeelConfig.MaxCasings` casings never push each other around,
+    /// while Casings-vs-Cosmetics (9×8) stays at Unity's default "collide" —
+    /// that's what makes a casing actually bounce off the greybox geometry.
     public sealed class CasingView : MonoBehaviour
     {
         Rigidbody _rb;

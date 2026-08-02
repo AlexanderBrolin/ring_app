@@ -21,12 +21,12 @@ namespace Ring.Presentation
         static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
         static readonly Color ChaserGlow = new Color(2.5f, 0.2f, 0.2f);
         static readonly Color GunnerGlow = new Color(0.2f, 0.6f, 2.5f);
-        const float GlowFadeSeconds = 3f;
 
         Renderer[] _renderers;
         MaterialPropertyBlock _block;
         Color _baseGlow;
         float _fadeTimer;
+        float _fadeDuration;
 
         void Awake()
         {
@@ -36,17 +36,21 @@ namespace Ring.Presentation
 
         /// (Re)spawns this pooled instance lying on its side at `pos`, glowing
         /// at full archetype-accent intensity right after death and cooling to
-        /// black over `GlowFadeSeconds`. A fresh random yaw each spawn
+        /// black over `glowFadeSeconds`. A fresh random yaw each spawn
         /// (cosmetic-only `UnityEngine.Random`) so a FIFO-reused slot doesn't
         /// read as literally the same body landing in the same orientation
-        /// every time.
-        public void Spawn(Vector3 pos, MobType type)
+        /// every time. `glowFadeSeconds` comes straight from
+        /// `GameFeelConfig.CorpseGlowFadeSeconds` every call (review fix-round
+        /// — was a local `const`), same hot-tweak contract as `CasingView.
+        /// Spawn`'s `settleSeconds` parameter.
+        public void Spawn(Vector3 pos, MobType type, float glowFadeSeconds)
         {
             gameObject.SetActive(true);
             float yaw = Random.Range(0f, 360f);
             transform.SetPositionAndRotation(pos, Quaternion.Euler(90f, yaw, 0f));
             _baseGlow = type == MobType.Chaser ? ChaserGlow : GunnerGlow;
-            _fadeTimer = GlowFadeSeconds;
+            _fadeDuration = Mathf.Max(glowFadeSeconds, 1e-4f);
+            _fadeTimer = _fadeDuration;
             ApplyEmission(_baseGlow);
         }
 
@@ -54,7 +58,7 @@ namespace Ring.Presentation
         {
             if (_fadeTimer <= 0f) return;
             _fadeTimer -= Time.unscaledDeltaTime;
-            float t = Mathf.Clamp01(_fadeTimer / GlowFadeSeconds);
+            float t = Mathf.Clamp01(_fadeTimer / _fadeDuration);
             ApplyEmission(_baseGlow * t);
         }
 

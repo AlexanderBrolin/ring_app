@@ -104,6 +104,19 @@ namespace Ring.Editor
     /// `PersistentPropsDirector`, wired to every prefab above plus `_arena`
     /// (decal/block-spark normal computation) and `_gameFeel`; (4)
     /// `SimEventRouter`'s new `_persistentProps` slot.
+    /// Task 27 review fix-round adds a fifth step: `EnsureCasingsLayer`
+    /// claims user layer 9 ("Casings") in `ProjectSettings/TagManager.asset`
+    /// — casings originally shared `GreyboxBuilder.CosmeticsLayer`/8 with the
+    /// arena's own colliders, which made `PersistentPropsDirector.Awake`'s
+    /// self-collision guard also disable casing-vs-arena collision (see that
+    /// class's doc); `GetOrCreateCasingPrefab` self-heals an
+    /// already-committed `Casing.prefab`'s layer unconditionally. The same
+    /// round also moves several Presentation-only literals (casing impulse/
+    /// torque, corpse glow fade, decal size, spark lifetime/speed/size) from
+    /// bootstrap/`PersistentPropsDirector`/`CorpseView` constants into new
+    /// `GameFeelConfig` fields (client/CLAUDE.md: "все числа game feel — в
+    /// ScriptableObjects") — this file's spark-prefab calls now read
+    /// `gameFeel.*` instead of literals for those three.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -162,6 +175,8 @@ namespace Ring.Editor
         const string BlockSparkPrefabPath = PrefabsDir + "/BlockSpark.prefab";
         const string DeathBurstPrefabPath = PrefabsDir + "/DeathBurst.prefab";
         const string PersistentPropsObjectName = "PersistentProps";
+        const string TagManagerPath = "ProjectSettings/TagManager.asset";
+        const string CasingsLayerName = "Casings";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -188,6 +203,21 @@ namespace Ring.Editor
             // baseline is TestConfigs.Default().Gunner, where they're unset -> 0).
             bool gunnerChanged = ApplyGunnerDefaults(gunner);
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
+
+            // Task 27 review fix-round: an already-committed GameFeelConfig.asset
+            // predates the new casing/spark/corpse/decal feel fields this round
+            // adds — Unity only writes a ScriptableObject's CURRENT field set to
+            // disk when something marks it dirty (missing keys silently fall
+            // back to the C# field initializer at load time either way, so this
+            // is a traceability fix, not a correctness one: the owner should see
+            // real numbers to hot-tweak in the Inspector/YAML, not an absent
+            // key). Checked via a direct text read (same technique as
+            // HasStaleSerializedField below, inverted: detects a MISSING key
+            // instead of a stale one) so this is a one-time sync, not an
+            // unconditional touch every run.
+            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("CasingImpulseUpMin"))
+                EditorUtility.SetDirty(gameFeel);
+
             AssetDatabase.SaveAssets();
 
             // Task 27 (Приложение П, Decal Renderer Feature): independent of
@@ -198,6 +228,12 @@ namespace Ring.Editor
             bool decalFeatureChanged = false;
             decalFeatureChanged |= AddDecalRendererFeatureIfMissing(PcRendererPath);
             decalFeatureChanged |= AddDecalRendererFeatureIfMissing(MobileRendererPath);
+
+            // Task 27 review fix-round: casings need their OWN layer, distinct
+            // from GreyboxBuilder.CosmeticsLayer (see PersistentPropsDirector's
+            // class doc for the bug this fixes) — EnsureCasingsLayer claims
+            // user layer 9 in TagManager.asset, idempotently.
+            bool casingsLayerChanged = EnsureCasingsLayer();
 
             SimulationRunner runner = FindRunner(scene);
             bool sceneDirty = false;
@@ -791,14 +827,25 @@ namespace Ring.Editor
             Material deathBurstMat = GetOrCreateUnlitMaterial("DeathBurst", new Color(4f, 1.3f, 0.3f));
 
             CasingView casingPrefab = GetOrCreateCasingPrefab(casingMat);
-            DecalProjector decalPrefab = GetOrCreateDecalPrefab(decalMat);
+            DecalProjector decalPrefab = GetOrCreateDecalPrefab(decalMat, gameFeel.DecalSize);
             CorpseView corpsePrefab = GetOrCreateCorpsePrefab(corpseMat);
+            // lifetime/speed/size read from GameFeelConfig at prefab-creation
+            // time (review fix-round — same "creation-time SO read" contract
+            // as TracerFadeSeconds/GetOrCreateProjectilePrefab above); burst
+            // COUNT/cone angle stay bootstrap-local literals — density/shape,
+            // not something GameFeelConfig grew a field for (see
+            // PersistentPropsDirector's pool-capacity consts doc for why the
+            // line between "feel number" and "technical constant" was drawn
+            // here).
             ParticleSystem hitSparkPrefab = GetOrCreateSparkPrefab(HitSparkPrefabPath, "HitSpark", hitSparkMat,
-                lifetime: 0.15f, speed: 3.5f, size: 0.06f, burstCount: 10, coneAngle: 35f);
+                lifetime: gameFeel.HitSparkLifetime, speed: gameFeel.HitSparkSpeed, size: gameFeel.HitSparkSize,
+                burstCount: 10, coneAngle: 35f);
             ParticleSystem blockSparkPrefab = GetOrCreateSparkPrefab(BlockSparkPrefabPath, "BlockSpark", blockSparkMat,
-                lifetime: 0.18f, speed: 3f, size: 0.07f, burstCount: 12, coneAngle: 25f);
+                lifetime: gameFeel.BlockSparkLifetime, speed: gameFeel.BlockSparkSpeed, size: gameFeel.BlockSparkSize,
+                burstCount: 12, coneAngle: 25f);
             ParticleSystem deathBurstPrefab = GetOrCreateSparkPrefab(DeathBurstPrefabPath, "DeathBurst", deathBurstMat,
-                lifetime: 0.3f, speed: 4f, size: 0.12f, burstCount: 24, coneAngle: 90f);
+                lifetime: gameFeel.DeathBurstLifetime, speed: gameFeel.DeathBurstSpeed, size: gameFeel.DeathBurstSize,
+                burstCount: 24, coneAngle: 90f);
 
             GameObject persistentPropsGo = FindRootObject(scene, PersistentPropsObjectName);
             if (persistentPropsGo == null)
@@ -910,6 +957,7 @@ namespace Ring.Editor
 
             Debug.Log($"StageOneSceneBootstrap: gunner {(gunnerChanged ? "updated" : "ok")}, " +
                 $"decal feature {(decalFeatureChanged ? "added" : "ok")}, " +
+                $"casings layer {(casingsLayerChanged ? "added" : "ok")}, " +
                 $"scene {(sceneDirty ? "updated" : "already up to date")}.");
         }
 
@@ -1112,21 +1160,74 @@ namespace Ring.Editor
             return true;
         }
 
+        /// Task 27 review fix-round: claims user layer 9 as "Casings" in
+        /// `ProjectSettings/TagManager.asset` — the standard editor-script
+        /// recipe for programmatically naming a layer (`SerializedObject`
+        /// over the `layers` string array, no dedicated public API exists).
+        /// Verified empty before this task claimed it (`grep` against the
+        /// committed `TagManager.asset`, T13's `GreyboxBuilder.CosmeticsLayer`
+        /// already owns layer 8). Idempotent: a second run sees `"Casings"`
+        /// already in the slot and no-ops. Defensively throws instead of
+        /// silently overwriting if slot 9 ever ends up holding some OTHER
+        /// name (e.g. a teammate claims it for something else first) — same
+        /// "hard error on unexpected setup state" policy as
+        /// `LoadMaterial`/`LoadAudioClip` below. Returns whether it actually
+        /// changed anything.
+        static bool EnsureCasingsLayer()
+        {
+            Object[] tagManagerAssets = AssetDatabase.LoadAllAssetsAtPath(TagManagerPath);
+            if (tagManagerAssets == null || tagManagerAssets.Length == 0)
+                throw new System.InvalidOperationException(
+                    $"StageOneSceneBootstrap: no asset at '{TagManagerPath}'.");
+
+            var so = new SerializedObject(tagManagerAssets[0]);
+            SerializedProperty layers = so.FindProperty("layers");
+            SerializedProperty slot = layers.GetArrayElementAtIndex(PersistentPropsDirector.CasingsLayer);
+
+            if (slot.stringValue == CasingsLayerName) return false;
+            if (!string.IsNullOrEmpty(slot.stringValue))
+                throw new System.InvalidOperationException(
+                    $"StageOneSceneBootstrap: layer {PersistentPropsDirector.CasingsLayer} is already " +
+                    $"named '{slot.stringValue}' — refusing to overwrite it with '{CasingsLayerName}'.");
+
+            slot.stringValue = CasingsLayerName;
+            so.ApplyModifiedProperties();
+            AssetDatabase.SaveAssets();
+            return true;
+        }
+
         /// Task 27: the shared `CasingView` prefab — a small primitive
         /// Cylinder (default-primitive `CapsuleCollider` deliberately KEPT,
         /// unlike every other primitive in this file that calls
         /// `RemoveCollider` — this is the one prop that needs real PhysX to
         /// bounce off the arena's Cosmetics-layer geometry, T13) plus a
         /// `Rigidbody` and a `CasingView`. Existence-guarded like every other
-        /// prefab helper here.
+        /// prefab helper here — EXCEPT the layer, which is self-healed
+        /// unconditionally (review fix-round bug: an already-committed
+        /// `Casing.prefab` may still carry the layer this task originally
+        /// shipped with, `GreyboxBuilder.CosmeticsLayer`/8, shared with the
+        /// arena's own colliders — see `PersistentPropsDirector`'s class doc
+        /// for why that made casings fall through the floor; self-heal here
+        /// is what fixes an already-committed prefab, not just a fresh one,
+        /// same treatment as the muzzle-particle material check elsewhere in
+        /// this file).
         static CasingView GetOrCreateCasingPrefab(Material casingMat)
         {
             var existing = AssetDatabase.LoadAssetAtPath<CasingView>(CasingPrefabPath);
-            if (existing != null) return existing;
+            if (existing != null)
+            {
+                if (existing.gameObject.layer != PersistentPropsDirector.CasingsLayer)
+                {
+                    existing.gameObject.layer = PersistentPropsDirector.CasingsLayer;
+                    EditorUtility.SetDirty(existing.gameObject);
+                    AssetDatabase.SaveAssets();
+                }
+                return existing;
+            }
 
             GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             go.name = "Casing";
-            go.layer = GreyboxBuilder.CosmeticsLayer;
+            go.layer = PersistentPropsDirector.CasingsLayer;
             go.transform.localScale = new Vector3(0.05f, 0.06f, 0.05f);
             go.GetComponent<MeshRenderer>().sharedMaterial = casingMat;
 
@@ -1144,13 +1245,15 @@ namespace Ring.Editor
 
         /// Task 27: the shared `DecalProjector` prefab. `size`/`material` are
         /// one-time module config (existence-guarded like everything else in
-        /// this file); `pivot` stays the component's own default
-        /// (`(0, 0, 0.5)`, `Runtime/Decal/DecalProjector.cs`) — it centers the
-        /// projection box between the transform's own position (local Z = 0)
-        /// and `size.z` ahead of it, which is exactly what
+        /// this file — `size` comes from `GameFeelConfig.DecalSize`, read
+        /// once here at creation time, review fix-round); `pivot` stays the
+        /// component's own default (`(0, 0, 0.5)`,
+        /// `Runtime/Decal/DecalProjector.cs`) — it centers the projection box
+        /// between the transform's own position (local Z = 0) and `size.z`
+        /// ahead of it, which is exactly what
         /// `PersistentPropsDirector.HandleBlocked`'s own near-offset/rotation
         /// math assumes.
-        static DecalProjector GetOrCreateDecalPrefab(Material decalMat)
+        static DecalProjector GetOrCreateDecalPrefab(Material decalMat, float size)
         {
             var existing = AssetDatabase.LoadAssetAtPath<DecalProjector>(DecalPrefabPath);
             if (existing != null) return existing;
@@ -1158,7 +1261,7 @@ namespace Ring.Editor
             var go = new GameObject("Decal");
             DecalProjector projector = go.AddComponent<DecalProjector>();
             projector.material = decalMat;
-            projector.size = new Vector3(0.6f, 0.6f, 0.6f);
+            projector.size = Vector3.one * size;
 
             GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, DecalPrefabPath);
             Object.DestroyImmediate(go);
