@@ -501,11 +501,21 @@ namespace Ring.Editor
                 muzzleRenderer.sharedMaterial = muzzleMat;
                 sceneDirty = true;
             }
+            // MuzzleFlashView takes no serialized references (fix-round app-2pl
+            // round 2 — direction now comes from the event's own Amount field,
+            // not a SimulationRunner snapshot), so no SerializedObject wiring here.
+            // The already-committed scene still carries the removed `_runner`
+            // field's data as an orphaned YAML key, though — `SerializedObject`
+            // only ever reflects the CURRENT class layout, so there is no
+            // supported API to diff against the stale value; `HasStaleField`
+            // below reads the scene text directly to detect it (existence-guarded
+            // like everything else here: once the field is gone, this is false
+            // forever, so re-running `Apply()` stays a no-op again after this
+            // one migration run drops it via the ordinary SaveScene path).
             MuzzleFlashView muzzleFlash = muzzleGo.GetComponent<MuzzleFlashView>();
-            var muzzleSo = new SerializedObject(muzzleFlash);
-            if (SetRef(muzzleSo, "_runner", runner))
+            if (HasStaleSerializedField("Ring.Presentation.MuzzleFlashView", "_runner"))
             {
-                muzzleSo.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(muzzleFlash);
                 sceneDirty = true;
             }
 
@@ -864,6 +874,23 @@ namespace Ring.Editor
                 throw new System.InvalidOperationException(
                     $"StageOneSceneBootstrap: no material at '{path}'.");
             return mat;
+        }
+
+        /// One-off migration helper (fix-round app-2pl round 2): detects a
+        /// serialized field's leftover YAML key for a given `MonoBehaviour` type
+        /// after the field itself was removed from the C# class. `SerializedObject`
+        /// cannot see this — it only ever reflects the type's CURRENT field
+        /// layout — so this reads `Main.unity`'s text directly instead, scoped to
+        /// a small window right after the type's `m_EditorClassIdentifier` line so
+        /// an unrelated component that happens to share the same field name (e.g.
+        /// `CameraRig._runner`) never false-positives.
+        static bool HasStaleSerializedField(string classIdentifier, string fieldName)
+        {
+            string text = System.IO.File.ReadAllText(ScenePath);
+            int idx = text.IndexOf(classIdentifier, System.StringComparison.Ordinal);
+            if (idx < 0) return false;
+            int windowLen = System.Math.Min(200, text.Length - idx);
+            return text.Substring(idx, windowLen).Contains(fieldName + ":");
         }
 
         static SimulationRunner FindRunner(Scene scene)

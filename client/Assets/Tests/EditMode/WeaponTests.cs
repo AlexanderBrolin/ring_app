@@ -70,5 +70,33 @@ namespace Ring.Simulation.Tests
                 if (w.GetEvent(i).Kind == SimEventKind.ProjectileFired) fired++;
             Assert.AreEqual(1, fired);
         }
+
+        [Test]
+        public void FiredEvent_AmountIsVelocitySimAngle()
+        {
+            // Amount carries the shot's sim-plane velocity angle (atan2(vel.y, vel.x),
+            // Presentation fix-round app-2pl round 2) so MuzzleFlashView can orient the
+            // muzzle burst tick-accurately from the event alone, instead of the
+            // render-frame's Curr snapshot (wrong during a multi-tick catch-up flush).
+            // Zero spread/recoil + aim straight along +X removes every other source of
+            // angle variance, so this isolates exactly the field under test.
+            var cfg = TestConfigs.Open();
+            cfg.Weapon.SpreadRad = 0f;
+            cfg.Weapon.RecoilPerShotRad = 0f;
+            var w = new SimulationWorld(1, cfg);
+            w.Tick(Fire); // aim (10,0) from Pos (0,0) -> straight +X; first shot is instant
+
+            SimEvent fired = default;
+            bool found = false;
+            for (int i = 0; i < w.EventCount; i++)
+            {
+                if (w.GetEvent(i).Kind != SimEventKind.ProjectileFired) continue;
+                fired = w.GetEvent(i);
+                found = true;
+                break;
+            }
+            Assert.IsTrue(found);
+            Assert.AreEqual(0f, fired.Amount, 1e-4f);
+        }
     }
 }

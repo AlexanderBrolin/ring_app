@@ -171,7 +171,15 @@ namespace Ring.Simulation.Core
                 Id = id, Owner = owner, Pos = pos, PrevPos = pos, Vel = vel,
                 Damage = damage, Radius = radius, Ttl = ttl
             };
-            Emit(SimEventKind.ProjectileFired, pos, id, default, 0f);
+            // Amount carries the shot's sim-plane velocity angle (Presentation
+            // fix-round app-2pl round 2): MuzzleFlashView needs a tick-accurate
+            // fire direction, and reading it back off the render-frame's Curr
+            // snapshot is wrong during a multi-tick catch-up flush (Curr reflects
+            // only the batch's LAST tick, not necessarily the tick this shot fired
+            // on) — this event field is the only tick-exact source available.
+            // Events are excluded from StateHash (spec §3.7), so this adds no new
+            // determinism/replay surface.
+            Emit(SimEventKind.ProjectileFired, pos, id, default, math.atan2(vel.y, vel.x));
             return id;
         }
 
