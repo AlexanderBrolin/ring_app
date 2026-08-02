@@ -109,7 +109,7 @@ app/
 │   │   └── Server/              # bootstrap headless, match-config, репорт результатов
 │   ├── Assets/Data/             # ScriptableObjects: герои, способности, мобы, лут
 │   ├── Assets/{Prefabs,Scenes,Art,Audio}/
-│   ├── Tests/EditMode/          # NUnit-тесты Simulation
+│   ├── Assets/Tests/EditMode/   # NUnit-тесты Simulation (asmdef обязан жить под Assets)
 │   ├── docker/                  # Dockerfile + entrypoint.sh headless game-сервера
 │   │                            #   (в ADR-002 §3 назван server/; переименован против
 │   │                            #    путаницы с app/server)
@@ -117,6 +117,20 @@ app/
 └── server/                      # FastAPI + PostgreSQL 16 + Redis (создаётся на Этапе 5)
     # uv-проект; docker-compose дев-контура живёт здесь, прод-деплой — в репо infra
 ```
+
+## Тулинг агентов (закреплено на Этапе 0)
+
+- **Unity:** 6000.3.21f1 (6.3 LTS, ADR-002 Amendment A5);
+  `UNITY=~/Unity/Hub/Editor/6000.3.21f1/Editor/Unity`.
+- **Тесты EditMode:** `"$UNITY" -runTests -batchmode -projectPath client
+  -testPlatform EditMode -testResults <абс.путь>.xml -logFile <лог>`;
+  exit 0 = все зелёные.
+- **Сборки:** `RING_BUILD_ROOT=<каталог вне git> "$UNITY" -batchmode -quit -projectPath
+  client -executeMethod Ring.Editor.BuildCommands.<BuildLinuxServer|BuildWindowsClient|BuildLinuxClient>
+  -logFile <лог>`.
+- **Unity MCP:** CoplayDev/unity-mcp (Amendment A6): Unity-пакет в manifest +
+  проектный `.mcp.json` (сервер: `uvx --from mcpforunityserver mcp-for-unity
+  --transport stdio`); тулы доступны при открытом Editor, после перезапуска сессии агента.
 
 ## Зоны ответственности и координация с коллегами
 
