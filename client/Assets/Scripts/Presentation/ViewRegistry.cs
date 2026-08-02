@@ -15,7 +15,10 @@ namespace Ring.Presentation
     ///    it straight to `Curr` (no interpolation, spec §3.7); a continuing Id
     ///    lerps between its position in `Prev` (falling back to `Curr` if that Id
     ///    isn't in `Prev`) and `Curr` by `Alpha`; an Id that drops out of `Curr`
-    ///    returns its view to the pool.
+    ///    returns its view to the pool. Every live mob (new or continuing) also
+    ///    gets `MobView.Sync(in MobState)` called here (Task 21, resolution "Bind
+    ///    contract") — the per-frame telegraph-pulse/Fire-glint accent read, same
+    ///    "no new subscriber" rule (П-1) as everything else in this class.
     ///  - `HandleEvent` (called by `SimEventRouter`, П-1's ordered fan-out — never
     ///    subscribed directly to any runner event): retires a view the instant its
     ///    entity's terminal event fires (MobDied for mobs; ProjectileBlocked /
@@ -114,7 +117,11 @@ namespace Ring.Presentation
                     // order for a freshly-rented view — see the matching comment on
                     // the projectile branch below for why this order matters at all.
                     view.transform.position = SimSpace.ToWorld(m.Pos) + MobOffset;
-                    view.Bind(m.Type);
+                    view.Bind(in m);
+                    // Sync right away (Task 21 Bind/Sync contract) so a mob that's
+                    // already mid-Telegraph the instant it becomes visible reads
+                    // correctly this same frame, not one frame late.
+                    view.Sync(in m);
                     _activeMobs.Add(m.Id, view);
                     continue;
                 }
@@ -122,6 +129,7 @@ namespace Ring.Presentation
                 float2 prevPos = FindMobPrevPos(prev, m.Id, m.Pos);
                 Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
                 view.transform.position = world + MobOffset;
+                view.Sync(in m);
             }
 
             _staleIdsScratch.Clear();

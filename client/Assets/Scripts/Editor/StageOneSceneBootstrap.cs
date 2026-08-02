@@ -57,6 +57,9 @@ namespace Ring.Editor
     /// subscriber, П-1 — everything else above is driven through its per-event
     /// fan-out instead), and — editor/dev-build only — a `PracticeTargets` object
     /// that spawns milestone-2 target dummies via `SimulationWorld.DevSpawnMob`.
+    /// Task 21 (spec §3.6, П-11) adds a `DevOverlay` object — the dev-spawn-buttons
+    /// stub Task 24 will grow into the full overlay — wired to the same `runner`
+    /// and `aimProvider` references as everything else above.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -88,6 +91,9 @@ namespace Ring.Editor
         const string EventRouterObjectName = "EventRouter";
         const string PracticeTargetsObjectName = "PracticeTargets";
         const float ProjectileDiameter = 0.24f;
+
+        // Task 21.
+        const string DevOverlayObjectName = "DevOverlay";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -566,6 +572,37 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 #endif
+
+            // Task 21 (spec §3.6, resolution П-11): a `DevOverlay` object carrying
+            // the dev-spawn-buttons stub. Unlike `PracticeTargets` right above,
+            // this wiring is NOT wrapped in a `#if` guard — `StageOneSceneBootstrap`
+            // itself only ever compiles for the Editor (it lives under
+            // `Assets/Scripts/Editor`, which Unity excludes from every player
+            // build outright, guard or not), so re-guarding the reference here
+            // would be redundant; only `DevOverlay`'s own file (in `Presentation/`,
+            // which DOES ship into player builds) needs the compile guard, and it
+            // has one.
+            GameObject devOverlayGo = FindRootObject(scene, DevOverlayObjectName);
+            if (devOverlayGo == null)
+            {
+                devOverlayGo = new GameObject(DevOverlayObjectName);
+                sceneDirty = true;
+            }
+            DevOverlay devOverlay = devOverlayGo.GetComponent<DevOverlay>();
+            if (devOverlay == null)
+            {
+                devOverlay = devOverlayGo.AddComponent<DevOverlay>();
+                sceneDirty = true;
+            }
+            var devOverlaySo = new SerializedObject(devOverlay);
+            bool devOverlayRefsChanged = false;
+            devOverlayRefsChanged |= SetRef(devOverlaySo, "_runner", runner);
+            devOverlayRefsChanged |= SetRef(devOverlaySo, "_aimProvider", aimProvider);
+            if (devOverlayRefsChanged)
+            {
+                devOverlaySo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
 
             if (sceneDirty)
             {
