@@ -71,7 +71,9 @@ namespace Ring.Editor
                 TP.MechRoot + "Models/Stan.fbx", null, MechScale);
 
             GameObject elites = GetOrCreateRoot("EliteRobots", new Vector3(0f, 0f, 8f), RobotYaw);
-            BuildEntityUnder(elites, "EyeDrone", new Vector3(-2.5f, 0f, 0f),
+            // Flying drone hovers (веха 3: спавнился наполовину в полу).
+            // Phase B: hover height must come from the mob's view wiring.
+            BuildEntityUnder(elites, "EyeDrone", new Vector3(-2.5f, 1.5f, 0f),
                 TP.SciFiRoot + "Models/Enemy_EyeDrone.fbx", null, EliteScale);
             BuildEntityUnder(elites, "QuadShell", new Vector3(0f, 0f, 0f),
                 TP.SciFiRoot + "Models/Enemy_QuadShell.fbx", null, EliteScale);
