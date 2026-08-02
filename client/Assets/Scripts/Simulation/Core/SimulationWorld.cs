@@ -164,6 +164,14 @@ namespace Ring.Simulation.Core
             return id;
         }
 
+        /// Removes a projectile by swapping the last slot into its place — O(1),
+        /// no shifting, consistent with the _projectileCount pattern above.
+        /// Consumer: Task 16 (projectile tick/expiry/hit resolution).
+        internal void RemoveProjectileAt(int index)
+        {
+            _projectiles[index] = _projectiles[--_projectileCount];
+        }
+
         public SimEvent GetEvent(int i) => _events[i];
 
         public void ClearEvents() => _eventCount = 0;
