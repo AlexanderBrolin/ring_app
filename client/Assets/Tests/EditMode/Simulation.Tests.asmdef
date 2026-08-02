@@ -1,7 +1,7 @@
 {
     "name": "Ring.Simulation.Tests",
     "rootNamespace": "Ring.Simulation.Tests",
-    "references": ["Ring.Simulation", "Ring.Data", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "references": ["Ring.Simulation", "Ring.Data", "Unity.Mathematics", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

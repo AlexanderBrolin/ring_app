@@ -1,3 +1,5 @@
+using Unity.Mathematics;
+
 namespace Ring.Simulation.Core
 {
     /// FNV-1a 64-bit over 8-byte words in canonical field order.
@@ -17,5 +19,20 @@ namespace Ring.Simulation.Core
             }
             return hash;
         }
+
+        public static ulong Add(ulong hash, float value)
+        {
+            if (value == 0f) value = 0f; // -0.0 -> +0.0 (canonicalize sign bit)
+            return Add(hash, (ulong)math.asuint(value));
+        }
+
+        public static ulong Add(ulong hash, float2 value)
+        {
+            return Add(Add(hash, value.x), value.y);
+        }
+
+        public static ulong Add(ulong hash, int value) => Add(hash, (ulong)(uint)value);
+
+        public static ulong Add(ulong hash, bool value) => Add(hash, value ? 1UL : 0UL);
     }
 }
