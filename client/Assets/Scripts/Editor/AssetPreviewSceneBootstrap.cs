@@ -88,6 +88,7 @@ namespace Ring.Editor
 
             BuildFloor(floorMat);
             BuildLights();
+            BuildCamera();
             ReportEmission(scene);
 
             EditorSceneManager.MarkSceneDirty(scene);
@@ -212,6 +213,22 @@ namespace Ring.Editor
             EnsurePointLight(neon, "NeonOrange", new Vector3(4f, 3f, -2f),
                 new Color(1f, 0.55f, 0.15f));
             // No Lightmapping calls anywhere: realtime only, no LightingData.
+        }
+
+        /// Game-view camera for the milestone PlayMode look: ¾ top-down angle
+        /// matching the game's perspective (ADR-001 §9), covers all rows.
+        static void BuildCamera()
+        {
+            GameObject go = GameObject.Find("/PreviewCamera");
+            if (go == null) go = new GameObject("PreviewCamera");
+            Camera camera = go.GetComponent<Camera>();
+            if (camera == null) camera = go.AddComponent<Camera>();
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0.02f, 0.02f, 0.04f);
+            if (go.GetComponent<AudioListener>() == null)
+                go.AddComponent<AudioListener>();
+            go.transform.position = new Vector3(0f, 16f, -8f);
+            go.transform.rotation = Quaternion.Euler(55f, 0f, 0f);
         }
 
         static void EnsurePointLight(GameObject parent, string name,
