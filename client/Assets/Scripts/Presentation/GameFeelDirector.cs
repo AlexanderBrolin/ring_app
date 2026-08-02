@@ -57,14 +57,19 @@ namespace Ring.Presentation
     /// tweak landing exactly inside an active window very slightly over/under-
     /// counts for that one window only, never a hard bug.
     ///
-    /// `AddTrauma`: implemented now (max-pulse + linear decay, the standard
-    /// "trauma" shape — Squirrel Eiserloh's screen-shake talk) so every event
-    /// that should eventually drive camera shake already feeds it, but nothing
-    /// CONSUMES `Trauma` yet — `CameraRig.ExternalOffset` stays untouched here.
-    /// Wiring the actual noise-driven shake is Task 26's job; this class only
-    /// keeps the accumulator honest in the meantime, the same "reserved hook,
-    /// not wired yet" shape `CameraRig.ExternalOffset` itself already had before
-    /// this task existed.
+    /// `AddTrauma`: max-pulse + linear decay, the standard "trauma" shape
+    /// (Squirrel Eiserloh's screen-shake talk) — every event that should drive
+    /// camera shake feeds it, clamped to [0, 1]. Task 26 wires the consumer
+    /// side: `ShakeOffset` below turns the decaying `Trauma` scalar into a
+    /// per-frame Perlin-noise offset (`trauma²` easing — small trauma barely
+    /// shakes, trauma near 1 shakes hard, spec Interfaces), which `CameraRig`
+    /// reads directly off this component (a bootstrap-wired reference, not an
+    /// event or `SimulationRunner`) and adds on top of its already-damped
+    /// position every `LateUpdate`. Both the trauma decay and the shake noise
+    /// run on `Time.unscaledDeltaTime`/`Time.unscaledTime` — never gated by
+    /// hitstop or paused by anything — so a shake already in flight when a
+    /// hitstop freeze or the death overlay hits keeps reading live instead of
+    /// stalling with the rest of the frame.
     ///
     /// `GameFeelConfig.ExtrapolateLocalPlayer` is deliberately left unconsumed
     /// here: no spec text ties it to a concrete mechanic, and inventing one
@@ -94,10 +99,28 @@ namespace Ring.Presentation
 
         public bool HitstopActive { get; private set; }
 
-        /// Reserved for Task 26 (camera shake) — see class doc. Public so a
-        /// future `CameraRig`/shake consumer can read it without this class
-        /// needing to know about that consumer.
         public float Trauma { get; private set; }
+
+        /// Task 26 (spec Interfaces): `ShakeAmplitude * trauma² *
+        /// (perlin(t·Freq) − 0.5, perlin(t·Freq + 17) − 0.5)`, recomputed every
+        /// `Update` from the CURRENT (already-decayed-this-frame) `Trauma`. The
+        /// two Perlin samples are offset by 17 (an arbitrary decorrelation
+        /// constant, not itself a tunable) purely so the X/Z components don't
+        /// read as a single diagonal wobble.
+        ///
+        /// Plane choice (documented per this task's brief — "реши осознанно"):
+        /// world XZ, the same ground plane `SimSpace`/`CameraRig`'s focus point
+        /// already live in — NOT the camera's local screen-right/up basis.
+        /// `CameraRig` never yaws or rolls (only a fixed `PitchDeg` around
+        /// world X), so world +X already reads as screen-horizontal, and a
+        /// world-Z nudge reads as a blend of screen-vertical and depth under
+        /// that fixed pitch — a believable "shake" for this camera without
+        /// `CameraRig` having to hand this class its basis vectors.
+        /// `CameraRig` adds this on top of `transform.position` AFTER
+        /// `SmoothDamp` (its own class doc / this task's brief) — never fed
+        /// back into the damp state — so shake reads as instantaneous jitter
+        /// instead of being smoothed away like normal camera follow.
+        public Vector3 ShakeOffset { get; private set; }
 
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
         // its sole SimEventRouter subscriber) — direct subscription, same shape
@@ -117,6 +140,7 @@ namespace Ring.Presentation
             if (Trauma > 0f)
                 Trauma = Mathf.Max(0f, Trauma - _gameFeel.TraumaDecayPerSec * Time.unscaledDeltaTime);
 
+            UpdateShake();
             UpdateVignette();
         }
 
@@ -226,6 +250,22 @@ namespace Ring.Presentation
 
         void AddTrauma(float amount) => Trauma = Mathf.Clamp01(Mathf.Max(Trauma, amount));
 
+        /// See `ShakeOffset`'s own doc for the formula/plane-choice rationale.
+        /// Recomputed unconditionally every frame (even at `Trauma == 0`, where
+        /// it collapses to `Vector3.zero` since the amplitude term is zero) —
+        /// cheap enough (two `Mathf.PerlinNoise` calls) that branching around
+        /// it would only save work in the common "no shake right now" case at
+        /// the cost of a second code path to keep in sync with the formula.
+        void UpdateShake()
+        {
+            float trauma = Trauma;
+            float t = Time.unscaledTime * _gameFeel.ShakeFrequency;
+            float nx = Mathf.PerlinNoise(t, 0f) - 0.5f;
+            float nz = Mathf.PerlinNoise(t + 17f, 0f) - 0.5f;
+            float magnitude = _gameFeel.ShakeAmplitude * trauma * trauma;
+            ShakeOffset = new Vector3(nx, 0f, nz) * magnitude;
+        }
+
         void UpdateVignette()
         {
             if (_vignette == null) return;
@@ -247,6 +287,7 @@ namespace Ring.Presentation
             ForceEndHitstop();
             _hitstopBudget.Clear();
             Trauma = 0f;
+            ShakeOffset = Vector3.zero;
             _vignetteAlpha = 0f;
             if (_vignette != null)
             {

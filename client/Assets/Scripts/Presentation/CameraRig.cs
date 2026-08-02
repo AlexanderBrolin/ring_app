@@ -12,21 +12,22 @@ namespace Ring.Presentation
     /// local zero, so the rig carries all position/rotation and the camera itself
     /// never needs to know about look-ahead or damping.
     ///
-    /// `ExternalOffset` is a reserved additive hook for camera shake (Task 26 /
-    /// GameFeelDirector). It is applied on top of the damped position — not fed back
-    /// into the SmoothDamp state — so shake reads as instantaneous instead of being
-    /// smoothed away. Defaults to zero and nothing here writes to it.
+    /// `GameFeelDirector.ShakeOffset` (Task 26, trauma-driven camera shake) is added
+    /// on top of the damped position every `LateUpdate`, read directly off a
+    /// bootstrap-wired reference — never fed back into the `SmoothDamp` state, so
+    /// shake reads as instantaneous jitter instead of being smoothed away, and never
+    /// gated by hitstop (`GameFeelDirector` decays/animates it on `Time.unscaledTime`
+    /// regardless of any freeze — see that class's own doc).
     public sealed class CameraRig : MonoBehaviour
     {
         [SerializeField] CameraConfig _config;
         [SerializeField] SimulationRunner _runner;
         [SerializeField] AimProvider _aimProvider;
+        [SerializeField] GameFeelDirector _gameFeelDirector;
 
         Vector3 _dampedPos;
         Vector3 _dampVelocity;
         bool _initialized;
-
-        public Vector3 ExternalOffset;
 
         void LateUpdate()
         {
@@ -56,7 +57,7 @@ namespace Ring.Presentation
                 _initialized = true;
             }
 
-            transform.position = _dampedPos + ExternalOffset;
+            transform.position = _dampedPos + _gameFeelDirector.ShakeOffset;
             transform.rotation = Quaternion.Euler(_config.PitchDeg, 0f, 0f);
         }
     }

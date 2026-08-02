@@ -75,6 +75,15 @@ namespace Ring.Editor
     /// pass in the Task 17 views section once `ViewRegistry` and the new
     /// full-screen `Vignette` `Image` (added to the `HUD` canvas, Task 14
     /// section) both exist.
+    /// Task 26 (spec Interfaces, this task's resolution П-3) wires `CameraRig`'s
+    /// new `_gameFeelDirector` slot (it reads `GameFeelDirector.ShakeOffset`
+    /// directly every `LateUpdate` — no event/`SimulationRunner` indirection) in
+    /// the existing CameraRig section, and adds a `SpreadCone` child under the
+    /// `Crosshair` object: a `LineRenderer` ring (closed loop, world-space,
+    /// `CrosshairView.ConeSegments` points), plus a new `SpreadConeEmissive`
+    /// unlit material created the same existence-guarded way as every other
+    /// placeholder material in this file. `CrosshairView` gains `_cone`/
+    /// `_runner` reference slots alongside its existing `_marker`/`_aimProvider`.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -86,6 +95,7 @@ namespace Ring.Editor
         const string CameraRigObjectName = "CameraRig";
         const string CrosshairObjectName = "Crosshair";
         const string MarkerObjectName = "Marker";
+        const string SpreadConeObjectName = "SpreadCone";
         const string ArenaObjectName = "Arena";
         const string EventSystemObjectName = "EventSystem";
         const string HudObjectName = "HUD";
@@ -244,6 +254,10 @@ namespace Ring.Editor
                 "CrosshairEmissive",
                 baseColor: new Color(0.04f, 0.02f, 0f),
                 emissionColor: new Color(3.5f, 1.2f, 0f));
+            // Task 26: the spread-cone ring reuses the crosshair's own warm-neon
+            // emissive tint (unlit, like the tracer/muzzle materials — a
+            // `LineRenderer` strip isn't meant to be shaded).
+            Material spreadConeMat = GetOrCreateUnlitMaterial("SpreadConeEmissive", new Color(3.5f, 1.2f, 0f));
 
             GameObject playerGo = FindRootObject(scene, PlayerObjectName);
             if (playerGo == null)
@@ -302,6 +316,7 @@ namespace Ring.Editor
             cameraRigRefsChanged |= SetRef(cameraRigSo, "_config", camera);
             cameraRigRefsChanged |= SetRef(cameraRigSo, "_runner", runner);
             cameraRigRefsChanged |= SetRef(cameraRigSo, "_aimProvider", aimProvider);
+            cameraRigRefsChanged |= SetRef(cameraRigSo, "_gameFeelDirector", gameFeelDirector);
             if (cameraRigRefsChanged)
             {
                 cameraRigSo.ApplyModifiedPropertiesWithoutUndo();
@@ -344,10 +359,51 @@ namespace Ring.Editor
                 markerRenderer.sharedMaterial = crosshairMat;
                 sceneDirty = true;
             }
+
+            // Task 26 (spec §3.5/§3.11, resolution П-3): the honest spread-cone
+            // ring — a world-space `LineRenderer` loop, sibling of `Marker` under
+            // `Crosshair`. Module settings (`loop`/`useWorldSpace`/`positionCount`/
+            // `widthMultiplier`) are one-time, existence-guarded like every other
+            // module setup in this file (e.g. `ConfigureMuzzleParticles`) — only
+            // the material is self-healed unconditionally, same treatment as the
+            // marker's own `MeshRenderer.sharedMaterial` check just above, and
+            // `CrosshairView.UpdateCone` overwrites every position every frame
+            // regardless, so no positions need seeding here.
+            Transform spreadConeTf = crosshairGo.transform.Find(SpreadConeObjectName);
+            GameObject spreadConeGo;
+            if (spreadConeTf == null)
+            {
+                spreadConeGo = new GameObject(SpreadConeObjectName);
+                spreadConeGo.transform.SetParent(crosshairGo.transform, false);
+                sceneDirty = true;
+            }
+            else
+            {
+                spreadConeGo = spreadConeTf.gameObject;
+            }
+            LineRenderer spreadCone = spreadConeGo.GetComponent<LineRenderer>();
+            if (spreadCone == null)
+            {
+                spreadCone = spreadConeGo.AddComponent<LineRenderer>();
+                spreadCone.loop = true;
+                spreadCone.useWorldSpace = true;
+                spreadCone.positionCount = CrosshairView.ConeSegments;
+                spreadCone.widthMultiplier = 0.04f;
+                spreadCone.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                sceneDirty = true;
+            }
+            if (spreadCone.sharedMaterial != spreadConeMat)
+            {
+                spreadCone.sharedMaterial = spreadConeMat;
+                sceneDirty = true;
+            }
+
             var crosshairSo = new SerializedObject(crosshairView);
             bool crosshairRefsChanged = false;
             crosshairRefsChanged |= SetRef(crosshairSo, "_marker", markerGo.transform);
             crosshairRefsChanged |= SetRef(crosshairSo, "_aimProvider", aimProvider);
+            crosshairRefsChanged |= SetRef(crosshairSo, "_cone", spreadCone);
+            crosshairRefsChanged |= SetRef(crosshairSo, "_runner", runner);
             if (crosshairRefsChanged)
             {
                 crosshairSo.ApplyModifiedPropertiesWithoutUndo();
