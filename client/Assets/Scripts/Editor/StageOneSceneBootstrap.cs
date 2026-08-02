@@ -23,6 +23,14 @@ namespace Ring.Editor
     /// `Assets/Art/Materials` the same way the SO assets are: existence-guarded,
     /// never overwritten once created, so an owner's in-Editor color tweak survives
     /// a re-run.
+    /// Task 13 (spec §3.13) extends it once more: an `Arena` object at scene root
+    /// carries `GreyboxBuilder`, wired to `ArenaConfig` and the three hand-authored
+    /// greybox materials (`Floor`/`Wall`/`Obstacle.mat`, created directly on disk,
+    /// not by this bootstrap — unlike the emissive materials above, these already
+    /// exist by the time `Apply()` runs, so they're loaded here, not created). The
+    /// actual geometry is built at runtime by `GreyboxBuilder.Awake()`, not here —
+    /// this method only wires the component references, same as everywhere else in
+    /// this file.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -34,6 +42,7 @@ namespace Ring.Editor
         const string CameraRigObjectName = "CameraRig";
         const string CrosshairObjectName = "Crosshair";
         const string MarkerObjectName = "Marker";
+        const string ArenaObjectName = "Arena";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -239,6 +248,38 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // Task 13 (spec §3.13): greybox arena. Floor/Wall/Obstacle materials are
+            // hand-authored on disk (unlike the emissive placeholders above), so
+            // they're loaded, not created — a missing file is a setup error, same
+            // treatment as the InputActionAsset/MainCamera checks above.
+            Material floorMat = LoadMaterial("Floor");
+            Material wallMat = LoadMaterial("Wall");
+            Material obstacleMat = LoadMaterial("Obstacle");
+
+            GameObject arenaGo = FindRootObject(scene, ArenaObjectName);
+            if (arenaGo == null)
+            {
+                arenaGo = new GameObject(ArenaObjectName);
+                sceneDirty = true;
+            }
+            GreyboxBuilder greyboxBuilder = arenaGo.GetComponent<GreyboxBuilder>();
+            if (greyboxBuilder == null)
+            {
+                greyboxBuilder = arenaGo.AddComponent<GreyboxBuilder>();
+                sceneDirty = true;
+            }
+            var greyboxSo = new SerializedObject(greyboxBuilder);
+            bool greyboxRefsChanged = false;
+            greyboxRefsChanged |= SetRef(greyboxSo, "_arena", arena);
+            greyboxRefsChanged |= SetRef(greyboxSo, "_floor", floorMat);
+            greyboxRefsChanged |= SetRef(greyboxSo, "_wall", wallMat);
+            greyboxRefsChanged |= SetRef(greyboxSo, "_obstacle", obstacleMat);
+            if (greyboxRefsChanged)
+            {
+                greyboxSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
             if (sceneDirty)
             {
                 EditorSceneManager.MarkSceneDirty(scene);
@@ -323,6 +364,20 @@ namespace Ring.Editor
             mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
             mat.SetColor("_EmissionColor", emissionColor);
             AssetDatabase.CreateAsset(mat, path);
+            return mat;
+        }
+
+        /// Loads a hand-authored `.mat` from `Assets/Art/Materials` — Task 13's
+        /// greybox materials are created directly on disk (unlike the emissive
+        /// placeholders above), so this never creates one; a missing file means the
+        /// asset wasn't checked in and is a hard setup error.
+        static Material LoadMaterial(string assetName)
+        {
+            string path = $"{MaterialsDir}/{assetName}.mat";
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (mat == null)
+                throw new System.InvalidOperationException(
+                    $"StageOneSceneBootstrap: no material at '{path}'.");
             return mat;
         }
 
