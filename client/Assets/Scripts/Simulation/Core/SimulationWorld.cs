@@ -62,6 +62,9 @@ namespace Ring.Simulation.Core
                 Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
             }
             WeaponSystem.Update(this, ref _players[0], in input);
+            // Canonical tick order (spec Interfaces, Task 16): movement → weapon →
+            // (mobs, Phase 6) → projectiles → (waves, Phase 6+).
+            ProjectileSystem.Update(this);
         }
 
         /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
@@ -143,6 +146,14 @@ namespace Ring.Simulation.Core
         /// Combat systems' seam into per-match counters (ShotsFired, skip counts, ...).
         internal ref MatchStats StatsRef => ref _stats;
 
+        /// ProjectileSystem's seam into live projectile storage (Task 16 sweep resolution).
+        internal ProjectileState[] Projectiles => _projectiles;
+        internal int ProjectileCount => _projectileCount;
+
+        /// ProjectileSystem's seam into live mob storage (Task 16 damage matrix).
+        internal MobState[] Mobs => _mobs;
+        internal int MobCount => _mobCount;
+
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
         /// once full, spawns are skipped and counted rather than growing the array,
         /// keeping the cap degradation allocation-free and deterministic.
@@ -171,6 +182,76 @@ namespace Ring.Simulation.Core
         {
             _projectiles[index] = _projectiles[--_projectileCount];
         }
+
+        /// Applies projectile damage to a mob (spec Interfaces, Task 16); on death
+        /// it swap-removes the mob the same way RemoveProjectileAt does for projectiles.
+        internal void DamageMob(int index, float dmg, float2 pos)
+        {
+            _mobs[index].Hp -= dmg;
+            _stats.ShotsHit++;
+            if (_mobs[index].Hp <= 0f)
+            {
+                _stats.Kills++;
+                Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg);
+                _mobs[index] = _mobs[--_mobCount];
+            }
+        }
+
+        /// Applies projectile damage to the player (spec Interfaces, Task 16): active
+        /// dash i-frames absorb the hit with no event; otherwise Hp drops and, once it
+        /// reaches zero, the player dies exactly once — the Alive gate stops further
+        /// hits on an already-dead player from re-emitting PlayerDied.
+        internal void DamagePlayer(float dmg, float2 pos)
+        {
+            ref PlayerState p = ref _players[0];
+            if (p.IframeTimer > 0f) return;
+
+            p.Hp -= dmg;
+            _stats.DamageTaken += dmg;
+            Emit(SimEventKind.PlayerDamaged, pos, 0, default, dmg);
+
+            if (p.Hp <= 0f && p.Alive)
+            {
+                p.Alive = false;
+                _stats.DeathTick = _tick;
+                p.DashTimer = 0f;
+                p.IframeTimer = 0f;
+                Emit(SimEventKind.PlayerDied, pos, 0, default, 0f);
+            }
+        }
+
+        /// Test-only mob spawn seam (Task 16 Interfaces): spawned mobs default to
+        /// Idle AI — Phase 6 hasn't wired ticking for it yet — so they act as static
+        /// combat targets for projectile tests. Capped at Arena.MaxMobs like the
+        /// real spawner will be.
+        internal int SpawnMobForTest(MobType type, float2 pos)
+        {
+            if (_mobCount >= _mobs.Length)
+            {
+                _stats.MobSpawnsSkipped++;
+                return -1;
+            }
+            int id = _nextEntityId++;
+            _mobs[_mobCount++] = new MobState
+            {
+                Id = id, Type = type, Pos = pos,
+                Hp = type == MobType.Chaser ? _config.Chaser.MaxHp : _config.Gunner.MaxHp,
+                Ai = MobAiState.Idle
+            };
+            return id;
+        }
+
+        /// Test-only wrapper over SpawnProjectile (Task 16 Interfaces) — same spawn
+        /// path production code uses, named for test call-sites.
+        internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
+            float damage, float radius, float ttl)
+            => SpawnProjectile(owner, pos, vel, damage, radius, ttl);
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// Dev-only mob placeholder spawn for Presentation milestone 2 (spec Interfaces).
+        /// Stripped from production builds — the sole public dev-surface method here.
+        public int DevSpawnMob(MobType type, float2 pos) => SpawnMobForTest(type, pos);
+#endif
 
         public SimEvent GetEvent(int i) => _events[i];
 
