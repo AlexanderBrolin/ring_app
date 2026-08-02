@@ -2,12 +2,17 @@
 # YAML-ассеты Unity (сцены, префабы, материалы, .meta, .asmdef) — обычный git.
 # Текстуры
 client/**/*.png filter=lfs diff=lfs merge=lfs -text
+client/**/*.PNG filter=lfs diff=lfs merge=lfs -text
 client/**/*.jpg filter=lfs diff=lfs merge=lfs -text
 client/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
 client/**/*.tga filter=lfs diff=lfs merge=lfs -text
+client/**/*.TGA filter=lfs diff=lfs merge=lfs -text
 client/**/*.psd filter=lfs diff=lfs merge=lfs -text
 client/**/*.exr filter=lfs diff=lfs merge=lfs -text
 client/**/*.hdr filter=lfs diff=lfs merge=lfs -text
+client/**/*.tif filter=lfs diff=lfs merge=lfs -text
+client/**/*.tiff filter=lfs diff=lfs merge=lfs -text
+client/**/*.bmp filter=lfs diff=lfs merge=lfs -text
 # Модели
 client/**/*.fbx filter=lfs diff=lfs merge=lfs -text
 client/**/*.FBX filter=lfs diff=lfs merge=lfs -text
@@ -15,8 +20,14 @@ client/**/*.obj filter=lfs diff=lfs merge=lfs -text
 client/**/*.blend filter=lfs diff=lfs merge=lfs -text
 # Аудио
 client/**/*.wav filter=lfs diff=lfs merge=lfs -text
+client/**/*.WAV filter=lfs diff=lfs merge=lfs -text
 client/**/*.ogg filter=lfs diff=lfs merge=lfs -text
 client/**/*.mp3 filter=lfs diff=lfs merge=lfs -text
+# Видео
+client/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
+client/**/*.mov filter=lfs diff=lfs merge=lfs -text
+client/**/*.webm filter=lfs diff=lfs merge=lfs -text
+client/**/*.avi filter=lfs diff=lfs merge=lfs -text
 # Шрифты
 client/**/*.ttf filter=lfs diff=lfs merge=lfs -text
 client/**/*.otf filter=lfs diff=lfs merge=lfs -text
@@ -26,3 +37,5 @@ client/**/*.so filter=lfs diff=lfs merge=lfs -text
 client/**/*.dylib filter=lfs diff=lfs merge=lfs -text
 client/**/*.a filter=lfs diff=lfs merge=lfs -text
 client/**/*.unitypackage filter=lfs diff=lfs merge=lfs -text
+# Бинарные Unity-ассеты, не покрываемые ForceText (запечённое освещение)
+client/**/LightingData.asset filter=lfs diff=lfs merge=lfs -text
