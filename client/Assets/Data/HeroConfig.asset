@@ -18,7 +18,7 @@ MonoBehaviour:
   Radius: 0.45
   MaxHp: 100
   DashSpeed: 30
-  DashDuration: 0.18
+  DashDuration: 0.09
   DashCooldown: 0.9
   DashIframes: 0.2
   DashBufferWindow: 0.15
