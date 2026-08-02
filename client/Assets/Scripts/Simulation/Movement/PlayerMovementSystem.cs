@@ -47,6 +47,19 @@ namespace Ring.Simulation.Movement
             return started;
         }
 
+        /// Advances a dead player's body by one tick (spec §3.12): input, dash and
+        /// weapon are inert once Alive is false, but the world keeps ticking — the
+        /// corpse still decelerates under friction and resolves collisions like a
+        /// live body, it just never receives input or re-accelerates.
+        public static void UpdateDead(ref PlayerState p, in SimConfig cfg)
+        {
+            float dt = SimulationWorld.TickDt;
+            var hero = cfg.Hero;
+            p.Vel = MoveTowards(p.Vel, float2.zero, hero.Friction * dt);
+            float2 target = p.Pos + p.Vel * dt;
+            MoveWithCollisions(ref p.Pos, ref p.Vel, target, hero.Radius, cfg.Arena);
+        }
+
         public static float2 MoveTowards(float2 cur, float2 target, float maxDelta)
         {
             float2 d = target - cur;

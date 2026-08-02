@@ -68,12 +68,22 @@ namespace Ring.Simulation.Core
             SimInput input = Sanitize(rawInput);
             _tick++;
             _players[0].AimPoint = input.AimPoint;
-            if (PlayerMovementSystem.Update(ref _players[0], in input, in _config))
+            // Death semantics (spec §3.12, Task 23): once dead, input/dash/weapon
+            // are inert — the body just decelerates under friction and keeps
+            // resolving collisions, it never reacts to input again.
+            if (_players[0].Alive)
             {
-                _stats.DashesUsed++;
-                Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
+                if (PlayerMovementSystem.Update(ref _players[0], in input, in _config))
+                {
+                    _stats.DashesUsed++;
+                    Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
+                }
+                WeaponSystem.Update(this, ref _players[0], in input);
             }
-            WeaponSystem.Update(this, ref _players[0], in input);
+            else
+            {
+                PlayerMovementSystem.UpdateDead(ref _players[0], in _config);
+            }
             // Canonical tick order (spec Interfaces, Task 16/19/20): movement →
             // weapon → mobs (Phase 6) → mob separation → projectiles → (waves,
             // Phase 6+). Separation runs right after MobAiSystem so it sees this
@@ -228,32 +238,43 @@ namespace Ring.Simulation.Core
 
         /// Applies projectile damage to a mob (spec Interfaces, Task 16); on death
         /// it swap-removes the mob the same way RemoveProjectileAt does for projectiles.
+        /// The mob's Hp/death/MobDied event happen unconditionally — the world keeps
+        /// playing out (spec §3.12) — but ShotsHit/Kills route through private
+        /// helpers guarded on player Alive, so a projectile fired before death that
+        /// connects afterwards still kills the mob without crediting the run's stats.
         internal void DamageMob(int index, float dmg, float2 pos)
         {
             _mobs[index].Hp -= dmg;
-            _stats.ShotsHit++;
+            IncrementShotsHit();
             if (_mobs[index].Hp <= 0f)
             {
-                _stats.Kills++;
+                IncrementKills();
                 Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg);
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
 
-        /// Applies projectile damage to the player (spec Interfaces, Task 16): active
-        /// dash i-frames absorb the hit with no event; otherwise Hp drops and, once it
-        /// reaches zero, the player dies exactly once — the Alive gate stops further
-        /// hits on an already-dead player from re-emitting PlayerDied.
+        /// Guarded stat increments (spec §3.12): stats freeze the tick the player
+        /// dies, even for damage from projectiles already in flight at that moment.
+        void IncrementShotsHit() { if (_players[0].Alive) _stats.ShotsHit++; }
+        void IncrementKills() { if (_players[0].Alive) _stats.Kills++; }
+
+        /// Applies projectile damage to the player (spec Interfaces, Task 16/23): a
+        /// no-op once the player is already dead (spec §3.12 — stats stay frozen and
+        /// no further PlayerDamaged/PlayerDied events fire); otherwise active dash
+        /// i-frames absorb the hit with no event, else Hp drops and, once it reaches
+        /// zero, the player dies exactly once.
         internal void DamagePlayer(float dmg, float2 pos)
         {
             ref PlayerState p = ref _players[0];
+            if (!p.Alive) return;
             if (p.IframeTimer > 0f) return;
 
             p.Hp -= dmg;
             _stats.DamageTaken += dmg;
             Emit(SimEventKind.PlayerDamaged, pos, 0, default, dmg);
 
-            if (p.Hp <= 0f && p.Alive)
+            if (p.Hp <= 0f)
             {
                 p.Alive = false;
                 _stats.DeathTick = _tick;
