@@ -590,6 +590,39 @@ Consumes: T4 (`FindModels`, `LoadDollAvatar`, `ShouldLoop`, константы �
 `П3 импорт паков (T6–11)` → `П4 аниматоры (T12–13)` → `П5 превью-сцена (T14–15)` →
 `П6 верификация+веха (T16–20)`. `app-5g6` (A8) — вне цепочки, ждёт мерджа Э1.
 
+## Ревизия Р-I по фактам инспекции (решения владельца 1a/2a, 2026-08-02)
+
+Инспекция (`$RING_ROOT/assets-src/INSPECTION.md`) показала: поставка UAL/UAL2 —
+**один FBX на пак с отдельными takes** (43+43), кукла — внутри `UAL1_Standard.fbx`;
+стрейфов/8-dir в бесплатных версиях нет. Владелец: **1a** (ревизия под факты),
+**2a** (1D-локомоция). Изменения к тексту тасков выше:
+
+- **T4:** `DollPath = UalRoot + "UAL1_Standard.fbx"` (кукла+клипы — один файл,
+  `CreateFromThisModel`); `CopyFromOther`+`DependsOnArtifact` — только для
+  `UAL2_Standard.fbx` и `Mannequin_F.fbx`. Классификация клипов кодом, а не
+  списками: humanoid — loop ⇔ имя оканчивается `_Loop`; роботы — loop ⇔ имя
+  после `|` начинается `Idle|Walk|Run`; прочее one-shot; списки
+  `LoopClips/OneShotClips` не нужны. `AnimatedRobotFiles = {George, Leela, Mike,
+  Stan, Enemy_EyeDrone, Enemy_QuadShell, Enemy_Trilobite}.fbx`. `_RM`-варианты
+  FBX в репо не копируются вовсе.
+- **T6 = только `UAL1_Standard.fbx`** (+ CREDITS) — «кукла» и «клипы» приезжают
+  одним файлом; **T7 = `UAL2_Standard.fbx` + `Mannequin_F.fbx`**; порядок
+  «UAL1 раньше UAL2» сохраняется (валидатор проверяет `sourceAvatar`).
+- **T10 (Sci-Fi):** отбор по INSPECTION.md — враги ×3 (`FBX (Unity)`-экспорт),
+  пушки ×6, лут-пропсы ×17, текстуры ×36; мебель не копируем.
+- **T12 (PlayerAnimator):** blend tree **1D по параметру `Speed`** (норм. [0;1]:
+  Idle_Loop → Walk_Loop → Jog_Fwd_Loop → Sprint_Loop); контракт для Фазы Б:
+  `Visual` поворачивается в сторону ДВИЖЕНИЯ, прицел держит Aim-слой
+  (Pistol_Aim_Neutral/Up/Down, Pistol_Shoot; маска верхней половины); Dash-стейт =
+  `Roll` (UAL1). Death: в Standard ровно один `Death01` (не 2–3) + Hit_Chest/
+  Hit_Head — вариативность смертей отложена (Pro/пост-MVP), фиксируется в bd note.
+- **T13/T15:** `Ual2Check` = `Mannequin_F` + мини-контроллер из `Sword_Dash` и
+  `Zombie_Walk_Fwd_Loop` (UAL2); `DirectorStub` = `Enemy_QuadShell` (крупнейший),
+  scale ×1.75; смерть роботов Sci-Fi = `TurnOff`.
+- **bd-дрифт:** jsonl экспортируется bd в ОСНОВНОЙ чекаут (`$APP_REPO`) —
+  chore-коммиты дрифта идут в main напрямую (штатное исключение проекта),
+  а не в эту ветку; пункты «bd-дрифт фазы» в тасках исполняются из `$APP_REPO`.
+
 ## Self-review плана (v2)
 
 - v1-ревью 4 субагентами (A код/API, B конвенции, C reuse, D полнота): 7 Critical,
