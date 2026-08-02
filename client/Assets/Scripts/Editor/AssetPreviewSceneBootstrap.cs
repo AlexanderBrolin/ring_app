@@ -23,10 +23,12 @@ namespace Ring.Editor
         public const string DirectorSkinPath = TA.MaterialsRoot + "DirectorSkin.mat";
         public const string ObsoleteDirectorMatPath = TA.MaterialsRoot + "DirectorDark.mat";
         public const string FloorMatPath = TA.MaterialsRoot + "PreviewFloor.mat";
-        // Milestone-1 feedback numbers (preview cosmetics, not gameplay SO).
-        const float MechScale = 0.4f;   // мехи «в 2,5 раза меньше»
-        const float EliteScale = 1.5f;  // элита «в 1,5 раза больше»
-        const float DirectorScale = 1.75f;
+        // Milestone feedback numbers (preview cosmetics, not gameplay SO).
+        const float MechScale = 0.4f;    // мехи «в 2,5 раза меньше» (веха 1)
+        const float EliteScale = 1.5f;   // элита «в 1,5 раза больше» (веха 1)
+        const float TriloScale = EliteScale * 0.5f; // «самый большой справа — в 2 раза меньше» (веха 3)
+        const float DirectorScale = 3.5f;           // «Директора в 2 раза больше» (веха 3)
+        const float RobotYaw = 180f;     // «роботы стоят задом к Сборщикам» (веха 3)
 
         [MenuItem("Ring/Bootstrap/Asset Preview Scene")]
         public static void Apply()
@@ -58,7 +60,7 @@ namespace Ring.Editor
             BuildEntity("Ual2Check", new Vector3(2f, 0f, 0f),
                 TP.DollPath, TA.Ual2CheckControllerPath);
 
-            GameObject mechs = GetOrCreateRoot("Mechs", new Vector3(0f, 0f, 4f));
+            GameObject mechs = GetOrCreateRoot("Mechs", new Vector3(0f, 0f, 4f), RobotYaw);
             BuildEntityUnder(mechs, "George", new Vector3(-3f, 0f, 0f),
                 TP.MechRoot + "Models/George.fbx", null, MechScale);
             BuildEntityUnder(mechs, "Leela", new Vector3(-1f, 0f, 0f),
@@ -68,17 +70,18 @@ namespace Ring.Editor
             BuildEntityUnder(mechs, "Stan", new Vector3(3f, 0f, 0f),
                 TP.MechRoot + "Models/Stan.fbx", null, MechScale);
 
-            GameObject elites = GetOrCreateRoot("EliteRobots", new Vector3(0f, 0f, 8f));
+            GameObject elites = GetOrCreateRoot("EliteRobots", new Vector3(0f, 0f, 8f), RobotYaw);
             BuildEntityUnder(elites, "EyeDrone", new Vector3(-2.5f, 0f, 0f),
                 TP.SciFiRoot + "Models/Enemy_EyeDrone.fbx", null, EliteScale);
             BuildEntityUnder(elites, "QuadShell", new Vector3(0f, 0f, 0f),
                 TP.SciFiRoot + "Models/Enemy_QuadShell.fbx", null, EliteScale);
             BuildEntityUnder(elites, "Trilobite", new Vector3(2.5f, 0f, 0f),
-                TP.SciFiRoot + "Models/Enemy_Trilobite.fbx", null, EliteScale);
+                TP.SciFiRoot + "Models/Enemy_Trilobite.fbx", null, TriloScale);
 
             GameObject director = BuildEntity("DirectorStub", new Vector3(0f, 0f, 12f),
                 TP.SciFiRoot + "Models/Enemy_QuadShell.fbx",
                 TA.ControllerPathFor("Enemy_QuadShell.fbx"), DirectorScale);
+            director.transform.rotation = Quaternion.Euler(0f, RobotYaw, 0f);
             Transform directorVisual = director.transform.Find("Visual");
             foreach (Renderer renderer in
                      directorVisual.GetComponentsInChildren<Renderer>())
@@ -105,11 +108,12 @@ namespace Ring.Editor
             Debug.Log("[AssetPreview] scene saved: " + TP.ScenePath);
         }
 
-        static GameObject GetOrCreateRoot(string name, Vector3 position)
+        static GameObject GetOrCreateRoot(string name, Vector3 position, float yaw = 0f)
         {
             GameObject go = GameObject.Find("/" + name);
             if (go == null) go = new GameObject(name);
             go.transform.position = position;
+            go.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
             return go;
         }
 

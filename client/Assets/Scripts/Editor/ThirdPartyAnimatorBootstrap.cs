@@ -110,14 +110,18 @@ namespace Ring.Editor
         ///     the other way around.
         static void CreatePlayerController(AvatarMask mask)
         {
-            if (AssetDatabase.LoadAssetAtPath<AnimatorController>(PlayerControllerPath) != null)
+            var existingController =
+                AssetDatabase.LoadAssetAtPath<AnimatorController>(PlayerControllerPath);
+            if (existingController != null)
             {
-                Debug.Log("[ThirdPartyAnimators] exists, skipped: " + PlayerControllerPath);
+                ReconcileSpeedDefault(existingController);
+                Debug.Log("[ThirdPartyAnimators] exists, reconciled: " + PlayerControllerPath);
                 return;
             }
             Dictionary<string, AnimationClip> clips = ClipsOf(TP.DollPath);
             var controller = AnimatorController.CreateAnimatorControllerAtPath(PlayerControllerPath);
             controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
+            ReconcileSpeedDefault(controller);
 
             AnimatorState locomotion = controller.CreateBlendTreeInController(
                 "Locomotion", out BlendTree tree, 0);
@@ -149,6 +153,25 @@ namespace Ring.Editor
             AddAimState(controller, aim, clips, "Pistol_Shoot");
             AddAimState(controller, aim, clips, "Pistol_Reload");
             Debug.Log("[ThirdPartyAnimators] created " + PlayerControllerPath);
+        }
+
+        /// Preview shows the collector RUNNING by default (milestone-3 feedback:
+        /// «он же бегать должен») — Speed defaults to 1 → Sprint end of the
+        /// blend tree. Phase B drives the parameter from simulation velocity.
+        static void ReconcileSpeedDefault(AnimatorController controller)
+        {
+            AnimatorControllerParameter[] parameters = controller.parameters; // copy
+            bool changed = false;
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (parameters[i].name != "Speed") continue;
+                if (!Mathf.Approximately(parameters[i].defaultFloat, 1f))
+                {
+                    parameters[i].defaultFloat = 1f;
+                    changed = true;
+                }
+            }
+            if (changed) controller.parameters = parameters;
         }
 
         /// UAL2 rig check (spec §9 risk): a second doll instance plays UAL2
