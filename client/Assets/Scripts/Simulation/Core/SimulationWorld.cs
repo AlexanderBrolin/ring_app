@@ -1,3 +1,4 @@
+using Ring.Simulation.AI;
 using Ring.Simulation.Combat;
 using Ring.Simulation.Movement;
 using Unity.Mathematics;
@@ -62,8 +63,9 @@ namespace Ring.Simulation.Core
                 Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
             }
             WeaponSystem.Update(this, ref _players[0], in input);
-            // Canonical tick order (spec Interfaces, Task 16): movement → weapon →
-            // (mobs, Phase 6) → projectiles → (waves, Phase 6+).
+            // Canonical tick order (spec Interfaces, Task 16/19): movement → weapon →
+            // mobs (Phase 6) → projectiles → (waves, Phase 6+).
+            MobAiSystem.Update(this);
             ProjectileSystem.Update(this);
         }
 
@@ -153,6 +155,10 @@ namespace Ring.Simulation.Core
         /// ProjectileSystem's seam into live mob storage (Task 16 damage matrix).
         internal MobState[] Mobs => _mobs;
         internal int MobCount => _mobCount;
+
+        /// MobAiSystem's seam into the per-archetype balance numbers (Task 19).
+        internal MobSimConfig MobConfigFor(MobType type)
+            => type == MobType.Chaser ? _config.Chaser : _config.Gunner;
 
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
         /// once full, spawns are skipped and counted rather than growing the array,
@@ -244,7 +250,10 @@ namespace Ring.Simulation.Core
             {
                 Id = id, Type = type, Pos = pos,
                 Hp = type == MobType.Chaser ? _config.Chaser.MaxHp : _config.Gunner.MaxHp,
-                Ai = MobAiState.Idle
+                Ai = MobAiState.Idle,
+                // Deterministic handedness for Gunner strafe / SteerAround's dead-on
+                // tangent tiebreak (Task 19 Interfaces) — no RNG needed.
+                StrafeSign = (id & 1) == 0 ? 1 : -1
             };
             return id;
         }
@@ -254,6 +263,11 @@ namespace Ring.Simulation.Core
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
             float damage, float radius, float ttl)
             => SpawnProjectile(owner, pos, vel, damage, radius, ttl);
+
+        /// Test-only seam (Task 19 Interfaces): kills the player outright via the
+        /// normal damage path (overkill amount) so MobAiSystem's "player dead"
+        /// branch (all mobs → Idle) can be exercised deterministically.
+        internal void KillPlayerForTest() => DamagePlayer(_config.Hero.MaxHp + 1f, _players[0].Pos);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// Dev-only mob placeholder spawn for Presentation milestone 2 (spec Interfaces).
