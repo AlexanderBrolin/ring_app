@@ -1,6 +1,11 @@
 using Ring.Data;
 using Ring.Simulation.Core;
 using UnityEngine;
+// Type alias, not `using Unity.Mathematics;` — a full namespace import would make
+// `Random` ambiguous between `UnityEngine.Random` (used below, `PlayClip`'s pitch
+// jitter) and `Unity.Mathematics.Random`, the same trap PersistentPropsDirector's
+// class doc (Task 27) already documents and routes around.
+using float2 = Unity.Mathematics.float2;
 
 namespace Ring.Presentation
 {
@@ -43,11 +48,6 @@ namespace Ring.Presentation
     {
         const int VoiceCount = 16;
 
-        // ~1.5 tick periods (33ms/tick @ 30Hz, spec §3.2) — see
-        // MuzzleFlashView.PredictedTtlSeconds's doc for the exact rationale;
-        // kept identical here so the two components' windows can't drift.
-        const float PredictedTtlSeconds = 0.05f;
-
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] AudioClip _shotClip;
@@ -69,8 +69,9 @@ namespace Ring.Presentation
 
         // Task 28 (ImmediateMuzzleFeedback): latches a predicted shot-sound
         // play until either the matching real ProjectileFired event consumes
-        // it (HandleEvent) or PredictedTtlSeconds elapses unconfirmed — see
-        // the class doc above and MuzzleFlashView's for the full rationale.
+        // it (HandleEvent) or SimulationRunner.ImmediatePredictionTtlSeconds
+        // elapses unconfirmed — see the class doc above and MuzzleFlashView's
+        // for the full rationale.
         bool _predicted;
         float _predictedExpireAt;
 
@@ -110,7 +111,12 @@ namespace Ring.Presentation
 
         /// Task 28: per-frame prediction — see the class doc above and
         /// `MuzzleFlashView.Update`'s doc for the shared heuristic's full
-        /// rationale.
+        /// rationale. Fix-round (review #1, Medium): positioned at the MUZZLE,
+        /// same as `MuzzleFlashView`'s fix — the authoritative `ProjectileHit`/
+        /// `PlayClip` position for a real shot is `WeaponSystem`'s spawn point
+        /// (`p.Pos + dir * cfg.MuzzleOffset`), not the hero's center; reads
+        /// `MuzzleOffset` off `_runner.World.Config.Weapon` (the built
+        /// `SimConfig`) rather than adding a second `WeaponConfig` reference.
         void Update()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
@@ -118,10 +124,17 @@ namespace Ring.Presentation
             if (_predicted) return;
             if (!_runner.WouldFireThisFrame) return;
 
-            if (PlayClip(_shotClip, SimEventKind.ProjectileFired, _runner.RenderCurr.Player.Pos))
+            PlayerState player = _runner.RenderCurr.Player;
+            float2 aimDir = player.AimPoint - player.Pos;
+            float lenSq = aimDir.x * aimDir.x + aimDir.y * aimDir.y;
+            float2 dir = lenSq > 1e-8f ? aimDir / Mathf.Sqrt(lenSq) : new float2(1f, 0f);
+            float muzzleOffset = _runner.World.Config.Weapon.MuzzleOffset;
+            float2 muzzlePos = player.Pos + dir * muzzleOffset;
+
+            if (PlayClip(_shotClip, SimEventKind.ProjectileFired, muzzlePos))
             {
                 _predicted = true;
-                _predictedExpireAt = Time.unscaledTime + PredictedTtlSeconds;
+                _predictedExpireAt = Time.unscaledTime + SimulationRunner.ImmediatePredictionTtlSeconds;
             }
             // PlayClip returning false (MinSfxInterval/VoicesPerSfx gated the
             // predicted attempt out) leaves `_predicted` false — the real event
@@ -154,7 +167,7 @@ namespace Ring.Presentation
         /// the round-robin voice pick. Returns whether a voice actually started
         /// playing — the predicted path only arms its suppression latch on
         /// `true` (see `Update`'s doc above for why).
-        bool PlayClip(AudioClip clip, SimEventKind kind, Unity.Mathematics.float2 simPos)
+        bool PlayClip(AudioClip clip, SimEventKind kind, float2 simPos)
         {
             if (clip == null) return false;
 

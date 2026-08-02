@@ -9,8 +9,39 @@ namespace Ring.Presentation
     /// `Time.unscaledDeltaTime` into fixed 30 Hz ticks via `FixedStepAccumulator`.
     /// `Time.timeScale` is never touched anywhere in the project — this is the only
     /// clock source for the sim, so pausing/slow-mo must never route through it.
+    ///
+    /// Task 28 fix-round (review #2, Low): `[DefaultExecutionOrder(-50)]` makes
+    /// this run its own `Update` before every default-order (0) script's —
+    /// `MuzzleFlashView`/`AudioDirector`'s `Update` read `LastFrameInput`/
+    /// `RenderCurr` (below) and need THIS frame's values, not whatever was left
+    /// over from last frame; Unity does not otherwise guarantee `Update` order
+    /// among same-order scripts. Verified safe for every other `Update`-phase
+    /// reader of this runner: `GameFeelDirector.Update` only decays its own
+    /// unscaledDeltaTime-driven timers (hitstop/trauma/shake/vignette), never
+    /// reads `_runner`'s per-frame state; `ViewRegistry`/`PlayerView`/`CameraRig`/
+    /// `HudController`/`CrosshairView` all read via `LateUpdate` (already
+    /// guaranteed to run after every `Update`, order or no); `DevOverlay`/
+    /// `PauseController`/`DeathOverlayController`'s own `Update`s only poll
+    /// keyboard/dev state and call `Restart`/toggle `Paused` — nothing in the
+    /// project currently depends on running BEFORE this class's `Update` within
+    /// the same frame, so pinning this one earlier is a strict improvement, not
+    /// a trade-off.
+    [DefaultExecutionOrder(-50)]
     public sealed class SimulationRunner : MonoBehaviour
     {
+        /// Task 28 fix-round (review #3, Minor): the shared TTL both
+        /// `MuzzleFlashView` and `AudioDirector`'s ImmediateMuzzleFeedback
+        /// prediction latches use — was two separate `PredictedTtlSeconds`
+        /// constants (one per class) that could silently drift apart; lives
+        /// here (not `GameFeelConfig`) because it is a tick-timing correctness
+        /// constant tied to this class's own 30Hz accumulator (spec §3.2), not
+        /// a game-feel number the owner would hot-tweak on the milestone-4
+        /// playtest. ~1.5 tick periods (33ms/tick @ 30Hz): long enough for the
+        /// matching real tick to land and flush even under a slightly-late
+        /// accumulator crossing, short enough to bound how long a false
+        /// prediction lingers (see the two consumers' own docs for specifics).
+        public const float ImmediatePredictionTtlSeconds = 0.05f;
+
         [SerializeField] HeroConfig _hero;
         [SerializeField] WeaponConfig _weapon;
         [SerializeField] MobConfig _chaser;
@@ -71,7 +102,11 @@ namespace Ring.Presentation
         /// source of truth for `MuzzleFlashView`/`AudioDirector`'s per-frame
         /// prediction, so the two components' decisions can never drift apart.
         /// Mirrors `WeaponSystem.Update`'s own `canFire` gate exactly (`FireHeld
-        /// && Alive && (CanFireWhileDash || DashTimer <= 0)`), but reads it off
+        /// && Alive && FireCooldown <= 0 && (CanFireWhileDash || DashTimer <= 0)`
+        /// — fix-round review #4: an earlier revision of this doc paraphrased
+        /// the gate without the `FireCooldown <= 0` term even though the code
+        /// below always had it; the property itself was correct, only the prose
+        /// was incomplete), but reads it off
         /// `RenderCurr` — the last COMPLETE tick's state — instead of any
         /// Simulation internals, per client/CLAUDE.md's "клиент не решает
         /// игровые исходы" boundary (this predicts client-local cosmetics only;
