@@ -52,6 +52,11 @@ namespace Ring.Simulation.Core
             _rng = new Random(folded == 0 ? 0x9E3779B9u : folded);
             _config = config;
             _players[0] = new PlayerState { Hp = config.Hero.MaxHp, Alive = true };
+            // Wave director starts idle, counting down to the first wave (Task 22
+            // Interfaces) — WavePhase.Waiting is the enum's zero value, but
+            // PhaseTimer must be set explicitly or the countdown would start
+            // already expired and fire a wave on tick 1.
+            _wave = new WaveState { Phase = WavePhase.Waiting, PhaseTimer = config.Wave.FirstWaveDelay };
             _mobs = new MobState[config.Arena.MaxMobs];
             _sepForces = new float2[config.Arena.MaxMobs];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
@@ -78,6 +83,10 @@ namespace Ring.Simulation.Core
             MobAiSystem.Update(this);
             SeparationSystem.Apply(this);
             ProjectileSystem.Update(this);
+            // Runs last (Task 22 Interfaces) so spawns land after this tick's
+            // movement/combat has settled — a mob spawned here doesn't get an
+            // extra, unbudgeted movement/combat sub-step on its own spawn tick.
+            WaveSystem.Update(this);
         }
 
         /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
@@ -175,6 +184,11 @@ namespace Ring.Simulation.Core
         /// (Task 20) — sized to Arena.MaxMobs, recomputed every tick, never grown.
         internal float2[] SepForces => _sepForces;
 
+        /// WaveSystem's seam into the wave director's live state (Task 22) — same
+        /// ref-return pattern as Rng, so the system mutates it in place instead of
+        /// round-tripping copies every tick.
+        internal ref WaveState WaveRef => ref _wave;
+
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
         /// once full, spawns are skipped and counted rather than growing the array,
         /// keeping the cap degradation allocation-free and deterministic.
@@ -249,15 +263,16 @@ namespace Ring.Simulation.Core
             }
         }
 
-        /// Test-only mob spawn seam (Task 16 Interfaces). Spawned mobs start at
+        /// Battle mob spawn (Task 22 Interfaces) — WaveSystem's sole entry point for
+        /// turning a validated spawn position into a live mob. Spawned mobs start at
         /// Idle AI, but since Task 19 (Phase 6) MobAiSystem ticks every live mob
         /// unconditionally — a spawned mob is NOT a static target: from the very
         /// next Tick() it settles into Chase/Reposition-Fire like any other mob.
-        /// Callers that need a stationary target must either not tick the world or
-        /// account for movement/contact damage/gunfire. StrafeSign is seeded
-        /// deterministically by Id parity (Task 19 Interfaces) — no RNG. Capped at
-        /// Arena.MaxMobs like the real spawner will be.
-        internal int SpawnMobForTest(MobType type, float2 pos)
+        /// Capped at Arena.MaxMobs: past the cap the spawn is skipped and counted
+        /// (MobSpawnsSkipped) rather than growing the array; the caller (WaveSystem)
+        /// is responsible for leaving the wave's spawn debt untouched when that
+        /// happens so the skipped mob is retried once the cap has room again.
+        internal int SpawnMob(MobType type, float2 pos)
         {
             if (_mobCount >= _mobs.Length)
             {
@@ -274,8 +289,18 @@ namespace Ring.Simulation.Core
                 // tangent tiebreak (Task 19 Interfaces) — no RNG needed.
                 StrafeSign = (id & 1) == 0 ? 1 : -1
             };
+            Emit(SimEventKind.MobSpawned, pos, id, type, 0f);
             return id;
         }
+
+        /// Test-only alias for SpawnMob (Task 16 Interfaces, retargeted in Task 22
+        /// once the battle spawn path existed — same cap/id/StrafeSign behaviour,
+        /// named for test call-sites). Now also emits MobSpawned like the battle
+        /// path does; no EditMode test asserts a specific MobSpawned count/absence
+        /// (checked by grep — call-sites either don't inspect events at all or
+        /// ClearEvents() before the window they measure), so this is not a
+        /// behavioural change any existing test depends on.
+        internal int SpawnMobForTest(MobType type, float2 pos) => SpawnMob(type, pos);
 
         /// Test-only wrapper over SpawnProjectile (Task 16 Interfaces) — same spawn
         /// path production code uses, named for test call-sites.
