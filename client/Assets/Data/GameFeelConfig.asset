@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 41284991a24b45d0ba6e8a5e34ae78d9, type: 3}
+  m_Name: GameFeelConfig
+  m_EditorClassIdentifier: Ring.Data::Ring.Data.GameFeelConfig
+  HitstopSeconds: 0.04
+  HitstopScope: 1
+  MaxHitstopRatio: 0.35
+  HitstopCatchUpSeconds: 0.05
+  FlashDuration: 0.08
+  TraumaHit: 0.2
+  TraumaDeath: 0.35
+  TraumaPlayerHit: 0.45
+  TraumaDecayPerSec: 1.2
+  ShakeAmplitude: 0.35
+  ShakeFrequency: 22
+  PitchRange: 0.12
+  TracerFadeSeconds: 0.4
+  CasingPhysicsSeconds: 1.5
+  MaxCasings: 1024
+  MaxDecals: 512
+  MaxCorpses: 64
+  VoicesPerSfx: 6
+  MinSfxInterval: 0.03
+  ImmediateMuzzleFeedback: 1
+  ExtrapolateLocalPlayer: 0

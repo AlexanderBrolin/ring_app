@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 94c562863cf07400ea83f86f7ca7c7a6, type: 3}
+  m_Name: WeaponConfig
+  m_EditorClassIdentifier: Ring.Data::Ring.Data.WeaponConfig
+  FireInterval: 0.12
+  ProjectileSpeed: 35
+  ProjectileRadius: 0.12
+  ProjectileLifetime: 1.5
+  Damage: 12
+  SpreadRad: 0.026
+  RecoilPerShotRad: 0.006
+  RecoilRecoveryRadPerSec: 0.03
+  RecoilMaxRad: 0.07
+  MuzzleOffset: 0.6
+  CanFireWhileDash: 0

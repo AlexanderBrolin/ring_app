@@ -57,6 +57,44 @@ namespace Ring.Simulation.Core
             _players[0].AimPoint = input.AimPoint;
         }
 
+        /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
+        /// the tick boundary (caller must only invoke this between ticks). Arena
+        /// topology (radius, obstacle count/positions/radii) must stay identical —
+        /// a change there invalidates collision/spawn geometry that isn't reconciled
+        /// here, so it throws instead; Presentation reacts by restarting the world.
+        /// Migration: Hp clamps down to the new max, every player timer clamps into
+        /// [0, its new max], wave-state (including WaveIndex) is left untouched.
+        public void ApplyConfig(in SimConfig next)
+        {
+            if (!ArenaTopologyMatches(in _config.Arena, in next.Arena))
+            {
+                throw new System.ArgumentException("SimulationWorld.ApplyConfig: arena topology " +
+                    "changed (radius/obstacles) — restart the world instead of hot-tweaking it.");
+            }
+
+            _config = next;
+
+            PlayerState p = _players[0];
+            p.Hp = math.min(p.Hp, next.Hero.MaxHp);
+            p.DashTimer = math.clamp(p.DashTimer, 0f, next.Hero.DashDuration);
+            p.DashCooldown = math.clamp(p.DashCooldown, 0f, next.Hero.DashCooldown);
+            p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
+            p.DashBufferTimer = math.clamp(p.DashBufferTimer, 0f, next.Hero.DashBufferWindow);
+            p.FireCooldown = math.clamp(p.FireCooldown, 0f, next.Weapon.FireInterval);
+            _players[0] = p;
+        }
+
+        static bool ArenaTopologyMatches(in ArenaSimConfig a, in ArenaSimConfig b)
+        {
+            if (a.Radius != b.Radius || a.ObstacleCount != b.ObstacleCount) return false;
+            for (int i = 0; i < a.ObstacleCount; i++)
+            {
+                if (!math.all(a.ObstaclePos[i] == b.ObstaclePos[i])) return false;
+                if (a.ObstacleRadius[i] != b.ObstacleRadius[i]) return false;
+            }
+            return true;
+        }
+
         SimInput Sanitize(in SimInput raw)
         {
             SimInput s = raw;
