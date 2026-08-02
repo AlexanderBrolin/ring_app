@@ -32,6 +32,9 @@ Input System 1.20 (project-wide actions), uGUI+TMP, Unity Test Framework (NUnit)
 - Единый RNG `_rng` мира; отдельные `Unity.Mathematics.Random` запрещены (§3.3).
 - Баланс — только в SO (`client/Assets/Data`); `TickDt` — единственный источник dt.
 - Пакеты не добавляются (Critical Rule 9). Словарь ADR-003 §9 — включая идентификаторы.
+- Код, идентификаторы и комментарии в .cs-файлах — АНГЛИЙСКИЕ (CLAUDE.md §Языки);
+  русские пояснения в сниппетах этого плана при переносе в файлы ПЕРЕВОДЯТСЯ
+  исполнителем на английский; русский остаётся в коммитах, UI-строках и тексте плана.
 - Коммиты: `feat(app-88s): …`/`test(…)`/`chore(…)`, русский, трейлер
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; перед коммитом секрет-чек
   `git status --short --untracked-files=all | grep -E '\.(env|pem|key)$|secrets/'` — пуст.
@@ -49,52 +52,87 @@ Input System 1.20 (project-wide actions), uGUI+TMP, Unity Test Framework (NUnit)
   `cd "$WT" && "$UNITY" -batchmode -quit -projectPath client -logFile "$SCRATCH/c.log"; grep -E "error CS|Exception" "$SCRATCH/c.log" | head; echo EXIT=$?`
   Ожидание: EXIT=0, grep пуст.
 - **R-BUILD-<X>**: `cd "$WT" && RING_BUILD_ROOT="$SCRATCH/builds" "$UNITY" -batchmode -quit -projectPath client -executeMethod Ring.Editor.BuildCommands.Build<X> -logFile "$SCRATCH/b.log"; echo EXIT=$?` (X ∈ LinuxServer|WindowsClient|LinuxClient).
-- **R-COMMIT**: секрет-чек → `git add <файлы> && git commit -m "<msg>"`.
+- **R-COMMIT**: секрет-чек → `git add <файлы> && git commit -m "<msg>" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"`.
 
 ---
 
 ## Phase 1 — Каркас (спека §3.1–3.3, §3.7, §3.9; таск 1 из §4)
 
-### Task 1: asmdef-слои Ring.Data / Ring.Presentation + ссылки
+### Task 1: asmdef-слои Ring.Data / Ring.Presentation + Amendment A7 + CODEOWNERS
 
 **Files:**
-- Create: `client/Assets/Scripts/Data/Ring.Data.asmdef`
-- Create: `client/Assets/Scripts/Presentation/Ring.Presentation.asmdef`
-- Modify: `client/Assets/Scripts/Editor/Editor.asmdef` (добавить ссылку Ring.Data)
+- Create: `client/Assets/Scripts/Data/Data.asmdef` (имена файлов — как в Э0:
+  без префикса `Ring.`)
+- Create: `client/Assets/Scripts/Presentation/Presentation.asmdef`
 - Modify: `client/Assets/Tests/EditMode/Simulation.Tests.asmdef` (добавить Ring.Data)
+- Modify: `docs/adr/ADR-002-Разработка.md` (§10: Amendment A7 — решение Р1)
+- Modify: `.github/CODEOWNERS` (строка `/client/Assets/Scripts/Data/` + фикс
+  мёртвого пути `/client/Tests/` → `/client/Assets/Tests/`)
 
 **Interfaces:**
-- Produces: сборки `Ring.Data` (SO-классы, ссылается на Ring.Simulation) и
-  `Ring.Presentation` (ссылается на Ring.Simulation, Ring.Data, Unity.InputSystem,
-  Unity.Mathematics) — все последующие таски кладут код в них.
+- Produces: сборки `Ring.Data` и `Ring.Presentation` — все последующие таски кладут
+  код в них. `Ring.Presentation` сразу ссылается на UI/TMP/URP-сборки: HUD (Task 14),
+  винетка (Task 25) и `DecalProjector` (Task 27) без них не соберутся, а повторных
+  правок asmdef план не содержит.
+- Ссылка `Editor.asmdef → Ring.Data` НЕ добавляется (уточнение спеки §3.1:
+  editor-кода на Ring.Data в этапе нет — hot-tweak живёт в `OnValidate` самих SO;
+  мёртвые зависимости запрещены Пятью правилами №3).
 
-- [ ] **Step 1:** `client/Assets/Scripts/Data/Ring.Data.asmdef`:
+- [ ] **Step 1:** `client/Assets/Scripts/Data/Data.asmdef` (полный набор полей —
+  формат как у существующего `Simulation.asmdef`):
 
 ```json
 {
     "name": "Ring.Data",
     "rootNamespace": "Ring.Data",
     "references": ["Ring.Simulation", "Unity.Mathematics"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
     "noEngineReferences": false
 }
 ```
 
-- [ ] **Step 2:** `client/Assets/Scripts/Presentation/Ring.Presentation.asmdef`:
+- [ ] **Step 2:** `client/Assets/Scripts/Presentation/Presentation.asmdef`:
 
 ```json
 {
     "name": "Ring.Presentation",
     "rootNamespace": "Ring.Presentation",
-    "references": ["Ring.Simulation", "Ring.Data", "Unity.InputSystem", "Unity.Mathematics"],
+    "references": ["Ring.Simulation", "Ring.Data", "Unity.InputSystem",
+                   "Unity.Mathematics", "UnityEngine.UI", "Unity.TextMeshPro",
+                   "Unity.RenderPipelines.Universal.Runtime"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
     "noEngineReferences": false
 }
 ```
 
-- [ ] **Step 3:** В `Editor.asmdef` и `Simulation.Tests.asmdef` добавить `"Ring.Data"`
-  в `references` (массивы сейчас: Editor — `[]`; Tests —
-  `["Ring.Simulation","UnityEngine.TestRunner","UnityEditor.TestRunner"]`).
-- [ ] **Step 4:** R-COMPILE — EXIT=0, ошибок нет; Unity сгенерит `.meta` — закоммитить вместе.
-- [ ] **Step 5:** R-COMMIT `feat(app-88s): asmdef-слои Ring.Data и Ring.Presentation`.
+- [ ] **Step 3:** В `Simulation.Tests.asmdef` добавить `"Ring.Data"` в `references`
+  (сейчас `["Ring.Simulation","UnityEngine.TestRunner","UnityEditor.TestRunner"]`).
+- [ ] **Step 4:** ADR-002 §10 — дописать Amendment (Р1 санкционирован апрувом спеки):
+
+```markdown
+- **A7 (2026-08-02).** Слой `client/Assets/Scripts/Data/` (asmdef `Ring.Data`:
+  SO-классы баланса + конвертация в plain SimConfig) — дополняет структуру §3;
+  server-ownership.
+```
+
+  `.github/CODEOWNERS`: добавить `/client/Assets/Scripts/Data/ @AlexanderBrolin`;
+  заменить битый `/client/Tests/` на `/client/Assets/Tests/`.
+- [ ] **Step 5:** R-COMPILE — EXIT=0, ошибок нет; Unity сгенерит `.meta` — закоммитить вместе.
+- [ ] **Step 6:** R-COMMIT `feat(app-88s): asmdef-слои Ring.Data/Ring.Presentation, Amendment A7, CODEOWNERS`.
 
 ### Task 2: StateHash64 — float-перегрузки (TDD)
 
@@ -178,7 +216,7 @@ using Unity.Mathematics;
 
 - [ ] **Step 4:** R-FILTER `StateHashTests` — PASS; R-FILTER `DeterminismTests` — PASS
   (golden-vector жив).
-- [ ] **Step 5:** R-COMMIT `test(app-88s): float/int/bool-перегрузки StateHash64 с канонизацией -0.0`.
+- [ ] **Step 5:** R-COMMIT `feat(app-88s): float/int/bool-перегрузки StateHash64 с канонизацией -0.0`.
 
 ### Task 3: SimConfig, SimInput, состояния, миграция API SimulationWorld (TDD)
 
@@ -225,12 +263,14 @@ public enum WavePhase : byte { Waiting = 0, Active = 1 }
 public struct WaveState { public WavePhase Phase; public int WaveIndex, PendingChasers,
     PendingGunners, AliveCount; public float PhaseTimer; }
 public struct MatchStats { public int Kills, WavesCleared, ShotsFired, ShotsHit,
-    DashesUsed, SpawnsSkipped, DeathTick; public float DamageTaken; }
+    DashesUsed, MobSpawnsSkipped, ProjectileSpawnsSkipped, DeathTick;
+    public float DamageTaken; }
+// капы наблюдаемы раздельно (спека §3.15): что упёрлось — видно в DevOverlay
 ```
 
 - `SimulationWorld`: `SimulationWorld(long seed, in SimConfig config)`,
-  `void Tick(in SimInput input)`, `ulong StateHash()`, `int Tick_ => _tick` (property
-  `CurrentTick`), `MatchStats Stats`, `PlayerState Player` (копия `_players[0]`).
+  `void Tick(in SimInput input)`, `ulong StateHash()`, `int CurrentTick`,
+  `MatchStats Stats`, `PlayerState Player` (копия `_players[0]`).
 - `TestConfigs.Default()` — plain `SimConfig` c числами по споке (тестовый эталон,
   без SO). Санитизация ввода — внутри `Tick` (спека §3.8).
 
@@ -254,7 +294,9 @@ namespace Ring.Simulation.Tests
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
                     ProjectileRadius = 0.12f, ProjectileLifetime = 1.5f, Damage = 12f,
                     SpreadRad = 0.026f, RecoilPerShotRad = 0.006f,
-                    RecoilRecoveryRadPerSec = 0.07f, RecoilMaxRad = 0.07f,
+                    // recovery MUST be below RecoilPerShotRad / FireInterval (0.05),
+                    // otherwise recoil never accumulates and the cone is dead
+                    RecoilRecoveryRadPerSec = 0.03f, RecoilMaxRad = 0.07f,
                     MuzzleOffset = 0.6f, CanFireWhileDash = false },
                 Chaser = new MobSimConfig { MaxSpeed = 5.2f, Accel = 30f, Radius = 0.5f,
                     MaxHp = 30f, ContactDamage = 15f, AttackRange = 1.1f,
@@ -285,10 +327,20 @@ namespace Ring.Simulation.Tests
             };
         }
 
-        /// Арена без препятствий — для тестов движения/боёвки в чистом поле.
-        public static SimConfig Open()
+        /// Default config with waves pushed out of reach: movement/combat
+        /// fixtures must never meet wave mobs (long runs would kill the player).
+        /// Wave scenarios use Default() explicitly (WaveTests only).
+        public static SimConfig Quiet()
         {
             var c = Default();
+            c.Wave.FirstWaveDelay = 1e6f;
+            return c;
+        }
+
+        /// Quiet arena without obstacles — open-field movement/combat tests.
+        public static SimConfig Open()
+        {
+            var c = Quiet();
             c.Arena.ObstacleCount = 0;
             c.Arena.ObstaclePos = System.Array.Empty<float2>();
             c.Arena.ObstacleRadius = System.Array.Empty<float>();
@@ -316,19 +368,26 @@ namespace Ring.Simulation.Tests
 
 ```csharp
         [Test]
-        public void HostileInput_StateStaysFinite()
+        public void HostileInput_StateStaysFinite_AndDeterministic()
         {
-            var world = new SimulationWorld(7, TestConfigs.Default());
-            var bad = new SimInput
+            static ulong Run()
             {
-                MoveDir = new float2(float.NaN, float.PositiveInfinity),
-                AimPoint = new float2(1e9f, float.NegativeInfinity),
-                FireHeld = true, DashRequested = true
-            };
-            for (int i = 0; i < 100; i++) world.Tick(bad);
-            var p = world.Player;
-            Assert.IsTrue(math.all(math.isfinite(p.Pos)) && math.all(math.isfinite(p.Vel)));
-            Assert.AreEqual(world.StateHash(), world.StateHash());
+                var w = new SimulationWorld(7, TestConfigs.Default());
+                var nan = new SimInput
+                {
+                    MoveDir = new float2(float.NaN, float.PositiveInfinity),
+                    AimPoint = new float2(1e9f, float.NegativeInfinity),
+                    FireHeld = true, DashRequested = true
+                };
+                var tooLong = new SimInput { MoveDir = new float2(100f, -50f) };
+                for (int i = 0; i < 50; i++) w.Tick(nan);
+                for (int i = 0; i < 50; i++) w.Tick(tooLong); // finite over-length dir
+                for (int i = 0; i < 50; i++) w.Tick(default); // zero moveDir
+                var p = w.Player;
+                Assert.IsTrue(math.all(math.isfinite(p.Pos)) && math.all(math.isfinite(p.Vel)));
+                return w.StateHash();
+            }
+            Assert.AreEqual(Run(), Run()); // two independent worlds, same hash
         }
 ```
 
@@ -372,7 +431,7 @@ namespace Ring.Simulation.Core
         {
             SimInput input = Sanitize(rawInput);
             _tick++;
-            _rng.NextUInt(); // тик всегда потребляет RNG: хеш «живого» мира меняется
+            _rng.NextUInt(); // every tick consumes RNG so an idle world still hashes alive
             _players[0].AimPoint = input.AimPoint;
         }
 
@@ -417,7 +476,9 @@ namespace Ring.Simulation.Core
         {
             h = StateHash64.Add(h, s.Kills); h = StateHash64.Add(h, s.WavesCleared);
             h = StateHash64.Add(h, s.ShotsFired); h = StateHash64.Add(h, s.ShotsHit);
-            h = StateHash64.Add(h, s.DashesUsed); h = StateHash64.Add(h, s.SpawnsSkipped);
+            h = StateHash64.Add(h, s.DashesUsed);
+            h = StateHash64.Add(h, s.MobSpawnsSkipped);
+            h = StateHash64.Add(h, s.ProjectileSpawnsSkipped);
             h = StateHash64.Add(h, s.DeathTick); h = StateHash64.Add(h, s.DamageTaken);
             return h;
         }
@@ -430,10 +491,11 @@ namespace Ring.Simulation.Core
 - [ ] **Step 4:** R-TEST — все зелёные (7 Э0-тестов на новом API + StateHashTests + hostile input).
 - [ ] **Step 5:** R-COMMIT `feat(app-88s): SimConfig/SimInput/состояния, миграция API мира, санитизация ввода`.
 
-### Task 4: FixedStepAccumulator (TDD)
+### Task 4: FixedStepAccumulator + раздача кадрового ввода по тикам (TDD)
 
 **Files:**
 - Create: `client/Assets/Scripts/Simulation/Core/FixedStepAccumulator.cs`
+- Modify: `client/Assets/Scripts/Simulation/Core/SimInput.cs` (класс `SimInputFrame`)
 - Create: `client/Assets/Tests/EditMode/AccumulatorTests.cs`
 
 **Interfaces:**
@@ -441,6 +503,11 @@ namespace Ring.Simulation.Core
   headless-сервером Э2): `int Advance(float dt)` (число тиков к исполнению),
   `float Alpha` (0..1 для интерполяции), `float DroppedTime`, `void Reset()`.
   Кап кадра — `MaxFrameTime = 0.25f`.
+- `SimInputFrame.ForTick(in SimInput frame, int tickIndex) → SimInput` — раздача
+  кадрового сэмпла по под-тикам: удерживаемые значения копируются во все тики,
+  edge-защёлка `DashRequested` — только в тик 0 (спека §3.2; обязательный тест
+  «2 тика в кадре → один дэш» живёт здесь, в чистом C#, а не в MonoBehaviour).
+  `SimulationRunner` (Task 7) обязан использовать этот метод.
 
 - [ ] **Step 1 (RED):** `AccumulatorTests.cs`:
 
@@ -465,8 +532,18 @@ namespace Ring.Simulation.Tests
         public void BigFrame_ManyTicks_NoLoss()
         {
             var acc = new FixedStepAccumulator();
-            Assert.AreEqual(6, acc.Advance(0.2f)); // 0.2/0.0333 = 6, остаток в Alpha
+            // 0.21 c / (1/30) = 6.3 — с запасом от float-границы (0.2f — ровно на ней)
+            Assert.AreEqual(6, acc.Advance(0.21f));
             Assert.That(acc.Alpha, Is.InRange(0f, 1f));
+        }
+
+        [Test]
+        public void FrameInput_EdgeLatchConsumedByFirstTickOnly()
+        {
+            var frame = new SimInput { FireHeld = true, DashRequested = true };
+            Assert.IsTrue(SimInputFrame.ForTick(frame, 0).DashRequested);
+            Assert.IsFalse(SimInputFrame.ForTick(frame, 1).DashRequested); // один дэш на кадр
+            Assert.IsTrue(SimInputFrame.ForTick(frame, 1).FireHeld); // held — во все тики
         }
 
         [Test]
@@ -524,12 +601,29 @@ namespace Ring.Simulation.Core
             _acc += dt;
             int ticks = (int)(_acc / SimulationWorld.TickDt);
             _acc -= ticks * SimulationWorld.TickDt;
+            if (_acc < 0f) _acc = 0f; // float rounding on exact-boundary frames
             return ticks;
         }
 
         public void Reset() { _acc = 0f; DroppedTime = 0f; }
     }
 }
+```
+
+  В `SimInput.cs` дописать:
+
+```csharp
+    /// Distributes one frame sample over N sub-ticks: held values copy to every
+    /// tick, the dash edge-latch fires on tick 0 only (spec §3.2).
+    public static class SimInputFrame
+    {
+        public static SimInput ForTick(in SimInput frame, int tickIndex)
+        {
+            SimInput si = frame;
+            si.DashRequested = frame.DashRequested && tickIndex == 0;
+            return si;
+        }
+    }
 ```
 
 - [ ] **Step 4:** R-FILTER `AccumulatorTests` — PASS.
@@ -541,6 +635,10 @@ namespace Ring.Simulation.Core
 - Create: `client/Assets/Scripts/Simulation/Core/SimEvents.cs`
 - Create: `client/Assets/Scripts/Simulation/Core/RenderSnapshot.cs`
 - Create: `client/Assets/Scripts/Simulation/Core/WorldSave.cs`
+- Create: `client/Assets/Scripts/Simulation/AssemblyInfo.cs`
+  (`[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Ring.Simulation.Tests")]`
+  — тесты видят internal-члены штатно; публичных `*ForTest`-обёрток в боевом API
+  мира НЕ заводим: в билд Э2 они бы уехали как читы)
 - Modify: `client/Assets/Scripts/Simulation/Core/SimulationWorld.cs`
 - Create: `client/Assets/Tests/EditMode/EventTests.cs`
 - Create: `client/Assets/Tests/EditMode/WorldLifecycleTests.cs`
@@ -563,6 +661,8 @@ internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType,
 public void CaptureSnapshot(RenderSnapshot target);  // без аллокаций
 public WorldSave SaveState();             // глубокая копия (аллоцирует — вне тика)
 public void RestoreState(WorldSave save);
+internal void SetPlayerForTest(in PlayerState p);   // швы теста «каждое поле в хеше»
+internal void SetStatsForTest(in MatchStats s);
 // RenderSnapshot: public int Tick; public PlayerState Player; public int MobCount;
 //   public MobState[] Mobs; public int ProjectileCount; public ProjectileState[] Projectiles;
 //   public WaveState Wave; public MatchStats Stats;
@@ -592,7 +692,7 @@ namespace Ring.Simulation.Tests
         {
             var w = new SimulationWorld(1, TestConfigs.Default());
             w.Tick(default); // tick = 1
-            w.EmitForTest(SimEventKind.PlayerDashed, new float2(1f, 2f), 0, 0f);
+            w.Emit(SimEventKind.PlayerDashed, new float2(1f, 2f), 0, default, 0f);
             Assert.AreEqual(1, w.EventCount);
             SimEvent e = w.GetEvent(0);
             Assert.AreEqual(SimEventKind.PlayerDashed, e.Kind);
@@ -604,7 +704,7 @@ namespace Ring.Simulation.Tests
         public void ClearEvents_ResetsCount()
         {
             var w = new SimulationWorld(1, TestConfigs.Default());
-            w.EmitForTest(SimEventKind.WaveStarted, float2.zero, 1, 0f);
+            w.Emit(SimEventKind.WaveStarted, float2.zero, 1, default, 0f);
             w.ClearEvents();
             Assert.AreEqual(0, w.EventCount);
         }
@@ -616,7 +716,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             int cap = cfg.Arena.MaxEventsPerFrame;
             for (int i = 0; i < cap + 10; i++)
-                w.EmitForTest(SimEventKind.ProjectileFired, float2.zero, i, 0f);
+                w.Emit(SimEventKind.ProjectileFired, float2.zero, i, default, 0f);
             Assert.AreEqual(cap, w.EventCount);
             Assert.AreEqual(10, w.DroppedEvents);
         }
@@ -662,6 +762,42 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void EveryPlayerAndStatsFieldAffectsHash() // спека §3.13 п.12 / §3.3
+        {
+            var w = new SimulationWorld(3, TestConfigs.Default());
+            w.Tick(default);
+            WorldSave save = w.SaveState();
+            ulong baseline = w.StateHash();
+            foreach (var field in typeof(PlayerState).GetFields())
+            {
+                w.RestoreState(save);
+                object boxed = w.Player;
+                field.SetValue(boxed, Bump(field.GetValue(boxed)));
+                w.SetPlayerForTest((PlayerState)boxed);
+                Assert.AreNotEqual(baseline, w.StateHash(), $"PlayerState.{field.Name} не в хеше");
+            }
+            foreach (var field in typeof(MatchStats).GetFields())
+            {
+                w.RestoreState(save);
+                object boxed = w.Stats;
+                field.SetValue(boxed, Bump(field.GetValue(boxed)));
+                w.SetStatsForTest((MatchStats)boxed);
+                Assert.AreNotEqual(baseline, w.StateHash(), $"MatchStats.{field.Name} не в хеше");
+            }
+            // аналогичные проходы для MobState/ProjectileState/WaveState добавляются
+            // в Task 16/22 швами SetMobForTest/SetProjectileForTest/SetWaveForTest
+        }
+
+        static object Bump(object v) => v switch
+        {
+            float f => f + 1f,
+            int i => i + 1,
+            bool b => !b,
+            Unity.Mathematics.float2 f2 => f2 + new Unity.Mathematics.float2(1f, 0f),
+            _ => throw new System.NotSupportedException(v.GetType().Name)
+        };
+
+        [Test]
         public void Snapshot_CopiesPlayerAndCounts()
         {
             var cfg = TestConfigs.Default();
@@ -677,10 +813,8 @@ namespace Ring.Simulation.Tests
 }
 ```
 
-  (`EmitForTest` — публичная обёртка над internal `Emit`, помеченная
-  `#if UNITY_INCLUDE_TESTS`-другом не выйдет между asmdef; делаем метод
-  `public void EmitForTest(SimEventKind k, float2 pos, int id, float amount)` в мире
-  с комментарием «test seam».)
+  (Тесты зовут `internal`-метод `w.Emit(kind, pos, id, default, amount)` напрямую —
+  доступ даёт `InternalsVisibleTo` из AssemblyInfo.cs этого таска.)
 - [ ] **Step 2:** R-FILTER `EventTests|WorldLifecycleTests` — RED.
 - [ ] **Step 3 (GREEN):** `SimEvents.cs` (enum+struct из Interfaces), `RenderSnapshot.cs`:
 
@@ -872,12 +1006,11 @@ namespace Ring.Data
             int ticks = _acc.Advance(Time.unscaledDeltaTime);
             for (int i = 0; i < ticks; i++)
             {
-                SimInput si = frame;
-                si.DashRequested = frame.DashRequested && i == 0; // защёлка — первому тику
-                _world.Tick(si);
+                _world.Tick(SimInputFrame.ForTick(frame, i)); // защёлка — первому тику
                 (Prev, Curr) = (Curr, Prev);
                 _world.CaptureSnapshot(Curr);
             }
+            Alpha = _acc.Alpha;
             if (ticks > 0)
             {
                 TicksFlushed?.Invoke();
@@ -975,6 +1108,12 @@ public static bool PushOutOfCircle(ref float2 pos, float r, float2 c, float cR, 
 public static bool ClampInsideRing(ref float2 pos, float r, float ringR, out float2 normal);
 public static float2 Slide(float2 vel, float2 normal);
 public static float2 Rotate(float2 v, float rad);
+// arena-level helpers — ЕДИНСТВЕННЫЙ обход препятствий+стены на весь проект:
+// их переиспользуют движение (T9), дэш (T10), снаряды (T16), LoS (T18), separation (T20)
+public static bool SweepArena(float2 p0, float2 p1, float padR, in ArenaSimConfig arena,
+    bool includeWall, out float t, out float2 normal);
+public static void Depenetrate(ref float2 pos, ref float2 vel, float radius,
+    in ArenaSimConfig arena, int iterations);
 ```
 
 - [ ] **Step 1 (RED):** `GeometryTests.cs`:
@@ -1158,8 +1297,63 @@ namespace Ring.Simulation.Core
             float s = math.sin(rad), c = math.cos(rad);
             return new float2(c * v.x - s * v.y, s * v.x + c * v.y);
         }
+
+        /// First contact along p0→p1 vs all obstacles (and optionally the wall).
+        /// Returns t ∈ [0,1] and the surface normal at the contact point.
+        public static bool SweepArena(float2 p0, float2 p1, float padR,
+            in ArenaSimConfig arena, bool includeWall, out float t, out float2 normal)
+        {
+            t = 1f; normal = float2.zero; bool hit = false;
+            for (int o = 0; o < arena.ObstacleCount; o++)
+                if (SegmentCircle(p0, p1, padR, arena.ObstaclePos[o],
+                        arena.ObstacleRadius[o], out float to) && to < t)
+                {
+                    t = to; hit = true;
+                    normal = math.normalizesafe(
+                        math.lerp(p0, p1, to) - arena.ObstaclePos[o], new float2(1f, 0f));
+                }
+            if (includeWall && SegmentRingWall(p0, p1, padR, arena.Radius, out float tw)
+                && tw < t)
+            {
+                t = tw; hit = true;
+                normal = -math.normalizesafe(math.lerp(p0, p1, tw), new float2(1f, 0f));
+            }
+            return hit;
+        }
+
+        /// Iterative depenetration from obstacles and the wall; slides velocity.
+        public static void Depenetrate(ref float2 pos, ref float2 vel, float radius,
+            in ArenaSimConfig arena, int iterations)
+        {
+            for (int i = 0; i < iterations; i++)
+            {
+                bool any = false;
+                for (int o = 0; o < arena.ObstacleCount; o++)
+                    if (PushOutOfCircle(ref pos, radius, arena.ObstaclePos[o],
+                            arena.ObstacleRadius[o], out float2 n))
+                    { vel = Slide(vel, n); any = true; }
+                if (ClampInsideRing(ref pos, radius, arena.Radius, out float2 wn))
+                { vel = Slide(vel, wn); any = true; }
+                if (!any) break;
+            }
+        }
     }
 }
+```
+
+  Дополнительный тест в `GeometryTests`:
+
+```csharp
+        [Test]
+        public void SweepArena_ReportsNearestContactWithNormal()
+        {
+            var arena = TestConfigs.DefaultArena(); // препятствие (10,4) r=2.2
+            bool hit = Geometry.SweepArena(new float2(6f, 4f), new float2(14f, 4f), 0.45f,
+                arena, includeWall: false, out float t, out float2 n);
+            Assert.IsTrue(hit);
+            Assert.That(t, Is.InRange(0f, 1f));
+            Assert.Less(n.x, 0f); // нормаль навстречу движению
+        }
 ```
 
 - [ ] **Step 4:** R-FILTER `GeometryTests` — PASS.
@@ -1233,7 +1427,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Obstacle_BlocksAndSlides_NoSpeedGain()
         {
-            var cfg = TestConfigs.Default(); // препятствие (10,4) r=2.2
+            var cfg = TestConfigs.Quiet(); // препятствие (10,4) r=2.2, волны выключены
             var w = new SimulationWorld(1, cfg);
             for (int i = 0; i < 600; i++)
             {
@@ -1243,6 +1437,8 @@ namespace Ring.Simulation.Tests
                 Assert.IsFalse(Geometry.CircleOverlap(w.Player.Pos, cfg.Hero.Radius - 0.01f,
                     new float2(10f, 4f), 2.2f), "игрок внутри препятствия");
             }
+            // скольжение реально продвигает: застывший у препятствия игрок — провал
+            Assert.Greater(w.Player.Pos.y, 1.5f, "не обогнул препятствие — застрял");
         }
 
         [Test]
@@ -1253,12 +1449,15 @@ namespace Ring.Simulation.Tests
             cfg.Arena.ObstaclePos = new[] { new float2(33f, 0f) };
             cfg.Arena.ObstacleRadius = new[] { 1.5f };
             var w = new SimulationWorld(1, cfg);
+            float2 start = w.Player.Pos;
             for (int i = 0; i < 500; i++)
             {
                 w.Tick(Move(1f, 0.05f));
                 Assert.IsTrue(math.all(math.isfinite(w.Player.Pos)));
                 Assert.LessOrEqual(math.length(w.Player.Pos), 35f - 0.44f);
             }
+            Assert.Greater(math.distance(w.Player.Pos, start), 10f,
+                "залип в углу стена+препятствие — не скользит");
         }
     }
 }
@@ -1294,30 +1493,26 @@ namespace Ring.Simulation.Movement
             return cur + d / math.sqrt(lsq) * maxDelta;
         }
 
-        /// Sweep to first contact, then ≤3 depenetration+slide iterations (спека §3.4).
+        /// Collide-and-slide (спека §3.4): sweep to contact, step off by Skin,
+        /// slide the velocity AND the remaining motion, retry ≤3 times.
+        /// (Наивный вариант «свип, потом депенетрация» НЕ работает: свип
+        /// останавливает ровно на поверхности, депенетрация не срабатывает,
+        /// скорость не режется — тело замирает у стены. Найдено self-review.)
         public static void MoveWithCollisions(ref float2 pos, ref float2 vel,
             float2 target, float radius, in ArenaSimConfig arena)
         {
-            float bestT = 1f;
-            for (int o = 0; o < arena.ObstacleCount; o++)
-                if (Geometry.SegmentCircle(pos, target, radius,
-                        arena.ObstaclePos[o], arena.ObstacleRadius[o], out float t) && t < bestT)
-                    bestT = t;
-            if (Geometry.SegmentRingWall(pos, target, radius, arena.Radius, out float tw)
-                && tw < bestT)
-                bestT = tw;
-            pos = math.lerp(pos, target, bestT);
-            for (int i = 0; i < 3; i++)
+            for (int iter = 0; iter < 3; iter++)
             {
-                bool any = false;
-                for (int o = 0; o < arena.ObstacleCount; o++)
-                    if (Geometry.PushOutOfCircle(ref pos, radius,
-                            arena.ObstaclePos[o], arena.ObstacleRadius[o], out float2 n))
-                    { vel = Geometry.Slide(vel, n); any = true; }
-                if (Geometry.ClampInsideRing(ref pos, radius, arena.Radius, out float2 wn))
-                { vel = Geometry.Slide(vel, wn); any = true; }
-                if (!any) break;
+                if (!Geometry.SweepArena(pos, target, radius, arena, true,
+                        out float t, out float2 n))
+                { pos = target; break; }
+                float2 contact = math.lerp(pos, target, t);
+                pos = contact + n * Geometry.Skin;
+                vel = Geometry.Slide(vel, n);
+                target = pos + Geometry.Slide(target - contact, n);
             }
+            // страховка от стартовых перекрытий/смены конфига
+            Geometry.Depenetrate(ref pos, ref vel, radius, arena, 1);
         }
     }
 }
@@ -1631,16 +1826,20 @@ namespace Ring.Presentation
   internal-доступ к миру (один asmdef). Мир получает:
   `internal int SpawnProjectile(ProjectileOwner owner, float2 pos, float2 vel,
   float damage, float radius, float ttl)` — кап `MaxProjectiles` →
-  `Stats.SpawnsSkipped++` и `-1`; иначе `Emit(ProjectileFired, …)`, возврат id.
+  `Stats.ProjectileSpawnsSkipped++` и `-1`; иначе `Emit(ProjectileFired, …)`, возврат id.
   `internal ref Random Rng => ref _rng`; `internal ref MatchStats StatsRef`.
 - Семантика (спека §3.5): `FireCooldown -= dt` всегда; отдача
   `RecoilOffset -= RecoilRecovery*dt` (кламп 0); стрельба при `FireHeld && Alive &&
-  (CanFireWhileDash || DashTimer≤0)`; цикл `while (FireCooldown ≤ 0)`:
-  `overshoot = min(-FireCooldown, dt)`; угол = `Rng.NextFloat(-a, a)`,
-  `a = SpreadRad + RecoilOffset`; спавн на
-  `p.Pos + dir*(MuzzleOffset + overshoot*ProjectileSpeed)`;
+  (CanFireWhileDash || DashTimer≤0)`; `interval = max(FireInterval, 1e-3f)`
+  (страховка от бесконечного цикла при нулевом конфиге); цикл
+  `while (FireCooldown ≤ 0)`: `overshoot = min(-FireCooldown, dt)`;
+  направление — **явно**:
+  `float2 baseDir = math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f));`
+  угол = `Rng.NextFloat(-a, a)`, `a = SpreadRad + RecoilOffset`;
+  `float2 dir = Geometry.Rotate(baseDir, angle);` спавн на
+  `p.Pos + dir*(MuzzleOffset + overshoot*ProjectileSpeed)`, скорость `dir*ProjectileSpeed`;
   `RecoilOffset = min(RecoilMax, RecoilOffset + RecoilPerShot)`;
-  `ShotsFired++`; `FireCooldown += FireInterval`. Не стреляет — `FireCooldown`
+  `ShotsFired++`; `FireCooldown += interval`. Не стреляет — `FireCooldown`
   клампится снизу нулём (после отпускания первый выстрел мгновенный).
 
 - [ ] **Step 1 (RED):** `WeaponTests.cs`:
@@ -1667,14 +1866,19 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Recoil_GrowsWhileFiring_DecaysAfter()
+        public void Recoil_AccumulatesWhileFiring_DecaysToZeroAfter()
         {
-            var w = new SimulationWorld(1, TestConfigs.Open());
-            for (int i = 0; i < 60; i++) w.Tick(Fire);
-            float during = w.Player.RecoilOffset;
-            Assert.Greater(during, 0f);
-            for (int i = 0; i < 90; i++) w.Tick(default);
-            Assert.Less(w.Player.RecoilOffset, during);
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            float peak = 0f;
+            for (int i = 0; i < 60; i++)
+            {
+                w.Tick(Fire);
+                peak = math.max(peak, w.Player.RecoilOffset);
+            }
+            // отдача реально копится (recovery < скорости накопления), не фаза-лотерея
+            Assert.Greater(peak, cfg.Weapon.RecoilPerShotRad * 2f);
+            for (int i = 0; i < 120; i++) w.Tick(default);
             Assert.AreEqual(0f, w.Player.RecoilOffset, 1e-4f);
         }
 
@@ -1693,10 +1897,14 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             cfg.Weapon.ProjectileLifetime = 60f; // снаряды не умирают
             cfg.Weapon.FireInterval = 0.001f;    // залить кап мгновенно
-            var w = new SimulationWorld(1, cfg);
-            for (int i = 0; i < 60; i++) w.Tick(Fire);
-            Assert.Greater(w.Stats.SpawnsSkipped, 0);
-            Assert.AreEqual(w.StateHash(), w.StateHash());
+            static ulong Run(SimConfig c2)
+            {
+                var w2 = new SimulationWorld(1, c2);
+                for (int i = 0; i < 60; i++) w2.Tick(Fire);
+                Assert.Greater(w2.Stats.ProjectileSpawnsSkipped, 0);
+                return w2.StateHash();
+            }
+            Assert.AreEqual(Run(cfg), Run(cfg)); // деградация по капу детерминирована
         }
 
         [Test]
@@ -1744,9 +1952,14 @@ namespace Ring.Simulation.Tests
   поглощение (без события); иначе `Hp -= dmg; DamageTaken += dmg;
   Emit(PlayerDamaged)`; `Hp ≤ 0` → `Alive = false; DeathTick = tick;
   DashTimer=IframeTimer=0; Emit(PlayerDied)` (однократно).
-- Тестовый шов: `internal int SpawnMobForTest(MobType type, float2 pos)` (public
-  `SpawnMobForTest`) — мобы без AI (Ai = Idle не тикается до Phase 6) = «болванки»
-  вехи 2 и цели тестов.
+- Тестовые швы — `internal`, тестам видны через `InternalsVisibleTo` (Task 5):
+  `internal int SpawnMobForTest(MobType type, float2 pos)` — мобы без AI
+  (Ai = Idle не тикается до Phase 6) = цели тестов;
+  `internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
+  float damage, float radius, float ttl)` — обёртка над `SpawnProjectile`.
+  Для болванок вехи 2 из Presentation — отдельный дев-метод, отсутствующий в
+  прод-билде: `#if UNITY_EDITOR || DEVELOPMENT_BUILD` →
+  `public int DevSpawnMob(MobType type, float2 pos) => SpawnMobForTest(type, pos);`.
 
 - [ ] **Step 1 (RED):** `ProjectileTests.cs`:
 
@@ -1860,6 +2073,61 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void MultiKillSameTick_SwapRemoveKeepsListConsistent() // спека §3.13 п.11
+        {
+            var w = new SimulationWorld(1, NoSpread());
+            int a = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
+            int b = w.SpawnMobForTest(MobType.Chaser, new float2(5.2f, 0.4f));
+            int c = w.SpawnMobForTest(MobType.Chaser, new float2(5.2f, -0.4f));
+            Assert.IsTrue(a != b && b != c); // id стабильны и уникальны
+            // три широких снаряда сносят всех в один тик — swap-remove в середине списка
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, 0f),
+                new float2(35f, 0f), 100f, 0.6f, 1f);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, 0.4f),
+                new float2(35f, 0f), 100f, 0.6f, 1f);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, -0.4f),
+                new float2(35f, 0f), 100f, 0.6f, 1f);
+            int died = 0;
+            for (int i = 0; i < 5; i++)
+            {
+                w.ClearEvents();
+                w.Tick(default);
+                for (int e = 0; e < w.EventCount; e++)
+                    if (w.GetEvent(e).Kind == SimEventKind.MobDied) died++;
+            }
+            Assert.AreEqual(3, died); // никого не потеряли и не задвоили
+            var snap = new RenderSnapshot(NoSpread().Arena);
+            w.CaptureSnapshot(snap);
+            Assert.AreEqual(0, snap.MobCount);
+        }
+
+        [Test]
+        public void DamageMatrix_MobShotIgnoresMobs_PlayerShotNoPiercing() // §3.5 негативы
+        {
+            var cfg = NoSpread();
+            var w = new SimulationWorld(1, cfg);
+            w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
+            w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
+            // вражеский снаряд летит к игроку сквозь двух мобов — мобов игнорирует
+            w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(10f, 0f),
+                new float2(-30f, 0f), 5f, 0.15f, 2f);
+            for (int i = 0; i < 12; i++) w.Tick(default);
+            var snap = new RenderSnapshot(cfg.Arena);
+            w.CaptureSnapshot(snap);
+            Assert.AreEqual(2, snap.MobCount);
+            for (int m = 0; m < snap.MobCount; m++)
+                Assert.AreEqual(cfg.Chaser.MaxHp, snap.Mobs[m].Hp); // мобы не задеты
+            Assert.Less(w.Player.Hp, cfg.Hero.MaxHp);               // игрок — задет
+            // пробития нет: сверхмощный снаряд игрока убивает только ближнего
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(3f, 0f),
+                new float2(35f, 0f), 1000f, 0.12f, 1f);
+            for (int i = 0; i < 6; i++) w.Tick(default);
+            w.CaptureSnapshot(snap);
+            Assert.AreEqual(1, snap.MobCount);
+            Assert.AreEqual(cfg.Chaser.MaxHp, snap.Mobs[0].Hp); // задний жив и цел
+        }
+
+        [Test]
         public void Ttl_ExpiresWithEvent()
         {
             var c = NoSpread();
@@ -1880,7 +2148,7 @@ namespace Ring.Simulation.Tests
 }
 ```
 
-  (+ `SpawnProjectileForTest` — public тест-шов над `SpawnProjectile`, как `EmitForTest`.)
+  (Сигнатуры обоих швов — в Interfaces выше; `internal` + `InternalsVisibleTo`.)
 - [ ] **Step 2:** R-FILTER `ProjectileTests` — RED.
 - [ ] **Step 3 (GREEN):** `ProjectileSystem.Update` + `DamageMob`/`DamagePlayer` по
   Interfaces. Порядок в тике: движение игрока → оружие → (мобы, Phase 6) → снаряды →
@@ -1899,8 +2167,8 @@ namespace Ring.Simulation.Tests
 - Create: `client/Assets/Audio/Placeholders/shot.wav`, `hit.wav`, `mob_death.wav`,
   `dash.wav`, `player_hit.wav` (Kenney CC0; LFS уже покрывает wav)
 - Modify: `client/Assets/Scenes/Main.unity` (префабы вьюх, объект `TargetSpawner`
-  вехи 2: N болванок через `SpawnMobForTest` по кнопке дев-оверлея — временный
-  MonoBehaviour `PracticeTargets`, удаляется в Phase 6)
+  вехи 2: N болванок через дев-метод мира `DevSpawnMob` (есть только в
+  Editor/dev-билде) — временный MonoBehaviour `PracticeTargets`, удаляется в Phase 7)
 
 **Interfaces:**
 - Produces: `ViewRegistry` (MonoBehaviour) — на `TicksFlushed`/`LateUpdate`
@@ -2109,10 +2377,10 @@ namespace Ring.Simulation.AI
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(1.0f, 0f)); // уже в AttackRange
             float hp0 = c.Hero.MaxHp;
-            int ticksToStrike = (int)math.ceil(c.Chaser.TelegraphSeconds / SimulationWorld.TickDt) + 2;
-            for (int i = 0; i < ticksToStrike; i++) w.Tick(Idle);
-            Assert.Less(w.Player.Hp, hp0);           // удар прошёл после телеграфа
-            Assert.AreEqual(hp0 - c.Chaser.ContactDamage, w.Player.Hp, 1e-3f); // ровно один удар
+            // ждём удара с запасом (FSM может потратить тик-два на Idle→Chase→Telegraph)
+            for (int i = 0; i < 40 && w.Player.Hp >= hp0; i++) w.Tick(Idle);
+            // ровно один удар: AttackCooldown 0.9 c = 27 тиков — второй не успевает
+            Assert.AreEqual(hp0 - c.Chaser.ContactDamage, w.Player.Hp, 1e-3f);
         }
 
         [Test]
@@ -2155,6 +2423,7 @@ namespace Ring.Simulation.AI
         public void Gunner_NoLoS_HoldsFire()
         {
             var c = TestConfigs.Open();
+            c.Gunner.StrafeSpeed = 0f; // изолируем LoS-гейт: страйф вывел бы из тени за ~60 тиков
             c.Arena.ObstacleCount = 1;
             c.Arena.ObstaclePos = new[] { new float2(5f, 0f) };
             c.Arena.ObstacleRadius = new[] { 3f };
@@ -2186,7 +2455,8 @@ namespace Ring.Simulation.AI
     }
 ```
 
-  (+ тест-шов `public void KillPlayerForTest()` — `DamagePlayer(H_p+1, Pos)`.)
+  (+ тест-шов `internal void KillPlayerForTest()` — `DamagePlayer(maxHp + 1, Pos)`;
+  тестам виден через `InternalsVisibleTo`.)
 - [ ] **Step 2:** R-FILTER `MobAiTests` — RED.
 - [ ] **Step 3 (GREEN):** `MobAiSystem.cs` по Interfaces (полные FSM обоих типов,
   `SteerAround` — приватный статик системы; движение — reuse `MoveWithCollisions`).
@@ -2206,8 +2476,10 @@ namespace Ring.Simulation.AI
   двойной буфер `float2[] _sepForces` (предаллоцирован на `MaxMobs` в мире): по всем
   парам мобов при перекрытии кругов `SeparationRadius` — сила
   `normalizesafe(d) * (1 − dist/threshold) * strength` симметрично в обе стороны;
-  затем применение `Pos += force * dt` + одна итерация выталкивания из
-  препятствий/стены.
+  применение — **добавкой к скорости** (`Vel += force`), НЕ прямой записью в `Pos`
+  мимо коллизий (второй путь перемещения дал бы туннелирование); движение мобов
+  остаётся единственным — через `MoveWithCollisions` в MobAiSystem; страховка —
+  `Geometry.Depenetrate(…, 1)` после применения.
 
 - [ ] **Step 1 (RED):** тест:
 
@@ -2257,7 +2529,8 @@ namespace Ring.Simulation.AI
 - Create: `client/Assets/Scripts/Simulation/AI/WaveSystem.cs`
 - Modify: `client/Assets/Scripts/Simulation/Core/SimulationWorld.cs`
   (вызов последним в тике; `SpawnMob(MobType, float2)` — боевой, с капом `MaxMobs`
-  → `SpawnsSkipped++`; `Emit(MobSpawned)`)
+  → `MobSpawnsSkipped++`, долг волны при этом СОХРАНЯЕТСЯ (повтор не чаще раза
+  в тик); `Emit(MobSpawned)`)
 - Create: `client/Assets/Tests/EditMode/WaveTests.cs`
 
 **Interfaces:**
@@ -2346,6 +2619,31 @@ namespace Ring.Simulation.Tests
             w.CaptureSnapshot(snap);
             Assert.AreEqual(0, snap.MobCount);
             Assert.Greater(snap.Wave.PendingChasers + snap.Wave.PendingGunners, 0);
+            // долг отрабатывается, когда условия позволяют (спека §3.13 п.5)
+            var relaxed = c;
+            relaxed.Wave.MinSpawnDistanceToPlayer = 8f;
+            w.ApplyConfig(relaxed);
+            for (int i = 0; i < 60; i++) w.Tick(default);
+            w.CaptureSnapshot(snap);
+            Assert.Greater(snap.MobCount, 0);
+            Assert.AreEqual(0, snap.Wave.PendingChasers + snap.Wave.PendingGunners);
+        }
+
+        [Test]
+        public void WaveComposition_FollowsGunnerShare()
+        {
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(11, c);
+            int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
+            for (int i = 0; i < delayTicks; i++) w.Tick(default);
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            int gunners = 0;
+            for (int m = 0; m < snap.MobCount; m++)
+                if (snap.Mobs[m].Type == MobType.Gunner) gunners++;
+            // волна 1: count = BaseCount = 4; gunners = round(4 × 0.2) = 1
+            Assert.AreEqual(c.Wave.BaseCount, snap.MobCount);
+            Assert.AreEqual(1, gunners);
         }
 
         [Test]
@@ -2359,7 +2657,14 @@ namespace Ring.Simulation.Tests
             var snap = new RenderSnapshot(c.Arena);
             w.CaptureSnapshot(snap);
             Assert.LessOrEqual(snap.MobCount, 2);
-            Assert.AreEqual(w.StateHash(), w.StateHash());
+            Assert.Greater(w.Stats.MobSpawnsSkipped, 0);
+            static ulong Run(SimConfig cc)
+            {
+                var ww = new SimulationWorld(11, cc);
+                for (int i = 0; i < 200; i++) ww.Tick(default);
+                return ww.StateHash();
+            }
+            Assert.AreEqual(Run(c), Run(c)); // деградация по капу детерминирована
         }
     }
 }
@@ -2475,7 +2780,7 @@ namespace Ring.Simulation.Tests
   `_acc.Reset()` и не тикает; `Time.timeScale` НЕ трогается); меню
   продолжить/рестарт/выход (`Application.Quit`).
 - `DevOverlay` (уголок): fps, `CurrentTick`, mobs/projectiles counts,
-  `DroppedEvents`, `Stats.SpawnsSkipped`, seed, поле «принудительный seed» +
+  `DroppedEvents`, `Stats.MobSpawnsSkipped`/`ProjectileSpawnsSkipped`, seed, поле «принудительный seed» +
   кнопка Restart. Счётчик дропов > 0 подсвечивается красным (спека §3.7 —
   тихая потеря запрещена).
 - `SimulationRunner.WorldRestarted` — все вьюхи/пулы/директоры чистятся
@@ -2644,22 +2949,19 @@ namespace Ring.Simulation.Tests
   - `AllocationTests.Tick_DoesNotAllocateGC`: насыщенный мир (спавн мобов до капа
     тест-швом, hold-огонь 100 тиков разгона), затем
     `Assert.That(() => { for (int i = 0; i < 1000; i++) w.Tick(input); },
-    UnityEngine.TestTools.Constraints.Is.Not.AllocatingGCMemory());`
+    Is.Not.AllocatingGCMemory());`
+    Обязательные using'и файла (`AllocatingGCMemory` — extension-метод, полная
+    квалификация НЕ компилируется, CS1061):
+    `using UnityEngine.TestTools.Constraints;`
+    `using Is = UnityEngine.TestTools.Constraints.Is;`
 - [ ] **Step 2:** R-TEST — все зелёные; найденные аллокации чинить (предаллокация),
   не ослаблять тест.
 - [ ] **Step 3:** R-COMMIT `test(app-88s): golden-хеш, скриптованный детерминизм, ноль GC-аллокаций`.
 
-### Task 30: CODEOWNERS + Amendment A7 (решение Р1)
+### Task 30: (перенесён в Task 1 по self-review плана)
 
-**Files:**
-- Modify: `.github/CODEOWNERS` (добавить `/client/Assets/Scripts/Data/ @AlexanderBrolin`;
-  починить `/client/Tests/` → `/client/Assets/Tests/`)
-- Modify: `docs/adr/ADR-002-Разработка.md` (§10: **A7 (2026-08-02):** слой
-  `client/Assets/Scripts/Data/` (asmdef `Ring.Data`: SO-классы баланса +
-  конвертация в SimConfig) — дополняет структуру §3; server-ownership)
-
-- [ ] **Step 1:** Правки файлов (санкция — апрув спеки, решение Р1).
-- [ ] **Step 2:** R-COMMIT `docs(app-88s): Amendment A7 (слой Data) + CODEOWNERS — Data и путь тестов`.
+Amendment A7 и правки CODEOWNERS выполняются в Task 1: репо не должно жить весь
+этап со слоем вне ADR-002 §3 и незащищённым `Scripts/Data/`. Отдельного таска нет.
 
 ### Task 31: верификация, PR, закрытие
 
@@ -2686,9 +2988,111 @@ Phase 8 (T25–28, **веха 4 = DoD**) → Phase 9 (T29–31).
 Каждая веха — короткая PlayMode-сессия владельца, фидбек в bd note эпика,
 итерации чисел — hot-tweak + chore-коммиты SO.
 
-## Соответствие спеке (самопроверка покрытия)
+## Соответствие спеке (самопроверка покрытия; сверено self-review субагентом D)
 
-§3.1→T1; §3.2→T4,T7; §3.3→T2,T3,T5,T29; §3.4→T8,T9,T10; §3.5→T15,T16; §3.6→T18–22;
-§3.7→T5,T17; §3.8→T3(санитизация),T11; §3.9→T6,T7,T28; §3.10→T12,T13,T14;
-§3.11→T17,T25,T26,T27,T28; §3.12→T23,T24; §3.13→по-таскам+T29; §3.14→T30,T31;
-§3.15→T5(события),T15(кап снарядов),T22(кап мобов),T27(пулы),T29(аллокации).
+§3.1→T1; §3.2→T4 (включая обязательный тест защёлки `SimInputFrame`),T7;
+§3.3→T2,T3,T5 (включая тест «каждое поле в хеше»),T29 + трасса tick→hash — П-9;
+§3.4→T8,T9,T10; §3.5→T15,T16 (включая негативы матрицы поражения); §3.6→T18–22;
+§3.7→T5,T17 (+router П-1); §3.8→T3(санитизация),T11 (+минимальный прицел в T12 —
+П-6); §3.9→T6 (+тест полноты маппинга П-4),T7,T28; §3.10→T12,T13,T14;
+§3.11→T17,T25,T26,T27,T28 (+параметры П-7); §3.12→T23,T24 (5 рестартов — П-8);
+§3.13: пп.1–4→T16/T18, п.5→T22, п.6→T3, п.7→T5/T15/T22, пп.8–9→T5, п.10→T29,
+п.11→T16, п.12→T5, п.13–14→T29; §3.14→T1(A7/CODEOWNERS)+T31;
+§3.15→T5,T15,T22,T27 + 20-минутный прогон в T31 (П-10).
+
+---
+
+## Приложение П — правки self-review, интегрируемые при исполнении
+
+Обязательные точечные правки, не вынесенные в тела тасков (оркестратор передаёт
+релевантные пункты вместе с текстом таска исполнителю; «Task N» = куда применять).
+
+- **П-1 (T17, архитектура событий).** Единственный подписчик `TicksFlushed` —
+  новый `SimEventRouter` (Create в T17): один проход по буферу, фан-аут строго в
+  порядке `GameFeelDirector → PersistentPropsDirector → AudioDirector →
+  ViewRegistry (ретайр вьюх) → DeathOverlayController`; прямые подписки остальных
+  классов на `TicksFlushed` запрещены. Владелец жизненного цикла `MobView` — только
+  `ViewRegistry`; труп в T27 — собственный префаб `PersistentPropsDirector`,
+  вьюха моба ему не передаётся.
+- **П-2 (T17, звук).** Класс сразу называется `AudioDirector` (минимальная версия:
+  пул 8 источников, питч), файла `MuzzleFlashAndSfx.cs` НЕ существует; T27 только
+  расширяет `AudioDirector` (лимит голосов, `MinSfxInterval`, `StopAll`);
+  правка Files T17/T24/T27 соответственно.
+- **П-3 (T12).** Создать `SimSpace` (`static Vector3 ToWorld(float2)` /
+  `static float2 ToSim(Vector3)`) — ЕДИНСТВЕННАЯ точка маппинга сим↔мир; все
+  вьюхи/камера/прицел/пропсы используют только его. Одновременно: единственный
+  per-frame источник прицела — `AimProvider.CurrentAimSimPos` (его читают
+  `PlayerView` и `CrosshairView`); из снапшота берётся только `RecoilOffset`.
+  Плюс минимальный прицел-маркер (без конуса) переносится в T12 — вехи 1–3 не
+  играются с системным курсором; конус отдачи остаётся в T26.
+- **П-4 (T6).** Полные поля `GameFeelConfig`: `HitstopSeconds=0.04`,
+  `HitstopScope (enum TargetOnly|FullFrame) = FullFrame`, `MaxHitstopRatio=0.35`,
+  `HitstopCatchUpSeconds=0.05`, `FlashDuration=0.08`, `TraumaHit=0.2`,
+  `TraumaDeath=0.35`, `TraumaPlayerHit=0.45`, `TraumaDecayPerSec=1.2`,
+  `ShakeAmplitude=0.35`, `ShakeFrequency=22`, `PitchRange=0.12`,
+  `TracerFadeSeconds=0.4`, `CasingPhysicsSeconds=1.5`, `MaxCasings=1024`,
+  `MaxDecals=512`, `MaxCorpses=64`, `VoicesPerSfx=6`, `MinSfxInterval=0.03`,
+  `ImmediateMuzzleFeedback=true`, `ExtrapolateLocalPlayer=false`;
+  `CameraConfig`: `PitchDeg=55 [50..60]`, `Distance=18`, `LookAhead=0.25`,
+  `Damp=0.15`. Литералы этих величин в T12/T25–T28 заменяются чтением SO.
+  Дополнительный тест `ConfigTests.Build_DefaultAssets_MatchesTestConfigsBaseline`:
+  поэлементное сравнение `SimConfigBuilder.Build(дефолтные SO)` с
+  `TestConfigs.Default()` (полнота маппинга §3.13; ловит дрейф двух источников
+  баланса; отдельный ассерт — chaser-ассет попадает в `cfg.Chaser`, gunner — в
+  `cfg.Gunner`). `ArenaConfig`: вложенный `[System.Serializable] public struct
+  Obstacle { public Vector2 Pos; public float Radius; }`, поле
+  `public Obstacle[] Obstacles = {…дефолты…}` с инициализатором; литерал зазора
+  спавна в валидации → поле `SpawnClearance` (`[Range(0.5f,5f)] = 1f`).
+- **П-5 (T7).** Заглушка `InputSampler` — безаргументный конструктор, поле
+  `_sampler` инициализируется в `Awake`; T11 меняет конструктор на
+  `(InputActionAsset, AimProvider)` и правит `Awake`. В `SampleFrame`
+  `DashRequested = _dashLatch` (без дублирующего `WasPressedThisFrame` — защёлка
+  через `performed` уже ловит нажатие внутри кадра); `FireHeld = IsPressed() ||
+  WasPressedThisFrame()` (вторая часть — тап короче кадра, оставить с
+  комментарием); `Disable()` реализуется и отписывает `performed`-хендлер;
+  `Mouse.current.position` читается `.ReadValue()`.
+- **П-6 (T24).** Заголовок оверлея — строка словаря «Носитель потерян»;
+  подпись «Циклов волн» → «Волн отражено»; «Заход №» → «Заход» (номер не
+  считаем). Клавиши R/Shift+R/Escape — прямой опрос `Keyboard.current` только в
+  дев-контроллерах, под `#if UNITY_EDITOR || DEVELOPMENT_BUILD` (зафиксированное
+  исключение из §3.8; UI-кнопка — через `UI/Submit`). DevOverlay дополнительно
+  показывает `FixedStepAccumulator.DroppedTime` и раздельные
+  `MobSpawnsSkipped`/`ProjectileSpawnsSkipped`.
+- **П-7 (T25/T27).** Hitstop — одна точка: `SimulationRunner.RenderAlpha`
+  (= `Alpha`, но замораживается директором) — вьюхи читают только его, локальные
+  `if (HitstopActive)` в трёх классах не пишутся. Параметры «догона» после
+  hitstop (`HitstopCatchUpSeconds`) и `ExtrapolateLocalPlayer` — из
+  `GameFeelConfig` (П-4). Пулы: обычные «взять/вернуть» —
+  `UnityEngine.Pool.ObjectPool<T>`; свой код — только один общий FIFO-буфер
+  `RingBuffer<T>` для гильз/декалей/трупов (не три копии).
+- **П-8 (T24).** Критерий смоука: **5 рестартов подряд**, после каждого счётчики
+  DevOverlay и активные звуки возвращаются к базовым; память не растёт
+  (Profiler). `GreyboxBuilder` подписывается на `WorldRestarted` и перестраивает
+  грейбокс (смена топологии арены = рестарт — спека §3.9).
+- **П-9 (T24).** DevOverlay показывает текущий `StateHash()` (hex) + тумблер
+  «лог tick→hash в файл» под `#if UNITY_EDITOR || DEVELOPMENT_BUILD`
+  (спека §3.3, отладка расхождений).
+- **П-10 (T31).** Перед PR — 20-минутный прогон с непрерывным огнём (спека §3.15):
+  fps не ниже цели, счётчики упёрлись в лимиты и не растут,
+  `Profiler.GetTotalAllocatedMemoryLong()` в начале/конце — в evidence bd.
+- **П-11 (T21/T25/T26).** Перед каждым R-COMMIT этих тасков — минимум R-COMPILE
+  (PlayMode-смоук остаётся основным критерием). Слепленные чекбоксы
+  «RED → GREEN → PASS» в T20/T21/T23/T26 исполняются как ОТДЕЛЬНЫЕ TDD-шаги
+  (verify FAIL и verify PASS — обязательные прогоны, галочка одна — шагов пять).
+  «Дев-кнопка» спавна в T21 — кнопка `DevOverlay`-заготовки, зовущая
+  `World.DevSpawnMob` (доступна с T17).
+- **П-12 (T7).** `HotTweakTests` дополнить: (а) кулдауны/таймеры после
+  `ApplyConfig` в `[0, новый максимум]` (уменьшить `DashCooldown` в конфиге при
+  активном кулдауне); (б) `WaveIndex` сохраняется (мир с начавшейся волной —
+  через `Default()` + 100 тиков). Тест порядка событий: два `Emit` подряд →
+  `GetEvent(0/1)` в порядке эмиссии (T5).
+- **П-13 (T29).** Хелперы `TestWorlds.Saturated(out SimConfig)` (насыщенный мир
+  для alloc/golden) и `TestEvents.CountOf(w, kind)` — вместо копий setup-кода
+  по тестовым файлам; `WorldSave`/`CaptureSnapshot`/`RestoreState` используют
+  общий приватный `CopyEntities` (T5).
+- **П-14 (T31).** Тело PR завершается строкой
+  `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- **П-15 (общее).** Пороговые числа в новых тестах по возможности выводить из
+  `cfg.*`/`TestConfigs`, а не литералами (существующие литералы тестов из тел
+  тасков допустимы — они синхронны с `TestConfigs`, который на вехах НЕ правится:
+  вехи правят SO-ассеты; расхождение ловит тест `MatchesTestConfigsBaseline` П-4).
