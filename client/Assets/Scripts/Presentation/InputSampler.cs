@@ -1,15 +1,67 @@
 using Ring.Simulation.Core;
+using Unity.Mathematics;
+using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace Ring.Presentation
 {
-    /// Stub until Task 11 (spec §3.2/П-5): plain class, parameterless constructor so
-    /// `SimulationRunner.Awake` can construct it without any Input System wiring yet.
-    /// Task 11 swaps the constructor for `(InputActionAsset, AimProvider)` and gives
-    /// `SampleFrame`/`ClearLatches` real bodies; `Awake` is edited to match.
-    public class InputSampler
+    /// Frame-level sampler: held values are read fresh every frame, while the Dash
+    /// edge is captured via a subscribed `performed` callback so a tap shorter than a
+    /// frame is never missed. `SimulationRunner.Update` samples once per frame and
+    /// clears latches only after any pending ticks consumed them (spec §3.2/§3.8).
+    public sealed class InputSampler
     {
-        public SimInput SampleFrame() => default;
+        readonly InputAction _move, _aim, _fire, _dash;
+        readonly AimProvider _aimProvider;
+        readonly System.Action<InputAction.CallbackContext> _onDashPerformed;
+        bool _dashLatch;
 
-        public void ClearLatches() { }
+        public InputSampler(InputActionAsset asset, AimProvider aimProvider)
+        {
+            _move = asset.FindAction("Gameplay/Move", true);
+            _aim = asset.FindAction("Gameplay/Aim", true);
+            _fire = asset.FindAction("Gameplay/Fire", true);
+            _dash = asset.FindAction("Gameplay/Dash", true);
+            _aimProvider = aimProvider;
+
+            // Stored so Disable() can unsubscribe the exact same delegate instance.
+            _onDashPerformed = _ => _dashLatch = true;
+            _dash.performed += _onDashPerformed;
+        }
+
+        public void Enable()
+        {
+            _move.Enable();
+            _aim.Enable();
+            _fire.Enable();
+            _dash.Enable();
+        }
+
+        public void Disable()
+        {
+            _move.Disable();
+            _aim.Disable();
+            _fire.Disable();
+            _dash.Disable();
+            _dash.performed -= _onDashPerformed;
+        }
+
+        public SimInput SampleFrame()
+        {
+            Vector2 move = _move.ReadValue<Vector2>();
+            return new SimInput
+            {
+                MoveDir = new float2(move.x, move.y),
+                AimPoint = _aimProvider.CurrentAimSimPos,
+                // Tap shorter than a frame: WasPressedThisFrame also catches a
+                // press-then-release that both landed between two samples.
+                FireHeld = _fire.IsPressed() || _fire.WasPressedThisFrame(),
+                // No extra `|| _dash.WasPressedThisFrame()` here: the `performed`
+                // subscription above already latches any within-frame press.
+                DashRequested = _dashLatch
+            };
+        }
+
+        public void ClearLatches() => _dashLatch = false;
     }
 }

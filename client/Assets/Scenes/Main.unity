@@ -442,6 +442,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1959383181}
   - component: {fileID: 1959383180}
+  - component: {fileID: 1959383182}
   m_Layer: 0
   m_Name: Simulation
   m_TagString: Untagged
@@ -469,6 +470,8 @@ MonoBehaviour:
   _arena: {fileID: 11400000, guid: 867e8c92b82842b1e997ed0f876471d0, type: 2}
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
   _camera: {fileID: 11400000, guid: f3f7f6fc78bca54ecacc769001bac619, type: 2}
+  _actionsAsset: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  _aimProvider: {fileID: 1959383182}
   Alpha: 0
   ConfigTweaked: 0
 --- !u!4 &1959383181
@@ -486,6 +489,19 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1959383182
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1959383179}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a2ecca69ba6a7bfa18b494e292cd8566, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Ring.Presentation::Ring.Presentation.AimProvider
+  _camera: {fileID: 330585545}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

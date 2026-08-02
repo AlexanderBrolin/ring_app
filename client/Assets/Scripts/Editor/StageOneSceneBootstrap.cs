@@ -3,6 +3,7 @@ using Ring.Presentation;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 
 namespace Ring.Editor
@@ -11,11 +12,14 @@ namespace Ring.Editor
     /// balance SO assets in `Assets/Data` and wires a `Simulation` GameObject with
     /// `SimulationRunner` into `Main.unity`. Every step is guarded by an existence
     /// check, so re-running `Apply()` is a no-op — safe to invoke again after the
-    /// owner hand-tweaks asset numbers in the Editor.
+    /// owner hand-tweaks asset numbers in the Editor. Task 11 (spec §3.8) extends it
+    /// to also add `AimProvider` to the same `Simulation` object and wire the scene's
+    /// Main Camera plus the project-wide `InputSystem_Actions` asset into the runner.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
         const string ScenePath = "Assets/Scenes/Main.unity";
+        const string ActionsAssetPath = "Assets/InputSystem_Actions.inputactions";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -53,6 +57,34 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // AimProvider lives on the same "Simulation" object (Task 11/П-5 §3):
+            // no separate GameObject needed, and existence-guarded like everything
+            // else here so re-running Apply() stays a no-op.
+            AimProvider aimProvider = runner.GetComponent<AimProvider>();
+            if (aimProvider == null)
+            {
+                aimProvider = runner.gameObject.AddComponent<AimProvider>();
+                sceneDirty = true;
+            }
+
+            Camera mainCamera = FindMainCamera(scene);
+            if (mainCamera == null)
+                throw new System.InvalidOperationException(
+                    "StageOneSceneBootstrap: no Camera tagged MainCamera found in the scene.");
+
+            var aimSo = new SerializedObject(aimProvider);
+            bool aimRefsChanged = SetRef(aimSo, "_camera", mainCamera);
+            if (aimRefsChanged)
+            {
+                aimSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            InputActionAsset actionsAsset = AssetDatabase.LoadAssetAtPath<InputActionAsset>(ActionsAssetPath);
+            if (actionsAsset == null)
+                throw new System.InvalidOperationException(
+                    $"StageOneSceneBootstrap: no InputActionAsset at '{ActionsAssetPath}'.");
+
             var so = new SerializedObject(runner);
             bool refsChanged = false;
             refsChanged |= SetRef(so, "_hero", hero);
@@ -63,6 +95,8 @@ namespace Ring.Editor
             refsChanged |= SetRef(so, "_arena", arena);
             refsChanged |= SetRef(so, "_gameFeel", gameFeel);
             refsChanged |= SetRef(so, "_camera", camera);
+            refsChanged |= SetRef(so, "_actionsAsset", actionsAsset);
+            refsChanged |= SetRef(so, "_aimProvider", aimProvider);
             if (refsChanged)
             {
                 so.ApplyModifiedPropertiesWithoutUndo();
@@ -136,6 +170,18 @@ namespace Ring.Editor
             {
                 var runner = root.GetComponentInChildren<SimulationRunner>(true);
                 if (runner != null) return runner;
+            }
+            return null;
+        }
+
+        static Camera FindMainCamera(Scene scene)
+        {
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                foreach (Camera cam in root.GetComponentsInChildren<Camera>(true))
+                {
+                    if (cam.CompareTag("MainCamera")) return cam;
+                }
             }
             return null;
         }

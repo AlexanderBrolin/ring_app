@@ -1,6 +1,7 @@
 using Ring.Data;
 using Ring.Simulation.Core;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace Ring.Presentation
 {
@@ -18,6 +19,8 @@ namespace Ring.Presentation
         [SerializeField] ArenaConfig _arena;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] CameraConfig _camera;
+        [SerializeField] InputActionAsset _actionsAsset;
+        [SerializeField] AimProvider _aimProvider;
 
         readonly FixedStepAccumulator _acc = new FixedStepAccumulator();
         InputSampler _sampler;
@@ -35,9 +38,13 @@ namespace Ring.Presentation
 
         void Awake()
         {
-            _sampler = new InputSampler(); // П-5 — Task 11 rebuilds this with real args
+            _sampler = new InputSampler(_actionsAsset, _aimProvider);
             RestartNewSeed();
         }
+
+        void OnEnable() => _sampler?.Enable();
+
+        void OnDisable() => _sampler?.Disable();
 
         void Update()
         {
