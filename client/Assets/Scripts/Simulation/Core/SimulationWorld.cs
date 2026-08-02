@@ -56,7 +56,11 @@ namespace Ring.Simulation.Core
             _tick++;
             _rng.NextUInt(); // every tick consumes RNG so an idle world still hashes alive
             _players[0].AimPoint = input.AimPoint;
-            PlayerMovementSystem.Update(ref _players[0], in input, in _config);
+            if (PlayerMovementSystem.Update(ref _players[0], in input, in _config))
+            {
+                _stats.DashesUsed++;
+                Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
+            }
         }
 
         /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
