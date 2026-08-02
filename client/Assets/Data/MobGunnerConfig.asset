@@ -16,10 +16,10 @@ MonoBehaviour:
   Accel: 25
   Radius: 0.5
   MaxHp: 20
-  ContactDamage: 15
-  AttackRange: 1.1
-  TelegraphSeconds: 0.35
-  AttackCooldown: 0.9
+  ContactDamage: 0
+  AttackRange: 0
+  TelegraphSeconds: 0
+  AttackCooldown: 0
   PreferredRange: 9
   RangeTolerance: 1.5
   StrafeSpeed: 3

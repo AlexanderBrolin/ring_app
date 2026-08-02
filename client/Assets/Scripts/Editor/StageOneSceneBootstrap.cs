@@ -30,11 +30,18 @@ namespace Ring.Editor
             HeroConfig hero = GetOrCreate<HeroConfig>("HeroConfig");
             WeaponConfig weapon = GetOrCreate<WeaponConfig>("WeaponConfig");
             MobConfig chaser = GetOrCreate<MobConfig>("MobChaserConfig");
-            MobConfig gunner = GetOrCreate<MobConfig>("MobGunnerConfig", ApplyGunnerDefaults);
+            MobConfig gunner = GetOrCreate<MobConfig>("MobGunnerConfig");
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
             GameFeelConfig gameFeel = GetOrCreate<GameFeelConfig>("GameFeelConfig");
             CameraConfig camera = GetOrCreate<CameraConfig>("CameraConfig");
+
+            // Reapplied unconditionally (not just on first creation) so a stale
+            // existing asset self-heals — fix-round 1: melee fields must read 0,
+            // not chaser's contact-combat numbers (gunner never melees, spec §3.9
+            // baseline is TestConfigs.Default().Gunner, where they're unset -> 0).
+            bool gunnerChanged = ApplyGunnerDefaults(gunner);
+            if (gunnerChanged) EditorUtility.SetDirty(gunner);
             AssetDatabase.SaveAssets();
 
             SimulationRunner runner = FindRunner(scene);
@@ -68,41 +75,57 @@ namespace Ring.Editor
                 EditorSceneManager.SaveScene(scene);
             }
 
-            Debug.Log($"StageOneSceneBootstrap: assets ok, scene {(sceneDirty ? "updated" : "already up to date")}.");
+            Debug.Log($"StageOneSceneBootstrap: gunner {(gunnerChanged ? "updated" : "ok")}, " +
+                $"scene {(sceneDirty ? "updated" : "already up to date")}.");
         }
 
-        static void ApplyGunnerDefaults(MobConfig m)
+        /// Full field set of the ranged archetype — mirrors TestConfigs.Default().Gunner
+        /// exactly (spec §3.9 baseline). Fix-round 1: TestConfigs.Gunner is a struct
+        /// literal that only sets the ranged-combat fields; everything it doesn't list
+        /// (ContactDamage, AttackRange, TelegraphSeconds, AttackCooldown) defaults to 0
+        /// for a struct, NOT to MobConfig's chaser-mirrored class field defaults — the
+        /// gunner never melees, so those must read 0 here too. Reapplied every run
+        /// (idempotent via per-field diff) so a stale asset self-heals.
+        static bool ApplyGunnerDefaults(MobConfig m)
         {
-            // Ranged archetype numbers (spec §3.9 Task 7); everything not listed here
-            // (ContactDamage, AttackRange, TelegraphSeconds, AttackCooldown, Radius,
-            // SeparationRadius/Strength, AvoidLookahead) keeps MobConfig's chaser-mirrored
-            // field defaults — orchestrator resolution: "остальное как chaser-дефолты".
-            m.MaxSpeed = 4f;
-            m.Accel = 25f;
-            m.Radius = 0.5f;
-            m.MaxHp = 20f;
-            m.PreferredRange = 9f;
-            m.RangeTolerance = 1.5f;
-            m.StrafeSpeed = 3f;
-            m.FireInterval = 1.6f;
-            m.ProjectileSpeed = 14f;
-            m.ProjectileRadius = 0.15f;
-            m.ProjectileLifetime = 3f;
-            m.ProjectileDamage = 8f;
-            m.LeadFactor = 0.8f;
-            m.SeparationRadius = 1.2f;
-            m.SeparationStrength = 6f;
-            m.AvoidLookahead = 3f;
+            bool changed = false;
+            changed |= SetIfDifferent(ref m.MaxSpeed, 4f);
+            changed |= SetIfDifferent(ref m.Accel, 25f);
+            changed |= SetIfDifferent(ref m.Radius, 0.5f);
+            changed |= SetIfDifferent(ref m.MaxHp, 20f);
+            changed |= SetIfDifferent(ref m.ContactDamage, 0f);
+            changed |= SetIfDifferent(ref m.AttackRange, 0f);
+            changed |= SetIfDifferent(ref m.TelegraphSeconds, 0f);
+            changed |= SetIfDifferent(ref m.AttackCooldown, 0f);
+            changed |= SetIfDifferent(ref m.PreferredRange, 9f);
+            changed |= SetIfDifferent(ref m.RangeTolerance, 1.5f);
+            changed |= SetIfDifferent(ref m.StrafeSpeed, 3f);
+            changed |= SetIfDifferent(ref m.FireInterval, 1.6f);
+            changed |= SetIfDifferent(ref m.ProjectileSpeed, 14f);
+            changed |= SetIfDifferent(ref m.ProjectileRadius, 0.15f);
+            changed |= SetIfDifferent(ref m.ProjectileLifetime, 3f);
+            changed |= SetIfDifferent(ref m.ProjectileDamage, 8f);
+            changed |= SetIfDifferent(ref m.LeadFactor, 0.8f);
+            changed |= SetIfDifferent(ref m.SeparationRadius, 1.2f);
+            changed |= SetIfDifferent(ref m.SeparationStrength, 6f);
+            changed |= SetIfDifferent(ref m.AvoidLookahead, 3f);
+            return changed;
         }
 
-        static T GetOrCreate<T>(string assetName, System.Action<T> configure = null) where T : ScriptableObject
+        static bool SetIfDifferent(ref float field, float value)
+        {
+            if (field == value) return false;
+            field = value;
+            return true;
+        }
+
+        static T GetOrCreate<T>(string assetName) where T : ScriptableObject
         {
             string path = $"{DataDir}/{assetName}.asset";
             var existing = AssetDatabase.LoadAssetAtPath<T>(path);
             if (existing != null) return existing;
 
             var asset = ScriptableObject.CreateInstance<T>();
-            configure?.Invoke(asset);
             AssetDatabase.CreateAsset(asset, path);
             return asset;
         }
