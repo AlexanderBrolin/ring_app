@@ -418,6 +418,7 @@ namespace Ring.Editor
                 baseColor: new Color(0.02f, 0.03f, 0.04f),
                 emissionColor: new Color(2.5f, 3f, 3.5f));
             Material tracerMat = GetOrCreateUnlitMaterial("TracerTrail", new Color(2.5f, 3f, 3.5f));
+            Material muzzleMat = GetOrCreateUnlitMaterial("MuzzleFlash", new Color(4f, 2.2f, 0.6f));
 
             MobView mobPrefab = GetOrCreateMobPrefab(mobMat);
             ProjectileView projectilePrefab =
@@ -487,6 +488,17 @@ namespace Ring.Editor
                 ParticleSystem particles = muzzleGo.AddComponent<ParticleSystem>();
                 ConfigureMuzzleParticles(particles);
                 muzzleGo.AddComponent<MuzzleFlashView>();
+                sceneDirty = true;
+            }
+            // Checked unconditionally (not just on first creation), same as the
+            // Player/Crosshair renderer checks above: `AddComponent<ParticleSystem>()`
+            // does not assign its `ParticleSystemRenderer` a material on its own, so
+            // a self-heal here is what fixes an already-committed object that was
+            // created before this check existed, not just future re-runs.
+            ParticleSystemRenderer muzzleRenderer = muzzleGo.GetComponent<ParticleSystemRenderer>();
+            if (muzzleRenderer.sharedMaterial != muzzleMat)
+            {
+                muzzleRenderer.sharedMaterial = muzzleMat;
                 sceneDirty = true;
             }
             MuzzleFlashView muzzleFlash = muzzleGo.GetComponent<MuzzleFlashView>();
@@ -709,7 +721,11 @@ namespace Ring.Editor
         /// `Emit` from `MuzzleFlashView.HandleEvent` (no continuous emission, no
         /// auto-play). Only ever called once, at creation (existence-guarded by
         /// the caller), so an owner's in-Editor tweak of these modules survives a
-        /// re-run.
+        /// re-run. The renderer's material is deliberately NOT set here — unlike
+        /// these module settings, it is self-healing (checked unconditionally by
+        /// the caller every run, see the `muzzleRenderer.sharedMaterial` check
+        /// above) because `AddComponent<ParticleSystem>()` leaves it empty and
+        /// that needs to fix an already-committed object too, not just a fresh one.
         static void ConfigureMuzzleParticles(ParticleSystem particles)
         {
             ParticleSystem.MainModule main = particles.main;

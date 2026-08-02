@@ -18,11 +18,16 @@ namespace Ring.Presentation
     ///    returns its view to the pool.
     ///  - `HandleEvent` (called by `SimEventRouter`, П-1's ordered fan-out — never
     ///    subscribed directly to any runner event): retires a view the instant its
-    ///    entity's terminal event fires (MobDied / ProjectileHit / ProjectileBlocked
-    ///    / ProjectileExpired), ahead of that frame's `LateUpdate` diff. This is
-    ///    redundant with the diff on a normal frame (the Id is already gone from
-    ///    `Curr` by then too) — it exists so retirement is explicit and immediate
-    ///    rather than only an incidental side effect of diffing.
+    ///    entity's terminal event fires (MobDied for mobs; ProjectileBlocked /
+    ///    ProjectileExpired for projectiles — NOT ProjectileHit: that event's
+    ///    `EntityId` is the hit mob's Id, not the consumed projectile's, per
+    ///    `ProjectileSystem`'s emit contract, so it can never match a live entry in
+    ///    `_activeProjectiles`; a projectile's on-hit retirement is left to the
+    ///    ordinary `LateUpdate` diff below), ahead of that frame's `LateUpdate`
+    ///    diff. This is redundant with the diff on a normal frame (the Id is
+    ///    already gone from `Curr` by then too) — it exists so retirement is
+    ///    explicit and immediate rather than only an incidental side effect of
+    ///    diffing.
     /// Dictionaries/pools/scratch buffers are pre-sized from `ArenaConfig`'s caps in
     /// `Awake` and never rebuilt — steady-state play allocates nothing (spec §3.7).
     public sealed class ViewRegistry : MonoBehaviour
@@ -72,7 +77,10 @@ namespace Ring.Presentation
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer
-        /// (П-1 fan-out) — retirement only, see class doc.
+        /// (П-1 fan-out) — retirement only, see class doc. `ProjectileHit` is
+        /// deliberately absent: its `EntityId` names the hit mob, not the
+        /// projectile (that Id is still surfaced here for a future flash-hook,
+        /// Phase 8's Task 25 — just not for retirement).
         public void HandleEvent(in SimEvent e)
         {
             switch (e.Kind)
@@ -80,7 +88,6 @@ namespace Ring.Presentation
                 case SimEventKind.MobDied:
                     RetireMob(e.EntityId);
                     break;
-                case SimEventKind.ProjectileHit:
                 case SimEventKind.ProjectileBlocked:
                 case SimEventKind.ProjectileExpired:
                     RetireProjectile(e.EntityId);
