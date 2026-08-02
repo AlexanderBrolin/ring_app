@@ -78,13 +78,19 @@ namespace Ring.Simulation.Tests
             // Presentation fix-round app-2pl round 2) so MuzzleFlashView can orient the
             // muzzle burst tick-accurately from the event alone, instead of the
             // render-frame's Curr snapshot (wrong during a multi-tick catch-up flush).
-            // Zero spread/recoil + aim straight along +X removes every other source of
-            // angle variance, so this isolates exactly the field under test.
+            // Zero spread/recoil removes every other source of angle variance, so this
+            // isolates exactly the field under test. Diagonal aim (not the shared `Fire`
+            // fixture's straight +X, fix-round 3 round 2): a straight +X shot has
+            // atan2 == 0, which is indistinguishable from the OLD hardcoded Amount=0f —
+            // that scenario can't actually catch a regression back to the hardcoded
+            // value. A 45-degree aim gives a non-zero expected angle the old code would
+            // fail, making this a genuinely discriminating regression test.
             var cfg = TestConfigs.Open();
             cfg.Weapon.SpreadRad = 0f;
             cfg.Weapon.RecoilPerShotRad = 0f;
             var w = new SimulationWorld(1, cfg);
-            w.Tick(Fire); // aim (10,0) from Pos (0,0) -> straight +X; first shot is instant
+            var diagonalFire = new SimInput { AimPoint = new float2(10f, 10f), FireHeld = true };
+            w.Tick(diagonalFire); // aim (10,10) from Pos (0,0) -> 45 degrees; first shot is instant
 
             SimEvent fired = default;
             bool found = false;
@@ -96,7 +102,7 @@ namespace Ring.Simulation.Tests
                 break;
             }
             Assert.IsTrue(found);
-            Assert.AreEqual(0f, fired.Amount, 1e-4f);
+            Assert.AreEqual(math.PI / 4f, fired.Amount, 1e-3f);
         }
     }
 }
