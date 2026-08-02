@@ -44,7 +44,10 @@ namespace Ring.Presentation
         const float ObstacleY = 1f;
 
         /// User layer 8 — named "Cosmetics" in `ProjectSettings/TagManager.asset`.
-        const int CosmeticsLayer = 8;
+        /// Public (Task 27): `PersistentPropsDirector`/`StageOneSceneBootstrap`
+        /// reuse this exact constant for casings/decals/corpses instead of
+        /// redeclaring the literal `8` a second/third time (reuse > duplication).
+        public const int CosmeticsLayer = 8;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] ArenaConfig _arena;

@@ -7,6 +7,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
@@ -84,6 +85,25 @@ namespace Ring.Editor
     /// unlit material created the same existence-guarded way as every other
     /// placeholder material in this file. `CrosshairView` gains `_cone`/
     /// `_runner` reference slots alongside its existing `_marker`/`_aimProvider`.
+    /// Task 27 (spec §3.11, Приложение П) adds persistent cosmetics: (1) an
+    /// idempotent `AddDecalRendererFeatureIfMissing` pass over both
+    /// `PC_Renderer.asset`/`Mobile_Renderer.asset` — the brief's "через Editor"
+    /// step reproduced by hand (no Editor UI in batchmode) via the exact
+    /// `SerializedObject`/`AssetDatabase` sequence the URP package's own
+    /// `ScriptableRendererDataEditor.AddComponent` uses (read directly from
+    /// package source, `Editor/ScriptableRendererDataEditor.cs`), guarded by
+    /// the public `ScriptableRendererData.TryGetRendererFeature&lt;T&gt;` the
+    /// same Inspector uses to reject a duplicate; (2) six new existence-guarded
+    /// prefabs (`Casing`/`Decal`/`Corpse`/`HitSpark`/`BlockSpark`/`DeathBurst`,
+    /// same `PrefabUtility.SaveAsPrefabAsset` pattern as `MobView`/
+    /// `ProjectileView`) and their materials, including a decal material
+    /// cloned from URP's own shipped `Runtime/Materials/Decal.mat` template
+    /// (loaded via its `Packages/com.unity.render-pipelines.universal/...`
+    /// virtual path) rather than hand-building a `Shader Graphs/Decal`
+    /// material from scratch; (3) a `PersistentProps` object carrying
+    /// `PersistentPropsDirector`, wired to every prefab above plus `_arena`
+    /// (decal/block-spark normal computation) and `_gameFeel`; (4)
+    /// `SimEventRouter`'s new `_persistentProps` slot.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -130,6 +150,19 @@ namespace Ring.Editor
         const string GameFeelDirectorObjectName = "GameFeelDirector";
         const string VignetteObjectName = "Vignette";
 
+        // Task 27.
+        const string PcRendererPath = "Assets/Settings/PC_Renderer.asset";
+        const string MobileRendererPath = "Assets/Settings/Mobile_Renderer.asset";
+        const string DecalTemplateMaterialPath =
+            "Packages/com.unity.render-pipelines.universal/Runtime/Materials/Decal.mat";
+        const string CasingPrefabPath = PrefabsDir + "/Casing.prefab";
+        const string DecalPrefabPath = PrefabsDir + "/Decal.prefab";
+        const string CorpsePrefabPath = PrefabsDir + "/Corpse.prefab";
+        const string HitSparkPrefabPath = PrefabsDir + "/HitSpark.prefab";
+        const string BlockSparkPrefabPath = PrefabsDir + "/BlockSpark.prefab";
+        const string DeathBurstPrefabPath = PrefabsDir + "/DeathBurst.prefab";
+        const string PersistentPropsObjectName = "PersistentProps";
+
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
         {
@@ -156,6 +189,15 @@ namespace Ring.Editor
             bool gunnerChanged = ApplyGunnerDefaults(gunner);
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
             AssetDatabase.SaveAssets();
+
+            // Task 27 (Приложение П, Decal Renderer Feature): independent of
+            // scene state, so it runs before any scene wiring below — see
+            // AddDecalRendererFeatureIfMissing's own doc for why this
+            // reproduces the URP Editor's "Add Renderer Feature" button by
+            // hand instead of using it (batchmode has no Inspector to click).
+            bool decalFeatureChanged = false;
+            decalFeatureChanged |= AddDecalRendererFeatureIfMissing(PcRendererPath);
+            decalFeatureChanged |= AddDecalRendererFeatureIfMissing(MobileRendererPath);
 
             SimulationRunner runner = FindRunner(scene);
             bool sceneDirty = false;
@@ -735,6 +777,58 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // Task 27 (spec §3.11, Приложение П): persistent cosmetics —
+            // shell casings, impact decals, corpses, and the three pooled
+            // spark/burst particle systems (muzzle flash itself is the
+            // MuzzleFlashView object just above, not duplicated here).
+            Material casingMat = GetOrCreateMaterial(
+                "CasingBrass", baseColor: new Color(0.25f, 0.16f, 0.05f), emissionColor: Color.black);
+            Material corpseMat = GetOrCreateMaterial(
+                "CorpseEmissive", baseColor: new Color(0.05f, 0.05f, 0.05f), emissionColor: new Color(0.1f, 0.1f, 0.1f));
+            Material decalMat = GetOrCreateDecalMaterial("ScorchDecal", new Color(0.04f, 0.04f, 0.04f, 0.85f));
+            Material hitSparkMat = GetOrCreateUnlitMaterial("HitSpark", new Color(3.5f, 3f, 1.6f));
+            Material blockSparkMat = GetOrCreateUnlitMaterial("BlockSpark", new Color(2f, 2.3f, 3f));
+            Material deathBurstMat = GetOrCreateUnlitMaterial("DeathBurst", new Color(4f, 1.3f, 0.3f));
+
+            CasingView casingPrefab = GetOrCreateCasingPrefab(casingMat);
+            DecalProjector decalPrefab = GetOrCreateDecalPrefab(decalMat);
+            CorpseView corpsePrefab = GetOrCreateCorpsePrefab(corpseMat);
+            ParticleSystem hitSparkPrefab = GetOrCreateSparkPrefab(HitSparkPrefabPath, "HitSpark", hitSparkMat,
+                lifetime: 0.15f, speed: 3.5f, size: 0.06f, burstCount: 10, coneAngle: 35f);
+            ParticleSystem blockSparkPrefab = GetOrCreateSparkPrefab(BlockSparkPrefabPath, "BlockSpark", blockSparkMat,
+                lifetime: 0.18f, speed: 3f, size: 0.07f, burstCount: 12, coneAngle: 25f);
+            ParticleSystem deathBurstPrefab = GetOrCreateSparkPrefab(DeathBurstPrefabPath, "DeathBurst", deathBurstMat,
+                lifetime: 0.3f, speed: 4f, size: 0.12f, burstCount: 24, coneAngle: 90f);
+
+            GameObject persistentPropsGo = FindRootObject(scene, PersistentPropsObjectName);
+            if (persistentPropsGo == null)
+            {
+                persistentPropsGo = new GameObject(PersistentPropsObjectName);
+                sceneDirty = true;
+            }
+            PersistentPropsDirector persistentProps = persistentPropsGo.GetComponent<PersistentPropsDirector>();
+            if (persistentProps == null)
+            {
+                persistentProps = persistentPropsGo.AddComponent<PersistentPropsDirector>();
+                sceneDirty = true;
+            }
+            var persistentPropsSo = new SerializedObject(persistentProps);
+            bool persistentPropsRefsChanged = false;
+            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_runner", runner);
+            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_gameFeel", gameFeel);
+            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_arena", arena);
+            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_casingPrefab", casingPrefab);
+            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
+            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_corpsePrefab", corpsePrefab);
+            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_hitSparkPrefab", hitSparkPrefab);
+            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
+            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
+            if (persistentPropsRefsChanged)
+            {
+                persistentPropsSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
             GameObject routerGo = FindRootObject(scene, EventRouterObjectName);
             if (routerGo == null)
             {
@@ -751,6 +845,7 @@ namespace Ring.Editor
             bool routerRefsChanged = false;
             routerRefsChanged |= SetRef(routerSo, "_runner", runner);
             routerRefsChanged |= SetRef(routerSo, "_gameFeelDirector", gameFeelDirector);
+            routerRefsChanged |= SetRef(routerSo, "_persistentProps", persistentProps);
             routerRefsChanged |= SetRef(routerSo, "_audioDirector", audioDirector);
             routerRefsChanged |= SetRef(routerSo, "_muzzleFlash", muzzleFlash);
             routerRefsChanged |= SetRef(routerSo, "_viewRegistry", viewRegistry);
@@ -814,6 +909,7 @@ namespace Ring.Editor
             }
 
             Debug.Log($"StageOneSceneBootstrap: gunner {(gunnerChanged ? "updated" : "ok")}, " +
+                $"decal feature {(decalFeatureChanged ? "added" : "ok")}, " +
                 $"scene {(sceneDirty ? "updated" : "already up to date")}.");
         }
 
@@ -971,6 +1067,196 @@ namespace Ring.Editor
             GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, ProjectilePrefabPath);
             Object.DestroyImmediate(go);
             return asset.GetComponent<ProjectileView>();
+        }
+
+        /// Task 27: idempotent replacement for clicking "Add Renderer Feature
+        /// → Decal" in the Inspector (unavailable in batchmode) — reproduces
+        /// `ScriptableRendererDataEditor.AddComponent`'s exact sequence (URP
+        /// package source, `Editor/ScriptableRendererDataEditor.cs`): grow
+        /// `m_RendererFeatures`/`m_RendererFeatureMap` by one element each,
+        /// create the feature as a sub-asset of the renderer data asset
+        /// (`AddObjectToAsset`, same as a real "Add Renderer Feature" click),
+        /// force a save/reimport. Guarded by the public
+        /// `ScriptableRendererData.TryGetRendererFeature&lt;T&gt;` — the same
+        /// API the Inspector itself uses to detect
+        /// `DecalRendererFeature`'s own `[DisallowMultipleRendererFeature]` —
+        /// so a second `Apply()` run is a no-op, same contract as everything
+        /// else in this file. Returns whether it actually added the feature.
+        static bool AddDecalRendererFeatureIfMissing(string rendererDataPath)
+        {
+            var data = AssetDatabase.LoadAssetAtPath<ScriptableRendererData>(rendererDataPath);
+            if (data == null)
+                throw new System.InvalidOperationException(
+                    $"StageOneSceneBootstrap: no ScriptableRendererData at '{rendererDataPath}'.");
+
+            if (data.TryGetRendererFeature<DecalRendererFeature>(out _)) return false;
+
+            var so = new SerializedObject(data);
+            SerializedProperty featuresProp = so.FindProperty("m_RendererFeatures");
+            SerializedProperty mapProp = so.FindProperty("m_RendererFeatureMap");
+
+            var feature = ScriptableObject.CreateInstance<DecalRendererFeature>();
+            feature.name = nameof(DecalRendererFeature);
+            AssetDatabase.AddObjectToAsset(feature, data);
+            AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out long localId);
+
+            featuresProp.arraySize++;
+            featuresProp.GetArrayElementAtIndex(featuresProp.arraySize - 1).objectReferenceValue = feature;
+            mapProp.arraySize++;
+            mapProp.GetArrayElementAtIndex(mapProp.arraySize - 1).longValue = localId;
+            so.ApplyModifiedProperties();
+
+            EditorUtility.SetDirty(data);
+            AssetDatabase.SaveAssetIfDirty(data);
+            AssetDatabase.ImportAsset(rendererDataPath);
+            return true;
+        }
+
+        /// Task 27: the shared `CasingView` prefab — a small primitive
+        /// Cylinder (default-primitive `CapsuleCollider` deliberately KEPT,
+        /// unlike every other primitive in this file that calls
+        /// `RemoveCollider` — this is the one prop that needs real PhysX to
+        /// bounce off the arena's Cosmetics-layer geometry, T13) plus a
+        /// `Rigidbody` and a `CasingView`. Existence-guarded like every other
+        /// prefab helper here.
+        static CasingView GetOrCreateCasingPrefab(Material casingMat)
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<CasingView>(CasingPrefabPath);
+            if (existing != null) return existing;
+
+            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            go.name = "Casing";
+            go.layer = GreyboxBuilder.CosmeticsLayer;
+            go.transform.localScale = new Vector3(0.05f, 0.06f, 0.05f);
+            go.GetComponent<MeshRenderer>().sharedMaterial = casingMat;
+
+            Rigidbody rb = go.AddComponent<Rigidbody>();
+            rb.mass = 0.01f;
+            rb.linearDamping = 0.4f;
+            rb.angularDamping = 0.6f;
+
+            go.AddComponent<CasingView>();
+
+            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, CasingPrefabPath);
+            Object.DestroyImmediate(go);
+            return asset.GetComponent<CasingView>();
+        }
+
+        /// Task 27: the shared `DecalProjector` prefab. `size`/`material` are
+        /// one-time module config (existence-guarded like everything else in
+        /// this file); `pivot` stays the component's own default
+        /// (`(0, 0, 0.5)`, `Runtime/Decal/DecalProjector.cs`) — it centers the
+        /// projection box between the transform's own position (local Z = 0)
+        /// and `size.z` ahead of it, which is exactly what
+        /// `PersistentPropsDirector.HandleBlocked`'s own near-offset/rotation
+        /// math assumes.
+        static DecalProjector GetOrCreateDecalPrefab(Material decalMat)
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<DecalProjector>(DecalPrefabPath);
+            if (existing != null) return existing;
+
+            var go = new GameObject("Decal");
+            DecalProjector projector = go.AddComponent<DecalProjector>();
+            projector.material = decalMat;
+            projector.size = new Vector3(0.6f, 0.6f, 0.6f);
+
+            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, DecalPrefabPath);
+            Object.DestroyImmediate(go);
+            return asset.GetComponent<DecalProjector>();
+        }
+
+        /// Task 27: the shared `CorpseView` prefab — a bare, uncollided
+        /// (`RemoveCollider`, same treatment as `MobView`/`ProjectileView`)
+        /// Capsule; per-death tint comes from a `MaterialPropertyBlock`
+        /// override in `CorpseView.Spawn`, never a material instance (same
+        /// no-per-instance-materials rule `MobView` follows).
+        static CorpseView GetOrCreateCorpsePrefab(Material corpseMat)
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<CorpseView>(CorpsePrefabPath);
+            if (existing != null) return existing;
+
+            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            go.name = "Corpse";
+            RemoveCollider(go);
+            go.GetComponent<MeshRenderer>().sharedMaterial = corpseMat;
+            go.AddComponent<CorpseView>();
+
+            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, CorpsePrefabPath);
+            Object.DestroyImmediate(go);
+            return asset.GetComponent<CorpseView>();
+        }
+
+        /// Task 27: existence-guarded factory for the three pooled spark/burst
+        /// particle prefabs (hit-spark, block-spark, death-burst) —
+        /// `ConfigureBurstParticles` bakes an authored `Burst` at time 0 into
+        /// the Emission module (unlike `ConfigureMuzzleParticles`'s manual
+        /// `Emit()` call, `PersistentPropsDirector.PlayParticle` only ever
+        /// calls `Play()`, so the burst has to be self-triggering) and sets
+        /// `stopAction = Callback` so `ParticleReturnToPool.
+        /// OnParticleSystemStopped` fires once the burst finishes.
+        static ParticleSystem GetOrCreateSparkPrefab(string path, string objectName, Material mat,
+            float lifetime, float speed, float size, int burstCount, float coneAngle)
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<ParticleSystem>(path);
+            if (existing != null) return existing;
+
+            var go = new GameObject(objectName);
+            ParticleSystem particles = go.AddComponent<ParticleSystem>();
+            ConfigureBurstParticles(particles, lifetime, speed, size, burstCount, coneAngle);
+            go.GetComponent<ParticleSystemRenderer>().sharedMaterial = mat;
+            go.AddComponent<ParticleReturnToPool>();
+
+            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, path);
+            Object.DestroyImmediate(go);
+            return asset.GetComponent<ParticleSystem>();
+        }
+
+        static void ConfigureBurstParticles(ParticleSystem particles, float lifetime, float speed, float size,
+            int burstCount, float coneAngle)
+        {
+            ParticleSystem.MainModule main = particles.main;
+            main.loop = false;
+            main.playOnAwake = false;
+            main.stopAction = ParticleSystemStopAction.Callback;
+            main.startLifetime = lifetime;
+            main.startSpeed = speed;
+            main.startSize = size;
+            main.startColor = Color.white;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+            ParticleSystem.EmissionModule emission = particles.emission;
+            emission.rateOverTime = 0f;
+            emission.SetBursts(new[] { new ParticleSystem.Burst(0f, (short)burstCount) });
+
+            ParticleSystem.ShapeModule shape = particles.shape;
+            shape.shapeType = ParticleSystemShapeType.Cone;
+            shape.angle = coneAngle;
+            shape.radius = 0.05f;
+        }
+
+        /// Task 27: existence-guarded like `GetOrCreateMaterial`/
+        /// `GetOrCreateUnlitMaterial`, but cloned from URP's own shipped
+        /// `Decal.mat` (loaded via its package virtual path) rather than
+        /// built from `Shader.Find` — the Decal shader graph
+        /// (`Shaders/Decal.shadergraph`) exposes the same `_BaseColor`/
+        /// `_EmissionColor` convention as the project's `Universal Render
+        /// Pipeline/Lit` materials (verified by reading the template's own
+        /// `.mat` YAML), so only the tint needs overriding.
+        static Material GetOrCreateDecalMaterial(string assetName, Color baseColor)
+        {
+            string path = $"{MaterialsDir}/{assetName}.mat";
+            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (existing != null) return existing;
+
+            Material template = AssetDatabase.LoadAssetAtPath<Material>(DecalTemplateMaterialPath);
+            if (template == null)
+                throw new System.InvalidOperationException(
+                    $"StageOneSceneBootstrap: no default Decal material at '{DecalTemplateMaterialPath}' — is URP installed?");
+
+            var mat = new Material(template) { name = assetName };
+            mat.SetColor("_BaseColor", baseColor);
+            AssetDatabase.CreateAsset(mat, path);
+            return mat;
         }
 
         /// Task 17: one-time module setup for the `MuzzleFlash` object's

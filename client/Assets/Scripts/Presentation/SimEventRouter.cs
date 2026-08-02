@@ -10,18 +10,19 @@ namespace Ring.Presentation
     /// before `SimulationRunner` clears it), fanned out per event in a fixed
     /// relative order:
     ///   GameFeelDirector → PersistentPropsDirector → AudioDirector →
-    ///   ViewRegistry (retire only) → DeathOverlayController.
+    ///   MuzzleFlashView → ViewRegistry (retire only) → DeathOverlayController.
     /// `AudioDirector`, `MuzzleFlashView` and `ViewRegistry` exist as of Task 17;
     /// `DeathOverlayController` (Task 24) slots in last; `GameFeelDirector`
     /// (Task 25, Приложение П-1) slots in FIRST — hitstop/hit-flash/vignette must
     /// react before anything else in the same pass gets a chance to read view
-    /// state for this frame. `PersistentPropsDirector` is still unimplemented
-    /// (later Phase 8 work); its place in the order is marked below instead of
-    /// being stubbed out with an empty class.
+    /// state for this frame. `PersistentPropsDirector` (Task 27, Приложение П-1)
+    /// slots in right after it — casings/decals/corpses/sparks spawn purely from
+    /// each event's own position, independent of anything the later slots do.
     public sealed class SimEventRouter : MonoBehaviour
     {
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelDirector _gameFeelDirector;
+        [SerializeField] PersistentPropsDirector _persistentProps;
         [SerializeField] AudioDirector _audioDirector;
         [SerializeField] MuzzleFlashView _muzzleFlash;
         [SerializeField] ViewRegistry _viewRegistry;
@@ -40,7 +41,7 @@ namespace Ring.Presentation
                 SimEvent e = world.GetEvent(i);
 
                 _gameFeelDirector.HandleEvent(in e); // hitstop/flash/vignette, first slot (Task 25, П-1)
-                // PersistentPropsDirector (casings, decals, corpses) — Phase 8: still unimplemented.
+                _persistentProps.HandleEvent(in e); // casings/decals/corpses/sparks (Task 27, П-1)
                 _audioDirector.HandleEvent(in e);
                 _muzzleFlash.HandleEvent(in e); // shot feedback, same pass (П-2)
                 _viewRegistry.HandleEvent(in e); // retire only — mapping/lerp is ViewRegistry's own LateUpdate
