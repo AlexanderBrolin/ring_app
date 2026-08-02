@@ -89,6 +89,7 @@ namespace Ring.Simulation.Tests
             g.SeparationRadius = expected.Gunner.SeparationRadius;
             g.SeparationStrength = expected.Gunner.SeparationStrength;
             g.AvoidLookahead = expected.Gunner.AvoidLookahead;
+            g.AvoidMargin = expected.Gunner.AvoidMargin;
 
             SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
 
@@ -157,6 +158,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.SeparationRadius, a.SeparationRadius, Eps);
             Assert.AreEqual(e.SeparationStrength, a.SeparationStrength, Eps);
             Assert.AreEqual(e.AvoidLookahead, a.AvoidLookahead, Eps);
+            Assert.AreEqual(e.AvoidMargin, a.AvoidMargin, Eps);
         }
 
         static void AssertWaveEqual(WaveSimConfig e, WaveSimConfig a)

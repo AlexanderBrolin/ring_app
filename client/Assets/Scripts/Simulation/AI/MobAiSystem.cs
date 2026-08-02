@@ -20,23 +20,6 @@ namespace Ring.Simulation.AI
         /// resulting speed drops below this fraction of the configured StrafeSpeed.
         const float StrafeBlockedFactor = 0.1f;
 
-        /// Extra clearance added on top of the mob's own collision radius when
-        /// deciding whether an obstacle still blocks the path (SteerAround only —
-        /// the physical MoveWithCollisions call always uses the bare radius). A
-        /// mob steering with zero margin re-acquires direct pursuit the instant
-        /// it is barely, physically clear of the obstacle — which snaps it onto
-        /// the obstacle's minimal tangent line, i.e. the shallowest possible
-        /// approach angle into the target. That angle is bounded by
-        /// asin(paddedRadius / distanceToObstacle) regardless of how the tangent
-        /// itself is computed (confirmed empirically while debugging
-        /// ObstacleBeforeMob_BlocksShot_NoDamage, Task 16/19: a Chaser rounding an
-        /// obstacle sitting on the player's fixed firing line settled onto a
-        /// ~23.6-degree final approach — shallow enough to stay inside the
-        /// player's shot corridor all the way into AttackRange). This margin
-        /// makes the mob keep a wider berth while still navigating around the
-        /// obstacle, which lifts that bound comfortably clear of the corridor.
-        const float AvoidMargin = 1f;
-
         public static void Update(SimulationWorld w)
         {
             float dt = SimulationWorld.TickDt;
@@ -82,6 +65,21 @@ namespace Ring.Simulation.AI
 
                 case MobAiState.Chase:
                 {
+                    // Entry criterion (centre-to-centre <= AttackRange) is
+                    // intentionally stricter than the strike's hit criterion below
+                    // (CircleOverlap, which also folds in the hero's own body
+                    // radius: effectively centre-to-centre < AttackRange +
+                    // hero.Radius). That's a deliberate asymmetry, not something to
+                    // unify: since AttackRange and hero.Radius are both positive,
+                    // the moment Telegraph is entered the player is already well
+                    // inside the strike's looser hit range too (by a hero.Radius
+                    // margin), so the windup tolerates the player drifting or
+                    // dashing a bit without the strike missing purely because of
+                    // the two checks' different shapes. Tightening the entry check
+                    // to match the hit check (or vice versa) would only make the
+                    // Chaser commit to a windup either later or from further away
+                    // than intended — not something either radius/range pair in
+                    // the current balance needs.
                     float dist = math.distance(m.Pos, player.Pos);
                     if (dist <= cfg.AttackRange)
                     {
@@ -92,7 +90,7 @@ namespace Ring.Simulation.AI
                     else
                     {
                         float2 dir = SteerAround(m.Pos, player.Pos, in arena,
-                            cfg.AvoidLookahead, cfg.Radius, m.Id);
+                            cfg.AvoidLookahead, cfg.Radius, cfg.AvoidMargin, m.Id);
                         m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed,
                             cfg.Accel * dt);
                     }
@@ -108,7 +106,9 @@ namespace Ring.Simulation.AI
                     if (m.StateTimer >= cfg.TelegraphSeconds)
                     {
                         // Re-validated at the strike tick — the player may have moved
-                        // (or dashed) out of range since the telegraph started.
+                        // (or dashed) out of range since the telegraph started. See
+                        // the Chase-entry comment above for why this check being
+                        // looser than the entry check is intentional.
                         if (Geometry.CircleOverlap(m.Pos, cfg.AttackRange,
                                 player.Pos, w.Config.Hero.Radius))
                             w.DamagePlayer(cfg.ContactDamage, m.Pos);
@@ -156,7 +156,7 @@ namespace Ring.Simulation.AI
                     - math.normalizesafe(toPlayer, new float2(1f, 0f)) * cfg.AvoidLookahead;
                 float2 target = dist > upper ? player.Pos : awayTarget;
                 float2 dir = SteerAround(m.Pos, target, in arena, cfg.AvoidLookahead,
-                    cfg.Radius, m.Id);
+                    cfg.Radius, cfg.AvoidMargin, m.Id);
                 m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed, cfg.Accel * dt);
                 ApplyMotion(ref m, in cfg, in arena, dt);
                 return;
@@ -213,12 +213,15 @@ namespace Ring.Simulation.AI
         /// without RNG. Only obstacles are considered (matches
         /// Targeting.HasLineOfFire) — the ring wall is handled by the physical
         /// collide-and-slide in MoveWithCollisions, not by look-ahead steering.
+        /// `avoidMargin` (MobSimConfig.AvoidMargin — see its doc comment for the
+        /// full rationale) pads the obstruction check beyond `mobRadius` so the
+        /// mob doesn't hug the obstacle at the bare minimum clearance.
         static float2 SteerAround(float2 pos, float2 targetPos, in ArenaSimConfig arena,
-            float lookahead, float mobRadius, int id)
+            float lookahead, float mobRadius, float avoidMargin, int id)
         {
             float2 dir = math.normalizesafe(targetPos - pos, new float2(1f, 0f));
             float2 aheadEnd = pos + dir * lookahead;
-            float padR = mobRadius + AvoidMargin;
+            float padR = mobRadius + avoidMargin;
 
             int blockedIdx = -1;
             float bestT = 1f;

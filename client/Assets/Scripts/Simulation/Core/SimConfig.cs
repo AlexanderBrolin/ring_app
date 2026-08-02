@@ -25,6 +25,30 @@ namespace Ring.Simulation.Core
             AttackRange, TelegraphSeconds, AttackCooldown, PreferredRange, RangeTolerance,
             StrafeSpeed, FireInterval, ProjectileSpeed, ProjectileRadius, ProjectileLifetime,
             ProjectileDamage, LeadFactor, SeparationRadius, SeparationStrength, AvoidLookahead;
+
+        /// Extra clearance `Ring.Simulation.AI.MobAiSystem.SteerAround` adds on top
+        /// of `Radius` when deciding whether an obstacle still blocks the path to a
+        /// target (obstruction lookahead only — the physical
+        /// `PlayerMovementSystem.MoveWithCollisions` call always uses the bare
+        /// `Radius`). A mob steering with zero margin re-acquires direct pursuit the
+        /// instant it is barely, physically clear of an obstacle — which snaps it
+        /// onto the obstacle's minimal tangent line, i.e. the shallowest possible
+        /// final approach angle into the target. That angle is bounded by
+        /// `asin((obstacleRadius + Radius + AvoidMargin) / distanceToObstacleCentre)`
+        /// regardless of how the tangent itself is computed (a geometric invariant
+        /// of "detour then beeline," confirmed empirically while debugging a Task 19
+        /// regression: with `AvoidMargin = 0`, a Chaser rounding an obstacle sitting
+        /// on the player's fixed firing line — `ProjectileTests.
+        /// ObstacleBeforeMob_BlocksShot_NoDamage`, Task 16 — settled onto a
+        /// ~23.6-degree final approach, shallow enough to stay inside the player's
+        /// shot corridor all the way into `AttackRange`). This margin makes the mob
+        /// keep a wider berth while still navigating around the obstacle, which
+        /// lifts that bound comfortably clear of the corridor; 1 (a full body-width
+        /// beyond the bare radius) is the smallest round value that does so for the
+        /// current Chaser/Gunner numbers (empirically, >=0.8 already suffices —
+        /// verified in an offline replay of the collision/steering math before
+        /// touching Unity, see the Task 19 report).
+        public float AvoidMargin;
     }
 
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).

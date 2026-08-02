@@ -86,7 +86,8 @@ namespace Ring.Data
             LeadFactor = m.LeadFactor,
             SeparationRadius = m.SeparationRadius,
             SeparationStrength = m.SeparationStrength,
-            AvoidLookahead = m.AvoidLookahead
+            AvoidLookahead = m.AvoidLookahead,
+            AvoidMargin = m.AvoidMargin
         };
 
         static ArenaSimConfig ToArenaSimConfig(ArenaConfig a)
@@ -214,6 +215,7 @@ namespace Ring.Data
             ReqNonNegative(errors, $"{name}.SeparationRadius", m.SeparationRadius);
             ReqNonNegative(errors, $"{name}.SeparationStrength", m.SeparationStrength);
             ReqNonNegative(errors, $"{name}.AvoidLookahead", m.AvoidLookahead);
+            ReqNonNegative(errors, $"{name}.AvoidMargin", m.AvoidMargin);
         }
 
         static void ReqFinite(List<string> errors, string name, float value)

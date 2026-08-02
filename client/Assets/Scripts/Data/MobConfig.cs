@@ -30,5 +30,6 @@ namespace Ring.Data
         [Range(0f, 10f)] public float SeparationRadius = 1.2f;
         [Range(0f, 50f)] public float SeparationStrength = 6f;
         [Range(0f, 10f)] public float AvoidLookahead = 3f;
+        [Range(0f, 5f)] public float AvoidMargin = 1f;
     }
 }

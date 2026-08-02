@@ -607,6 +607,7 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.SeparationRadius, 1.2f);
             changed |= SetIfDifferent(ref m.SeparationStrength, 6f);
             changed |= SetIfDifferent(ref m.AvoidLookahead, 3f);
+            changed |= SetIfDifferent(ref m.AvoidMargin, 1f);
             return changed;
         }
 

@@ -234,10 +234,14 @@ namespace Ring.Simulation.Core
             }
         }
 
-        /// Test-only mob spawn seam (Task 16 Interfaces): spawned mobs default to
-        /// Idle AI — Phase 6 hasn't wired ticking for it yet — so they act as static
-        /// combat targets for projectile tests. Capped at Arena.MaxMobs like the
-        /// real spawner will be.
+        /// Test-only mob spawn seam (Task 16 Interfaces). Spawned mobs start at
+        /// Idle AI, but since Task 19 (Phase 6) MobAiSystem ticks every live mob
+        /// unconditionally — a spawned mob is NOT a static target: from the very
+        /// next Tick() it settles into Chase/Reposition-Fire like any other mob.
+        /// Callers that need a stationary target must either not tick the world or
+        /// account for movement/contact damage/gunfire. StrafeSign is seeded
+        /// deterministically by Id parity (Task 19 Interfaces) — no RNG. Capped at
+        /// Arena.MaxMobs like the real spawner will be.
         internal int SpawnMobForTest(MobType type, float2 pos)
         {
             if (_mobCount >= _mobs.Length)
