@@ -48,15 +48,36 @@ namespace Ring.Presentation
         static readonly Color GunnerGlintAccent = new Color(0.6f, 0.6f, 1.3f);
         const float GunnerGlintHz = 3f;
 
-        MeshRenderer _renderer;
+        // Task 25 (owner requirement, веха 3): the hit-flash/accent read must be
+        // independent of the placeholder capsule mesh — a future model swap
+        // brings its own renderer hierarchy (body + attachments, possibly
+        // `SkinnedMeshRenderer`), not a single top-level `MeshRenderer`.
+        // `GetComponentsInChildren<Renderer>(true)` is cached once here (Awake,
+        // not per-frame) and every entry gets the SAME `MaterialPropertyBlock`
+        // applied in `ApplyEmission` — this is the one place both the
+        // hit-flash (`Flash`) and the telegraph-pulse/Fire-glint accents (`Sync`)
+        // ultimately write through, so both automatically cover the whole model
+        // once one exists, with no further change needed here.
+        Renderer[] _renderers;
         MaterialPropertyBlock _block;
         Color _baseEmission;
         float _flashTimer;
         float _flashDuration;
 
+        // Task 25 (Приложение П-7, `HitstopScope.TargetOnly`): while this timer
+        // is running, `ViewRegistry.SyncMobs` skips writing `transform.position`
+        // for this view — it holds exactly where it was instead of continuing to
+        // interpolate, while every other mob/projectile/the player/the camera
+        // keep moving normally off the live pair. Ticks unscaled, same as
+        // `_flashTimer`, so hitstop/slow-mo (there is none — `Time.timeScale` is
+        // never touched, see `SimulationRunner`) never affects the timer itself.
+        float _freezePositionTimer;
+
+        public bool IsPositionFrozen => _freezePositionTimer > 0f;
+
         void Awake()
         {
-            _renderer = GetComponent<MeshRenderer>();
+            _renderers = GetComponentsInChildren<Renderer>(true);
             _block = new MaterialPropertyBlock();
         }
 
@@ -69,6 +90,7 @@ namespace Ring.Presentation
         {
             _baseEmission = m.Type == MobType.Chaser ? ChaserAccent : GunnerAccent;
             _flashTimer = 0f;
+            _freezePositionTimer = 0f; // pool-rebind hygiene, same as the flash timer above
             ApplyEmission(_baseEmission);
         }
 
@@ -118,16 +140,27 @@ namespace Ring.Presentation
             _flashTimer = _flashDuration;
         }
 
+        /// `GameFeelDirector`'s `HitstopScope.TargetOnly` hook (Task 25 Interfaces)
+        /// — see `_freezePositionTimer`'s doc above. Reentrant the same way
+        /// `Flash` is: a later call while already frozen simply restamps the
+        /// timer, it doesn't stack.
+        public void FreezePosition(float seconds) => _freezePositionTimer = Mathf.Max(seconds, 1e-4f);
+
+        /// `GameFeelDirector.ForceEndHitstop`'s early-out (e.g. `PlayerDied`) —
+        /// clears the freeze immediately instead of waiting for the timer to run
+        /// out on its own.
+        public void ClearPositionFreeze() => _freezePositionTimer = 0f;
+
         void Update()
         {
-            if (_flashTimer <= 0f) return;
-            _flashTimer -= Time.unscaledDeltaTime;
+            if (_flashTimer > 0f) _flashTimer -= Time.unscaledDeltaTime;
+            if (_freezePositionTimer > 0f) _freezePositionTimer -= Time.unscaledDeltaTime;
         }
 
         void ApplyEmission(Color emission)
         {
             _block.SetColor(EmissionColorId, emission);
-            _renderer.SetPropertyBlock(_block);
+            for (int i = 0; i < _renderers.Length; i++) _renderers[i].SetPropertyBlock(_block);
         }
     }
 }

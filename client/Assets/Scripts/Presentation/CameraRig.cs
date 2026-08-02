@@ -30,9 +30,13 @@ namespace Ring.Presentation
 
         void LateUpdate()
         {
-            Vector3 prevW = SimSpace.ToWorld(_runner.Prev.Player.Pos);
-            Vector3 currW = SimSpace.ToWorld(_runner.Curr.Player.Pos);
-            Vector3 playerW = Vector3.Lerp(prevW, currW, _runner.Alpha);
+            // Task 25 (Приложение П-7): reads ONLY `SimulationRunner.RenderPrev`/
+            // `RenderCurr`/`RenderAlpha` — a `FullFrame` hitstop freeze holds the
+            // camera still along with everything else without this class knowing
+            // hitstop exists.
+            Vector3 prevW = SimSpace.ToWorld(_runner.RenderPrev.Player.Pos);
+            Vector3 currW = SimSpace.ToWorld(_runner.RenderCurr.Player.Pos);
+            Vector3 playerW = Vector3.Lerp(prevW, currW, _runner.RenderAlpha);
             Vector3 aimW = SimSpace.ToWorld(_aimProvider.CurrentAimSimPos);
 
             Vector3 focus = playerW + (aimW - playerW) * _config.LookAhead;

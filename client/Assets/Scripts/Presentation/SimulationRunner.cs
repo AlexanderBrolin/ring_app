@@ -29,6 +29,30 @@ namespace Ring.Presentation
 
         public RenderSnapshot Prev, Curr;
         public float Alpha;
+
+        // Task 25 (Приложение П-7): the SOLE point every interpolating view
+        // (ViewRegistry, PlayerView, CameraRig) reads — `Prev`/`Curr`/`Alpha`
+        // above are the raw double-buffer this class itself owns and keeps
+        // advancing every tick no matter what (the simulation is never paused
+        // for hitstop, spec §3.2/§3.11); `RenderPrev`/`RenderCurr`/`RenderAlpha`
+        // are what actually reaches the screen, and `GameFeelDirector` is the
+        // only thing that ever calls `FreezeRender`/`UnfreezeRender` to make the
+        // two diverge. A `RenderSnapshot` is a mutable class this runner recycles
+        // every tick (`(Prev, Curr) = (Curr, Prev)` then `CaptureSnapshot(Curr)`
+        // overwrites whichever object that lands on) — so freezing "the render
+        // pair" can't just mean holding onto whatever `Curr` currently points at,
+        // that same object gets overwritten again within a couple of ticks.
+        // `_renderPrevFrozen`/`_renderCurrFrozen` are separate, permanently-owned
+        // buffers `FreezeRender` deep-copies the live pair into instead.
+        RenderSnapshot _renderPrevFrozen, _renderCurrFrozen;
+        bool _renderFrozen;
+        float _catchUpRemaining, _catchUpDuration;
+
+        public RenderSnapshot RenderPrev =>
+            _renderFrozen || _catchUpRemaining > 0f ? _renderPrevFrozen : Prev;
+        public RenderSnapshot RenderCurr => _renderFrozen ? _renderCurrFrozen : Curr;
+        public float RenderAlpha { get; private set; }
+
         public SimulationWorld World => _world;
         public long Seed { get; private set; }
         public bool ConfigTweaked;
@@ -126,12 +150,104 @@ namespace Ring.Presentation
                 if (TickAdvanced != null) TickAdvanced.Invoke(_world.CurrentTick, _world.StateHash());
             }
             Alpha = _acc.Alpha;
+            UpdateRenderAlpha();
             if (ticks > 0)
             {
                 TicksFlushed?.Invoke();
                 _world.ClearEvents();
                 _sampler.ClearLatches();
             }
+        }
+
+        /// Advances `RenderAlpha` every render frame (Task 25, Приложение П-7).
+        /// Three mutually exclusive states: pinned while `_renderFrozen`
+        /// (`FreezeRender` is active — `GameFeelDirector` hasn't unfrozen yet);
+        /// easing 0→1 over `_catchUpDuration` while `_catchUpRemaining > 0`
+        /// (`UnfreezeRender` just ran with a non-zero catch-up window); plain
+        /// pass-through to the live `Alpha` otherwise. See the `RenderPrev`/
+        /// `RenderCurr`/`RenderAlpha` doc block above for why a frozen picture
+        /// needs its own buffers instead of just holding `Alpha` still.
+        void UpdateRenderAlpha()
+        {
+            if (_renderFrozen) return;
+
+            if (_catchUpRemaining > 0f)
+            {
+                _catchUpRemaining -= Time.unscaledDeltaTime;
+                RenderAlpha = _catchUpDuration > 0f
+                    ? 1f - Mathf.Clamp01(_catchUpRemaining / _catchUpDuration)
+                    : 1f;
+                if (_catchUpRemaining <= 0f) _catchUpRemaining = 0f;
+                return;
+            }
+
+            RenderAlpha = Alpha;
+        }
+
+        /// `GameFeelDirector`'s hook for a `FullFrame`-scope hitstop trigger
+        /// (Приложение П-7) — deep-copies the CURRENT live pair into the frozen
+        /// buffers and pins `RenderAlpha` at today's live value, then flips
+        /// `RenderPrev`/`RenderCurr`/`RenderAlpha` over to that frozen state.
+        /// Safe to call again while already frozen (a follow-up hit resetting
+        /// the hitstop timer, spec Interfaces "переустанавливается, не
+        /// суммируется") — re-copying re-pins the frozen picture to the newest
+        /// moment instead of leaving it stuck on the FIRST hit in a chain.
+        public void FreezeRender()
+        {
+            CopySnapshot(Prev, _renderPrevFrozen);
+            CopySnapshot(Curr, _renderCurrFrozen);
+            RenderAlpha = Alpha;
+            _renderFrozen = true;
+            _catchUpRemaining = 0f; // a fresh freeze cancels any catch-up in flight
+        }
+
+        /// Ends a `FreezeRender` freeze. `catchUpSeconds <= 0` (`GameFeelDirector.
+        /// ForceEndHitstop`, e.g. on `PlayerDied`) snaps straight back to the live
+        /// pair; otherwise `RenderPrev` holds at the last frozen picture while
+        /// `RenderCurr` immediately starts tracking the live (still-advancing)
+        /// `Curr` again and `RenderAlpha` eases 0→1 over `catchUpSeconds` instead
+        /// of jumping to whatever `Alpha` reads that frame — several ticks can
+        /// have landed while the frame was pinned, so an instant snap would read
+        /// as every mob/projectile popping forward in a single frame.
+        public void UnfreezeRender(float catchUpSeconds)
+        {
+            if (!_renderFrozen) return;
+            _renderFrozen = false;
+            if (catchUpSeconds > 0f)
+            {
+                // The pose actually on screen the instant before unfreezing is
+                // `_renderCurrFrozen` (RenderCurr while frozen) — re-anchor
+                // `_renderPrevFrozen` (RenderPrev's frozen backing store) to it so
+                // the catch-up blends FROM there, not from the older `Prev` half
+                // of the pair that was frozen alongside it.
+                CopySnapshot(_renderCurrFrozen, _renderPrevFrozen);
+                _catchUpDuration = catchUpSeconds;
+                _catchUpRemaining = catchUpSeconds;
+            }
+            else
+            {
+                _catchUpRemaining = 0f;
+            }
+        }
+
+        /// Deep-copies one tick's worth of render data between two
+        /// `RenderSnapshot` instances of matching capacity (`FreezeRender`/
+        /// `UnfreezeRender` above — both `to` buffers are allocated in `Restart`
+        /// with this same runner's `ArenaConfig` caps, same as `Prev`/`Curr`
+        /// themselves). Every field on `RenderSnapshot` is either a struct or a
+        /// struct array, so plain assignment/indexed-copy IS the deep copy —
+        /// nothing here reaches into `Ring.Simulation.Core` beyond reading its
+        /// already-public fields (Simulation itself is untouched by this task).
+        static void CopySnapshot(RenderSnapshot from, RenderSnapshot to)
+        {
+            to.Tick = from.Tick;
+            to.Player = from.Player;
+            to.MobCount = from.MobCount;
+            for (int i = 0; i < from.MobCount; i++) to.Mobs[i] = from.Mobs[i];
+            to.ProjectileCount = from.ProjectileCount;
+            for (int i = 0; i < from.ProjectileCount; i++) to.Projectiles[i] = from.Projectiles[i];
+            to.Wave = from.Wave;
+            to.Stats = from.Stats;
         }
 
         public void Restart(long seed)
@@ -145,6 +261,11 @@ namespace Ring.Presentation
             _world.CaptureSnapshot(Curr);
             _acc.Reset();
             Alpha = 0f;
+            _renderPrevFrozen = new RenderSnapshot(cfg.Arena);
+            _renderCurrFrozen = new RenderSnapshot(cfg.Arena);
+            _renderFrozen = false;
+            _catchUpRemaining = 0f;
+            RenderAlpha = 0f;
             ConfigTweaked = false;
             _pendingApplyConfig = false;
             // A fresh match never starts paused (Task 24) — covers a restart

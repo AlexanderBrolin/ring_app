@@ -19,9 +19,14 @@ namespace Ring.Presentation
 
         void LateUpdate()
         {
-            Vector3 prevW = SimSpace.ToWorld(_runner.Prev.Player.Pos);
-            Vector3 currW = SimSpace.ToWorld(_runner.Curr.Player.Pos);
-            Vector3 groundPos = Vector3.Lerp(prevW, currW, _runner.Alpha);
+            // Task 25 (Приложение П-7): reads ONLY `SimulationRunner.RenderPrev`/
+            // `RenderCurr`/`RenderAlpha` — never `Prev`/`Curr`/`Alpha` directly and
+            // never `GameFeelDirector.HitstopActive` — so a `FullFrame` hitstop
+            // freeze is entirely `SimulationRunner`'s doing; this class has no idea
+            // hitstop even exists.
+            Vector3 prevW = SimSpace.ToWorld(_runner.RenderPrev.Player.Pos);
+            Vector3 currW = SimSpace.ToWorld(_runner.RenderCurr.Player.Pos);
+            Vector3 groundPos = Vector3.Lerp(prevW, currW, _runner.RenderAlpha);
             transform.position = groundPos + CapsuleOffset;
 
             Vector3 aimW = SimSpace.ToWorld(_aimProvider.CurrentAimSimPos);

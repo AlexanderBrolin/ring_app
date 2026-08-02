@@ -12,12 +12,16 @@ namespace Ring.Presentation
     ///   GameFeelDirector → PersistentPropsDirector → AudioDirector →
     ///   ViewRegistry (retire only) → DeathOverlayController.
     /// `AudioDirector`, `MuzzleFlashView` and `ViewRegistry` exist as of Task 17;
-    /// `DeathOverlayController` (Task 24) slots in last. GameFeelDirector/
-    /// PersistentPropsDirector are still Phase 8 work — their place in the order
-    /// is marked below instead of being stubbed out with empty classes.
+    /// `DeathOverlayController` (Task 24) slots in last; `GameFeelDirector`
+    /// (Task 25, Приложение П-1) slots in FIRST — hitstop/hit-flash/vignette must
+    /// react before anything else in the same pass gets a chance to read view
+    /// state for this frame. `PersistentPropsDirector` is still unimplemented
+    /// (later Phase 8 work); its place in the order is marked below instead of
+    /// being stubbed out with an empty class.
     public sealed class SimEventRouter : MonoBehaviour
     {
         [SerializeField] SimulationRunner _runner;
+        [SerializeField] GameFeelDirector _gameFeelDirector;
         [SerializeField] AudioDirector _audioDirector;
         [SerializeField] MuzzleFlashView _muzzleFlash;
         [SerializeField] ViewRegistry _viewRegistry;
@@ -35,8 +39,8 @@ namespace Ring.Presentation
             {
                 SimEvent e = world.GetEvent(i);
 
-                // GameFeelDirector (hitstop, screen shake) — Phase 8: slots in here first.
-                // PersistentPropsDirector (casings, decals, corpses) — Phase 8: second.
+                _gameFeelDirector.HandleEvent(in e); // hitstop/flash/vignette, first slot (Task 25, П-1)
+                // PersistentPropsDirector (casings, decals, corpses) — Phase 8: still unimplemented.
                 _audioDirector.HandleEvent(in e);
                 _muzzleFlash.HandleEvent(in e); // shot feedback, same pass (П-2)
                 _viewRegistry.HandleEvent(in e); // retire only — mapping/lerp is ViewRegistry's own LateUpdate

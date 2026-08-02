@@ -133,11 +133,22 @@ namespace Ring.Presentation
             }
         }
 
+        /// `GameFeelDirector`'s seam into per-mob view state (Task 25 Interfaces)
+        /// — looks up the live view for a `ProjectileHit` event's `EntityId` so
+        /// the director can call `MobView.Flash`/`FreezePosition` on the actual
+        /// hit mob without this class needing to know anything about hitstop
+        /// itself (П-1: no hitstop-specific branching lives here).
+        public bool TryGetMobView(int id, out MobView view) => _activeMobs.TryGetValue(id, out view);
+
         void SyncMobs()
         {
-            RenderSnapshot curr = _runner.Curr;
-            RenderSnapshot prev = _runner.Prev;
-            float alpha = _runner.Alpha;
+            // Task 25 (Приложение П-7): reads ONLY `SimulationRunner.RenderPrev`/
+            // `RenderCurr`/`RenderAlpha` — never `Prev`/`Curr`/`Alpha` directly.
+            // A `FullFrame` hitstop freeze is entirely `SimulationRunner`'s doing;
+            // this class has no `if (HitstopActive)` branch anywhere.
+            RenderSnapshot curr = _runner.RenderCurr;
+            RenderSnapshot prev = _runner.RenderPrev;
+            float alpha = _runner.RenderAlpha;
 
             _seenMobIds.Clear();
             for (int i = 0; i < curr.MobCount; i++)
@@ -161,9 +172,19 @@ namespace Ring.Presentation
                     continue;
                 }
 
-                float2 prevPos = FindMobPrevPos(prev, m.Id, m.Pos);
-                Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
-                view.transform.position = world + MobOffset;
+                // Task 25 (Приложение П-7, `TargetOnly` hitstop scope): a mob
+                // `GameFeelDirector.HandleProjectileHit` just froze
+                // (`MobView.FreezePosition`) holds its transform exactly where it
+                // was instead of being overwritten here — everyone else keeps
+                // interpolating normally off the live pair. `Sync` (accent/flash
+                // color) still runs regardless: the hit-flash itself must never
+                // freeze, only the position does.
+                if (!view.IsPositionFrozen)
+                {
+                    float2 prevPos = FindMobPrevPos(prev, m.Id, m.Pos);
+                    Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
+                    view.transform.position = world + MobOffset;
+                }
                 view.Sync(in m);
             }
 
@@ -177,9 +198,14 @@ namespace Ring.Presentation
 
         void SyncProjectiles()
         {
-            RenderSnapshot curr = _runner.Curr;
-            RenderSnapshot prev = _runner.Prev;
-            float alpha = _runner.Alpha;
+            // Task 25 (Приложение П-7): same Render* switch as `SyncMobs` above —
+            // projectiles have no `TargetOnly` freeze of their own (only
+            // `MobView` does), so a `FullFrame` hitstop is the only way they
+            // ever hold still, and that already falls straight out of reading
+            // `RenderPrev`/`RenderCurr`/`RenderAlpha` here.
+            RenderSnapshot curr = _runner.RenderCurr;
+            RenderSnapshot prev = _runner.RenderPrev;
+            float alpha = _runner.RenderAlpha;
 
             _seenProjectileIds.Clear();
             for (int i = 0; i < curr.ProjectileCount; i++)

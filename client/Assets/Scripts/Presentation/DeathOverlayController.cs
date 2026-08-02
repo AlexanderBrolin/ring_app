@@ -35,6 +35,7 @@ namespace Ring.Presentation
         const float InputDelaySeconds = 0.5f;
 
         [SerializeField] SimulationRunner _runner;
+        [SerializeField] GameFeelDirector _gameFeelDirector;
         [SerializeField] GameObject _panel;
         [SerializeField] TMP_Text _metricsText;
         [SerializeField] Button _restartButton;
@@ -65,6 +66,15 @@ namespace Ring.Presentation
 
         void Show()
         {
+            // Task 25 (this task's amendment, explicitly called out ahead of
+            // time in Task 24's brief): a hitstop freeze must never survive into
+            // the death screen — `GameFeelDirector`'s own `PlayerDied` handler
+            // already forces this off before this method runs (П-1 fan-out:
+            // `GameFeelDirector` is the first slot, this controller the last),
+            // so this call is ordinarily a no-op; kept explicit/defensive rather
+            // than relying solely on that ordering.
+            _gameFeelDirector.ForceEndHitstop();
+
             _shownAtUnscaledTime = Time.unscaledTime;
             _metricsText.text = BuildMetricsText();
             _panel.SetActive(true);

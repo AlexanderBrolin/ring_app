@@ -67,6 +67,14 @@ namespace Ring.Editor
     /// `PracticeTargets` object is retired — self-healed out of the scene
     /// outright (its class no longer exists) now that real wave spawning
     /// (Task 22) makes the placeholder dummies redundant.
+    /// Task 25 (spec Interfaces, Приложение П-1/П-7) adds a `GameFeelDirector`
+    /// object, wired in TWO passes: an early one (right after `SimulationRunner`
+    /// itself, `_runner`/`_gameFeel` only) so the component instance already
+    /// exists by the time `DeathOverlayController`'s own `_gameFeelDirector`
+    /// slot and `SimEventRouter`'s fan-out need to reference it, and a second
+    /// pass in the Task 17 views section once `ViewRegistry` and the new
+    /// full-screen `Vignette` `Image` (added to the `HUD` canvas, Task 14
+    /// section) both exist.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -107,6 +115,10 @@ namespace Ring.Editor
         const string DeathOverlayObjectName = "DeathOverlay";
         const string PausePanelObjectName = "PausePanel";
         const string PauseControllerObjectName = "PauseMenu";
+
+        // Task 25.
+        const string GameFeelDirectorObjectName = "GameFeelDirector";
+        const string VignetteObjectName = "Vignette";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -187,6 +199,36 @@ namespace Ring.Editor
             if (refsChanged)
             {
                 so.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // Task 25 (Приложение П-1/П-7): `GameFeelDirector` object, created
+            // (first wiring pass) here rather than down in the Task 17 views
+            // section — `DeathOverlayController`'s `_gameFeelDirector` slot and
+            // `SimEventRouter`'s fan-out both need the component INSTANCE to
+            // already exist well before `ViewRegistry`/the HUD's `Vignette`
+            // `Image` are built, even though this pass only wires the two refs
+            // (`_runner`, `_gameFeel`) already available this early. The second
+            // pass (`_viewRegistry`, `_vignette`) runs later, once those exist.
+            GameObject gameFeelDirectorGo = FindRootObject(scene, GameFeelDirectorObjectName);
+            if (gameFeelDirectorGo == null)
+            {
+                gameFeelDirectorGo = new GameObject(GameFeelDirectorObjectName);
+                sceneDirty = true;
+            }
+            GameFeelDirector gameFeelDirector = gameFeelDirectorGo.GetComponent<GameFeelDirector>();
+            if (gameFeelDirector == null)
+            {
+                gameFeelDirector = gameFeelDirectorGo.AddComponent<GameFeelDirector>();
+                sceneDirty = true;
+            }
+            var gameFeelDirectorSo = new SerializedObject(gameFeelDirector);
+            bool gameFeelDirectorRefsChanged = false;
+            gameFeelDirectorRefsChanged |= SetRef(gameFeelDirectorSo, "_runner", runner);
+            gameFeelDirectorRefsChanged |= SetRef(gameFeelDirectorSo, "_gameFeel", gameFeel);
+            if (gameFeelDirectorRefsChanged)
+            {
+                gameFeelDirectorSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -426,6 +468,14 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // Task 25 (spec Interfaces: "винетка (UI Image alpha-пульс)"): a
+            // full-screen damage vignette, sibling-ordered right after the HUD
+            // bars/wave-text (renders on top of them) and before the death/pause
+            // panels below (renders underneath those — moot either way since it's
+            // non-interactive and the panels are near-opaque, but keeps the
+            // z-order intent explicit).
+            Image vignetteImage = GetOrCreateVignette(hudGo.transform, ref sceneDirty);
+
             // Task 24 (spec Interfaces): death screen + pause menu panels, both
             // children of the same HUD canvas the bars/wave-text above live on
             // (later sibling order in the same Canvas renders them on top).
@@ -456,6 +506,7 @@ namespace Ring.Editor
             var deathOverlaySo = new SerializedObject(deathOverlay);
             bool deathOverlayRefsChanged = false;
             deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_runner", runner);
+            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_gameFeelDirector", gameFeelDirector);
             deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_panel", deathPanelGo);
             deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_metricsText", deathMetrics);
             deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_restartButton", deathRestartButton);
@@ -540,6 +591,20 @@ namespace Ring.Editor
             if (viewsRefsChanged)
             {
                 viewsSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // Task 25: second `GameFeelDirector` wiring pass — `_viewRegistry`
+            // now exists (just created above) and `_vignette` was created
+            // earlier in the Task 14 HUD section; `_runner`/`_gameFeel` were
+            // already wired in the first pass near the top of this method.
+            var gameFeelDirectorSo2 = new SerializedObject(gameFeelDirector);
+            bool gameFeelDirectorRefsChanged2 = false;
+            gameFeelDirectorRefsChanged2 |= SetRef(gameFeelDirectorSo2, "_viewRegistry", viewRegistry);
+            gameFeelDirectorRefsChanged2 |= SetRef(gameFeelDirectorSo2, "_vignette", vignetteImage);
+            if (gameFeelDirectorRefsChanged2)
+            {
+                gameFeelDirectorSo2.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -629,6 +694,7 @@ namespace Ring.Editor
             var routerSo = new SerializedObject(router);
             bool routerRefsChanged = false;
             routerRefsChanged |= SetRef(routerSo, "_runner", runner);
+            routerRefsChanged |= SetRef(routerSo, "_gameFeelDirector", gameFeelDirector);
             routerRefsChanged |= SetRef(routerSo, "_audioDirector", audioDirector);
             routerRefsChanged |= SetRef(routerSo, "_muzzleFlash", muzzleFlash);
             routerRefsChanged |= SetRef(routerSo, "_viewRegistry", viewRegistry);
@@ -971,6 +1037,35 @@ namespace Ring.Editor
 
             sceneDirty = true;
             return tmp;
+        }
+
+        /// A full-screen, non-interactive damage vignette (Task 25 spec
+        /// Interfaces: "винетка (UI Image alpha-пульс)") — a single `Image`
+        /// stretched to fill the HUD canvas, starting fully transparent.
+        /// `raycastTarget = false` so it never intercepts clicks meant for the
+        /// HP/dash bars or the death/pause panel buttons layered around it.
+        /// `GameFeelDirector` only ever writes this `Image`'s ALPHA channel
+        /// (`UpdateVignette`) — the base RGB set here is a Presentation color
+        /// choice, same as the HP/dash bar fill colors above, existence-guarded
+        /// like everything else in this file so an owner's in-Editor tint tweak
+        /// survives a re-run. No `GameFeelConfig.VignetteColor` field exists on
+        /// that SO (checked, not assumed) — this task reuses `TraumaPlayerHit`/
+        /// `TraumaDecayPerSec` for the pulse's peak/decay instead of growing the
+        /// SO for a single new color.
+        static Image GetOrCreateVignette(Transform parent, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(VignetteObjectName);
+            if (existing != null) return existing.GetComponent<Image>();
+
+            var go = new GameObject(VignetteObjectName, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            StretchToFillParent((RectTransform)go.transform);
+            Image image = go.GetComponent<Image>();
+            image.color = new Color(0.55f, 0.02f, 0.02f, 0f);
+            image.raycastTarget = false;
+
+            sceneDirty = true;
+            return image;
         }
 
         /// A full-screen darkened background panel for a modal overlay (Task 24:
