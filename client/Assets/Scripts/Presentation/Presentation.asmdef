@@ -1,0 +1,16 @@
+{
+    "name": "Ring.Presentation",
+    "rootNamespace": "Ring.Presentation",
+    "references": ["Ring.Simulation", "Ring.Data", "Unity.InputSystem",
+                   "Unity.Mathematics", "UnityEngine.UI", "Unity.TextMeshPro",
+                   "Unity.RenderPipelines.Universal.Runtime"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
