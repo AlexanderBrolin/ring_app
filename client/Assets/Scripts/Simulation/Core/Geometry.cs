@@ -34,6 +34,54 @@ namespace Ring.Simulation.Core
             return true;
         }
 
+        /// Entry AND exit of the swept circle through a static circle, clipped to
+        /// the segment: the chord interval [tEnter, tExit] ⊆ [0,1]. Task 6 needs
+        /// both ends because a projectile's height changes along the tick, so the
+        /// hit-volume test is an interval-vs-interval overlap, not a point test.
+        ///
+        /// NB: this deliberately re-solves the same quadratic as SegmentCircle
+        /// above instead of SegmentCircle delegating to it. SegmentCircle is the
+        /// hot path (SweepArena runs it per obstacle per moving body per tick) and
+        /// is pinned bit-for-bit by the golden hash; routing it through a
+        /// two-root/clamp variant would change its float rounding. The two must be
+        /// changed as a pair (QC18).
+        public static bool SegmentCircleInterval(float2 p0, float2 p1, float padR,
+            float2 c, float cR, out float tEnter, out float tExit)
+        {
+            tEnter = 0f; tExit = 0f;
+            float2 d = p1 - p0;
+            float2 f = p0 - c;
+            float r = padR + cR;
+            float a = math.dot(d, d);
+            if (a < 1e-12f)
+            {
+                // Degenerate sweep (no horizontal motion this tick): the body
+                // spends the whole step at p0, so the interval is the full step.
+                if (math.lengthsq(f) >= r * r) return false;
+                tExit = 1f;
+                return true;
+            }
+            float b = 2f * math.dot(f, d);
+            float cc = math.dot(f, f) - r * r;
+            float disc = b * b - 4f * a * cc;
+            if (disc < 0f) return false;
+            float sqrtDisc = math.sqrt(disc);
+            float inv = 1f / (2f * a);
+            // Clip the chord to the step: a root before the start means the body
+            // began inside (enter at 0), a root past the end means it is still
+            // inside when the step runs out (exit at 1).
+            tEnter = math.max((-b - sqrtDisc) * inv, 0f);
+            tExit = math.min((-b + sqrtDisc) * inv, 1f);
+            if (tEnter > tExit)
+            {
+                // The whole chord lies outside [0,1] — the circle is either
+                // entirely behind the start or entirely beyond the end.
+                tEnter = 0f; tExit = 0f;
+                return false;
+            }
+            return true;
+        }
+
         /// Exit through the ring wall from inside; solves |p0 + d·t| = ringR − padR.
         public static bool SegmentRingWall(float2 p0, float2 p1, float padR,
             float ringR, out float t)

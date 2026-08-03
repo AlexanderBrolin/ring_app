@@ -13,6 +13,13 @@ namespace Ring.Simulation.Core
 
     public enum MobType : byte { Chaser = 0, Gunner = 1 }
 
+    /// Vertical hit-zone a shot landed in (Task 6). Lives in Core next to MobType
+    /// because it crosses every layer: Simulation classifies it, SimEvent carries
+    /// it, Presentation reads it off the event for zone-specific feedback.
+    /// `None` is the "no zone applies" value carried by every event kind with no
+    /// hit behind it; a melee strike reports Body (MobAiSystem), never None.
+    public enum HitZone : byte { None = 0, Legs = 1, Body = 2, Head = 3 }
+
     public enum MobAiState : byte { Idle, Chase, Telegraph, Recover, Reposition, Fire }
 
     /// Live state of a single mob instance.
@@ -55,7 +62,10 @@ namespace Ring.Simulation.Core
     /// Per-match counters surfaced to DevOverlay/telemetry.
     public struct MatchStats
     {
-        public int Kills, WavesCleared, ShotsFired, ShotsHit,
+        /// HeadshotKills (Task 6) counts the subset of Kills whose killing blow
+        /// landed in HitZone.Head — incremented only from SimulationWorld's
+        /// Alive-guarded helper, exactly like Kills itself.
+        public int Kills, HeadshotKills, WavesCleared, ShotsFired, ShotsHit,
             DashesUsed, MobSpawnsSkipped, ProjectileSpawnsSkipped, DeathTick;
         public float DamageTaken;
         // caps are observed separately (spec §3.15): what got clamped is visible in DevOverlay

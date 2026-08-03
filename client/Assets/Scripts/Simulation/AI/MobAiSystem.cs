@@ -111,7 +111,17 @@ namespace Ring.Simulation.AI
                         // looser than the entry check is intentional.
                         if (Geometry.CircleOverlap(m.Pos, cfg.AttackRange,
                                 player.Pos, w.Config.Hero.Radius))
-                            w.DamagePlayer(cfg.ContactDamage, m.Pos);
+                        {
+                            // A fist is not aimed: it always reports Body and is
+                            // NOT scaled by the zone table (Task 6) — the
+                            // multipliers exist to reward aiming, which melee
+                            // does none of. Direction is attacker → victim, the
+                            // knock-reaction axis Presentation needs; the same
+                            // pre-motion `player` snapshot the overlap check
+                            // above uses, so both read one consistent frame.
+                            w.DamagePlayer(cfg.ContactDamage, m.Pos, HitZone.Body,
+                                math.normalizesafe(player.Pos - m.Pos, new float2(1f, 0f)));
+                        }
                         m.Ai = MobAiState.Recover;
                         m.StateTimer = 0f;
                     }

@@ -186,16 +186,22 @@ namespace Ring.Simulation.Core
         /// `owner` (F-3 fix-round) is meaningful only for ProjectileFired — every
         /// other call site omits it and gets the default `ProjectileOwner.Player`,
         /// same "unused for every other kind" contract `SimEvent.Owner`'s own doc
-        /// describes.
+        /// describes. `zone`/`hitDir` (Task 6) are meaningful only for the four
+        /// blow-carrying kinds (ProjectileHit, MobDied, PlayerDamaged,
+        /// PlayerDied); both are optional so the existing call sites that emit
+        /// non-blow events keep passing five arguments and get the neutral
+        /// HitZone.None / zero direction.
         internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType, float amount,
-            ProjectileOwner owner = ProjectileOwner.Player)
+            ProjectileOwner owner = ProjectileOwner.Player,
+            HitZone zone = HitZone.None, float2 hitDir = default)
         {
             if (_eventCount < _events.Length)
             {
                 _events[_eventCount++] = new SimEvent
                 {
                     Kind = kind, Tick = _tick, Pos = pos,
-                    EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner
+                    EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner,
+                    Zone = zone, HitDir = hitDir
                 };
             }
             else
@@ -288,14 +294,21 @@ namespace Ring.Simulation.Core
         /// playing out (spec §3.12) — but ShotsHit/Kills route through private
         /// helpers guarded on player Alive, so a projectile fired before death that
         /// connects afterwards still kills the mob without crediting the run's stats.
-        internal void DamageMob(int index, float dmg, float2 pos)
+        /// `dmg` is the POST-multiplier amount (Task 6 — ProjectileSystem applies
+        /// the hit zone's multiplier before calling in), `zone`/`dir` describe the
+        /// blow and are forwarded to MobDied for Presentation.
+        internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir)
         {
             _mobs[index].Hp -= dmg;
             IncrementShotsHit();
             if (_mobs[index].Hp <= 0f)
             {
                 IncrementKills();
-                Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg);
+                // Headshot kills count the KILLING blow's zone only: earlier
+                // headshots on the same mob are already reflected in Hp.
+                if (zone == HitZone.Head) IncrementHeadshotKills();
+                Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg,
+                    zone: zone, hitDir: dir);
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
@@ -304,13 +317,17 @@ namespace Ring.Simulation.Core
         /// dies, even for damage from projectiles already in flight at that moment.
         void IncrementShotsHit() { if (_players[0].Alive) _stats.ShotsHit++; }
         void IncrementKills() { if (_players[0].Alive) _stats.Kills++; }
+        void IncrementHeadshotKills() { if (_players[0].Alive) _stats.HeadshotKills++; }
 
         /// Applies projectile damage to the player (spec Interfaces, Task 16/23): a
         /// no-op once the player is already dead (spec §3.12 — stats stay frozen and
         /// no further PlayerDamaged/PlayerDied events fire); otherwise active dash
         /// i-frames absorb the hit with no event, else Hp drops and, once it reaches
         /// zero, the player dies exactly once.
-        internal void DamagePlayer(float dmg, float2 pos)
+        /// `dmg` is the POST-multiplier amount, same contract as DamageMob above;
+        /// `zone`/`dir` ride along on PlayerDamaged and, on the killing blow, on
+        /// PlayerDied too (the death VFX wants the blow that ended the run).
+        internal void DamagePlayer(float dmg, float2 pos, HitZone zone, float2 dir)
         {
             ref PlayerState p = ref _players[0];
             if (!p.Alive) return;
@@ -318,7 +335,7 @@ namespace Ring.Simulation.Core
 
             p.Hp -= dmg;
             _stats.DamageTaken += dmg;
-            Emit(SimEventKind.PlayerDamaged, pos, 0, default, dmg);
+            Emit(SimEventKind.PlayerDamaged, pos, 0, default, dmg, zone: zone, hitDir: dir);
 
             if (p.Hp <= 0f)
             {
@@ -326,7 +343,7 @@ namespace Ring.Simulation.Core
                 _stats.DeathTick = _tick;
                 p.DashTimer = 0f;
                 p.IframeTimer = 0f;
-                Emit(SimEventKind.PlayerDied, pos, 0, default, 0f);
+                Emit(SimEventKind.PlayerDied, pos, 0, default, 0f, zone: zone, hitDir: dir);
             }
         }
 
@@ -377,8 +394,13 @@ namespace Ring.Simulation.Core
 
         /// Test-only seam (Task 19 Interfaces): kills the player outright via the
         /// normal damage path (overkill amount) so MobAiSystem's "player dead"
-        /// branch (all mobs → Idle) can be exercised deterministically.
-        internal void KillPlayerForTest() => DamagePlayer(_config.Hero.MaxHp + 1f, _players[0].Pos);
+        /// branch (all mobs → Idle) can be exercised deterministically. Reports a
+        /// Body hit from +X (Task 6 signature ripple): the seam models "something
+        /// killed the player", and Body/no-multiplier is the neutral choice — no
+        /// caller of this seam asserts on the zone.
+        internal void KillPlayerForTest()
+            => DamagePlayer(_config.Hero.MaxHp + 1f, _players[0].Pos,
+                HitZone.Body, new float2(1f, 0f));
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// Dev-only mob placeholder spawn for Presentation milestone 2 (spec Interfaces).
@@ -523,7 +545,8 @@ namespace Ring.Simulation.Core
 
         static ulong HashStats(ulong h, in MatchStats s)
         {
-            h = StateHash64.Add(h, s.Kills); h = StateHash64.Add(h, s.WavesCleared);
+            h = StateHash64.Add(h, s.Kills); h = StateHash64.Add(h, s.HeadshotKills);
+            h = StateHash64.Add(h, s.WavesCleared);
             h = StateHash64.Add(h, s.ShotsFired); h = StateHash64.Add(h, s.ShotsHit);
             h = StateHash64.Add(h, s.DashesUsed);
             h = StateHash64.Add(h, s.MobSpawnsSkipped);

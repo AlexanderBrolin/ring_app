@@ -20,6 +20,31 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Emit_WithoutZoneArgs_DefaultsToNoneAndZeroDirection()
+        {
+            // Task 6 added zone/hitDir as OPTIONAL parameters precisely so the
+            // existing five-argument call sites stay untouched — this pins the
+            // neutral payload they keep producing.
+            var w = new SimulationWorld(1, TestConfigs.Default());
+            w.Emit(SimEventKind.WaveStarted, float2.zero, 3, default, 0f);
+            SimEvent e = w.GetEvent(0);
+            Assert.AreEqual(HitZone.None, e.Zone);
+            Assert.AreEqual(float2.zero, e.HitDir);
+        }
+
+        [Test]
+        public void Emit_CarriesZoneAndHitDir()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Default());
+            w.Emit(SimEventKind.ProjectileHit, float2.zero, 7, MobType.Gunner, 20.4f,
+                zone: HitZone.Head, hitDir: new float2(0f, 1f));
+            SimEvent e = w.GetEvent(0);
+            Assert.AreEqual(HitZone.Head, e.Zone);
+            Assert.AreEqual(new float2(0f, 1f), e.HitDir);
+            Assert.AreEqual(20.4f, e.Amount, 1e-4f);
+        }
+
+        [Test]
         public void ClearEvents_ResetsCount()
         {
             var w = new SimulationWorld(1, TestConfigs.Default());

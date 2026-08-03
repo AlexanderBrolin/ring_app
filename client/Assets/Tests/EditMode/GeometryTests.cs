@@ -32,6 +32,79 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void SegmentCircleInterval_ReturnsEnterAndExit()
+        {
+            bool hit = Geometry.SegmentCircleInterval(
+                new float2(-2f, 0f), new float2(2f, 0f), 0f,
+                float2.zero, 1f, out float tEnter, out float tExit);
+            Assert.IsTrue(hit);
+            Assert.AreEqual(0.25f, tEnter, 1e-4f); // enters the circle at x = -1
+            Assert.AreEqual(0.75f, tExit, 1e-4f);  // leaves it at x = +1
+        }
+
+        [Test]
+        public void SegmentCircleInterval_Tangent_EnterEqualsExit()
+        {
+            // grazes the top of the unit circle: the quadratic has a double root
+            bool hit = Geometry.SegmentCircleInterval(
+                new float2(-2f, 1f), new float2(2f, 1f), 0f,
+                float2.zero, 1f, out float tEnter, out float tExit);
+            Assert.IsTrue(hit);
+            Assert.AreEqual(tEnter, tExit, 1e-4f);
+            Assert.AreEqual(0.5f, tEnter, 1e-4f);
+        }
+
+        [Test]
+        public void SegmentCircleInterval_StartInside_ClipsEnterToZero()
+        {
+            bool hit = Geometry.SegmentCircleInterval(
+                float2.zero, new float2(2f, 0f), 0f,
+                float2.zero, 1f, out float tEnter, out float tExit);
+            Assert.IsTrue(hit);
+            Assert.AreEqual(0f, tEnter, 1e-6f); // the negative root is clipped away
+            Assert.AreEqual(0.5f, tExit, 1e-4f);
+        }
+
+        [Test]
+        public void SegmentCircleInterval_EndsInside_ClipsExitToOne()
+        {
+            bool hit = Geometry.SegmentCircleInterval(
+                new float2(-2f, 0f), float2.zero, 0f,
+                float2.zero, 1f, out float tEnter, out float tExit);
+            Assert.IsTrue(hit);
+            Assert.AreEqual(0.5f, tEnter, 1e-4f);
+            Assert.AreEqual(1f, tExit, 1e-6f);
+        }
+
+        [Test]
+        public void SegmentCircleInterval_Miss_ReturnsFalse()
+        {
+            Assert.IsFalse(Geometry.SegmentCircleInterval(
+                new float2(-2f, 2f), new float2(2f, 2f), 0f,
+                float2.zero, 1f, out _, out _));
+        }
+
+        [Test]
+        public void SegmentCircleInterval_CircleBeyondSegmentEnd_ReturnsFalse()
+        {
+            // the whole chord lies at t > 1 — a miss for THIS tick's sweep
+            Assert.IsFalse(Geometry.SegmentCircleInterval(
+                new float2(-4f, 0f), new float2(-3f, 0f), 0f,
+                float2.zero, 1f, out _, out _));
+        }
+
+        [Test]
+        public void SegmentCircleInterval_PadRadiusWidensTheChord()
+        {
+            // padding inflates the target circle by padR, exactly like SegmentCircle
+            Assert.IsTrue(Geometry.SegmentCircleInterval(
+                new float2(-2f, 0f), new float2(2f, 0f), 0.5f,
+                float2.zero, 1f, out float tEnter, out float tExit));
+            Assert.AreEqual(0.125f, tEnter, 1e-4f); // enters at x = -1.5
+            Assert.AreEqual(0.875f, tExit, 1e-4f);  // leaves at x = +1.5
+        }
+
+        [Test]
         public void SegmentRingWall_ExitFromInside_Found()
         {
             Assert.IsTrue(Geometry.SegmentRingWall(new float2(34f, 0f), new float2(36f, 0f),

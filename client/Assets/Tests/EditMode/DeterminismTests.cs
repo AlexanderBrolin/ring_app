@@ -147,7 +147,14 @@ namespace Ring.Simulation.Tests
             // hash): HashProjectile now folds in the three new vertical-motion
             // fields on every live projectile, so any scripted run that ever
             // spawns a projectile legitimately changes the hash.
-            const ulong GoldenHash = 0x3AEBD95348AC495FUL; // = 4245726025451587935
+            // Re-pinned by Task 6 (height gating + hit zones entered the
+            // outcomes AND the hash): shots are now gated on the target's
+            // vertical column and scaled by the zone they land in — most
+            // visibly, a flat shot at hero muzzle height reads as Legs on the
+            // taller Gunner tower and deals 0.75x — so the scripted run's
+            // damage/kill trace legitimately differs; on top of that
+            // MatchStats.HeadshotKills is a new field inside HashStats.
+            const ulong GoldenHash = 0x1A1FEB00BB40B72AUL; // = 1882481557638264618
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 

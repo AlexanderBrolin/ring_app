@@ -18,10 +18,11 @@ namespace Ring.Simulation.Combat
         public static void Update(SimulationWorld w)
         {
             float dt = SimulationWorld.TickDt;
-            ArenaSimConfig arena = w.Config.Arena;
-            float chaserRadius = w.Config.Chaser.Radius;
-            float gunnerRadius = w.Config.Gunner.Radius;
-            float heroRadius = w.Config.Hero.Radius;
+            SimConfig config = w.Config;
+            ArenaSimConfig arena = config.Arena;
+            float chaserRadius = config.Chaser.Radius;
+            float gunnerRadius = config.Gunner.Radius;
+            float heroRadius = config.Hero.Radius;
             (float t, int kind, int index)[] candidates = w.ProjCandidates;
 
             for (int i = w.ProjectileCount - 1; i >= 0; i--)
@@ -74,13 +75,17 @@ namespace Ring.Simulation.Combat
                 // Repeated min-scan, no sort/delegates (AllocationTests): picks
                 // the smallest-t candidate among those not yet excluded, using
                 // strict `<` so the first-packed (= lowest canonical slot)
-                // candidate wins ties. A selected candidate can be rejected
-                // (Task 6: height) — excluded via swap-remove and the scan
-                // repeats over what's left; that branch is dead until Task 6
-                // wires an actual rejection check (accepted is always true here).
+                // candidate wins ties. Task 6 activates the rejection branch: a
+                // candidate the shot passes OVER or UNDER (height gate) is
+                // excluded via swap-remove and the scan repeats over what is
+                // left, so a target further down the line is still reachable
+                // through a screening one (M5). Every rejection shrinks
+                // candCount by one, so the loop runs at most candCount times.
                 float bestT = 1f;
                 int hitKind = HitNone;
                 int hitMobIndex = -1;
+                HitZone hitZone = HitZone.None;
+                float hitMult = 1f;
                 while (candCount > 0)
                 {
                     int bestSlot = -1;
@@ -102,9 +107,17 @@ namespace Ring.Simulation.Combat
                     hitKind = candidates[bestSlot].kind;
                     hitMobIndex = candidates[bestSlot].index;
 
-                    bool accepted = true; // Task 6 wires the height gate here
-                    if (accepted) break;
+                    if (AcceptCandidate(w, in config, in proj, startPos, target,
+                            hitKind, hitMobIndex, out hitZone, out hitMult))
+                    {
+                        break;
+                    }
 
+                    // Rejected: fall back to "no hit" before rescanning, so a
+                    // scan that exhausts every candidate leaves the projectile
+                    // flying instead of resolving the last one it looked at.
+                    hitKind = HitNone;
+                    hitMobIndex = -1;
                     candidates[bestSlot] = candidates[--candCount];
                 }
 
@@ -120,16 +133,23 @@ namespace Ring.Simulation.Combat
                     case HitMob:
                     {
                         float2 contact = math.lerp(startPos, target, bestT);
+                        float2 hitDir = math.normalizesafe(proj.Vel, new float2(1f, 0f));
+                        // Multiplier applies BEFORE the event: Amount is the
+                        // damage actually dealt, so Presentation never has to
+                        // re-derive it from a base value it cannot see.
+                        float dmg = proj.Damage * hitMult;
                         MobState mob = mobs[hitMobIndex];
-                        w.Emit(SimEventKind.ProjectileHit, contact, mob.Id, mob.Type, proj.Damage);
-                        w.DamageMob(hitMobIndex, proj.Damage, contact);
+                        w.Emit(SimEventKind.ProjectileHit, contact, mob.Id, mob.Type, dmg,
+                            zone: hitZone, hitDir: hitDir);
+                        w.DamageMob(hitMobIndex, dmg, contact, hitZone, hitDir);
                         w.RemoveProjectileAt(i);
                         break;
                     }
                     case HitPlayer:
                     {
                         float2 contact = math.lerp(startPos, target, bestT);
-                        w.DamagePlayer(proj.Damage, contact);
+                        float2 hitDir = math.normalizesafe(proj.Vel, new float2(1f, 0f));
+                        w.DamagePlayer(proj.Damage * hitMult, contact, hitZone, hitDir);
                         w.RemoveProjectileAt(i);
                         break;
                     }
@@ -145,6 +165,76 @@ namespace Ring.Simulation.Combat
                         break;
                 }
             }
+        }
+
+        /// Height gate + zone resolution for the candidate the min-scan just
+        /// picked (Task 6). Returns false when the shot passes clear over (or
+        /// under) the target's column, which sends the scan back for the next
+        /// candidate; on true, `zone`/`mult` describe the blow.
+        ///
+        /// The projectile's height is not a point: it moves by VelZ·dt across the
+        /// step, so the test uses the height at BOTH ends of the chord through
+        /// the target — hence Geometry.SegmentCircleInterval rather than the
+        /// gather phase's entry-only SegmentCircle. The zone itself is read at
+        /// the ENTRY height: that is where the round first touches the body.
+        static bool AcceptCandidate(SimulationWorld w, in SimConfig config, in ProjectileState proj,
+            float2 p0, float2 p1, int kind, int mobIndex, out HitZone zone, out float mult)
+        {
+            zone = HitZone.None;
+            mult = 1f;
+
+            float2 targetPos;
+            float targetRadius, legsTop, bodyTop, headTop, legsMult, bodyMult, headMult;
+            if (kind == HitMob)
+            {
+                MobState mob = w.Mobs[mobIndex];
+                MobSimConfig cfg = w.MobConfigFor(mob.Type);
+                targetPos = mob.Pos;
+                targetRadius = cfg.Radius;
+                legsTop = cfg.LegsTop; bodyTop = cfg.BodyTop; headTop = cfg.HeadTop;
+                legsMult = cfg.LegsDamageMult;
+                bodyMult = cfg.BodyDamageMult;
+                headMult = cfg.HeadDamageMult;
+            }
+            else if (kind == HitPlayer)
+            {
+                HeroSimConfig cfg = config.Hero;
+                targetPos = w.Player.Pos;
+                targetRadius = cfg.Radius;
+                legsTop = cfg.LegsTop; bodyTop = cfg.BodyTop; headTop = cfg.HeadTop;
+                legsMult = cfg.LegsDamageMult;
+                bodyMult = cfg.BodyDamageMult;
+                headMult = cfg.HeadDamageMult;
+            }
+            else
+            {
+                // Barrier (obstacle or ring wall): no modelled top — those stop a
+                // shot at any height. The floor, the one hit-volume with a
+                // vertical bound of its own, lands in Task 7.
+                return true;
+            }
+
+            float hStart = proj.Height;
+            float hEnd = hStart + proj.VelZ * SimulationWorld.TickDt;
+            // Fallback [0,1] = the step's full height span. Unreachable for a
+            // gathered candidate (both solvers answer the same quadratic, and the
+            // gather phase already found this circle on this segment); keeping it
+            // conservative means a hypothetical disagreement can only ever let a
+            // hit through, never silently swallow one.
+            float tEnter = 0f, tExit = 1f;
+            if (Geometry.SegmentCircleInterval(p0, p1, proj.Radius, targetPos, targetRadius,
+                    out float chordEnter, out float chordExit))
+            {
+                tEnter = chordEnter;
+                tExit = chordExit;
+            }
+            float hEnter = math.lerp(hStart, hEnd, tEnter);
+            float hExit = math.lerp(hStart, hEnd, tExit);
+
+            if (!HitZones.Overlaps(hEnter, hExit, proj.Radius, headTop)) return false;
+            zone = HitZones.Classify(hEnter, legsTop, bodyTop, headTop);
+            mult = HitZones.MultFor(zone, legsMult, bodyMult, headMult);
+            return true;
         }
     }
 }
