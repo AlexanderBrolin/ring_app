@@ -5,7 +5,11 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.Core
 {
-    /// Deterministic world: fixed-dt ticks, single RNG seeded from match-config.
+    /// Deterministic world: fixed-dt ticks, two independent RNG streams seeded
+    /// from match-config (Task 3: split from the former single shared Random) —
+    /// weapon spread (_spreadRng) and wave director (_waveRng) draw from
+    /// separate streams so one system's RNG consumption never perturbs the
+    /// other's sequence.
     /// No UnityEngine (asmdef: noEngineReferences) — Critical Rule 1.
     public sealed class SimulationWorld
     {
@@ -13,7 +17,8 @@ namespace Ring.Simulation.Core
         public const float TickDt = 1f / 30f;
 
         int _tick;
-        Random _rng;
+        Random _spreadRng;
+        Random _waveRng;
         SimConfig _config;
         readonly PlayerState[] _players = new PlayerState[1];
         MatchStats _stats;
@@ -48,8 +53,13 @@ namespace Ring.Simulation.Core
         public SimulationWorld(long seed, in SimConfig config)
         {
             uint folded = (uint)(seed ^ (seed >> 32));
-            // Unity.Mathematics.Random rejects seed 0.
-            _rng = new Random(folded == 0 ? 0x9E3779B9u : folded);
+            // Task 3: two independent streams, each derived from the same folded
+            // seed XORed with a stream-specific constant so weapon spread and wave
+            // spawns never share (and therefore never perturb) each other's RNG
+            // sequence. Fold() re-applies the zero-guard per stream — u-suffixes
+            // are required so the XOR operands stay uint (PA9).
+            _spreadRng = new Random(Fold(folded ^ 0xB5297A4Du));
+            _waveRng = new Random(Fold(folded ^ 0x68E31DA4u));
             _config = config;
             _players[0] = new PlayerState { Hp = config.Hero.MaxHp, Alive = true };
             // Wave director starts idle, counting down to the first wave (Task 22
@@ -131,6 +141,10 @@ namespace Ring.Simulation.Core
             _players[0] = p;
         }
 
+        /// Unity.Mathematics.Random rejects seed 0 — remaps it to a fixed nonzero
+        /// constant (Task 3, same zero-guard as Task 1's single-stream version).
+        static uint Fold(uint x) => x == 0 ? 0x9E3779B9u : x;
+
         static bool ArenaTopologyMatches(in ArenaSimConfig a, in ArenaSimConfig b)
         {
             if (a.Radius != b.Radius || a.ObstacleCount != b.ObstacleCount) return false;
@@ -181,9 +195,14 @@ namespace Ring.Simulation.Core
             }
         }
 
-        /// Combat systems' seam into the single world RNG (Critical Rule: one shared
-        /// Random, no ad-hoc Unity.Mathematics.Random instances in Simulation).
-        internal ref Random Rng => ref _rng;
+        /// WeaponSystem's seam into the weapon-spread RNG stream (Task 3; consumer
+        /// lands in Task 15) — Critical Rule: no ad-hoc Unity.Mathematics.Random
+        /// instances in Simulation, every draw goes through one of these two seams.
+        internal ref Random SpreadRng => ref _spreadRng;
+
+        /// WaveSystem's seam into the wave-director RNG stream (Task 3) — split
+        /// from SpreadRng so weapon fire never shifts wave spawn draws.
+        internal ref Random WaveRng => ref _waveRng;
 
         /// Combat systems' seam into per-match counters (ShotsFired, skip counts, ...).
         internal ref MatchStats StatsRef => ref _stats;
@@ -205,8 +224,8 @@ namespace Ring.Simulation.Core
         internal float2[] SepForces => _sepForces;
 
         /// WaveSystem's seam into the wave director's live state (Task 22) — same
-        /// ref-return pattern as Rng, so the system mutates it in place instead of
-        /// round-tripping copies every tick.
+        /// ref-return pattern as SpreadRng/WaveRng, so the system mutates it in
+        /// place instead of round-tripping copies every tick.
         internal ref WaveState WaveRef => ref _wave;
 
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
@@ -377,7 +396,8 @@ namespace Ring.Simulation.Core
             var save = new WorldSave
             {
                 Tick = _tick,
-                Rng = _rng,
+                SpreadRng = _spreadRng,
+                WaveRng = _waveRng,
                 NextEntityId = _nextEntityId,
                 Player = _players[0],
                 MobCount = _mobCount,
@@ -395,7 +415,8 @@ namespace Ring.Simulation.Core
         public void RestoreState(WorldSave save)
         {
             _tick = save.Tick;
-            _rng = save.Rng;
+            _spreadRng = save.SpreadRng;
+            _waveRng = save.WaveRng;
             _nextEntityId = save.NextEntityId;
             _players[0] = save.Player;
             _mobCount = save.MobCount;
@@ -420,13 +441,15 @@ namespace Ring.Simulation.Core
         internal void SetProjectileForTest(int index, in ProjectileState p) => _projectiles[index] = p;
         internal void SetWaveForTest(in WaveState w) => _wave = w;
 
-        /// Canonical order (spec §3.3): tick → rng → nextEntityId → player →
+        /// Canonical order (spec §3.3; Task 3 — split rng into spreadRng/waveRng):
+        /// tick → spreadRng → waveRng → nextEntityId → player →
         /// mobCount+mobs → projectileCount+projectiles → wave → stats.
         public ulong StateHash()
         {
             ulong h = StateHash64.Begin();
             h = StateHash64.Add(h, (ulong)_tick);
-            h = StateHash64.Add(h, _rng.state);
+            h = StateHash64.Add(h, _spreadRng.state);
+            h = StateHash64.Add(h, _waveRng.state);
             h = StateHash64.Add(h, _nextEntityId);
             h = HashPlayer(h, in _players[0]);
             h = StateHash64.Add(h, _mobCount);

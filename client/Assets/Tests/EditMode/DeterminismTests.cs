@@ -143,8 +143,40 @@ namespace Ring.Simulation.Tests
             // "debt" that paid off as a several-shots volley on LoS acquisition)
             // — the scripted scenario's waves spawn gunners, so this legitimately
             // changes their FireCooldown trace and therefore the hash.
-            const ulong GoldenHash = 0x39B4C57694AD8770UL; // = 4158165469061023600
+            // Re-pinned by Task 3 (RNG-split _spreadRng/_waveRng): the seed scheme
+            // changed from one folded seed to two streams each folded seed XORed
+            // with a stream constant, and the hash now folds in both streams'
+            // .state instead of one — every RNG draw in the scripted run traces
+            // differently, so the hash legitimately changes.
+            const ulong GoldenHash = 0x0061082106E3A8DFUL; // = 27312010683459807
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
+        }
+
+        [Test]
+        public void SpreadDrawDoesNotShiftWaves()
+        {
+            // Same seed; world A fires for 100 ticks, world B stays idle.
+            // Split streams: composition/positions of the FIRST wave must match at spawn tick.
+            var cfg = TestConfigs.Default();
+            cfg.Weapon.ProjectileLifetime = 0.2f; // ~7 m, never reaches the spawn ring (QA9)
+            var a = new SimulationWorld(7, cfg);
+            var b = new SimulationWorld(7, cfg);
+            var fire = new SimInput { FireHeld = true, AimPoint = new float2(10f, 0f) };
+            var idle = new SimInput();
+            int spawnTick = -1;
+            for (int i = 0; i < 100; i++)
+            {
+                a.Tick(fire); b.Tick(idle);
+                if (spawnTick < 0 && b.MobCount > 0) { spawnTick = i; break; } // QD4: compare AT spawn
+            }
+            Assert.GreaterOrEqual(spawnTick, 0, "wave never spawned");
+            Assert.AreEqual(b.MobCount, a.MobCount);
+            for (int m = 0; m < a.MobCount; m++)
+            {
+                Assert.AreEqual(b.Mobs[m].Type, a.Mobs[m].Type);
+                Assert.AreEqual(b.Mobs[m].Pos.x, a.Mobs[m].Pos.x, 1e-4f);
+                Assert.AreEqual(b.Mobs[m].Pos.y, a.Mobs[m].Pos.y, 1e-4f);
+            }
         }
     }
 }

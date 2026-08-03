@@ -8,7 +8,8 @@ namespace Ring.Simulation.Core
     public sealed class WorldSave
     {
         public int Tick;
-        public Random Rng;
+        public Random SpreadRng;
+        public Random WaveRng;
         public int NextEntityId;
         public PlayerState Player;
         public int MobCount;

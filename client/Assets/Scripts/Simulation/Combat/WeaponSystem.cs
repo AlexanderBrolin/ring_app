@@ -38,7 +38,7 @@ namespace Ring.Simulation.Combat
                 float overshoot = math.min(-p.FireCooldown, dt);
                 float2 baseDir = math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f));
                 float a = cfg.SpreadRad + p.RecoilOffset;
-                float angle = w.Rng.NextFloat(-a, a);
+                float angle = w.SpreadRng.NextFloat(-a, a);
                 float2 dir = Geometry.Rotate(baseDir, angle);
                 float2 spawnPos = p.Pos + dir * (cfg.MuzzleOffset + overshoot * cfg.ProjectileSpeed);
                 float2 vel = dir * cfg.ProjectileSpeed;
