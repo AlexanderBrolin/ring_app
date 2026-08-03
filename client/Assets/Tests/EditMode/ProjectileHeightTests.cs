@@ -108,6 +108,56 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void FloorHit_BlocksAtFloorPoint_MobBehindUnharmed() // D4
+        {
+            // Angled-down shot: by construction (FireAimed3D) the trajectory
+            // crosses ground height (h = 0) at x = 4 m. The floor stops the
+            // round a projectile-radius short of that — well before the Chaser
+            // parked at x = 6 m — so the mob behind the contact point is
+            // untouched (Т7 self-review: floor-vs-mob ordering).
+            var cfg = TestConfigs.Open();
+            cfg.Chaser.MaxSpeed = 0f;
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+            TestWorlds.FireAimed3D(w, float2.zero, MuzzleH, new float2(4f, 0f), 0f);
+            TestWorlds.RunUntilProjectilesDie(w);
+
+            Assert.AreEqual(1, w.MobCount);
+            Assert.AreEqual(cfg.Chaser.MaxHp, w.Mobs[0].Hp, 1e-4f); // never hit
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked));
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked,
+                out SimEvent blocked));
+            // floor: no impact normal (D12/C5 — never a "≈0" heuristic, it IS zero)
+            Assert.AreEqual(0f, blocked.HitDir.x, 1e-6f);
+            Assert.AreEqual(0f, blocked.HitDir.y, 1e-6f);
+            // contact height == Radius: that is exactly where the sphere's
+            // underside reaches the ground plane (t_floor's defining equation)
+            Assert.AreEqual(cfg.Weapon.ProjectileRadius, blocked.Amount, 1e-4f);
+        }
+
+        [Test]
+        public void WallBlock_CarriesNormalAndHeight()
+        {
+            // Flat shot (targetH == muzzleH keeps VelZ at 0, isolating the wall
+            // path from the floor one) straight out to the ring wall: the
+            // contact height stays pinned at muzzle height, and HitDir carries
+            // the real SweepArena normal instead of the pre-Т7 zero placeholder.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.FireAimed3D(w, float2.zero, MuzzleH,
+                new float2(cfg.Arena.Radius, 0f), MuzzleH);
+            TestWorlds.RunUntilProjectilesDie(w);
+
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked));
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked,
+                out SimEvent blocked));
+            // wall normal points back toward the arena centre, i.e. -x here
+            Assert.AreEqual(-1f, blocked.HitDir.x, 1e-4f);
+            Assert.AreEqual(0f, blocked.HitDir.y, 1e-4f);
+            Assert.AreEqual(MuzzleH, blocked.Amount, 1e-4f);
+        }
+
+        [Test]
         public void EqualT_TieBreaksLowerIndex()
         {
             var cfg = TestConfigs.Open();

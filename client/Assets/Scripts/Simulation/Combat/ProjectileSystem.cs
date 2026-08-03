@@ -11,7 +11,7 @@ namespace Ring.Simulation.Combat
     /// is consumed on its first contact, no piercing.
     internal static class ProjectileSystem
     {
-        const int HitNone = 0, HitBarrier = 1, HitMob = 2, HitPlayer = 3;
+        const int HitNone = 0, HitBarrier = 1, HitMob = 2, HitPlayer = 3, HitFloor = 4;
 
         /// Iterates back-to-front so RemoveProjectileAt's swap-remove never skips
         /// or re-visits a slot within this same pass (spec §3.13 item 11).
@@ -37,13 +37,13 @@ namespace Ring.Simulation.Combat
 
                 // Gather phase (Task 5 refactor): pack every actual geometry
                 // hit into the scratch in canonical slot order — 0 = barrier,
-                // then mobs by index, then player (floor lands in Task 7) — so
+                // then mobs by index, then player, then floor (Task 7) — so
                 // the packed array's index order doubles as the tie-break
                 // order below, matching Task 1's original streaming-min
                 // bit-for-bit.
                 int candCount = 0;
                 if (Geometry.SweepArena(startPos, target, proj.Radius, in arena, true,
-                        out float tArena, out _))
+                        out float tArena, out float2 arenaNormal))
                 {
                     candidates[candCount++] = (tArena, HitBarrier, -1);
                 }
@@ -69,6 +69,24 @@ namespace Ring.Simulation.Combat
                             player.Pos, heroRadius, out float tp))
                     {
                         candidates[candCount++] = (tp, HitPlayer, -1);
+                    }
+                }
+
+                // Floor candidate (Task 7): a descending shot (VelZ < 0) crosses
+                // the ground when its centre height reaches Radius (the sphere's
+                // underside at z = 0). t_floor solves proj.Height + t*VelZ*dt =
+                // Radius for t; only gathered when that crossing genuinely falls
+                // within THIS tick's step — clipped to [0,1] the same way
+                // SegmentCircle/SegmentRingWall reject an out-of-range root above,
+                // rather than forcing a distant crossing to register early.
+                // Packed LAST (canonical slot order, M5): a barrier/mob/player tie
+                // at the same t always outranks the floor.
+                if (proj.VelZ < 0f)
+                {
+                    float tFloor = (proj.Radius - proj.Height) / (proj.VelZ * dt);
+                    if (tFloor >= 0f && tFloor <= 1f)
+                    {
+                        candidates[candCount++] = (tFloor, HitFloor, -1);
                     }
                 }
 
@@ -126,7 +144,22 @@ namespace Ring.Simulation.Combat
                     case HitBarrier:
                     {
                         float2 contact = math.lerp(startPos, target, bestT);
-                        w.Emit(SimEventKind.ProjectileBlocked, contact, proj.Id, default, 0f);
+                        float contactHeight = proj.Height + proj.VelZ * dt * bestT;
+                        // Wall/obstacle: HitDir is the real SweepArena surface
+                        // normal (Task 7 — D12/C5, no "≈0" heuristic).
+                        w.Emit(SimEventKind.ProjectileBlocked, contact, proj.Id, default,
+                            contactHeight, hitDir: arenaNormal);
+                        w.RemoveProjectileAt(i);
+                        break;
+                    }
+                    case HitFloor:
+                    {
+                        float2 contact = math.lerp(startPos, target, bestT);
+                        float contactHeight = proj.Height + proj.VelZ * dt * bestT;
+                        // Floor: no modelled surface normal — HitDir is exactly
+                        // zero, not an approximation (Task 7 — D12/C5).
+                        w.Emit(SimEventKind.ProjectileBlocked, contact, proj.Id, default,
+                            contactHeight, hitDir: float2.zero);
                         w.RemoveProjectileAt(i);
                         break;
                     }
@@ -206,11 +239,19 @@ namespace Ring.Simulation.Combat
                 bodyMult = cfg.BodyDamageMult;
                 headMult = cfg.HeadDamageMult;
             }
-            else
+            else if (kind == HitBarrier)
             {
-                // Barrier (obstacle or ring wall): no modelled top — those stop a
-                // shot at any height. The floor, the one hit-volume with a
-                // vertical bound of its own, lands in Task 7.
+                // Barrier (obstacle or ring wall): no modelled top — stops a
+                // shot at any height.
+                return true;
+            }
+            else // HitFloor
+            {
+                // Floor (Task 7): the gather phase already solved the exact
+                // within-tick height crossing, so every gathered floor
+                // candidate is a genuine contact — nothing further to test.
+                // Not a damageable body: no zone (zone/mult already default to
+                // None/1 at the top of this function).
                 return true;
             }
 

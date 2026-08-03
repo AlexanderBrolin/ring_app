@@ -39,8 +39,7 @@ namespace Ring.Simulation.Core
         // slot is overwritten before being read each tick, so like _sepForces
         // above it carries no state across ticks and is deliberately excluded
         // from SaveState/RestoreState and StateHash. Sized to MaxMobs + 3: one
-        // slot per live mob plus barrier, player, and floor (floor lands in
-        // Task 7).
+        // slot per live mob plus barrier, player, and floor (Task 7).
         readonly (float t, int kind, int index)[] _projCandidates;
         WaveState _wave;
         int _nextEntityId = 1;
