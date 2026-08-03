@@ -50,3 +50,27 @@ MonoBehaviour:
   BlockSparkBurstCount: 18
   ImmediateMuzzleFeedback: 1
   ExtrapolateLocalPlayer: 0
+  PlayerVisualScale: 1
+  ChaserVisualScale: 0.4
+  GunnerVisualScale: 0.4
+  SpeedDampTime: 0.1
+  PlayerMoveThreshold01: 0.05
+  VisualTurnDegPerSec: 720
+  IdleAimTurnDegPerSec: 180
+  MobTurnDegPerSec: 540
+  PlayerYawOffsetDeg: 0
+  MechYawOffsetDeg: 0
+  MobWalkEnterSpeed: 0.4
+  MobWalkExitSpeed: 0.2
+  MobRunEnterSpeed: 2.6
+  MobRunExitSpeed: 2.2
+  LocomotionHoldSeconds: 0.15
+  AimYawClampDeg: 80
+  SpineYawShare: 0.4
+  DashLeanDeg: 18
+  DashLeanInOutSeconds: 0.08
+  LocomotionCrossFadeSeconds: 0.12
+  OneShotCrossFadeSeconds: 0.06
+  MuzzleLiftY: 1.1
+  GunLocalPosition: {x: 0, y: 0, z: 0}
+  GunLocalEuler: {x: 0, y: 0, z: 0}

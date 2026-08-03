@@ -127,6 +127,23 @@ namespace Ring.Editor
     /// `WouldFireThisFrame`, `AudioDirector`'s predicted-play path) is pure C#
     /// with no new scene objects/references, so no other wiring section here
     /// changes.
+    /// Assets phase B plan, Task 8 (spec §3.2): the `Player` root stops being
+    /// a bare capsule — it self-heals an already-committed scene's leftover
+    /// `MeshRenderer`/`MeshFilter` and instead carries a doll `Visual` child
+    /// (`EditorBootstrapUtils.EnsureVisual`, the UAL1 doll FBX + generated
+    /// `PlayerAnimator` controller) driven by a new `PlayerVisual` component
+    /// (`_runner`/`_aimProvider`/`_gameFeel`/`_animator`/`_visual`, wired to
+    /// `SimEventRouter`'s new `_playerVisual` fan-out slot). `PlayerView`
+    /// loses its own `_aimProvider` slot in the same change (the field moved
+    /// to `PlayerVisual`, T7) — only `_runner` is wired here now.
+    /// `PlayerEmissive`'s `GetOrCreateMaterial` call is kept purely so the
+    /// greybox material stays available on disk for a hand-tweak/fallback;
+    /// nothing in the scene consumes it as of this task. A `Gun` object
+    /// (SciFi kit pistol prefab) is instantiated once as a child of the
+    /// doll's `RightHand` bone and then write-if-different reconciled every
+    /// `Apply()` against `GameFeelConfig.GunLocalPosition`/`GunLocalEuler`,
+    /// so an owner's number tweak on the milestone Б1 playtest applies
+    /// without tearing the gun down and rebuilding it.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -187,6 +204,11 @@ namespace Ring.Editor
         const string PersistentPropsObjectName = "PersistentProps";
         const string TagManagerPath = "ProjectSettings/TagManager.asset";
         const string CasingsLayerName = "Casings";
+
+        // Task 8 (assets phase B plan, spec §3.2): the pistol in the doll's hand.
+        const string GunObjectName = "Gun";
+        // 8a: swapping the gun = this one id.
+        const string GunModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Gun_Pistol.fbx";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -348,10 +370,11 @@ namespace Ring.Editor
             }
 
             // Task 12 (spec §3.7/§3.11): placeholder emissive materials, then the
-            // Player capsule, the CameraRig (parent of Main Camera) and the Crosshair
+            // Player object, the CameraRig (parent of Main Camera) and the Crosshair
             // marker. Colors are greybox placeholders — Task 13+ owns the real art
             // pass; only the emissive channel matters here (dark-neon readability).
-            Material playerMat = GetOrCreateMaterial(
+            // greybox fallback kept on disk; no scene consumer since phase B
+            GetOrCreateMaterial(
                 "PlayerEmissive",
                 baseColor: new Color(0.03f, 0.03f, 0.04f),
                 emissionColor: new Color(0f, 2.5f, 3f));
@@ -367,15 +390,23 @@ namespace Ring.Editor
             GameObject playerGo = EditorBootstrapUtils.FindRootObject(scene, PlayerObjectName);
             if (playerGo == null)
             {
-                playerGo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                playerGo.name = PlayerObjectName;
+                playerGo = new GameObject(PlayerObjectName);
                 EditorBootstrapUtils.RemoveCollider(playerGo);
                 sceneDirty = true;
             }
-            MeshRenderer playerRenderer = playerGo.GetComponent<MeshRenderer>();
-            if (playerRenderer.sharedMaterial != playerMat)
+            // Self-heal an already-committed E1 capsule: since assets phase B
+            // (spec §3.2) the root carries no renderer of its own — the doll
+            // lives on the "Visual" child instead (EnsureVisual below).
+            MeshRenderer playerMeshRenderer = playerGo.GetComponent<MeshRenderer>();
+            if (playerMeshRenderer != null)
             {
-                playerRenderer.sharedMaterial = playerMat;
+                Object.DestroyImmediate(playerMeshRenderer);
+                sceneDirty = true;
+            }
+            MeshFilter playerMeshFilter = playerGo.GetComponent<MeshFilter>();
+            if (playerMeshFilter != null)
+            {
+                Object.DestroyImmediate(playerMeshFilter);
                 sceneDirty = true;
             }
             PlayerView playerView = playerGo.GetComponent<PlayerView>();
@@ -387,10 +418,81 @@ namespace Ring.Editor
             var playerSo = new SerializedObject(playerView);
             bool playerRefsChanged = false;
             playerRefsChanged |= EditorBootstrapUtils.SetRef(playerSo, "_runner", runner);
-            playerRefsChanged |= EditorBootstrapUtils.SetRef(playerSo, "_aimProvider", aimProvider);
             if (playerRefsChanged)
             {
                 playerSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // Assets phase B (spec §3.2, task 8): the collector doll — a named
+            // "Visual" child instantiated from the UAL1 doll FBX, driven by
+            // PlayerVisual (facing/animation) instead of the root transform
+            // itself (PlayerView doc).
+            bool playerVisualChanged = false;
+            GameObject playerVisualGo = EditorBootstrapUtils.EnsureVisual(playerGo,
+                ThirdPartyAssetPostprocessor.DollPath,
+                ThirdPartyAnimatorBootstrap.PlayerControllerPath,
+                gameFeel.PlayerVisualScale, ref playerVisualChanged);
+            sceneDirty |= playerVisualChanged;
+
+            PlayerVisual playerVisual = playerGo.GetComponent<PlayerVisual>();
+            if (playerVisual == null)
+            {
+                playerVisual = playerGo.AddComponent<PlayerVisual>();
+                sceneDirty = true;
+            }
+            var playerVisualSo = new SerializedObject(playerVisual);
+            bool playerVisualRefsChanged = false;
+            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_runner", runner);
+            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_aimProvider", aimProvider);
+            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_gameFeel", gameFeel);
+            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_animator",
+                playerVisualGo.GetComponent<Animator>());
+            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_visual",
+                playerVisualGo.transform);
+            if (playerVisualRefsChanged)
+            {
+                playerVisualSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // The gun: instantiated once as a child of the doll's RightHand
+            // bone, then write-if-different reconciled against
+            // GameFeelConfig's local transform every Apply — an owner's
+            // number tweak on the milestone Б1 playtest applies without
+            // tearing the object down and rebuilding it.
+            Animator dollAnimator = playerVisualGo.GetComponent<Animator>();
+            Transform hand = dollAnimator.GetBoneTransform(HumanBodyBones.RightHand);
+            if (hand == null)
+                throw new System.InvalidOperationException(
+                    "StageOneSceneBootstrap: doll has no RightHand bone.");
+            Transform gunTf = hand.Find(GunObjectName);
+            if (gunTf == null)
+            {
+                GameObject gunModel = AssetDatabase.LoadAssetAtPath<GameObject>(GunModelPath);
+                if (gunModel == null)
+                    throw new System.InvalidOperationException(
+                        "StageOneSceneBootstrap: no gun model at " + GunModelPath);
+                var gun = (GameObject)PrefabUtility.InstantiatePrefab(gunModel);
+                gun.name = GunObjectName;
+                gun.transform.SetParent(hand, false);
+                gunTf = gun.transform;
+                sceneDirty = true;
+            }
+            if (gunTf.localPosition != gameFeel.GunLocalPosition)
+            {
+                gunTf.localPosition = gameFeel.GunLocalPosition;
+                sceneDirty = true;
+            }
+            // Compare ROTATIONS, not euler read-backs: localEulerAngles returns values
+            // re-derived from the quaternion (normalized to [0;360)), so e.g. (0,-90,0)
+            // reads back as (0,270,0) and a naive != would re-dirty the scene on every
+            // Apply (audit fix ПБ19). Writing via localEulerAngles keeps the serialized
+            // euler hint consistent.
+            Quaternion gunTargetRotation = Quaternion.Euler(gameFeel.GunLocalEuler);
+            if (Quaternion.Angle(gunTf.localRotation, gunTargetRotation) > 1e-3f)
+            {
+                gunTf.localEulerAngles = gameFeel.GunLocalEuler;
                 sceneDirty = true;
             }
 
@@ -926,6 +1028,7 @@ namespace Ring.Editor
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_persistentProps", persistentProps);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_audioDirector", audioDirector);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_muzzleFlash", muzzleFlash);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_playerVisual", playerVisual);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_viewRegistry", viewRegistry);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_deathOverlay", deathOverlay);
             if (routerRefsChanged)
