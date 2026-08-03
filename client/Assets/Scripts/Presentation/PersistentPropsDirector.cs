@@ -220,11 +220,13 @@ namespace Ring.Presentation
                 _gameFeel.MuzzleLiftY,
                 Random.Range(-CasingLateralOffset, CasingLateralOffset));
             Vector3 pos = SimSpace.ToWorld(e.Pos) + lateral;
-            float sideMax = _gameFeel.CasingImpulseSideMax;
-            Vector3 impulse = new Vector3(
-                Random.Range(-sideMax, sideMax),
-                Random.Range(_gameFeel.CasingImpulseUpMin, _gameFeel.CasingImpulseUpMax),
-                Random.Range(-sideMax, sideMax));
+            // Eject to the shooter's RIGHT of the shot direction (e.Amount is the
+            // projectile's sim-plane velocity angle, tick-exact — MuzzleFlashView's
+            // contract): right = shot direction rotated -90° about world up.
+            Vector3 right = new Vector3(Mathf.Sin(e.Amount), 0f, -Mathf.Cos(e.Amount));
+            Vector3 impulse =
+                right * Random.Range(_gameFeel.CasingEjectSpeedMin, _gameFeel.CasingEjectSpeedMax)
+                + Vector3.up * Random.Range(_gameFeel.CasingImpulseUpMin, _gameFeel.CasingImpulseUpMax);
             Vector3 torque = Random.insideUnitSphere * _gameFeel.CasingTorqueScale;
 
             CasingView view = _casings.Rent();

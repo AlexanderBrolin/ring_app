@@ -275,12 +275,12 @@ namespace Ring.Editor
             // inverted here: detects a MISSING key instead of a stale one) so
             // this is a one-time sync, not an unconditional touch every run.
             // The marker key is always the MOST RECENTLY added field
-            // (currently `CasingScale`, Б1 fix-wave 3 — was `DashGlowSize`
-            // (app-9av) before that, and `GunLocalEuler` before that) so a
-            // fresh field addition is what re-triggers the sync, regardless
-            // of which older fields an already-committed asset already
-            // happens to carry.
-            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("CasingScale"))
+            // (currently `CasingEjectSpeedMax`, Б1 fix-wave 5 (app-xjz) — was
+            // `CasingScale` before that, `DashGlowSize` (app-9av) before that,
+            // and `GunLocalEuler` before that) so a fresh field addition is
+            // what re-triggers the sync, regardless of which older fields an
+            // already-committed asset already happens to carry.
+            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("CasingEjectSpeedMax"))
                 EditorUtility.SetDirty(gameFeel);
 
             AssetDatabase.SaveAssets();

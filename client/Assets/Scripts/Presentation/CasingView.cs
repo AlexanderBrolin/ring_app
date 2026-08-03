@@ -62,8 +62,13 @@ namespace Ring.Presentation
             _rb.isKinematic = false;
             _rb.linearVelocity = Vector3.zero;
             _rb.angularVelocity = Vector3.zero;
-            _rb.AddForce(impulse, ForceMode.Impulse);
-            _rb.AddTorque(torque, ForceMode.Impulse);
+            // VelocityChange: the SO numbers are meters-per-second (and radians-per-
+            // second for spin) applied directly. ForceMode.Impulse divided by the
+            // 0.01 kg mass and multiplied every number by 100 — "up 0.5" launched a
+            // 50 m/s rocket and the side scatter tunneled through the arena wall
+            // (app-xjz, Э1 bug unmasked at milestone Б1).
+            _rb.AddForce(impulse, ForceMode.VelocityChange);
+            _rb.AddTorque(torque, ForceMode.VelocityChange);
             _settleTimer = settleSeconds;
             _hardCapTimer = settleSeconds * HardCapMultiplier;
         }

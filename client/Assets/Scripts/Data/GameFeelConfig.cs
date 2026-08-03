@@ -40,7 +40,6 @@ namespace Ring.Data
         // `ProjectileOffset` in ViewRegistry are also never SO fields).
         [Range(0f, 10f)] public float CasingImpulseUpMin = 1.2f;
         [Range(0f, 10f)] public float CasingImpulseUpMax = 2.2f;
-        [Range(0f, 10f)] public float CasingImpulseSideMax = 1.2f;
         [Range(0f, 1f)] public float CasingTorqueScale = 0.02f;
         [Range(0.1f, 20f)] public float CorpseGlowFadeSeconds = 3f;
         [Range(0.05f, 3f)] public float DecalSize = 0.6f;
@@ -78,7 +77,7 @@ namespace Ring.Data
         // by the bootstrap on every Apply. GunLocalEuler was the sync-marker key
         // (bootstrap:245) until the Б1 fix-wave-2 block below superseded it, and
         // `DashGlowSize` in turn until the Б1 fix-wave-3 field below superseded
-        // THAT — `CasingScale` is the current marker, see its own doc.
+        // THAT — `CasingEjectSpeedMax` is the current marker, see its own doc.
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
         [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
@@ -108,7 +107,8 @@ namespace Ring.Data
         // start point, fading out over a few seconds. MaxDashGlows is a pool cap
         // (dash cooldown 1.2s vs ~2.5s life → 3 alive typ.). DashGlowSize was the
         // bootstrap sync-marker key until the Б1 fix-wave-3 field below
-        // superseded it — `CasingScale` is the current marker, see its own doc.
+        // superseded it — `CasingEjectSpeedMax` is the current marker, see its
+        // own doc.
         [Range(1, 32)] public int MaxDashGlows = 8;
         [Range(0.1f, 10f)] public float DashGlowSeconds = 2.5f;
         [Range(0.1f, 3f)] public float DashGlowSize = 0.9f;
@@ -117,9 +117,20 @@ namespace Ring.Data
         // тёмные") — the baked-prefab casing scale (0.05/0.06/0.05, Task 27)
         // is no longer the last word: `CasingView.Spawn` now takes a live
         // scale read from here every shot, same hot-tweak contract as
-        // `CasingPhysicsSeconds`. `CasingScale` is the bootstrap sync-marker
-        // key (bootstrap:245) now — keep it the LAST field of this class.
-        [Range(0.02f, 0.4f)] public float CasingScale = 0.12f; // sync-marker key — keep LAST
+        // `CasingPhysicsSeconds`.
+        [Range(0.02f, 0.4f)] public float CasingScale = 0.12f;
+
+        // Б1 fix-wave 5 (app-xjz): replaces the old CasingImpulseSideMax
+        // random left/right scatter — CasingView.Spawn now switched from
+        // ForceMode.Impulse to ForceMode.VelocityChange (see its own doc),
+        // so these are direct meters-per-second along a *directed* eject
+        // vector (PersistentPropsDirector.SpawnCasing ejects to the
+        // shooter's right of the shot, like a real pistol's ejection port)
+        // rather than an undirected impulse. `CasingEjectSpeedMax` is the
+        // bootstrap sync-marker key (bootstrap:245) now — keep it the LAST
+        // field of this class.
+        [Range(0f, 5f)] public float CasingEjectSpeedMin = 0.8f;
+        [Range(0f, 5f)] public float CasingEjectSpeedMax = 1.4f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc
