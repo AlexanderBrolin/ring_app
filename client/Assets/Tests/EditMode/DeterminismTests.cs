@@ -110,9 +110,14 @@ namespace Ring.Simulation.Tests
                 {
                     MoveDir = new float2(float.NaN, float.PositiveInfinity),
                     AimPoint = new float2(1e9f, float.NegativeInfinity),
-                    FireHeld = true, DashRequested = true
+                    FireHeld = true, DashRequested = true,
+                    AimHeight = float.NaN, AimHeld = true
                 };
-                var tooLong = new SimInput { MoveDir = new float2(100f, -50f) };
+                var tooLong = new SimInput
+                {
+                    MoveDir = new float2(100f, -50f),
+                    AimHeight = float.PositiveInfinity, AimHeld = true
+                };
                 for (int i = 0; i < 50; i++) w.Tick(nan);
                 for (int i = 0; i < 50; i++) w.Tick(tooLong); // finite over-length dir
                 for (int i = 0; i < 50; i++) w.Tick(default); // zero moveDir
@@ -121,6 +126,17 @@ namespace Ring.Simulation.Tests
                 return w.StateHash();
             }
             Assert.AreEqual(Run(), Run()); // two independent worlds, same hash
+        }
+
+        [Test]
+        public void Sanitize_ClampsAimHeight_AndMapsNaNToMuzzle()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var over = w.SanitizeForTest(new SimInput { AimHeld = true, AimHeight = cfg.Hero.MaxAimHeight + 5f });
+            Assert.AreEqual(cfg.Hero.MaxAimHeight, over.AimHeight, 1e-5f);  // clamp (fixture expr - PA2)
+            var nan = w.SanitizeForTest(new SimInput { AimHeld = true, AimHeight = float.NaN });
+            Assert.AreEqual(cfg.Hero.MuzzleHeight, nan.AimHeight, 1e-5f);   // NaN -> muzzle height
         }
 
         [Test]

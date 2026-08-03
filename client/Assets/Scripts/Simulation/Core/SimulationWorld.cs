@@ -175,6 +175,12 @@ namespace Ring.Simulation.Core
             float maxR = _config.Arena.Radius * 2f;
             if (math.lengthsq(rel) > maxR * maxR)
                 s.AimPoint = _players[0].Pos + math.normalizesafe(rel) * maxR;
+            // Task 8: non-finite AimHeight maps to standing muzzle height, then
+            // the result is clamped into the arena-wide aim-ray height cap —
+            // sanitized unconditionally so the field stays finite regardless of
+            // AimHeld (the consumer that gates on AimHeld arrives in Task 15).
+            if (!math.isfinite(s.AimHeight)) s.AimHeight = _config.Hero.MuzzleHeight;
+            s.AimHeight = math.clamp(s.AimHeight, 0f, _config.Hero.MaxAimHeight);
             return s;
         }
 
@@ -400,6 +406,11 @@ namespace Ring.Simulation.Core
         internal void KillPlayerForTest()
             => DamagePlayer(_config.Hero.MaxHp + 1f, _players[0].Pos,
                 HitZone.Body, new float2(1f, 0f));
+
+        /// Test-only seam (Task 8 Interfaces): exposes the private Sanitize step
+        /// so tests can assert the AimHeight NaN-map/clamp behaviour directly,
+        /// without threading it through a full Tick().
+        internal SimInput SanitizeForTest(in SimInput raw) => Sanitize(raw);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// Dev-only mob placeholder spawn for Presentation milestone 2 (spec Interfaces).
