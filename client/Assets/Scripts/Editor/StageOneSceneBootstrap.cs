@@ -178,7 +178,6 @@ namespace Ring.Editor
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
-        const string ArtDir = "Assets/Art";
         const string MaterialsDir = "Assets/Art/Materials";
         const string ScenePath = "Assets/Scenes/Main.unity";
         const string ActionsAssetPath = "Assets/InputSystem_Actions.inputactions";
@@ -436,7 +435,6 @@ namespace Ring.Editor
             if (playerGo == null)
             {
                 playerGo = new GameObject(PlayerObjectName);
-                EditorBootstrapUtils.RemoveCollider(playerGo);
                 sceneDirty = true;
             }
             // Self-heal an already-committed E1 capsule: since assets phase B

@@ -127,7 +127,9 @@ namespace Ring.Presentation
             // deep INSIDE that collider and gets depenetrated tens of meters up and
             // sideways (app-4qc, Б1 milestone find). A local (1,2,1) box scales to
             // the exact visual disc bounds: top face at world y = 0.
-            Object.Destroy(floor.GetComponent<Collider>());
+            Collider degenerate = floor.GetComponent<Collider>();
+            degenerate.enabled = false; // Destroy is deferred to end-of-frame — kill the dome NOW
+            Object.Destroy(degenerate);
             BoxCollider floorBox = floor.AddComponent<BoxCollider>();
             floorBox.size = new Vector3(1f, 2f, 1f);
         }

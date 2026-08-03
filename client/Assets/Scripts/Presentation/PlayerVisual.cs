@@ -32,13 +32,15 @@ namespace Ring.Presentation
         Quaternion _facing = Quaternion.identity;
         Vector3 _prevPos;
         bool _hasPrevPos;
-        float _dashLean;
+        float _dashLean01;
         float _aimWeight = 1f;
         bool _dead;
 
+#if UNITY_EDITOR
         Vector3 _appliedGunPosition;
         Vector3 _appliedGunEuler;
         bool _gunApplied;
+#endif
 
         void OnEnable() => _runner.WorldRestarted += HandleWorldRestarted;
 
@@ -83,6 +85,8 @@ namespace Ring.Presentation
             _aimWeight = Mathf.MoveTowards(_aimWeight, weightTarget, weightRate);
             _animator.SetLayerWeight(AimLayer, _aimWeight);
 
+#if UNITY_EDITOR
+            // Editor-only: builds carry the baked scene values; this live push exists for the owner's PlayMode tuning loop.
             // Gun tuning is gizmo-friendly (Б1 wave 4): config values are pushed to
             // the transform ONLY when they change, so the owner can also drag the
             // Gun with the scene gizmo in PlayMode and then persist the result via
@@ -98,6 +102,7 @@ namespace Ring.Presentation
                 _appliedGunEuler = _gameFeel.GunLocalEuler;
                 _gunApplied = true;
             }
+#endif
 
             if (_dead) return; // corpse: no speed/facing/yaw/lean writes (Б3)
 
@@ -129,15 +134,15 @@ namespace Ring.Presentation
 
             // Dash lean (7a): an offset over _facing, tilted toward DashDir.
             PlayerState player = _runner.RenderCurr.Player;
-            float leanTarget = player.DashTimer > 0f ? _gameFeel.DashLeanDeg : 0f;
-            _dashLean = Mathf.MoveTowards(_dashLean, leanTarget,
-                _gameFeel.DashLeanDeg * dt / Mathf.Max(_gameFeel.DashLeanInOutSeconds, 1e-3f));
+            float leanTarget01 = player.DashTimer > 0f ? 1f : 0f;
+            _dashLean01 = Mathf.MoveTowards(_dashLean01, leanTarget01,
+                dt / Mathf.Max(_gameFeel.DashLeanInOutSeconds, 1e-3f));
             Quaternion rotation = _facing;
-            if (_dashLean > 0.01f)
+            if (_dashLean01 > 0.001f)
             {
                 Vector3 dashW = SimSpace.ToWorld(player.DashDir);
                 if (dashW.sqrMagnitude > 1e-6f)
-                    rotation = Quaternion.AngleAxis(_dashLean,
+                    rotation = Quaternion.AngleAxis(_dashLean01 * _gameFeel.DashLeanDeg,
                         Vector3.Cross(Vector3.up, dashW.normalized)) * _facing;
             }
             _visual.rotation = rotation;
@@ -202,7 +207,7 @@ namespace Ring.Presentation
             _animator.Play(AnimIds.Locomotion, BaseLayer, 0f);
             _animator.Play(AnimIds.PistolAimNeutral, AimLayer, 0f);
             _animator.SetFloat(AnimIds.Speed, 0f);
-            _dashLean = 0f;
+            _dashLean01 = 0f;
             _hasPrevPos = false; // restart teleports the player — no ghost speed spike
         }
 
