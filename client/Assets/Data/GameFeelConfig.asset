@@ -33,8 +33,7 @@ MonoBehaviour:
   MinSfxInterval: 0.03
   CasingImpulseUpMin: 0.2
   CasingImpulseUpMax: 0.5
-  CasingImpulseSideMax: 1.2
-  CasingTorqueScale: 0.02
+  CasingTorqueScale: 12
   CorpseGlowFadeSeconds: 3
   DecalSize: 0.6
   HitSparkLifetime: 0.15
@@ -72,9 +71,11 @@ MonoBehaviour:
   LocomotionCrossFadeSeconds: 0.12
   OneShotCrossFadeSeconds: 0.06
   MuzzleLiftY: 1.1
-  GunLocalPosition: {x: 0, y: 0, z: 0}
-  GunLocalEuler: {x: 0, y: 0, z: 0}
+  GunLocalPosition: {x: 0.0315, y: 0.0817, z: 0.0052}
+  GunLocalEuler: {x: 344.68088, y: 97.644905, z: 82.9196}
   MaxDashGlows: 8
   DashGlowSeconds: 2.5
   DashGlowSize: 0.9
-  CasingScale: 0.1
+  CasingScale: 0.08
+  CasingEjectSpeedMin: 0.8
+  CasingEjectSpeedMax: 1.4
