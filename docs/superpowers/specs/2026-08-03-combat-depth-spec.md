@@ -137,9 +137,12 @@ DoD Э1 закрыт плейтестом; пакет — вставка меж�
   - **От бедра:** горизонталь (`VelZ = 0`) на `muzzleH`. Разброс:
     `a = (SpreadRad + RecoilOffset) × moveMult`; `moveMult =
     SpreadSlideMult` в слайде, иначе `SpreadRunMult` при `|Vel| ≥
-    RunSpreadSpeedFrac × MaxSpeed`, иначе 1. RNG-draw разброса — только
-    от бедра; **RNG разделяется**: `_spreadRng` (оружие) и `_waveRng`
-    (волны) вместо общего потока — переключение режима не сдвигает спавны;
+    RunSpreadSpeedFrac × MaxSpeed`, иначе 1. RNG-draw разброса выполняется
+    в обоих режимах при эффективном разбросе `a > 0` (сведённый прицел без
+    спрея draw не делает — PD3); **RNG разделяется**: `_spreadRng` (оружие)
+    и `_waveRng` (волны) вместо общего потока (`_rng`/`WorldSave.Rng`
+    удаляются — потребителей не остаётся, PC9) — режим огня не сдвигает
+    спавны;
     оба в `WorldSave`/хеш; дёшево именно сейчас, пока golden пересеивается
     (C4, страховка ресимов Э2).
 - **Ганнер:** горизонтально на своей `MuzzleHeight`, лид 2D Э1. Слайд
@@ -150,9 +153,10 @@ DoD Э1 закрыт плейтестом; пакет — вставка меж�
   выманивает замах с 10 м — A4), и смещение прогноза клампится
   `SwingLeadMaxMeters` (D2-review); условие: `dist(m.Pos, predicted) ≤
   AttackRange`. Удар не меняется: re-validate фактического оверлапа —
-  честный промах. Формула — новый `Targeting.PredictPos(pos, vel, seconds,
-  factor, maxLead)` рядом с `AimWithLead` (сам `AimWithLead` НЕ
-  переиспользуется — он про перехват снарядом, B12). `SwingLeadFactor 0` =
+  честный промах. Формула — новый `Targeting.PredictPos(pos, vel, maxSpeed,
+  seconds, factor, maxLead)` рядом с `AimWithLead` (сам `AimWithLead` НЕ
+  переиспользуется — он про перехват снарядом, B12; кламп длины лида —
+  внутри хелпера, PD17). `SwingLeadFactor 0` =
   поведение Э1 (проверка поведенческая: тик входа в `Telegraph` совпадает с
   `dist ≤ AttackRange`, D9). Анти-баит: тюнинг-кандидат В1 — выпад на ударе
   (`LungeSpeed`), если кайтинг по кругу всё ещё выключает чейзера (C10).
@@ -262,14 +266,16 @@ DoD Э1 закрыт плейтестом; пакет — вставка меж�
 | `WeaponConfig` | `CanFireWhileSlide true`, `SpreadRunMult 1.5`, `SpreadSlideMult 2.0`, `RunSpreadSpeedFrac 0.5` (маркер); радиус снаряда — балансовый PR на В2 |
 | `MobConfig` × Chaser | `LegsTop 0.60`, `BodyTop 1.45`, `HeadTop 1.85` (Д15: ростом с носителя и чуть выше — «мясо»-экран), мульты `0.75 / 1.0 / 1.7` (единые, v4-исключение отменено владельцем), `SwingLeadFactor 1.0`, `SwingLeadMaxMeters 2.0` (маркер) |
 | `MobConfig` × Gunner | `LegsTop 1.10`, `BodyTop 2.70`, `HeadTop 3.50` (Д15: ×2 роста носителя — голова-башня над толпой), мульты `0.75 / 1.0 / 1.7` (**хедшот = 12 × 1.7 = 20.4 ≥ 20 HP — oneshot**), `MuzzleHeight 0.95` — **sim-дуло НЕ масштабируется ростом** (горизонтальный выстрел обязан попадать в корпус носителя [0.55, 1.35) и переныриваться слайдом; виз-дуло модели — вопрос вехи В2) |
-| `GameFeelConfig` | `TracerScale 0.7`, `SlideDustRate 40`, `SlideWallSparkRate 60`, `RicochetSparkCount 12`, `StaminaBarFullColor`, `StaminaBarLowColor`, `StaminaBarLowThreshold 0.25`, `StaminaDeniedPulseSeconds 0.2` (C11), `HeadHitstopScale 1.4`, `ZoneHitPitchOffset 0.06` (C12), `GibHeadImpulseSpeed 6`, `GibExplosionSpeed 4`, `GibPartsFifoLimit 24`, `GibPhysicsSeconds 3` (D10), `AimProxyHeadRadiusFrac 0.5` (ручка СЛОЖНОСТИ хедшота: уже прокси → сложнее навести, A13), `GunnerVisualScale 2.0` (Д15: виз-модель Leela масштабируется под сим-пояса ×2, подгонка — веха В2), `AimRayAlpha 0.35`, `AimRayWidth 0.03`, `AimDotScale 0.15` (маркер; `HipReticleRadiusScale` УБРАН — ретикл остаётся честным конусом, C13) |
+| `GameFeelConfig` | `TracerScale 0.7`, `SlideDustRate 40`, `SlideWallSparkRate 60`, `RicochetSparkCount 12`, `StaminaBarFullColor`, `StaminaBarLowColor`, `StaminaBarLowThreshold 0.25`, `StaminaDeniedPulseSeconds 0.2` (C11), `HeadHitstopScale 1.4`, `ZoneHitPitchOffset 0.06` (C12), `GibHeadImpulseSpeed 6`, `GibExplosionSpeed 4`, `GibPartsFifoLimit 24`, `GibPhysicsSeconds 3` (D10), `AimProxyHeadRadiusFrac 0.5` (ручка СЛОЖНОСТИ хедшота: уже прокси → сложнее навести, A13), `SlideDustBurstCount 14`, `SlideWallSparkBurstCount 10` (burst-модель по прецеденту `HitSparkBurstCount` — continuous-rate у пулов нет, PC13), `AimRayAlpha 0.35`, `AimRayWidth 0.03`, `AimDotScale 0.15` (маркер; `HipReticleRadiusScale` УБРАН — C13). **`GunnerVisualScale` — существующее поле (0.4)**: рост ×2 = значение ≈0.76 (пропорция 0.4 × 3.5/1.85) — правка существующего числа, отдельный балансовый PR на В2; механизм применения (`EnsureVisual`/`MobVisual.Bind`) уже есть, код не меняется (PD1/PC1) |
 
 Геометрия волны (Д15, с учётом ±Radius по заслоняющим — A7): блок-потолок
 чейзера `1.85 + 0.12 = 1.97`; траектория в голову ганнера (центр ~3.1 на
-9 м, наклон ≈0.233) достигает 1.97 на ≈4.2 м — **чейзер ближе ~4 м от дула
-экранирует даже голову ганнера**. Это намеренно: «мясо» прикрывает, стрелять
-в башню-голову — с дистанции, фланга или после расчистки; v2-фича «перестрел
-через низкого чейзера» отменена владельцем в пользу экрана.
+9 м, наклон ≈0.233) достигает 1.97 на ≈4.16 м; hit/no-hit решается на
+**входе свипа** (центр минус радиусы `0.5 + 0.12`), итого — **чейзер с
+центром ближе ≈4.8 м от дула экранирует даже голову ганнера** (PA6). Это
+намеренно: «мясо» прикрывает, стрелять в башню-голову — с дистанции,
+фланга или после расчистки; v2-фича «перестрел через низкого чейзера»
+отменена владельцем в пользу экрана.
 
 `SimConfigBuilder.Validate` (строго-положительные — поимённо, D15): пояса
 `0 < LegsTop < BodyTop < HeadTop` (per-архетип и Hero); мульты ≥ 0; цены > 0
@@ -295,10 +301,12 @@ max(HeadTop)`; `SlideMinSpeedFrac ∈ (0,1]`; `SlideWallStopDot ∈ [−1,1]`;
   аналитика плоскости y=0. При `AimHeld`: попал в прокси → точка на нём;
   мимо → точка пола, `AimHeight = 0` («хоть в пол»). Прокси — чайлд-объекты
   вьюх (`RemoveCollider` корней сохраняется), размеры бутстрап строит из
-  SO-поясов; голова × `AimProxyHeadRadiusFrac`; **Visual-чайлд
-  `MobGunnerView` получает `localScale = GunnerVisualScale`** (Д15 —
-  силуэт обязан совпасть с сим-поясами ×2; идемпотентно, подгонка на В2).
-  Отставание поз на кадр
+  SO-поясов; голова × `AimProxyHeadRadiusFrac`; виз-масштаб ганнера ×2 —
+  через СУЩЕСТВУЮЩИЙ `GameFeelConfig.GunnerVisualScale` (значение —
+  балансовый PR на В2, см. §3.5; второго писателя `localScale` не заводим,
+  PC1). Прокси/масштаб обязаны доезжать до уже закоммиченных префабов:
+  self-heal под ранним возвратом `PrefabVisualsMatch` (идиома слоя гильз/
+  `fillSprite`, PC2). Отставание поз на кадр
   минимизировано порядком, остаток — допустим в соло (K15). Near-miss «в
   пол» вместо цели — осознанная цена точного режима (§6; ручка-кандидат
   `AimSnapScreenRadius` при фрустрации на В2 — C9).
@@ -387,7 +395,8 @@ II); конвертация всех окон в int-тики (C6 — рефак
     на границе** (D8), **разброс не нулевой на первом тике `AimHeld`** (C2),
     **спрей даёт разброс и в сведённом прицеле** (`a_aim = RecoilOffset` —
     Д15), геометрия экрана: чейзер на 2 м блокирует выстрел в голову ганнера,
-    чейзер на 5+ м — не блокирует.
+    чейзер на 6.5 м — не блокирует (порог по входу свипа ≈4.8 м — тесты
+    отступают от границы, PA6).
   - `HitZoneTests`: пояса, единые мульты, **хедшот ганнера — oneshot**
     (12 × 1.7 ≥ 20), слайд-профиль, ганнер мимо слайдящего, зоны в
     событиях, `Amount` после множителя.
