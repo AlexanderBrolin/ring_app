@@ -239,8 +239,8 @@ namespace Ring.Editor
             string path = TP.RingRoot + "Materials/" + safe + ".mat";
             var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
             if (existing != null) return existing;
-            EnsureFolder(TP.RingRoot);
-            EnsureFolder(TP.RingRoot + "Materials/");
+            EditorBootstrapUtils.EnsureFolder(TP.RingRoot);
+            EditorBootstrapUtils.EnsureFolder(TP.RingRoot + "Materials/");
             var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
             mat.SetTexture("_BaseMap", baseMap);
             if (emissive != null)
@@ -253,15 +253,6 @@ namespace Ring.Editor
             }
             AssetDatabase.CreateAsset(mat, path);
             return mat;
-        }
-
-        static void EnsureFolder(string path)
-        {
-            string trimmed = path.TrimEnd('/');
-            if (AssetDatabase.IsValidFolder(trimmed)) return;
-            AssetDatabase.CreateFolder(
-                Path.GetDirectoryName(trimmed).Replace('\\', '/'),
-                Path.GetFileName(trimmed));
         }
 
         /// Spec §7.4 junk gate, single implementation: no Resources/,

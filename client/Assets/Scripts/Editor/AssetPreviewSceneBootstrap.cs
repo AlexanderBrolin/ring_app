@@ -112,7 +112,7 @@ namespace Ring.Editor
 
         static GameObject GetOrCreateRoot(string name, Vector3 position, float yaw = 0f)
         {
-            GameObject go = GameObject.Find("/" + name);
+            GameObject go = EditorBootstrapUtils.FindRootObject(SceneManager.GetActiveScene(), name);
             if (go == null) go = new GameObject(name);
             go.transform.position = position;
             go.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
@@ -123,7 +123,8 @@ namespace Ring.Editor
             string modelPath, string controllerPath, float visualScale = 1f)
         {
             GameObject root = GetOrCreateRoot(name, position);
-            EnsureVisual(root, modelPath, controllerPath, visualScale);
+            bool changedDummy = false; // preview always saves the scene unconditionally
+            EditorBootstrapUtils.EnsureVisual(root, modelPath, controllerPath, visualScale, ref changedDummy);
             return root;
         }
 
@@ -135,62 +136,10 @@ namespace Ring.Editor
             GameObject root = existing != null ? existing.gameObject : new GameObject(name);
             root.transform.SetParent(parent.transform, false);
             root.transform.localPosition = localPosition;
-            EnsureVisual(root, modelPath,
-                controllerPath ?? DefaultControllerFor(modelPath), visualScale);
-        }
-
-        static string DefaultControllerFor(string modelPath)
-        {
-            string path = TA.ControllerPathFor(modelPath);
-            return AssetDatabase.LoadAssetAtPath<UnityEditor.Animations
-                .AnimatorController>(path) != null ? path : null;
-        }
-
-        static void EnsureVisual(GameObject root, string modelPath,
-            string controllerPath, float visualScale = 1f)
-        {
-            Transform visualTf = root.transform.Find("Visual");
-            // A visual instantiated from a DIFFERENT model (e.g. after feedback
-            // swaps) is torn down and rebuilt — idempotent otherwise.
-            if (visualTf != null)
-            {
-                UnityEngine.Object source =
-                    PrefabUtility.GetCorrespondingObjectFromSource(visualTf.gameObject);
-                string sourcePath = source != null
-                    ? AssetDatabase.GetAssetPath(source) : null;
-                if (sourcePath != modelPath)
-                {
-                    UnityEngine.Object.DestroyImmediate(visualTf.gameObject);
-                    visualTf = null;
-                }
-            }
-            GameObject visual;
-            if (visualTf == null)
-            {
-                GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(modelPath);
-                if (model == null)
-                    throw new InvalidOperationException(
-                        "AssetPreviewSceneBootstrap: model not found at " + modelPath);
-                visual = (GameObject)PrefabUtility.InstantiatePrefab(model);
-                visual.name = "Visual";
-                visual.transform.SetParent(root.transform, false);
-                visual.transform.localPosition = Vector3.zero;
-            }
-            else
-            {
-                visual = visualTf.gameObject;
-            }
-            visual.transform.localScale = Vector3.one * visualScale;
-            if (controllerPath == null) return; // static props carry no Animator
-            var controller = AssetDatabase.LoadAssetAtPath<UnityEditor.Animations
-                .AnimatorController>(controllerPath);
-            if (controller == null)
-                throw new InvalidOperationException(
-                    "AssetPreviewSceneBootstrap: controller not found at " + controllerPath);
-            Animator animator = visual.GetComponent<Animator>();
-            if (animator == null) animator = visual.AddComponent<Animator>();
-            animator.runtimeAnimatorController = controller;
-            animator.applyRootMotion = false; // motion is never animation-driven
+            bool changedDummy = false; // preview always saves the scene unconditionally
+            EditorBootstrapUtils.EnsureVisual(root, modelPath,
+                controllerPath ?? EditorBootstrapUtils.DefaultControllerFor(modelPath), visualScale,
+                ref changedDummy);
         }
 
         /// DirectorSkin = FRESH URP Lit material: cloning the importer's artifact
@@ -252,32 +201,27 @@ namespace Ring.Editor
 
         static Material GetOrCreateMaterial(string path, Color baseColor, Color emission)
         {
-            var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
-            if (mat != null) return mat;
-            var shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null)
-                throw new InvalidOperationException("URP Lit shader not found");
-            mat = new Material(shader);
-            mat.SetColor("_BaseColor", baseColor);
-            if (emission.maxColorComponent > 0f)
+            return EditorBootstrapUtils.GetOrCreateMaterial(path, EditorBootstrapUtils.UrpLitShader, mat =>
             {
-                mat.EnableKeyword("_EMISSION");
-                mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
-                mat.SetColor("_EmissionColor", emission);
-            }
-            AssetDatabase.CreateAsset(mat, path);
-            return mat;
+                mat.SetColor("_BaseColor", baseColor);
+                if (emission.maxColorComponent > 0f)
+                {
+                    mat.EnableKeyword("_EMISSION");
+                    mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                    mat.SetColor("_EmissionColor", emission);
+                }
+            });
         }
 
         static void BuildFloor(Material floorMat)
         {
-            GameObject floor = GameObject.Find("/Floor");
+            GameObject floor = EditorBootstrapUtils.FindRootObject(SceneManager.GetActiveScene(), "Floor");
             if (floor == null)
             {
                 floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
                 floor.name = "Floor";
                 // Preview cosmetics only — no physics (pattern: E1 RemoveCollider).
-                UnityEngine.Object.DestroyImmediate(floor.GetComponent<Collider>());
+                EditorBootstrapUtils.RemoveCollider(floor);
             }
             floor.transform.position = Vector3.zero;
             floor.transform.localScale = new Vector3(6f, 1f, 6f);
@@ -308,7 +252,7 @@ namespace Ring.Editor
         /// matching the game's perspective (ADR-001 §9), covers all rows.
         static void BuildCamera()
         {
-            GameObject go = GameObject.Find("/PreviewCamera");
+            GameObject go = EditorBootstrapUtils.FindRootObject(SceneManager.GetActiveScene(), "PreviewCamera");
             if (go == null) go = new GameObject("PreviewCamera");
             Camera camera = go.GetComponent<Camera>();
             if (camera == null) camera = go.AddComponent<Camera>();

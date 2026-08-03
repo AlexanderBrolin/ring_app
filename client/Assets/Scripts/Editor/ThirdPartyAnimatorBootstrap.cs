@@ -58,19 +58,10 @@ namespace Ring.Editor
 
         static void EnsureFolders()
         {
-            EnsureFolder(TP.RingRoot);
-            EnsureFolder(AnimatorsRoot);
-            EnsureFolder(MasksRoot);
-            EnsureFolder(MaterialsRoot); // used by AssetPreviewSceneBootstrap (T14)
-        }
-
-        static void EnsureFolder(string path)
-        {
-            string trimmed = path.TrimEnd('/');
-            if (AssetDatabase.IsValidFolder(trimmed)) return;
-            AssetDatabase.CreateFolder(
-                Path.GetDirectoryName(trimmed).Replace('\\', '/'),
-                Path.GetFileName(trimmed));
+            EditorBootstrapUtils.EnsureFolder(TP.RingRoot);
+            EditorBootstrapUtils.EnsureFolder(AnimatorsRoot);
+            EditorBootstrapUtils.EnsureFolder(MasksRoot);
+            EditorBootstrapUtils.EnsureFolder(MaterialsRoot); // used by AssetPreviewSceneBootstrap (T14)
         }
 
         static AvatarMask GetOrCreateUpperBodyMask()

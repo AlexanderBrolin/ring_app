@@ -287,7 +287,7 @@ namespace Ring.Editor
                     "StageOneSceneBootstrap: no Camera tagged MainCamera found in the scene.");
 
             var aimSo = new SerializedObject(aimProvider);
-            bool aimRefsChanged = SetRef(aimSo, "_camera", mainCamera);
+            bool aimRefsChanged = EditorBootstrapUtils.SetRef(aimSo, "_camera", mainCamera);
             if (aimRefsChanged)
             {
                 aimSo.ApplyModifiedPropertiesWithoutUndo();
@@ -301,16 +301,16 @@ namespace Ring.Editor
 
             var so = new SerializedObject(runner);
             bool refsChanged = false;
-            refsChanged |= SetRef(so, "_hero", hero);
-            refsChanged |= SetRef(so, "_weapon", weapon);
-            refsChanged |= SetRef(so, "_chaser", chaser);
-            refsChanged |= SetRef(so, "_gunner", gunner);
-            refsChanged |= SetRef(so, "_wave", wave);
-            refsChanged |= SetRef(so, "_arena", arena);
-            refsChanged |= SetRef(so, "_gameFeel", gameFeel);
-            refsChanged |= SetRef(so, "_camera", camera);
-            refsChanged |= SetRef(so, "_actionsAsset", actionsAsset);
-            refsChanged |= SetRef(so, "_aimProvider", aimProvider);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_hero", hero);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_weapon", weapon);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_chaser", chaser);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_gunner", gunner);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_wave", wave);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_arena", arena);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_gameFeel", gameFeel);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_camera", camera);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_actionsAsset", actionsAsset);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_aimProvider", aimProvider);
             if (refsChanged)
             {
                 so.ApplyModifiedPropertiesWithoutUndo();
@@ -325,7 +325,7 @@ namespace Ring.Editor
             // `Image` are built, even though this pass only wires the two refs
             // (`_runner`, `_gameFeel`) already available this early. The second
             // pass (`_viewRegistry`, `_vignette`) runs later, once those exist.
-            GameObject gameFeelDirectorGo = FindRootObject(scene, GameFeelDirectorObjectName);
+            GameObject gameFeelDirectorGo = EditorBootstrapUtils.FindRootObject(scene, GameFeelDirectorObjectName);
             if (gameFeelDirectorGo == null)
             {
                 gameFeelDirectorGo = new GameObject(GameFeelDirectorObjectName);
@@ -339,8 +339,8 @@ namespace Ring.Editor
             }
             var gameFeelDirectorSo = new SerializedObject(gameFeelDirector);
             bool gameFeelDirectorRefsChanged = false;
-            gameFeelDirectorRefsChanged |= SetRef(gameFeelDirectorSo, "_runner", runner);
-            gameFeelDirectorRefsChanged |= SetRef(gameFeelDirectorSo, "_gameFeel", gameFeel);
+            gameFeelDirectorRefsChanged |= EditorBootstrapUtils.SetRef(gameFeelDirectorSo, "_runner", runner);
+            gameFeelDirectorRefsChanged |= EditorBootstrapUtils.SetRef(gameFeelDirectorSo, "_gameFeel", gameFeel);
             if (gameFeelDirectorRefsChanged)
             {
                 gameFeelDirectorSo.ApplyModifiedPropertiesWithoutUndo();
@@ -364,12 +364,12 @@ namespace Ring.Editor
             // `LineRenderer` strip isn't meant to be shaded).
             Material spreadConeMat = GetOrCreateUnlitMaterial("SpreadConeEmissive", new Color(3.5f, 1.2f, 0f));
 
-            GameObject playerGo = FindRootObject(scene, PlayerObjectName);
+            GameObject playerGo = EditorBootstrapUtils.FindRootObject(scene, PlayerObjectName);
             if (playerGo == null)
             {
                 playerGo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
                 playerGo.name = PlayerObjectName;
-                RemoveCollider(playerGo);
+                EditorBootstrapUtils.RemoveCollider(playerGo);
                 sceneDirty = true;
             }
             MeshRenderer playerRenderer = playerGo.GetComponent<MeshRenderer>();
@@ -386,8 +386,8 @@ namespace Ring.Editor
             }
             var playerSo = new SerializedObject(playerView);
             bool playerRefsChanged = false;
-            playerRefsChanged |= SetRef(playerSo, "_runner", runner);
-            playerRefsChanged |= SetRef(playerSo, "_aimProvider", aimProvider);
+            playerRefsChanged |= EditorBootstrapUtils.SetRef(playerSo, "_runner", runner);
+            playerRefsChanged |= EditorBootstrapUtils.SetRef(playerSo, "_aimProvider", aimProvider);
             if (playerRefsChanged)
             {
                 playerSo.ApplyModifiedPropertiesWithoutUndo();
@@ -397,7 +397,7 @@ namespace Ring.Editor
             // CameraRig is the parent: it carries position/rotation, Main Camera
             // stays a child at local zero (П-3 resolution). Reparenting an existing
             // camera is itself guarded so a second run is a no-op.
-            GameObject cameraRigGo = FindRootObject(scene, CameraRigObjectName);
+            GameObject cameraRigGo = EditorBootstrapUtils.FindRootObject(scene, CameraRigObjectName);
             if (cameraRigGo == null)
             {
                 cameraRigGo = new GameObject(CameraRigObjectName);
@@ -418,17 +418,17 @@ namespace Ring.Editor
             }
             var cameraRigSo = new SerializedObject(cameraRig);
             bool cameraRigRefsChanged = false;
-            cameraRigRefsChanged |= SetRef(cameraRigSo, "_config", camera);
-            cameraRigRefsChanged |= SetRef(cameraRigSo, "_runner", runner);
-            cameraRigRefsChanged |= SetRef(cameraRigSo, "_aimProvider", aimProvider);
-            cameraRigRefsChanged |= SetRef(cameraRigSo, "_gameFeelDirector", gameFeelDirector);
+            cameraRigRefsChanged |= EditorBootstrapUtils.SetRef(cameraRigSo, "_config", camera);
+            cameraRigRefsChanged |= EditorBootstrapUtils.SetRef(cameraRigSo, "_runner", runner);
+            cameraRigRefsChanged |= EditorBootstrapUtils.SetRef(cameraRigSo, "_aimProvider", aimProvider);
+            cameraRigRefsChanged |= EditorBootstrapUtils.SetRef(cameraRigSo, "_gameFeelDirector", gameFeelDirector);
             if (cameraRigRefsChanged)
             {
                 cameraRigSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
-            GameObject crosshairGo = FindRootObject(scene, CrosshairObjectName);
+            GameObject crosshairGo = EditorBootstrapUtils.FindRootObject(scene, CrosshairObjectName);
             if (crosshairGo == null)
             {
                 crosshairGo = new GameObject(CrosshairObjectName);
@@ -446,7 +446,7 @@ namespace Ring.Editor
             {
                 markerGo = GameObject.CreatePrimitive(PrimitiveType.Quad);
                 markerGo.name = MarkerObjectName;
-                RemoveCollider(markerGo);
+                EditorBootstrapUtils.RemoveCollider(markerGo);
                 markerGo.transform.SetParent(crosshairGo.transform, false);
                 // Quad's default normal faces -Z; lay it flat, normal up, for a
                 // top-down ¾ camera.
@@ -505,10 +505,10 @@ namespace Ring.Editor
 
             var crosshairSo = new SerializedObject(crosshairView);
             bool crosshairRefsChanged = false;
-            crosshairRefsChanged |= SetRef(crosshairSo, "_marker", markerGo.transform);
-            crosshairRefsChanged |= SetRef(crosshairSo, "_aimProvider", aimProvider);
-            crosshairRefsChanged |= SetRef(crosshairSo, "_cone", spreadCone);
-            crosshairRefsChanged |= SetRef(crosshairSo, "_runner", runner);
+            crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_marker", markerGo.transform);
+            crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_aimProvider", aimProvider);
+            crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_cone", spreadCone);
+            crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_runner", runner);
             if (crosshairRefsChanged)
             {
                 crosshairSo.ApplyModifiedPropertiesWithoutUndo();
@@ -523,7 +523,7 @@ namespace Ring.Editor
             Material wallMat = LoadMaterial("Wall");
             Material obstacleMat = LoadMaterial("Obstacle");
 
-            GameObject arenaGo = FindRootObject(scene, ArenaObjectName);
+            GameObject arenaGo = EditorBootstrapUtils.FindRootObject(scene, ArenaObjectName);
             if (arenaGo == null)
             {
                 arenaGo = new GameObject(ArenaObjectName);
@@ -537,11 +537,11 @@ namespace Ring.Editor
             }
             var greyboxSo = new SerializedObject(greyboxBuilder);
             bool greyboxRefsChanged = false;
-            greyboxRefsChanged |= SetRef(greyboxSo, "_runner", runner);
-            greyboxRefsChanged |= SetRef(greyboxSo, "_arena", arena);
-            greyboxRefsChanged |= SetRef(greyboxSo, "_floor", floorMat);
-            greyboxRefsChanged |= SetRef(greyboxSo, "_wall", wallMat);
-            greyboxRefsChanged |= SetRef(greyboxSo, "_obstacle", obstacleMat);
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_runner", runner);
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_arena", arena);
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_floor", floorMat);
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_wall", wallMat);
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_obstacle", obstacleMat);
             if (greyboxRefsChanged)
             {
                 greyboxSo.ApplyModifiedPropertiesWithoutUndo();
@@ -554,7 +554,7 @@ namespace Ring.Editor
             // no actionsAsset is set (InputSystemUIInputModule.AssignDefaultActions,
             // called from HasNoActions()), same as the "GameObject > UI > Event
             // System" menu item produces.
-            GameObject eventSystemGo = FindRootObject(scene, EventSystemObjectName);
+            GameObject eventSystemGo = EditorBootstrapUtils.FindRootObject(scene, EventSystemObjectName);
             if (eventSystemGo == null)
             {
                 eventSystemGo = new GameObject(EventSystemObjectName);
@@ -571,7 +571,7 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
-            GameObject hudGo = FindRootObject(scene, HudObjectName);
+            GameObject hudGo = EditorBootstrapUtils.FindRootObject(scene, HudObjectName);
             if (hudGo == null)
             {
                 hudGo = new GameObject(HudObjectName, typeof(RectTransform));
@@ -619,10 +619,10 @@ namespace Ring.Editor
             }
             var hudSo = new SerializedObject(hud);
             bool hudRefsChanged = false;
-            hudRefsChanged |= SetRef(hudSo, "_runner", runner);
-            hudRefsChanged |= SetRef(hudSo, "_hpFill", hpFill);
-            hudRefsChanged |= SetRef(hudSo, "_dashFill", dashFill);
-            hudRefsChanged |= SetRef(hudSo, "_waveText", waveText);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_runner", runner);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_hpFill", hpFill);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_dashFill", dashFill);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_waveText", waveText);
             if (hudRefsChanged)
             {
                 hudSo.ApplyModifiedPropertiesWithoutUndo();
@@ -652,7 +652,7 @@ namespace Ring.Editor
             Button deathRestartButton = GetOrCreateOverlayButton(deathPanelGo.transform, "RestartButton", "Заново",
                 new Vector2(0f, -230f), new Vector2(220f, 50f), ref sceneDirty);
 
-            GameObject deathOverlayGo = FindRootObject(scene, DeathOverlayObjectName);
+            GameObject deathOverlayGo = EditorBootstrapUtils.FindRootObject(scene, DeathOverlayObjectName);
             if (deathOverlayGo == null)
             {
                 deathOverlayGo = new GameObject(DeathOverlayObjectName);
@@ -666,11 +666,11 @@ namespace Ring.Editor
             }
             var deathOverlaySo = new SerializedObject(deathOverlay);
             bool deathOverlayRefsChanged = false;
-            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_runner", runner);
-            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_gameFeelDirector", gameFeelDirector);
-            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_panel", deathPanelGo);
-            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_metricsText", deathMetrics);
-            deathOverlayRefsChanged |= SetRef(deathOverlaySo, "_restartButton", deathRestartButton);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_runner", runner);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_gameFeelDirector", gameFeelDirector);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_panel", deathPanelGo);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_metricsText", deathMetrics);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_restartButton", deathRestartButton);
             if (deathOverlayRefsChanged)
             {
                 deathOverlaySo.ApplyModifiedPropertiesWithoutUndo();
@@ -687,7 +687,7 @@ namespace Ring.Editor
             Button quitButton = GetOrCreateOverlayButton(pausePanelGo.transform, "QuitButton", "Выйти",
                 new Vector2(0f, -90f), new Vector2(240f, 50f), ref sceneDirty);
 
-            GameObject pauseControllerGo = FindRootObject(scene, PauseControllerObjectName);
+            GameObject pauseControllerGo = EditorBootstrapUtils.FindRootObject(scene, PauseControllerObjectName);
             if (pauseControllerGo == null)
             {
                 pauseControllerGo = new GameObject(PauseControllerObjectName);
@@ -701,11 +701,11 @@ namespace Ring.Editor
             }
             var pauseSo = new SerializedObject(pauseController);
             bool pauseRefsChanged = false;
-            pauseRefsChanged |= SetRef(pauseSo, "_runner", runner);
-            pauseRefsChanged |= SetRef(pauseSo, "_menu", pausePanelGo);
-            pauseRefsChanged |= SetRef(pauseSo, "_resumeButton", resumeButton);
-            pauseRefsChanged |= SetRef(pauseSo, "_restartButton", pauseRestartButton);
-            pauseRefsChanged |= SetRef(pauseSo, "_quitButton", quitButton);
+            pauseRefsChanged |= EditorBootstrapUtils.SetRef(pauseSo, "_runner", runner);
+            pauseRefsChanged |= EditorBootstrapUtils.SetRef(pauseSo, "_menu", pausePanelGo);
+            pauseRefsChanged |= EditorBootstrapUtils.SetRef(pauseSo, "_resumeButton", resumeButton);
+            pauseRefsChanged |= EditorBootstrapUtils.SetRef(pauseSo, "_restartButton", pauseRestartButton);
+            pauseRefsChanged |= EditorBootstrapUtils.SetRef(pauseSo, "_quitButton", quitButton);
             if (pauseRefsChanged)
             {
                 pauseSo.ApplyModifiedPropertiesWithoutUndo();
@@ -730,7 +730,7 @@ namespace Ring.Editor
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
 
-            GameObject viewsGo = FindRootObject(scene, ViewsObjectName);
+            GameObject viewsGo = EditorBootstrapUtils.FindRootObject(scene, ViewsObjectName);
             if (viewsGo == null)
             {
                 viewsGo = new GameObject(ViewsObjectName);
@@ -744,11 +744,11 @@ namespace Ring.Editor
             }
             var viewsSo = new SerializedObject(viewRegistry);
             bool viewsRefsChanged = false;
-            viewsRefsChanged |= SetRef(viewsSo, "_runner", runner);
-            viewsRefsChanged |= SetRef(viewsSo, "_gameFeel", gameFeel);
-            viewsRefsChanged |= SetRef(viewsSo, "_arena", arena);
-            viewsRefsChanged |= SetRef(viewsSo, "_mobPrefab", mobPrefab);
-            viewsRefsChanged |= SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_runner", runner);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gameFeel", gameFeel);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_arena", arena);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_mobPrefab", mobPrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
             if (viewsRefsChanged)
             {
                 viewsSo.ApplyModifiedPropertiesWithoutUndo();
@@ -761,8 +761,8 @@ namespace Ring.Editor
             // already wired in the first pass near the top of this method.
             var gameFeelDirectorSo2 = new SerializedObject(gameFeelDirector);
             bool gameFeelDirectorRefsChanged2 = false;
-            gameFeelDirectorRefsChanged2 |= SetRef(gameFeelDirectorSo2, "_viewRegistry", viewRegistry);
-            gameFeelDirectorRefsChanged2 |= SetRef(gameFeelDirectorSo2, "_vignette", vignetteImage);
+            gameFeelDirectorRefsChanged2 |= EditorBootstrapUtils.SetRef(gameFeelDirectorSo2, "_viewRegistry", viewRegistry);
+            gameFeelDirectorRefsChanged2 |= EditorBootstrapUtils.SetRef(gameFeelDirectorSo2, "_vignette", vignetteImage);
             if (gameFeelDirectorRefsChanged2)
             {
                 gameFeelDirectorSo2.ApplyModifiedPropertiesWithoutUndo();
@@ -775,7 +775,7 @@ namespace Ring.Editor
             AudioClip dashClip = LoadAudioClip("dash.wav");
             AudioClip playerHitClip = LoadAudioClip("player_hit.wav");
 
-            GameObject audioGo = FindRootObject(scene, AudioDirectorObjectName);
+            GameObject audioGo = EditorBootstrapUtils.FindRootObject(scene, AudioDirectorObjectName);
             if (audioGo == null)
             {
                 audioGo = new GameObject(AudioDirectorObjectName);
@@ -789,20 +789,20 @@ namespace Ring.Editor
             }
             var audioSo = new SerializedObject(audioDirector);
             bool audioRefsChanged = false;
-            audioRefsChanged |= SetRef(audioSo, "_runner", runner);
-            audioRefsChanged |= SetRef(audioSo, "_gameFeel", gameFeel);
-            audioRefsChanged |= SetRef(audioSo, "_shotClip", shotClip);
-            audioRefsChanged |= SetRef(audioSo, "_hitClip", hitClip);
-            audioRefsChanged |= SetRef(audioSo, "_mobDeathClip", mobDeathClip);
-            audioRefsChanged |= SetRef(audioSo, "_dashClip", dashClip);
-            audioRefsChanged |= SetRef(audioSo, "_playerHitClip", playerHitClip);
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_runner", runner);
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_gameFeel", gameFeel);
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_shotClip", shotClip);
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_hitClip", hitClip);
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_mobDeathClip", mobDeathClip);
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_dashClip", dashClip);
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_playerHitClip", playerHitClip);
             if (audioRefsChanged)
             {
                 audioSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
-            GameObject muzzleGo = FindRootObject(scene, MuzzleFlashObjectName);
+            GameObject muzzleGo = EditorBootstrapUtils.FindRootObject(scene, MuzzleFlashObjectName);
             if (muzzleGo == null)
             {
                 muzzleGo = new GameObject(MuzzleFlashObjectName);
@@ -832,8 +832,8 @@ namespace Ring.Editor
             MuzzleFlashView muzzleFlash = muzzleGo.GetComponent<MuzzleFlashView>();
             var muzzleSo = new SerializedObject(muzzleFlash);
             bool muzzleRefsChanged = false;
-            muzzleRefsChanged |= SetRef(muzzleSo, "_runner", runner);
-            muzzleRefsChanged |= SetRef(muzzleSo, "_gameFeel", gameFeel);
+            muzzleRefsChanged |= EditorBootstrapUtils.SetRef(muzzleSo, "_runner", runner);
+            muzzleRefsChanged |= EditorBootstrapUtils.SetRef(muzzleSo, "_gameFeel", gameFeel);
             if (muzzleRefsChanged)
             {
                 muzzleSo.ApplyModifiedPropertiesWithoutUndo();
@@ -878,7 +878,7 @@ namespace Ring.Editor
                 lifetime: gameFeel.DeathBurstLifetime, speed: gameFeel.DeathBurstSpeed, size: gameFeel.DeathBurstSize,
                 burstCount: 24, coneAngle: 90f);
 
-            GameObject persistentPropsGo = FindRootObject(scene, PersistentPropsObjectName);
+            GameObject persistentPropsGo = EditorBootstrapUtils.FindRootObject(scene, PersistentPropsObjectName);
             if (persistentPropsGo == null)
             {
                 persistentPropsGo = new GameObject(PersistentPropsObjectName);
@@ -892,22 +892,22 @@ namespace Ring.Editor
             }
             var persistentPropsSo = new SerializedObject(persistentProps);
             bool persistentPropsRefsChanged = false;
-            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_runner", runner);
-            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_gameFeel", gameFeel);
-            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_arena", arena);
-            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_casingPrefab", casingPrefab);
-            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
-            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_corpsePrefab", corpsePrefab);
-            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_hitSparkPrefab", hitSparkPrefab);
-            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
-            persistentPropsRefsChanged |= SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_runner", runner);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gameFeel", gameFeel);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_arena", arena);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_casingPrefab", casingPrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpsePrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_hitSparkPrefab", hitSparkPrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
             if (persistentPropsRefsChanged)
             {
                 persistentPropsSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
-            GameObject routerGo = FindRootObject(scene, EventRouterObjectName);
+            GameObject routerGo = EditorBootstrapUtils.FindRootObject(scene, EventRouterObjectName);
             if (routerGo == null)
             {
                 routerGo = new GameObject(EventRouterObjectName);
@@ -921,13 +921,13 @@ namespace Ring.Editor
             }
             var routerSo = new SerializedObject(router);
             bool routerRefsChanged = false;
-            routerRefsChanged |= SetRef(routerSo, "_runner", runner);
-            routerRefsChanged |= SetRef(routerSo, "_gameFeelDirector", gameFeelDirector);
-            routerRefsChanged |= SetRef(routerSo, "_persistentProps", persistentProps);
-            routerRefsChanged |= SetRef(routerSo, "_audioDirector", audioDirector);
-            routerRefsChanged |= SetRef(routerSo, "_muzzleFlash", muzzleFlash);
-            routerRefsChanged |= SetRef(routerSo, "_viewRegistry", viewRegistry);
-            routerRefsChanged |= SetRef(routerSo, "_deathOverlay", deathOverlay);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_runner", runner);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_gameFeelDirector", gameFeelDirector);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_persistentProps", persistentProps);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_audioDirector", audioDirector);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_muzzleFlash", muzzleFlash);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_viewRegistry", viewRegistry);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_deathOverlay", deathOverlay);
             if (routerRefsChanged)
             {
                 routerSo.ApplyModifiedPropertiesWithoutUndo();
@@ -942,7 +942,7 @@ namespace Ring.Editor
             // The `PracticeTargets` class/type itself is deleted from the
             // codebase, so this can only ever find a stale scene object, never
             // recreate the component.
-            GameObject stalePracticeGo = FindRootObject(scene, PracticeTargetsObjectName);
+            GameObject stalePracticeGo = EditorBootstrapUtils.FindRootObject(scene, PracticeTargetsObjectName);
             if (stalePracticeGo != null)
             {
                 Object.DestroyImmediate(stalePracticeGo);
@@ -958,7 +958,7 @@ namespace Ring.Editor
             // would be redundant; only `DevOverlay`'s own file (in `Presentation/`,
             // which DOES ship into player builds) needs the compile guard, and it
             // has one.
-            GameObject devOverlayGo = FindRootObject(scene, DevOverlayObjectName);
+            GameObject devOverlayGo = EditorBootstrapUtils.FindRootObject(scene, DevOverlayObjectName);
             if (devOverlayGo == null)
             {
                 devOverlayGo = new GameObject(DevOverlayObjectName);
@@ -972,8 +972,8 @@ namespace Ring.Editor
             }
             var devOverlaySo = new SerializedObject(devOverlay);
             bool devOverlayRefsChanged = false;
-            devOverlayRefsChanged |= SetRef(devOverlaySo, "_runner", runner);
-            devOverlayRefsChanged |= SetRef(devOverlaySo, "_aimProvider", aimProvider);
+            devOverlayRefsChanged |= EditorBootstrapUtils.SetRef(devOverlaySo, "_runner", runner);
+            devOverlayRefsChanged |= EditorBootstrapUtils.SetRef(devOverlaySo, "_aimProvider", aimProvider);
             if (devOverlayRefsChanged)
             {
                 devOverlaySo.ApplyModifiedPropertiesWithoutUndo();
@@ -1058,24 +1058,13 @@ namespace Ring.Editor
         static Material GetOrCreateMaterial(string assetName, Color baseColor, Color emissionColor)
         {
             string path = $"{MaterialsDir}/{assetName}.mat";
-            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
-            if (existing != null) return existing;
-
-            if (!AssetDatabase.IsValidFolder(MaterialsDir))
-                AssetDatabase.CreateFolder(ArtDir, "Materials");
-
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null)
-                throw new System.InvalidOperationException(
-                    "StageOneSceneBootstrap: URP Lit shader not found — is URP installed?");
-
-            var mat = new Material(shader) { name = assetName };
-            mat.SetColor("_BaseColor", baseColor);
-            mat.EnableKeyword("_EMISSION");
-            mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
-            mat.SetColor("_EmissionColor", emissionColor);
-            AssetDatabase.CreateAsset(mat, path);
-            return mat;
+            return EditorBootstrapUtils.GetOrCreateMaterial(path, EditorBootstrapUtils.UrpLitShader, mat =>
+            {
+                mat.SetColor("_BaseColor", baseColor);
+                mat.EnableKeyword("_EMISSION");
+                mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                mat.SetColor("_EmissionColor", emissionColor);
+            });
         }
 
         /// Task 17's tracer material: URP Unlit rather than Lit (like
@@ -1085,21 +1074,8 @@ namespace Ring.Editor
         static Material GetOrCreateUnlitMaterial(string assetName, Color color)
         {
             string path = $"{MaterialsDir}/{assetName}.mat";
-            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
-            if (existing != null) return existing;
-
-            if (!AssetDatabase.IsValidFolder(MaterialsDir))
-                AssetDatabase.CreateFolder(ArtDir, "Materials");
-
-            Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
-            if (shader == null)
-                throw new System.InvalidOperationException(
-                    "StageOneSceneBootstrap: URP Unlit shader not found — is URP installed?");
-
-            var mat = new Material(shader) { name = assetName };
-            mat.SetColor("_BaseColor", color);
-            AssetDatabase.CreateAsset(mat, path);
-            return mat;
+            return EditorBootstrapUtils.GetOrCreateMaterial(path, EditorBootstrapUtils.UrpUnlitShader, mat =>
+                mat.SetColor("_BaseColor", color));
         }
 
         /// Task 17: the shared `MobView` prefab — a bare capsule, no per-type
@@ -1115,7 +1091,7 @@ namespace Ring.Editor
 
             GameObject go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             go.name = "MobView";
-            RemoveCollider(go);
+            EditorBootstrapUtils.RemoveCollider(go);
             go.GetComponent<MeshRenderer>().sharedMaterial = mobMat;
             go.AddComponent<MobView>();
 
@@ -1133,27 +1109,24 @@ namespace Ring.Editor
         static ProjectileView GetOrCreateProjectilePrefab(Material sphereMat, Material trailMat,
             float tracerFadeSeconds)
         {
-            var existing = AssetDatabase.LoadAssetAtPath<ProjectileView>(ProjectilePrefabPath);
-            if (existing != null) return existing;
+            return EditorBootstrapUtils.BuildPrefab<ProjectileView>(ProjectilePrefabPath, () =>
+            {
+                GameObject go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                go.name = "ProjectileView";
+                EditorBootstrapUtils.RemoveCollider(go);
+                go.transform.localScale = Vector3.one * ProjectileDiameter;
+                go.GetComponent<MeshRenderer>().sharedMaterial = sphereMat;
 
-            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            go.name = "ProjectileView";
-            RemoveCollider(go);
-            go.transform.localScale = Vector3.one * ProjectileDiameter;
-            go.GetComponent<MeshRenderer>().sharedMaterial = sphereMat;
+                TrailRenderer trail = go.AddComponent<TrailRenderer>();
+                trail.time = tracerFadeSeconds;
+                trail.startWidth = 0.06f;
+                trail.endWidth = 0f;
+                trail.minVertexDistance = 0.05f;
+                trail.sharedMaterial = trailMat;
 
-            TrailRenderer trail = go.AddComponent<TrailRenderer>();
-            trail.time = tracerFadeSeconds;
-            trail.startWidth = 0.06f;
-            trail.endWidth = 0f;
-            trail.minVertexDistance = 0.05f;
-            trail.sharedMaterial = trailMat;
-
-            go.AddComponent<ProjectileView>();
-
-            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, ProjectilePrefabPath);
-            Object.DestroyImmediate(go);
-            return asset.GetComponent<ProjectileView>();
+                go.AddComponent<ProjectileView>();
+                return go;
+            });
         }
 
         /// Task 27: idempotent replacement for clicking "Add Renderer Feature
@@ -1264,22 +1237,22 @@ namespace Ring.Editor
                 return existing;
             }
 
-            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            go.name = "Casing";
-            go.layer = PersistentPropsDirector.CasingsLayer;
-            go.transform.localScale = new Vector3(0.05f, 0.06f, 0.05f);
-            go.GetComponent<MeshRenderer>().sharedMaterial = casingMat;
+            return EditorBootstrapUtils.BuildPrefab<CasingView>(CasingPrefabPath, () =>
+            {
+                GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                go.name = "Casing";
+                go.layer = PersistentPropsDirector.CasingsLayer;
+                go.transform.localScale = new Vector3(0.05f, 0.06f, 0.05f);
+                go.GetComponent<MeshRenderer>().sharedMaterial = casingMat;
 
-            Rigidbody rb = go.AddComponent<Rigidbody>();
-            rb.mass = 0.01f;
-            rb.linearDamping = 0.4f;
-            rb.angularDamping = 0.6f;
+                Rigidbody rb = go.AddComponent<Rigidbody>();
+                rb.mass = 0.01f;
+                rb.linearDamping = 0.4f;
+                rb.angularDamping = 0.6f;
 
-            go.AddComponent<CasingView>();
-
-            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, CasingPrefabPath);
-            Object.DestroyImmediate(go);
-            return asset.GetComponent<CasingView>();
+                go.AddComponent<CasingView>();
+                return go;
+            });
         }
 
         /// Task 27: the shared `DecalProjector` prefab. `size`/`material` are
@@ -1294,17 +1267,14 @@ namespace Ring.Editor
         /// math assumes.
         static DecalProjector GetOrCreateDecalPrefab(Material decalMat, float size)
         {
-            var existing = AssetDatabase.LoadAssetAtPath<DecalProjector>(DecalPrefabPath);
-            if (existing != null) return existing;
-
-            var go = new GameObject("Decal");
-            DecalProjector projector = go.AddComponent<DecalProjector>();
-            projector.material = decalMat;
-            projector.size = Vector3.one * size;
-
-            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, DecalPrefabPath);
-            Object.DestroyImmediate(go);
-            return asset.GetComponent<DecalProjector>();
+            return EditorBootstrapUtils.BuildPrefab<DecalProjector>(DecalPrefabPath, () =>
+            {
+                var go = new GameObject("Decal");
+                DecalProjector projector = go.AddComponent<DecalProjector>();
+                projector.material = decalMat;
+                projector.size = Vector3.one * size;
+                return go;
+            });
         }
 
         /// Task 27: the shared `CorpseView` prefab — a bare, uncollided
@@ -1314,18 +1284,15 @@ namespace Ring.Editor
         /// no-per-instance-materials rule `MobView` follows).
         static CorpseView GetOrCreateCorpsePrefab(Material corpseMat)
         {
-            var existing = AssetDatabase.LoadAssetAtPath<CorpseView>(CorpsePrefabPath);
-            if (existing != null) return existing;
-
-            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            go.name = "Corpse";
-            RemoveCollider(go);
-            go.GetComponent<MeshRenderer>().sharedMaterial = corpseMat;
-            go.AddComponent<CorpseView>();
-
-            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, CorpsePrefabPath);
-            Object.DestroyImmediate(go);
-            return asset.GetComponent<CorpseView>();
+            return EditorBootstrapUtils.BuildPrefab<CorpseView>(CorpsePrefabPath, () =>
+            {
+                GameObject go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                go.name = "Corpse";
+                EditorBootstrapUtils.RemoveCollider(go);
+                go.GetComponent<MeshRenderer>().sharedMaterial = corpseMat;
+                go.AddComponent<CorpseView>();
+                return go;
+            });
         }
 
         /// Task 27: existence-guarded factory for the three pooled spark/burst
@@ -1362,15 +1329,15 @@ namespace Ring.Editor
                 return existing;
             }
 
-            var go = new GameObject(objectName);
-            ParticleSystem particles = go.AddComponent<ParticleSystem>();
-            ConfigureBurstParticles(particles, lifetime, speed, size, burstCount, coneAngle);
-            go.GetComponent<ParticleSystemRenderer>().sharedMaterial = mat;
-            go.AddComponent<ParticleReturnToPool>();
-
-            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, path);
-            Object.DestroyImmediate(go);
-            return asset.GetComponent<ParticleSystem>();
+            return EditorBootstrapUtils.BuildPrefab<ParticleSystem>(path, () =>
+            {
+                var go = new GameObject(objectName);
+                ParticleSystem particles = go.AddComponent<ParticleSystem>();
+                ConfigureBurstParticles(particles, lifetime, speed, size, burstCount, coneAngle);
+                go.GetComponent<ParticleSystemRenderer>().sharedMaterial = mat;
+                go.AddComponent<ParticleReturnToPool>();
+                return go;
+            });
         }
 
         /// True if an already-baked prefab's module values (lifetime/speed/
@@ -1780,30 +1747,5 @@ namespace Ring.Editor
             return null;
         }
 
-        static GameObject FindRootObject(Scene scene, string name)
-        {
-            foreach (GameObject root in scene.GetRootGameObjects())
-            {
-                if (root.name == name) return root;
-            }
-            return null;
-        }
-
-        static void RemoveCollider(GameObject go)
-        {
-            Collider collider = go.GetComponent<Collider>();
-            if (collider != null) Object.DestroyImmediate(collider);
-        }
-
-        static bool SetRef(SerializedObject so, string fieldName, Object value)
-        {
-            SerializedProperty prop = so.FindProperty(fieldName);
-            if (prop == null)
-                throw new System.InvalidOperationException(
-                    $"StageOneSceneBootstrap: {so.targetObject.GetType().Name} has no serialized field '{fieldName}'.");
-            if (prop.objectReferenceValue == value) return false;
-            prop.objectReferenceValue = value;
-            return true;
-        }
     }
 }
