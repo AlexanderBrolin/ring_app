@@ -73,7 +73,7 @@ MonoBehaviour:
   OneShotCrossFadeSeconds: 0.06
   MuzzleLiftY: 1.1
   GunLocalPosition: {x: 0, y: 0, z: 0}
-  GunLocalEuler: {x: 0, y: 0, z: 0}
+  GunLocalEuler: {x: -90, y: 0, z: 0}
   MaxDashGlows: 8
   DashGlowSeconds: 2.5
   DashGlowSize: 0.9
