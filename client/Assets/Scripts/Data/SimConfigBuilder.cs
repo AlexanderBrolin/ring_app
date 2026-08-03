@@ -36,7 +36,27 @@ namespace Ring.Data
                     SlideProfileTop = hero.SlideProfileTop,
                     MuzzleHeight = hero.MuzzleHeight,
                     SlideMuzzleHeight = hero.SlideMuzzleHeight,
-                    MaxAimHeight = hero.MaxAimHeight
+                    MaxAimHeight = hero.MaxAimHeight,
+                    StaminaMax = hero.StaminaMax,
+                    DashStaminaCost = hero.DashStaminaCost,
+                    SlideStaminaCost = hero.SlideStaminaCost,
+                    LinkedDashStaminaCost = hero.LinkedDashStaminaCost,
+                    StaminaRegenPerSec = hero.StaminaRegenPerSec,
+                    StaminaRegenDelay = hero.StaminaRegenDelay,
+                    SlideSpeed = hero.SlideSpeed,
+                    SlideDuration = hero.SlideDuration,
+                    SlideSteerRadPerSec = hero.SlideSteerRadPerSec,
+                    SlideMinSpeedFrac = hero.SlideMinSpeedFrac,
+                    RunUpSeconds = hero.RunUpSeconds,
+                    RunUpDecayMult = hero.RunUpDecayMult,
+                    SlideBufferWindow = hero.SlideBufferWindow,
+                    LinkWindowSeconds = hero.LinkWindowSeconds,
+                    PostDashSlideWindow = hero.PostDashSlideWindow,
+                    SlideWallStopDot = hero.SlideWallStopDot,
+                    RicochetRetention = hero.RicochetRetention,
+                    AimMoveSpeedFrac = hero.AimMoveSpeedFrac,
+                    AimSlideSpeedMult = hero.AimSlideSpeedMult,
+                    AimSettleSeconds = hero.AimSettleSeconds
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -50,7 +70,11 @@ namespace Ring.Data
                     RecoilRecoveryRadPerSec = weapon.RecoilRecoveryRadPerSec,
                     RecoilMaxRad = weapon.RecoilMaxRad,
                     MuzzleOffset = weapon.MuzzleOffset,
-                    CanFireWhileDash = weapon.CanFireWhileDash
+                    CanFireWhileDash = weapon.CanFireWhileDash,
+                    CanFireWhileSlide = weapon.CanFireWhileSlide,
+                    SpreadRunMult = weapon.SpreadRunMult,
+                    SpreadSlideMult = weapon.SpreadSlideMult,
+                    RunSpreadSpeedFrac = weapon.RunSpreadSpeedFrac
                 },
                 Chaser = ToMobSimConfig(chaser),
                 Gunner = ToMobSimConfig(gunner),
@@ -161,6 +185,50 @@ namespace Ring.Data
             ReqNonNegative(errors, "Weapon.RecoilRecoveryRadPerSec", cfg.Weapon.RecoilRecoveryRadPerSec);
             ReqNonNegative(errors, "Weapon.RecoilMaxRad", cfg.Weapon.RecoilMaxRad);
             ReqNonNegative(errors, "Weapon.MuzzleOffset", cfg.Weapon.MuzzleOffset);
+
+            // Task 2 (spec stamina/slide/aim): stamina pool + action costs/regen.
+            ReqPositive(errors, "Hero.StaminaMax", cfg.Hero.StaminaMax);
+            ReqPositive(errors, "Hero.StaminaRegenPerSec", cfg.Hero.StaminaRegenPerSec);
+            ReqNonNegative(errors, "Hero.StaminaRegenDelay", cfg.Hero.StaminaRegenDelay);
+            ReqCostWithinStamina(errors, "Hero.DashStaminaCost", cfg.Hero.DashStaminaCost, cfg.Hero.StaminaMax);
+            ReqCostWithinStamina(errors, "Hero.SlideStaminaCost", cfg.Hero.SlideStaminaCost, cfg.Hero.StaminaMax);
+            ReqCostWithinStamina(errors, "Hero.LinkedDashStaminaCost", cfg.Hero.LinkedDashStaminaCost, cfg.Hero.StaminaMax);
+            if (cfg.Hero.LinkedDashStaminaCost > cfg.Hero.DashStaminaCost)
+            {
+                errors.Add("Hero.LinkedDashStaminaCost must be <= Hero.DashStaminaCost " +
+                    $"(got LinkedDashStaminaCost={cfg.Hero.LinkedDashStaminaCost:F3}, " +
+                    $"DashStaminaCost={cfg.Hero.DashStaminaCost:F3}).");
+            }
+
+            // Task 2: slide kinematics + buffered-input windows.
+            ReqPositive(errors, "Hero.SlideSpeed", cfg.Hero.SlideSpeed);
+            ReqPositive(errors, "Hero.SlideDuration", cfg.Hero.SlideDuration);
+            ReqPositive(errors, "Hero.RunUpSeconds", cfg.Hero.RunUpSeconds);
+            ReqNonNegative(errors, "Hero.RunUpDecayMult", cfg.Hero.RunUpDecayMult);
+            ReqNonNegative(errors, "Hero.SlideBufferWindow", cfg.Hero.SlideBufferWindow);
+            ReqNonNegative(errors, "Hero.LinkWindowSeconds", cfg.Hero.LinkWindowSeconds);
+            ReqNonNegative(errors, "Hero.PostDashSlideWindow", cfg.Hero.PostDashSlideWindow);
+            ReqInRange(errors, "Hero.SlideMinSpeedFrac", cfg.Hero.SlideMinSpeedFrac, 0f, 1f, minExclusive: true);
+            ReqInRange(errors, "Hero.SlideWallStopDot", cfg.Hero.SlideWallStopDot, -1f, 1f);
+            ReqInRange(errors, "Hero.RicochetRetention", cfg.Hero.RicochetRetention, 0f, 1f);
+
+            // Task 2: aim-down-sights movement/settle profile. AimMoveSpeedFrac must
+            // stay strictly above SlideMinSpeedFrac (D15) — checked separately from the
+            // (0,1] range so its message names AimMoveSpeedFrac specifically.
+            ReqInRange(errors, "Hero.AimMoveSpeedFrac", cfg.Hero.AimMoveSpeedFrac, 0f, 1f, minExclusive: true);
+            if (cfg.Hero.AimMoveSpeedFrac <= cfg.Hero.SlideMinSpeedFrac)
+            {
+                errors.Add("Hero.AimMoveSpeedFrac must be > Hero.SlideMinSpeedFrac (D15) " +
+                    $"(got AimMoveSpeedFrac={cfg.Hero.AimMoveSpeedFrac:F3}, " +
+                    $"SlideMinSpeedFrac={cfg.Hero.SlideMinSpeedFrac:F3}).");
+            }
+            ReqInRange(errors, "Hero.AimSlideSpeedMult", cfg.Hero.AimSlideSpeedMult, 0f, 1f, minExclusive: true);
+            ReqPositive(errors, "Hero.AimSettleSeconds", cfg.Hero.AimSettleSeconds);
+
+            // Task 2: movement-driven spread widening while running/sliding.
+            ReqAtLeast(errors, "Weapon.SpreadRunMult", cfg.Weapon.SpreadRunMult, 1f);
+            ReqAtLeast(errors, "Weapon.SpreadSlideMult", cfg.Weapon.SpreadSlideMult, 1f);
+            ReqInRange(errors, "Weapon.RunSpreadSpeedFrac", cfg.Weapon.RunSpreadSpeedFrac, 0f, 1f);
 
             ValidateMob(errors, "Chaser", cfg.Chaser);
             ValidateMob(errors, "Gunner", cfg.Gunner);
@@ -334,6 +402,41 @@ namespace Ring.Data
         {
             if (value < 0)
                 errors.Add($"{name} must be >= 0 (got {value}).");
+        }
+
+        /// Task 2: a stamina-cost field must be positive and not exceed the pool it
+        /// draws from (Hero.StaminaMax).
+        static void ReqCostWithinStamina(List<string> errors, string name, float value, float staminaMax)
+        {
+            ReqPositive(errors, name, value);
+            if (value > staminaMax)
+            {
+                errors.Add($"{name} must be <= Hero.StaminaMax " +
+                    $"(got {name}={value:F3}, StaminaMax={staminaMax:F3}).");
+            }
+        }
+
+        /// Task 2: bounded fractions/dot-products (min optionally exclusive, max always
+        /// inclusive — matches every (0,1]/[0,1]/[-1,1] shape this task's fields need).
+        static void ReqInRange(List<string> errors, string name, float value, float min, float max,
+            bool minExclusive = false)
+        {
+            ReqFinite(errors, name, value);
+            bool minOk = minExclusive ? value > min : value >= min;
+            if (!minOk || value > max)
+            {
+                string minBrace = minExclusive ? "(" : "[";
+                errors.Add($"{name} must be in {minBrace}{min}, {max}] (got {value:F3}).");
+            }
+        }
+
+        /// Task 2: a lower-bounded multiplier (e.g. spread multipliers must be >= 1 —
+        /// they only ever widen the cone, never narrow it).
+        static void ReqAtLeast(List<string> errors, string name, float value, float min)
+        {
+            ReqFinite(errors, name, value);
+            if (value < min)
+                errors.Add($"{name} must be >= {min} (got {value:F3}).");
         }
     }
 }

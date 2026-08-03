@@ -35,6 +35,38 @@ namespace Ring.Data
         [Range(0f, 5f)] public float SlideMuzzleHeight = 0.45f;
         [Range(1f, 6f)] public float MaxAimHeight = 3.8f;
 
+        // Task 2 (spec stamina/slide/aim): stamina pool, per-action costs and regen —
+        // stamina drains on Dash/Slide/Linked-Dash and regenerates after a delay once
+        // no action is draining it.
+        [Range(1f, 300f)] public float StaminaMax = 90f;
+        [Range(0.1f, 300f)] public float DashStaminaCost = 48f;
+        [Range(0.1f, 300f)] public float SlideStaminaCost = 13f;
+        [Range(0.1f, 300f)] public float LinkedDashStaminaCost = 16f;
+        [Range(0.1f, 100f)] public float StaminaRegenPerSec = 22f;
+        [Range(0f, 5f)] public float StaminaRegenDelay = 0.72f;
+
+        // Task 2: slide kinematics (speed/duration/steering) and the buffered-input
+        // windows that let a queued slide/dash chain into the next action instead of
+        // being dropped.
+        [Range(0.1f, 40f)] public float SlideSpeed = 13.5f;
+        [Range(0.05f, 5f)] public float SlideDuration = 0.52f;
+        [Range(0f, 10f)] public float SlideSteerRadPerSec = 1.2f;
+        [Range(0.01f, 1f)] public float SlideMinSpeedFrac = 0.75f;
+        [Range(0.05f, 5f)] public float RunUpSeconds = 1.18f;
+        [Range(0f, 10f)] public float RunUpDecayMult = 3.0f;
+        [Range(0f, 1f)] public float SlideBufferWindow = 0.15f;
+        [Range(0f, 1f)] public float LinkWindowSeconds = 0.25f;
+        [Range(0f, 1f)] public float PostDashSlideWindow = 0.32f;
+        [Range(-1f, 1f)] public float SlideWallStopDot = 0.7f;
+        [Range(0f, 1f)] public float RicochetRetention = 0.8f;
+
+        // Task 2: aim-down-sights movement/settle profile. AimMoveSpeedFrac must stay
+        // strictly above SlideMinSpeedFrac (D15) so aiming can never be mistaken for a
+        // slide-speed state by downstream movement code.
+        [Range(0.01f, 1f)] public float AimMoveSpeedFrac = 0.8f;
+        [Range(0.01f, 1f)] public float AimSlideSpeedMult = 0.5f;
+        [Range(0.05f, 2f)] public float AimSettleSeconds = 0.5f; // sync-marker key — keep LAST
+
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a
         // full match restart. Editor-only (OnValidate never runs in a player

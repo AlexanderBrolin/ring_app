@@ -143,6 +143,24 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("SlideProfileTop"));
         }
 
+        [Test]
+        public void Validate_ZeroStaminaRegen_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.StaminaRegenPerSec = 0f;
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("StaminaRegenPerSec"));
+        }
+
+        [Test]
+        public void Validate_AimFracNotAboveSlideFrac_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.AimMoveSpeedFrac = hero.SlideMinSpeedFrac; // equality is also a violation (strict >)
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("AimMoveSpeedFrac"));
+        }
+
         static void AssertHeroEqual(HeroSimConfig e, HeroSimConfig a)
         {
             Assert.AreEqual(e.MaxSpeed, a.MaxSpeed, Eps);
@@ -165,6 +183,26 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.MuzzleHeight, a.MuzzleHeight, Eps);
             Assert.AreEqual(e.SlideMuzzleHeight, a.SlideMuzzleHeight, Eps);
             Assert.AreEqual(e.MaxAimHeight, a.MaxAimHeight, Eps);
+            Assert.AreEqual(e.StaminaMax, a.StaminaMax, Eps);
+            Assert.AreEqual(e.DashStaminaCost, a.DashStaminaCost, Eps);
+            Assert.AreEqual(e.SlideStaminaCost, a.SlideStaminaCost, Eps);
+            Assert.AreEqual(e.LinkedDashStaminaCost, a.LinkedDashStaminaCost, Eps);
+            Assert.AreEqual(e.StaminaRegenPerSec, a.StaminaRegenPerSec, Eps);
+            Assert.AreEqual(e.StaminaRegenDelay, a.StaminaRegenDelay, Eps);
+            Assert.AreEqual(e.SlideSpeed, a.SlideSpeed, Eps);
+            Assert.AreEqual(e.SlideDuration, a.SlideDuration, Eps);
+            Assert.AreEqual(e.SlideSteerRadPerSec, a.SlideSteerRadPerSec, Eps);
+            Assert.AreEqual(e.SlideMinSpeedFrac, a.SlideMinSpeedFrac, Eps);
+            Assert.AreEqual(e.RunUpSeconds, a.RunUpSeconds, Eps);
+            Assert.AreEqual(e.RunUpDecayMult, a.RunUpDecayMult, Eps);
+            Assert.AreEqual(e.SlideBufferWindow, a.SlideBufferWindow, Eps);
+            Assert.AreEqual(e.LinkWindowSeconds, a.LinkWindowSeconds, Eps);
+            Assert.AreEqual(e.PostDashSlideWindow, a.PostDashSlideWindow, Eps);
+            Assert.AreEqual(e.SlideWallStopDot, a.SlideWallStopDot, Eps);
+            Assert.AreEqual(e.RicochetRetention, a.RicochetRetention, Eps);
+            Assert.AreEqual(e.AimMoveSpeedFrac, a.AimMoveSpeedFrac, Eps);
+            Assert.AreEqual(e.AimSlideSpeedMult, a.AimSlideSpeedMult, Eps);
+            Assert.AreEqual(e.AimSettleSeconds, a.AimSettleSeconds, Eps);
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)
@@ -180,6 +218,10 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.RecoilMaxRad, a.RecoilMaxRad, Eps);
             Assert.AreEqual(e.MuzzleOffset, a.MuzzleOffset, Eps);
             Assert.AreEqual(e.CanFireWhileDash, a.CanFireWhileDash);
+            Assert.AreEqual(e.CanFireWhileSlide, a.CanFireWhileSlide);
+            Assert.AreEqual(e.SpreadRunMult, a.SpreadRunMult, Eps);
+            Assert.AreEqual(e.SpreadSlideMult, a.SpreadSlideMult, Eps);
+            Assert.AreEqual(e.RunSpreadSpeedFrac, a.RunSpreadSpeedFrac, Eps);
         }
 
         static void AssertMobEqual(MobSimConfig e, MobSimConfig a)

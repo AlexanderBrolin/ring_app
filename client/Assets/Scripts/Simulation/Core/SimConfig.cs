@@ -16,6 +16,18 @@ namespace Ring.Simulation.Core
         /// Slide stamina-movement profile height, hero muzzle heights (standing /
         /// mid-slide), and the arena-wide aim-ray height cap.
         public float SlideProfileTop, MuzzleHeight, SlideMuzzleHeight, MaxAimHeight;
+
+        /// Stamina pool and per-action costs/regen (Т2 — stamina/slide/dash economy).
+        public float StaminaMax, DashStaminaCost, SlideStaminaCost, LinkedDashStaminaCost,
+            StaminaRegenPerSec, StaminaRegenDelay;
+
+        /// Slide kinematics and buffered-input windows (Т2).
+        public float SlideSpeed, SlideDuration, SlideSteerRadPerSec, SlideMinSpeedFrac,
+            RunUpSeconds, RunUpDecayMult, SlideBufferWindow, LinkWindowSeconds,
+            PostDashSlideWindow, SlideWallStopDot, RicochetRetention;
+
+        /// Aim-down-sights movement/settle profile (Т2).
+        public float AimMoveSpeedFrac, AimSlideSpeedMult, AimSettleSeconds;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).
@@ -25,6 +37,11 @@ namespace Ring.Simulation.Core
             ProjectileLifetime, Damage, SpreadRad, RecoilPerShotRad, RecoilRecoveryRadPerSec,
             RecoilMaxRad, MuzzleOffset;
         public bool CanFireWhileDash;
+
+        /// Movement-driven spread widening while running/sliding, and whether the
+        /// weapon can fire at all mid-slide (Т2).
+        public bool CanFireWhileSlide;
+        public float SpreadRunMult, SpreadSlideMult, RunSpreadSpeedFrac;
     }
 
     /// Balance numbers shared by all mob archetypes (chaser/gunner use the same shape).
