@@ -20,7 +20,7 @@ namespace Ring.Data
 
         // Task 1 (spec hit-zone geometry): vertical hit-zone bounds (metres above
         // ground) and per-zone damage multipliers used by the raycast aim system
-        // (Т4+) to resolve which body zone a shot lands in.
+        // (Task 4+) to resolve which body zone a shot lands in.
         [Range(0.05f, 5f)] public float LegsTop = 0.55f;
         [Range(0.05f, 5f)] public float BodyTop = 1.35f;
         [Range(0.05f, 5f)] public float HeadTop = 1.75f;
@@ -29,7 +29,7 @@ namespace Ring.Data
         [Range(0f, 5f)] public float HeadDamageMult = 1.7f;
 
         // Task 1: slide stamina-movement profile height and the hero's own weapon
-        // muzzle heights (standing / mid-slide), consumed by the aim-ray system (Т4+).
+        // muzzle heights (standing / mid-slide), consumed by the aim-ray system (Task 4+).
         [Range(0.05f, 5f)] public float SlideProfileTop = 0.55f;
         [Range(0f, 5f)] public float MuzzleHeight = 1.0f;
         [Range(0f, 5f)] public float SlideMuzzleHeight = 0.45f;

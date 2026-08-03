@@ -34,7 +34,7 @@ namespace Ring.Data
 
         // Task 1 (spec hit-zone geometry): vertical hit-zone bounds and per-zone
         // damage multipliers, same shape as HeroConfig — consumed by the raycast aim
-        // system (Т4+). Defaults below are the chaser archetype (this class's shape,
+        // system (Task 4+). Defaults below are the chaser archetype (this class's shape,
         // see class doc); the Gunner .asset overrides LegsTop/BodyTop/HeadTop to the
         // taller ranged-mech silhouette (Task 7/17).
         [Range(0.05f, 5f)] public float LegsTop = 0.60f;
@@ -53,7 +53,7 @@ namespace Ring.Data
         [Range(0f, 5f)] public float MuzzleHeight = 0.95f;
 
         // Task 1: melee swing-attack target lead — how far ahead of a moving target's
-        // position a Chaser's swing aims (Т15+); capped in metres so a fast-fleeing
+        // position a Chaser's swing aims (Task 15+); capped in metres so a fast-fleeing
         // target does not pull the swing absurdly far off its own body.
         [Range(0f, 2f)] public float SwingLeadFactor = 1.0f;
         [Range(0f, 6f)] public float SwingLeadMaxMeters = 2.0f; // sync-marker key — keep LAST

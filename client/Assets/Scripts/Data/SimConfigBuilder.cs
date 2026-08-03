@@ -421,7 +421,11 @@ namespace Ring.Data
         static void ReqInRange(List<string> errors, string name, float value, float min, float max,
             bool minExclusive = false)
         {
+            bool finite = !(float.IsNaN(value) || float.IsInfinity(value));
             ReqFinite(errors, name, value);
+            if (!finite)
+                return;
+
             bool minOk = minExclusive ? value > min : value >= min;
             if (!minOk || value > max)
             {
