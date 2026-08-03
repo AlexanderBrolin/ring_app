@@ -18,6 +18,19 @@ namespace Ring.Presentation
     /// PhysX, it has its own analytic collision (`Geometry.SweepArena`/
     /// `Depenetrate`) against the same `ArenaConfig` numbers.
     ///
+    /// `BuildFloor` swaps its `CreatePrimitive`-default `CapsuleCollider` for a
+    /// `BoxCollider` (app-4qc, Б1 milestone find): under the floor's
+    /// non-uniform (2R, 0.5, 2R) scale, PhysX degenerates a capsule (height 1 &lt;
+    /// 2×radius R) into a plain SPHERE of radius R — a dome whose apex sits
+    /// ~R-0.5 above the arena center — so anything cosmetic spawned near
+    /// ground level started deep INSIDE it and got depenetrated tens of
+    /// meters up and sideways. The obstacle cylinders keep their default
+    /// (also-degenerate, also-spherical) capsule colliders on purpose: for a
+    /// short cylindrical obstacle that "sphere" is visually indistinguishable
+    /// from a true cylinder collider for casing bounce purposes, so it isn't
+    /// worth the extra box-collider bookkeeping — a deliberate scope decision,
+    /// not an oversight.
+    ///
     /// Idempotent by child count: `Build()` runs once from `Awake` and does
     /// nothing if this transform already has children (e.g. a second `Awake` from
     /// a domain reload without a scene reopen). Arena topology is off-limits to
@@ -106,6 +119,19 @@ namespace Ring.Presentation
             floor.transform.localPosition = new Vector3(0f, FloorY, 0f);
             floor.transform.localScale = new Vector3(_arena.Radius * 2f, FloorScaleY, _arena.Radius * 2f);
             floor.GetComponent<MeshRenderer>().sharedMaterial = _floor;
+
+            // CreatePrimitive(Cylinder) ships a CapsuleCollider, which under this
+            // non-uniform scale (2R, 0.5, 2R) degenerates in PhysX to a SPHERE of
+            // radius R (height 1 < 2*radius) — a dome whose apex sits ~R-0.5 above
+            // the arena center. Anything cosmetic spawned near ground level starts
+            // deep INSIDE that collider and gets depenetrated tens of meters up and
+            // sideways (app-4qc, Б1 milestone find). A local (1,2,1) box scales to
+            // the exact visual disc bounds: top face at world y = 0.
+            Collider degenerate = floor.GetComponent<Collider>();
+            degenerate.enabled = false; // Destroy is deferred to end-of-frame — kill the dome NOW
+            Object.Destroy(degenerate);
+            BoxCollider floorBox = floor.AddComponent<BoxCollider>();
+            floorBox.size = new Vector3(1f, 2f, 1f);
         }
 
         void BuildWall()

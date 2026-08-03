@@ -20,10 +20,16 @@ namespace Ring.Presentation
     /// гильзы/трупы от позиций событий, никаких привязок к мешам вьюх" — a
     /// future model swap changes nothing here).
     ///
-    /// Pooling split (Приложение П-7): casings/decals/corpses have no "done
-    /// with it" moment during a live match (spec: "живут до конца захода") —
-    /// they use the single shared `RingBuffer&lt;T&gt;` (FIFO, oldest
-    /// overwritten once full), one instance per kind, never three copies of
+    /// Б1 milestone fix-wave 2 (app-9av, owner request) adds a fourth
+    /// `RingBuffer&lt;T&gt;` kind, `DashGlowView` — a glowing floor mark at the
+    /// dash start point that fades out over `GameFeelConfig.DashGlowSeconds`,
+    /// spawned on `PlayerDashed` the same way every other event here spawns
+    /// its own cosmetic.
+    ///
+    /// Pooling split (Приложение П-7): casings/decals/corpses/dash-glows have
+    /// no "done with it" moment during a live match (spec: "живут до конца
+    /// захода") — they use the single shared `RingBuffer&lt;T&gt;` (FIFO, oldest
+    /// overwritten once full), one instance per kind, never separate copies of
     /// the same logic. The three spark/burst particle systems ARE ordinary
     /// "rent it, it finishes on its own, give it back" objects — they use
     /// `UnityEngine.Pool.ObjectPool&lt;ParticleSystem&gt;` instead, returned via
@@ -84,17 +90,19 @@ namespace Ring.Presentation
         // Structural spawn-positioning offsets — NOT feel numbers (owner
         // guidance, review fix-round: these stay code constants, only the
         // actual game-feel numbers below moved into GameFeelConfig).
-        const float CasingSpawnLift = 0.25f;
+        // Casing spawn height rides GameFeelConfig.MuzzleLiftY — the muzzle
+        // height is a single source (Б1-веха fix: casings were born at ankle
+        // height inside the doll mesh).
         const float CasingLateralOffset = 0.15f;
         const float DecalHeightOffset = 1f;
         const float DecalNearOffset = 0.1f;
 
-        // Half the default primitive Capsule's diameter (radius 0.5, untouched
-        // by `GetOrCreateCorpsePrefab` — same unscaled capsule `MobView`'s own
-        // prefab uses) — lets the "lying on its side" capsule rest flush on
-        // the floor (world Y=0, `GreyboxBuilder`'s floor top surface) instead
-        // of clipping halfway through it.
-        const float CorpseLift = 0.5f;
+        // Mech pivot sits at the feet (same convention as MobVisual/ViewRegistry's
+        // own mob root) — the Death clip itself lays the body down, so no
+        // vertical spawn offset is needed (was 0.5f for the old capsule
+        // primitive's "lying on its side" rest height; that path is no longer
+        // wired anywhere after T12, Б4).
+        const float CorpseLift = 0f;
 
         // Particle pool capacities (review fix-round: were a single shared
         // `SparkPoolPrewarm = 16`, too small for a dense fight — a maxed-out
@@ -121,6 +129,7 @@ namespace Ring.Presentation
         [SerializeField] CasingView _casingPrefab;
         [SerializeField] DecalProjector _decalPrefab;
         [SerializeField] CorpseView _corpsePrefab;
+        [SerializeField] DashGlowView _dashGlowPrefab;
         [SerializeField] ParticleSystem _hitSparkPrefab;
         [SerializeField] ParticleSystem _blockSparkPrefab;
         [SerializeField] ParticleSystem _deathBurstPrefab;
@@ -128,6 +137,7 @@ namespace Ring.Presentation
         RingBuffer<CasingView> _casings;
         RingBuffer<DecalProjector> _decals;
         RingBuffer<CorpseView> _corpses;
+        RingBuffer<DashGlowView> _dashGlows;
         ObjectPool<ParticleSystem> _hitSparkPool;
         ObjectPool<ParticleSystem> _blockSparkPool;
         ObjectPool<ParticleSystem> _deathBurstPool;
@@ -139,9 +149,11 @@ namespace Ring.Presentation
             _casings = new RingBuffer<CasingView>(_gameFeel.MaxCasings, CreateCasing);
             _decals = new RingBuffer<DecalProjector>(_gameFeel.MaxDecals, CreateDecal);
             _corpses = new RingBuffer<CorpseView>(_gameFeel.MaxCorpses, CreateCorpse);
+            _dashGlows = new RingBuffer<DashGlowView>(_gameFeel.MaxDashGlows, CreateDashGlow);
             _casings.Prewarm();
             _decals.Prewarm();
             _corpses.Prewarm();
+            _dashGlows.Prewarm();
 
             _hitSparkPool = CreateParticlePool(_hitSparkPrefab, HitSparkPoolCapacity);
             _blockSparkPool = CreateParticlePool(_blockSparkPrefab, BlockSparkPoolCapacity);
@@ -169,6 +181,7 @@ namespace Ring.Presentation
             _casings.Clear(view => view.gameObject.SetActive(false));
             _decals.Clear(decal => decal.gameObject.SetActive(false));
             _corpses.Clear(corpse => corpse.gameObject.SetActive(false));
+            _dashGlows.Clear(glow => glow.gameObject.SetActive(false));
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's
@@ -194,6 +207,9 @@ namespace Ring.Presentation
                 case SimEventKind.MobDied:
                     HandleMobDied(in e);
                     break;
+                case SimEventKind.PlayerDashed:
+                    SpawnDashGlow(in e);
+                    break;
             }
         }
 
@@ -201,18 +217,20 @@ namespace Ring.Presentation
         {
             Vector3 lateral = new Vector3(
                 Random.Range(-CasingLateralOffset, CasingLateralOffset),
-                CasingSpawnLift,
+                _gameFeel.MuzzleLiftY,
                 Random.Range(-CasingLateralOffset, CasingLateralOffset));
             Vector3 pos = SimSpace.ToWorld(e.Pos) + lateral;
-            float sideMax = _gameFeel.CasingImpulseSideMax;
-            Vector3 impulse = new Vector3(
-                Random.Range(-sideMax, sideMax),
-                Random.Range(_gameFeel.CasingImpulseUpMin, _gameFeel.CasingImpulseUpMax),
-                Random.Range(-sideMax, sideMax));
+            // Eject to the shooter's RIGHT of the shot direction (e.Amount is the
+            // projectile's sim-plane velocity angle, tick-exact — MuzzleFlashView's
+            // contract): right = shot direction rotated -90° about world up.
+            Vector3 right = new Vector3(Mathf.Sin(e.Amount), 0f, -Mathf.Cos(e.Amount));
+            Vector3 impulse =
+                right * Random.Range(_gameFeel.CasingEjectSpeedMin, _gameFeel.CasingEjectSpeedMax)
+                + Vector3.up * Random.Range(_gameFeel.CasingImpulseUpMin, _gameFeel.CasingImpulseUpMax);
             Vector3 torque = Random.insideUnitSphere * _gameFeel.CasingTorqueScale;
 
             CasingView view = _casings.Rent();
-            view.Spawn(pos, impulse, torque, _gameFeel.CasingPhysicsSeconds);
+            view.Spawn(pos, impulse, torque, _gameFeel.CasingPhysicsSeconds, _gameFeel.CasingScale);
         }
 
         void HandleBlocked(in SimEvent e)
@@ -240,6 +258,12 @@ namespace Ring.Presentation
             PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
         }
 
+        void SpawnDashGlow(in SimEvent e)
+        {
+            DashGlowView glow = _dashGlows.Rent();
+            glow.Spawn(SimSpace.ToWorld(e.Pos), _gameFeel.DashGlowSeconds, _gameFeel.DashGlowSize);
+        }
+
         void PlayParticle(ObjectPool<ParticleSystem> pool, Vector3 worldPos, Quaternion rotation)
         {
             ParticleSystem ps = pool.Get();
@@ -265,6 +289,13 @@ namespace Ring.Presentation
         CorpseView CreateCorpse()
         {
             CorpseView view = Instantiate(_corpsePrefab, transform);
+            view.gameObject.SetActive(false);
+            return view;
+        }
+
+        DashGlowView CreateDashGlow()
+        {
+            DashGlowView view = Instantiate(_dashGlowPrefab, transform);
             view.gameObject.SetActive(false);
             return view;
         }

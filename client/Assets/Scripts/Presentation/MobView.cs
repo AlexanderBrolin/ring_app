@@ -6,9 +6,11 @@ namespace Ring.Presentation
     /// Presentation view for a single live mob (spec §3.6/§3.7). Pooled and
     /// (re)bound purely by `ViewRegistry` — no other class instantiates, destroys,
     /// or repositions a `MobView`. The capsule's material is one shared asset
-    /// (`MobEmissive`) across every instance; per-archetype color comes only from a
+    /// (`MobEmissive`) across every instance; any accent tint comes only from a
     /// `MaterialPropertyBlock` override applied in `Bind`/`Sync`, never a material
-    /// instance (П-2: no per-instance materials).
+    /// instance (П-2: no per-instance materials). Base emission is black now
+    /// (9a) — the capsule is a fallback for when no mech model is bound; a real
+    /// model's archetype identity lives in `Visual`/`MobVisual`, not a color tint.
     /// Task 21 (spec §3.6, resolution "Bind contract"): `Bind` now takes the full
     /// `MobState` (not just `MobType`) and only sets up the pool-rebind baseline
     /// (base accent color, cleared flash). Every per-frame accent — the Chaser's
@@ -24,8 +26,6 @@ namespace Ring.Presentation
     public sealed class MobView : MonoBehaviour
     {
         static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
-        static readonly Color ChaserAccent = new Color(3.5f, 0.25f, 0.25f);
-        static readonly Color GunnerAccent = new Color(0.25f, 0.8f, 3.5f);
         static readonly Color FlashAccent = new Color(4f, 4f, 4f);
 
         // Telegraph pulse (Chaser windup — spec §3.6, "base for dodging"): a
@@ -75,22 +75,34 @@ namespace Ring.Presentation
         // never touched, see `SimulationRunner`) never affects the timer itself.
         float _freezePositionTimer;
 
+        /// Set first thing in `Bind`, from the bound entity's `MobState.Type`
+        /// (T9 Interfaces — consumed by T10).
+        public MobType Type { get; private set; }
+
+        /// Cached in `Awake`; null when this instance is the capsule fallback
+        /// (no `MobVisual` sibling component) — T10 checks this before driving
+        /// mech-specific animation.
+        public MobVisual Visual { get; private set; }
+
         public bool IsPositionFrozen => _freezePositionTimer > 0f;
 
         void Awake()
         {
             _renderers = GetComponentsInChildren<Renderer>(true);
             _block = new MaterialPropertyBlock();
+            Visual = GetComponent<MobVisual>();
         }
 
-        /// Rebinds this (pooled) view to a freshly assigned entity: picks the
-        /// per-archetype base accent color and clears any leftover flash state
-        /// from a previous life in the pool. Only sets the resting baseline —
-        /// `ViewRegistry` calls `Sync` right after this (same frame) to layer in
-        /// the state-driven accent for the entity's current tick.
+        /// Rebinds this (pooled) view to a freshly assigned entity: records the
+        /// archetype (`Type`), resets the base emission to black (9a), and
+        /// clears any leftover flash state from a previous life in the pool.
+        /// Only sets the resting baseline — `ViewRegistry` calls `Sync` right
+        /// after this (same frame) to layer in the state-driven accent for the
+        /// entity's current tick.
         public void Bind(in MobState m)
         {
-            _baseEmission = m.Type == MobType.Chaser ? ChaserAccent : GunnerAccent;
+            Type = m.Type;
+            _baseEmission = Color.black;
             _flashTimer = 0f;
             _freezePositionTimer = 0f; // pool-rebind hygiene, same as the flash timer above
             ApplyEmission(_baseEmission);

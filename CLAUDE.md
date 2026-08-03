@@ -108,6 +108,8 @@ app/
 │   │   ├── Meta/                # REST-клиент меты, лобби-UI
 │   │   └── Server/              # bootstrap headless, match-config, репорт результатов
 │   ├── Assets/Data/             # ScriptableObjects: герои, способности, мобы, лут
+│   ├── Assets/ThirdParty/       # CC0-паки моделей/анимаций (ASSETS-001, ADR-002 A8;
+│   │                            #   LFS) + _Ring/ — наши Animator'ы/маски/материалы
 │   ├── Assets/{Prefabs,Scenes,Art,Audio}/
 │   ├── Assets/Tests/EditMode/   # NUnit-тесты Simulation (asmdef обязан жить под Assets)
 │   ├── docker/                  # Dockerfile + entrypoint.sh headless game-сервера

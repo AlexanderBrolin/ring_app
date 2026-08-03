@@ -20,10 +20,24 @@ namespace Ring.Presentation
     /// `GameFeelConfig.MaxCasings` casings never push each other around,
     /// while Casings-vs-Cosmetics (9×8) stays at Unity's default "collide" —
     /// that's what makes a casing actually bounce off the greybox geometry.
+    ///
+    /// Freeze condition (app-4qc, Б1 milestone find): a pure "timer expired"
+    /// freeze pinned casings in place mid-air whenever the floor's degenerate
+    /// collider (see `GreyboxBuilder`'s class doc) had just launched them
+    /// upward — the timer ran out before they ever landed. `Update` now also
+    /// requires the casing to actually be at rest (low linear velocity)
+    /// before freezing, with a hard-cap timer (`HardCapMultiplier` ×
+    /// `settleSeconds`) as a structural backstop so a casing that somehow
+    /// never settles (e.g. stuck oscillating in a geometry seam) still stops
+    /// paying PhysX cost eventually.
     public sealed class CasingView : MonoBehaviour
     {
+        const float HardCapMultiplier = 4f;   // structural, not feel
+        const float SettleSpeedSqr = 0.01f;   // (0.1 m/s)^2 — "stopped rolling"
+
         Rigidbody _rb;
         float _settleTimer;
+        float _hardCapTimer;
 
         void Awake() => _rb = GetComponent<Rigidbody>();
 
@@ -36,23 +50,41 @@ namespace Ring.Presentation
         /// `ProjectileView.Bind`'s `tracerFadeSeconds` parameter. Explicitly
         /// resets `isKinematic` to false — a FIFO-reused instance may still be
         /// frozen from its previous life in the ring buffer.
-        public void Spawn(Vector3 pos, Vector3 impulse, Vector3 torque, float settleSeconds)
+        /// `scale` comes from `GameFeelConfig.CasingScale` every call, same
+        /// live hot-tweak contract as `settleSeconds` (Б1 fix-wave 3: owner
+        /// playtest feedback — the baked prefab's 5cm casing was unreadable
+        /// from the ¾ camera; runtime scale now overrides it every shot).
+        public void Spawn(Vector3 pos, Vector3 impulse, Vector3 torque, float settleSeconds, float scale)
         {
             gameObject.SetActive(true);
+            transform.localScale = new Vector3(scale, scale * 1.2f, scale);
             transform.SetPositionAndRotation(pos, Quaternion.identity);
             _rb.isKinematic = false;
             _rb.linearVelocity = Vector3.zero;
             _rb.angularVelocity = Vector3.zero;
-            _rb.AddForce(impulse, ForceMode.Impulse);
-            _rb.AddTorque(torque, ForceMode.Impulse);
+            // VelocityChange: the SO numbers are meters-per-second (and radians-per-
+            // second for spin) applied directly. ForceMode.Impulse divided by the
+            // 0.01 kg mass and multiplied every number by 100 — "up 0.5" launched a
+            // 50 m/s rocket and the side scatter tunneled through the arena wall
+            // (app-xjz, Э1 bug unmasked at milestone Б1).
+            _rb.AddForce(impulse, ForceMode.VelocityChange);
+            _rb.AddTorque(torque, ForceMode.VelocityChange);
             _settleTimer = settleSeconds;
+            _hardCapTimer = settleSeconds * HardCapMultiplier;
         }
 
         void Update()
         {
-            if (_settleTimer <= 0f) return;
-            _settleTimer -= Time.unscaledDeltaTime;
-            if (_settleTimer <= 0f) _rb.isKinematic = true;
+            if (_rb.isKinematic) return;
+            float dt = Time.unscaledDeltaTime;
+            _settleTimer -= dt;
+            _hardCapTimer -= dt;
+            if (_settleTimer > 0f) return;
+            // Freeze only once the casing actually came to rest on the floor —
+            // the old pure-timer freeze pinned mid-air casings (app-4qc); the
+            // hard cap still guarantees the PhysX cost ends for every casing.
+            if (_rb.linearVelocity.sqrMagnitude < SettleSpeedSqr || _hardCapTimer <= 0f)
+                _rb.isKinematic = true;
         }
     }
 }

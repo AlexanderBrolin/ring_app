@@ -35,18 +35,23 @@ namespace Ring.Presentation
     /// `Awake` and never rebuilt — steady-state play allocates nothing (spec §3.7).
     public sealed class ViewRegistry : MonoBehaviour
     {
-        static readonly Vector3 MobOffset = Vector3.up * 1f;
+        // Mech pivots sit at the feet (Task 10, assets phase B) — the old
+        // capsule fallback's pivot was its center, hence the +1m lift; a real
+        // model needs none.
+        static readonly Vector3 MobOffset = Vector3.zero;
         static readonly Vector3 ProjectileOffset = Vector3.up * 1f;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] ArenaConfig _arena;
-        [SerializeField] MobView _mobPrefab;
+        [SerializeField] MobView _chaserPrefab;
+        [SerializeField] MobView _gunnerPrefab;
         [SerializeField] ProjectileView _projectilePrefab;
 
         Dictionary<int, MobView> _activeMobs;
         Dictionary<int, ProjectileView> _activeProjectiles;
-        Stack<MobView> _mobPool;
+        Stack<MobView> _chaserPool;
+        Stack<MobView> _gunnerPool;
         Stack<ProjectileView> _projectilePool;
 
         // Per-frame scratch buffers, cleared and reused every call — no allocation
@@ -62,7 +67,11 @@ namespace Ring.Presentation
 
             _activeMobs = new Dictionary<int, MobView>(mobCap);
             _activeProjectiles = new Dictionary<int, ProjectileView>(projCap);
-            _mobPool = new Stack<MobView>(mobCap);
+            // Both pools capped at mobCap (Б6 — not split by archetype ratio):
+            // a match's Chaser/Gunner mix can vary, so each pool is sized as if
+            // the whole cap were one archetype rather than guessing a split.
+            _chaserPool = new Stack<MobView>(mobCap);
+            _gunnerPool = new Stack<MobView>(mobCap);
             _projectilePool = new Stack<ProjectileView>(projCap);
             _seenMobIds = new HashSet<int>(mobCap);
             _seenProjectileIds = new HashSet<int>(projCap);
@@ -92,7 +101,11 @@ namespace Ring.Presentation
             foreach (KeyValuePair<int, MobView> kv in _activeMobs)
             {
                 kv.Value.gameObject.SetActive(false);
-                _mobPool.Push(kv.Value);
+                // Type is set by Bind before a view ever reaches _activeMobs
+                // (the only path in — see RentMob/SyncMobs), so it's always
+                // valid here (Б6).
+                Stack<MobView> pool = kv.Value.Type == MobType.Chaser ? _chaserPool : _gunnerPool;
+                pool.Push(kv.Value);
             }
             _activeMobs.Clear();
 
@@ -156,6 +169,25 @@ namespace Ring.Presentation
             // already returned early otherwise.
             float telegraphSeconds = _runner.World.Config.Chaser.TelegraphSeconds;
 
+            // Task 10 (assets phase B spec §3.7): built once per frame, not
+            // per-view — every live MobVisual reads the same feel numbers this
+            // frame (T9's contract).
+            MobVisualParams visualParams = new MobVisualParams
+            {
+                WalkEnterSpeed = _gameFeel.MobWalkEnterSpeed,
+                WalkExitSpeed = _gameFeel.MobWalkExitSpeed,
+                RunEnterSpeed = _gameFeel.MobRunEnterSpeed,
+                RunExitSpeed = _gameFeel.MobRunExitSpeed,
+                HoldSeconds = _gameFeel.LocomotionHoldSeconds,
+                TurnDegPerSec = _gameFeel.MobTurnDegPerSec,
+                YawOffsetDeg = _gameFeel.MechYawOffsetDeg,
+                LocomotionCrossFadeSeconds = _gameFeel.LocomotionCrossFadeSeconds,
+                OneShotCrossFadeSeconds = _gameFeel.OneShotCrossFadeSeconds,
+                DeltaTime = Time.unscaledDeltaTime,
+                PlayerPos = _runner.RenderPlayerWorldPos,
+                Paused = _runner.Paused,
+            };
+
             _seenMobIds.Clear();
             for (int i = 0; i < curr.MobCount; i++)
             {
@@ -164,16 +196,19 @@ namespace Ring.Presentation
 
                 if (!_activeMobs.TryGetValue(m.Id, out MobView view))
                 {
-                    view = RentMob();
+                    view = RentMob(m.Type);
                     // Position before Bind (spec/П-2 fix-round, app-2pl): canonical
                     // order for a freshly-rented view — see the matching comment on
                     // the projectile branch below for why this order matters at all.
                     view.transform.position = SimSpace.ToWorld(m.Pos) + MobOffset;
                     view.Bind(in m);
+                    view.Visual?.Bind(in m, m.Type == MobType.Chaser
+                        ? _gameFeel.ChaserVisualScale : _gameFeel.GunnerVisualScale);
                     // Sync right away (Task 21 Bind/Sync contract) so a mob that's
                     // already mid-Telegraph the instant it becomes visible reads
                     // correctly this same frame, not one frame late.
                     view.Sync(in m, telegraphSeconds);
+                    view.Visual?.Sync(in m, in visualParams);
                     _activeMobs.Add(m.Id, view);
                     continue;
                 }
@@ -192,6 +227,11 @@ namespace Ring.Presentation
                     view.transform.position = world + MobOffset;
                 }
                 view.Sync(in m, telegraphSeconds);
+                // After the position write above (Б7): when frozen, position
+                // wasn't written this frame, so MobVisual's own prev/curr delta
+                // reads zero and it settles on Idle — no separate "frozen" branch
+                // needed here or in MobVisual.
+                view.Visual?.Sync(in m, in visualParams);
             }
 
             _staleIdsScratch.Clear();
@@ -264,15 +304,17 @@ namespace Ring.Presentation
             return fallback;
         }
 
-        MobView RentMob()
+        MobView RentMob(MobType type)
         {
-            if (_mobPool.Count > 0)
+            Stack<MobView> pool = type == MobType.Chaser ? _chaserPool : _gunnerPool;
+            if (pool.Count > 0)
             {
-                MobView v = _mobPool.Pop();
+                MobView v = pool.Pop();
                 v.gameObject.SetActive(true);
                 return v;
             }
-            return Instantiate(_mobPrefab, transform);
+            MobView prefab = type == MobType.Chaser ? _chaserPrefab : _gunnerPrefab;
+            return Instantiate(prefab, transform);
         }
 
         ProjectileView RentProjectile()
@@ -291,7 +333,11 @@ namespace Ring.Presentation
             if (!_activeMobs.TryGetValue(id, out MobView view)) return;
             _activeMobs.Remove(id);
             view.gameObject.SetActive(false);
-            _mobPool.Push(view);
+            // Type is set by Bind before a view ever reaches _activeMobs (the
+            // only path in — see RentMob/SyncMobs), so it's always valid here
+            // (Б6).
+            Stack<MobView> pool = view.Type == MobType.Chaser ? _chaserPool : _gunnerPool;
+            pool.Push(view);
         }
 
         void RetireProjectile(int id)

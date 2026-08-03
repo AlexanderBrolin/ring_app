@@ -62,6 +62,8 @@ namespace Ring.Editor
                 throw new InvalidOperationException(
                     "ThirdPartyImportBootstrap: validation failed:\n  " +
                     string.Join("\n  ", errors));
+
+            ReconcileRemapEmission();
         }
 
         static void ValidateModel(string path, Avatar doll,
@@ -237,31 +239,48 @@ namespace Ring.Editor
             string safe = new string(matName
                 .Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
             string path = TP.RingRoot + "Materials/" + safe + ".mat";
-            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
-            if (existing != null) return existing;
-            EnsureFolder(TP.RingRoot);
-            EnsureFolder(TP.RingRoot + "Materials/");
-            var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            mat.SetTexture("_BaseMap", baseMap);
-            if (emissive != null)
+            return EditorBootstrapUtils.GetOrCreateMaterial(
+                path, EditorBootstrapUtils.UrpLitShader, mat =>
             {
+                // was: emission enabled only when an *_Emissive.png exists — MechPack has
+                // none, so MPB _EmissionColor writes were silently dead (spec §3.4, Б1).
+                mat.SetTexture("_BaseMap", baseMap);
                 mat.EnableKeyword("_EMISSION");
-                mat.globalIlluminationFlags =
-                    MaterialGlobalIlluminationFlags.RealtimeEmissive;
-                mat.SetTexture("_EmissionMap", emissive);
-                mat.SetColor("_EmissionColor", Color.white);
-            }
-            AssetDatabase.CreateAsset(mat, path);
-            return mat;
+                mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                // White keeps authored emissive zones (Sci-Fi atlases) alive; black base for
+                // mask-less packs — the MPB accents are additive either way (ПБ2).
+                mat.SetColor("_EmissionColor", emissive != null ? Color.white : Color.black);
+                if (emissive != null) mat.SetTexture("_EmissionMap", emissive);
+            });
         }
 
-        static void EnsureFolder(string path)
+        /// Б1 reconcile: already-committed remap materials predate the unconditional
+        /// emission rule above — heal them in place (recreating would break the
+        /// externalObjects GUID link in the pack .fbx.meta). DirectorSkin/PreviewFloor
+        /// are NOT remaps and keep their own authored emission setup (names derived
+        /// from the preview bootstrap's own path constants — no literal copies, Р9).
+        static readonly string[] NonRemapMaterials =
         {
-            string trimmed = path.TrimEnd('/');
-            if (AssetDatabase.IsValidFolder(trimmed)) return;
-            AssetDatabase.CreateFolder(
-                Path.GetDirectoryName(trimmed).Replace('\\', '/'),
-                Path.GetFileName(trimmed));
+            System.IO.Path.GetFileNameWithoutExtension(AssetPreviewSceneBootstrap.DirectorSkinPath),
+            System.IO.Path.GetFileNameWithoutExtension(AssetPreviewSceneBootstrap.FloorMatPath),
+        };
+
+        static void ReconcileRemapEmission()
+        {
+            string folder = ThirdPartyAnimatorBootstrap.MaterialsRoot.TrimEnd('/');
+            foreach (string guid in AssetDatabase.FindAssets("t:Material", new[] { folder }))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                string name = System.IO.Path.GetFileNameWithoutExtension(path);
+                if (System.Array.IndexOf(NonRemapMaterials, name) >= 0) continue;
+                var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
+                if (mat == null || mat.IsKeywordEnabled("_EMISSION")) continue;
+                mat.EnableKeyword("_EMISSION");
+                mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                EditorUtility.SetDirty(mat);
+                AssetDatabase.SaveAssetIfDirty(mat);
+                Debug.Log("[ThirdParty] emission reconciled: " + path);
+            }
         }
 
         /// Spec §7.4 junk gate, single implementation: no Resources/,

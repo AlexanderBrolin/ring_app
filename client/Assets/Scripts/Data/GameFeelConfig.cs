@@ -40,8 +40,7 @@ namespace Ring.Data
         // `ProjectileOffset` in ViewRegistry are also never SO fields).
         [Range(0f, 10f)] public float CasingImpulseUpMin = 1.2f;
         [Range(0f, 10f)] public float CasingImpulseUpMax = 2.2f;
-        [Range(0f, 10f)] public float CasingImpulseSideMax = 1.2f;
-        [Range(0f, 1f)] public float CasingTorqueScale = 0.02f;
+        [Range(0f, 30f)] public float CasingTorqueScale = 12f; // rad/s via VelocityChange since app-xjz
         [Range(0.1f, 20f)] public float CorpseGlowFadeSeconds = 3f;
         [Range(0.05f, 3f)] public float DecalSize = 0.6f;
         [Range(0.01f, 2f)] public float HitSparkLifetime = 0.15f;
@@ -71,6 +70,67 @@ namespace Ring.Data
 
         public bool ImmediateMuzzleFeedback = true;
         public bool ExtrapolateLocalPlayer = false;
+
+        // Assets phase B (spec §3.7): character-visual numbers. Scale fields are
+        // bind-time (re-run the bootstrap / rebuild prefabs to apply); the rest are
+        // read per frame — live hot-tweak. GunLocal* are reconciled write-if-different
+        // by the bootstrap on every Apply. GunLocalEuler was the sync-marker key
+        // (bootstrap:245) until the Б1 fix-wave-2 block below superseded it, and
+        // `DashGlowSize` in turn until the Б1 fix-wave-3 field below superseded
+        // THAT — `CasingEjectSpeedMax` is the current marker, see its own doc.
+        [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
+        [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
+        [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
+        [Range(0f, 0.5f)] public float SpeedDampTime = 0.1f;
+        [Range(0f, 1f)] public float PlayerMoveThreshold01 = 0.05f;
+        [Range(0f, 1440f)] public float VisualTurnDegPerSec = 720f;
+        [Range(0f, 1440f)] public float IdleAimTurnDegPerSec = 180f;
+        [Range(0f, 1440f)] public float MobTurnDegPerSec = 540f;
+        [Range(-180f, 180f)] public float PlayerYawOffsetDeg = 180f;
+        [Range(-180f, 180f)] public float MechYawOffsetDeg = 0f;
+        [Range(0f, 5f)] public float MobWalkEnterSpeed = 0.4f;
+        [Range(0f, 5f)] public float MobWalkExitSpeed = 0.2f;
+        [Range(0f, 10f)] public float MobRunEnterSpeed = 2.6f;
+        [Range(0f, 10f)] public float MobRunExitSpeed = 2.2f;
+        [Range(0f, 1f)] public float LocomotionHoldSeconds = 0.15f;
+        [Range(0f, 90f)] public float AimYawClampDeg = 80f;
+        [Range(0f, 1f)] public float SpineYawShare = 0.4f;
+        [Range(0f, 45f)] public float DashLeanDeg = 18f;
+        [Range(0.01f, 0.5f)] public float DashLeanInOutSeconds = 0.08f;
+        [Range(0f, 0.5f)] public float LocomotionCrossFadeSeconds = 0.12f;
+        [Range(0f, 0.3f)] public float OneShotCrossFadeSeconds = 0.06f;
+        [Range(0f, 2f)] public float MuzzleLiftY = 1.1f;
+        public Vector3 GunLocalPosition = Vector3.zero;
+        public Vector3 GunLocalEuler = Vector3.zero;
+
+        // Б1 milestone owner request (app-9av): a glowing floor mark at the dash
+        // start point, fading out over a few seconds. MaxDashGlows is a pool cap
+        // (dash cooldown 1.2s vs ~2.5s life → 3 alive typ.). DashGlowSize was the
+        // bootstrap sync-marker key until the Б1 fix-wave-3 field below
+        // superseded it — `CasingEjectSpeedMax` is the current marker, see its
+        // own doc.
+        [Range(1, 32)] public int MaxDashGlows = 8;
+        [Range(0.1f, 10f)] public float DashGlowSeconds = 2.5f;
+        [Range(0.1f, 3f)] public float DashGlowSize = 0.9f;
+
+        // Б1 fix-wave 3 (owner playtest feedback: "гильзы не видно — мелкие и
+        // тёмные") — the baked-prefab casing scale (0.05/0.06/0.05, Task 27)
+        // is no longer the last word: `CasingView.Spawn` now takes a live
+        // scale read from here every shot, same hot-tweak contract as
+        // `CasingPhysicsSeconds`.
+        [Range(0.02f, 0.4f)] public float CasingScale = 0.12f;
+
+        // Б1 fix-wave 5 (app-xjz): replaces the old CasingImpulseSideMax
+        // random left/right scatter — CasingView.Spawn now switched from
+        // ForceMode.Impulse to ForceMode.VelocityChange (see its own doc),
+        // so these are direct meters-per-second along a *directed* eject
+        // vector (PersistentPropsDirector.SpawnCasing ejects to the
+        // shooter's right of the shot, like a real pistol's ejection port)
+        // rather than an undirected impulse. `CasingEjectSpeedMax` is the
+        // bootstrap sync-marker key (bootstrap:245) now — keep it the LAST
+        // field of this class.
+        [Range(0f, 5f)] public float CasingEjectSpeedMin = 0.8f;
+        [Range(0f, 5f)] public float CasingEjectSpeedMax = 1.4f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

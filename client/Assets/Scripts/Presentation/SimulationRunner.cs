@@ -93,6 +93,13 @@ namespace Ring.Presentation
         public RenderSnapshot RenderCurr => _renderFrozen ? _renderCurrFrozen : Curr;
         public float RenderAlpha { get; private set; }
 
+        /// Interpolated player ground position of the RENDER pair (П-7): the single
+        /// shared formula for PlayerView/PlayerVisual/ViewRegistry — screen-space
+        /// consumers never re-derive it and never read each other's transforms.
+        public Vector3 RenderPlayerWorldPos => Vector3.Lerp(
+            SimSpace.ToWorld(RenderPrev.Player.Pos),
+            SimSpace.ToWorld(RenderCurr.Player.Pos), RenderAlpha);
+
         public SimulationWorld World => _world;
         public long Seed { get; private set; }
         public bool ConfigTweaked;

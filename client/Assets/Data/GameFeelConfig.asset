@@ -31,10 +31,9 @@ MonoBehaviour:
   MaxCorpses: 64
   VoicesPerSfx: 6
   MinSfxInterval: 0.03
-  CasingImpulseUpMin: 1.2
-  CasingImpulseUpMax: 2.2
-  CasingImpulseSideMax: 1.2
-  CasingTorqueScale: 0.02
+  CasingImpulseUpMin: 0.2
+  CasingImpulseUpMax: 0.5
+  CasingTorqueScale: 12
   CorpseGlowFadeSeconds: 3
   DecalSize: 0.6
   HitSparkLifetime: 0.15
@@ -50,3 +49,33 @@ MonoBehaviour:
   BlockSparkBurstCount: 18
   ImmediateMuzzleFeedback: 1
   ExtrapolateLocalPlayer: 0
+  PlayerVisualScale: 1
+  ChaserVisualScale: 0.4
+  GunnerVisualScale: 0.4
+  SpeedDampTime: 0.1
+  PlayerMoveThreshold01: 0.05
+  VisualTurnDegPerSec: 720
+  IdleAimTurnDegPerSec: 180
+  MobTurnDegPerSec: 540
+  PlayerYawOffsetDeg: 180
+  MechYawOffsetDeg: 0
+  MobWalkEnterSpeed: 0.4
+  MobWalkExitSpeed: 0.2
+  MobRunEnterSpeed: 2.6
+  MobRunExitSpeed: 2.2
+  LocomotionHoldSeconds: 0.15
+  AimYawClampDeg: 80
+  SpineYawShare: 0.4
+  DashLeanDeg: 18
+  DashLeanInOutSeconds: 0.08
+  LocomotionCrossFadeSeconds: 0.12
+  OneShotCrossFadeSeconds: 0.06
+  MuzzleLiftY: 1.1
+  GunLocalPosition: {x: 0.0315, y: 0.0817, z: 0.0052}
+  GunLocalEuler: {x: 344.68088, y: 97.644905, z: 82.9196}
+  MaxDashGlows: 8
+  DashGlowSeconds: 2.5
+  DashGlowSize: 0.9
+  CasingScale: 0.08
+  CasingEjectSpeedMin: 0.8
+  CasingEjectSpeedMax: 1.4
