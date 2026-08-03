@@ -68,7 +68,8 @@ namespace Ring.Simulation.Core
             _spreadRng = new Random(Fold(folded ^ 0xB5297A4Du));
             _waveRng = new Random(Fold(folded ^ 0x68E31DA4u));
             _config = config;
-            _players[0] = new PlayerState { Hp = config.Hero.MaxHp, Alive = true };
+            _players[0] = new PlayerState
+                { Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true };
             // Wave director starts idle, counting down to the first wave (Task 22
             // Interfaces) — WavePhase.Waiting is the enum's zero value, but
             // PhaseTimer must be set explicitly or the countdown would start
@@ -96,10 +97,19 @@ namespace Ring.Simulation.Core
             if (_players[0].Alive)
             {
                 _players[0].AimPoint = input.AimPoint;
-                if (PlayerMovementSystem.Update(ref _players[0], in input, in _config))
+                MovementResult moveResult = PlayerMovementSystem.Update(ref _players[0], in input, in _config);
+                if (moveResult.DashStarted)
                 {
                     _stats.DashesUsed++;
                     Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
+                }
+                if (moveResult.DashDenied)
+                {
+                    // Missing cost (Task 9 Interfaces): Update() never touches
+                    // Stamina on a denied attempt, so the pre-tick value is
+                    // exactly what's still sitting on _players[0] right now.
+                    Emit(SimEventKind.StaminaDenied, _players[0].Pos, 0, default,
+                        _config.Hero.DashStaminaCost - _players[0].Stamina);
                 }
                 WeaponSystem.Update(this, ref _players[0], in input);
             }
@@ -141,6 +151,8 @@ namespace Ring.Simulation.Core
 
             PlayerState p = _players[0];
             p.Hp = math.min(p.Hp, next.Hero.MaxHp);
+            p.Stamina = math.clamp(p.Stamina, 0f, next.Hero.StaminaMax);
+            p.StaminaRegenDelayTimer = math.clamp(p.StaminaRegenDelayTimer, 0f, next.Hero.StaminaRegenDelay);
             p.DashTimer = math.clamp(p.DashTimer, 0f, next.Hero.DashDuration);
             p.DashCooldown = math.clamp(p.DashCooldown, 0f, next.Hero.DashCooldown);
             p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
@@ -348,6 +360,10 @@ namespace Ring.Simulation.Core
                 _stats.DeathTick = _tick;
                 p.DashTimer = 0f;
                 p.IframeTimer = 0f;
+                // Task 9: Stamina itself freezes for free (UpdateDead never
+                // touches it), but the regen-delay countdown is reset so a
+                // corpse's PlayerState reads clean, same as the dash timers above.
+                p.StaminaRegenDelayTimer = 0f;
                 Emit(SimEventKind.PlayerDied, pos, 0, default, 0f, zone: zone, hitDir: dir);
             }
         }
@@ -518,6 +534,7 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.Pos); h = StateHash64.Add(h, p.Vel);
             h = StateHash64.Add(h, p.AimPoint); h = StateHash64.Add(h, p.DashDir);
             h = StateHash64.Add(h, p.RecoilOffset); h = StateHash64.Add(h, p.Hp);
+            h = StateHash64.Add(h, p.Stamina); h = StateHash64.Add(h, p.StaminaRegenDelayTimer);
             h = StateHash64.Add(h, p.DashTimer); h = StateHash64.Add(h, p.DashCooldown);
             h = StateHash64.Add(h, p.IframeTimer); h = StateHash64.Add(h, p.DashBufferTimer);
             h = StateHash64.Add(h, p.FireCooldown); h = StateHash64.Add(h, p.Alive);

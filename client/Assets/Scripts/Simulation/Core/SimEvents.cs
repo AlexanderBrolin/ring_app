@@ -17,7 +17,10 @@ namespace Ring.Simulation.Core
         PlayerDashed,
         PlayerDied,
         WaveStarted,
-        WaveCleared
+        WaveCleared,
+        /// Task 9: a dash attempt was gated by the stamina pool (Stamina <
+        /// DashStaminaCost) — Amount carries the missing cost, Pos the player.
+        StaminaDenied
     }
 
     public struct SimEvent

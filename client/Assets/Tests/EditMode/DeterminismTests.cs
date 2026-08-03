@@ -170,7 +170,12 @@ namespace Ring.Simulation.Tests
             // taller Gunner tower and deals 0.75x — so the scripted run's
             // damage/kill trace legitimately differs; on top of that
             // MatchStats.HeadshotKills is a new field inside HashStats.
-            const ulong GoldenHash = 0x1A1FEB00BB40B72AUL; // = 1882481557638264618
+            // Re-pinned by Task 9 (stamina core): PlayerState gained Stamina
+            // and StaminaRegenDelayTimer, both folded into HashPlayer — every
+            // scripted tick now carries their trace (dash cost/regen/gate),
+            // so the hash legitimately changes even though the scripted
+            // scenario's dash/move/aim inputs themselves are unchanged.
+            const ulong GoldenHash = 0xE72886716C1458C0UL; // = 16656711043532478656
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 

@@ -7,7 +7,8 @@ namespace Ring.Simulation.Core
     {
         public float2 Pos, Vel, AimPoint, DashDir;
         public float RecoilOffset,
-            Hp, DashTimer, DashCooldown, IframeTimer, DashBufferTimer, FireCooldown;
+            Hp, Stamina, StaminaRegenDelayTimer,
+            DashTimer, DashCooldown, IframeTimer, DashBufferTimer, FireCooldown;
         public bool Alive;
     }
 
