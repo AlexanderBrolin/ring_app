@@ -5,7 +5,9 @@
 
 **Цель:** двухрежимный прицел (ПКМ-луч / от бедра) + хитзоны голова/тело/ноги +
 Буст-мувмент (дэш/слайд/рикошет/связки) + обломки + упреждающий замах чейзера —
-по спеке `docs/superpowers/specs/2026-08-03-combat-depth-spec.md` (v4).
+по спеке `docs/superpowers/specs/2026-08-03-combat-depth-spec.md` (**v5**:
+Д15 — чейзер 1.85 «мясо»-экран, ганнер ×2 с oneshot-головой, единые мульты,
+сведение 0.5 с, спрей-разброс и в прицеле).
 
 **Архитектура:** вертикаль только у снарядов и хит-объёмов; движение 2D;
 все новые механики — детерминированные поля `PlayerState`/`ProjectileState` +
@@ -55,8 +57,10 @@
 BodyDamageMult,HeadDamageMult,SlideProfileTop,MuzzleHeight,SlideMuzzleHeight,
 MaxAimHeight}` (float); `MobSimConfig.{LegsTop,BodyTop,HeadTop,LegsDamageMult,
 BodyDamageMult,HeadDamageMult,MuzzleHeight,SwingLeadFactor,SwingLeadMaxMeters}`.
-Дефолты и валидация — спека §3.5 (чейзер 0.35/0.75/1.05, мульты 0.75/1.0/**1.0**;
-ганнер 0.55/1.40/1.90, 0.75/1.0/1.5, `MuzzleHeight 0.95`).
+Дефолты и валидация — спека §3.5 v5 (Д15: чейзер 0.60/1.45/1.85; ганнер
+1.10/2.70/3.50; мульты ЕДИНЫЕ у героя и обоих архетипов 0.75/1.0/1.7;
+`Gunner.MuzzleHeight 0.95` — sim-дуло НЕ масштабируется ростом;
+`Hero.MaxAimHeight 3.8`).
 
 - [ ] RED: в `ConfigTests` — `Validate_ZoneOrderViolated_Throws`
   (`LegsTop=1.0,BodyTop=0.5` → `ArgumentException`) и
@@ -82,7 +86,7 @@ StaminaRegenDelay 0.72, SlideSpeed 13.5, SlideDuration 0.52,
 SlideSteerRadPerSec 1.2, SlideMinSpeedFrac 0.75, RunUpSeconds 1.18,
 RunUpDecayMult 3.0, SlideBufferWindow 0.15, LinkWindowSeconds 0.25,
 PostDashSlideWindow 0.32, SlideWallStopDot 0.7, RicochetRetention 0.8,
-AimMoveSpeedFrac 0.8, AimSlideSpeedMult 0.5, AimSettleSeconds 0.25}`;
+AimMoveSpeedFrac 0.8, AimSlideSpeedMult 0.5, AimSettleSeconds 0.5}`;
 `WeaponSimConfig.{CanFireWhileSlide true, SpreadRunMult 1.5,
 SpreadSlideMult 2.0, RunSpreadSpeedFrac 0.5}`.
 
@@ -172,13 +176,16 @@ Modify `ProjectileHeightTests.cs`, `EventTests.cs`.
 **Produces:** `HitZone`, сигнатуры урона; событие с зоной/вектором.
 
 - [ ] RED (пакет, все в FAIL):
-  `Shot_OverChaserHead_HitsGunnerBehind` (чейзер (2.5,0), ганнер (9,0),
-  прицельный спавн снаряда тестовым спавном `height 1.0, velZ +0.072*|v|`
-  → умирает ганнер, чейзер цел); `Graze_AtHeadTopPlusRadius_HitsAsHead`
-  (`h = HeadTop + Radius − 1e-4` ⇒ хит, `Zone == Head`);
-  `RejectedTall_DoesNotShadowFarther` (M5); `EqualT_TieBreaksLowerIndex`;
-  `ChaserHead_MultIsOne` (12 урона), `GunnerHead_Mult15` (18);
-  `Hit_Amount_IsPostMultiplier`.
+  `GunnerHeadOverCrowd_HitFromFarChaser` (чейзер (5,0), ганнер (9,0),
+  тестовый спавн `height 1.0` с наклоном в голову ганнера (~3.1) → умирает
+  ганнер, чейзер цел — Д15-геометрия);
+  `CloseChaser_ScreensGunnerHead` (чейзер (2,0) — та же траектория
+  съедается чейзером, ганнер цел);
+  `Graze_AtHeadTopPlusRadius_HitsAsHead` (`h = HeadTop + Radius − 1e-4` ⇒
+  хит, `Zone == Head`); `RejectedTall_DoesNotShadowFarther` (M5 — низкий
+  профиль: слайдящий игрок/пол-кандидат); `EqualT_TieBreaksLowerIndex`;
+  `GunnerHeadshot_IsOneshot` (12 × 1.7 = 20.4 ≥ 20 HP — труп с одного);
+  `ChaserHeadshot_TwoShots` (30 HP / 20.4); `Hit_Amount_IsPostMultiplier`.
 - [ ] Прогон двух новых классов → FAIL.
 - [ ] GREEN: по формулам §3.2; перепин golden.
 - [ ] Полный EditMode → PASS.
@@ -365,23 +372,26 @@ Test `MovementTests.cs`, `SlideTests.cs`, `StaminaTests.cs` (не задевае
 
 ### Т15: два режима огня в `WeaponSystem`
 
-**Files:** Modify `Combat/WeaponSystem.cs` — формулы §3.2 дословно:
+**Files:** Modify `Combat/WeaponSystem.cs` — формулы §3.2 v5 дословно:
 aim: `vel3 = normalizesafe(float3(AimPoint − muzzle2D, AimHeight − muzzleH),
-fallback3) * ProjectileSpeed`; эффективный разброс `a_hip × (1 −
-AimSettleTimer/AimSettleSeconds)`; hip: `VelZ = 0`, `a = (SpreadRad +
-RecoilOffset) × moveMult`; `muzzleH = SlideTimer > 0 ? SlideMuzzleHeight :
+fallback3) * ProjectileSpeed`; разброс прицельного режима
+`a_aim = RecoilOffset + SpreadRad × (1 − AimSettleTimer/AimSettleSeconds)`
+(Д15: спрей даёт разброс всегда, движенческие мульты в прицеле не
+применяются); hip: `VelZ = 0`, `a = (SpreadRad + RecoilOffset) × moveMult`; `muzzleH = SlideTimer > 0 ? SlideMuzzleHeight :
 MuzzleHeight`; spread-draw из `SpreadRng` только при `a > 0`; поворот
 горизонтали + перенормировка на `ProjectileSpeed`; `spawnPos2D = p.Pos +
 dir2D × (MuzzleOffset + overshoot × length(vel3.xy))`, `height = muzzleH +
 overshoot × VelZ`; гейт `CanFireWhileSlide`; Test `ProjectileHeightTests.cs`,
 `WeaponTests.cs`.
 
-- [ ] RED: `AimedShot_HitsExactPoint_IncludingFloor` (точка пола под
-  курсором → `ProjectileBlocked` ровно там); `AimedShot_FullSpeed3D`
-  (`|(Vel,VelZ)| == ProjectileSpeed` при ненулевом угле и разбросе — K10);
-  `HipShot_HorizontalAtMuzzleHeight`; `HipSpread_RunAndSlideMultipliers`
-  (×1.5 на пороге `RunSpreadSpeedFrac`, ×2 в слайде, ×1 в покое — D8);
-  `FirstAimTick_SpreadNotZero` (C2); `Recoil_AccumulatesWhileAimed` (D8);
+- [ ] RED: `AimedShot_HitsExactPoint_IncludingFloor` (сведён, спрея нет —
+  точка пола под курсором → `ProjectileBlocked` ровно там);
+  `AimedShot_FullSpeed3D` (`|(Vel,VelZ)| == ProjectileSpeed` при ненулевом
+  угле и разбросе — K10); `HipShot_HorizontalAtMuzzleHeight`;
+  `HipSpread_RunAndSlideMultipliers` (×1.5 на пороге `RunSpreadSpeedFrac`,
+  ×2 в слайде, ×1 в покое — D8); `FirstAimTick_SpreadNotZero` (C2);
+  `AimedSpray_HasSpread` (Д15: сведён, `RecoilOffset > 0` ⇒ `a_aim > 0`);
+  `Recoil_AccumulatesAndDecays_InAimMode` (D8);
   `SlideFire_FromSlideMuzzleHeight`.
 - [ ] Прогон → FAIL.
 - [ ] GREEN; перепин golden.
@@ -442,7 +452,8 @@ Arena.Radius×2` из рантайм-конфига, `QueryTriggerInteraction.Co
 `CurrentAimSimPos/Height` учитывают `AimHeld` — при промахе точка пола,
 height 0), `Editor/StageOneSceneBootstrap.cs` (`EnsureAimProxyLayer` по
 образцу Casings; прокси-чайлды на `MobChaserView`/`MobGunnerView`/кукле:
-триггер-капсулы из SO-поясов, голова × `AimProxyHeadRadiusFrac`),
+триггер-капсулы из SO-поясов, голова × `AimProxyHeadRadiusFrac`;
+**Visual-чайлд ганнера — `localScale = GameFeel.GunnerVisualScale`**, Д15),
 `Presentation/PersistentPropsDirector.cs`-стиль `Physics.IgnoreLayerCollision`
 для AimProxy (B3) — в `AimProvider.Awake`; порядок: каст в `LateUpdate`
 после вьюх + `Physics.SyncTransforms` (C15).
