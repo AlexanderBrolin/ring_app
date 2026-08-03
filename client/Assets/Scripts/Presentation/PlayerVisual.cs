@@ -25,6 +25,7 @@ namespace Ring.Presentation
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] Animator _animator;
         [SerializeField] Transform _visual;
+        [SerializeField] Transform _gun;
 
         Transform _spine;
         Transform _chest;
@@ -77,6 +78,15 @@ namespace Ring.Presentation
             float weightRate = dt / Mathf.Max(_gameFeel.LocomotionCrossFadeSeconds, 1e-3f);
             _aimWeight = Mathf.MoveTowards(_aimWeight, weightTarget, weightRate);
             _animator.SetLayerWeight(AimLayer, _aimWeight);
+
+            // Live gun-transform tuning (Б1 milestone): GunLocal* are read every
+            // frame so the owner dials the grip in PlayMode; the bootstrap's own
+            // write-if-different pass only seeds the scene value.
+            if (_gun != null)
+            {
+                _gun.localPosition = _gameFeel.GunLocalPosition;
+                _gun.localEulerAngles = _gameFeel.GunLocalEuler;
+            }
 
             if (_dead) return; // corpse: no speed/facing/yaw/lean writes (Б3)
 

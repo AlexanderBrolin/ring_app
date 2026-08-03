@@ -228,7 +228,7 @@ namespace Ring.Presentation
             Vector3 torque = Random.insideUnitSphere * _gameFeel.CasingTorqueScale;
 
             CasingView view = _casings.Rent();
-            view.Spawn(pos, impulse, torque, _gameFeel.CasingPhysicsSeconds);
+            view.Spawn(pos, impulse, torque, _gameFeel.CasingPhysicsSeconds, _gameFeel.CasingScale);
         }
 
         void HandleBlocked(in SimEvent e)

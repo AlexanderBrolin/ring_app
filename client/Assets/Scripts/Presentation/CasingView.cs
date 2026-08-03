@@ -50,9 +50,14 @@ namespace Ring.Presentation
         /// `ProjectileView.Bind`'s `tracerFadeSeconds` parameter. Explicitly
         /// resets `isKinematic` to false — a FIFO-reused instance may still be
         /// frozen from its previous life in the ring buffer.
-        public void Spawn(Vector3 pos, Vector3 impulse, Vector3 torque, float settleSeconds)
+        /// `scale` comes from `GameFeelConfig.CasingScale` every call, same
+        /// live hot-tweak contract as `settleSeconds` (Б1 fix-wave 3: owner
+        /// playtest feedback — the baked prefab's 5cm casing was unreadable
+        /// from the ¾ camera; runtime scale now overrides it every shot).
+        public void Spawn(Vector3 pos, Vector3 impulse, Vector3 torque, float settleSeconds, float scale)
         {
             gameObject.SetActive(true);
+            transform.localScale = new Vector3(scale, scale * 1.2f, scale);
             transform.SetPositionAndRotation(pos, Quaternion.identity);
             _rb.isKinematic = false;
             _rb.linearVelocity = Vector3.zero;

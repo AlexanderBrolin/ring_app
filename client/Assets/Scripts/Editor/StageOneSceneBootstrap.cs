@@ -275,11 +275,12 @@ namespace Ring.Editor
             // inverted here: detects a MISSING key instead of a stale one) so
             // this is a one-time sync, not an unconditional touch every run.
             // The marker key is always the MOST RECENTLY added field
-            // (currently `DashGlowSize`, Б1 fix-wave 2 (app-9av) — was
-            // `GunLocalEuler` before that) so a fresh field addition
-            // is what re-triggers the sync, regardless of which older fields
-            // an already-committed asset already happens to carry.
-            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("DashGlowSize"))
+            // (currently `CasingScale`, Б1 fix-wave 3 — was `DashGlowSize`
+            // (app-9av) before that, and `GunLocalEuler` before that) so a
+            // fresh field addition is what re-triggers the sync, regardless
+            // of which older fields an already-committed asset already
+            // happens to carry.
+            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("CasingScale"))
                 EditorUtility.SetDirty(gameFeel);
 
             AssetDatabase.SaveAssets();
@@ -494,6 +495,19 @@ namespace Ring.Editor
                 gunTf = gun.transform;
                 sceneDirty = true;
             }
+
+            // playerVisual's _gun slot needs gunTf, which doesn't exist until
+            // here (this gun-block runs after the playerVisual wiring block
+            // above) — wired in its own mini-block rather than reordering
+            // either block, same |=/ApplyModifiedPropertiesWithoutUndo/
+            // sceneDirty shape as every other ref-wiring block in this method.
+            var playerVisualGunSo = new SerializedObject(playerVisual);
+            if (EditorBootstrapUtils.SetRef(playerVisualGunSo, "_gun", gunTf))
+            {
+                playerVisualGunSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
             if (gunTf.localPosition != gameFeel.GunLocalPosition)
             {
                 gunTf.localPosition = gameFeel.GunLocalPosition;

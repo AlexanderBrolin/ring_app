@@ -77,3 +77,4 @@ MonoBehaviour:
   MaxDashGlows: 8
   DashGlowSeconds: 2.5
   DashGlowSize: 0.9
+  CasingScale: 0.12

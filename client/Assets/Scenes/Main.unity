@@ -3353,6 +3353,7 @@ MonoBehaviour:
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
   _animator: {fileID: 73025777}
   _visual: {fileID: 73025775}
+  _gun: {fileID: 915666281}
 --- !u!1 &1828108797
 GameObject:
   m_ObjectHideFlags: 0
