@@ -22,6 +22,7 @@ namespace Ring.Simulation.Combat
             float chaserRadius = w.Config.Chaser.Radius;
             float gunnerRadius = w.Config.Gunner.Radius;
             float heroRadius = w.Config.Hero.Radius;
+            (float t, int kind, int index)[] candidates = w.ProjCandidates;
 
             for (int i = w.ProjectileCount - 1; i >= 0; i--)
             {
@@ -31,16 +32,19 @@ namespace Ring.Simulation.Combat
                 proj.PrevPos = startPos;
                 proj.Ttl -= dt;
 
-                float bestT = 1f;
-                int hitKind = HitNone;
-                int hitMobIndex = -1;
                 MobState[] mobs = w.Mobs;
 
+                // Gather phase (Task 5 refactor): pack every actual geometry
+                // hit into the scratch in canonical slot order — 0 = barrier,
+                // then mobs by index, then player (floor lands in Task 7) — so
+                // the packed array's index order doubles as the tie-break
+                // order below, matching Task 1's original streaming-min
+                // bit-for-bit.
+                int candCount = 0;
                 if (Geometry.SweepArena(startPos, target, proj.Radius, in arena, true,
-                        out float tArena, out _) && tArena < bestT)
+                        out float tArena, out _))
                 {
-                    bestT = tArena;
-                    hitKind = HitBarrier;
+                    candidates[candCount++] = (tArena, HitBarrier, -1);
                 }
 
                 if (proj.Owner == ProjectileOwner.Player)
@@ -50,11 +54,9 @@ namespace Ring.Simulation.Combat
                     {
                         float mobRadius = mobs[m].Type == MobType.Chaser ? chaserRadius : gunnerRadius;
                         if (Geometry.SegmentCircle(startPos, target, proj.Radius,
-                                mobs[m].Pos, mobRadius, out float tm) && tm < bestT)
+                                mobs[m].Pos, mobRadius, out float tm))
                         {
-                            bestT = tm;
-                            hitKind = HitMob;
-                            hitMobIndex = m;
+                            candidates[candCount++] = (tm, HitMob, m);
                         }
                     }
                 }
@@ -63,11 +65,47 @@ namespace Ring.Simulation.Combat
                     PlayerState player = w.Player;
                     if (player.Alive
                         && Geometry.SegmentCircle(startPos, target, proj.Radius,
-                            player.Pos, heroRadius, out float tp) && tp < bestT)
+                            player.Pos, heroRadius, out float tp))
                     {
-                        bestT = tp;
-                        hitKind = HitPlayer;
+                        candidates[candCount++] = (tp, HitPlayer, -1);
                     }
+                }
+
+                // Repeated min-scan, no sort/delegates (AllocationTests): picks
+                // the smallest-t candidate among those not yet excluded, using
+                // strict `<` so the first-packed (= lowest canonical slot)
+                // candidate wins ties. A selected candidate can be rejected
+                // (Task 6: height) — excluded via swap-remove and the scan
+                // repeats over what's left; that branch is dead until Task 6
+                // wires an actual rejection check (accepted is always true here).
+                float bestT = 1f;
+                int hitKind = HitNone;
+                int hitMobIndex = -1;
+                while (candCount > 0)
+                {
+                    int bestSlot = -1;
+                    bestT = 1f;
+                    for (int c = 0; c < candCount; c++)
+                    {
+                        if (candidates[c].t < bestT)
+                        {
+                            bestT = candidates[c].t;
+                            bestSlot = c;
+                        }
+                    }
+                    if (bestSlot < 0)
+                    {
+                        hitKind = HitNone;
+                        break;
+                    }
+
+                    hitKind = candidates[bestSlot].kind;
+                    hitMobIndex = candidates[bestSlot].index;
+
+                    bool accepted = true; // Task 6 wires the height gate here
+                    if (accepted) break;
+
+                    candidates[bestSlot] = candidates[--candCount];
                 }
 
                 switch (hitKind)

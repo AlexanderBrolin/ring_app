@@ -34,6 +34,14 @@ namespace Ring.Simulation.Core
         readonly float2[] _sepForces;
         ProjectileState[] _projectiles;
         int _projectileCount;
+        // Scratch buffer for ProjectileSystem's per-tick candidate min-scan
+        // (Task 5) — preallocated here so the hot path never allocates; every
+        // slot is overwritten before being read each tick, so like _sepForces
+        // above it carries no state across ticks and is deliberately excluded
+        // from SaveState/RestoreState and StateHash. Sized to MaxMobs + 3: one
+        // slot per live mob plus barrier, player, and floor (floor lands in
+        // Task 7).
+        readonly (float t, int kind, int index)[] _projCandidates;
         WaveState _wave;
         int _nextEntityId = 1;
 
@@ -70,6 +78,7 @@ namespace Ring.Simulation.Core
             _mobs = new MobState[config.Arena.MaxMobs];
             _sepForces = new float2[config.Arena.MaxMobs];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
+            _projCandidates = new (float t, int kind, int index)[config.Arena.MaxMobs + 3];
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
         }
 
@@ -222,6 +231,11 @@ namespace Ring.Simulation.Core
         /// SeparationSystem's seam into its preallocated per-tick force buffer
         /// (Task 20) — sized to Arena.MaxMobs, recomputed every tick, never grown.
         internal float2[] SepForces => _sepForces;
+
+        /// ProjectileSystem's seam into its preallocated per-tick candidate
+        /// scratch (Task 5) — sized to Arena.MaxMobs + 3, recomputed every
+        /// tick, never grown.
+        internal (float t, int kind, int index)[] ProjCandidates => _projCandidates;
 
         /// WaveSystem's seam into the wave director's live state (Task 22) — same
         /// ref-return pattern as SpreadRng/WaveRng, so the system mutates it in
