@@ -36,6 +36,10 @@ namespace Ring.Presentation
         float _aimWeight = 1f;
         bool _dead;
 
+        Vector3 _appliedGunPosition;
+        Vector3 _appliedGunEuler;
+        bool _gunApplied;
+
         void OnEnable() => _runner.WorldRestarted += HandleWorldRestarted;
 
         void OnDisable() => _runner.WorldRestarted -= HandleWorldRestarted;
@@ -79,13 +83,20 @@ namespace Ring.Presentation
             _aimWeight = Mathf.MoveTowards(_aimWeight, weightTarget, weightRate);
             _animator.SetLayerWeight(AimLayer, _aimWeight);
 
-            // Live gun-transform tuning (Б1 milestone): GunLocal* are read every
-            // frame so the owner dials the grip in PlayMode; the bootstrap's own
-            // write-if-different pass only seeds the scene value.
-            if (_gun != null)
+            // Gun tuning is gizmo-friendly (Б1 wave 4): config values are pushed to
+            // the transform ONLY when they change, so the owner can also drag the
+            // Gun with the scene gizmo in PlayMode and then persist the result via
+            // the CaptureGunTransform context menu below.
+            if (_gun != null
+                && (!_gunApplied
+                    || _appliedGunPosition != _gameFeel.GunLocalPosition
+                    || _appliedGunEuler != _gameFeel.GunLocalEuler))
             {
                 _gun.localPosition = _gameFeel.GunLocalPosition;
                 _gun.localEulerAngles = _gameFeel.GunLocalEuler;
+                _appliedGunPosition = _gameFeel.GunLocalPosition;
+                _appliedGunEuler = _gameFeel.GunLocalEuler;
+                _gunApplied = true;
             }
 
             if (_dead) return; // corpse: no speed/facing/yaw/lean writes (Б3)
@@ -194,5 +205,25 @@ namespace Ring.Presentation
             _dashLean = 0f;
             _hasPrevPos = false; // restart teleports the player — no ghost speed spike
         }
+
+#if UNITY_EDITOR
+        /// Owner workflow (Б1 wave 4): drag the Gun with the gizmo in
+        /// PlayMode until the grip looks right, then right-click this
+        /// component → Capture Gun Transform To Config. SO edits made in
+        /// PlayMode persist, so the captured numbers survive exiting play.
+        [ContextMenu("Capture Gun Transform To Config")]
+        void CaptureGunTransformToConfig()
+        {
+            if (_gun == null || _gameFeel == null) return;
+            _gameFeel.GunLocalPosition = _gun.localPosition;
+            _gameFeel.GunLocalEuler = _gun.localEulerAngles;
+            _appliedGunPosition = _gameFeel.GunLocalPosition;
+            _appliedGunEuler = _gameFeel.GunLocalEuler;
+            _gunApplied = true;
+            UnityEditor.EditorUtility.SetDirty(_gameFeel);
+            Debug.Log("PlayerVisual: gun transform captured to GameFeelConfig: "
+                + _gun.localPosition + " / " + _gun.localEulerAngles);
+        }
+#endif
     }
 }
