@@ -145,14 +145,17 @@ namespace Ring.Editor
     /// so an owner's number tweak on the milestone Б1 playtest applies
     /// without tearing the gun down and rebuilding it.
     /// Б1 fix-wave 2 (app-9av, owner request) adds a seventh persistent-cosmetic
-    /// prefab: `DashGlow` (`GetOrCreateDashGlowPrefab`) — a `DecalProjector` +
-    /// `DashGlowView` pair, built and existence-guarded exactly like
-    /// `Decal`/`ScorchDecal` above, but with a non-black emission (`GetOrCreateDecalMaterial`
-    /// gains an `emissionColor` parameter for this — `ScorchDecal`'s own call
-    /// site now passes `Color.black`, preserving its prior unlit look
-    /// byte-for-byte). `PersistentPropsDirector`'s existing wiring block
+    /// prefab: `DashGlow` (`GetOrCreateDashGlowPrefab`) — a flat unlit `Quad` +
+    /// `DashGlowView` pair (`PersistentPropsDirector`'s existing wiring block
     /// gains a `_dashGlowPrefab` slot alongside `_casingPrefab`/`_decalPrefab`/
-    /// `_corpsePrefab`.
+    /// `_corpsePrefab`). Review round: the first pass tried a `DecalProjector`
+    /// (`GetOrCreateDecalMaterial` grew an `emissionColor` parameter for it) —
+    /// URP's `Decal.shadergraph` turned out to have NO Emission block at all,
+    /// so that emission was a provable no-op; `GetOrCreateDecalMaterial` is
+    /// back to its original two-parameter signature (`ScorchDecal`'s call site
+    /// unchanged), and `DashGlow` instead reuses `GetOrCreateUnlitMaterial` —
+    /// same `Universal Render Pipeline/Unlit` HDR-`_BaseColor` family as
+    /// `HitSpark`/`BlockSpark`/`DeathBurst` above, which DOES bloom.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -962,20 +965,20 @@ namespace Ring.Editor
                 "CasingBrass", baseColor: new Color(0.25f, 0.16f, 0.05f), emissionColor: Color.black);
             Material corpseMat = GetOrCreateMaterial(
                 "CorpseEmissive", baseColor: new Color(0.05f, 0.05f, 0.05f), emissionColor: new Color(0.1f, 0.1f, 0.1f));
-            Material decalMat = GetOrCreateDecalMaterial("ScorchDecal", new Color(0.04f, 0.04f, 0.04f, 0.85f), Color.black);
+            Material decalMat = GetOrCreateDecalMaterial("ScorchDecal", new Color(0.04f, 0.04f, 0.04f, 0.85f));
             Material hitSparkMat = GetOrCreateUnlitMaterial("HitSpark", new Color(3.5f, 3f, 1.6f));
             Material blockSparkMat = GetOrCreateUnlitMaterial("BlockSpark", new Color(2f, 2.3f, 3f));
             Material deathBurstMat = GetOrCreateUnlitMaterial("DeathBurst", new Color(4f, 1.3f, 0.3f));
-            // Б1 fix-wave 2 (app-9av): dash-start floor mark — emission color
-            // mirrors PlayerEmissive's accent (Э1) so the mark reads as "this
-            // player's" trail, not a generic FX color.
-            Material dashGlowMat = GetOrCreateDecalMaterial(
-                "DashGlowDecal", new Color(0.05f, 0.35f, 0.45f, 0.8f), new Color(0f, 2.5f, 3f));
+            // Б1 fix-wave 2 review (app-9av): unlit quad, not a decal — see
+            // GetOrCreateDecalMaterial's doc for why a decal material can't
+            // glow at all. Color mirrors PlayerEmissive's accent (Э1) so the
+            // mark reads as "this player's" trail, not a generic FX color.
+            Material dashGlowMat = GetOrCreateUnlitMaterial("DashGlow", new Color(0f, 2.5f, 3f));
 
             CasingView casingPrefab = GetOrCreateCasingPrefab(casingMat);
             DecalProjector decalPrefab = GetOrCreateDecalPrefab(decalMat, gameFeel.DecalSize);
             CorpseView corpsePrefab = GetOrCreateCorpsePrefab(corpseMat);
-            DashGlowView dashGlowPrefab = GetOrCreateDashGlowPrefab(dashGlowMat, gameFeel.DashGlowSize);
+            DashGlowView dashGlowPrefab = GetOrCreateDashGlowPrefab(dashGlowMat);
             // lifetime/speed/size/burstCount read from GameFeelConfig at
             // prefab-creation time (review fix-round — same "creation-time SO
             // read" contract as TracerFadeSeconds/GetOrCreateProjectilePrefab
@@ -1399,25 +1402,30 @@ namespace Ring.Editor
             });
         }
 
-        /// Б1 fix-wave 2 (app-9av): the shared `DashGlowView` prefab — same
-        /// shape as `GetOrCreateDecalPrefab` above (default pivot, `size`/
-        /// `material` seeded once from `GameFeelConfig.DashGlowSize` at
-        /// creation time), plus the `DashGlowView`/`DecalProjector` sibling
-        /// wiring `Spawn` needs — done here via `SetRef` on the staging
-        /// object, same technique the scene-wiring calls elsewhere in this
-        /// file use, just applied to a prefab-bound object before it's saved.
-        static DashGlowView GetOrCreateDashGlowPrefab(Material dashGlowMat, float size)
+        /// Б1 fix-wave 2 review (app-9av): the shared `DashGlowView` prefab —
+        /// a flat unlit `Quad` (same primitive/orientation convention as
+        /// `CrosshairView`'s `Marker` above — `RemoveCollider`, no default
+        /// primitive collider kept, unlike `Casing`), NOT a `DecalProjector`
+        /// (see `GetOrCreateDecalMaterial`'s doc for why a decal can't glow
+        /// at all). `Spawn` fully resets position/rotation/scale/color every
+        /// call (same "reset like fresh" contract as `CasingView.Spawn`), so
+        /// this factory bakes no particular transform into the prefab —
+        /// only the `DashGlowView`/`Renderer` sibling wiring, via `SetRef`
+        /// on the staging object before it's saved, same technique the
+        /// scene-wiring calls elsewhere in this file use.
+        static DashGlowView GetOrCreateDashGlowPrefab(Material dashGlowMat)
         {
             return EditorBootstrapUtils.BuildPrefab<DashGlowView>(DashGlowPrefabPath, () =>
             {
-                var go = new GameObject("DashGlow");
-                DecalProjector projector = go.AddComponent<DecalProjector>();
-                projector.material = dashGlowMat;
-                projector.size = Vector3.one * size;
+                GameObject go = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                go.name = "DashGlow";
+                EditorBootstrapUtils.RemoveCollider(go);
+                MeshRenderer renderer = go.GetComponent<MeshRenderer>();
+                renderer.sharedMaterial = dashGlowMat;
 
                 DashGlowView view = go.AddComponent<DashGlowView>();
                 var so = new SerializedObject(view);
-                EditorBootstrapUtils.SetRef(so, "_projector", projector);
+                EditorBootstrapUtils.SetRef(so, "_renderer", renderer);
                 so.ApplyModifiedPropertiesWithoutUndo();
                 return go;
             });
@@ -1554,15 +1562,18 @@ namespace Ring.Editor
         /// `GetOrCreateUnlitMaterial`, but cloned from URP's own shipped
         /// `Decal.mat` (loaded via its package virtual path) rather than
         /// built from `Shader.Find` — the Decal shader graph
-        /// (`Shaders/Decal.shadergraph`) exposes the same `_BaseColor`/
-        /// `_EmissionColor` convention as the project's `Universal Render
-        /// Pipeline/Lit` materials (verified by reading the template's own
-        /// `.mat` YAML), so only the tint needs overriding. `emissionColor`
-        /// (Б1 fix-wave 2, app-9av) follows the same `GetOrCreateMaterial`
-        /// convention above — zero/black keeps a decal like `ScorchDecal`
-        /// unlit-looking (no `_EMISSION` keyword touched), while a non-black
-        /// value (the new `DashGlowDecal`) makes it glow.
-        static Material GetOrCreateDecalMaterial(string assetName, Color baseColor, Color emissionColor)
+        /// (`Shaders/Decal.shadergraph`) exposes the same `_BaseColor`
+        /// convention as the project's `Universal Render Pipeline/Lit`
+        /// materials (verified by reading the template's own `.mat` YAML),
+        /// so only the tint needs overriding. Б1 fix-wave 2 review
+        /// (app-9av): a since-removed `emissionColor` parameter here was
+        /// dead on arrival — `Decal.shadergraph` has NO Emission block at
+        /// all, so `EnableKeyword("_EMISSION")`/`_EmissionColor` on a decal
+        /// material is a no-op (the keyword lands in `m_InvalidKeywords`).
+        /// A glowing floor mark (`DashGlow`) needs a real emissive/unlit
+        /// surface instead — see `GetOrCreateUnlitMaterial` and
+        /// `DashGlowView`'s own doc for why it isn't a decal at all.
+        static Material GetOrCreateDecalMaterial(string assetName, Color baseColor)
         {
             string path = $"{MaterialsDir}/{assetName}.mat";
             var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -1575,12 +1586,6 @@ namespace Ring.Editor
 
             var mat = new Material(template) { name = assetName };
             mat.SetColor("_BaseColor", baseColor);
-            if (emissionColor.maxColorComponent > 0f)
-            {
-                mat.EnableKeyword("_EMISSION");
-                mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
-                mat.SetColor("_EmissionColor", emissionColor);
-            }
             AssetDatabase.CreateAsset(mat, path);
             return mat;
         }
