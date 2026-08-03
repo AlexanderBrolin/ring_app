@@ -118,7 +118,11 @@ namespace Ring.Simulation.Combat
                     }
                     if (bestSlot < 0)
                     {
+                        // Same "no hit" fallback as the rejection branch below —
+                        // both exits must leave the pair consistent, even though
+                        // the HitNone path never reads hitMobIndex.
                         hitKind = HitNone;
+                        hitMobIndex = -1;
                         break;
                     }
 

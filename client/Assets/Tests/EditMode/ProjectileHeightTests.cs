@@ -6,7 +6,7 @@ namespace Ring.Simulation.Tests
 {
     public class ProjectileHeightTests
     {
-        /// Д15 shot geometry — normative fixture numbers, not derived here: the
+        /// D15 shot geometry — normative fixture numbers, not derived here: the
         /// hero fires from muzzle height at a point in the Gunner's head band 9 m
         /// out, which puts the straight trajectory over a Chaser's crown at 6.5 m
         /// and under it at 2 m. Their relation to the config is asserted in the
@@ -46,7 +46,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void GunnerHeadOverCrowd_HitFromFarChaser()
         {
-            // Д15 + M5: the trajectory clears the Chaser at 6.5 m (sweep entry
+            // D15 + M5: the trajectory clears the Chaser at 6.5 m (sweep entry
             // x = 5.88 sits at h = 2.37, above HeadTop + ProjectileRadius = 1.97),
             // so that candidate is rejected on height and the scan carries on to
             // the Gunner at 9 m, whose head band [BodyTop, HeadTop] the shot is
@@ -114,7 +114,7 @@ namespace Ring.Simulation.Tests
             // crosses ground height (h = 0) at x = 4 m. The floor stops the
             // round a projectile-radius short of that — well before the Chaser
             // parked at x = 6 m — so the mob behind the contact point is
-            // untouched (Т7 self-review: floor-vs-mob ordering).
+            // untouched (Task 7 self-review: floor-vs-mob ordering).
             var cfg = TestConfigs.Open();
             cfg.Chaser.MaxSpeed = 0f;
             var w = new SimulationWorld(1, cfg);
@@ -141,7 +141,7 @@ namespace Ring.Simulation.Tests
             // Flat shot (targetH == muzzleH keeps VelZ at 0, isolating the wall
             // path from the floor one) straight out to the ring wall: the
             // contact height stays pinned at muzzle height, and HitDir carries
-            // the real SweepArena normal instead of the pre-Т7 zero placeholder.
+            // the real SweepArena normal instead of the pre-Task 7 zero placeholder.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
             TestWorlds.FireAimed3D(w, float2.zero, MuzzleH,
