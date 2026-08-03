@@ -58,7 +58,7 @@ MonoBehaviour:
   VisualTurnDegPerSec: 720
   IdleAimTurnDegPerSec: 180
   MobTurnDegPerSec: 540
-  PlayerYawOffsetDeg: 0
+  PlayerYawOffsetDeg: 180
   MechYawOffsetDeg: 0
   MobWalkEnterSpeed: 0.4
   MobWalkExitSpeed: 0.2
