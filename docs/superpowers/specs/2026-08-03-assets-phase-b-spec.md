@@ -125,7 +125,9 @@ look/feel-числа — новые поля `GameFeelConfig` (решение 10
 7. **Пушка (8a).** Инстанс `SciFiEssentialsKit/Models/Gun_Pistol.fbx`
    (проверено, есть на диске; идентификатор — константа бутстрапа) крепится
    бутстрапом чайлдом к `GetBoneTransform(HumanBodyBones.RightHand)`;
-   локальный офсет/поворот — константы бутстрапа (подгонка на вехе).
+   локальный офсет/поворот — поля `GameFeelConfig.GunLocalPosition`/
+   `GunLocalEuler` с write-if-different реконсиляцией бутстрапом
+   (feel-числа вехи — правка ПБ6 плана; подгонка на вехе без правок кода).
    Вспышка ствола: `MuzzleFlashView` получает лифт высоты
    (`GameFeelConfig.MuzzleLiftY`, дефолт ~1.1) — событийная позиция `e.Pos`
    лежит на y=0, у куклы это щиколотки (Б13). Гильзы (`CasingSpawnLift`) —
@@ -274,8 +276,9 @@ Pistol_Shoot); `ThirdPartyAnimatorBootstrap` генерирует контрол
 
 ### 3.7. GameFeelConfig: новые поля (10a, Б14)
 
-Все поля — с `[Range]` (конвенция файла); для каждого фиксируется точка
-чтения: **bind-time** (применяется бутстрапом/Bind'ом; правка = повторный
+Все float-поля — с `[Range]` (конвенция файла; Vector3-поля `GunLocal*` —
+без атрибута, как bool'ы Э1); для каждого фиксируется точка чтения:
+**bind-time** (применяется бутстрапом/Bind'ом; правка = повторный
 `Apply`/ре-энтер PlayMode) или **per-frame** (живой hot-tweak):
 
 - bind-time: `PlayerVisualScale=1`, `ChaserVisualScale=0.4`,

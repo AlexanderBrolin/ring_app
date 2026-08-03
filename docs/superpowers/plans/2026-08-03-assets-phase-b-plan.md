@@ -211,9 +211,15 @@ namespace Ring.Editor
             var existing = AssetDatabase.LoadAssetAtPath<T>(path);
             if (existing != null) return existing;
             GameObject go = build();
-            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, path);
-            Object.DestroyImmediate(go);
-            return asset.GetComponent<T>();
+            try
+            {
+                GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, path);
+                return asset.GetComponent<T>();
+            }
+            finally
+            {
+                Object.DestroyImmediate(go); // never leak the staging object into the scene
+            }
         }
 
         /// The Phase B hierarchy convention (spec §3.2/§3.3, preview's
@@ -427,8 +433,13 @@ if (emissive != null) mat.SetTexture("_EmissionMap", emissive);
 /// Б1 reconcile: already-committed remap materials predate the unconditional
 /// emission rule above — heal them in place (recreating would break the
 /// externalObjects GUID link in the pack .fbx.meta). DirectorSkin/PreviewFloor
-/// are NOT remaps and keep their own authored emission setup.
-static readonly string[] NonRemapMaterials = { "DirectorSkin", "PreviewFloor" };
+/// are NOT remaps and keep their own authored emission setup (names derived
+/// from the preview bootstrap's own path constants — no literal copies, Р9).
+static readonly string[] NonRemapMaterials =
+{
+    System.IO.Path.GetFileNameWithoutExtension(AssetPreviewSceneBootstrap.DirectorSkinPath),
+    System.IO.Path.GetFileNameWithoutExtension(AssetPreviewSceneBootstrap.FloorMatPath),
+};
 
 static void ReconcileRemapEmission()
 {
@@ -780,7 +791,11 @@ namespace Ring.Presentation
             // the bones, so the offset never accumulates.
             if (aimDir.sqrMagnitude > 1e-8f)
             {
-                float yaw = Vector3.SignedAngle(_visual.forward, aimDir.normalized, Vector3.up);
+                // _visual.forward carries the model yaw offset — compensate,
+                // or a non-zero PlayerYawOffsetDeg skews the aim by itself
+                // and pins the spine against the clamp (audit fix ПБ19).
+                float yaw = Vector3.SignedAngle(_visual.forward, aimDir.normalized, Vector3.up)
+                    + _gameFeel.PlayerYawOffsetDeg;
                 yaw = Mathf.Clamp(yaw, -_gameFeel.AimYawClampDeg, _gameFeel.AimYawClampDeg);
                 float spineYaw = yaw * _gameFeel.SpineYawShare;
                 float chestYaw = yaw - spineYaw;
@@ -979,7 +994,13 @@ if (gunTf.localPosition != gameFeel.GunLocalPosition)
     gunTf.localPosition = gameFeel.GunLocalPosition;
     sceneDirty = true;
 }
-if (gunTf.localEulerAngles != gameFeel.GunLocalEuler)
+// Compare ROTATIONS, not euler read-backs: localEulerAngles returns values
+// re-derived from the quaternion (normalized to [0;360)), so e.g. (0,-90,0)
+// reads back as (0,270,0) and a naive != would re-dirty the scene on every
+// Apply (audit fix ПБ19). Writing via localEulerAngles keeps the serialized
+// euler hint consistent.
+Quaternion gunTargetRotation = Quaternion.Euler(gameFeel.GunLocalEuler);
+if (Quaternion.Angle(gunTf.localRotation, gunTargetRotation) > 1e-3f)
 {
     gunTf.localEulerAngles = gameFeel.GunLocalEuler;
     sceneDirty = true;
@@ -1101,6 +1122,9 @@ namespace Ring.Presentation
         {
             if (_visual.localScale != Vector3.one * visualScale)
                 _visual.localScale = Vector3.one * visualScale;
+            // Pool-rebind hygiene: the previous life's facing must not leak
+            // into a fresh spawn (audit fix ПБ19).
+            _visual.localRotation = Quaternion.identity;
             _loco = Locomotion.Idle;
             _holdTimer = 0f;
             _lastAi = m.Ai;
@@ -1606,6 +1630,16 @@ v1-ревью 4 Explore-субагентами (A код/API, B конвенци
   Death` (алиас, не второй хеш).
 - **ПБ18:** `PlayerYawOffsetDeg`/`MechYawOffsetDeg` — ручки риска «модель
   смотрит не по +Z» (§7 спеки) без правок кода на вехе.
+- **ПБ19 (аудит v2):** спайн-yaw компенсирует `PlayerYawOffsetDeg` (иначе
+  ненулевой оффсет систематически скручивал прицел в кламп); поворот пушки —
+  сравнение кватернионов (`localEulerAngles` read-back не round-trip-стабилен
+  → вечный sceneDirty); белый список не-ремапов Т3 — из констант
+  превью-бутстрапа (Р9); `MobVisual.Bind` сбрасывает `_visual.localRotation`
+  (поворот прошлой жизни пула); `BuildPrefab` — try/finally (staging-объект
+  не течёт в сцену при throw). Осознанно НЕ внесено: `_facing` куклы на
+  рестарте сохраняется (кукла доворачивается от последнего направления —
+  дёшево и читается естественно; «сброс yaw/наклона» спеки покрыт
+  `_dashLean=0` и переписью костей аниматором).
 - Осознанное дублирование (записано, не чинится): экранная дельта скорости
   в `PlayerVisual` и `MobVisual` (~6 строк) — источники позиции и нормировки
   принципиально разные (снапшот+0..1 vs transform+м/с), общий хелпер ухудшил
