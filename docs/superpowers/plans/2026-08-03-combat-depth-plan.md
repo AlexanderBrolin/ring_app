@@ -21,9 +21,13 @@ Presentation потребляет снапшот/события/`World.Config` (
 **Tech Stack:** Unity 6000.3.21f1, NUnit EditMode, Unity.Mathematics 1.3.x;
 новых пакетов нет (CR 9).
 
-**Спека:** v5 (Д1–Д15; два раунда self-review). **Статус плана:** v3 —
-глубина по эталону Фазы Б/Э1; все правки план-ревью PA1–PA17/PB1–PB12/
-PC1–PC16/PD1–PD22 сохранены (см. «Соответствие находкам» в хвосте).
+**Спека:** v5 (Д1–Д15; два раунда self-review). **Статус плана:** v4 —
+глубина по эталону Фазы Б/Э1; правки ДВУХ раундов план-ревью:
+PA1–PA17/PB1–PB12/PC1–PC16/PD1–PD22 (раунд 1, v2) и
+QA1–QA18/QB1–QB21/QC1–QC21/QD1–QD17 (раунд 2 по v3: тест-швы без
+лямбд, `Spread` public-класс вместо internal-формулы, семантика точки
+прицела с прокси, `MovementResult`-контракт, гонка маркера ганнера,
+локальный `aimHeld` golden-сценария, вехи чекбоксами, гейты Г6/Г7).
 
 ## Global Constraints (каждый таск обязан соблюдать)
 
@@ -44,16 +48,23 @@ PC1–PC16/PD1–PD22 сохранены (см. «Соответствие на�
 - **Simulation меняется** (суть пакета) — но строго TDD (CR2) и без
   UnityEngine (CR1; только `Unity.Mathematics`).
 - **ГЕЙТ-ОТКАТ (после КАЖДОГО Unity-прогона):** `git status --porcelain --
-  client/Packages client/Assets/Settings .gitattributes client/ProjectSettings`
-  → допустим ТОЛЬКО дифф `TagManager.asset` (Т19); иной дрифт →
-  `git checkout -- <пути>`; TMP-самопис
-  `client/Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF - Fallback.asset`
-  → откатывать всегда (урок 32).
+  client/Packages client/Assets/Settings .gitattributes client/ProjectSettings
+  "client/Assets/TextMesh Pro"` (QB17) → дифф `TagManager.asset` допустим
+  **только начиная с Т19 и только в его коммите** (до Т19 — откат, QB8);
+  иной дрифт → `git checkout -- <пути>`; TMP-самопис
+  `LiberationSans SDF - Fallback.asset` → откатывать всегда (урок 32).
 - **ГЕЙТ-ЛОГ (после каждого batchmode):** `grep -E "error CS|Shader error|
   Failed to import|Error while importing|NullReferenceException|Exception"
   <лог>` → пусто (кроме явно ожидаемых таском строк).
-- **ГЕЙТ-META:** новые `.cs`/ассеты коммитятся вместе со своими `.meta`
-  (генерятся ближайшим Unity-прогоном; несопоставленный файл → стоп).
+- **ГЕЙТ-META:** каждому новому не-`.meta` файлу **и папке** (`_Ring/
+  Animations/`, `_Ring/Gibs/` — Т23/Т24) соответствует `<path>.meta`
+  (QB16); генерятся ближайшим Unity-прогоном; несопоставленный → стоп.
+- **Тест-швы состояния (QA1):** лямбда-перегрузок нет; канон —
+  `var p = w.Player; p.X = …; w.SetPlayerForTest(p);` (эталон
+  `WorldLifecycleTests.cs:56`); чтение мобов/снарядов — существующие
+  `w.Mobs[i]` / `w.Projectiles[i]` (internal-массивы, QC5).
+- Русские пояснения в сниппетах плана при переносе в `.cs` ПЕРЕВОДЯТСЯ
+  на английский (QB6; правило эталонов).
 - **RED-дисциплина (PA17):** тест не компилируется из-за отсутствующих
   полей/сигнатур → сначала пустые поля/заглушки до КОМПИЛЯЦИИ, затем
   наблюдаемый FAIL ассерта. Ошибка компиляции ≠ RED.
@@ -86,14 +97,19 @@ PC1–PC16/PD1–PD22 сохранены (см. «Соответствие на�
 - **R-FILTER `<Класс>`:** R-TEST + `-testFilter "Ring.Simulation.Tests.<Класс>"`.
 - **R-COMPILE:** `cd "$WT" && "$UNITY" -batchmode -quit -projectPath client
   -logFile "$SCRATCH/c.log"; echo EXIT=$?` → EXIT=0 + ГЕЙТ-ЛОГ + ГЕЙТ-ОТКАТ.
-- **R-APPLY:** `cd "$WT" && "$UNITY" -batchmode -quit -projectPath client
-  -executeMethod Ring.Editor.StageOneSceneBootstrap.Apply
-  -logFile "$SCRATCH/apply.log"; echo EXIT=$?` → EXIT=0 + ГЕЙТ-ЛОГ + ГЕЙТ-ОТКАТ.
+- **R-APPLY-<X>:** `cd "$WT" && "$UNITY" -batchmode -quit -projectPath client
+  -executeMethod Ring.Editor.<X>.Apply -logFile "$SCRATCH/apply-<X>.log";
+  echo EXIT=$?` (X ∈ StageOneSceneBootstrap | ThirdPartyImportBootstrap |
+  ThirdPartyAnimatorBootstrap | AssetPreviewSceneBootstrap; свой лог на
+  прогон — ПБ15/QB7) → EXIT=0 + ГЕЙТ-ЛОГ + ГЕЙТ-ОТКАТ. Без `<X>` = 
+  StageOneSceneBootstrap.
 - **R-IDEM:** повторный R-APPLY → `git status --porcelain -- client/` пуст и
   `git diff -- client/` пуст (мерить ПОСЛЕ коммита артефактов — урок А6).
 - **R-GOLDEN (перепин):** R-FILTER `DeterminismTests` → из лога/xml взять
   `But was: <N>` теста `GoldenHash_ScriptedScenario` → вписать константу
-  (`DeterminismTests.cs:146`, hex) → повторный R-FILTER → PASS. Старый хеш Э1
+  (`DeterminismTests.cs:146`, hex) + **обновить десятичный
+  дубль-комментарий и однострочное обоснование перепина (какой таск/почему —
+  QB15)** → повторный R-FILTER → PASS. Старый хеш Э1
   `0x39B4C57694AD8770UL`; каждый перепин — строкой в bd note таска.
 - **R-BUILD-<X>:** `cd "$WT" && RING_BUILD_ROOT="$SCRATCH/builds" "$UNITY"
   -batchmode -quit -projectPath client -executeMethod
@@ -126,8 +142,16 @@ PC1–PC16/PD1–PD22 сохранены (см. «Соответствие на�
   `MobConfig` (класс = чейзер): `0.60 / 1.45 / 1.85`, мульты `0.75/1.0/1.7`,
   **`MuzzleHeight 0.95` — дефолт класса** (чейзер поле не читает; иначе
   Validate-правило D5 уронит существующий `Build_DefaultAssets_...` — PA11),
-  `SwingLeadFactor 1.0`, `SwingLeadMaxMeters 2.0`. Ганнер-значения
-  (1.10/2.70/3.50) — НЕ здесь, а в Т17 (`ApplyGunnerZoneDefaults`).
+  `SwingLeadFactor 1.0`, `SwingLeadMaxMeters 2.0`. Ганнер-значения в
+  `.asset` (1.10/2.70/3.50) — Т17 (`ApplyGunnerZoneDefaults`); **но
+  `TestConfigs.Default().Gunner` получает башню УЖЕ ЗДЕСЬ (QA4):**
+  `LegsTop 1.10, BodyTop 2.70, HeadTop 3.50`, мульты `0.75/1.0/1.7`,
+  `MuzzleHeight 0.95` (gunner-блок `TestConfigs.cs:27–32` — отдельные
+  значения, не класс-дефолты; вся геометрия Т6 держится на башне) + те же
+  поля — в gunner-блок копирования
+  `Build_DefaultAssets_MatchesTestConfigsBaseline` (блок присваивает
+  gunner-SO значения из baseline ПЕРЕД `Build` — тест не зависит от
+  `.asset` и не ждёт Т17; A3).
 - Валидация (добавить в `SimConfigBuilder.Validate`, единый `ArgumentException`
   со списком): общий приватный `ValidateZones(List<string> errors, string who,
   float legs, float body, float head, float legsMult, float bodyMult,
@@ -155,7 +179,10 @@ public void Validate_ZoneOrderViolated_Throws()
 public void Validate_SlideProfileAboveGunnerMuzzle_Throws()
 {
     var hero = ScriptableObject.CreateInstance<HeroConfig>();
-    hero.SlideProfileTop = 0.9f; // 0.9 + ProjectileRadius(0.15) >= MuzzleHeight(0.95)
+    // NB (QA2/QD3): у свежего MobConfig ProjectileRadius = 0 (чейзер-дефолты),
+    // поэтому берём 1.0: 1.0 + 0 >= MuzzleHeight(0.95) — правило D5 нарушено,
+    // при этом 1.0 <= Hero.BodyTop (1.35) — прочие правила молчат.
+    hero.SlideProfileTop = 1.0f;
     var ex = Assert.Throws<ArgumentException>(() => BuildWith(hero));
     Assert.That(ex.Message, Does.Contain("SlideProfileTop"));
 }
@@ -261,31 +288,39 @@ public void Validate_AimFracNotAboveSlideFrac_Throws()
   Док-комментарии `SimulationWorld` («single shared Random») и `WaveSystem`
   («w.Rng.NextFloat») переписать под два потока.
 
-- [ ] **Step 1 (RED):** в `DeterminismTests.cs`:
+- [ ] **Step 1 (RED):** в `DeterminismTests.cs` (правки QA9/QD4: короткая
+  жизнь снаряда — пули не долетают до кольца спавна и не мешают счёту HP/
+  слотов; сравнение — на ТИКЕ спавна волны, до расхождения AI от чужих
+  entity-id; чтение — существующий internal-массив `w.Mobs`, QC5):
 
 ```csharp
 [Test]
 public void SpreadDrawDoesNotShiftWaves()
 {
-    // Один seed; мир A стреляет 100 тиков, мир B молчит.
-    // Раздельные потоки: состав/позиции ПЕРВОЙ волны обязаны совпасть.
-    var a = new SimulationWorld(7, TestConfigs.Default());
-    var b = new SimulationWorld(7, TestConfigs.Default());
+    // Same seed; world A fires for 100 ticks, world B stays idle.
+    // Split streams: composition/positions of the FIRST wave must match at spawn tick.
+    var cfg = TestConfigs.Default();
+    cfg.Weapon.ProjectileLifetime = 0.2f; // ~7 m, never reaches the spawn ring (QA9)
+    var a = new SimulationWorld(7, cfg);
+    var b = new SimulationWorld(7, cfg);
     var fire = new SimInput { FireHeld = true, AimPoint = new float2(10f, 0f) };
     var idle = new SimInput();
-    for (int i = 0; i < 100; i++) { a.Tick(fire); b.Tick(idle); }
-    // доводим оба мира до спавна первой волны (FirstWaveDelay 2.5с = 75 тиков уже позади)
+    int spawnTick = -1;
+    for (int i = 0; i < 100; i++)
+    {
+        a.Tick(fire); b.Tick(idle);
+        if (spawnTick < 0 && b.MobCount > 0) { spawnTick = i; break; } // QD4: compare AT spawn
+    }
+    Assert.GreaterOrEqual(spawnTick, 0, "wave never spawned");
     Assert.AreEqual(b.MobCount, a.MobCount);
     for (int m = 0; m < a.MobCount; m++)
     {
-        Assert.AreEqual(b.GetMobForTest(m).Type, a.GetMobForTest(m).Type);
-        Assert.AreEqual(b.GetMobForTest(m).Pos.x, a.GetMobForTest(m).Pos.x, 1e-4f);
+        Assert.AreEqual(b.Mobs[m].Type, a.Mobs[m].Type);
+        Assert.AreEqual(b.Mobs[m].Pos.x, a.Mobs[m].Pos.x, 1e-4f);
+        Assert.AreEqual(b.Mobs[m].Pos.y, a.Mobs[m].Pos.y, 1e-4f);
     }
 }
 ```
-
-  (доступ к мобам — существующие тест-швы; если геттера нет — добавить
-  `internal MobState GetMobForTest(int i)` рядом с `SetMobForTest`).
 - [ ] **Step 2:** R-FILTER `DeterminismTests` → FAIL (общий поток сдвинут
   стрельбой).
 - [ ] **Step 3 (GREEN):** два потока + удаление старого + `WorldSave`/хеш;
@@ -294,8 +329,9 @@ public void SpreadDrawDoesNotShiftWaves()
   R-TEST → 0 failed.
 - [ ] **Step 5:** R-COMMIT `feat(app-n6g): Т3 — раздельные RNG-потоки оружия и волн`.
 
-**Гейт фазы Г1:** R-TEST полный; push ветки; `bd note app-n6g "Г1 done:
-тесты N, golden <хеш>"`.
+**Гейт фазы Г1:** R-TEST полный (total ≈ 98: 93 + Т1/Т2/Т3-тесты — QD17,
+сверять атрибут `total` в xml); push ветки; jsonl-chore (QB10);
+`bd note app-n6g "Г1 done: тесты N, golden <хеш>"`; `bd close` сабтаска Г1.
 
 ---
 
@@ -365,8 +401,9 @@ namespace Ring.Simulation.Tests
 **Files:** Modify `.../Combat/ProjectileSystem.cs`, `.../Core/SimulationWorld.cs`.
 
 **Interfaces:**
-- Produces: `internal (float t, int kind, int index)[] ProjCandidates` —
-  преаллоцированный скретч размером **`Arena.MaxMobs + 3`** (барьер + игрок +
+- Produces: `readonly (float t, int kind, int index)[] _projCandidates` +
+  `internal … ProjCandidates => _projCandidates` (конвенция `_sepForces`/
+  `SepForces` — QB13) — преаллоцированный скретч размером **`Arena.MaxMobs + 3`** (барьер + игрок +
   пол — PA15), комментарий-исключение из `SaveState`/`StateHash` по образцу
   `_sepForces`. Семантика прохода: собрать кандидатов (0 = барьер, 1..N =
   мобы по индексу, дальше игрок; пол добавит Т7) → повторный выбор
@@ -402,8 +439,9 @@ namespace Ring.Simulation.Tests
 // Core/SimStates.cs (рядом с MobType)
 public enum HitZone : byte { None = 0, Legs = 1, Body = 2, Head = 3 }
 
-// Combat/HitZones.cs — СКАЛЯРНЫЕ сигнатуры (одно тело на Hero и мобов, PC5)
-public static class HitZones
+// Combat/HitZones.cs — СКАЛЯРНЫЕ сигнатуры (одно тело на Hero и мобов, PC5);
+// класс INTERNAL: вне сборки никому не нужен, Presentation читает SimEvent.Zone (QB14)
+internal static class HitZones
 {
     // h клампится в [0, headTop]: «чирк по макушке» = Head, подрез у пола = Legs (D3)
     public static HitZone Classify(float h, float legsTop, float bodyTop, float headTop);
@@ -412,14 +450,16 @@ public static class HitZones
     public static bool Overlaps(float hEnter, float hExit, float radius, float top);
 }
 
-// Core/Geometry.cs — выход из круга для клипа высоты по хорде (PD10)
+// Core/Geometry.cs — выход из круга для клипа высоты по хорде (PD10).
+// NB: решает ту же квадратику, что SegmentCircle — ДВЕ реализации намеренно
+// (SweepArena — горячий путь, golden Т5 бит-в-бит); менять только парой (QC18)
 public static bool SegmentCircleInterval(float2 p0, float2 p1, float padR,
     float2 c, float cR, out float tEnter, out float tExit);
 
-// Core/SimulationWorld.cs
+// Core/SimulationWorld.cs (+ HashStats явно — HeadshotKills, QA17/QB21)
 internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir);
 internal void DamagePlayer(float dmg, float2 pos, HitZone zone, float2 dir);
-// Emit — ДВА optional-параметра, 12 существующих call-site'ов не трогаются (PC16):
+// Emit — ДВА optional-параметра, 11 существующих call-site'ов не трогаются (PC16/QC20):
 internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType,
     float amount, ProjectileOwner owner = ProjectileOwner.Player,
     HitZone zone = HitZone.None, float2 hitDir = default);
@@ -476,7 +516,8 @@ public class HitZoneTests
     {
         var cfg = TestConfigs.Open();
         Assert.GreaterOrEqual(cfg.Weapon.Damage * cfg.Gunner.HeadDamageMult, cfg.Gunner.MaxHp);
-        // спавн ганнера, снаряд в пояс головы, один тик → MobCount == 0, MobDied.Zone == Head
+        // спавн ганнера, снаряд в пояс головы, один тик → MobCount == 0,
+        // MobDied.Zone == Head, Stats.HeadshotKills == 1 (логика «добивающее» — QD13)
     }
 
     [Test] public void ChaserHeadshot_TwoShots() { /* 30 HP: после 1-го хед-хита жив, после 2-го мёртв */ }
@@ -515,9 +556,14 @@ public void CloseChaser_ScreensGunnerHead()
 [Test] public void EqualT_TieBreaksLowerIndex() { /* два моба, равный t ⇒ побеждает меньший слот (C7) */ }
 ```
 
-  Хелперы `SpawnPair`/`FireAimedFrom` (тестовый спавн снаряда по 3D-нормали от
-  `(origin, muzzleH)` к `(targetX, targetH)` × `ProjectileSpeed`)/
-  `RunUntilProjectilesDie` — локальные статики файла.
+  Хелперы — в **`TestWorlds`** (существующий дом shared-фикстур, QC8; НЕ
+  локальные статики — потребители: `ProjectileHeightTests` Т6/Т7/Т15,
+  `HitZoneTests` Т6, `SlideTests` Т11): `TestWorlds.SpawnMobsAt(world,
+  params (MobType type, float2 pos)[])`, `TestWorlds.FireAimed3D(world,
+  float2 origin, float muzzleH, float2 targetXY, float targetH)` (тестовый
+  спавн по 3D-нормали × `ProjectileSpeed`), `TestWorlds.
+  RunUntilProjectilesDie(world, maxTicks = 120)`. `HitZoneTests.cs` — шапка
+  `using Ring.Simulation.Core; using Ring.Simulation.Combat;` (QA17).
 - [ ] **Step 3:** заглушки типов → R-FILTER `GeometryTests`,`HitZoneTests`,
   `ProjectileHeightTests` → FAIL ассертов.
 - [ ] **Step 4 (GREEN):** по Interfaces выше; R-GOLDEN.
@@ -573,29 +619,29 @@ Test `DeterminismTests.cs`.
 
 - [ ] **Step 1 (RED):** в `HostileInput_StateStaysFinite_AndDeterministic`
   добавить в генерацию враждебного ввода `AimHeight = float.NaN` /
-  `float.PositiveInfinity`, `AimHeld = true`; новый тест:
+  `float.PositiveInfinity`, `AimHeld = true`; наблюдаемый кламп — через
+  тест-шов `internal SimInput SanitizeForTest(in SimInput raw)` (обёртка
+  `Sanitize`; `InternalsVisibleTo` уже открыт — QA6/QD14):
 
 ```csharp
 [Test]
-public void Sanitize_ClampsAimHeight()
+public void Sanitize_ClampsAimHeight_AndMapsNaNToMuzzle()
 {
     var cfg = TestConfigs.Open();
     var w = new SimulationWorld(1, cfg);
-    w.Tick(new SimInput { AimHeld = true, AimHeight = cfg.Hero.MaxAimHeight + 5f });
-    // фикстурное выражение, не литерал (PA2/PD4): проверяем через выстрел Т15 позже;
-    // здесь — что мир конечен и хеш детерминирован при повторе
-    Assert.AreEqual(new SimulationWorld(1, cfg).AlsoTick(/*same*/).StateHash(), w.StateHash());
+    var over = w.SanitizeForTest(new SimInput { AimHeld = true, AimHeight = cfg.Hero.MaxAimHeight + 5f });
+    Assert.AreEqual(cfg.Hero.MaxAimHeight, over.AimHeight, 1e-5f);  // clamp (fixture expr - PA2)
+    var nan = w.SanitizeForTest(new SimInput { AimHeld = true, AimHeight = float.NaN });
+    Assert.AreEqual(cfg.Hero.MuzzleHeight, nan.AimHeight, 1e-5f);   // NaN -> muzzle height
 }
 ```
-
-  (точная проверка клампа станет наблюдаемой в Т15 через `VelZ` снаряда —
-  здесь фиксируем устойчивость и детерминизм.)
 - [ ] **Step 2:** R-FILTER `DeterminismTests` → FAIL/компиляция → заглушки →
   FAIL. **Step 3 (GREEN)** — golden НЕ меняется (высоту никто не читает).
 - [ ] **Step 4:** R-FILTER → PASS; R-TEST. **Step 5:** R-COMMIT
   `feat(app-n6g): Т8 — прицельные входы и санитайз`.
 
-**Гейт фазы Г2:** R-TEST полный; push; bd note (golden текущий).
+**Гейт фазы Г2:** R-TEST полный (total ≈ +16 к Г1 — QD17); push;
+jsonl-chore; bd note (golden текущий); `bd close` сабтаска Г2.
 
 ---
 
@@ -608,8 +654,7 @@ public void Sanitize_ClampsAimHeight()
   (**`HashPlayer` — явно, PB10**), `.../Core/SimEvents.cs` (`StaminaDenied`),
   `.../Movement/PlayerMovementSystem.cs`
 - Create: `client/Assets/Tests/EditMode/StaminaTests.cs` (+ `.meta`)
-- Modify: `HotTweakTests.cs`, `TestConfigs.cs` (+`RegenFixture()`),
-  `WorldLifecycleTests.cs`
+- Modify: `HotTweakTests.cs` (рефлексивный кламп-проход — QC7)
 
 **Interfaces:**
 - Produces: `PlayerState + float Stamina, StaminaRegenDelayTimer`;
@@ -619,16 +664,22 @@ public void Sanitize_ClampsAimHeight()
   Дэш: гейт `Stamina ≥ DashStaminaCost` (иначе — Denied-событие не чаще
   1 раза на взвод буфера), списание, `StaminaRegenDelayTimer =
   StaminaRegenDelay`; реген `+StaminaRegenPerSec * dt` при
-  `StaminaRegenDelayTimer == 0` и вне дэша/слайда, кламп `StaminaMax`.
-  `TestConfigs.RegenFixture()`: `Default()` c `SlideDuration = 0.9f,
-  StaminaRegenDelay = 0.3f` (M16 — заморозка наблюдаема).
+  `StaminaRegenDelayTimer == 0` и вне дэша (условие «и вне слайда» добавит
+  Т10), кламп `StaminaMax`. **Сигнатура `Update` меняется здесь:**
+  `bool` → структ `MovementResult { DashStarted, DashDenied }` (расширяется
+  Т10/Т12 — единый контракт «система → мир», QC12); call-site
+  `SimulationWorld.Tick:81` эмитит `PlayerDashed`/`StaminaDenied` по полям.
   `ApplyConfig`-клампы: `Stamina → [0, StaminaMax]`,
   `StaminaRegenDelayTimer → [0, StaminaRegenDelay]`.
-  `WorldLifecycleTests` + **рефлексивный кламп-проход** (PC11): выставить все
-  float-поля `PlayerState` = 1e6 тест-швом → `ApplyConfig(уменьшенные
-  максимумы)` → рефлексией проверить, что ни одно поле не выше своего
-  максимума из карты `поле → максимум` (карта — локальный словарь теста;
-  новое поле без записи в карте → тест падает с понятным сообщением).
+  **Рефлексивный кламп-проход — в `HotTweakTests`** (дом `ApplyConfig` —
+  QC7; НЕ в `WorldLifecycleTests`): выставить все float-поля `PlayerState` =
+  1e6 (канон-шов QA1) → `ApplyConfig(уменьшенные максимумы)` → рефлексией
+  проверить каждое поле против карты `поле → максимум` (локальный словарь
+  теста; поле без записи в карте → падение с понятным сообщением).
+  **Карта пополняется в Т10 (`SlideTimer` и др.), Т11 (`LinkWindowTimer`),
+  Т12 (`DashSpeedCur`), Т14 (`AimSettleTimer`) — обязательной строкой их
+  GREEN-шагов (QC7).** `RegenFixture()` заводится в Т10 (первый потребитель
+  — QB12).
 
 - [ ] **Step 1 (RED):** `StaminaTests.cs`:
 
@@ -658,10 +709,13 @@ public class StaminaTests
     {
         var cfg = TestConfigs.Open();
         var w = new SimulationWorld(1, cfg);
-        w.SetPlayerForTest(p => { p.Stamina = cfg.Hero.DashStaminaCost - 1f; return p; });
+        var p = w.Player;                                 // canon test-seam (QA1)
+        p.Stamina = cfg.Hero.DashStaminaCost - 1f;
+        w.SetPlayerForTest(p);
         w.Tick(Dash);
         Assert.AreEqual(0, w.Stats.DashesUsed);
         Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.StaminaDenied));
+        // Amount события = недостающая цена (QD8-ассерт §3.4)
     }
 
     [Test]
@@ -677,8 +731,9 @@ public class StaminaTests
         Assert.Greater(w.Player.Stamina, beforeRegen);      // реген пошёл
     }
 
-    [Test] public void Regen_FrozenDuringSlide_OnFixture() { /* RegenFixture: в слайде Stamina не растёт (M16) */ }
-    [Test] public void HotTweak_ClampsStaminaToNewMax() { /* ApplyConfig: StaminaMax 90→50 ⇒ Stamina ≤ 50 */ }
+    // Regen_FrozenDuringSlide_OnFixture — пишется в Т10 (слайда ещё нет; QB12).
+    // Точечный HotTweak-тест НЕ заводится: кламп покрывает рефлексивный
+    // проход в HotTweakTests (QC7).
 }
 ```
 
@@ -688,7 +743,8 @@ public class StaminaTests
 - [ ] **Step 3 (GREEN)** + рефлексивный кламп-проход; R-GOLDEN.
 - [ ] **Step 4:** R-FILTER `StaminaTests`+`HotTweakTests`+`DashTests`+
   `WorldLifecycleTests` → PASS; R-TEST.
-- [ ] **Step 5:** R-COMMIT `feat(app-n6g): Т9 — ресурс Буст (код Stamina)`.
+- [ ] **Step 5:** R-COMMIT `feat(app-n6g): Т9 — ресурс Буст (код Stamina)`
+  (+ `.meta` нового `StaminaTests.cs` — QB20).
 
 ### Task Т10: слайд — гейт, старт, тик, выход
 
@@ -702,23 +758,54 @@ public class StaminaTests
 - Modify: `StaminaTests.cs` (+`Regen_FrozenDuringSlide_OnFixture`)
 
 **Interfaces:**
-- Produces: слайд-механика §3.3 v5. Порядок в `PlayerMovementSystem.Update`
-  (расширение существующей структуры: таймеры → дэш-ветка → слайд-ветка →
-  моментум):
+- Produces: слайд-механика §3.3 v5. **`LinkWindowTimer` заводится ЗДЕСЬ**
+  (поле + декремент + кламп + смерть + карта клампов; открытие окна — тоже
+  здесь; потребление/стеновое обнуление — Т11; QB3/QA12/QD9).
+  **Контракт «система → мир» — единый структ (QC12), рикошет-поля заполнит
+  Т12:**
 
 ```csharp
-// таймеры (канон math.max(0, t - dt); буфер — латч-паттерн DashBufferTimer):
+public struct MovementResult                       // заводится в Т9 (DashStarted, DashDenied),
+{                                                  // расширяется Т10/Т12
+    public bool DashStarted, DashDenied;           // Т9
+    public bool SlideStarted, SlideDenied;         // Т10
+    public bool Ricocheted; public float2 RicochetPos, RicochetNormal; // Т12
+}
+public static MovementResult Update(ref PlayerState p, in SimInput input, in SimConfig cfg);
+// call-site единственный: SimulationWorld.Tick (:81) — эмитит события/статы по полям результата.
+```
+
+  Слайд — ЗВЕНО существующей if-цепочки `Update` (QC11: реальная структура
+  — `if (DashTimer>0) … else if (дэш-старт) … else …`; отдельные if-блоки
+  после цепочки запрещены — двойная запись `Vel` за тик):
+
+```csharp
+// timers (canonical math.max(0, t - dt); buffer = DashBufferTimer latch pattern):
 p.SlideBufferTimer = input.SlideRequested ? hero.SlideBufferWindow
                                           : math.max(0f, p.SlideBufferTimer - dt);
-p.PostDashSlideTimer = math.max(0f, p.PostDashSlideTimer - dt); // B10: не голый -= dt
-// разгон: копится вне дэша/слайда при |Vel| >= frac*MaxSpeed, иначе распад (M9/C32):
+p.PostDashSlideTimer = math.max(0f, p.PostDashSlideTimer - dt);   // B10
+p.LinkWindowTimer   = math.max(0f, p.LinkWindowTimer - dt);       // QA12
+// run-up accrues outside dash/slide, decays below threshold (M9/C32):
 bool moving = math.length(p.Vel) >= hero.SlideMinSpeedFrac * hero.MaxSpeed;
 if (p.DashTimer <= 0f && p.SlideTimer <= 0f)
     p.RunUpTimer = moving ? math.min(p.RunUpTimer + dt, hero.RunUpSeconds)
                           : math.max(0f, p.RunUpTimer - hero.RunUpDecayMult * dt);
-// старт слайда: буфер живой && не в дэше && (разгон полный || пост-дэш окно) && Буст:
-bool gate = p.RunUpTimer >= hero.RunUpSeconds || p.PostDashSlideTimer > 0f;
-if (p.SlideBufferTimer > 0f && p.DashTimer <= 0f && p.SlideTimer <= 0f && gate)
+
+bool slideGate = p.RunUpTimer >= hero.RunUpSeconds || p.PostDashSlideTimer > 0f;
+if (p.DashTimer > 0f)                     { /* dash tick (unchanged + T12 ricochet) */ }
+else if (p.DashBufferTimer > 0f && p.DashCooldown <= 0f
+         && p.SlideTimer <= 0f)           // QD10: no dash start while sliding
+{ /* dash start: Т9-гейт Буста; связка-скидка/обход кулдауна — Т11 */ }
+else if (p.SlideTimer > 0f)               // slide tick — link of the SAME chain (QC11)
+{
+    p.SlideTimer = math.max(0f, p.SlideTimer - dt);
+    float2 want = math.lengthsq(input.MoveDir) > 1e-6f ? math.normalize(input.MoveDir) : p.SlideDir;
+    p.SlideDir = Geometry.RotateTowards(p.SlideDir, want, hero.SlideSteerRadPerSec * dt); // QC19
+    p.Vel = p.SlideDir * hero.SlideSpeed;              // AimHeld-мульт — Т14
+    if (p.SlideTimer <= 0f) p.LinkWindowTimer = hero.LinkWindowSeconds; // штатный выход (C22: вынос)
+    MoveWithCollisions(...);                            // стеновое гашение — Т11
+}
+else if (p.SlideBufferTimer > 0f && slideGate)          // slide start
 {
     if (p.Stamina >= hero.SlideStaminaCost)
     {
@@ -729,38 +816,37 @@ if (p.SlideBufferTimer > 0f && p.DashTimer <= 0f && p.SlideTimer <= 0f && gate)
         p.SlideDir = math.lengthsq(input.MoveDir) > 1e-6f ? math.normalize(input.MoveDir)
             : math.lengthsq(p.Vel) > 1e-6f ? math.normalize(p.Vel)
             : math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f)); // D6
-        slideStarted = true; // мир эмитит PlayerSlideStarted + SlidesUsed++
+        result.SlideStarted = true;   // мир: PlayerSlideStarted + SlidesUsed++
     }
-    // не хватило — латч живёт своё окно и перепроверяется каждый тик (C11)
+    else result.SlideDenied = true;   // мир: StaminaDenied (QD8; поле в MovementResult)
+    // недобор: латч живёт своё окно, перепроверка каждый тик (C11)
 }
-// тик слайда: руление + override скорости (AimHeld-мульт — Т14):
-if (p.SlideTimer > 0f)
-{
-    p.SlideTimer = math.max(0f, p.SlideTimer - dt);
-    float2 want = math.lengthsq(input.MoveDir) > 1e-6f ? math.normalize(input.MoveDir) : p.SlideDir;
-    p.SlideDir = RotateTowards(p.SlideDir, want, hero.SlideSteerRadPerSec * dt);
-    p.Vel = p.SlideDir * hero.SlideSpeed;
-    if (p.SlideTimer <= 0f) p.LinkWindowTimer = hero.LinkWindowSeconds; // Т11 добавит поле
-    // выход без среза скорости — вынос осознан (C22)
-}
+else { /* обычный MoveTowards-моментум (существующая ветка) */ }
 ```
 
-  `RotateTowards(float2 from, float2 to, float maxRad)` — приватный статик
-  системы (через `atan2`/`Rotate`, существующий `Geometry.Rotate`).
-  Сигнатура `Update` расширяется до
-  `static (bool dashStarted, bool slideStarted) Update(...)` ЛИБО два
-  out-bool — на выбор implementer'а, но мир эмитит оба события. Смерть:
-  `SlideTimer/SlideBufferTimer/RunUpTimer/PostDashSlideTimer = 0` рядом с
-  `DashTimer` (M11). Пост-дэш окно ставится в тик перехода `DashTimer → 0`
-  (C13). Клампы `ApplyConfig` + карта рефлексивного теста Т9.
+  `Geometry.RotateTowards(float2 from, float2 to, float maxRad)` — public в
+  `Geometry` (дом 2D-математики; тестируется в `GeometryTests` — QC19).
+  Реген Т9 дополняется условием «и `SlideTimer <= 0f`» (QD10). Смерть:
+  `SlideTimer/SlideBufferTimer/RunUpTimer/PostDashSlideTimer/LinkWindowTimer
+  = 0` рядом с `DashTimer` (M11/QD9). Пост-дэш окно ставится в тик перехода
+  `DashTimer → 0` (C13). Клампы `ApplyConfig` (вкл. `LinkWindowTimer →
+  LinkWindowSeconds`) + строки в карту рефлексивного теста Т9.
+  `TestConfigs.RegenFixture()` (`SlideDuration 0.9, StaminaRegenDelay 0.3`
+  — M16) заводится здесь + тест `Regen_FrozenDuringSlide_OnFixture`
+  (перенос из Т9 — QB12). `StaminaDenied` слайда — не чаще 1 раза на взвод
+  буфера (симметрия с дэшем).
 
 - [ ] **Step 1 (RED):** `SlideTests.cs` — 10 тестов (семантика — по одному
   ассерт-ядру):
   - `Slide_RequiresRunUpOrPostDash` — запрос без разгона → `SlidesUsed == 0`;
     после `RunUpSeconds` бега → слайд стартует;
   - `PostDash_OpensSlideWindow` — дэш → конец → слайд в окне 0.32 без разгона;
-  - `RunUp_DecaysBelowThreshold` — разгон 50%, остановка на K тиков →
-    `RunUpTimer` упал на `RunUpDecayMult × K × dt` (фикстурно);
+  - `RunUp_DecaysBelowThreshold` — K отсчитывается от ПЕРВОГО тика, где
+    `|Vel| < SlideMinSpeedFrac × MaxSpeed` (замерить в тесте: после снятия
+    ввода скорость падает до порога ~2 тика — QA16), затем
+    `RunUpTimer` падает на `RunUpDecayMult × K × dt` (фикстурно);
+  - `Slide_InsufficientStamina_Denied` — Буст ниже цены слайда при полном
+    разгоне: слайда нет, `StaminaDenied` с `Amount` = недостающее (QD8);
   - `Slide_ResetsRunUp_NoChain` (M2) — слайд→слайд немедленно → отказ;
   - `Slide_MutualExclusionWithDash` (C7) — слайд-запрос в дэше буферится,
     дэш-запрос в слайде не срабатывает;
@@ -770,9 +856,14 @@ if (p.SlideTimer > 0f)
     `SlideDir` повернулся ≤ `SlideSteerRadPerSec * dt` (по углу);
   - `Slide_ExitKeepsMomentum` (C22) — после `SlideDuration` `|Vel|` ==
     `SlideSpeed`, затем спад к `MaxSpeed`;
-  - `Death_ClearsSlideState` (M11) — смерть в слайде → все слайд-таймеры 0;
+  - `Death_ClearsSlideState` (M11) — смерть в слайде → все слайд-таймеры 0
+    (вкл. `LinkWindowTimer`);
   - `SlideBuffer_FiresWhenRegenCoversCost` (PD12, `RegenFixture`) — Буст чуть
-    ниже цены, запрос → в течение буфер-окна реген добирает → слайд стартует.
+    ниже цены, запрос → в течение буфер-окна реген добирает → слайд стартует;
+  - `Regen_FrozenDuringSlide_OnFixture` (M16, перенос из Т9 — QB12);
+  - `SlideStarted_EventCarriesPosAndDir` — `PlayerSlideStarted.Pos` = позиция
+    старта, `HitDir == SlideDir` (payload §3.4 — QD13; `EventTests.cs` в
+    Files).
 - [ ] **Step 2:** заглушки → R-FILTER `SlideTests` → FAIL ассертов.
 - [ ] **Step 3 (GREEN)** по сниппету; R-GOLDEN.
 - [ ] **Step 4:** R-FILTER `SlideTests`+`StaminaTests`+`MovementTests`+
@@ -784,19 +875,24 @@ if (p.SlideTimer > 0f)
 
 **Files:**
 - Modify: `.../Movement/PlayerMovementSystem.cs` (**`MoveWithCollisions` →
-  `out bool hit, out float2 normal`** — первый контакт; discard'ы:
-  `PlayerMovementSystem.UpdateDead`, `MobAiSystem.ApplyMotion` — B11),
+  `out bool hit, out float2 normal, out float2 contact`** — первый контакт,
+  QA8/QC13; discard'ы: `PlayerMovementSystem.UpdateDead`,
+  `MobAiSystem.ApplyMotion` — B11),
   `.../Core/SimStates.cs` (`+ LinkWindowTimer`), `.../Combat/ProjectileSystem.cs`
   (профиль), `.../Core/SimulationWorld.cs` (кламп/`HashPlayer`)
 - Modify: `SlideTests.cs`, `HitZoneTests.cs`, `StaminaTests.cs`
 
 **Interfaces:**
-- Семантика: гашение о стену — в слайд-ветке после `MoveWithCollisions`:
+- `MoveWithCollisions` → `out bool hit, out float2 normal, out float2
+  contact` (**три out'а — QA8/QC13: `contact` нужен рикошет-событию Т12**;
+  discard-вызовы `UpdateDead` и `MobAiSystem.ApplyMotion` — на три `_`).
+- Гашение о стену — в слайд-ветке после `MoveWithCollisions`:
   `hit && math.dot(-normal, p.SlideDir) > hero.SlideWallStopDot` ⇒
   `SlideTimer = 0`, `Vel = math.normalizesafe(p.Vel, p.SlideDir) *
-  hero.MaxSpeed`, `RunUpTimer = 0`, **`LinkWindowTimer` НЕ открывается**
-  (M3 — стена не путь к скидке). Штатный выход открывает окно (Т10). Дэш в
-  окне: цена `LinkedDashStaminaCost`, остаток `DashCooldown` игнорируется,
+  hero.MaxSpeed`, `RunUpTimer = 0`, **`LinkWindowTimer = 0` — окно связки
+  НЕ открывается и гасится, если уже было открыто в этом тике** (M3/QA12).
+  Штатный выход открывает окно (Т10). Дэш в окне: цена
+  `LinkedDashStaminaCost`, остаток `DashCooldown` игнорируется,
   `LinkWindowTimer = 0` (окно потребляется — C6), кулдаун ставится заново.
   Слайд-профиль: в `ProjectileSystem` для игрока при
   `player.SlideTimer > 0` верхняя граница = `SlideProfileTop` (вместо
@@ -808,7 +904,9 @@ if (p.SlideTimer > 0f)
   - `SlideAlongWall_Continues` — под острым углом слайд доживает таймер;
   - `LinkedDash_DiscountAndCooldownBypass_ConsumesWindow` (C6) — после
     штатного слайда дэш в окне: списано `LinkedDashStaminaCost`, кулдаун
-    прежнего дэша не мешает, второй дэш в то же окно — уже полная цена;
+    прежнего дэша не мешает; повторный дэш-запрос сразу после — **ассерт
+    `Stats.DashesUsed` не растёт и Буст не меняется** (окно потреблено,
+    кулдаун снова держит — QA14);
   - `PerfectChain_CostsExactly_StaminaMax` — дэш→слайд→связка-дэш→слайд:
     суммарно `DashStaminaCost + 2*SlideStaminaCost + LinkedDashStaminaCost`
     == `StaminaMax` (фикстурно; Д5 «ровно две связки»);
@@ -835,18 +933,19 @@ if (p.SlideTimer > 0f)
 - Семантика (условие — У ВЫЗЫВАЮЩЕГО, `math.reflect` напрямую, собственный
   `Geometry.Reflect` НЕ заводится — PC10): в дэш-ветке
   `p.Vel = p.DashDir * p.DashSpeedCur` (старт дэша: `DashSpeedCur =
-  hero.DashSpeed`); после `MoveWithCollisions(out hit, out normal)`:
+  hero.DashSpeed`); после `MoveWithCollisions(out hit, out normal,
+  out contact)` (`contact` — из Т11-сигнатуры, QA8):
 
 ```csharp
-if (hit && math.dot(p.DashDir, normal) < 0f && !ricochetedThisTick)
+if (hit && math.dot(p.DashDir, normal) < 0f && !result.Ricocheted) // <=1 per tick (M8)
 {
-    p.DashDir = math.reflect(p.DashDir, normal);        // зеркально (Д9)
+    p.DashDir = math.reflect(p.DashDir, normal);        // mirror (D9)
     p.DashSpeedCur *= hero.RicochetRetention;
-    ricochetedThisTick = true;                          // ≤1 отражения на тик (M8)
-    ricochetContact = contactPos; ricochetNormal = normal; // мир эмитит DashRicocheted
+    result.Ricocheted = true;                           // MovementResult (QC12)
+    result.RicochetPos = contact; result.RicochetNormal = normal;
 }
-// отражённый вектор применяется СО СЛЕДУЮЩЕГО тика (D16): тик контакта уже
-// разрешён скольжением внутри MoveWithCollisions
+// reflected vector applies FROM THE NEXT tick (D16): contact tick is already
+// resolved by the slide inside MoveWithCollisions
 ```
 
 - [ ] **Step 1 (RED):** `DashRicochetTests.cs` — вся арифметика на ЯВНОЙ
@@ -900,19 +999,22 @@ public static float2 PredictPos(float2 pos, float2 vel, float maxSpeed,
 }
 ```
 
-  `MobAiSystem.UpdateChaser`: вход в `Telegraph` — `math.distance(m.Pos,
-  Targeting.PredictPos(player.Pos, player.Vel, cfg.HeroMaxSpeedForLead …))`
-  — ВНИМАНИЕ: `MobSimConfig` не знает `Hero.MaxSpeed`; прокинуть параметром
-  из `SimulationWorld` (`w.Config.Hero.MaxSpeed`) в вызов `UpdateChaser`
-  (система уже получает мир). Удар (re-validate через `TelegraphSeconds`)
-  НЕ меняется — честный промах.
+  `MobAiSystem.UpdateChaser`: вход в `Telegraph` —
+  `math.distance(m.Pos, Targeting.PredictPos(player.Pos, player.Vel,
+  w.Config.Hero.MaxSpeed, cfg.TelegraphSeconds, cfg.SwingLeadFactor,
+  cfg.SwingLeadMaxMeters)) ≤ cfg.AttackRange` — **сигнатура `UpdateChaser`
+  НЕ меняется: `w` уже в параметрах и уже читает `w.Config.Hero.Radius`
+  (QA11)**. Удар (re-validate через `TelegraphSeconds`) НЕ меняется —
+  честный промах.
 
 - [ ] **Step 1 (RED):** в `MobAiTests`:
   - `Chaser_TelegraphsAheadOfRunner_AndConnects` — игрок бежит на чейзера с
     `MaxSpeed`: телеграф стартует РАНЬШЕ входа в `AttackRange` и удар
     попадает (прогноз);
   - `Chaser_Standing_FarPlayer_NoTelegraph` (D8) — стоячий игрок на
-    `AttackRange + SwingLeadMaxMeters + 0.5` → телеграфа нет;
+    `AttackRange + SwingLeadMaxMeters + 0.5`; фикстура `cfg.Chaser.MaxSpeed
+    = 0` (чейзер не доезжает и не превращает тест в гонку тиков — QA15) →
+    телеграфа нет за 60 тиков;
   - `Chaser_DashDoesNotBaitFromAfar` (A4) — дэш (Vel = DashSpeed) в сторону
     чейзера с 6 м → телеграфа нет (лид клампится MaxSpeed);
   - `Chaser_LeadClampedByMaxMeters` — бег с MaxSpeed: вход в телеграф не
@@ -938,6 +1040,8 @@ public static float2 PredictPos(float2 pos, float2 vel, float maxSpeed,
   `hero.MaxSpeed * hero.AimMoveSpeedFrac` (дэша не касается). Слайд-тик:
   `p.Vel = p.SlideDir * hero.SlideSpeed *
   (input.AimHeld ? hero.AimSlideSpeedMult : 1f)` — с ТОГО ЖЕ тика (A11).
+  **Смерть: `AimSettleTimer = 0` рядом с прочими; строка в карту клампов
+  `HotTweakTests` (`→ AimSettleSeconds`) — QD9/QC7.**
 
 - [ ] **Step 1 (RED):**
   - `AimHeld_CapsRunSpeed` — стационарная скорость под ПКМ ==
@@ -953,7 +1057,8 @@ public static float2 PredictPos(float2 pos, float2 vel, float maxSpeed,
 - [ ] **Step 5:** R-COMMIT `feat(app-n6g): Т14 — кап и слайд-штраф
   прицельного режима`.
 
-**Гейт фазы Г3:** R-TEST; push; bd note.
+**Гейт фазы Г3:** R-TEST (total ≈ +32 к Г2 — QD17); push; jsonl-chore;
+bd note; `bd close` сабтаска Г3.
 
 ---
 
@@ -965,23 +1070,34 @@ public static float2 PredictPos(float2 pos, float2 vel, float maxSpeed,
 `ProjectileHeightTests.cs`, `WeaponTests.cs`.
 
 **Interfaces:**
-- Produces: `public static float HipSpreadRadians(in WeaponSimConfig w,
-  in PlayerState p, in HeroSimConfig hero)` — ЕДИНАЯ формула хип-разброса
-  (потребитель №2 — `CrosshairView`, Т20 — PC6):
+- Produces: **`public static class Spread`** (новый файл-сосед в
+  `Simulation/Combat/Spread.cs` — `WeaponSystem` остаётся `internal`, а
+  формулу читает и `CrosshairView` из `Ring.Presentation`; QA3/QB1/QC1/QD2):
 
 ```csharp
-public static float HipSpreadRadians(in WeaponSimConfig w, in PlayerState p, in HeroSimConfig hero)
+namespace Ring.Simulation.Combat
 {
-    float moveMult = p.SlideTimer > 0f ? w.SpreadSlideMult
-        : math.length(p.Vel) >= w.RunSpreadSpeedFrac * hero.MaxSpeed ? w.SpreadRunMult
-        : 1f;
-    return (w.SpreadRad + p.RecoilOffset) * moveMult;
+    /// Single home of the hip-fire spread formula: consumed by WeaponSystem
+    /// (authoritative shots) and CrosshairView (honest reticle) — PC6.
+    public static class Spread
+    {
+        public static float HipRadians(in WeaponSimConfig weapon, in PlayerState p,
+            in HeroSimConfig hero)
+        {
+            float moveMult = p.SlideTimer > 0f ? weapon.SpreadSlideMult
+                : math.length(p.Vel) >= weapon.RunSpreadSpeedFrac * hero.MaxSpeed
+                    ? weapon.SpreadRunMult
+                    : 1f;
+            return (weapon.SpreadRad + p.RecoilOffset) * moveMult;
+        }
+    }
 }
 ```
 
   Ветка выстрела (замена нынешних строк ~39–46; спека §3.2 v5 дословно):
 
 ```csharp
+var hero = w.Config.Hero;                       // QC21: Update declares only cfg = w.Config.Weapon
 float muzzleH = p.SlideTimer > 0f ? hero.SlideMuzzleHeight : hero.MuzzleHeight;
 float a; float3 vel3;
 if (input.AimHeld)
@@ -995,7 +1111,7 @@ if (input.AimHeld)
 }
 else
 {
-    a = HipSpreadRadians(in cfg, in p, in hero);
+    a = Spread.HipRadians(in cfg, in p, in hero);
     float2 dir2 = math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f));
     vel3 = new float3(dir2 * cfg.ProjectileSpeed, 0f);               // горизонталь Э1
 }
@@ -1023,7 +1139,7 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
   - `AimedShot_FullSpeed3D` (K10) — при угле и разбросе
     `|(Vel, VelZ)| == ProjectileSpeed` (1e-3);
   - `HipShot_HorizontalAtMuzzleHeight` — `VelZ == 0`, `Height == MuzzleHeight`;
-  - `HipSpread_RunAndSlideMultipliers` (D8) — `HipSpreadRadians` на
+  - `HipSpread_RunAndSlideMultipliers` (D8) — `Spread.HipRadians` на
     стоячем/бегущем/слайдящем: ×1 / ×`SpreadRunMult` / ×`SpreadSlideMult`,
     граница `RunSpreadSpeedFrac` включительно;
   - `FirstAimTick_SpreadNotZero` (C2) — тик 1 `AimHeld` c `SpreadRad > 0` ⇒
@@ -1041,10 +1157,13 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
 
 **Files:** Modify `DeterminismTests.cs` (`Scripted`).
 
-- [ ] **Step 1:** в `Scripted(ref rng)` добавить: `SlideRequested =
-  rng.NextFloat() < 0.05f`; «залипающий» `AimHeld` (поле-переменная
-  сценария, переключение `rng.NextFloat() < 0.03f`); `AimHeight =
-  rng.NextFloat(0f, 3.8f)` — **пояса башни-головы [2.70, 3.50] в сценарии
+- [ ] **Step 1:** сигнатура сценария меняется на `Scripted(ref Random rng,
+  ref bool aimHeld)`; `bool aimHeld = false;` объявляется ЛОКАЛЬНО в
+  `RunScripted` рядом с `var rng = …` (**никаких статик-полей: `RunScripted`
+  зовётся трижды, состояние утечёт между прогонами и golden станет
+  порядкозависимым — QA5/QB5/QD5**). В сценарий добавить: `SlideRequested =
+  rng.NextFloat() < 0.05f`; переключение `aimHeld` с шансом 3%/тик;
+  `AimHeight = rng.NextFloat(0f, 3.8f)` — **пояса башни-головы [2.70, 3.50]
   достижимы** (PA2/PD4).
 - [ ] **Step 2:** R-FILTER `DeterminismTests` → golden FAIL (ожидаемо) →
   R-GOLDEN — **ФИНАЛЬНЫЙ перепин** (значение — в bd note и в будущий PR).
@@ -1052,8 +1171,9 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
 - [ ] **Step 4:** R-COMMIT `test(app-n6g): Т16 — golden покрывает слайд и оба
   режима огня`.
 
-**Гейт фазы Г4:** R-TEST; push; `bd note app-n6g "Г4: golden final <хеш>,
-тестов <N>"`.
+**Гейт фазы Г4:** R-TEST (total ≈ +9 к Г3 — QD17); push; jsonl-chore;
+`bd note app-n6g "Г4: golden final <хеш>, тестов <N>"`; `bd close`
+сабтаска Г4.
 
 ---
 
@@ -1076,7 +1196,10 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
   `GibExplosionSpeed 4`, `GibPartsFifoLimit 24`, `GibPhysicsSeconds 3`,
   `AimProxyHeadRadiusFrac 0.5`, `AimRayAlpha 0.35`, `AimRayWidth 0.03`,
   `AimDotScale 0.15` — маркер, ПОСЛЕДНИМ + keep-LAST (старый док у
-  `CasingEjectSpeedMax` снять).
+  `CasingEjectSpeedMax` снять). **`RicochetSparkCount` и
+  `SlideWallSparkBurstCount` НЕ заводятся** (QC3: burst-каунт запечён в
+  префаб из `BlockSparkBurstCount`, `PlayParticle` его не параметризует;
+  QC4/QD12: потребителя нет — спека §3.5 поправлена).
 - `EditorBootstrapUtils.EnsureAssetHasKey(Object so, string assetPath,
   string markerField)` — извлечение инлайн-проверки бутстрапа (`File.
   ReadAllText(...).Contains` → `EditorUtility.SetDirty`); инлайн-вариант
@@ -1085,6 +1208,8 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
   `GameFeelConfig.asset` (`"AimDotScale"`), `HeroConfig.asset`
   (`"AimSettleSeconds"`), `WeaponConfig.asset` (`"RunSpreadSpeedFrac"`),
   `MobChaserConfig.asset` / `MobGunnerConfig.asset` (`"SwingLeadMaxMeters"`).
+  **Порядок против гонки маркера (QD6): `bool gunnerMarkerPresent`
+  снимается ДО всех `EnsureAssetHasKey`/`SetDirty`/`SaveAssets`.**
   **НОВЫЙ `ApplyGunnerZoneDefaults(MobConfig gunner)`** — `SetIfDifferent`
   ТОЛЬКО по новым полям: `LegsTop 1.10, BodyTop 2.70, HeadTop 3.50`, мульты
   `0.75/1.0/1.7`, `MuzzleHeight 0.95` (`SwingLead*` не трогает — у ганнера
@@ -1093,9 +1218,10 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
   запрещён — PA4/PB2/PC3).
 
 - [ ] **Step 1:** поля + хелпер + `ApplyGunnerZoneDefaults` → R-COMPILE.
-- [ ] **Step 2:** R-APPLY → ГЕЙТ-ЛОГ; проверить YAML: новые ключи в пяти
-  `.asset`, ганнер — зонные значения, `GunnerVisualScale: 0.4` НЕ изменился,
-  ручные числа ганнера Э1 (`MaxHp: 20` и т.д.) НЕ изменились.
+- [ ] **Step 2:** R-APPLY → ГЕЙТ-ЛОГ; YAML-ассерты: новые ключи в пяти
+  `.asset`; `MobGunnerConfig.asset` содержит `LegsTop: 1.1` и
+  `HeadTop: 3.5` (QD6); `GunnerVisualScale: 0.4` НЕ изменился; ручные
+  числа ганнера Э1 (`MaxHp: 20` и т.д.) НЕ изменились.
 - [ ] **Step 3:** R-IDEM (второй Apply — пустой diff).
 - [ ] **Step 4:** R-COMMIT `feat(app-n6g): Т17 — доставка SO-полей
   маркер-ключами` (включая изменённые `.asset` + сцену, если dirty).
@@ -1118,16 +1244,19 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
   `performed` В `Enable()` (пере-подписка — урок F-2), снятие в `Disable()`,
   сброс в `ClearLatches()`; `AimHeld = _aimHold.IsPressed()` — уровень, БЕЗ
   `WasPressedThisFrame` (C16). `SampleFrame` заполняет
-  `SlideRequested/AimHeld/AimHeight` (высота — из `AimProvider`, Т19; до Т19
-  — `MuzzleHeight`-фолбэк через runner-конфиг).
+  `SlideRequested/AimHeld/AimHeight` (высота — из `AimProvider`, Т19;
+  **до Т19 — `AimHeight = float.NaN`: `Sanitize` Т8 отобразит в
+  `MuzzleHeight`; доступа к конфигу у сэмплера нет и не нужен — QD11**).
 - `SimulationRunner`: проброс новых полей в `SimInput` +
   `SimInputFrame.ForTick` (edge — только `SlideRequested`).
 
 - [ ] **Step 1:** правки → R-COMPILE.
-- [ ] **Step 2 (смоук биндов, PD18):** временная проверка в `Apply`
-  (или editor-тест): `asset.FindAction("Gameplay/<X>", true)` для
-  Move/Aim/Fire/Dash/Slide/AimHold → R-APPLY, лог чист.
-- [ ] **Step 3:** R-COMMIT `feat(app-n6g): Т18 — бинды слайда и прицела`.
+- [ ] **Step 2 (смоук биндов, PD18/QD16):** ПОСТОЯННЫЙ editor-тест, не
+  временный код: `InputActionsTests.cs` (+ `.meta`) в `Tests/EditMode` —
+  `asset.FindAction("Gameplay/<X>", throwIfNotFound: true)` для
+  Move/Aim/Fire/Dash/Slide/AimHold; R-FILTER `InputActionsTests` → PASS.
+- [ ] **Step 3:** R-IDEM (`.inputactions` стабилен при Apply — QD16).
+- [ ] **Step 4:** R-COMMIT `feat(app-n6g): Т18 — бинды слайда и прицела`.
 
 ### Task Т19: прицел — слой, прокси, провайдер
 
@@ -1141,6 +1270,14 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
   (**+ `SetRef(aimSo, "_runner", runner)` в бутстрапе — PA8/PD16**);
   `Awake`: `for (int i = 0; i < 32; i++) Physics.IgnoreLayerCollision(
   AimProxyLayer, i, true);` (прецедент гильз — B3);
+  **Семантика точки прицела МЕНЯЕТСЯ (QA7/QD1): при `AimHeld` и попадании
+  в прокси И `CurrentAimSimPos`, И `CurrentAimHeight` берутся из ОДНОЙ
+  точки `hit.point` одного каста** (иначе XY — за мобом на полу, высота —
+  с прокси: траектория систематически ниже цели, хедшот-башня мертва);
+  при промахе — плоскостной фолбэк Э1 + `height = 0`; при `!AimHeld` —
+  поведение Э1 без изменений. Кэш обоих значений — в `LateUpdate` после
+  `Physics.SyncTransforms`. NRE-гвард: `if (_runner == null ||
+  _runner.World == null) return;` (QA18).
   `bool TryAimProxy(out float2 simPos, out float height)`: `Physics.Raycast(
   ray, out hit, _runner.World.Config.Arena.Radius * 2f, 1 << AimProxyLayer,
   QueryTriggerInteraction.Collide)` (множитель — тот же, что в `Sanitize`,
@@ -1150,8 +1287,10 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
   используется» (сэмплер шлёт, симуляция игнорирует). Каст — в `LateUpdate`
   ПОСЛЕ записи поз вьюх + `Physics.SyncTransforms()` (C15); однокадровое
   отставание — задокументировать в class-doc (K15).
-- Бутстрап: `EnsureAimProxyLayer` — копия `EnsureCasingsLayer` под слот 10 с
-  отказом при занятом чужим именем; прокси-чайлды `AimProxy_Legs/Body/Head`
+- Бутстрап: общий **`EnsureUserLayer(int slot, string name)`** (QC14 —
+  логика патча TagManager одна; `EnsureCasingsLayer` становится тонкой
+  обёрткой, `EnsureAimProxyLayer` — второй вызов, слот 10, отказ при
+  занятом чужим именем); прокси-чайлды `AimProxy_Legs/Body/Head`
   (CapsuleCollider `isTrigger = true`, слой 10) на префабах
   `MobChaserView`/`MobGunnerView` и кукле игрока — размеры из SO-поясов
   соответствующего конфига, голова — радиус `× AimProxyHeadRadiusFrac`;
@@ -1178,16 +1317,20 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
 
 **Interfaces:**
 - `AimRayView` — **ТОЛЬКО LineRenderer** (2 точки: дуло модели → точка
-  прицела; материал `GetOrCreateUnlitMaterial`; `AimRayAlpha`/`AimRayWidth`;
-  `enabled` только при `AimHeld`); **собственной точки-маркера НЕ заводит**
-  (PC8). Ссылки: `_runner`, `_aimProvider`, `_gameFeel` (SetRef бутстрапом).
+  прицела; `AimRayAlpha`/`AimRayWidth`; `enabled` только при `AimHeld`);
+  **собственной точки-маркера НЕ заводит** (PC8). Материал создаёт бутстрап
+  (`GetOrCreateUnlitMaterial` — приватный статик Editor-сборки, QA10) и
+  прокидывает `SetRef(aimRaySo, "_rayMaterial", mat)`. Ссылки: `_runner`,
+  `_aimProvider`, `_gameFeel`, `_rayMaterial` (SetRef бутстрапом).
 - `CrosshairView`: конус — радиус строго по хип-формуле через
-  **`WeaponSystem.HipSpreadRadians(World.Config.Weapon, RenderCurr.Player,
+  **`Spread.HipRadians(World.Config.Weapon, RenderCurr.Player,
   World.Config.Hero)`** (одна формула на сим и вьюху — PC6; `settleFactor`
   НЕ применяется — конус живёт только от бедра, PD15); при `AimHeld` конус
   скрыт; `_marker`: квадрат-квад → круглый мини-диск, при `AimHeld` служит
   точкой прицела (scale × `AimDotScale`, позиция — точка прицела) — второй
-  маркер не заводится (PC8).
+  маркер не заводится (PC8). **Оба док-блока `CrosshairView` (class-doc и
+  `UpdateCone`) переписать под `Spread.HipRadians`** — иначе доки врут про
+  источник формулы (QC16).
 
 - [ ] **Step 1:** `AimRayView` + бутстрап-объект/провода → R-COMPILE.
 - [ ] **Step 2:** `CrosshairView` (формула/режимы/круг-маркер) → R-COMPILE.
@@ -1200,7 +1343,9 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
 **Files:** Modify `client/Assets/Scripts/Presentation/SimulationRunner.cs`,
 `ViewRegistry.cs`, `MuzzleFlashView.cs`, `AimRayView.cs`,
 `PersistentPropsDirector.cs`, `client/Assets/Scripts/Data/GameFeelConfig.cs`
-(док-строки).
+(док-строки), **`client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs`
+(снять `SetRef(..., "_arena", ...)` :1080 — `SetRef` бросает на
+  отсутствующее поле, без этого R-APPLY упадёт; QC2)**.
 
 **Interfaces:**
 - `SimulationRunner` — НОВОЕ свойство (единственный дом тернара — PC7):
@@ -1212,7 +1357,9 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
   вместо константы `ProjectileOffset` (удалить — K8); масштаб трейсера ×
   `TracerScale`.
 - Потребители дульной высоты → `_runner.RenderMuzzleHeight`:
-  `MuzzleFlashView` (ОБА места — предсказание и событие, PC7), гильзы
+  `MuzzleFlashView` — предсказание и **игрок-ветка** события; **моб-ветка
+  события — `World.Config.Gunner.MuzzleHeight`** (ганнер с Т4 стреляет с
+  0.95, вспышка обязана совпасть — QC9); гильзы
   `PersistentPropsDirector.SpawnCasing`; `AimRayView` — начало луча.
   `AudioDirector` высоту НЕ читает — не трогать (PC7).
   `GameFeelConfig.MuzzleLiftY` — из кода выведен, поле остаётся
@@ -1232,7 +1379,8 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
 - [ ] **Step 5:** R-COMMIT `feat(app-n6g): Т21 — вьюхи снарядов, дула и
   декалей в 3D`.
 
-**Гейт фазы Г5:** R-TEST + R-APPLY + R-IDEM; push; bd note.
+**Гейт фазы Г5:** R-TEST (total: +InputActionsTests — QD17) + R-APPLY +
+R-IDEM; push; jsonl-chore; bd note; `bd close` сабтаска Г5.
 
 ---
 
@@ -1246,20 +1394,29 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
 
 **Interfaces:**
 - HUD: `_staminaFill` — третий `GetOrCreateBar("StaminaBar", …)` + `SetRef`
-  (паттерн `_hpFill`/`_dashFill` — B8); заполнение
-  `RenderCurr.Player.Stamina / World.Config.Hero.StaminaMax` (eps-гвард как
-  `CooldownEps`); цвет — лерп `StaminaBarFullColor→LowColor` ниже
-  `StaminaBarLowThreshold`; по `StaminaDenied` — пульс цветом
-  (`StaminaDeniedPulseSeconds`). UI-подпись бара — «Буст» (Д12).
+  (паттерн `_hpFill`/`_dashFill` — B8); заполнение —
+  **`_runner.Curr.Player.Stamina`** (источник соседних баров; НЕ
+  `RenderCurr` — бар не должен замирать в хитстопе, QC10) `/
+  World.Config.Hero.StaminaMax` (eps-гвард как `CooldownEps`); цвет — лерп
+  `StaminaBarFullColor→LowColor` ниже порога; по `StaminaDenied` — пульс
+  (`StaminaDeniedPulseSeconds`). **Текстовой подписи НЕТ** (у HP/Dash её
+  нет, `GetOrCreateBar` строит только Background+Fill; различение — цветом
+  и позицией; «Буст» остаётся термином документации/настроек — QD7,
+  решение записано).
 - `GameFeelDirector`: `ProjectileHit` c `Zone == Head` → hitstop ×
   `HeadHitstopScale`.
 - `AudioDirector`: питч хита ± `ZoneHitPitchOffset` (Head выше, Legs ниже);
   короткий deny-звук по `StaminaDenied`; звук рикошета по `DashRicocheted`.
 - `PersistentPropsDirector`: `HandleEvent` + `DashRicocheted` → burst через
-  **существующий `_blockSparkPool`** (`PlayParticle(pos,
-  LookRotation(HitDir))`, `RicochetSparkCount` — шестой пул НЕ заводится,
-  PC13); `PlayerSlideStarted` → burst пыли `SlideDustBurstCount` (прецедент
-  `HitSparkBurstCount`/`ConfigureBurstParticles`).
+  **существующий `_blockSparkPool`** (реальная сигнатура QA13:
+  `PlayParticle(_blockSparkPool, SimSpace.ToWorld(e.Pos),
+  Quaternion.LookRotation(SimSpace.ToWorld(e.HitDir), Vector3.up))` +
+  гвард нулевого `HitDir` — `LookRotation(zero)` пишет ошибку в лог и
+  роняет ГЕЙТ-ЛОГ; каунт частиц — запечённый `BlockSparkBurstCount`, свой
+  каунт не заводится — QC3/PC13); `PlayerSlideStarted` → burst пыли
+  `SlideDustBurstCount` (прецедент `HitSparkBurstCount`/
+  `ConfigureBurstParticles`; отдельный dust-пул + префаб — по образцу
+  спарк-пулов).
 - `DevOverlay`: строки `SlidesUsed`/`HeadshotKills` (A16; `DroppedEvents`
   уже есть).
 
@@ -1272,16 +1429,22 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
 
 ### ВЕХА В1 «Руки» + ВЕХА В2 «Прицел» — плейтесты владельца (СТОП)
 
-Контент В1 (Буст/слайд/рикошет/замах/HUD/deny) готов с Т22; контент В2
-(оба режима, зоны, oneshot-башня, экран «мяса», «хоть в пол», луч/круг) —
-с Т21 (PD19). СТОП: сборка не нужна — владелец играет в Editor'е
-(hot-tweak SO живьём). Передать владельцу: тюнинг-лист В1 (экономика Буста,
-окна, `SwingLead*`, кандидат «выпад на ударе» — C10; кандидаты чейзера
-`Telegraph 0.22`/`Range 1.4` — M20), чеклист `DroppedEvents == 0`
-(DevOverlay); В2: читаемость хедшота (слышимость — C12), near-miss «в пол»
-(кандидат-ручка `AimSnapScreenRadius` — C9), **балансовый PR владельца:
-радиус снаряда, `GunnerVisualScale 0.4 → ≈0.76`**. Фидбек — фикс-волнами
-(урок 34), bd note.
+- [ ] Гейт фазы Г6 (QB10): R-TEST полный (ожидаемое total ≈ Г4-счётчик,
+  сим не менялся — QD17); R-APPLY + R-IDEM; push ветки; jsonl-chore;
+  `bd note app-n6g "Г6 done: вехи В1/В2 переданы владельцу"`.
+- [ ] Доложить владельцу В1: Буст/слайд/рикошет/замах/HUD/deny; тюнинг-лист
+  (экономика Буста, окна, `SwingLead*`, кандидат «выпад на ударе» — C10;
+  кандидаты чейзера `Telegraph 0.22`/`Range 1.4` — M20); чеклист
+  `DroppedEvents == 0` (DevOverlay). Играет в Editor'е, hot-tweak SO живьём.
+- [ ] Доложить владельцу В2: оба режима, зоны, oneshot-башня, экран «мяса»,
+  «хоть в пол», луч/круг; читаемость хедшота (C12); near-miss «в пол»
+  (кандидат `AimSnapScreenRadius` — C9); **балансовый PR владельца: радиус
+  снаряда, `GunnerVisualScale 0.4 → ≈0.76`**.
+- [ ] Числа плейтеста → `chore(app-n6g): <SO> — числа вех В1/В2`
+  (санкционированное исключение из запретного списка — QB9); R-IDEM мерить
+  ПОСЛЕ этого коммита.
+- [ ] Фидбек → фикс-волны (урок 34) → bd note.
+- [ ] **Дальше — только по команде владельца.**
 
 ---
 
@@ -1317,7 +1480,8 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
 - [ ] **Step 3:** `PlayerVisual` слайд-ветка + Capture → R-COMPILE; R-APPLY →
   R-IDEM.
 - [ ] **Step 4:** R-COMMIT `feat(app-n6g): Т23 — слайд-анимация Сборщика`
-  (+ LFS-проверка: `git check-attr filter -- <fbx>` → lfs).
+  (+ `.meta` FBX И НОВОЙ ПАПКИ `_Ring/Animations/` — QB20/QB16;
+  LFS-проверка: `git check-attr filter -- <fbx>` → lfs).
 
 ### Task Т24: обломки (сначала `app-1zf`)
 
@@ -1335,10 +1499,11 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
   `bd close app-1zf`. Отрицательный → фолбэк: отлёт ЦЕЛОЙ головы-меша
   (если отделима) или примитивов, решение владельца на В3 (Р2).
 - `GibView`: Rigidbody-обломок, слой `PersistentPropsDirector.CasingsLayer`
-  (физика уже изолирована); **settle-логика — ДОСЛОВНЫЙ перенос из
-  `CasingView`** (freeze по `linearVelocity.sqrMagnitude < SettleSpeedSqr`
-  ИЛИ hard-cap `HardCapMultiplier × GibPhysicsSeconds` — НЕ голый таймер,
-  урок app-4qc — PC14); `Spawn(Vector3 pos, Mesh mesh, Material mat,
+  (физика уже изолирована); **settle-логика — общий хелпер `PropSettle`
+  (Presentation): `static bool ShouldFreeze(Rigidbody rb, float elapsed,
+  float settleSeconds)` — freeze по скорости + hard-cap (НЕ голый таймер,
+  урок app-4qc); `CasingView` рефакторится на него же — одно правило
+  заморозки на обе вьюхи (QC15, PC14)**; `Spawn(Vector3 pos, Mesh mesh, Material mat,
   Vector3 impulse)` — `AddForce(impulse, ForceMode.VelocityChange)` (урок 28).
 - `PersistentPropsDirector`: пятый `RingBuffer<GibView>` (лимит
   `GibPartsFifoLimit`, Prewarm, регистрация в `Clear()` — D10);
@@ -1359,9 +1524,14 @@ w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
 
 ### ВЕХА В3 «Мясо» — плейтест владельца (СТОП)
 
-Обломки (голова по вектору пули, взрыв-разброс), слайд-клип Mixamo или
-процедурный фолбэк (слово владельца), пыль/искры/звуки. Фидбек —
-фикс-волнами; числа — SO живьём.
+- [ ] Гейт фазы Г7 (QB10): R-TEST полный; R-APPLY-<X> затронутых бутстрапов
+  + R-IDEM; push; jsonl-chore; `bd note app-n6g "Г7 done: веха В3"`.
+- [ ] Доложить владельцу: обломки (голова по вектору, взрыв-разброс),
+  слайд-клип Mixamo или процедурный фолбэк (его слово — Р1), пыль/искры/
+  звуки.
+- [ ] Числа плейтеста → `chore(app-n6g): <SO> — числа вехи В3` (QB9).
+- [ ] Фидбек → фикс-волны → bd note.
+- [ ] **Дальше — только по команде владельца.**
 
 ---
 

@@ -266,7 +266,7 @@ DoD Э1 закрыт плейтестом; пакет — вставка меж�
 | `WeaponConfig` | `CanFireWhileSlide true`, `SpreadRunMult 1.5`, `SpreadSlideMult 2.0`, `RunSpreadSpeedFrac 0.5` (маркер); радиус снаряда — балансовый PR на В2 |
 | `MobConfig` × Chaser | `LegsTop 0.60`, `BodyTop 1.45`, `HeadTop 1.85` (Д15: ростом с носителя и чуть выше — «мясо»-экран), мульты `0.75 / 1.0 / 1.7` (единые, v4-исключение отменено владельцем), `SwingLeadFactor 1.0`, `SwingLeadMaxMeters 2.0` (маркер) |
 | `MobConfig` × Gunner | `LegsTop 1.10`, `BodyTop 2.70`, `HeadTop 3.50` (Д15: ×2 роста носителя — голова-башня над толпой), мульты `0.75 / 1.0 / 1.7` (**хедшот = 12 × 1.7 = 20.4 ≥ 20 HP — oneshot**), `MuzzleHeight 0.95` — **sim-дуло НЕ масштабируется ростом** (горизонтальный выстрел обязан попадать в корпус носителя [0.55, 1.35) и переныриваться слайдом; виз-дуло модели — вопрос вехи В2) |
-| `GameFeelConfig` | `TracerScale 0.7`, `SlideDustRate 40`, `SlideWallSparkRate 60`, `RicochetSparkCount 12`, `StaminaBarFullColor`, `StaminaBarLowColor`, `StaminaBarLowThreshold 0.25`, `StaminaDeniedPulseSeconds 0.2` (C11), `HeadHitstopScale 1.4`, `ZoneHitPitchOffset 0.06` (C12), `GibHeadImpulseSpeed 6`, `GibExplosionSpeed 4`, `GibPartsFifoLimit 24`, `GibPhysicsSeconds 3` (D10), `AimProxyHeadRadiusFrac 0.5` (ручка СЛОЖНОСТИ хедшота: уже прокси → сложнее навести, A13), `SlideDustBurstCount 14`, `SlideWallSparkBurstCount 10` (burst-модель по прецеденту `HitSparkBurstCount` — continuous-rate у пулов нет, PC13), `AimRayAlpha 0.35`, `AimRayWidth 0.03`, `AimDotScale 0.15` (маркер; `HipReticleRadiusScale` УБРАН — C13). **`GunnerVisualScale` — существующее поле (0.4)**: рост ×2 = значение ≈0.76 (пропорция 0.4 × 3.5/1.85) — правка существующего числа, отдельный балансовый PR на В2; механизм применения (`EnsureVisual`/`MobVisual.Bind`) уже есть, код не меняется (PD1/PC1) |
+| `GameFeelConfig` | `TracerScale 0.7`, `SlideDustRate 40`, `SlideWallSparkRate 60`, `RicochetSparkCount 12`, `StaminaBarFullColor`, `StaminaBarLowColor`, `StaminaBarLowThreshold 0.25`, `StaminaDeniedPulseSeconds 0.2` (C11), `HeadHitstopScale 1.4`, `ZoneHitPitchOffset 0.06` (C12), `GibHeadImpulseSpeed 6`, `GibExplosionSpeed 4`, `GibPartsFifoLimit 24`, `GibPhysicsSeconds 3` (D10), `AimProxyHeadRadiusFrac 0.5` (ручка СЛОЖНОСТИ хедшота: уже прокси → сложнее навести, A13), `SlideDustBurstCount 14` (burst-модель по прецеденту `HitSparkBurstCount` — continuous-rate у пулов нет, PC13; `SlideWallSparkBurstCount` УБРАН — потребителя нет, QD12; `RicochetSparkCount` УБРАН — искра рикошета живёт на существующем `BlockSparkBurstCount`, запечённом в префаб, QC3), `AimRayAlpha 0.35`, `AimRayWidth 0.03`, `AimDotScale 0.15` (маркер; `HipReticleRadiusScale` УБРАН — C13). **`GunnerVisualScale` — существующее поле (0.4)**: рост ×2 = значение ≈0.76 (пропорция 0.4 × 3.5/1.85) — правка существующего числа, отдельный балансовый PR на В2; механизм применения (`EnsureVisual`/`MobVisual.Bind`) уже есть, код не меняется (PD1/PC1) |
 
 Геометрия волны (Д15, с учётом ±Radius по заслоняющим — A7): блок-потолок
 чейзера `1.85 + 0.12 = 1.97`; траектория в голову ганнера (центр ~3.1 на
@@ -328,11 +328,13 @@ max(HeadTop)`; `SlideMinSpeedFrac ∈ (0,1]`; `SlideWallStopDot ∈ [−1,1]`;
 - **Предсказание выстрела:** `WouldFireThisFrame` зеркалит
   `CanFireWhileSlide`; конфиг оружия — из `World.Config.Weapon` (не третья
   ссылка на SO — B7).
-- **Дульная высота — три call-site'а предсказания** (B6): `MuzzleFlashView`
-  (:96–97), `AudioDirector` (:131–132), `PersistentPropsDirector.SpawnCasing`
-  (:220) читают `World.Config.Hero.MuzzleHeight` / `SlideMuzzleHeight` по
-  `RenderCurr.Player.SlideTimer > 0` (D13); `GameFeelConfig.MuzzleLiftY`
-  выведен из кода (поле остаётся до чистки).
+- **Дульная высота** (B6, уточнено QC7/QC9): единый дом тернара —
+  `SimulationRunner.RenderMuzzleHeight` (`SlideTimer > 0 ? SlideMuzzleHeight
+  : MuzzleHeight` из `World.Config.Hero`); потребители — `MuzzleFlashView`
+  (оба места; моб-ветка события — `World.Config.Gunner.MuzzleHeight`),
+  гильзы `PersistentPropsDirector.SpawnCasing`, луч `AimRayView`.
+  `AudioDirector` высоту не читает (устаревшее упоминание B6 снято).
+  `GameFeelConfig.MuzzleLiftY` выведен из кода (поле остаётся до чистки).
 - **Снаряды:** `ViewRegistry` интерполирует `PrevHeight → Height`,
   константа `ProjectileOffset` удаляется; трейсер — `TracerScale`.
 - **Фидбек попадания по зоне (C12, ADR-001 §10):** `Zone` из
