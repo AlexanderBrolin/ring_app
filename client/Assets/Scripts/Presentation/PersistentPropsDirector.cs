@@ -97,12 +97,12 @@ namespace Ring.Presentation
         const float DecalHeightOffset = 1f;
         const float DecalNearOffset = 0.1f;
 
-        // Half the default primitive Capsule's diameter (radius 0.5, untouched
-        // by `GetOrCreateCorpsePrefab` — same unscaled capsule `MobView`'s own
-        // prefab uses) — lets the "lying on its side" capsule rest flush on
-        // the floor (world Y=0, `GreyboxBuilder`'s floor top surface) instead
-        // of clipping halfway through it.
-        const float CorpseLift = 0.5f;
+        // Mech pivot sits at the feet (same convention as MobVisual/ViewRegistry's
+        // own mob root) — the Death clip itself lays the body down, so no
+        // vertical spawn offset is needed (was 0.5f for the old capsule
+        // primitive's "lying on its side" rest height; that path is no longer
+        // wired anywhere after T12, Б4).
+        const float CorpseLift = 0f;
 
         // Particle pool capacities (review fix-round: were a single shared
         // `SparkPoolPrewarm = 16`, too small for a dense fight — a maxed-out
