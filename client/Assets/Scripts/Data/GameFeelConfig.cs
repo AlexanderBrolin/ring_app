@@ -40,7 +40,7 @@ namespace Ring.Data
         // `ProjectileOffset` in ViewRegistry are also never SO fields).
         [Range(0f, 10f)] public float CasingImpulseUpMin = 1.2f;
         [Range(0f, 10f)] public float CasingImpulseUpMax = 2.2f;
-        [Range(0f, 1f)] public float CasingTorqueScale = 0.02f;
+        [Range(0f, 30f)] public float CasingTorqueScale = 0.02f; // rad/s via VelocityChange since app-xjz
         [Range(0.1f, 20f)] public float CorpseGlowFadeSeconds = 3f;
         [Range(0.05f, 3f)] public float DecalSize = 0.6f;
         [Range(0.01f, 2f)] public float HitSparkLifetime = 0.15f;
