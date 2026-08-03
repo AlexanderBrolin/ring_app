@@ -20,10 +20,24 @@ namespace Ring.Presentation
     /// `GameFeelConfig.MaxCasings` casings never push each other around,
     /// while Casings-vs-Cosmetics (9×8) stays at Unity's default "collide" —
     /// that's what makes a casing actually bounce off the greybox geometry.
+    ///
+    /// Freeze condition (app-4qc, Б1 milestone find): a pure "timer expired"
+    /// freeze pinned casings in place mid-air whenever the floor's degenerate
+    /// collider (see `GreyboxBuilder`'s class doc) had just launched them
+    /// upward — the timer ran out before they ever landed. `Update` now also
+    /// requires the casing to actually be at rest (low linear velocity)
+    /// before freezing, with a hard-cap timer (`HardCapMultiplier` ×
+    /// `settleSeconds`) as a structural backstop so a casing that somehow
+    /// never settles (e.g. stuck oscillating in a geometry seam) still stops
+    /// paying PhysX cost eventually.
     public sealed class CasingView : MonoBehaviour
     {
+        const float HardCapMultiplier = 4f;   // structural, not feel
+        const float SettleSpeedSqr = 0.01f;   // (0.1 m/s)^2 — "stopped rolling"
+
         Rigidbody _rb;
         float _settleTimer;
+        float _hardCapTimer;
 
         void Awake() => _rb = GetComponent<Rigidbody>();
 
@@ -46,13 +60,21 @@ namespace Ring.Presentation
             _rb.AddForce(impulse, ForceMode.Impulse);
             _rb.AddTorque(torque, ForceMode.Impulse);
             _settleTimer = settleSeconds;
+            _hardCapTimer = settleSeconds * HardCapMultiplier;
         }
 
         void Update()
         {
-            if (_settleTimer <= 0f) return;
-            _settleTimer -= Time.unscaledDeltaTime;
-            if (_settleTimer <= 0f) _rb.isKinematic = true;
+            if (_rb.isKinematic) return;
+            float dt = Time.unscaledDeltaTime;
+            _settleTimer -= dt;
+            _hardCapTimer -= dt;
+            if (_settleTimer > 0f) return;
+            // Freeze only once the casing actually came to rest on the floor —
+            // the old pure-timer freeze pinned mid-air casings (app-4qc); the
+            // hard cap still guarantees the PhysX cost ends for every casing.
+            if (_rb.linearVelocity.sqrMagnitude < SettleSpeedSqr || _hardCapTimer <= 0f)
+                _rb.isKinematic = true;
         }
     }
 }
