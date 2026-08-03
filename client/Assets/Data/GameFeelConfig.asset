@@ -31,8 +31,8 @@ MonoBehaviour:
   MaxCorpses: 64
   VoicesPerSfx: 6
   MinSfxInterval: 0.03
-  CasingImpulseUpMin: 1.2
-  CasingImpulseUpMax: 2.2
+  CasingImpulseUpMin: 0.2
+  CasingImpulseUpMax: 0.5
   CasingImpulseSideMax: 1.2
   CasingTorqueScale: 0.02
   CorpseGlowFadeSeconds: 3
@@ -73,8 +73,8 @@ MonoBehaviour:
   OneShotCrossFadeSeconds: 0.06
   MuzzleLiftY: 1.1
   GunLocalPosition: {x: 0, y: 0, z: 0}
-  GunLocalEuler: {x: -90, y: 0, z: 0}
+  GunLocalEuler: {x: 0, y: 0, z: 0}
   MaxDashGlows: 8
   DashGlowSeconds: 2.5
   DashGlowSize: 0.9
-  CasingScale: 0.12
+  CasingScale: 0.1
