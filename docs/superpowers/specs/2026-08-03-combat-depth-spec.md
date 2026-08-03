@@ -1,458 +1,496 @@
-# Спека: Боёвка-глубина — 3D-прицел, хитзоны, стамина-мувмент (app-n6g)
+# Спека: Боёвка-глубина — 3D-прицел, хитзоны, Буст-мувмент (app-n6g)
 
 **Дата:** 2026-08-03 · **Эпик:** app-n6g · **Ветка:** `feature/app-n6g-combat-depth`
 **Worktree:** `app/.worktrees/feature-app-n6g-combat-depth` (от main `d35d710`).
-**Вход:** brainstorm 2026-08-03 (дискуссия TPP → решение «остаёмся в ¾, углубляем
-боёвку»; решения владельца §2), ADR-001 §9 + A1, ADR-002 A9, ADR-003 §4/§9 + A1,
-ADR-002 §4 (CR 1/2/3/6/9), аудит Simulation (Explore, эта сессия).
-**Статус:** v3 — правки self-review K1–K20/C1–C32/R1–R12/M1–M20 внесены
-(4 Explore-субагента: код, целостность, правила, механика/эксплойты);
-переигровка прицела владельцем 2026-08-03-2 (двухрежимный: ПКМ-луч / от
-бедра, Д2'), ответы §10 (термин «Буст», баланс v2 принят, чейзер-упреждение).
-**Связанные bd:** `app-nco` (child — обломки), `app-aih` (закрыт: принят
-упрощённо), `app-1tu` (deferred), `app-5nu` (Э2 заблокирован этим эпиком).
+**Вход:** brainstorm 2026-08-03 (дискуссия TPP → «остаёмся в ¾, углубляем боёвку»),
+ADR-001 §9 + A1, ADR-002 A9/A10, ADR-003 §4/§9 + A1, ADR-002 §4 (CR 1/2/3/6/9),
+аудит Simulation (Explore, эта сессия).
+**Статус:** v4 — после ДВУХ раундов self-review: v2 (K/C/R/M — 4 оси), v3
+(переигровка прицела владельцем: Д2'/Д8'/Д12–Д14), v4 (протокол `review_spec.md`,
+субагенты A/B/C/D — reuse, стандарты, полнота; правки A1–A18, B1–B15, C1–C17,
+D1–D19 внесены или отклонены с записью в §6).
+**Связанные bd:** `app-nco` (child — обломки), `app-1zf` (child — проверка
+под-мешей ДО В3), `app-aih` (закрыт), `app-1tu` (deferred — только КАМЕРА),
+`app-5nu` (Э2 заблокирован).
 
 ## 1. Цель и границы
 
-Углубить соло-боёвку до сетевого этапа, не меняя жанровый фундамент
-(топ-даун ¾, плоская 2D-симуляция движения, серверные снаряды T6):
+Углубить соло-боёвку до сетевого этапа, не меняя фундамент (топ-даун ¾,
+плоская 2D-симуляция движения, серверные снаряды T6):
 
-1. **3D-прицел по лучу курсора** — снаряды получают высоту; у мобов и носителя
-   хитзоны голова/тело/ноги с множителями урона (симметрия под PvP Э4).
-2. **Стамина-мувмент** — дэш (shift) и слайд (space) на общем ресурсе с окнами
-   связки; рикошет дэша от стен; скилл: идеальный тайминг = больше движений.
+1. **Двухрежимный прицел (Д2')** — от бедра: горизонталь Э1 с честным
+   разбросом; по ПКМ: точный 3D-выстрел по лучу. Хитзоны голова/тело/ноги у
+   мобов и носителя (симметрия под PvP Э4).
+2. **Буст-мувмент** — дэш (shift) и слайд (space) на общем ресурсе «Буст»
+   с окнами связки; рикошет дэша от стен.
 3. **Обломки** — смерть моба разносит модель по зоне и вектору попадания
    (клиентская косметика по прецеденту гильз; вливает `app-nco`).
+4. **Упреждающий замах чейзера (Д14)** — ответ на обесценивание ближнего боя
+   мобильностью.
 
-Статус этапности: DoD Э1 закрыт плейтестом (handoff 2026-08-03); пакет — вставка
-между Э1 и Э2 по решению владельца Д11, зафиксирована ADR-002 **A9**.
+DoD Э1 закрыт плейтестом; пакет — вставка между Э1 и Э2 (ADR-002 A9).
 Движение остаётся 2D. Golden пересеивается санкционированно (§4).
 
 ## 2. Зафиксированные решения (brainstorm 2026-08-03)
 
 | # | Тема | Выбор владельца |
 |---|---|---|
-| Д1 | Перспектива | Топ-даун ¾ остаётся; TPP отклонён. `app-aih` принят упрощённо, `app-1tu` deferred до плейтеста прицела |
-| Д2' | Прицел (переиграно владельцем 2026-08-03-2) | **Двухрежимный.** ПКМ = прицельный режим: 3D-луч курсора (визуал: полупрозрачный луч + точка), снаряд летит ТОЧНО в указанную точку — хоть в пол; цена — кап скорости движения и замедленный слайд (прокачка снимает). От бедра (без ПКМ): всегда горизонтально на уровне оружия, разброс растёт при спрее и движении; штрафа скорости нет; ретикл — круглый на полу (квадрат заменить). Снаряд сборщика меньше (радиус + партикль) |
-| Д3 | Хитзоны | Голова/тело/ноги у мобов **и носителя** (PvP Э4); фиксированные объёмы без поз (роботам честно, ADR-003 §5); множители в SO |
+| Д1 | Перспектива | Топ-даун ¾; TPP отклонён. `app-aih` принят упрощённо, `app-1tu` deferred (только камера) |
+| Д2' | Прицел (2026-08-03-2) | **Двухрежимный.** ПКМ: 3D-луч (полупрозрачный, с точкой), снаряд летит точно в указанную точку — хоть в пол; цена — кап скорости и медленный слайд (прокачка снимает). От бедра: горизонталь на высоте оружия, разброс растёт от спрея и движения, штрафа скорости нет; ретикл — круг (квадрат-маркер заменить). Снаряд сборщика меньше (радиус + партикль) |
+| Д3 | Хитзоны | Голова/тело/ноги у мобов **и носителя**; фиксированные объёмы без поз (роботам честно, ADR-003 §5); множители в SO |
 | Д4 | Обломки | Симуляция шлёт факт (зона, вектор); клиент разносит модель физикой; FIFO как у гильз; рандом презентационный |
-| Д5 | Ресурс | Стамина: пул; слайд ≈ дэш/3; дэш-в-связке — скидка; идеал на старте = ровно 2 связки «дэш→слайд» |
-| Д6 | Гейт слайда | Гибрид (1a): доступность — по разгону (непрерывный бег) ИЛИ в окне после дэша; скидка на дэш — только в окне связки после слайда |
-| Д7 | Слайд vs ближний | Уязвим (2a): низкий профиль обманывает только снаряды; кулак чейзера бьёт |
-| Д8' | Стрельба в слайде (уточнено 2026-08-03-2) | Разрешена; дуло при слайде физично опускается (§3.2). От бедра в слайде — разброс ×2 (на бегу ×1.5, оба прокачиваются); в прицеле из слайда — точно, но слайд теряет скорость (Д2') |
-| Д9 | Рикошет | В базе (4b): дэш в стену — зеркальный отскок (угол отражения = углу падения); качаются дальность дэша и сила отскока (лор ADR-003 A1: прыжковый двигатель + силовой кокон) |
-| Д10 | Раскладка | Space = слайд, shift = дэш (5a); настройка биндов — позже |
-| Д11 | Порядок | Пакет ДО Э2 (2a); `app-5nu` заблокирован; ADR-002 A9 |
-| Д12 | Термин ресурса | User-facing «**Буст**» (заряд бустера-двигателя); код — `Stamina` (словарь ADR-003 A1) |
-| Д13 | Баланс v2 | Стартовые дефолты v2 приняты (дэш 48/связка 16, слайд 13.5, хедшот ×1.5, низкий чейзер); тюнинг на вехах |
-| Д14 | Чейзер | Числа Э1 не трогаем; вместо этого — **упреждающий замах**: чейзер начинает телеграф по прогнозу позиции игрока (он машина — умеет считать, как ганнер с упреждением); включается в пакет, т.к. дёшево (есть `Targeting.AimWithLead`-прецедент) |
+| Д5 | Ресурс | Буст: пул; слайд ≈ дэш/3; дэш-в-связке — скидка; идеал на старте = ровно 2 связки «дэш→слайд» |
+| Д6 | Гейт слайда | Гибрид: доступность — разгон ИЛИ окно после дэша; скидка — только в окне связки после слайда |
+| Д7 | Слайд vs ближний | Уязвим: низкий профиль обманывает только снаряды; кулак чейзера бьёт |
+| Д8' | Стрельба в слайде | Разрешена; дуло опускается (`SlideMuzzleHeight`). От бедра в слайде разброс ×2 (на бегу ×1.5); в прицеле — точно, но слайд медленнее |
+| Д9 | Рикошет | В базе: дэш в стену — зеркальный отскок; качаются дальность и сила отскока (лор ADR-003 A1: прыжковый двигатель + силовой кокон) |
+| Д10 | Раскладка | Space = слайд, shift = дэш; ПКМ = прицел; настройка биндов — позже |
+| Д11 | Порядок | Пакет ДО Э2; `app-5nu` заблокирован; ADR-002 A9 |
+| Д12 | Термин | User-facing «**Буст**»; код — `Stamina` (словарь ADR-003 A1) |
+| Д13 | Баланс v2 | Стартовые дефолты v2 приняты; тюнинг на вехах |
+| Д14 | Чейзер | Числа Э1 не трогаем; упреждающий замах по прогнозу (машина умеет считать) — в пакет |
 
 ## 3. Скоуп
 
 ### 3.1. Слои и дисциплина
 
-- Меняются: `Simulation/**` (строго TDD), `Scripts/Data/` (поля SO +
-  `SimConfigBuilder`), `Presentation/**`, `Editor/**` (бутстрап: прокси-коллайдеры
-  прицела, слайд-стейт куклы, HUD-элемент стамины, слой `AimProxy`),
-  `Assets/InputSystem_Actions.inputactions` (бинды §3.6),
-  `ProjectSettings/` (TagManager: слой `AimProxy` по образцу `EnsureCasingsLayer`;
-  DynamicsManager: матрица коллизий), `ThirdParty/_Ring/**` (производные
-  обломков + Mixamo-клип слайда), `.gitignore` (`.worktrees/`).
-- Балансовые `Assets/Data/*.asset`: новые поля — автосинком; **правка
-  существующих чисел (радиус снаряда, тюнинг вех) — отдельным PR** после вехи
-  (правило client/CLAUDE.md о раздельных балансовых PR).
+- Меняются: `Simulation/**` (строго TDD), `Scripts/Data/`, `Presentation/**`,
+  `Editor/**` (бутстрап), `Assets/InputSystem_Actions.inputactions`,
+  `ProjectSettings/TagManager.asset` (слой `AimProxy` по образцу
+  `EnsureCasingsLayer`; **матрица коллизий — НЕ через DynamicsManager**, а
+  runtime-вызовом `Physics.IgnoreLayerCollision` по прецеденту гильз
+  `PersistentPropsDirector.cs:147` — B3), `ThirdParty/_Ring/**` (производные
+  обломков + Mixamo-клип, A10).
+- Балансовые `Assets/Data/*.asset`: новые поля — через маркер-ключи (§3.5,
+  механизм B4); **правка существующих чисел** (радиус снаряда, `Gunner.MaxHp`
+  — см. §6) — **отдельным балансовым PR** после вехи.
 - НЕ меняются: `Networking/`, `client/CLAUDE.md`, CODEOWNERS, `Packages/**`
-  (CR 9 — новых пакетов нет), контент паков (ASSETS-001 §4.1 — паки read-only,
-  производные в `_Ring/`).
-- Клиентский трек не активен: Presentation-часть ведёт server-сессия владельца
-  (прецедент Фазы Б), кросс-трековый bd-контракт не требуется.
-- Словарь ADR-003 §9 + A1. Термин ресурса мувмента: user-facing — «Буст»
-  (Д12), код — `Stamina`.
-- CR 7 (latency 80 мс/5%) неприменим — пакет pre-network; повторный гейт
-  хитзон/связок под лагом — обязательный пункт DoD Э2 (bd-заметка на `app-5nu`).
+  (CR 9), контент паков (ASSETS-001 §4.1), `.gitignore` (строка `.worktrees/`
+  уже в ветке — A14).
+- Клиентский трек не активен: Presentation ведёт server-сессия владельца
+  (прецедент Фазы Б).
+- Словарь ADR-003 §9 + A1: user-facing и проза — «Буст», «хит-объём»/«зона»;
+  `Stamina`/`HitZone` — только код в бэктиках (D17).
+- CR 7 (latency) неприменим — pre-network (ADR-002 A9); повторный гейт — DoD
+  Э2 (заметка на `app-5nu`: + рост инпут-снапшота на `AimHeight`+`AimHeld`,
+  + видимость чужого прицельного луча в PvP — решение Э4, D18).
 
-### 3.2. Симуляция: 3D-снаряды и хитзоны
+### 3.2. Симуляция: 3D-снаряды, хитзоны, два режима огня
 
 **Вертикальная ось — только у снарядов и хит-объёмов.** Движение, стены,
 сепарация, ближний бой — плоские.
 
-- `ProjectileState` + `Height`, `PrevHeight`, `VelZ`. Интеграция в
-  `ProjectileSystem`: в ветке «без попадания» `PrevHeight = Height;
-  Height += VelZ * dt` рядом с `Pos = target`. Полёт прямолинейный, без
-  гравитации. Все три поля — в `HashProjectile` и `WorldSave`.
-- `SimInput` + `AimHeight` (float) и `AimHeld` (bool — ПКМ зажат). `Sanitize`:
-  не-конечное `AimHeight` → `Hero.MuzzleHeight`; кламп в `[0, MaxAimHeight]`.
-  При `AimHeld == false` симуляция `AimHeight` игнорирует (выстрел от бедра
-  горизонтален по построению).
-- **Хит-объём** = круг радиуса R (2D, как в Э1) × пояса из SO:
-  `[0, LegsTop)` ноги, `[LegsTop, BodyTop)` тело, `[BodyTop, HeadTop]` голова.
-  Учёт радиуса снаряда по вертикали — симметрично 2D-свипу: попадание
-  засчитывается при `h ∈ [-Radius, Top + Radius]` (граничный «чирк по макушке»
-  честен, M14).
-- **Перебор кандидатов** (M5/C9): кандидаты (барьер + мобы/игрок) собираются
-  с их `t` и проверяются **в порядке возрастания `t`**; кандидат, чья высота
-  `h = Height + VelZ * dt * t` вне его вертикального диапазона, пропускается —
-  снаряд может поразить более дальнюю цель в том же тике. Высотный тест — по
-  точке входа свипа; переоценка внутри круга не делается (MVP, K19).
-  Барьеры (кольцо, препятствия) — полновысотные. `h ≤ Radius` по пути →
-  `ProjectileBlocked` в точке касания пола.
+- `ProjectileState` + `Height`, `PrevHeight`, `VelZ`. Интеграция: в ветке
+  «без попадания» `PrevHeight = Height; Height += VelZ * dt` рядом с
+  `Pos = target`. Без гравитации. Все три поля — в `HashProjectile`/`WorldSave`.
+- `SimInput` + `AimHeight` (float), `AimHeld` (bool — уровень, не латч).
+  `Sanitize`: не-конечное `AimHeight` → `Hero.MuzzleHeight`; кламп
+  `[0, MaxAimHeight]`; при `!AimHeld` высота игнорируется.
+- **Хит-объём** = круг радиуса R (2D) × пояса `[0, LegsTop)` ноги,
+  `[LegsTop, BodyTop)` тело, `[BodyTop, HeadTop]` голова. Вертикальный допуск
+  симметричен 2D-свипу: попадание при пересечении высотного интервала
+  снаряда с `[-Radius, Top + Radius]`; **для классификации зоны `h` клампится
+  в `[0, HeadTop]`** («чирк по макушке» = Head, подрез у пола = Legs — D3).
+  Hit/no-hit решается по интервалу `[tEnter, tExit]` свипа (клип высоты по
+  хорде — видимый луч Д2' обязан совпадать с симуляцией на крутых углах, C8);
+  зона — по первому реально пересечённому поясу.
+- **Перебор кандидатов** (M5/C7): без сортировки — повторный min-scan по `t`
+  с исключением отвергнутых (тай-брейк — меньший индекс кандидата, стабильно
+  как в Э1); буфер кандидатов — преаллоцированный скретч по образцу
+  `SimulationWorld._sepForces` (вне `SaveState`/`StateHash`, B9). **Пол —
+  обычный кандидат** с `t_floor = (Radius − Height) / (VelZ · dt)` при
+  `VelZ < 0`, участвует в общем порядке (моб за точкой касания пола не
+  страдает — D4). Барьеры полновысотные.
 - **Урон и зоны:** `DamageMob(index, dmg, pos, zone, dir)` /
-  `DamagePlayer(dmg, pos, zone, dir)`; множитель зоны применяется ДО эмита
-  (`Amount` событий — урон после множителя, C28). Затронутые сигнатуры:
-  `SpawnProjectile` (+`height`, `velZ`) и тест-двойник, вызовы в
-  `WeaponSystem`, `MobAiSystem` (ганнер), `KillPlayerForTest`, 8 тест-вызовов
-  (K1/K13/K14). Кулак чейзера: `zone = Body`, множитель НЕ применяется,
-  `dir = normalize(p.Pos - m.Pos)` — в т.ч. по слайдящему (Д7, C15).
-- **Слайд-профиль:** во время слайда попадание по игроку засчитывается только
-  при `h ≤ SlideProfileTop + Radius`; классификация — по обычным поясам
-  (при дефолтах — всегда ноги; хедшот слайдящего невозможен осознанно, C14).
-- **Выстрел сборщика — два режима (Д2'):**
-  `spawnPos2D = p.Pos + dir2D * (MuzzleOffset + overshoot * horizontalSpeed)`,
-  `height = muzzleH + overshoot * VelZ` (K9), где `muzzleH = MuzzleHeight`
-  (в слайде — `SlideMuzzleHeight`: стрельба «снизу вверх» физична, M6).
-  - **Прицельный (`AimHeld`):** направление — 3D-нормаль от дула к
-    `(AimPoint, AimHeight)`; **разброс и отдача НЕ применяются** («летит
-    точно туда, куда указатель» — хоть в пол: клиент при промахе луча мимо
-    прокси даёт точку пола, `AimHeight = 0`, снаряд честно втыкается в пол
-    → `ProjectileBlocked`-декаль). `RecoilOffset` продолжает копиться/
-    распадаться как в Э1 (спрей от бедра после выхода из прицела не
-    обнуляется бесплатно).
-  - **От бедра (без `AimHeld`):** всегда горизонтально (`VelZ = 0`) на
-    высоте `muzzleH` — поведение Э1. Разброс: угол `a = (SpreadRad +
-    RecoilOffset) × moveMult`, где `moveMult = SpreadSlideMult` в слайде,
-    иначе `SpreadRunMult` при `|Vel| ≥ RunSpreadSpeedFrac × MaxSpeed`,
-    иначе `1` (штрафа скорости движения от бедра нет). Вращение разброса —
-    вокруг вертикали (K10; при `VelZ = 0` вырождается в 2D Э1).
-- **Упреждающий замах чейзера (Д14):** вход в `Telegraph` — по прогнозу:
-  `dist(m.Pos, player.Pos + player.Vel × TelegraphSeconds × SwingLeadFactor)
-  ≤ AttackRange` (вместо текущей дистанции; `SwingLeadFactor 0` = поведение
-  Э1). Сам удар не меняется: re-validate фактического оверлапа через
-  `TelegraphSeconds` — честный промах, если игрок увернулся. Бегущий на
-  чейзера (или слайдящий сквозь) ловит замах «на упреждение», как ловил бы
-  выстрел ганнера (`Targeting.AimWithLead`-прецедент).
-- **Ганнер:** стреляет горизонтально на своей `MuzzleHeight` (лид 2D Э1 не
-  меняется). Слайд подныривает — осознанная «глупость» мобов по вертикали.
+  `DamagePlayer(dmg, pos, zone, dir)`; множитель зоны — ДО эмита (`Amount`
+  событий = урон после множителя). Сигнатуры-рябь: `SpawnProjectile`
+  (+`height`, `velZ`) и тест-двойник; вызовы: `WeaponSystem`, `MobAiSystem`
+  (ганнер: своя `MuzzleHeight`, `VelZ = 0`), `KillPlayerForTest`, **9**
+  тест-вызовов (`ProjectileTests` ×7, `WorldLifecycleTests:46`,
+  `DeathTests:54` — A8). Кулак чейзера: `zone = Body`, множитель НЕ
+  применяется, `dir = normalize(p.Pos − m.Pos)` — и по слайдящему (Д7).
+- **Слайд-профиль:** при `SlideTimer > 0` попадание по игроку — только при
+  пересечении `[-Radius, SlideProfileTop + Radius]`; классификация по
+  обычным поясам (дефолты → всегда ноги; хедшот слайдящего невозможен).
+- **Выстрел сборщика — единая формула:**
+  `vel3 = normalizesafe(targetPoint3 − muzzle3, fallback3) * ProjectileSpeed`
+  (`ProjectileSpeed` — **длина 3D-вектора**; горизонтальная дальность падает
+  с углом — осознанно); `Vel = vel3.xy; VelZ = vel3.z`;
+  `dir2D = normalizesafe(vel3.xy, normalizesafe(AimPoint − Pos, (1,0)))`;
+  `fallback3` = горизонталь в сторону прицела (D7-review).
+  `spawnPos2D = p.Pos + dir2D * (MuzzleOffset + overshoot * length(vel3.xy))`,
+  `height = muzzleH + overshoot * VelZ` (K9); `muzzleH = MuzzleHeight`, в
+  слайде `SlideMuzzleHeight`.
+  - **Прицельный (`AimHeld`):** `targetPoint3 = (AimPoint, AimHeight)`.
+    Точность приходит с подъёмом: `AimSettleTimer` растёт до
+    `AimSettleSeconds` при `AimHeld` (декэй ×2 при отпускании); эффективный
+    разброс = `a_hip × (1 − AimSettleTimer / AimSettleSeconds)` — tap-ПКМ
+    не даёт мгновенного лазера (C2). После устаканивания — точно, БЕЗ
+    разброса и отдачи: решение владельца Д2' (осознанный отход от
+    ADS-нормы с отдачей — §6; готовый запасной ход: вертикальный увод
+    `AimHeight` на `RecoilOffset × k` — включается ручкой, если В2 покажет
+    доминирование лазера, C3). `RecoilOffset` копится в обоих режимах.
+  - **От бедра:** горизонталь (`VelZ = 0`) на `muzzleH`. Разброс:
+    `a = (SpreadRad + RecoilOffset) × moveMult`; `moveMult =
+    SpreadSlideMult` в слайде, иначе `SpreadRunMult` при `|Vel| ≥
+    RunSpreadSpeedFrac × MaxSpeed`, иначе 1. RNG-draw разброса — только
+    от бедра; **RNG разделяется**: `_spreadRng` (оружие) и `_waveRng`
+    (волны) вместо общего потока — переключение режима не сдвигает спавны;
+    оба в `WorldSave`/хеш; дёшево именно сейчас, пока golden пересеивается
+    (C4, страховка ресимов Э2).
+- **Ганнер:** горизонтально на своей `MuzzleHeight`, лид 2D Э1. Слайд
+  подныривает — осознанная «глупость» мобов по вертикали.
+- **Упреждающий замах чейзера (Д14):** вход в `Telegraph` по прогнозу
+  `predicted = player.Pos + leadVel × TelegraphSeconds × SwingLeadFactor`,
+  где `leadVel = player.Vel`, длина клампится `Hero.MaxSpeed` (дэш 30 м/с не
+  выманивает замах с 10 м — A4), и смещение прогноза клампится
+  `SwingLeadMaxMeters` (D2-review); условие: `dist(m.Pos, predicted) ≤
+  AttackRange`. Удар не меняется: re-validate фактического оверлапа —
+  честный промах. Формула — новый `Targeting.PredictPos(pos, vel, seconds,
+  factor, maxLead)` рядом с `AimWithLead` (сам `AimWithLead` НЕ
+  переиспользуется — он про перехват снарядом, B12). `SwingLeadFactor 0` =
+  поведение Э1 (проверка поведенческая: тик входа в `Telegraph` совпадает с
+  `dist ≤ AttackRange`, D9). Анти-баит: тюнинг-кандидат В1 — выпад на ударе
+  (`LungeSpeed`), если кайтинг по кругу всё ещё выключает чейзера (C10).
 
-### 3.3. Симуляция: стамина, слайд, рикошет
+### 3.3. Симуляция: Буст, слайд, рикошет
 
 `PlayerState` + `Stamina`, `StaminaRegenDelayTimer`, `SlideTimer`, `SlideDir`,
 `SlideBufferTimer`, `LinkWindowTimer`, `RunUpTimer`, `PostDashSlideTimer`,
-`DashSpeedCur` (K2/C1). Все — в `HashPlayer`/`WorldSave` (рефлекшн-тест).
+`DashSpeedCur`, `AimSettleTimer` (C2). Все — в `HashPlayer`/`WorldSave`.
+Таймеры тикают по канону Э1 `math.max(0f, t − dt)` — включая
+`PostDashSlideTimer` (B10).
 
-- **Инициализация:** конструктор мира — `Stamina = StaminaMax` (как
-  `Hp = MaxHp`), остальные нули (C2). **Смерть:** все слайд/связка/разгон-
-  таймеры обнуляются рядом с `DashTimer`/`IframeTimer`; `Stamina`
-  замораживается; `UpdateDead` ничего из нового не тикает (C4/M11).
-- **Стамина:** траты — дэш `DashStaminaCost`, слайд `SlideStaminaCost`,
-  дэш-в-связке `LinkedDashStaminaCost`; реген `StaminaRegenPerSec` после
-  `StaminaRegenDelay` от последней траты; во время дэша/слайда заморожен
-  (при дефолтах путь мёртв — тест на фикстурных числах, M16). Не хватает —
-  действие не срабатывает; **буфер перепроверяется каждый тик** до истечения
-  окна: срабатывает на первом тике, где есть и ресурс, и гейт (C11).
-- **Гейт слайда (Д6):** `RunUpTimer = min(RunUpTimer + dt, RunUpSeconds)` пока
+- **Инициализация:** `Stamina = StaminaMax` в конструкторе (как `Hp`),
+  остальное нули. **Смерть:** новые таймеры обнуляются рядом с
+  `DashTimer`/`IframeTimer`; `Stamina` замораживается; `UpdateDead` не тикает.
+- **Буст:** траты — дэш `DashStaminaCost`, слайд `SlideStaminaCost`, связка
+  `LinkedDashStaminaCost`; реген `StaminaRegenPerSec` после
+  `StaminaRegenDelay` от последней траты; в дэше/слайде заморожен (при
+  дефолтах путь мёртв — тест на фикстурных числах, M16). Не хватает —
+  отказ + событие `StaminaDenied` (deny-фидбек, C11); буфер перепроверяется
+  каждый тик до истечения.
+- **Кап под прицелом (Д2'):** при `AimHeld` целевая скорость бега =
+  `MaxSpeed × AimMoveSpeedFrac` (через обычный `MoveTowards`); дэша не
+  касается; прокачка снимает.
+- **Гейт слайда:** `RunUpTimer = min(RunUpTimer + dt, RunUpSeconds)` пока
   `|Vel| ≥ SlideMinSpeedFrac × MaxSpeed` и нет дэша/слайда; ниже порога —
-  распад `RunUpTimer = max(0, RunUpTimer - 3*dt)` (не жёсткий сброс — терпит
-  короткие повороты/скольжение вдоль стен, M9/C32). **На старте слайда
-  `RunUpTimer = 0`; во время слайда и дэша не накапливается** (иначе гейт
-  платится один раз за матч — M2/C8/K12). Слайд доступен: разгон полный ИЛИ
-  `PostDashSlideTimer > 0`.
-- **Взаимоисключение (C7):** слайд не стартует при `DashTimer > 0` (буферится);
-  дэш не стартует при `SlideTimer > 0`; повторный слайд в слайде игнорируется.
-- **Прицельный режим и движение (Д2'):** при `AimHeld` целевая скорость бега
-  ограничена `MaxSpeed × AimMoveSpeedFrac` (кап, не мгновенное торможение —
-  обычный `MoveTowards`); дэша не касается. Прокачка снимает (SO-ручка).
-  `AimMoveSpeedFrac ≥ SlideMinSpeedFrac` (валидация §3.5) — разгон под
-  прицелом достижим, слайд из прицела легален.
-- **Слайд:** запрос — латч + буфер (`SlideBufferWindow`). Старт: списание,
-  `SlideTimer = SlideDuration`, `SlideDir` = MoveDir (иначе направление Vel),
-  сброс разгона. Каждый тик `Vel = SlideDir × slideSpeed`, где `slideSpeed =
-  SlideSpeed × (AimHeld ? AimSlideSpeedMult : 1)` — прицел «гасит» слайд
-  (Д2', ×0.5 на старте, прокачка снимает; переключение ПКМ посреди слайда
-  применяется со следующего тика). Руление — поворот `SlideDir` к `MoveDir`
-  ≤ `SlideSteerRadPerSec × dt`. Профиль срезан (§3.2), i-frames НЕТ,
-  стрельба разрешена (`CanFireWhileSlide = true`), тела мобов не блокируют
-  (в симуляции и не блокировали — фиксируем осознанно).
-  **Штатный выход** (таймер): скорость НЕ срезается — короткий «вынос»
-  `SlideSpeed → MaxSpeed` через обычный `MoveTowards` осознан (C22); открывается
-  `LinkWindowTimer = LinkWindowSeconds`.
-  **Гашение о стену:** контакт с `dot(-normal, SlideDir) > SlideWallStopDot` →
-  `SlideTimer = 0`, скорость до бега (`normalize(Vel) × MaxSpeed`), `RunUpTimer
-  = 0`, **окно связки НЕ открывается** (иначе стена — самый дешёвый путь к
-  скидке, M3). Скольжение вдоль стены под острым углом — бесплатно
+  распад `max(0, RunUpTimer − RunUpDecayMult × dt)` (`RunUpDecayMult` — SO,
+  не хардкод, C5). На старте слайда `RunUpTimer = 0`; в слайде/дэше не
+  копится (M2). Доступность: разгон полный ИЛИ `PostDashSlideTimer > 0`.
+- **Взаимоисключение:** слайд не стартует при `DashTimer > 0` (буферится);
+  дэш не стартует при `SlideTimer > 0`; повторный слайд игнорируется.
+- **Слайд:** старт — списание, `SlideTimer = SlideDuration`, `SlideDir`:
+  MoveDir → направление Vel → `normalizesafe(AimPoint − Pos, (1,0))`
+  (третий фолбэк обязателен — вырожденный случай после дэша в стену, D6);
+  сброс разгона. Каждый тик `Vel = SlideDir × slideSpeed`, `slideSpeed =
+  SlideSpeed × (AimHeld ? AimSlideSpeedMult : 1)` — применяется с того же
+  тика (A11). Руление ≤ `SlideSteerRadPerSec × dt`. Профиль срезан, i-frames
+  НЕТ, стрельба разрешена, тела мобов не блокируют. **Штатный выход:**
+  скорость не срезается (вынос осознан); `LinkWindowTimer =
+  LinkWindowSeconds`. **Гашение о стену** (`dot(−normal, SlideDir) >
+  SlideWallStopDot`): `SlideTimer = 0`, скорость до бега, `RunUpTimer = 0`,
+  окно связки НЕ открывается (M3). Скольжение вдоль — бесплатно
   (существующий `Geometry.Slide`).
-- **Окно связки:** дэш при `LinkWindowTimer > 0`: цена `LinkedDashStaminaCost`,
-  остаток `DashCooldown` игнорируется (ADR-001 A1), **окно потребляется**
-  (`LinkWindowTimer = 0`), кулдаун ставится заново как обычно (C6).
-- **Пост-дэш окно:** `PostDashSlideTimer = PostDashSlideWindow` в тик, когда
-  `DashTimer` доходит до 0; `-= dt`; обнуляется на старте слайда (C13).
-- **Рикошет дэша (Д9):** `MoveWithCollisions` получает
-  `out bool hit, out float2 normal` (первый контакт); второй путь свипа НЕ
-  заводится (R8/K11; прочие вызовы — mob/dead — игнорируют out'ы). При
-  `DashTimer > 0` и `dot(DashDir, normal) < 0`: `DashDir = reflect(DashDir,
-  normal)`, `DashSpeedCur *= RicochetRetention`; не более одного отражения на
-  тик, остальные итерации тика — обычный `Slide` (контракт сходимости
-  `MoveWithCollisions`, M8); отражений за дэш — без лимита, каждое эмитит
-  `DashRicocheted`. Дэш-тик: `Vel = DashDir × DashSpeedCur`; старт дэша:
-  `DashSpeedCur = DashSpeed`. i-frames не прерываются.
-- **Хот-твик:** `ApplyConfig` дополняется клампами: `Stamina → [0, StaminaMax]`,
-  `SlideTimer → [0, SlideDuration]`, `SlideBufferTimer → [0, SlideBufferWindow]`,
-  `LinkWindowTimer → [0, LinkWindowSeconds]`, `PostDashSlideTimer → [0,
-  PostDashSlideWindow]`, `StaminaRegenDelayTimer → [0, StaminaRegenDelay]`,
-  `RunUpTimer → [0, RunUpSeconds]`, `DashSpeedCur → [0, DashSpeed]` (C5/M10).
-- **Экономика** (стартовые числа; расчёты — против текущих значений `.asset`
-  Э1: MaxSpeed 7.5, DashSpeed 30, DashDuration 0.09, DashCooldown 0.9 — они
-  уже расходятся с C#-дефолтами, C27): пул 90, дэш 48, слайд 13, дэш-в-связке
-  16. Идеал: 48+13+16+13 = **90 — ровно две связки в ноль** (Д5). Рваный
-  тайминг: после 48+13 остаток 29 < 48 — полный дэш доступен через
-  `0.72 + 19/22 ≈ 1.6 с` от траты слайда: наказание — пауза в темпе боя, не
-  вечный отказ (честный расчёт вместо прежнего «не выходит», C10/M15).
-  Реген: от нуля до пула 90/22 ≈ 4.1 с + задержка 0.72 ≈ **4.8 с** (C24).
-  Обход кулдауна обязателен, пока `DashCooldown 0.9 > DashDuration +
-  SlideDuration + LinkWindowSeconds = 0.86` (реальное неравенство, C25);
-  сравняются — пересмотреть (В1).
-- Тик-квантизация: дэш при 0.09 реально длится 4 движ-тика = **4.0 м** (не
-  2.7), слайд 0.52 = 16 тиков ≈ **7.0 м** при скорости 13.5 (M7). Новые
-  длительности выбраны в середине тик-корзин (M17); `DashTests` фиксирует
-  дистанцию в метрах, чтобы лестница была видна тюнеру.
+- **Окно связки:** дэш при `LinkWindowTimer > 0`: цена
+  `LinkedDashStaminaCost`, остаток кулдауна игнорируется (ADR-001 A1), окно
+  потребляется, кулдаун ставится заново.
+- **Пост-дэш окно:** ставится в тик обнуления `DashTimer`; гасится стартом
+  слайда.
+- **Рикошет дэша:** `MoveWithCollisions` + `out bool hit, out float2 normal`
+  (первый контакт; второго пути свипа нет; прочие call-sites —
+  `PlayerMovementSystem:60` dead, `MobAiSystem:209` mob — игнорируют out'ы,
+  B11). При `DashTimer > 0` и `dot(DashDir, normal) < 0`: `DashDir =
+  reflect(DashDir, normal)` (хелпер в `Geometry`), `DashSpeedCur *=
+  RicochetRetention`; **новый вектор применяется со следующего тика** (тик
+  контакта уже разрешён скольжением — D16); ≤1 отражения на тик, каждое
+  эмитит `DashRicocheted`. Дэш-тик: `Vel = DashDir × DashSpeedCur`; старт:
+  `DashSpeedCur = DashSpeed`. i-frames живут.
+- **Хот-твик:** `ApplyConfig` клампит все новые поля в их максимумы
+  (`Stamina → StaminaMax`, таймеры → окна, `DashSpeedCur → DashSpeed`,
+  `AimSettleTimer → AimSettleSeconds`).
+- **Экономика** (по `.asset`-числам Э1 — C27): пул 90, дэш 48, слайд 13,
+  связка 16. Идеал: 48+13+16+13 = **90 — ровно две связки** (Д5). Рваный
+  тайминг: полный дэш через ≈1.6 с от траты слайда — пауза, не отказ.
+  Реген с нуля ≈ 4.8 с. **Тик-арифметика** (стартовый тик включён — одна
+  конвенция, D11): дэш 0.09 → 4 тика = 4.0 м; слайд 0.52 → 17 тиков ≈
+  7.65 м; окно связки открывается на тике 21 (0.70 с) при кулдауне 0.9 —
+  обход кулдауна экономит до 0.2 с в начале окна; если тюнинг сделает
+  `DashCooldown ≤ 0.70 с` — обход избыточен, пересмотреть (В1).
 
 ### 3.4. События и статистика
 
-- `SimEvent` + `HitZone Zone` (byte: None/Legs/Body/Head) и `float2 HitDir`.
-  Заполнение: `ProjectileHit`/`MobDied`/`PlayerDamaged`/`PlayerDied` — зона и
-  направление удара (урон в `Amount` — после множителя, C28);
-  `DashRicocheted` — `Pos` = контакт, `HitDir` = нормаль поверхности;
-  `PlayerSlideStarted` — `Pos` = старт, `HitDir` = `SlideDir`;
-  `ProjectileBlocked` — `Amount` = высота контакта (`≈0` → пол: декаль
-  плашмя, нормаль вверх; иначе стена: декаль на этой высоте вместо
-  хардкода 1 м — K7/C12); остальные — default.
-- Новые `SimEventKind`: `PlayerSlideStarted`, `DashRicocheted`.
-- `MatchStats` + `SlidesUsed`, `HeadshotKills` — инкремент только пока
-  `Alive` (контракт заморозки статистики Э1 §3.12, C30); `HeadshotKills` —
-  добивающее попадание с `Zone == Head`.
-- Буфер событий: прирост (2 вида + байт + float2) мал против капа 256 —
-  не меняем; чеклист В1 включает `DroppedEvents == 0` (C31).
+- `SimEvent` + `HitZone Zone` (None/Legs/Body/Head) и `float2 HitDir`.
+  Заполнение: `ProjectileHit`/`MobDied`/`PlayerDamaged`/`PlayerDied` — зона
+  и направление удара; `DashRicocheted` — `Pos` контакт, `HitDir` нормаль;
+  `PlayerSlideStarted` — `Pos` старт, `HitDir` = `SlideDir`;
+  `StaminaDenied` — `Pos` игрок, `Amount` = недостающая цена (C11);
+  `ProjectileBlocked` — `Amount` = высота контакта, **`HitDir` = нормаль
+  поверхности, пол = `(0,0)`** (никаких «≈0»-эвристик — D12/C5); остальные
+  default.
+- Новые `SimEventKind`: `PlayerSlideStarted`, `DashRicocheted`,
+  `StaminaDenied`.
+- `MatchStats` + `SlidesUsed`, `HeadshotKills` — через `IncrementX()`-хелперы
+  с гвардом `Alive` (B13); `HeadshotKills` — добивающее с `Zone == Head`.
+- Буфер 256 не меняется; чеклист В1: `DroppedEvents == 0` — читается с
+  существующего `DevOverlay` (он же получает строки `SlidesUsed`/
+  `HeadshotKills` — A16).
 
 ### 3.5. Данные (SO → SimConfig)
 
-Дефолты таблицы — значения C#-полей (в `.asset` попадут автосинком);
-это стартовые числа, живой тюнинг — владелец на вехах.
+Дефолты — значения C#-полей. **Механизм доставки новых полей в закоммиченные
+`.asset` (B4, автосинка не существует):** общий хелпер
+`EditorBootstrapUtils.EnsureAssetHasKey(so, assetPath, markerField)` —
+маркер-ключ на КАЖДЫЙ изменяемый SO (по образцу GameFeel-маркера):
+`HeroConfig` → `AimSettleSeconds`, `WeaponConfig` → `RunSpreadSpeedFrac`,
+`MobChaserConfig`/`MobGunnerConfig` → `SwingLeadMaxMeters`; маркер = последнее
+объявленное поле класса (D14). Ганнер-специфика дописывается в
+`ApplyGunnerDefaults`, гейт `gunnerCreated` дополняется маркерной проверкой
+(иначе существующий ассет не обновится — A1); `SwingLeadFactor` у ганнера
+игнорируется (A15).
 
 | SO | Поля (дефолт) |
 |---|---|
-| `HeroConfig` — зоны | `LegsTop 0.55`, `BodyTop 1.35`, `HeadTop 1.75`, `LegsDamageMult 0.75`, `BodyDamageMult 1.0`, `HeadDamageMult 1.5` (K3/R2), `SlideProfileTop 0.55`, `MuzzleHeight 1.0`, `SlideMuzzleHeight 0.45`, `MaxAimHeight 2.2` (M19) |
-| `HeroConfig` — стамина | `StaminaMax 90`, `DashStaminaCost 48`, `SlideStaminaCost 13`, `LinkedDashStaminaCost 16`, `StaminaRegenPerSec 22`, `StaminaRegenDelay 0.72` |
-| `HeroConfig` — слайд/дэш | `SlideSpeed 13.5` (реальный рывок против бега 7.5, M12), `SlideDuration 0.52`, `SlideSteerRadPerSec 1.2`, `SlideMinSpeedFrac 0.75` (терпит поворот ~75°, M9), `RunUpSeconds 1.2`, `SlideBufferWindow 0.15`, `LinkWindowSeconds 0.25`, `PostDashSlideWindow 0.32`, `SlideWallStopDot 0.7`, `RicochetRetention 0.8` (не no-op, ручка Д9 живая — M8) |
-| `HeroConfig` — прицел (Д2') | `AimMoveSpeedFrac 0.8` (кап бега под ПКМ; прокачка → 1.0), `AimSlideSpeedMult 0.5` (слайд под ПКМ; прокачка → 1.0) |
-| `WeaponConfig` — разброс (Д2'/Д8') | `SpreadRunMult 1.5`, `SpreadSlideMult 2.0`, `RunSpreadSpeedFrac 0.5` (порог «на бегу» для разброса от бедра; всё прокачивается) |
-| `MobConfig` × Chaser — замах (Д14) | `SwingLeadFactor 1.0` (0 = поведение Э1) |
-| `MobConfig` × Chaser | `LegsTop 0.35`, `BodyTop 0.75`, `HeadTop 1.05` — **чейзер низкий**, иначе перестрела не существует (M1/C3) |
-| `MobConfig` × Gunner | `LegsTop 0.55`, `BodyTop 1.40`, `HeadTop 1.90`, `MuzzleHeight 0.95` |
-| `MobConfig` — общее | `LegsDamageMult 0.75`, `BodyDamageMult 1.0`, `HeadDamageMult 1.5` (ваншот ганнера при ×2 отвергнут: 12×1.5=18 → TTK головой 2 выстрела, M4) |
-| `WeaponConfig` | `CanFireWhileSlide true`; радиус снаряда — правка ассета отдельным PR на вехе В2 (рука владельца) |
-| `GameFeelConfig` | `TracerScale 0.7`, `SlideDustRate 40`, `SlideWallSparkRate 60`, `RicochetSparkCount 12`, `StaminaBarFullColor`, `StaminaBarLowColor`, `StaminaBarLowThreshold 0.25`, `GibHeadImpulseSpeed 6`, `GibExplosionSpeed 4`, `GibPartsFifoLimit 24`, `AimProxyHeadRadiusFrac 0.5` (узкий прокси головы — целиться точнее, M4), `AimRayAlpha 0.35`, `AimRayWidth 0.03`, `AimDotScale 0.15`, `HipReticleRadiusScale 1.0` (Д2') — **новый маркер-ключ синка = `HipReticleRadiusScale`**, `CasingEjectSpeedMax` перестаёт быть маркером (C19) |
+| `HeroConfig` — зоны | `LegsTop 0.55`, `BodyTop 1.35`, `HeadTop 1.75`, `LegsDamageMult 0.75`, `BodyDamageMult 1.0`, `HeadDamageMult 1.5`, `SlideProfileTop 0.55`, `MuzzleHeight 1.0`, `SlideMuzzleHeight 0.45`, `MaxAimHeight 2.2` |
+| `HeroConfig` — Буст | `StaminaMax 90`, `DashStaminaCost 48`, `SlideStaminaCost 13`, `LinkedDashStaminaCost 16`, `StaminaRegenPerSec 22`, `StaminaRegenDelay 0.72` |
+| `HeroConfig` — слайд/дэш | `SlideSpeed 13.5`, `SlideDuration 0.52`, `SlideSteerRadPerSec 1.2`, `SlideMinSpeedFrac 0.75`, `RunUpSeconds 1.18` (середина тик-корзины, C6), `RunUpDecayMult 3.0` (C5), `SlideBufferWindow 0.15`, `LinkWindowSeconds 0.25`, `PostDashSlideWindow 0.32`, `SlideWallStopDot 0.7`, `RicochetRetention 0.8` |
+| `HeroConfig` — прицел | `AimMoveSpeedFrac 0.8`, `AimSlideSpeedMult 0.5`, `AimSettleSeconds 0.25` (маркер) |
+| `WeaponConfig` | `CanFireWhileSlide true`, `SpreadRunMult 1.5`, `SpreadSlideMult 2.0`, `RunSpreadSpeedFrac 0.5` (маркер); радиус снаряда — балансовый PR на В2 |
+| `MobConfig` × Chaser | `LegsTop 0.35`, `BodyTop 0.75`, `HeadTop 1.05`, мульты `0.75 / 1.0 / 1.0` — **головной бонус чейзеру ×1.0**: горизонталь от бедра (1.0) попадает в его голову геометрически, бонус был бы бесплатным (C1); компенсация — головная косметика обломков; `SwingLeadFactor 1.0`, `SwingLeadMaxMeters 2.0` (маркер) |
+| `MobConfig` × Gunner | `LegsTop 0.55`, `BodyTop 1.40`, `HeadTop 1.90`, мульты `0.75 / 1.0 / 1.5`, `MuzzleHeight 0.95` |
+| `GameFeelConfig` | `TracerScale 0.7`, `SlideDustRate 40`, `SlideWallSparkRate 60`, `RicochetSparkCount 12`, `StaminaBarFullColor`, `StaminaBarLowColor`, `StaminaBarLowThreshold 0.25`, `StaminaDeniedPulseSeconds 0.2` (C11), `HeadHitstopScale 1.4`, `ZoneHitPitchOffset 0.06` (C12), `GibHeadImpulseSpeed 6`, `GibExplosionSpeed 4`, `GibPartsFifoLimit 24`, `GibPhysicsSeconds 3` (D10), `AimProxyHeadRadiusFrac 0.5` (ручка СЛОЖНОСТИ хедшота: уже прокси → сложнее навести, A13), `AimRayAlpha 0.35`, `AimRayWidth 0.03`, `AimDotScale 0.15` (маркер; `HipReticleRadiusScale` УБРАН — ретикл остаётся честным конусом, C13) |
 
-Проверка перестрела с этими числами: дуло 1.0 → голова ганнера ~1.65 на 9 м,
-высота над чейзером на 2–4 м = 1.14–1.29 > `Chaser.HeadTop 1.05` ✓ (M1).
+Перестрел (с учётом ±Radius по заслоняющим — A7): блок-потолок чейзера
+`1.05 + 0.12 = 1.17`; траектория в голову ганнера (~1.65 на 9 м) даёт 1.17
+на ≈2.4 м — **коридор перестрела: чейзер дальше ≈2.4 м от дула**.
 
-`SimConfigBuilder.Validate` (полный список — C17/R10/M13): пояса возрастают
-(`0 < LegsTop < BodyTop < HeadTop`, per-архетип в `ValidateMob` и Hero);
-множители ≥ 0; цены ≥ 0 и ≤ `StaminaMax`; `LinkedDashStaminaCost ≤
-DashStaminaCost`; `StaminaMax > 0`; `0 < SlideProfileTop ≤ BodyTop`;
-**`SlideProfileTop < Gunner.MuzzleHeight`** (иначе слайд молча теряет смысл);
-`LegsTop ≤ SlideProfileTop`; `MuzzleHeight ≤ HeadTop`;
-`MaxAimHeight ≥ max(HeadTop всех архетипов)`; `SlideMinSpeedFrac ∈ (0, 1]`;
-`SlideWallStopDot ∈ [-1, 1]`; `RicochetRetention ∈ [0, 1]`;
-`SlideMuzzleHeight ≤ SlideProfileTop`; скорости/окна ≥ 0;
-`AimMoveSpeedFrac ∈ (0, 1]` и `≥ SlideMinSpeedFrac` (слайд из прицела
-достижим); `AimSlideSpeedMult ∈ (0, 1]`; `SpreadRunMult/SpreadSlideMult ≥ 1`;
-`RunSpreadSpeedFrac ∈ [0, 1]`; `SwingLeadFactor ∈ [0, 2]`.
+`SimConfigBuilder.Validate` (строго-положительные — поимённо, D15): пояса
+`0 < LegsTop < BodyTop < HeadTop` (per-архетип и Hero); мульты ≥ 0; цены > 0
+и ≤ `StaminaMax`; `LinkedDashStaminaCost ≤ DashStaminaCost`; `StaminaMax > 0`;
+`StaminaRegenPerSec > 0`; `SlideSpeed > 0`; `SlideDuration > 0`;
+`RunUpSeconds > 0`; `0 < SlideProfileTop ≤ BodyTop`;
+**`SlideProfileTop + Gunner.ProjectileRadius < Gunner.MuzzleHeight`** (D5);
+`LegsTop ≤ SlideProfileTop`; `MuzzleHeight ≤ HeadTop`; `MaxAimHeight ≥
+max(HeadTop)`; `SlideMinSpeedFrac ∈ (0,1]`; `SlideWallStopDot ∈ [−1,1]`;
+`RicochetRetention ∈ [0,1]`; `SlideMuzzleHeight ≤ SlideProfileTop`;
+`AimMoveSpeedFrac ∈ (0,1]` и `> SlideMinSpeedFrac` (строго, D15);
+`AimSlideSpeedMult ∈ (0,1]`; `SpreadRunMult/SpreadSlideMult ≥ 1`;
+`RunSpreadSpeedFrac ∈ [0,1]`; `SwingLeadFactor ∈ [0,2]`;
+`SwingLeadMaxMeters ≥ 0`; `AimSettleSeconds > 0`; `RunUpDecayMult ≥ 0`.
 
 ### 3.6. Presentation
 
-- **Прицел (Д2'):** режим по зажатому ПКМ (новый экшен `Gameplay/AimMode`,
-  `<Mouse>/rightButton`, `AimHeld` в `SimInput`). В режиме: луч камеры через
-  курсор по слою `AimProxy`; попал — `AimPoint`/`AimHeight` из точки на
-  прокси; мимо — точка пола, `AimHeight = 0` («хоть в пол»). **Визуал луча:**
-  полупрозрачная линия от дула модели оружия к точке прицела
-  (`AimRayAlpha`/`AimRayWidth`) + точка-маркер в точке (`AimDotScale`);
-  LineRenderer, живёт только при `AimHeld`. Без ПКМ (от бедра): ретикл —
-  **круг на полу** (заменяет текущий квадрат — «квадрат не читается»),
-  радиус визуализирует текущий разброс с учётом `moveMult` (§3.2), масштаб —
-  `HipReticleRadiusScale`. Прокси-коллайдеры — отдельные чайлд-объекты вьюх
-  (политика `RemoveCollider` корней сохраняется, K15), размеры бутстрап
-  строит из SO-поясов; голова — радиус `× AimProxyHeadRadiusFrac`. Матрица
-  коллизий: `AimProxy` ни с чем не сталкивается (только Raycast). Позы
-  прокси отстают на кадр — допустимо в соло, зафиксировано (K15).
+- **Источник точки прицела — существующий `AimProvider`** (B2), расширяется:
+  `TryAimProxy(out simPos, out height)` — `Physics.Raycast` по маске
+  `AimProxy` (`maxDistance = Arena.Radius × 2`, прокси — триггеры,
+  `QueryTriggerInteraction.Collide`; каст после записи поз вьюх: порядок
+  LateUpdate + `Physics.SyncTransforms` — C15); мимо — существующая
+  аналитика плоскости y=0. При `AimHeld`: попал в прокси → точка на нём;
+  мимо → точка пола, `AimHeight = 0` («хоть в пол»). Прокси — чайлд-объекты
+  вьюх (`RemoveCollider` корней сохраняется), размеры бутстрап строит из
+  SO-поясов; голова × `AimProxyHeadRadiusFrac`. Отставание поз на кадр
+  минимизировано порядком, остаток — допустим в соло (K15). Near-miss «в
+  пол» вместо цели — осознанная цена точного режима (§6; ручка-кандидат
+  `AimSnapScreenRadius` при фрустрации на В2 — C9).
+- **Визуал:** при `AimHeld` — луч (LineRenderer, 2 точки: дуло модели →
+  точка прицела; `AimRayAlpha/Width`, материал через `GetOrCreateMaterial`)
+  + точка-маркер (`AimDotScale`); **круг-конус скрыт**. Без ПКМ — конус:
+  **существующий `CrosshairView._cone`** (B1/A6 — второго кольца не заводим),
+  формула `tan((SpreadRad + RecoilOffset) × moveMult × settleFactor) ×
+  distance` (D19); квадрат-`_marker` заменяется круглым мини-маркером.
 - **Инпут:** `Gameplay/Dash`: `<Keyboard>/space` → `<Keyboard>/leftShift`
-  (геймпад/XR-биндинги не трогаем); новый `Gameplay/Slide`:
-  `<Keyboard>/space` + `<Gamepad>/buttonEast`; новый `Gameplay/AimMode`:
-  `<Mouse>/rightButton` (+ `<Gamepad>/leftTrigger`; полная раскладка — Д10,
-  позже; C29). `InputSampler` + `SlideRequested`-латч + `AimHeld` (уровень,
-  не латч); `SimInputFrame.ForTick` — edge на тик 0 только для запросов.
-  Примечание M9: на стике `SlideMinSpeedFrac 0.75` достижим с ~75%
-  отклонения.
-- **Предсказание выстрела:** `SimulationRunner.WouldFireThisFrame` зеркалит
-  новый гейт `CanFireWhileSlide` (иначе вспышка разойдётся с симуляцией, K16).
-- **Снаряды:** `ViewRegistry` интерполирует `Height`
-  (`PrevHeight`→`Height`), константный офсет 1 м удаляется (K8);
-  трейсер сборщика — `TracerScale`.
-- **Слайд-визуал:** клип **Mixamo `Running Slide`** — источник уже решён
-  ASSETS-001 §1.4 (не UAL, R3); импорт по ASSETS-001 §4.2 в `_Ring/`,
-  запись ADR-002 A10 + `CREDITS.md` («no redistribution»). Фолбэк при
-  проблемах ретаргета — процедурный присед+наклон (решение владельца на В3,
-  риск Р1). Пыль/искры — по `PlayerSlideStarted` и контактам.
-- **Обломки (`app-nco`):** по `MobDied.Zone/HitDir`: хедшот — труп без головы
-  + голова-Rigidbody с импульсом `GibHeadImpulseSpeed` по `HitDir`
-  (VelocityChange, урок 28); взрыв — разброс под-мешей `GibExplosionSpeed`;
-  FIFO `GibPartsFifoLimit`. Производные меши — `ThirdParty/_Ring/Gibs/`
-  (паки read-only, ASSETS-001 §4.1), Rig Generic (§4.3), бинарники LFS (CR8).
-  Проверка разбиения мешей — **отдельный bd-таск ДО В3** (риск Р2).
-- **Дуло:** код дульных эффектов/гильз читает `HeroConfig.MuzzleHeight`
-  (sim-истина); `GameFeelConfig.MuzzleLiftY` больше не используется кодом,
-  поле остаётся до чистки (K18).
-- **HUD:** полоска «**Буст**» (Д12) в `HudController` (новый `_staminaFill`,
-  элемент строит бутстрап, K20); цвета/порог — GameFeel.
-- **Рикошет:** искра+звук по `DashRicocheted` (нормаль — из события).
+  (геймпад/XR не трогаем); `Gameplay/Slide`: `<Keyboard>/space` +
+  `<Gamepad>/buttonEast` — **латч по образцу Dash, включая пере-подписку в
+  `Enable()` и очистку в `ClearLatches()`** (C16); `Gameplay/AimHold`
+  (имя — не `AimMode`: рядом живёт Value-экшен `Gameplay/Aim`, A12):
+  `<Mouse>/rightButton` + `<Gamepad>/leftTrigger`, **уровень через
+  `IsPressed()`, латча НЕ заводит** (без `WasPressedThisFrame` — иначе
+  фантомный кадр прицела, C16). `UI/RightClick` существует — не конфликт
+  (разные мапы).
+- **Предсказание выстрела:** `WouldFireThisFrame` зеркалит
+  `CanFireWhileSlide`; конфиг оружия — из `World.Config.Weapon` (не третья
+  ссылка на SO — B7).
+- **Дульная высота — три call-site'а предсказания** (B6): `MuzzleFlashView`
+  (:96–97), `AudioDirector` (:131–132), `PersistentPropsDirector.SpawnCasing`
+  (:220) читают `World.Config.Hero.MuzzleHeight` / `SlideMuzzleHeight` по
+  `RenderCurr.Player.SlideTimer > 0` (D13); `GameFeelConfig.MuzzleLiftY`
+  выведен из кода (поле остаётся до чистки).
+- **Снаряды:** `ViewRegistry` интерполирует `PrevHeight → Height`,
+  константа `ProjectileOffset` удаляется; трейсер — `TracerScale`.
+- **Фидбек попадания по зоне (C12, ADR-001 §10):** `Zone` из
+  `ProjectileHit` → `GameFeelDirector` (хитстоп × `HeadHitstopScale` на
+  голову) + `AudioDirector` (питч ± `ZoneHitPitchOffset`: голова выше,
+  ноги ниже) — множитель ×1.5 должен быть слышен и виден в момент
+  попадания, иначе В2 нечего оценивать.
+- **Deny-фидбек (C11):** `StaminaDenied` → пульс полоски цветом
+  `StaminaBarLowColor` (`StaminaDeniedPulseSeconds`) + короткий звук.
+- **Слайд-визуал:** клип Mixamo `Running Slide` (A10, импорт по ASSETS-001
+  §4.2 в `_Ring/`); фолбэк — процедурный присед (владелец, В3). Поза
+  слайда/дуло — гизмо + `ContextMenu Capture` по образцу `PlayerVisual`
+  (урок 33, B15). Пыль/искры — `PlayerSlideStarted` + контакты.
+- **Обломки:** пятый `RingBuffer<GibView>` в `PersistentPropsDirector`
+  (регистрируется в `Clear()` — рестарт чистит, D10), питается из
+  существующего `HandleMobDied`; «труп без головы» — ветка в
+  `CorpseView.Spawn` (B5); слой — `Casings` (9, физика уже изолирована);
+  импульсы `VelocityChange`; физика засыпает через `GibPhysicsSeconds`
+  (прецедент `CasingPhysicsSeconds`); лимит `GibPartsFifoLimit`. Производные
+  меши — `_Ring/Gibs/`, Rig Generic, LFS. Проверка под-мешей — `app-1zf`
+  ДО В3.
+- **HUD:** полоска «Буст» — третий `GetOrCreateBar` + `SetRef` (B8), новый
+  `_staminaFill` в `HudController`.
+- **Рикошет:** искра+звук по `DashRicocheted` (нормаль из события).
+- **Декали:** `ProjectileBlocked` — стена: декаль на высоте `Amount` с
+  нормалью `HitDir`; пол (`HitDir == 0`): декаль плашмя (K7/D12).
 
 ### 3.7. Что осознанно НЕ делаем
 
-- TPP, вертикальный wall-run, прыжок (Д1); трупы-препятствия (владелец);
-  позо-хитбоксы и отмотка (§6 — риск Э2/Э4 записан); гравитация снарядов;
-  система перк-карточек §7.1 (Э3+; здесь только SO-ручки); ПКМ-режим
-  (`app-1tu` deferred); FF мобов (`app-46m`); поведенческий отстрел
-  конечностей живых мобов — ступень II отдельным issue после вех.
-- Числа чейзера Э1 (`TelegraphSeconds 0.35`, `AttackRange 1.1`) не трогаем
-  (Д14): ответ на M20 («слайд/бег обесценивают кулак») — упреждающий замах
-  §3.2, а не правка чисел; если В1 покажет, что мало, — кандидаты
-  `0.22`/`1.4` в тюнинг-листе, рука владельца.
+TPP, wall-run, прыжок (Д1); трупы-препятствия; позо-зависимые хит-объёмы и
+отмотка (риск Э2/Э4 записан); гравитация снарядов; система перк-карточек
+§7.1 (Э3+ — здесь только SO-ручки); ПКМ-КАМЕРА (`app-1tu` deferred); FF
+мобов (`app-46m`); поведенческий отстрел конечностей живых мобов (ступень
+II); конвертация всех окон в int-тики (C6 — рефактор вне скоупа, выбраны
+середины корзин); aim-магнетизм (C9 — кандидат Р3/В2).
 
 ## 4. Детерминизм и тесты (TDD)
 
-- Новые поля `PlayerState`/`ProjectileState`/`MatchStats` — в
-  `HashPlayer`/`HashProjectile`/`HashStats` и `WorldSave`;
-  `EveryPlayerAndStatsFieldAffectsHash` форсирует.
-- **`TestConfigs.Default()` расширяется всеми новыми полями в связке с
-  C#-дефолтами SO; `ConfigTests.AssertHeroEqual/AssertMobEqual/
-  AssertWeaponEqual` дополняются теми же полями** — иначе зонные тесты
-  работают в вырожденном мире нулевой высоты (K4).
-- **Golden пересеивается** — санкция спеки; старый/новый хеш фиксируются в
-  PR. Скриптовый сценарий дополняется `SlideRequested` (~5%) и вариацией
-  `AimHeight`, чтобы golden покрывал новые ветки.
-- Новые классы: `Projectile3DTests` (высота в контакте, промах над головой,
-  пол, перестрел через низкого чейзера [M1-сценарий 2 м/9 м], «чирк»
-  ±Radius, отвергнутый кандидат не затеняет дальнего — M5, длина скорости
-  под разбросом — K10; **режимы Д2':** прицельный — точное попадание в
-  указанную точку без разброса, включая точку пола; от бедра — `VelZ == 0`
-  на высоте дула, множители разброса ×1.5 бег / ×2 слайд, покой — ×1),
-  `HitZoneTests` (пояса, множители, слайд-профиль, ганнер-выстрел мимо
-  слайдящего на дефолтах — M13, зоны в событиях),
-  `StaminaTests` (траты/реген/отказ/буфер-добор регеном — C11; заморозка —
-  на фикстурных числах `SlideDuration 0.9 / Delay 0.3`, M16),
-  `SlideTests` (гейт, слайд-не-перезаряжает-гейт — M2, распад разгона,
-  пост-дэш окно, взаимоисключение — C7, руление, гашение о стену БЕЗ окна
-  связки — M3, смерть в слайде чистит состояние — M11, вынос на выходе,
-  **слайд под ПКМ — скорость ×`AimSlideSpeedMult`, переключение со
-  следующего тика**), `DashRicochetTests` (зеркальность, retention через
-  `DashSpeedCur`, guard `dot < 0` — M8, одно отражение/тик, i-frames живут,
-  событие, дистанция дэша в метрах — M7). Расширяются также:
-  `MovementTests` (кап бега под `AimHeld` = `MaxSpeed × AimMoveSpeedFrac`;
-  разгон под капом достижим), `MobAiTests` (упреждающий замах Д14: чейзер
-  телеграфит по прогнозу и попадает по прямолинейно бегущему/слайдящему;
-  `SwingLeadFactor 0` — поведение Э1 бит-в-бит).
-- Расширяются: `ConfigTests` (валидация §3.5 + хот-твик клампы C5),
-  `HotTweakTests` (стамина/слайд-клампы), `EventTests` (payload'ы §3.4),
-  `DeterminismTests` (golden), `AllocationTests` (0 GC на тик — вкл. массив
-  кандидатов §3.2: stack-alloc/preallocated).
-- Гейт per task: затронутые тесты; перед PR — полный EditMode + сборки
-  (Linux server, Windows client).
+- Новые поля — в хеш/`WorldSave`; `EveryPlayerAndStatsFieldAffectsHash`
+  форсирует. RNG-split `_spreadRng`/`_waveRng` — в `WorldSave` и канонический
+  порядок хеша (C4).
+- **`TestConfigs.Default()` и `ConfigTests.AssertHeroEqual/AssertMobEqual/
+  AssertWeaponEqual` расширяются в связке** (K4); **блок копирования полей
+  ганнера в `Build_DefaultAssets_MatchesTestConfigsBaseline` — теми же
+  полями** (A3). Фикстура M16-чисел — четвёртый именованный вариант
+  `TestConfigs` (B14); длинные прогоны Буста/слайда — от `Quiet()`/`Open()`.
+- **Golden пересеивается**; сценарий дополняется `SlideRequested` (~5%) и
+  **`AimHeld` как «залипающим» уровнем** (переключение ~3%/тик — вариация
+  только `AimHeight` не покрывала бы ни одной новой ветки, D1/A5); старый
+  хеш `0x39B4C57694AD8770` фиксируется в PR.
+- Новые классы:
+  - `ProjectileHeightTests` (имя — конвенция без цифр, A18): высота в
+    контакте по `[tEnter, tExit]`, кламп зоны на чирках `h = ±Radius` (D3),
+    пол-кандидат в общем порядке + «моб за точкой пола не страдает» (D4),
+    промах над головой, перестрел (M1-сценарий: чейзер 2.4 м/ганнер 9 м),
+    отвергнутый кандидат не затеняет дальнего (M5), тай-брейк равных `t`
+    (C7), длина `|vel3| == ProjectileSpeed` под разбросом (K10), прицельный
+    — точно в точку (вкл. точку пола), от бедра — `VelZ == 0` + множители
+    ×1.5/×2/×1, **порог `RunSpreadSpeedFrac` на границе** (D8), **разброс
+    не нулевой на первом тике `AimHeld`** (C2), **`RecoilOffset` копится в
+    прицеле** (D8).
+  - `HitZoneTests`: пояса, мульты per-архетип (чейзер-голова ×1.0),
+    слайд-профиль, ганнер мимо слайдящего, зоны в событиях, `Amount` после
+    множителя.
+  - `StaminaTests`: траты/реген/отказ + `StaminaDenied`, буфер-добор
+    регеном, заморозка регена (фикстурные числа M16), `Stamina = StaminaMax`
+    на старте.
+  - `SlideTests`: гейт, слайд-не-перезаряжает-гейт (M2), распад разгона
+    через `RunUpDecayMult`, пост-дэш окно, взаимоисключение, руление,
+    гашение о стену БЕЗ окна связки (M3), смерть в слайде чистит состояние
+    (M11), вынос на выходе, слайд под ПКМ ×`AimSlideSpeedMult` с того же
+    тика, `SlideDir`-фолбэк при нулевых MoveDir/Vel (D6).
+  - `DashRicochetTests`: зеркальность **со следующего тика** (D16),
+    retention через `DashSpeedCur`, guard `dot < 0`, ≤1 отражения/тик,
+    i-frames живут, событие с нормалью, дистанция дэша в метрах — **на
+    явной фикстуре** (`DashDuration`/`DashSpeed` заданы в тесте, не из
+    `TestConfigs` — C14).
+  - `MobAiTests` (расширение): замах по прогнозу попадает по бегущему И
+    слайдящему; **стоячий дальше `AttackRange` НЕ телеграфится** (D8);
+    кламп лида скоростью бега — дэш не выманивает замах (A4/D2); кламп
+    `SwingLeadMaxMeters`; `SwingLeadFactor 0` — тик входа = тик
+    `dist ≤ AttackRange` (D9).
+- Расширяются: `ConfigTests` (валидация §3.5 + клампы `ApplyConfig`),
+  `HotTweakTests`, `EventTests` (payload'ы §3.4), `DeterminismTests`
+  (golden + **`HostileInput_...` дополняется `AimHeight`/`AimHeld`** — D8),
+  `AllocationTests` (0 GC: скретч кандидатов, без делегатов сортировки —
+  A17), `MovementTests` (кап под ПКМ + **снятие капа отпусканием** — D8),
+  `DashTests` (перенацелить `DashIntoObstacle_StopsAtSurface_NoTunnel` под
+  рикошет — A9).
+- Гейт per task: затронутые тесты; перед PR — полный EditMode + сборки.
 
 ## 5. Вехи (плейтесты владельца)
 
-- **В1 «Руки»:** стамина+слайд+рикошет (мех-модели как есть) — связки, окна,
-  ощущение слайда, отскоки, HUD. Тюнинг-лист: экономика, `SlideSpeed`,
-  окна, `RunUpSeconds`; кандидаты чейзера `Telegraph 0.22`/`Range 1.4` (M20);
-  `DroppedEvents == 0`.
-- **В2 «Прицел»:** 3D-луч, хитзоны, множители, перестрел, подныривание;
-  радиус снаряда — отдельный балансовый PR рукой владельца.
-- **В3 «Мясо»:** обломки (голова по вектору, взрыв-разброс), слайд-клип
-  Mixamo (или фолбэк — решение владельца), пыль/искры, звуки.
-- Фикс-волны фидбека короткими итерациями (урок 34).
+- **В1 «Руки»:** Буст+слайд+рикошет+замах чейзера — связки, окна, слайд
+  сквозь толпу, отскоки, deny-фидбек, HUD. Тюнинг-лист: экономика, окна,
+  `SwingLead*`, кандидат «выпад на ударе» (C10), кандидаты `Telegraph
+  0.22`/`Range 1.4`; `DroppedEvents == 0` (DevOverlay).
+- **В2 «Прицел»:** оба режима, зоны, множители (слышимость хедшота — C12),
+  перестрел (коридор 2.4 м+), подныривание, «хоть в пол»; near-miss-фрустрация
+  → ручка снапа (C9); ADS-лазер → увод от `RecoilOffset` (C3); радиус
+  снаряда и `Gunner.MaxHp 26` (хедшот должен резать TTK — C1) — отдельный
+  балансовый PR рукой владельца.
+- **В3 «Мясо»:** обломки (голова по вектору, взрыв-разброс, `app-1zf` —
+  до вехи), слайд-клип Mixamo/фолбэк (владелец), пыль/искры/звуки.
+- Фикс-волны короткими итерациями (урок 34).
 
 ## 6. Decision log
 
-- 2026-08-03 (v1): `PostDashSlideTimer` — отдельный таймер, не проверка
-  `DashCooldown`; «мгновенно после дэша» (Д6) реализовано окном 0.32 с
-  (буфер под человеческий тайминг; 0 = буквальное «мгновенно»).
-- 2026-08-03 (v1): фолбэк-высота прицела = горизонталь (не пол) — выстрела
-  «в пол» как намеренного действия нет.
-- 2026-08-03 (v1): ганнер стреляет горизонтально — «глупость» мобов по
-  вертикали делает слайд честной тактикой.
-- 2026-08-03 (v2, self-review): чейзер стал низким (M1) — иначе перестрел
-  геометрически не существует; `HeadDamageMult 2.0 → 1.5` (M4 — ваншот
-  ганнера и удвоение DPS не входили в намерение Д3); стена не открывает
-  окно связки (M3); разгон сбрасывается слайдом и не копится в движениях
-  (M2); экономика пересчитана честно с регеном (M15/C10): дэш 48,
-  связка 16 — идеал ровно 90.
-- 2026-08-03 (v2): отмотка хитбоксов не делается; `AimHeight` — клиентский
-  вход, зону пересчитывает симуляция по высоте снаряда (CR3 чист). Риск:
-  на Э2 (интерп ~100 мс + 80 мс RTT) доля хедшотов упадёт; к Э4 (PvP-зоны)
-  вопрос отмотки пересматривается — заметки на `app-5nu` (R12). Слайд-профиль
-  против игроков в PvP почти не работает (курсор бьёт сверху, M18) —
-  наследникам Э4 не считать слайд анти-PvP-механикой.
-- 2026-08-03 (v2): зоны Legs/Head носителя в PvE недостижимы (единственный
-  снаряд мобов летит на 0.95 = Body) — оставлены ради Э4-симметрии, дёшевы
-  (M18).
-- 2026-08-03-2 (v3, владелец): прицел переигран в двухрежимный (Д2') —
-  прицельная точность стала осознанной ставкой (кап скорости, медленный
-  слайд), от бедра вернулось Э1-поведение с платой разбросом за движение.
-  «Хоть в пол» легален только в прицеле. Разброс в прицеле = 0 —
-  единственный источник точности вертикали; `RecoilOffset` копится в обоих
-  режимах (спрей наказуем и после выхода из прицела). Код-идентификатор
-  ресурса остаётся `Stamina` (англ. стандарт), user-facing — «Буст» (Д12).
-- 2026-08-03-2 (v3): ответ на M20 — упреждающий замах чейзера (Д14) вместо
-  правки чисел Э1; `SwingLeadFactor 0` сохраняет Э1-поведение как opt-out.
-- 2026-08-03-2 (v3): `app-1tu` остаётся deferred — он про смену КАМЕРЫ
-  (плечо/PiP-зум); ПКМ-режим Д2' камеру не трогает и его не заменяет.
+- v1: `PostDashSlideTimer` — отдельный таймер; фолбэк-прицел горизонтален;
+  ганнер стреляет горизонтально (осознанная «глупость» по вертикали).
+- v2 (self-review K/C/R/M): низкий чейзер; `HeadDamageMult 2.0 → 1.5`
+  (ваншот отвергнут); стена не открывает окно связки; разгон сбрасывается
+  слайдом; экономика с регеном честно (48/16); отмотка не делается —
+  `AimHeight` клиентский вход, зону пересчитывает симуляция (CR3 чист);
+  слайд-профиль в PvP почти не работает (M18) — Э4 предупреждён.
+- v3 (владелец): двухрежимный прицел Д2'; «Буст»; `Stamina` в коде; Д14
+  вместо правки чисел Э1; `app-1tu` = только камера.
+- v4 (протокол review_spec): **Chaser.HeadDamageMult = 1.0** — горизонталь
+  от бедра (1.0 м) геометрически попадает в голову чейзера (пояс
+  0.75–1.05), бонус был бы бесплатным при каждом выстреле в упор (C1);
+  головной бонус — награда прицельного режима по ганнеру; чейзеру —
+  косметика обломков головы. Валидация «`MuzzleHeight` в теле каждого
+  архетипа» НЕ вводится — конфликтует с перестрелом (низкий чейзер), C1
+  разрешён множителем. `Gunner.MaxHp 20` даёт TTK-no-op хедшота (2 и 2
+  выстрела) — кандидат `MaxHp 26` на балансовый PR В2.
+- v4: ADS без отдачи после устаканивания — **решение владельца Д2'
+  («летит точно»)**, осознанный отход от индустриальной ADS-нормы (C3);
+  защита от tap-ПКМ — `AimSettleSeconds` (C2); запасной ход (вертикальный
+  увод от `RecoilOffset`) описан и включается ручкой при необходимости.
+- v4: RNG разделён на `_spreadRng`/`_waveRng` (C4) — сейчас бесплатно
+  (golden пересеивается), страхует ресимы Э2 от каскадного десинка.
+- v4: отклонено с обоснованием: aim-магнетизм (C9 — «хоть в пол» и
+  near-miss-цена — часть скилла режима; ручка — кандидат В2); конвертация
+  окон в int-тики (C6 — рефактор вне скоупа, выбраны середины корзин);
+  тест «C#-дефолты == .asset» (C14 — расхождение историческое,
+  санкционировано C27; фикстуры явные); перестановка разделов по образцу
+  Фазы Б (A18 — косметика поздней стадии, дифф дороже).
+- v4: упреждение замаха клампится скоростью бега и `SwingLeadMaxMeters` —
+  без клампов дэш (30 м/с) выманивал замах с 10.5 м и **выключал** ближний
+  бой, инверсия Д14 (A4/D2); анти-кайт «выпад на ударе» — кандидат В1 (C10).
 
 ## 7. DoD пакета
 
-1. Полный EditMode зелёный (старое 93 + новые классы §4), golden пересеян
-   (старый `0x39B4C57694AD8770` → новый зафиксирован в PR).
-2. Сборки: Linux headless server + Windows client без ошибок.
-3. Вехи В1–В3 приняты владельцем плейтестом (соло, без лага — CR7-оговорка
-   §3.1).
-4. `Apply` бутстрапа идемпотентен (прокси, HUD, бинды, слой).
-5. PR смержен; `app-nco` закрыт вместе с В3; `app-5nu` разблокирован.
+1. Полный EditMode зелёный (93 старых + новые классы §4), golden пересеян
+   (старый `0x39B4C57694AD8770` → новый в PR).
+2. Сборки: Linux headless server + Windows client.
+3. Вехи В1–В3 приняты владельцем (соло, без лага — A9-оговорка CR7).
+4. `Apply` бутстрапа идемпотентен (прокси, HUD, бинды, слой, маркеры SO).
+5. PR смержен; `app-nco`/`app-1zf` закрыты; `app-5nu` разблокирован.
 
 ## 8. Риски
 
-- **Р1:** ретаргет Mixamo `Running Slide` на куклу UAL кривой → фолбэк
-  процедурный присед+наклон (заранее одобренный путь, В3 не блокирует;
-  финальное слово — владелец на вехе).
-- **Р2:** меши Quaternius не делятся на под-меши по костям → фолбэк: отлёт
-  целых голов/частей-примитивов вместо кусков меха; проверка — отдельный
-  bd-таск ДО В3 (`app-nco` note), решение владельца на В3.
-- **Р3:** прицел в голову курсором в ¾ окажется неточным/фрустрирующим →
-  ручки `AimProxyHeadRadiusFrac`/поясов; если мало — размораживаем `app-1tu`
-  (ПКМ-режим точности).
-- **Р4:** хедшоты под лагом Э2 (интерп + RTT) — заметка на `app-5nu`,
-  повторный гейт в Э2 обязателен.
+- **Р1:** ретаргет Mixamo-клипа кривой → процедурный присед (одобрен
+  заранее; слово владельца на В3).
+- **Р2:** меши не делятся на под-меши → отлёт целых голов/примитивов;
+  проверка — `app-1zf` ДО В3.
+- **Р3:** прицел в голову курсором в ¾ неточен/фрустрирует → ручки
+  `AimProxyHeadRadiusFrac` (узкий прокси = сложнее, A13; асимметрия
+  прокси/сим-радиуса записана), пояса; далее `AimSnapScreenRadius` (C9);
+  крайний случай — разморозка `app-1tu`.
+- **Р4:** хедшоты под лагом Э2 — заметка на `app-5nu`, повторный гейт
+  обязателен (+ инпут-рост и видимость луча — D18).
+- **Р5:** упреждающий замах инвертируется в «выключение чейзера» кайтом —
+  клампы §3.2; кандидат «выпад» В1 (C10).
 
 ## 9. Декомпозиция bd
 
-Эпик `app-n6g` (claimed). Child-таски создаются на фазе плана
-(writing-plans): симуляция (3D-снаряды → зоны → стамина → слайд → рикошет),
-данные/валидация, прицел/инпут, вьюхи/обломки (`app-nco` — child), HUD,
-бутстрап, гейты/вехи. Side-quest'ы — `discovered-from app-n6g`.
-`app-5nu` blocks-зависимость уже стоит.
+Эпик `app-n6g` (claimed); children: `app-nco` (обломки), `app-1zf`
+(под-меши). Остальные сабтаски — на фазе плана (writing-plans): порядок
+фаз ≈ сим-снаряды/зоны → Буст/слайд/рикошет → замах → данные/валидация →
+прицел/инпут → вьюхи/обломки/HUD → гейты/вехи. Side-quest'ы —
+`discovered-from app-n6g`. `app-5nu` blocks стоит.
 
 ## 10. Открытые вопросы владельцу
 
-Все вопросы v2 закрыты ответами владельца 2026-08-03-2:
-
-1. Термин ресурса — «**Буст**» (Д12; словарь ADR-003 A1, код — `Stamina`).
-2. Балансные дефолты v2 приняты как старт для В1 (Д13).
-3. Числа чейзера Э1 не трогаем; вместо них — упреждающий замах (Д14, §3.2);
-   тюнинг-кандидаты остаются в листе В1 на случай, если упреждения мало.
-
-Открытых вопросов нет.
+Закрыты (2026-08-03-2): «Буст» (Д12), баланс v2 принят (Д13), чейзер —
+упреждение вместо правки чисел (Д14). Новых вопросов v4 не открыл; два
+балансовых кандидата отданы вехам: `Gunner.MaxHp 26` (В2), «выпад на
+ударе» (В1).
