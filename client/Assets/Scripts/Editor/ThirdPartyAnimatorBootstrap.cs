@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using Ring.Presentation;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -111,13 +112,13 @@ namespace Ring.Editor
             }
             Dictionary<string, AnimationClip> clips = ClipsOf(TP.DollPath);
             var controller = AnimatorController.CreateAnimatorControllerAtPath(PlayerControllerPath);
-            controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
+            controller.AddParameter(AnimIds.SpeedName, AnimatorControllerParameterType.Float);
             ReconcileSpeedDefault(controller);
 
             AnimatorState locomotion = controller.CreateBlendTreeInController(
-                "Locomotion", out BlendTree tree, 0);
+                AnimIds.LocomotionName, out BlendTree tree, 0);
             tree.blendType = BlendTreeType.Simple1D;
-            tree.blendParameter = "Speed";
+            tree.blendParameter = AnimIds.SpeedName;
             tree.useAutomaticThresholds = false;
             tree.AddChild(Require(clips, "Idle_Loop"), 0f);
             tree.AddChild(Require(clips, "Walk_Loop"), 0.33f);
@@ -125,24 +126,24 @@ namespace Ring.Editor
             tree.AddChild(Require(clips, "Sprint_Loop"), 1f);
             controller.layers[0].stateMachine.defaultState = locomotion;
 
-            AddOptionalState(controller, clips, "Hit_Chest", "HitReact");
-            AddOptionalState(controller, clips, "Hit_Head", "HitReactHead");
-            controller.AddMotion(Require(clips, "Death01"), 0).name = "Death";
-            AddOptionalState(controller, clips, "Roll", "Dash");
+            AddOptionalState(controller, clips, "Hit_Chest", AnimIds.HitReactName);
+            AddOptionalState(controller, clips, "Hit_Head", AnimIds.HitReactHeadName);
+            controller.AddMotion(Require(clips, "Death01"), 0).name = AnimIds.DeathName;
+            AddOptionalState(controller, clips, "Roll", AnimIds.DashName);
 
-            controller.AddLayer("Aim");
+            controller.AddLayer(AnimIds.AimLayerName);
             AnimatorControllerLayer[] layers = controller.layers; // returns a copy
             layers[1].avatarMask = mask;
             layers[1].blendingMode = AnimatorLayerBlendingMode.Override;
             layers[1].defaultWeight = 1f;
             controller.layers = layers;
             AnimatorStateMachine aim = controller.layers[1].stateMachine;
-            AnimatorState aimIdle = AddAimState(controller, aim, clips, "Pistol_Aim_Neutral");
+            AnimatorState aimIdle = AddAimState(controller, aim, clips, AnimIds.PistolAimNeutralName);
             aim.defaultState = aimIdle;
-            AddAimState(controller, aim, clips, "Pistol_Aim_Up");
-            AddAimState(controller, aim, clips, "Pistol_Aim_Down");
-            AddAimState(controller, aim, clips, "Pistol_Shoot");
-            AddAimState(controller, aim, clips, "Pistol_Reload");
+            AddAimState(controller, aim, clips, AnimIds.PistolAimUpName);
+            AddAimState(controller, aim, clips, AnimIds.PistolAimDownName);
+            AddAimState(controller, aim, clips, AnimIds.PistolShootName);
+            AddAimState(controller, aim, clips, AnimIds.PistolReloadName);
             Debug.Log("[ThirdPartyAnimators] created " + PlayerControllerPath);
         }
 
@@ -155,7 +156,7 @@ namespace Ring.Editor
             bool changed = false;
             for (int i = 0; i < parameters.Length; i++)
             {
-                if (parameters[i].name != "Speed") continue;
+                if (parameters[i].name != AnimIds.SpeedName) continue;
                 if (!Mathf.Approximately(parameters[i].defaultFloat, 1f))
                 {
                     parameters[i].defaultFloat = 1f;
