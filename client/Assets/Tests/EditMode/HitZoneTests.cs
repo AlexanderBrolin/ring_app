@@ -199,5 +199,52 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(cfg.Chaser.MaxHp - hit.Amount, w.Mobs[0].Hp, 1e-4f);
             Assert.AreEqual(1f, hit.HitDir.x, 1e-4f); // travelling +X
         }
+
+        [Test]
+        public void GunnerShot_MissesSlidingHero()
+        {
+            var cfg = Range();
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player;
+            // QA1 seam: force mid-slide directly — no need to choreograph a
+            // real run-up/slide-request just to get SlideTimer > 0.
+            p.SlideTimer = cfg.Hero.SlideDuration;
+            w.SetPlayerForTest(p);
+
+            // Horizontal shot at the Gunner's muzzle height (M13): 0.55
+            // (SlideProfileTop) + 0.15 (Gunner.ProjectileRadius) < 0.95
+            // (Gunner.MuzzleHeight) — the sliding profile must let it pass clean over.
+            w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(TargetX, 0f),
+                new float2(-cfg.Gunner.ProjectileSpeed, 0f), cfg.Gunner.MuzzleHeight, 0f,
+                cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius, cfg.Gunner.ProjectileLifetime);
+
+            w.ClearEvents();
+            w.Tick(default);
+
+            Assert.AreEqual(cfg.Hero.MaxHp, w.Player.Hp, "sliding profile must have let the shot pass clean over");
+            Assert.AreEqual(0, TestEvents.CountOf(w, SimEventKind.PlayerDamaged));
+        }
+
+        [Test]
+        public void SlidingHero_HitOnlyBelowProfile()
+        {
+            var cfg = Range();
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player;
+            p.SlideTimer = cfg.Hero.SlideDuration; // QA1 seam
+            w.SetPlayerForTest(p);
+
+            const float shotHeight = 0.3f; // below SlideProfileTop (0.55) and LegsTop (0.55)
+            w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(TargetX, 0f),
+                new float2(-cfg.Gunner.ProjectileSpeed, 0f), shotHeight, 0f,
+                cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius, cfg.Gunner.ProjectileLifetime);
+
+            w.ClearEvents();
+            w.Tick(default);
+
+            SimEvent damaged = Blow(w, SimEventKind.PlayerDamaged);
+            Assert.AreEqual(HitZone.Legs, damaged.Zone);
+            Assert.Less(w.Player.Hp, cfg.Hero.MaxHp);
+        }
     }
 }

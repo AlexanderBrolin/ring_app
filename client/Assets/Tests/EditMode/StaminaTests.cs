@@ -78,5 +78,94 @@ namespace Ring.Simulation.Tests
 
         // A dedicated HotTweak spot-test is NOT added here: the clamp is covered
         // by the reflective pass in HotTweakTests (QC7).
+
+        [Test]
+        public void LinkedDash_DiscountAndCooldownBypass_ConsumesWindow()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var move = new SimInput { MoveDir = new float2(1f, 0f) };
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // dash #1
+            Assert.AreEqual(1, w.Stats.DashesUsed);
+            for (int i = 0; i < 10; i++) w.Tick(move); // dash ends, post-dash window opens
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide, via post-dash window
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+
+            int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
+            for (int i = 0; i < slideTicks; i++) w.Tick(move); // ride the slide out to its natural end
+            Assert.AreEqual(0f, w.Player.SlideTimer, "test setup: slide must have ended");
+            Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
+            Assert.Greater(w.Player.DashCooldown, 0f,
+                "test setup: dash #1's cooldown must still be running — this is what the bypass is for");
+
+            float staminaBeforeLinkedDash = w.Player.Stamina;
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // linked dash, inside the window
+            Assert.AreEqual(2, w.Stats.DashesUsed, "cooldown bypass: the linked dash must have started");
+            Assert.AreEqual(staminaBeforeLinkedDash - cfg.Hero.LinkedDashStaminaCost, w.Player.Stamina, 1e-3f);
+            Assert.AreEqual(0f, w.Player.LinkWindowTimer, "window must be consumed by the linked dash");
+
+            // Immediate re-request (QA14): the window is gone and the fresh
+            // cooldown the linked dash just set holds again — no third dash.
+            int dashesBefore = w.Stats.DashesUsed;
+            float staminaBefore = w.Player.Stamina;
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true });
+            Assert.AreEqual(dashesBefore, w.Stats.DashesUsed, "no third dash — the window was already spent");
+            Assert.AreEqual(staminaBefore, w.Player.Stamina, 1e-3f, "the ignored attempt must not touch Stamina");
+        }
+
+        [Test]
+        public void PerfectChain_CostsExactly_StaminaMax()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var move = new SimInput { MoveDir = new float2(1f, 0f) };
+
+            // Fixture premise (Д5 "exactly two links"): dash + two slides + one
+            // linked dash must total exactly the starting stamina pool.
+            Assert.AreEqual(cfg.Hero.StaminaMax,
+                cfg.Hero.DashStaminaCost + 2f * cfg.Hero.SlideStaminaCost + cfg.Hero.LinkedDashStaminaCost,
+                1e-4f, "fixture premise: exactly two links must drain StaminaMax");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // dash #1
+            Assert.AreEqual(1, w.Stats.DashesUsed);
+            Assert.AreEqual(cfg.Hero.StaminaMax - cfg.Hero.DashStaminaCost, w.Player.Stamina, 1e-3f);
+
+            for (int i = 0; i < 10; i++) w.Tick(move); // dash ends, post-dash window opens
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide #1
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+            float afterSlide1 = w.Player.Stamina;
+            Assert.AreEqual(cfg.Hero.StaminaMax - cfg.Hero.DashStaminaCost - cfg.Hero.SlideStaminaCost,
+                afterSlide1, 1e-3f);
+
+            int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
+            for (int i = 0; i < slideTicks; i++) w.Tick(move); // ride slide #1 out to its natural end
+            Assert.AreEqual(0f, w.Player.SlideTimer, "test setup: slide #1 must have ended");
+            Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // linked dash, inside the window
+            Assert.AreEqual(2, w.Stats.DashesUsed);
+            Assert.AreEqual(afterSlide1 - cfg.Hero.LinkedDashStaminaCost, w.Player.Stamina, 1e-3f);
+            Assert.AreEqual(0f, w.Player.LinkWindowTimer, "window must be consumed by the linked dash");
+
+            for (int i = 0; i < 10; i++) w.Tick(move); // linked dash ends, its own post-dash window opens
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: second post-dash window must be open");
+
+            float beforeSlide2 = w.Player.Stamina;
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide #2
+            Assert.AreEqual(2, w.Stats.SlidesUsed);
+            Assert.AreEqual(beforeSlide2 - cfg.Hero.SlideStaminaCost, w.Player.Stamina, 1e-3f);
+
+            // Total spent across the whole chain equals exactly StaminaMax (Д5):
+            // regen never gets a chance to run mid-chain — every dash/slide start
+            // re-primes StaminaRegenDelayTimer well before it could elapse, and
+            // SlideTimer itself blocks regen while a slide is active (QD10) — so
+            // this is pure arithmetic, not a coincidence of timing.
+            Assert.AreEqual(0f, w.Player.Stamina, 1e-3f);
+        }
     }
 }

@@ -276,5 +276,75 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(w.Player.Pos, e.Pos);
             Assert.AreEqual(w.Player.SlideDir, e.HitDir);
         }
+
+        [Test]
+        public void WallStop_KillsSlide_NoLinkWindow()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Arena.ObstacleCount = 1;
+            cfg.Arena.ObstaclePos = new[] { new float2(5f, 0f) }; // dead ahead — head-on hit
+            cfg.Arena.ObstacleRadius = new[] { 1f };
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player;
+            // QA1 seam: satisfies the slide gate without ticking through a full
+            // run-up — Vel must clear the SlideMinSpeedFrac threshold too, or
+            // Update()'s "moving" check decays RunUpTimer back below RunUpSeconds
+            // on this very first tick before the gate is even read.
+            p.RunUpTimer = cfg.Hero.RunUpSeconds;
+            p.Vel = new float2(cfg.Hero.MaxSpeed, 0f);
+            w.SetPlayerForTest(p);
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide starts
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+            Assert.Greater(w.Player.SlideTimer, 0f, "test setup: must be sliding");
+
+            int budget = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt) + 2;
+            bool stopped = false;
+            for (int i = 0; i < budget; i++)
+            {
+                w.Tick(new SimInput { MoveDir = new float2(1f, 0f) });
+                if (w.Player.SlideTimer <= 0f) { stopped = true; break; }
+            }
+            Assert.IsTrue(stopped, "test setup: slide never ended");
+            Assert.AreEqual(0f, w.Player.SlideTimer);
+            Assert.AreEqual(0f, w.Player.LinkWindowTimer, "wall-stop must not open the link window");
+
+            // Proof by consequence (M3): if the window had opened, this dash
+            // would be linked and cost less — it must cost the FULL price.
+            float staminaBeforeDash = w.Player.Stamina;
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true });
+            Assert.AreEqual(1, w.Stats.DashesUsed);
+            Assert.AreEqual(staminaBeforeDash - cfg.Hero.DashStaminaCost, w.Player.Stamina, 1e-3f,
+                "wall-stop must not leave a link window — the dash must cost the FULL price");
+        }
+
+        [Test]
+        public void SlideAlongWall_Continues()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Arena.ObstacleCount = 1;
+            // Offset so the swept-circle path only grazes the obstacle: at this
+            // offset dot(-normal, SlideDir) ~= 0.44, comfortably under the
+            // fixture's SlideWallStopDot (0.7) — a shallow hit, not a head-on one.
+            cfg.Arena.ObstaclePos = new[] { new float2(5f, 1.3f) };
+            cfg.Arena.ObstacleRadius = new[] { 1f };
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player;
+            p.RunUpTimer = cfg.Hero.RunUpSeconds; // QA1 seam (see WallStop_KillsSlide_NoLinkWindow)
+            p.Vel = new float2(cfg.Hero.MaxSpeed, 0f);
+            w.SetPlayerForTest(p);
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide starts
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+
+            int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
+            for (int i = 0; i < slideTicks - 1; i++)
+                w.Tick(new SimInput { MoveDir = new float2(1f, 0f) });
+            Assert.Greater(w.Player.SlideTimer, 0f, "graze must not have wall-stopped the slide early");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f) }); // this tick ends it naturally
+            Assert.AreEqual(0f, w.Player.SlideTimer);
+            Assert.Greater(w.Player.LinkWindowTimer, 0f, "natural exit must still open the link window");
+        }
     }
 }

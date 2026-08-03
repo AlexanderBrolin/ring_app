@@ -59,6 +59,12 @@ namespace Ring.Simulation.Movement
             bool slideGate = p.RunUpTimer >= hero.RunUpSeconds || p.PostDashSlideTimer > 0f;
 
             var result = new MovementResult();
+            // Task 11: true only inside the "slide tick — link of the SAME
+            // chain" branch below. MoveWithCollisions is a single shared call
+            // site at the bottom of this method (see its call-site comment),
+            // so wall-stop damping — which only applies to slide movement —
+            // needs its own flag to know which branch owned this tick.
+            bool slideMoveTick = false;
             if (p.DashTimer > 0f)
             {
                 p.DashTimer = math.max(0f, p.DashTimer - dt);
@@ -68,12 +74,19 @@ namespace Ring.Simulation.Movement
                 // decrement that can cause the transition.
                 if (p.DashTimer <= 0f) p.PostDashSlideTimer = hero.PostDashSlideWindow;
             }
-            else if (p.DashBufferTimer > 0f && p.DashCooldown <= 0f && p.SlideTimer <= 0f)
+            else if (p.DashBufferTimer > 0f && p.SlideTimer <= 0f
+                && (p.DashCooldown <= 0f || p.LinkWindowTimer > 0f))
                 // QD10: a dash never starts while a slide is active — the
                 // buffered request just keeps latching/decaying above until
                 // the slide ends (or the buffer window itself expires).
+                // Task 11 (C6): a dash requested inside the post-slide link
+                // window bypasses the ordinary DashCooldown gate entirely —
+                // that bypass is the whole point of the window — but it still
+                // pays its OWN (discounted) stamina cost below.
             {
-                if (p.Stamina >= hero.DashStaminaCost)
+                bool linked = p.LinkWindowTimer > 0f;
+                float cost = linked ? hero.LinkedDashStaminaCost : hero.DashStaminaCost;
+                if (p.Stamina >= cost)
                 {
                     float2 dir = math.lengthsq(input.MoveDir) > 1e-6f
                         ? math.normalizesafe(input.MoveDir)
@@ -84,8 +97,11 @@ namespace Ring.Simulation.Movement
                     p.IframeTimer = hero.DashIframes;
                     p.DashBufferTimer = 0f;
                     p.Vel = dir * hero.DashSpeed;
-                    p.Stamina -= hero.DashStaminaCost;
+                    p.Stamina -= cost;
                     p.StaminaRegenDelayTimer = hero.StaminaRegenDelay;
+                    // Task 11 (C6): the window is consumed by USE, whether it
+                    // paid for this dash or (being un-opened) was already 0.
+                    p.LinkWindowTimer = 0f;
                     result.DashStarted = true;
                 }
                 else
@@ -102,6 +118,7 @@ namespace Ring.Simulation.Movement
             }
             else if (p.SlideTimer > 0f) // slide tick — link of the SAME chain (QC11)
             {
+                slideMoveTick = true;
                 p.SlideTimer = math.max(0f, p.SlideTimer - dt);
                 float2 want = math.lengthsq(input.MoveDir) > 1e-6f
                     ? math.normalize(input.MoveDir)
@@ -163,7 +180,27 @@ namespace Ring.Simulation.Movement
                 p.Stamina = math.min(hero.StaminaMax, p.Stamina + hero.StaminaRegenPerSec * dt);
 
             float2 target = p.Pos + p.Vel * dt;
-            MoveWithCollisions(ref p.Pos, ref p.Vel, target, hero.Radius, cfg.Arena);
+            MoveWithCollisions(ref p.Pos, ref p.Vel, target, hero.Radius, cfg.Arena,
+                out bool hit, out float2 hitNormal, out _);
+
+            // Task 11 (M3/QA12): a slide that rams into a wall/obstacle near
+            // head-on kills the slide outright instead of sliding along it —
+            // SlideWallStopDot is the dot(-normal, SlideDir) threshold that
+            // separates "hit it flat" from "grazed it at a shallow angle"
+            // (Geometry.Slide, run inside MoveWithCollisions above, already
+            // lets a shallow hit keep its tangential speed and keep going —
+            // this only overrides the steep case). The link window is not
+            // just left unopened here: if THIS tick is also the tick
+            // SlideTimer crossed to 0 above (a normal exit and a wall-stop
+            // landing on the very same tick), that grant is revoked too.
+            if (slideMoveTick && hit
+                && math.dot(-hitNormal, p.SlideDir) > hero.SlideWallStopDot)
+            {
+                p.SlideTimer = 0f;
+                p.Vel = math.normalizesafe(p.Vel, p.SlideDir) * hero.MaxSpeed;
+                p.RunUpTimer = 0f;
+                p.LinkWindowTimer = 0f;
+            }
             return result;
         }
 
@@ -182,7 +219,8 @@ namespace Ring.Simulation.Movement
             var hero = cfg.Hero;
             p.Vel = MoveTowards(p.Vel, float2.zero, hero.Friction * dt);
             float2 target = p.Pos + p.Vel * dt;
-            MoveWithCollisions(ref p.Pos, ref p.Vel, target, hero.Radius, cfg.Arena);
+            MoveWithCollisions(ref p.Pos, ref p.Vel, target, hero.Radius, cfg.Arena,
+                out _, out _, out _);
         }
 
         public static float2 MoveTowards(float2 cur, float2 target, float maxDelta)
@@ -198,18 +236,32 @@ namespace Ring.Simulation.Movement
         /// (Naive "sweep then depenetrate" doesn't work: the sweep stops exactly
         /// at the surface, depenetration never triggers, velocity is never cut —
         /// the body freezes at the wall. Found in self-review.)
+        ///
+        /// `hit`/`normal`/`contact` (Task 11, QA8/QC13) report only the FIRST
+        /// contact this resolve makes: a later iteration of the same call (a
+        /// corner catching the just-depenetrated slide vector again) is purely
+        /// internal correction, not a second distinguishable hit a caller
+        /// (wall-stop here, the Task 12 ricochet event) should react to. The
+        /// safety-net Depenetrate call below never reports through these
+        /// either — it only resolves starting overlaps/config swaps, not a
+        /// motion-driven contact.
         public static void MoveWithCollisions(ref float2 pos, ref float2 vel,
-            float2 target, float radius, in ArenaSimConfig arena)
+            float2 target, float radius, in ArenaSimConfig arena,
+            out bool hit, out float2 normal, out float2 contact)
         {
+            hit = false;
+            normal = float2.zero;
+            contact = float2.zero;
             for (int iter = 0; iter < 3; iter++)
             {
                 if (!Geometry.SweepArena(pos, target, radius, arena, true,
                         out float t, out float2 n))
                 { pos = target; break; }
-                float2 contact = math.lerp(pos, target, t);
-                pos = contact + n * Geometry.Skin;
+                float2 hitPoint = math.lerp(pos, target, t);
+                if (iter == 0) { hit = true; normal = n; contact = hitPoint; }
+                pos = hitPoint + n * Geometry.Skin;
                 vel = Geometry.Slide(vel, n);
-                target = pos + Geometry.Slide(target - contact, n);
+                target = pos + Geometry.Slide(target - hitPoint, n);
             }
             // safety net against starting overlaps/config swaps
             Geometry.Depenetrate(ref pos, ref vel, radius, arena, 1);

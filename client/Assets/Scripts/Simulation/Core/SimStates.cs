@@ -18,8 +18,9 @@ namespace Ring.Simulation.Core
         /// RunUpTimer tracks the sustained-movement gate that unlocks a slide;
         /// PostDashSlideTimer is the short post-dash window that substitutes
         /// for a full run-up (opens on the DashTimer -> 0 transition tick);
-        /// LinkWindowTimer opens on a normal slide exit — consumption/wall
-        /// zeroing arrive in Task 11, this task only declares/ticks/opens it.
+        /// LinkWindowTimer opens on a normal slide exit and is consumed by
+        /// either a linked dash or a wall-stopped slide (PlayerMovementSystem,
+        /// Task 11).
         public float2 SlideDir;
         public float SlideTimer, SlideBufferTimer, RunUpTimer, PostDashSlideTimer, LinkWindowTimer;
     }

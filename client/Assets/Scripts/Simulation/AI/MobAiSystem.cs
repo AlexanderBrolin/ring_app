@@ -219,7 +219,8 @@ namespace Ring.Simulation.AI
         static void ApplyMotion(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena, float dt)
         {
             float2 target = m.Pos + m.Vel * dt;
-            PlayerMovementSystem.MoveWithCollisions(ref m.Pos, ref m.Vel, target, cfg.Radius, in arena);
+            PlayerMovementSystem.MoveWithCollisions(ref m.Pos, ref m.Vel, target, cfg.Radius, in arena,
+                out _, out _, out _);
         }
 
         /// Steering direction toward `targetPos`: the direct line unless an obstacle

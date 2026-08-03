@@ -221,7 +221,7 @@ namespace Ring.Simulation.Combat
             mult = 1f;
 
             float2 targetPos;
-            float targetRadius, legsTop, bodyTop, headTop, legsMult, bodyMult, headMult;
+            float targetRadius, legsTop, bodyTop, headTop, overlapTop, legsMult, bodyMult, headMult;
             if (kind == HitMob)
             {
                 MobState mob = w.Mobs[mobIndex];
@@ -229,6 +229,7 @@ namespace Ring.Simulation.Combat
                 targetPos = mob.Pos;
                 targetRadius = cfg.Radius;
                 legsTop = cfg.LegsTop; bodyTop = cfg.BodyTop; headTop = cfg.HeadTop;
+                overlapTop = headTop;
                 legsMult = cfg.LegsDamageMult;
                 bodyMult = cfg.BodyDamageMult;
                 headMult = cfg.HeadDamageMult;
@@ -239,6 +240,16 @@ namespace Ring.Simulation.Combat
                 targetPos = w.Player.Pos;
                 targetRadius = cfg.Radius;
                 legsTop = cfg.LegsTop; bodyTop = cfg.BodyTop; headTop = cfg.HeadTop;
+                // Task 11: mid-slide, the hero presents a lower profile — the
+                // OVERLAP gate caps at SlideProfileTop instead of the standing
+                // HeadTop, so a shot on a high horizontal line (e.g. a
+                // Gunner's muzzle height) passes clean over a sliding target.
+                // Zone CLASSIFICATION below is untouched: Classify still reads
+                // the standing legs/body/head table, so a shot that DOES
+                // connect while sliding resolves to whatever zone its entry
+                // height actually falls in (Legs, or low Body, since
+                // SlideProfileTop sits below BodyTop).
+                overlapTop = w.Player.SlideTimer > 0f ? cfg.SlideProfileTop : headTop;
                 legsMult = cfg.LegsDamageMult;
                 bodyMult = cfg.BodyDamageMult;
                 headMult = cfg.HeadDamageMult;
@@ -276,7 +287,7 @@ namespace Ring.Simulation.Combat
             float hEnter = math.lerp(hStart, hEnd, tEnter);
             float hExit = math.lerp(hStart, hEnd, tExit);
 
-            if (!HitZones.Overlaps(hEnter, hExit, proj.Radius, headTop)) return false;
+            if (!HitZones.Overlaps(hEnter, hExit, proj.Radius, overlapTop)) return false;
             zone = HitZones.Classify(hEnter, legsTop, bodyTop, headTop);
             mult = HitZones.MultFor(zone, legsMult, bodyMult, headMult);
             return true;
