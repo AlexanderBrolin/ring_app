@@ -238,11 +238,11 @@ namespace Ring.Editor
             // inverted here: detects a MISSING key instead of a stale one) so
             // this is a one-time sync, not an unconditional touch every run.
             // The marker key is always the MOST RECENTLY added field
-            // (currently `HitSparkBurstCount`, milestone-4 DoD iteration —
-            // was `CasingImpulseUpMin` before that) so a fresh field addition
+            // (currently `GunLocalEuler`, Assets phase B (spec §3.7) — was
+            // `HitSparkBurstCount` before that) so a fresh field addition
             // is what re-triggers the sync, regardless of which older fields
             // an already-committed asset already happens to carry.
-            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("HitSparkBurstCount"))
+            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("GunLocalEuler"))
                 EditorUtility.SetDirty(gameFeel);
 
             AssetDatabase.SaveAssets();

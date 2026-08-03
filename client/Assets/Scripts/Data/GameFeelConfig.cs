@@ -72,6 +72,36 @@ namespace Ring.Data
         public bool ImmediateMuzzleFeedback = true;
         public bool ExtrapolateLocalPlayer = false;
 
+        // Assets phase B (spec §3.7): character-visual numbers. Scale fields are
+        // bind-time (re-run the bootstrap / rebuild prefabs to apply); the rest are
+        // read per frame — live hot-tweak. GunLocal* are reconciled write-if-different
+        // by the bootstrap on every Apply. GunLocalEuler is the sync-marker key
+        // (bootstrap:245) — keep it the LAST field of this class.
+        [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
+        [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
+        [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
+        [Range(0f, 0.5f)] public float SpeedDampTime = 0.1f;
+        [Range(0f, 1f)] public float PlayerMoveThreshold01 = 0.05f;
+        [Range(0f, 1440f)] public float VisualTurnDegPerSec = 720f;
+        [Range(0f, 1440f)] public float IdleAimTurnDegPerSec = 180f;
+        [Range(0f, 1440f)] public float MobTurnDegPerSec = 540f;
+        [Range(-180f, 180f)] public float PlayerYawOffsetDeg = 0f;
+        [Range(-180f, 180f)] public float MechYawOffsetDeg = 0f;
+        [Range(0f, 5f)] public float MobWalkEnterSpeed = 0.4f;
+        [Range(0f, 5f)] public float MobWalkExitSpeed = 0.2f;
+        [Range(0f, 10f)] public float MobRunEnterSpeed = 2.6f;
+        [Range(0f, 10f)] public float MobRunExitSpeed = 2.2f;
+        [Range(0f, 1f)] public float LocomotionHoldSeconds = 0.15f;
+        [Range(0f, 90f)] public float AimYawClampDeg = 80f;
+        [Range(0f, 1f)] public float SpineYawShare = 0.4f;
+        [Range(0f, 45f)] public float DashLeanDeg = 18f;
+        [Range(0.01f, 0.5f)] public float DashLeanInOutSeconds = 0.08f;
+        [Range(0f, 0.5f)] public float LocomotionCrossFadeSeconds = 0.12f;
+        [Range(0f, 0.3f)] public float OneShotCrossFadeSeconds = 0.06f;
+        [Range(0f, 2f)] public float MuzzleLiftY = 1.1f;
+        public Vector3 GunLocalPosition = Vector3.zero;
+        public Vector3 GunLocalEuler = Vector3.zero;
+
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc
         // above), so SimulationRunner's ApplyConfig reaction to this Raise() just
