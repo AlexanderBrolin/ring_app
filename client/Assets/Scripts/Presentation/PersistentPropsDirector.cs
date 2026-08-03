@@ -84,7 +84,9 @@ namespace Ring.Presentation
         // Structural spawn-positioning offsets — NOT feel numbers (owner
         // guidance, review fix-round: these stay code constants, only the
         // actual game-feel numbers below moved into GameFeelConfig).
-        const float CasingSpawnLift = 0.25f;
+        // Casing spawn height rides GameFeelConfig.MuzzleLiftY — the muzzle
+        // height is a single source (Б1-веха fix: casings were born at ankle
+        // height inside the doll mesh).
         const float CasingLateralOffset = 0.15f;
         const float DecalHeightOffset = 1f;
         const float DecalNearOffset = 0.1f;
@@ -201,7 +203,7 @@ namespace Ring.Presentation
         {
             Vector3 lateral = new Vector3(
                 Random.Range(-CasingLateralOffset, CasingLateralOffset),
-                CasingSpawnLift,
+                _gameFeel.MuzzleLiftY,
                 Random.Range(-CasingLateralOffset, CasingLateralOffset));
             Vector3 pos = SimSpace.ToWorld(e.Pos) + lateral;
             float sideMax = _gameFeel.CasingImpulseSideMax;

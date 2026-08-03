@@ -136,8 +136,11 @@ namespace Ring.Presentation
                 // _visual.forward carries the model yaw offset — compensate,
                 // or a non-zero PlayerYawOffsetDeg skews the aim by itself
                 // and pins the spine against the clamp (audit fix ПБ19).
-                float yaw = Vector3.SignedAngle(_visual.forward, aimDir.normalized, Vector3.up)
-                    + _gameFeel.PlayerYawOffsetDeg;
+                // DeltaAngle keeps the offset-compensated sum in [-180;180] — a
+                // 180° model offset would otherwise pin the clamp (Б1-веха fix).
+                float yaw = Mathf.DeltaAngle(0f,
+                    Vector3.SignedAngle(_visual.forward, aimDir.normalized, Vector3.up)
+                    + _gameFeel.PlayerYawOffsetDeg);
                 yaw = Mathf.Clamp(yaw, -_gameFeel.AimYawClampDeg, _gameFeel.AimYawClampDeg);
                 float spineYaw = yaw * _gameFeel.SpineYawShare;
                 float chestYaw = yaw - spineYaw;
