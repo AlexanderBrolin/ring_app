@@ -10,7 +10,8 @@ namespace Ring.Presentation
     /// before `SimulationRunner` clears it), fanned out per event in a fixed
     /// relative order:
     ///   GameFeelDirector → PersistentPropsDirector → AudioDirector →
-    ///   MuzzleFlashView → ViewRegistry (retire only) → DeathOverlayController.
+    ///   MuzzleFlashView → PlayerVisual (animation retrigger/death, phase B) →
+    ///   ViewRegistry (retire only) → DeathOverlayController.
     /// `AudioDirector`, `MuzzleFlashView` and `ViewRegistry` exist as of Task 17;
     /// `DeathOverlayController` (Task 24) slots in last; `GameFeelDirector`
     /// (Task 25, Приложение П-1) slots in FIRST — hitstop/hit-flash/vignette must
@@ -25,6 +26,7 @@ namespace Ring.Presentation
         [SerializeField] PersistentPropsDirector _persistentProps;
         [SerializeField] AudioDirector _audioDirector;
         [SerializeField] MuzzleFlashView _muzzleFlash;
+        [SerializeField] PlayerVisual _playerVisual;
         [SerializeField] ViewRegistry _viewRegistry;
         [SerializeField] DeathOverlayController _deathOverlay;
 
@@ -44,6 +46,7 @@ namespace Ring.Presentation
                 _persistentProps.HandleEvent(in e); // casings/decals/corpses/sparks (Task 27, П-1)
                 _audioDirector.HandleEvent(in e);
                 _muzzleFlash.HandleEvent(in e); // shot feedback, same pass (П-2)
+                _playerVisual.HandleEvent(in e); // animation retrigger/death (phase B)
                 _viewRegistry.HandleEvent(in e); // retire only — mapping/lerp is ViewRegistry's own LateUpdate
                 _deathOverlay.HandleEvent(in e); // death-screen show, last slot (Task 24, П-1)
             }

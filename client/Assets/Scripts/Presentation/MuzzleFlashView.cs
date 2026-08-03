@@ -94,7 +94,7 @@ namespace Ring.Presentation
             dir.Normalize();
 
             float muzzleOffset = _runner.World.Config.Weapon.MuzzleOffset;
-            EmitBurst(posW + dir * muzzleOffset, dir);
+            EmitBurst(posW + dir * muzzleOffset, dir, _gameFeel.MuzzleLiftY);
             _predicted = true;
             _predictedExpireAt = Time.unscaledTime + SimulationRunner.ImmediatePredictionTtlSeconds;
         }
@@ -128,12 +128,16 @@ namespace Ring.Presentation
             // position — always unit-length, never the degenerate zero-vector
             // case a position difference could hit.
             Vector3 dir = new Vector3(Mathf.Cos(e.Amount), 0f, Mathf.Sin(e.Amount));
-            EmitBurst(SimSpace.ToWorld(e.Pos), dir);
+            EmitBurst(SimSpace.ToWorld(e.Pos), dir,
+                e.Owner == ProjectileOwner.Player ? _gameFeel.MuzzleLiftY : 0f);
         }
 
-        void EmitBurst(Vector3 worldPos, Vector3 dir)
+        /// Phase B: lift raises the burst to the doll's muzzle height for the
+        /// player's own shots (mech shots stay at ground-anchor height, `lift`
+        /// = 0 — mobs never got the doll lift in the first place, ПБ2).
+        void EmitBurst(Vector3 worldPos, Vector3 dir, float lift)
         {
-            transform.position = worldPos;
+            transform.position = worldPos + Vector3.up * lift;
             transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
             _particles.Emit(BurstCount);
         }
