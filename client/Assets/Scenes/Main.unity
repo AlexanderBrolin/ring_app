@@ -1117,7 +1117,7 @@ MonoBehaviour:
   _arena: {fileID: 11400000, guid: 867e8c92b82842b1e997ed0f876471d0, type: 2}
   _casingPrefab: {fileID: 7521136148588205193, guid: 6299663238cb293e095dc842650a3587, type: 3}
   _decalPrefab: {fileID: 6084807468969330963, guid: c256b7427e75671e68ff2afcfcb29eff, type: 3}
-  _corpsePrefab: {fileID: 7427976997072786286, guid: 9953fd9764bc8d2a0b54309bb825f9b6, type: 3}
+  _corpsePrefab: {fileID: 563010563106822884, guid: bfa36846e880d0a1bad03fc676bc476f, type: 3}
   _dashGlowPrefab: {fileID: 3945040351260055807, guid: 7f14bcc847533bf10bcbb64ff6baaf01, type: 3}
   _hitSparkPrefab: {fileID: 7374377401012443161, guid: 42ec01c09f06985e2ba187ed4e79aa15, type: 3}
   _blockSparkPrefab: {fileID: 3910514533307916869, guid: 373685f485adaed9fb5cfe233b98cdeb, type: 3}
@@ -3226,7 +3226,8 @@ MonoBehaviour:
   _runner: {fileID: 1959383180}
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
   _arena: {fileID: 11400000, guid: 867e8c92b82842b1e997ed0f876471d0, type: 2}
-  _mobPrefab: {fileID: 6243670479059310367, guid: 4a4d39f541edd88ba8af5ba9435ccc8a, type: 3}
+  _chaserPrefab: {fileID: 112095094450026238, guid: ce2393f3bafe8586a817a4e9fa2f3f96, type: 3}
+  _gunnerPrefab: {fileID: 3360266603742807858, guid: 6a20fcac77baec07cad9f7b371359148, type: 3}
   _projectilePrefab: {fileID: 2834824209119835038, guid: 46258a528de6059eeb3ff46cde8d16fd, type: 3}
 --- !u!4 &1795406097
 Transform:

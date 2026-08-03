@@ -156,6 +156,25 @@ namespace Ring.Editor
     /// unchanged), and `DashGlow` instead reuses `GetOrCreateUnlitMaterial` —
     /// same `Universal Render Pipeline/Unlit` HDR-`_BaseColor` family as
     /// `HitSpark`/`BlockSpark`/`DeathBurst` above, which DOES bloom.
+    /// Task 12 (assets phase B plan, spec §3.7/§3.11, milestone Б2, owner
+    /// decision 1b) replaces the placeholder capsule mob/corpse prefabs with
+    /// real mech visuals: `MobChaserView.prefab`/`MobGunnerView.prefab`
+    /// (`GetOrCreateMobArchetypePrefab`, a named `Visual` child + `MobView`/
+    /// `MobVisual`, per T9/T10) bound to George/Leela respectively, and
+    /// `CorpseMechView.prefab` (`GetOrCreateCorpseMechPrefab`, TWO named
+    /// children — `VisualChaser`/`VisualGunner`, T12's own resolution) per
+    /// `CorpseView`'s Б4 mech-corpse wiring. Both factories guard on
+    /// `EditorBootstrapUtils.PrefabVisualsMatch` rather than plain existence
+    /// (Б11) — the mapping constants above are the SOLE place the pair is
+    /// chosen, so a re-Apply after an edit there rebuilds the affected
+    /// prefab(s) instead of silently keeping the old model. `GetOrCreateMobPrefab`
+    /// and its capsule `MobView.prefab` are retired outright (`ViewRegistry`'s
+    /// old single `_mobPrefab` slot became two, `_chaserPrefab`/
+    /// `_gunnerPrefab`, in the same T9/T11 change that made this task
+    /// possible); `GetOrCreateCorpsePrefab`'s old capsule stays in the file
+    /// and on disk (ПБ13, `CorpseView` doc) but is no longer wired to
+    /// `PersistentPropsDirector` — `CorpseMechView` takes its `_corpsePrefab`
+    /// slot instead.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -181,7 +200,6 @@ namespace Ring.Editor
         const string PrefabsDir = "Assets/Prefabs";
         const string AudioDir = "Assets/Audio/Placeholders";
         const string ProjectilePrefabPath = PrefabsDir + "/ProjectileView.prefab";
-        const string MobPrefabPath = PrefabsDir + "/MobView.prefab";
         const string ViewsObjectName = "Views";
         const string AudioDirectorObjectName = "AudioDirector";
         const string MuzzleFlashObjectName = "MuzzleFlash";
@@ -224,6 +242,17 @@ namespace Ring.Editor
         const string GunObjectName = "Gun";
         // 8a: swapping the gun = this one id.
         const string GunModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Gun_Pistol.fbx";
+
+        // Task 12 (assets phase B plan, spec §3.7/§3.11, milestone Б2): the
+        // mech archetype + corpse prefab paths. Owner decision 1b: starting
+        // pair; swapping a mech = edit ChaserModelPath/GunnerModelPath here
+        // + re-Apply (the source-path guard rebuilds the prefab, Б11) —
+        // this is the SOLE place the pair is chosen.
+        const string ChaserModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/George.fbx";
+        const string GunnerModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/Leela.fbx";
+        const string MobChaserPrefabPath = PrefabsDir + "/MobChaserView.prefab";
+        const string MobGunnerPrefabPath = PrefabsDir + "/MobGunnerView.prefab";
+        const string CorpseMechPrefabPath = PrefabsDir + "/CorpseMechView.prefab";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -846,7 +875,11 @@ namespace Ring.Editor
             // Task 17 (spec §3.6/§3.7, П-1/П-2): pooled mob/projectile views matched
             // by Id, placeholder SFX + muzzle flash fanned out from a single
             // TicksFlushed subscriber, and milestone-2 practice targets to shoot at.
-            Material mobMat = GetOrCreateMaterial(
+            // Task 12: MobEmissive is no longer consumed by any prefab (the
+            // mech visuals carry their own pack materials) — kept as a
+            // greybox fallback on disk, statement-only, no local (no scene
+            // consumer, same treatment PlayerEmissive already got in T8).
+            GetOrCreateMaterial(
                 "MobEmissive",
                 baseColor: new Color(0.06f, 0.06f, 0.06f),
                 emissionColor: new Color(0.15f, 0.15f, 0.15f));
@@ -857,7 +890,14 @@ namespace Ring.Editor
             Material tracerMat = GetOrCreateUnlitMaterial("TracerTrail", new Color(2.5f, 3f, 3.5f));
             Material muzzleMat = GetOrCreateUnlitMaterial("MuzzleFlash", new Color(4f, 2.2f, 0.6f));
 
-            MobView mobPrefab = GetOrCreateMobPrefab(mobMat);
+            // Task 12 (owner decision 1b): the starting mech pair — George
+            // (Chaser), Leela (Gunner). GetOrCreateMobArchetypePrefab's own
+            // source-path guard (PrefabVisualsMatch) rebuilds the prefab if
+            // the mapping above ever changes.
+            MobView chaserPrefab = GetOrCreateMobArchetypePrefab(
+                MobChaserPrefabPath, ChaserModelPath, gameFeel.ChaserVisualScale);
+            MobView gunnerPrefab = GetOrCreateMobArchetypePrefab(
+                MobGunnerPrefabPath, GunnerModelPath, gameFeel.GunnerVisualScale);
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
 
@@ -878,7 +918,8 @@ namespace Ring.Editor
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_runner", runner);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gameFeel", gameFeel);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_arena", arena);
-            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_mobPrefab", mobPrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_chaserPrefab", chaserPrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gunnerPrefab", gunnerPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
             if (viewsRefsChanged)
             {
@@ -991,7 +1032,14 @@ namespace Ring.Editor
 
             CasingView casingPrefab = GetOrCreateCasingPrefab(casingMat);
             DecalProjector decalPrefab = GetOrCreateDecalPrefab(decalMat, gameFeel.DecalSize);
-            CorpseView corpsePrefab = GetOrCreateCorpsePrefab(corpseMat);
+            // Task 12: the old capsule CorpseView is no longer wired into the
+            // scene (CorpseMechView replaces it) — the call is kept as a
+            // bare statement so the capsule artifact stays on disk (ПБ13,
+            // CorpseView class doc), no local since nothing reads it anymore.
+            GetOrCreateCorpsePrefab(corpseMat);
+            CorpseView corpseMechPrefab = GetOrCreateCorpseMechPrefab(
+                CorpseMechPrefabPath, ChaserModelPath, GunnerModelPath,
+                gameFeel.ChaserVisualScale, gameFeel.GunnerVisualScale);
             DashGlowView dashGlowPrefab = GetOrCreateDashGlowPrefab(dashGlowMat);
             // lifetime/speed/size/burstCount read from GameFeelConfig at
             // prefab-creation time (review fix-round — same "creation-time SO
@@ -1034,7 +1082,7 @@ namespace Ring.Editor
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_arena", arena);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_casingPrefab", casingPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
-            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpsePrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpseMechPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_dashGlowPrefab", dashGlowPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_hitSparkPrefab", hitSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
@@ -1217,26 +1265,80 @@ namespace Ring.Editor
                 mat.SetColor("_BaseColor", color));
         }
 
-        /// Task 17: the shared `MobView` prefab — a bare capsule, no per-type
-        /// scale/color baked in (`MobView.Bind` sets the accent color at runtime
-        /// via `MaterialPropertyBlock`, spec/П-2). Existence-guarded like the SO
-        /// assets/materials above: once the `.prefab` exists on disk, this is
-        /// never re-authored, so an owner's in-Editor tweak (e.g. hand-adjusted
-        /// scale) survives a re-run.
-        static MobView GetOrCreateMobPrefab(Material mobMat)
+        /// Task 12 (assets phase B plan, spec §3.7/§3.11): the shared
+        /// per-archetype mech prefab — a named `Visual` child carrying the
+        /// pack model + generated Animator (`EditorBootstrapUtils.
+        /// EnsureVisual`), `MobView`/`MobVisual` on the root. Guarded by
+        /// `PrefabVisualsMatch` (Б11) rather than plain existence, like the
+        /// SO assets/materials above once the `.prefab` exists on disk this
+        /// is never re-authored UNLESS the mapping at the top of this file
+        /// picks a different model — then the stale prefab is deleted and
+        /// rebuilt so an owner's pair swap actually takes effect.
+        static MobView GetOrCreateMobArchetypePrefab(string prefabPath, string modelPath,
+            float visualScale)
         {
-            var existing = AssetDatabase.LoadAssetAtPath<MobView>(MobPrefabPath);
-            if (existing != null) return existing;
+            if (AssetDatabase.LoadAssetAtPath<MobView>(prefabPath) != null)
+            {
+                if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath, ("Visual", modelPath)))
+                    return AssetDatabase.LoadAssetAtPath<MobView>(prefabPath);
+                AssetDatabase.DeleteAsset(prefabPath); // pair swapped: rebuild; SetRef re-wires
+            }
+            return EditorBootstrapUtils.BuildPrefab<MobView>(prefabPath, () =>
+            {
+                var go = new GameObject(System.IO.Path.GetFileNameWithoutExtension(prefabPath));
+                bool changed = false;
+                GameObject visual = EditorBootstrapUtils.EnsureVisual(go, modelPath,
+                    ThirdPartyAnimatorBootstrap.ControllerPathFor(modelPath),
+                    visualScale, ref changed);
+                go.AddComponent<MobView>();
+                MobVisual mobVisual = go.AddComponent<MobVisual>();
+                var so = new SerializedObject(mobVisual);
+                EditorBootstrapUtils.SetRef(so, "_animator", visual.GetComponent<Animator>());
+                EditorBootstrapUtils.SetRef(so, "_visual", visual.transform);
+                so.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
 
-            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            go.name = "MobView";
-            EditorBootstrapUtils.RemoveCollider(go);
-            go.GetComponent<MeshRenderer>().sharedMaterial = mobMat;
-            go.AddComponent<MobView>();
-
-            GameObject asset = PrefabUtility.SaveAsPrefabAsset(go, MobPrefabPath);
-            Object.DestroyImmediate(go);
-            return asset.GetComponent<MobView>();
+        /// Task 12 (assets phase B plan, spec §3.7/§3.11): the shared mech
+        /// corpse prefab — TWO named `Visual` children (`VisualChaser`/
+        /// `VisualGunner`, each its own model/Animator via `EnsureVisual`),
+        /// toggled by `CorpseView.Spawn` per the dying mob's `MobType`
+        /// (`CorpseView` class doc, Б4). Same `PrefabVisualsMatch` guard as
+        /// `GetOrCreateMobArchetypePrefab` above, checked against BOTH
+        /// children so a swap of either half of the pair rebuilds this
+        /// prefab too.
+        static CorpseView GetOrCreateCorpseMechPrefab(string prefabPath,
+            string chaserModelPath, string gunnerModelPath,
+            float chaserScale, float gunnerScale)
+        {
+            if (AssetDatabase.LoadAssetAtPath<CorpseView>(prefabPath) != null)
+            {
+                if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath,
+                        ("VisualChaser", chaserModelPath), ("VisualGunner", gunnerModelPath)))
+                    return AssetDatabase.LoadAssetAtPath<CorpseView>(prefabPath);
+                AssetDatabase.DeleteAsset(prefabPath);
+            }
+            return EditorBootstrapUtils.BuildPrefab<CorpseView>(prefabPath, () =>
+            {
+                var go = new GameObject("CorpseMechView");
+                bool changed = false;
+                GameObject chaserVisual = EditorBootstrapUtils.EnsureVisual(go,
+                    chaserModelPath, ThirdPartyAnimatorBootstrap.ControllerPathFor(chaserModelPath),
+                    chaserScale, ref changed, "VisualChaser");
+                GameObject gunnerVisual = EditorBootstrapUtils.EnsureVisual(go,
+                    gunnerModelPath, ThirdPartyAnimatorBootstrap.ControllerPathFor(gunnerModelPath),
+                    gunnerScale, ref changed, "VisualGunner");
+                gunnerVisual.SetActive(false); // Spawn() flips per MobType
+                CorpseView view = go.AddComponent<CorpseView>();
+                var so = new SerializedObject(view);
+                EditorBootstrapUtils.SetRef(so, "_chaserVisual", chaserVisual);
+                EditorBootstrapUtils.SetRef(so, "_gunnerVisual", gunnerVisual);
+                EditorBootstrapUtils.SetRef(so, "_chaserAnimator", chaserVisual.GetComponent<Animator>());
+                EditorBootstrapUtils.SetRef(so, "_gunnerAnimator", gunnerVisual.GetComponent<Animator>());
+                so.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
         }
 
         /// Task 17: the shared `ProjectileView` prefab — a small emissive sphere
@@ -1244,7 +1346,7 @@ namespace Ring.Editor
         /// only seeded here from the `GameFeelConfig` value at bootstrap time;
         /// `ProjectileView.Bind` re-applies it live every spawn so PlayMode
         /// hot-tweaking `TracerFadeSeconds` (spec §3.9) still takes effect.
-        /// Existence-guarded the same way as `GetOrCreateMobPrefab`.
+        /// Existence-guarded the same way as the mech/corpse prefabs above.
         static ProjectileView GetOrCreateProjectilePrefab(Material sphereMat, Material trailMat,
             float tracerFadeSeconds)
         {
