@@ -144,6 +144,15 @@ namespace Ring.Editor
     /// `Apply()` against `GameFeelConfig.GunLocalPosition`/`GunLocalEuler`,
     /// so an owner's number tweak on the milestone Б1 playtest applies
     /// without tearing the gun down and rebuilding it.
+    /// Б1 fix-wave 2 (app-9av, owner request) adds a seventh persistent-cosmetic
+    /// prefab: `DashGlow` (`GetOrCreateDashGlowPrefab`) — a `DecalProjector` +
+    /// `DashGlowView` pair, built and existence-guarded exactly like
+    /// `Decal`/`ScorchDecal` above, but with a non-black emission (`GetOrCreateDecalMaterial`
+    /// gains an `emissionColor` parameter for this — `ScorchDecal`'s own call
+    /// site now passes `Color.black`, preserving its prior unlit look
+    /// byte-for-byte). `PersistentPropsDirector`'s existing wiring block
+    /// gains a `_dashGlowPrefab` slot alongside `_casingPrefab`/`_decalPrefab`/
+    /// `_corpsePrefab`.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -205,6 +214,9 @@ namespace Ring.Editor
         const string TagManagerPath = "ProjectSettings/TagManager.asset";
         const string CasingsLayerName = "Casings";
 
+        // Б1 fix-wave 2 (app-9av): dash-start floor mark.
+        const string DashGlowPrefabPath = PrefabsDir + "/DashGlow.prefab";
+
         // Task 8 (assets phase B plan, spec §3.2): the pistol in the doll's hand.
         const string GunObjectName = "Gun";
         // 8a: swapping the gun = this one id.
@@ -260,11 +272,11 @@ namespace Ring.Editor
             // inverted here: detects a MISSING key instead of a stale one) so
             // this is a one-time sync, not an unconditional touch every run.
             // The marker key is always the MOST RECENTLY added field
-            // (currently `GunLocalEuler`, Assets phase B (spec §3.7) — was
-            // `HitSparkBurstCount` before that) so a fresh field addition
+            // (currently `DashGlowSize`, Б1 fix-wave 2 (app-9av) — was
+            // `GunLocalEuler` before that) so a fresh field addition
             // is what re-triggers the sync, regardless of which older fields
             // an already-committed asset already happens to carry.
-            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("GunLocalEuler"))
+            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("DashGlowSize"))
                 EditorUtility.SetDirty(gameFeel);
 
             AssetDatabase.SaveAssets();
@@ -950,14 +962,20 @@ namespace Ring.Editor
                 "CasingBrass", baseColor: new Color(0.25f, 0.16f, 0.05f), emissionColor: Color.black);
             Material corpseMat = GetOrCreateMaterial(
                 "CorpseEmissive", baseColor: new Color(0.05f, 0.05f, 0.05f), emissionColor: new Color(0.1f, 0.1f, 0.1f));
-            Material decalMat = GetOrCreateDecalMaterial("ScorchDecal", new Color(0.04f, 0.04f, 0.04f, 0.85f));
+            Material decalMat = GetOrCreateDecalMaterial("ScorchDecal", new Color(0.04f, 0.04f, 0.04f, 0.85f), Color.black);
             Material hitSparkMat = GetOrCreateUnlitMaterial("HitSpark", new Color(3.5f, 3f, 1.6f));
             Material blockSparkMat = GetOrCreateUnlitMaterial("BlockSpark", new Color(2f, 2.3f, 3f));
             Material deathBurstMat = GetOrCreateUnlitMaterial("DeathBurst", new Color(4f, 1.3f, 0.3f));
+            // Б1 fix-wave 2 (app-9av): dash-start floor mark — emission color
+            // mirrors PlayerEmissive's accent (Э1) so the mark reads as "this
+            // player's" trail, not a generic FX color.
+            Material dashGlowMat = GetOrCreateDecalMaterial(
+                "DashGlowDecal", new Color(0.05f, 0.35f, 0.45f, 0.8f), new Color(0f, 2.5f, 3f));
 
             CasingView casingPrefab = GetOrCreateCasingPrefab(casingMat);
             DecalProjector decalPrefab = GetOrCreateDecalPrefab(decalMat, gameFeel.DecalSize);
             CorpseView corpsePrefab = GetOrCreateCorpsePrefab(corpseMat);
+            DashGlowView dashGlowPrefab = GetOrCreateDashGlowPrefab(dashGlowMat, gameFeel.DashGlowSize);
             // lifetime/speed/size/burstCount read from GameFeelConfig at
             // prefab-creation time (review fix-round — same "creation-time SO
             // read" contract as TracerFadeSeconds/GetOrCreateProjectilePrefab
@@ -1000,6 +1018,7 @@ namespace Ring.Editor
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_casingPrefab", casingPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpsePrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_dashGlowPrefab", dashGlowPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_hitSparkPrefab", hitSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
@@ -1380,6 +1399,30 @@ namespace Ring.Editor
             });
         }
 
+        /// Б1 fix-wave 2 (app-9av): the shared `DashGlowView` prefab — same
+        /// shape as `GetOrCreateDecalPrefab` above (default pivot, `size`/
+        /// `material` seeded once from `GameFeelConfig.DashGlowSize` at
+        /// creation time), plus the `DashGlowView`/`DecalProjector` sibling
+        /// wiring `Spawn` needs — done here via `SetRef` on the staging
+        /// object, same technique the scene-wiring calls elsewhere in this
+        /// file use, just applied to a prefab-bound object before it's saved.
+        static DashGlowView GetOrCreateDashGlowPrefab(Material dashGlowMat, float size)
+        {
+            return EditorBootstrapUtils.BuildPrefab<DashGlowView>(DashGlowPrefabPath, () =>
+            {
+                var go = new GameObject("DashGlow");
+                DecalProjector projector = go.AddComponent<DecalProjector>();
+                projector.material = dashGlowMat;
+                projector.size = Vector3.one * size;
+
+                DashGlowView view = go.AddComponent<DashGlowView>();
+                var so = new SerializedObject(view);
+                EditorBootstrapUtils.SetRef(so, "_projector", projector);
+                so.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
+
         /// Task 27: the shared `CorpseView` prefab — a bare, uncollided
         /// (`RemoveCollider`, same treatment as `MobView`/`ProjectileView`)
         /// Capsule; per-death tint comes from a `MaterialPropertyBlock`
@@ -1514,8 +1557,12 @@ namespace Ring.Editor
         /// (`Shaders/Decal.shadergraph`) exposes the same `_BaseColor`/
         /// `_EmissionColor` convention as the project's `Universal Render
         /// Pipeline/Lit` materials (verified by reading the template's own
-        /// `.mat` YAML), so only the tint needs overriding.
-        static Material GetOrCreateDecalMaterial(string assetName, Color baseColor)
+        /// `.mat` YAML), so only the tint needs overriding. `emissionColor`
+        /// (Б1 fix-wave 2, app-9av) follows the same `GetOrCreateMaterial`
+        /// convention above — zero/black keeps a decal like `ScorchDecal`
+        /// unlit-looking (no `_EMISSION` keyword touched), while a non-black
+        /// value (the new `DashGlowDecal`) makes it glow.
+        static Material GetOrCreateDecalMaterial(string assetName, Color baseColor, Color emissionColor)
         {
             string path = $"{MaterialsDir}/{assetName}.mat";
             var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -1528,6 +1575,12 @@ namespace Ring.Editor
 
             var mat = new Material(template) { name = assetName };
             mat.SetColor("_BaseColor", baseColor);
+            if (emissionColor.maxColorComponent > 0f)
+            {
+                mat.EnableKeyword("_EMISSION");
+                mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                mat.SetColor("_EmissionColor", emissionColor);
+            }
             AssetDatabase.CreateAsset(mat, path);
             return mat;
         }

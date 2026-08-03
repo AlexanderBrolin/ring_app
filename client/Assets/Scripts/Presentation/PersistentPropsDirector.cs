@@ -20,10 +20,16 @@ namespace Ring.Presentation
     /// гильзы/трупы от позиций событий, никаких привязок к мешам вьюх" — a
     /// future model swap changes nothing here).
     ///
-    /// Pooling split (Приложение П-7): casings/decals/corpses have no "done
-    /// with it" moment during a live match (spec: "живут до конца захода") —
-    /// they use the single shared `RingBuffer&lt;T&gt;` (FIFO, oldest
-    /// overwritten once full), one instance per kind, never three copies of
+    /// Б1 milestone fix-wave 2 (app-9av, owner request) adds a fourth
+    /// `RingBuffer&lt;T&gt;` kind, `DashGlowView` — a glowing floor mark at the
+    /// dash start point that fades out over `GameFeelConfig.DashGlowSeconds`,
+    /// spawned on `PlayerDashed` the same way every other event here spawns
+    /// its own cosmetic.
+    ///
+    /// Pooling split (Приложение П-7): casings/decals/corpses/dash-glows have
+    /// no "done with it" moment during a live match (spec: "живут до конца
+    /// захода") — they use the single shared `RingBuffer&lt;T&gt;` (FIFO, oldest
+    /// overwritten once full), one instance per kind, never separate copies of
     /// the same logic. The three spark/burst particle systems ARE ordinary
     /// "rent it, it finishes on its own, give it back" objects — they use
     /// `UnityEngine.Pool.ObjectPool&lt;ParticleSystem&gt;` instead, returned via
@@ -123,6 +129,7 @@ namespace Ring.Presentation
         [SerializeField] CasingView _casingPrefab;
         [SerializeField] DecalProjector _decalPrefab;
         [SerializeField] CorpseView _corpsePrefab;
+        [SerializeField] DashGlowView _dashGlowPrefab;
         [SerializeField] ParticleSystem _hitSparkPrefab;
         [SerializeField] ParticleSystem _blockSparkPrefab;
         [SerializeField] ParticleSystem _deathBurstPrefab;
@@ -130,6 +137,7 @@ namespace Ring.Presentation
         RingBuffer<CasingView> _casings;
         RingBuffer<DecalProjector> _decals;
         RingBuffer<CorpseView> _corpses;
+        RingBuffer<DashGlowView> _dashGlows;
         ObjectPool<ParticleSystem> _hitSparkPool;
         ObjectPool<ParticleSystem> _blockSparkPool;
         ObjectPool<ParticleSystem> _deathBurstPool;
@@ -141,9 +149,11 @@ namespace Ring.Presentation
             _casings = new RingBuffer<CasingView>(_gameFeel.MaxCasings, CreateCasing);
             _decals = new RingBuffer<DecalProjector>(_gameFeel.MaxDecals, CreateDecal);
             _corpses = new RingBuffer<CorpseView>(_gameFeel.MaxCorpses, CreateCorpse);
+            _dashGlows = new RingBuffer<DashGlowView>(_gameFeel.MaxDashGlows, CreateDashGlow);
             _casings.Prewarm();
             _decals.Prewarm();
             _corpses.Prewarm();
+            _dashGlows.Prewarm();
 
             _hitSparkPool = CreateParticlePool(_hitSparkPrefab, HitSparkPoolCapacity);
             _blockSparkPool = CreateParticlePool(_blockSparkPrefab, BlockSparkPoolCapacity);
@@ -171,6 +181,7 @@ namespace Ring.Presentation
             _casings.Clear(view => view.gameObject.SetActive(false));
             _decals.Clear(decal => decal.gameObject.SetActive(false));
             _corpses.Clear(corpse => corpse.gameObject.SetActive(false));
+            _dashGlows.Clear(glow => glow.gameObject.SetActive(false));
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's
@@ -195,6 +206,9 @@ namespace Ring.Presentation
                     break;
                 case SimEventKind.MobDied:
                     HandleMobDied(in e);
+                    break;
+                case SimEventKind.PlayerDashed:
+                    SpawnDashGlow(in e);
                     break;
             }
         }
@@ -242,6 +256,12 @@ namespace Ring.Presentation
             PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
         }
 
+        void SpawnDashGlow(in SimEvent e)
+        {
+            DashGlowView glow = _dashGlows.Rent();
+            glow.Spawn(SimSpace.ToWorld(e.Pos), _gameFeel.DashGlowSeconds, _gameFeel.DashGlowSize);
+        }
+
         void PlayParticle(ObjectPool<ParticleSystem> pool, Vector3 worldPos, Quaternion rotation)
         {
             ParticleSystem ps = pool.Get();
@@ -267,6 +287,13 @@ namespace Ring.Presentation
         CorpseView CreateCorpse()
         {
             CorpseView view = Instantiate(_corpsePrefab, transform);
+            view.gameObject.SetActive(false);
+            return view;
+        }
+
+        DashGlowView CreateDashGlow()
+        {
+            DashGlowView view = Instantiate(_dashGlowPrefab, transform);
             view.gameObject.SetActive(false);
             return view;
         }

@@ -43,7 +43,7 @@ namespace Ring.Presentation
                 SimEvent e = world.GetEvent(i);
 
                 _gameFeelDirector.HandleEvent(in e); // hitstop/flash/vignette, first slot (Task 25, П-1)
-                _persistentProps.HandleEvent(in e); // casings/decals/corpses/sparks (Task 27, П-1)
+                _persistentProps.HandleEvent(in e); // casings/decals/corpses/sparks/dash-glows (Task 27, П-1; app-9av)
                 _audioDirector.HandleEvent(in e);
                 _muzzleFlash.HandleEvent(in e); // shot feedback, same pass (П-2)
                 _playerVisual.HandleEvent(in e); // animation retrigger/death (phase B)
