@@ -232,7 +232,7 @@ namespace Ring.Simulation.Core
         /// once full, spawns are skipped and counted rather than growing the array,
         /// keeping the cap degradation allocation-free and deterministic.
         internal int SpawnProjectile(ProjectileOwner owner, float2 pos, float2 vel,
-            float damage, float radius, float ttl)
+            float height, float velZ, float damage, float radius, float ttl)
         {
             if (_projectileCount >= _projectiles.Length)
             {
@@ -243,6 +243,7 @@ namespace Ring.Simulation.Core
             _projectiles[_projectileCount++] = new ProjectileState
             {
                 Id = id, Owner = owner, Pos = pos, PrevPos = pos, Vel = vel,
+                Height = height, PrevHeight = height, VelZ = velZ,
                 Damage = damage, Radius = radius, Ttl = ttl
             };
             // Amount carries the shot's sim-plane velocity angle (Presentation
@@ -357,8 +358,8 @@ namespace Ring.Simulation.Core
         /// Test-only wrapper over SpawnProjectile (Task 16 Interfaces) — same spawn
         /// path production code uses, named for test call-sites.
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
-            float damage, float radius, float ttl)
-            => SpawnProjectile(owner, pos, vel, damage, radius, ttl);
+            float height, float velZ, float damage, float radius, float ttl)
+            => SpawnProjectile(owner, pos, vel, height, velZ, damage, radius, ttl);
 
         /// Test-only seam (Task 19 Interfaces): kills the player outright via the
         /// normal damage path (overkill amount) so MobAiSystem's "player dead"
@@ -441,6 +442,11 @@ namespace Ring.Simulation.Core
         internal void SetProjectileForTest(int index, in ProjectileState p) => _projectiles[index] = p;
         internal void SetWaveForTest(in WaveState w) => _wave = w;
 
+        /// Test-only seam (Task 4): reads a live projectile slot back —
+        /// SetProjectileForTest's counterpart, for tests asserting on
+        /// post-tick projectile state (e.g. Height/PrevHeight after VelZ integration).
+        internal ProjectileState GetProjectileForTest(int index) => _projectiles[index];
+
         /// Canonical order (spec §3.3; Task 3 — split rng into spreadRng/waveRng):
         /// tick → spreadRng → waveRng → nextEntityId → player →
         /// mobCount+mobs → projectileCount+projectiles → wave → stats.
@@ -488,6 +494,8 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.Pos); h = StateHash64.Add(h, p.PrevPos);
             h = StateHash64.Add(h, p.Vel); h = StateHash64.Add(h, p.Damage);
             h = StateHash64.Add(h, p.Radius); h = StateHash64.Add(h, p.Ttl);
+            h = StateHash64.Add(h, p.Height); h = StateHash64.Add(h, p.PrevHeight);
+            h = StateHash64.Add(h, p.VelZ);
             return h;
         }
 

@@ -42,7 +42,10 @@ namespace Ring.Simulation.Combat
                 float2 dir = Geometry.Rotate(baseDir, angle);
                 float2 spawnPos = p.Pos + dir * (cfg.MuzzleOffset + overshoot * cfg.ProjectileSpeed);
                 float2 vel = dir * cfg.ProjectileSpeed;
+                // Height/VelZ (Task 4): flat trajectory for now — spawns at the hero's
+                // muzzle height with zero vertical velocity until arcing/ballistics land.
                 w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel,
+                    w.Config.Hero.MuzzleHeight, 0f,
                     cfg.Damage, cfg.ProjectileRadius, cfg.ProjectileLifetime);
 
                 p.RecoilOffset = math.min(cfg.RecoilMaxRad, p.RecoilOffset + cfg.RecoilPerShotRad);

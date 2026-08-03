@@ -97,6 +97,8 @@ namespace Ring.Simulation.Combat
                     }
                     default:
                         proj.Pos = target;
+                        proj.PrevHeight = proj.Height;
+                        proj.Height += proj.VelZ * dt;
                         if (proj.Ttl <= 0f)
                         {
                             w.Emit(SimEventKind.ProjectileExpired, proj.Pos, proj.Id, default, 0f);

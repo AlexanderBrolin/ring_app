@@ -44,7 +44,7 @@ namespace Ring.Simulation.Tests
             // player always exists).
             w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(1f, 0f), new float2(1f, 0f),
-                10f, 0.1f, 1f);
+                1f, 0f, 10f, 0.1f, 1f);
             w.Tick(default);
             WorldSave save = w.SaveState();
             ulong baseline = w.StateHash();

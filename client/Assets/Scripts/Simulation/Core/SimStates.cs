@@ -35,6 +35,11 @@ namespace Ring.Simulation.Core
         public ProjectileOwner Owner;
         public float2 Pos, PrevPos, Vel;
         public float Damage, Radius, Ttl;
+
+        /// Vertical position/velocity (metres above ground, Task 4): Height
+        /// advances by VelZ each tick alongside the horizontal Pos update;
+        /// PrevHeight mirrors PrevPos's role for interpolation.
+        public float Height, PrevHeight, VelZ;
     }
 
     public enum WavePhase : byte { Waiting = 0, Active = 1 }

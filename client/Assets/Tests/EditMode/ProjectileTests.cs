@@ -94,14 +94,14 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, c);
             // enemy projectile right in front of the player during the dash frame — i-frames are active
             w.SpawnProjectileForTest(ProjectileOwner.Mob,
-                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 8f, 0.15f, 3f);
+                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true });
             w.Tick(default);
             Assert.AreEqual(c.Hero.MaxHp, w.Player.Hp); // i-frames absorbed it
             for (int i = 0; i < 10; i++) w.Tick(default); // dash and i-frames have expired
             // second projectile — from the player's CURRENT position (shifted after the dash)
             w.SpawnProjectileForTest(ProjectileOwner.Mob,
-                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 8f, 0.15f, 3f);
+                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f);
             for (int i = 0; i < 4; i++) w.Tick(default);
             Assert.Less(w.Player.Hp, c.Hero.MaxHp);
         }
@@ -116,11 +116,11 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(a != b && b != c); // ids are stable and unique
             // three wide projectiles wipe everyone out in one tick — swap-remove mid-list
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, 0f),
-                new float2(35f, 0f), 100f, 0.6f, 1f);
+                new float2(35f, 0f), 1f, 0f, 100f, 0.6f, 1f);
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, 0.4f),
-                new float2(35f, 0f), 100f, 0.6f, 1f);
+                new float2(35f, 0f), 1f, 0f, 100f, 0.6f, 1f);
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, -0.4f),
-                new float2(35f, 0f), 100f, 0.6f, 1f);
+                new float2(35f, 0f), 1f, 0f, 100f, 0.6f, 1f);
             int died = 0;
             for (int i = 0; i < 5; i++)
             {
@@ -144,7 +144,7 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
             // enemy projectile flies toward the player through two mobs — ignores the mobs
             w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(10f, 0f),
-                new float2(-30f, 0f), 5f, 0.15f, 2f);
+                new float2(-30f, 0f), 1f, 0f, 5f, 0.15f, 2f);
             for (int i = 0; i < 12; i++) w.Tick(default);
             var snap = new RenderSnapshot(cfg.Arena);
             w.CaptureSnapshot(snap);
@@ -154,7 +154,7 @@ namespace Ring.Simulation.Tests
             Assert.Less(w.Player.Hp, cfg.Hero.MaxHp);               // player — hit
             // no piercing: an overkill player projectile only kills the nearest
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(3f, 0f),
-                new float2(35f, 0f), 1000f, 0.12f, 1f);
+                new float2(35f, 0f), 1f, 0f, 1000f, 0.12f, 1f);
             for (int i = 0; i < 6; i++) w.Tick(default);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(1, snap.MobCount);

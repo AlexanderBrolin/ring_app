@@ -190,8 +190,11 @@ namespace Ring.Simulation.AI
             {
                 float2 aimDir = Targeting.AimWithLead(m.Pos, player.Pos, player.Vel,
                     cfg.ProjectileSpeed, cfg.LeadFactor);
+                // Height/VelZ (Task 4): flat trajectory for now — spawns at the
+                // gunner's muzzle height with zero vertical velocity.
                 w.SpawnProjectile(ProjectileOwner.Mob, m.Pos + aimDir * cfg.Radius,
-                    aimDir * cfg.ProjectileSpeed, cfg.ProjectileDamage, cfg.ProjectileRadius,
+                    aimDir * cfg.ProjectileSpeed, cfg.MuzzleHeight, 0f,
+                    cfg.ProjectileDamage, cfg.ProjectileRadius,
                     cfg.ProjectileLifetime);
                 m.FireCooldown += cfg.FireInterval;
             }

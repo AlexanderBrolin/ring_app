@@ -143,12 +143,11 @@ namespace Ring.Simulation.Tests
             // "debt" that paid off as a several-shots volley on LoS acquisition)
             // — the scripted scenario's waves spawn gunners, so this legitimately
             // changes their FireCooldown trace and therefore the hash.
-            // Re-pinned by Task 3 (RNG-split _spreadRng/_waveRng): the seed scheme
-            // changed from one folded seed to two streams each folded seed XORed
-            // with a stream constant, and the hash now folds in both streams'
-            // .state instead of one — every RNG draw in the scripted run traces
-            // differently, so the hash legitimately changes.
-            const ulong GoldenHash = 0x0061082106E3A8DFUL; // = 27312010683459807
+            // Re-pinned by Task 4 (projectile Height/PrevHeight/VelZ entered the
+            // hash): HashProjectile now folds in the three new vertical-motion
+            // fields on every live projectile, so any scripted run that ever
+            // spawns a projectile legitimately changes the hash.
+            const ulong GoldenHash = 0x3AEBD95348AC495FUL; // = 4245726025451587935
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
