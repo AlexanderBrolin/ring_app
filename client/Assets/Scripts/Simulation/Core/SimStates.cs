@@ -10,6 +10,18 @@ namespace Ring.Simulation.Core
             Hp, Stamina, StaminaRegenDelayTimer,
             DashTimer, DashCooldown, IframeTimer, DashBufferTimer, FireCooldown;
         public bool Alive;
+
+        /// Slide state (Task 10, spec §3.3 v5): SlideDir is the travel heading
+        /// (steered towards input each tick, Geometry.RotateTowards-clamped);
+        /// SlideTimer counts down the active slide; SlideBufferTimer is the
+        /// DashBufferTimer-style edge latch for a buffered slide request;
+        /// RunUpTimer tracks the sustained-movement gate that unlocks a slide;
+        /// PostDashSlideTimer is the short post-dash window that substitutes
+        /// for a full run-up (opens on the DashTimer -> 0 transition tick);
+        /// LinkWindowTimer opens on a normal slide exit — consumption/wall
+        /// zeroing arrive in Task 11, this task only declares/ticks/opens it.
+        public float2 SlideDir;
+        public float SlideTimer, SlideBufferTimer, RunUpTimer, PostDashSlideTimer, LinkWindowTimer;
     }
 
     public enum MobType : byte { Chaser = 0, Gunner = 1 }
@@ -67,7 +79,7 @@ namespace Ring.Simulation.Core
         /// landed in HitZone.Head — incremented only from SimulationWorld's
         /// Alive-guarded helper, exactly like Kills itself.
         public int Kills, HeadshotKills, WavesCleared, ShotsFired, ShotsHit,
-            DashesUsed, MobSpawnsSkipped, ProjectileSpawnsSkipped, DeathTick;
+            DashesUsed, SlidesUsed, MobSpawnsSkipped, ProjectileSpawnsSkipped, DeathTick;
         public float DamageTaken;
         // caps are observed separately (spec §3.15): what got clamped is visible in DevOverlay
     }

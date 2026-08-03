@@ -20,7 +20,13 @@ namespace Ring.Simulation.Core
         WaveCleared,
         /// Task 9: a dash attempt was gated by the stamina pool (Stamina <
         /// DashStaminaCost) — Amount carries the missing cost, Pos the player.
-        StaminaDenied
+        /// Task 10 reuses this same kind for a gated slide attempt (Stamina <
+        /// SlideStaminaCost) — same "Amount = missing cost" payload contract.
+        StaminaDenied,
+        /// Task 10: a slide started — Pos is the player's position for this
+        /// tick (spec §3.4 payload convention, same as PlayerDashed), HitDir
+        /// carries the slide's travel direction (SlideDir).
+        PlayerSlideStarted
     }
 
     public struct SimEvent

@@ -51,7 +51,31 @@ namespace Ring.Simulation.Tests
             Assert.Greater(w.Player.Stamina, beforeRegen);      // regen kicked in
         }
 
-        // Regen_FrozenDuringSlide_OnFixture — written in Т10 (no slide yet; QB12).
+        [Test]
+        public void Regen_FrozenDuringSlide_OnFixture()
+        {
+            // RegenFixture (M16): SlideDuration 0.9s outlasts StaminaRegenDelay
+            // 0.3s, so a bug that only gated regen on the post-action delay
+            // (and not on SlideTimer itself, QD10) would show regen resuming
+            // partway through the slide — this fixture is specifically sized
+            // to make that failure mode observable within the slide window.
+            var cfg = TestConfigs.RegenFixture();
+            var w = new SimulationWorld(1, cfg);
+            var move = new SimInput { MoveDir = new float2(1f, 0f) };
+            for (int i = 0; i < 60; i++) w.Tick(move); // full run-up
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide starts
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+            float staminaAfterStart = w.Player.Stamina;
+
+            int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
+            for (int i = 0; i < slideTicks - 1; i++)
+            {
+                w.Tick(move);
+                Assert.AreEqual(staminaAfterStart, w.Player.Stamina, 1e-4f,
+                    "stamina regenerated while still sliding");
+            }
+        }
+
         // A dedicated HotTweak spot-test is NOT added here: the clamp is covered
         // by the reflective pass in HotTweakTests (QC7).
     }

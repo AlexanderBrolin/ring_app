@@ -142,6 +142,31 @@ namespace Ring.Simulation.Core
             return new float2(c * v.x - s * v.y, s * v.x + c * v.y);
         }
 
+        /// Rotates `from` towards `to` by at most `maxRad` radians, along the
+        /// shorter arc, preserving `from`'s magnitude (direction-only steer —
+        /// Task 10 slide steering, QC19). A zero-length `from` or `to` can't
+        /// supply a heading, so the other vector (or `from` itself, unchanged)
+        /// is returned rather than dividing by zero.
+        public static float2 RotateTowards(float2 from, float2 to, float maxRad)
+        {
+            float lenFrom = math.length(from);
+            if (lenFrom < 1e-6f) return from;
+            float lenTo = math.length(to);
+            if (lenTo < 1e-6f) return from;
+
+            float2 nFrom = from / lenFrom;
+            float2 nTo = to / lenTo;
+            float cosAngle = math.clamp(math.dot(nFrom, nTo), -1f, 1f);
+            float angle = math.acos(cosAngle);
+            if (angle <= maxRad) return nTo * lenFrom;
+
+            // Sign of the shorter rotation: a positive 2D cross product means
+            // `to` lies counter-clockwise from `from`.
+            float cross = nFrom.x * nTo.y - nFrom.y * nTo.x;
+            float rad = cross >= 0f ? maxRad : -maxRad;
+            return Rotate(nFrom, rad) * lenFrom;
+        }
+
         /// First contact along p0→p1 vs all obstacles (and optionally the wall).
         /// Returns t ∈ [0,1] and the surface normal at the contact point.
         public static bool SweepArena(float2 p0, float2 p1, float padR,

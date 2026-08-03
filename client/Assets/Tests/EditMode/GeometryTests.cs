@@ -149,6 +149,40 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void RotateTowards_WithinMaxAngle_SnapsToTarget()
+        {
+            // 10-degree gap, 90-degree/step budget: reaches the target exactly.
+            float2 from = new float2(1f, 0f);
+            float2 to = Geometry.Rotate(from, math.radians(10f));
+            float2 r = Geometry.RotateTowards(from, to, math.PI / 2f);
+            Assert.AreEqual(to.x, r.x, 1e-4f);
+            Assert.AreEqual(to.y, r.y, 1e-4f);
+        }
+
+        [Test]
+        public void RotateTowards_BeyondMaxAngle_ClampsRotation_PreservesLength()
+        {
+            // 180-degree flip, clamped to a much smaller per-call budget.
+            float2 from = new float2(2f, 0f); // non-unit on purpose: length must survive
+            float2 to = new float2(-1f, 0f);
+            float maxRad = 0.1f;
+            float2 r = Geometry.RotateTowards(from, to, maxRad);
+
+            Assert.AreEqual(math.length(from), math.length(r), 1e-4f); // magnitude preserved
+            float angle = math.acos(math.clamp(
+                math.dot(math.normalizesafe(from), math.normalizesafe(r)), -1f, 1f));
+            Assert.AreEqual(maxRad, angle, 1e-4f); // rotated by exactly the budget, no more
+        }
+
+        [Test]
+        public void RotateTowards_ZeroLengthInput_ReturnsFromUnchanged()
+        {
+            Assert.AreEqual(float2.zero, Geometry.RotateTowards(float2.zero, new float2(1f, 0f), 1f));
+            float2 from = new float2(1f, 0f);
+            Assert.AreEqual(from, Geometry.RotateTowards(from, float2.zero, 1f));
+        }
+
+        [Test]
         public void SweepArena_ReportsNearestContactWithNormal()
         {
             var arena = TestConfigs.DefaultArena(); // obstacle (10,4) r=2.2

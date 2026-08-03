@@ -96,5 +96,19 @@ namespace Ring.Simulation.Tests
             c.Arena.ObstacleRadius = System.Array.Empty<float>();
             return c;
         }
+
+        /// Open() with an extended slide (Task 10 — M16): SlideDuration 0.9s
+        /// (vs the 0.52s default) and a shortened StaminaRegenDelay of 0.3s so
+        /// slide-adjacent stamina-regen timing tests (regen frozen for the
+        /// whole slide even once the post-action delay alone would have
+        /// elapsed; buffer-window regen catch-up) have enough headroom to
+        /// observe the behaviour deterministically instead of racing it.
+        public static SimConfig RegenFixture()
+        {
+            var c = Open();
+            c.Hero.SlideDuration = 0.9f;
+            c.Hero.StaminaRegenDelay = 0.3f;
+            return c;
+        }
     }
 }

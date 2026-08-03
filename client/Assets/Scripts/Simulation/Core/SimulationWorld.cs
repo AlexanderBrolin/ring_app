@@ -111,6 +111,19 @@ namespace Ring.Simulation.Core
                     Emit(SimEventKind.StaminaDenied, _players[0].Pos, 0, default,
                         _config.Hero.DashStaminaCost - _players[0].Stamina);
                 }
+                if (moveResult.SlideStarted)
+                {
+                    _stats.SlidesUsed++;
+                    Emit(SimEventKind.PlayerSlideStarted, _players[0].Pos, 0, default, 0f,
+                        hitDir: _players[0].SlideDir);
+                }
+                if (moveResult.SlideDenied)
+                {
+                    // Same missing-cost contract as DashDenied above, against
+                    // SlideStaminaCost (Task 10).
+                    Emit(SimEventKind.StaminaDenied, _players[0].Pos, 0, default,
+                        _config.Hero.SlideStaminaCost - _players[0].Stamina);
+                }
                 WeaponSystem.Update(this, ref _players[0], in input);
             }
             else
@@ -158,6 +171,13 @@ namespace Ring.Simulation.Core
             p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
             p.DashBufferTimer = math.clamp(p.DashBufferTimer, 0f, next.Hero.DashBufferWindow);
             p.FireCooldown = math.clamp(p.FireCooldown, 0f, next.Weapon.FireInterval);
+            // Task 10: slide timers, same clamp-to-new-ceiling contract as the
+            // dash timers above.
+            p.SlideTimer = math.clamp(p.SlideTimer, 0f, next.Hero.SlideDuration);
+            p.SlideBufferTimer = math.clamp(p.SlideBufferTimer, 0f, next.Hero.SlideBufferWindow);
+            p.RunUpTimer = math.clamp(p.RunUpTimer, 0f, next.Hero.RunUpSeconds);
+            p.PostDashSlideTimer = math.clamp(p.PostDashSlideTimer, 0f, next.Hero.PostDashSlideWindow);
+            p.LinkWindowTimer = math.clamp(p.LinkWindowTimer, 0f, next.Hero.LinkWindowSeconds);
             _players[0] = p;
         }
 
@@ -364,6 +384,14 @@ namespace Ring.Simulation.Core
                 // touches it), but the regen-delay countdown is reset so a
                 // corpse's PlayerState reads clean, same as the dash timers above.
                 p.StaminaRegenDelayTimer = 0f;
+                // Task 10 (M11/QD9): every slide timer clears the same way —
+                // SlideDir is a heading, not a timer, so (like DashDir) it is
+                // deliberately left as-is.
+                p.SlideTimer = 0f;
+                p.SlideBufferTimer = 0f;
+                p.RunUpTimer = 0f;
+                p.PostDashSlideTimer = 0f;
+                p.LinkWindowTimer = 0f;
                 Emit(SimEventKind.PlayerDied, pos, 0, default, 0f, zone: zone, hitDir: dir);
             }
         }
@@ -538,6 +566,10 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.DashTimer); h = StateHash64.Add(h, p.DashCooldown);
             h = StateHash64.Add(h, p.IframeTimer); h = StateHash64.Add(h, p.DashBufferTimer);
             h = StateHash64.Add(h, p.FireCooldown); h = StateHash64.Add(h, p.Alive);
+            // Task 10: slide state.
+            h = StateHash64.Add(h, p.SlideDir); h = StateHash64.Add(h, p.SlideTimer);
+            h = StateHash64.Add(h, p.SlideBufferTimer); h = StateHash64.Add(h, p.RunUpTimer);
+            h = StateHash64.Add(h, p.PostDashSlideTimer); h = StateHash64.Add(h, p.LinkWindowTimer);
             return h;
         }
 
@@ -576,6 +608,7 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, s.WavesCleared);
             h = StateHash64.Add(h, s.ShotsFired); h = StateHash64.Add(h, s.ShotsHit);
             h = StateHash64.Add(h, s.DashesUsed);
+            h = StateHash64.Add(h, s.SlidesUsed);
             h = StateHash64.Add(h, s.MobSpawnsSkipped);
             h = StateHash64.Add(h, s.ProjectileSpawnsSkipped);
             h = StateHash64.Add(h, s.DeathTick); h = StateHash64.Add(h, s.DamageTaken);

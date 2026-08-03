@@ -83,6 +83,12 @@ namespace Ring.Simulation.Tests
                 ["DashBufferTimer"] = next.Hero.DashBufferWindow,
                 ["FireCooldown"] = next.Weapon.FireInterval,
                 ["RecoilOffset"] = float.PositiveInfinity, // clamped by WeaponSystem, not ApplyConfig
+                // Task 10: slide timers.
+                ["SlideTimer"] = next.Hero.SlideDuration,
+                ["SlideBufferTimer"] = next.Hero.SlideBufferWindow,
+                ["RunUpTimer"] = next.Hero.RunUpSeconds,
+                ["PostDashSlideTimer"] = next.Hero.PostDashSlideWindow,
+                ["LinkWindowTimer"] = next.Hero.LinkWindowSeconds,
             };
 
             var w = new SimulationWorld(5, cfg);

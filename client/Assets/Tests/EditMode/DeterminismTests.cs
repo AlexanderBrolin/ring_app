@@ -175,7 +175,17 @@ namespace Ring.Simulation.Tests
             // scripted tick now carries their trace (dash cost/regen/gate),
             // so the hash legitimately changes even though the scripted
             // scenario's dash/move/aim inputs themselves are unchanged.
-            const ulong GoldenHash = 0xE72886716C1458C0UL; // = 16656711043532478656
+            // Re-pinned by Task 10 (slide core): PlayerState gained SlideDir,
+            // SlideTimer, SlideBufferTimer, RunUpTimer, PostDashSlideTimer and
+            // LinkWindowTimer — all six folded into HashPlayer — plus
+            // MatchStats.SlidesUsed into HashStats. Scripted()'s input never
+            // sets SlideRequested, so a slide itself never starts (Slide*/
+            // LinkWindowTimer/SlideDir stay at their zero default the whole
+            // run), but RunUpTimer accrues/decays every tick off the
+            // scripted MoveDir and PostDashSlideTimer opens on every scripted
+            // dash's end — both are new per-tick trace inside HashPlayer, so
+            // the hash legitimately changes even with slide itself dormant.
+            const ulong GoldenHash = 0x5D8AF580F3587000UL; // = 6740469726500646912
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
