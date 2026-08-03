@@ -7,6 +7,15 @@ namespace Ring.Simulation.Core
     {
         public float MaxSpeed, Accel, Friction, Radius, MaxHp,
             DashSpeed, DashDuration, DashCooldown, DashIframes, DashBufferWindow;
+
+        /// Vertical hit-zone bounds (metres above ground) and per-zone damage
+        /// multipliers for the raycast aim system (Т4+).
+        public float LegsTop, BodyTop, HeadTop,
+            LegsDamageMult, BodyDamageMult, HeadDamageMult;
+
+        /// Slide stamina-movement profile height, hero muzzle heights (standing /
+        /// mid-slide), and the arena-wide aim-ray height cap.
+        public float SlideProfileTop, MuzzleHeight, SlideMuzzleHeight, MaxAimHeight;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).
@@ -25,6 +34,15 @@ namespace Ring.Simulation.Core
             AttackRange, TelegraphSeconds, AttackCooldown, PreferredRange, RangeTolerance,
             StrafeSpeed, FireInterval, ProjectileSpeed, ProjectileRadius, ProjectileLifetime,
             ProjectileDamage, LeadFactor, SeparationRadius, SeparationStrength, AvoidLookahead;
+
+        /// Vertical hit-zone bounds (metres above ground) and per-zone damage
+        /// multipliers for the raycast aim system (Т4+); MuzzleHeight is read for the
+        /// Gunner archetype only.
+        public float LegsTop, BodyTop, HeadTop,
+            LegsDamageMult, BodyDamageMult, HeadDamageMult, MuzzleHeight;
+
+        /// Melee swing-attack target lead (Chaser archetype, Т15+).
+        public float SwingLeadFactor, SwingLeadMaxMeters;
 
         /// Extra clearance `Ring.Simulation.AI.MobAiSystem.SteerAround` adds on top
         /// of `Radius` when deciding whether an obstacle still blocks the path to a

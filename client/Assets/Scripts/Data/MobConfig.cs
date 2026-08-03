@@ -32,6 +32,32 @@ namespace Ring.Data
         [Range(0f, 10f)] public float AvoidLookahead = 3f;
         [Range(0f, 5f)] public float AvoidMargin = 1f;
 
+        // Task 1 (spec hit-zone geometry): vertical hit-zone bounds and per-zone
+        // damage multipliers, same shape as HeroConfig — consumed by the raycast aim
+        // system (Т4+). Defaults below are the chaser archetype (this class's shape,
+        // see class doc); the Gunner .asset overrides LegsTop/BodyTop/HeadTop to the
+        // taller ranged-mech silhouette (Task 7/17).
+        [Range(0.05f, 5f)] public float LegsTop = 0.60f;
+        [Range(0.05f, 5f)] public float BodyTop = 1.45f;
+        [Range(0.05f, 5f)] public float HeadTop = 1.85f;
+        [Range(0f, 5f)] public float LegsDamageMult = 0.75f;
+        [Range(0f, 5f)] public float BodyDamageMult = 1.0f;
+        [Range(0f, 5f)] public float HeadDamageMult = 1.7f;
+
+        // Task 1: muzzle height for ranged mobs (Gunner); the chaser (this class's
+        // default shape) never reads it, but it must stay a plausible in-zone value
+        // (not 0) — the Gunner slot's SimConfigBuilder.Validate rule D5 checks
+        // Hero.SlideProfileTop + Gunner.ProjectileRadius < Gunner.MuzzleHeight even
+        // when the Gunner .asset has not been authored yet (Task 17) and a freshly
+        // created MobConfig instance is standing in for it in tests.
+        [Range(0f, 5f)] public float MuzzleHeight = 0.95f;
+
+        // Task 1: melee swing-attack target lead — how far ahead of a moving target's
+        // position a Chaser's swing aims (Т15+); capped in metres so a fast-fleeing
+        // target does not pull the swing absurdly far off its own body.
+        [Range(0f, 2f)] public float SwingLeadFactor = 1.0f;
+        [Range(0f, 6f)] public float SwingLeadMaxMeters = 2.0f; // sync-marker key — keep LAST
+
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR
         void OnValidate() => RingDataChanged.Raise();

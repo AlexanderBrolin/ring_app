@@ -21,6 +21,14 @@ namespace Ring.Simulation.Tests
             return (hero, weapon, chaser, gunner, wave, arena);
         }
 
+        /// Builds a SimConfig from a caller-supplied hero and default everything else —
+        /// for zone-validation tests (Task 1) that only need to vary Hero fields.
+        static SimConfig BuildWith(HeroConfig hero)
+        {
+            var (_, w, c, g, wv, a) = MakeDefaults();
+            return SimConfigBuilder.Build(hero, w, c, g, wv, a);
+        }
+
         [Test]
         public void Build_DefaultAssets_ProducesValidConfig()
         {
@@ -90,6 +98,13 @@ namespace Ring.Simulation.Tests
             g.SeparationStrength = expected.Gunner.SeparationStrength;
             g.AvoidLookahead = expected.Gunner.AvoidLookahead;
             g.AvoidMargin = expected.Gunner.AvoidMargin;
+            g.LegsTop = expected.Gunner.LegsTop;
+            g.BodyTop = expected.Gunner.BodyTop;
+            g.HeadTop = expected.Gunner.HeadTop;
+            g.LegsDamageMult = expected.Gunner.LegsDamageMult;
+            g.BodyDamageMult = expected.Gunner.BodyDamageMult;
+            g.HeadDamageMult = expected.Gunner.HeadDamageMult;
+            g.MuzzleHeight = expected.Gunner.MuzzleHeight;
 
             SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
 
@@ -107,6 +122,27 @@ namespace Ring.Simulation.Tests
             Assert.AreNotEqual(cfg.Chaser.FireInterval, cfg.Gunner.FireInterval);
         }
 
+        [Test]
+        public void Validate_ZoneOrderViolated_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.LegsTop = 1.0f; hero.BodyTop = 0.5f; // zone order violated
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("LegsTop"));
+        }
+
+        [Test]
+        public void Validate_SlideProfileAboveGunnerMuzzle_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            // NB (QA2/QD3): a fresh MobConfig has ProjectileRadius = 0 (chaser
+            // defaults), so 1.0 is used: 1.0 + 0 >= MuzzleHeight(0.95) — rule D5
+            // violated, while 1.0 <= Hero.BodyTop (1.35) — the other rules stay quiet.
+            hero.SlideProfileTop = 1.0f;
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("SlideProfileTop"));
+        }
+
         static void AssertHeroEqual(HeroSimConfig e, HeroSimConfig a)
         {
             Assert.AreEqual(e.MaxSpeed, a.MaxSpeed, Eps);
@@ -119,6 +155,16 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.DashCooldown, a.DashCooldown, Eps);
             Assert.AreEqual(e.DashIframes, a.DashIframes, Eps);
             Assert.AreEqual(e.DashBufferWindow, a.DashBufferWindow, Eps);
+            Assert.AreEqual(e.LegsTop, a.LegsTop, Eps);
+            Assert.AreEqual(e.BodyTop, a.BodyTop, Eps);
+            Assert.AreEqual(e.HeadTop, a.HeadTop, Eps);
+            Assert.AreEqual(e.LegsDamageMult, a.LegsDamageMult, Eps);
+            Assert.AreEqual(e.BodyDamageMult, a.BodyDamageMult, Eps);
+            Assert.AreEqual(e.HeadDamageMult, a.HeadDamageMult, Eps);
+            Assert.AreEqual(e.SlideProfileTop, a.SlideProfileTop, Eps);
+            Assert.AreEqual(e.MuzzleHeight, a.MuzzleHeight, Eps);
+            Assert.AreEqual(e.SlideMuzzleHeight, a.SlideMuzzleHeight, Eps);
+            Assert.AreEqual(e.MaxAimHeight, a.MaxAimHeight, Eps);
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)
@@ -159,6 +205,15 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.SeparationStrength, a.SeparationStrength, Eps);
             Assert.AreEqual(e.AvoidLookahead, a.AvoidLookahead, Eps);
             Assert.AreEqual(e.AvoidMargin, a.AvoidMargin, Eps);
+            Assert.AreEqual(e.LegsTop, a.LegsTop, Eps);
+            Assert.AreEqual(e.BodyTop, a.BodyTop, Eps);
+            Assert.AreEqual(e.HeadTop, a.HeadTop, Eps);
+            Assert.AreEqual(e.LegsDamageMult, a.LegsDamageMult, Eps);
+            Assert.AreEqual(e.BodyDamageMult, a.BodyDamageMult, Eps);
+            Assert.AreEqual(e.HeadDamageMult, a.HeadDamageMult, Eps);
+            Assert.AreEqual(e.MuzzleHeight, a.MuzzleHeight, Eps);
+            Assert.AreEqual(e.SwingLeadFactor, a.SwingLeadFactor, Eps);
+            Assert.AreEqual(e.SwingLeadMaxMeters, a.SwingLeadMaxMeters, Eps);
         }
 
         static void AssertWaveEqual(WaveSimConfig e, WaveSimConfig a)
