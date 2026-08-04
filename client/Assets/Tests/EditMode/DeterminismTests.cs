@@ -25,11 +25,16 @@ namespace Ring.Simulation.Tests
         /// (a LOCAL there, not a static field here — statics would leak across
         /// RunScripted's three per-test-session calls and make the golden hash
         /// order-dependent, Task 16 QA5/QB5/QD5) so the aim level persists
-        /// across ticks within one scripted run.
+        /// across ticks within one scripted run. `maxAimHeight` comes in the same
+        /// way, from the caller's own config (Г4 review): the AimHeight draw's
+        /// upper bound has to BE Hero.MaxAimHeight — that is what Sanitize clamps
+        /// to, and what keeps the tower head belts inside the scripted run's reach
+        /// — so a literal here would silently drift the day that number moves.
         /// Draw order is FIXED (reorder only with a golden repin): MoveDir
         /// direction, MoveDir magnitude, AimPoint, FireHeld, DashRequested,
         /// SlideRequested, aimHeld toggle roll, AimHeight.
-        static SimInput Scripted(ref Unity.Mathematics.Random rng, ref bool aimHeld)
+        static SimInput Scripted(ref Unity.Mathematics.Random rng, ref bool aimHeld,
+            float maxAimHeight)
         {
             var moveDir = rng.NextFloat2Direction() * rng.NextFloat();
             var aimPoint = rng.NextFloat2(new float2(-30f, -30f), new float2(30f, 30f));
@@ -37,7 +42,9 @@ namespace Ring.Simulation.Tests
             bool dashRequested = rng.NextFloat() < 0.05f;
             bool slideRequested = rng.NextFloat() < 0.05f;
             if (rng.NextFloat() < 0.03f) aimHeld = !aimHeld; // ~3%/tick toggle chance
-            float aimHeight = rng.NextFloat(0f, 3.8f); // tower head belts [2.70, 3.50] reachable
+            // tower head belts [2.70, 3.50] stay reachable: the bound IS the
+            // config's MaxAimHeight, threaded in rather than restated
+            float aimHeight = rng.NextFloat(0f, maxAimHeight);
 
             return new SimInput
             {
@@ -56,11 +63,12 @@ namespace Ring.Simulation.Tests
         /// input-driven determinism from world-seed-driven determinism.
         static ulong RunScripted(uint inputSeed, int ticks)
         {
-            var world = new SimulationWorld(42, TestConfigs.Default());
+            SimConfig cfg = TestConfigs.Default();
+            var world = new SimulationWorld(42, cfg);
             var rng = new Random(inputSeed);
             bool aimHeld = false; // LOCAL — RunScripted runs 3x/session, no static leak (QA5/QB5/QD5)
             for (int i = 0; i < ticks; i++)
-                world.Tick(Scripted(ref rng, ref aimHeld));
+                world.Tick(Scripted(ref rng, ref aimHeld, cfg.Hero.MaxAimHeight));
             return world.StateHash();
         }
 
