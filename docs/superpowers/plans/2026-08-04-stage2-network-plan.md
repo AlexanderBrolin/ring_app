@@ -203,8 +203,9 @@ headless-образ в Docker Hub, лаг-гейт механик и спайк 
   `.../Networking/Spike/SpikePlayerController.cs` (+ `.meta`),
   `.../Networking/Spike/SpikeBootstrap.cs` (+ `.meta`),
   `client/Assets/Scenes/NetSpike.unity` (+ `.meta`)
-- Modify: `client/Assets/Tests/EditMode/Simulation.Tests.asmdef` (+`Ring.Networking`;
-  **и `FishNet.Runtime`, если Т2 п.9 это требует**)
+- Modify: `client/Assets/Tests/EditMode/Simulation.Tests.asmdef` (+`Ring.Networking`
+  **и `FishNet.Runtime` — Т2 п.9 ответил утвердительно: `IBroadcast` компилируется
+  именно в сборку `FishNet.Runtime`, без ссылки тесты дадут CS0012**)
 
 **Interfaces:**
 - `Networking.asmdef`: `"name": "Ring.Networking"`, `"references":
@@ -1454,8 +1455,12 @@ public static class InputStarvation
 }
 ```
 
-- Подписка на `TimeManager` — с порядком «наш обработчик последний» (способ —
-  заметка Т2 п.6); счётчики `InputStarved`/`InputOverwritten` в `NetStats`.
+- Подписка на `TimeManager`: **механизма приоритетов НЕТ** (Т2 п.6 — события
+  объявлены обычными `event Action`, вызываются в порядке подписки). Поэтому шаг
+  мира вешается на **`OnPostTick`**, который в порядке тика
+  (`OnPreTick → TryIterateData(true) → OnTick → OnPostTick → SendStateUpdate`)
+  идёт после `OnTick` — «подписаться последним» не закладывать. Счётчики
+  `InputStarved`/`InputOverwritten` — в `NetStats`.
 - Структурная строка лога матча (спека §3.11) включает **среднее и максимум
   времени тика** — замер заводится здесь.
 
@@ -1581,9 +1586,16 @@ Modify `client/Assets/Scripts/Editor/BuildCommands.cs`,
 **Interfaces:**
 - `ServerBootstrap`: `MatchConfigLoader` → `NetworkManager` (Tugboat, порт) →
   `SimulationWorld(seed, config, playerCount)` → `MatchServer`.
-  **`Application.targetFrameRate`** (Р63) — значение из заметки Т2 п.7; без него
-  player loop крутится на тысячах кадров и замер под `--cpus=1` показал бы
-  потолок независимо от стоимости симуляции.
+  **Кап кадров** (Р63/Р102) — **через `ServerManager.FrameRate`, НЕ присваиванием
+  `Application.targetFrameRate`**: `NetworkManager.UpdateFramerate()` присваивает
+  его сам при каждой смене состояния и затёр бы наше значение (Т2 п.7). Под
+  `UNITY_SERVER && !UNITY_EDITOR` FishNet дополнительно клампит до
+  `TickRate + 15` (при 30 Гц — 45), и `BuildLinuxServer` собирается подтаргетом
+  `StandaloneBuildSubtarget.Server`, то есть кламп в headless-сборке действует.
+  Бутстрап обязан **залогировать фактический `Application.targetFrameRate` после
+  старта** — замер В2 снимается с известной частоты, а не с предполагаемой.
+  Без капа player loop крутится на тысячах кадров и замер под `--cpus=1` показал
+  бы потолок независимо от стоимости симуляции.
 - **`BuildCommands.Build(..., string[] scenes)`** (Р45): per-target список;
   `BuildLinuxServer` → только `Server.unity`; клиентские → `Main.unity`; гвард
   «пустой список → throw» сохраняется.
