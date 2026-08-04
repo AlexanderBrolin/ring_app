@@ -540,13 +540,39 @@ public void SetFrameRate(ushort value) { ... NetworkManager.UpdateFramerate(); }
 **Важная оговорка**: клэмп работает только под `#if UNITY_SERVER &&
 !UNITY_EDITOR` — то есть только если сборка идёт как Unity Dedicated Server
 таргет (символ `UNITY_SERVER` выставляется этим таргетом автоматически). Если
-`client/docker` линуксовый headless-билд собирается как обычный Standalone
-Linux с `-batchmode -nographics` (не Dedicated Server таргет), `UNITY_SERVER`
-не определён, автоклэмп не сработает, и явная установка
-`Application.targetFrameRate` в `ServerBootstrap` (Р63 в спеке) **остаётся
-обязательной**, а не избыточной. Это вопрос конфигурации билда клиента, не
-пакета — вне скоупа этой заметки, но напрямую влияет на то, нужен ли
-`ServerBootstrap`'у собственный explicit-сеттинг.
+headless-билд собирается как обычный Standalone Linux с `-batchmode -nographics`
+(не Dedicated Server таргет), `UNITY_SERVER` не определён и автоклэмп не
+сработает. `BuildLinuxServer` в этом репо собирается подтаргетом `Server`,
+поэтому кламп действует (спека Р102).
+
+### Рычаг — `ServerManager.SetFrameRate()`, не присваивание (правка фикс-волны Ф1)
+
+Первая редакция этого раздела заканчивалась выводом «явная установка
+`Application.targetFrameRate` в `ServerBootstrap` (Р63) **остаётся
+обязательной**». Это противоречит решению спеки **Р102** и неверно по коду:
+
+- `UpdateFramerate()` **перезаписывает** `Application.targetFrameRate`
+  (`NetworkManager.cs:421-423`) при каждой смене состояния соединения — её зовут
+  `ClientManager.cs:132`, `:386` и `ServerManager.cs:184`, `:552`. Прямое
+  присваивание в бутстрапе живёт только до ближайшего из этих событий.
+- Само свойство-источник — **`internal`**: `internal ushort FrameRate =>
+  _changeFrameRate ? _frameRate : (ushort)0;` (`ServerManager.cs:169`), то есть
+  снаружи не читается и не пишется.
+- Публичный рычаг ровно один: `public void SetFrameRate(ushort value)`
+  (`ServerManager.cs:179-185`) — он клэмпит значение, **сам взводит
+  `_changeFrameRate = true`** и тут же зовёт `UpdateFramerate()`.
+
+**Нюанс, который нельзя потерять:** если галку `_changeFrameRate` в инспекторе
+снять и `SetFrameRate` не звать, `FrameRate` вернёт `0`, суммарный `frameRate`
+останется `0`, и `UpdateFramerate` **не присвоит ничего** (`if (frameRate > 0)`,
+`:422`) — в этой и только в этой конфигурации прямое присваивание уцелело бы.
+Полагаться на неё нельзя: дефолт `_changeFrameRate = true` (`:165`), а
+`SetFrameRate` этот дефолт восстанавливает принудительно.
+
+**Вывод для Р63/Т41:** `ServerBootstrap` вызывает
+`networkManager.ServerManager.SetFrameRate(<число>)` и логирует фактическую
+частоту после старта; собственного присваивания `Application.targetFrameRate`
+он не делает.
 
 ---
 
@@ -583,7 +609,41 @@ public void SetPacketLoss(double value)   // :140
 public LatencySimulator LatencySimulator { get { ... return _latencySimulator; } }
 ```
 Путь из игрового кода: `networkManager.TransportManager.LatencySimulator
-.SetLatency(80); ... .SetPacketLoss(0.05); ... .SetEnabled(true);`.
+.SetLatency(40); ... .SetPacketLoss(0.05); ... .SetEnabled(true);`.
+
+### Единица `_latency` — ОДНО направление, не RTT (правка фикс-волны Ф1)
+
+Первая редакция заметки рекомендовала `SetLatency(80)` под критическое правило 7
+(«80 мс RTT»). Это **вдвое больше нужного**. Задержка применяется **к каждому
+направлению отдельно**, удвоения в коде нет:
+
+```csharp
+// Runtime/Managing/Transporting/LatencySimulator.cs:245-248
+private float GetLatencyAsFloat()
+{
+    return (float)(_latency / 1000f);
+}
+// :253-306  — AddOutgoing, ЕДИНСТВЕННАЯ точка, где задержка навешивается
+float latency = GetLatencyAsFloat();                        // :286
+if (DropPacket()) { if (c == Channel.Reliable) latency += latency * 0.3f; else return; }
+Message msg = new(connectionId, segment, latency);
+```
+`AddOutgoing` зовётся и на пути «к клиенту» (`TransportManager.cs:697`), и на
+пути «к серверу» (`:772`) — то есть пакет платит `_latency` по дороге туда и
+ещё раз по дороге обратно.
+
+**Следствия:**
+- **`RTT = 2 × Latency`.** Для CR 7 (80 мс RTT) в инспекторе/коде ставится
+  **`Latency = 40`**.
+- **Потери тоже односторонние.** 5% в поле → круговая вероятность
+  `1 − 0.95² = 9.75%`. Если цель — «5% round-trip», ставить ≈ 2.53% на
+  направление; спека и CR 7 читают 5% как **потерю пакета на направление**,
+  поэтому в поле остаётся `0.05`, а в отчётах указывается круговое число.
+- Тултип поля `_latency` («When acting as host this value will be doubled»,
+  `:84`) **кодом не подкреплён**: ни `AddOutgoing`, ни `IterateOutgoing` не
+  умножают на два при `IsHostStarted`; `_simulateHost` (`:80`) — это булев
+  переключатель «симулировать ли clientHost вообще» (`:257-274`), не множитель.
+  Ориентироваться на тултип нельзя.
 
 ### Гарантия выключения в релизной сборке
 

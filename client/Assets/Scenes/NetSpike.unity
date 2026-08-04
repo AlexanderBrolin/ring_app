@@ -437,7 +437,7 @@ MonoBehaviour:
   _wave: {fileID: 11400000, guid: f70885052f0dd008f913f7c35ecee849, type: 2}
   _arena: {fileID: 11400000, guid: 867e8c92b82842b1e997ed0f876471d0, type: 2}
   _patternRadPerSec: 1.2
-  _dashPeriodSeconds: 2
+  _dashPeriodSeconds: 3
   _showOverlay: 1
 --- !u!4 &1972703731
 Transform:
@@ -581,7 +581,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 34e4a322dca349547989b14021da4e23, type: 3}
   m_Name: 
   m_EditorClassIdentifier: FishNet.Runtime::FishNet.Managing.Transporting.TransportManager
-  Transport: {fileID: 0}
+  Transport: {fileID: 2073228517}
   _maximumClientPacketSize: 20480
   _intermediateLayer: {fileID: 0}
   _latencySimulator:

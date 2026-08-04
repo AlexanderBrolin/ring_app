@@ -22,7 +22,7 @@ namespace Ring.Editor
     /// `NetworkManager` root carrying the managers whose inspector the owner
     /// actually touches on plan step 3 (`TransportManager` — the latency
     /// simulator; `TimeManager` — the spec-pinned 30 Hz tick; `PredictionManager`
-    /// — state interpolation, i.e. input redundancy per Т2 note §5), Tugboat as
+    /// — state interpolation, i.e. input redundancy per T2 note §5), Tugboat as
     /// the transport, FishNet's own `PlayerSpawner` wired to a generated
     /// `SpikePlayer` prefab, and a `SpikeBootstrap` object wired to the six
     /// balance assets `Main.unity` already feeds `SimulationRunner`.
@@ -122,15 +122,22 @@ namespace Ring.Editor
             GameObject bootstrapGo = GetOrCreateRoot(scene, BootstrapObjectName, ref sceneDirty);
             SpikeBootstrap bootstrap = EnsureComponent<SpikeBootstrap>(bootstrapGo, ref sceneDirty);
             var bootstrapSo = new SerializedObject(bootstrap);
-            bool bootstrapRefsChanged = false;
-            bootstrapRefsChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_networkManager", manager);
-            bootstrapRefsChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_hero", hero);
-            bootstrapRefsChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_weapon", weapon);
-            bootstrapRefsChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_chaser", chaser);
-            bootstrapRefsChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_gunner", gunner);
-            bootstrapRefsChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_wave", wave);
-            bootstrapRefsChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_arena", arena);
-            if (bootstrapRefsChanged)
+            bool bootstrapChanged = false;
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_networkManager", manager);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_hero", hero);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_weapon", weapon);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_chaser", chaser);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_gunner", gunner);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_wave", wave);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_arena", arena);
+            // Pinned like the tick rate above, and for the same reason: it is a
+            // parameter of the measurement (it has to clear the Boost economy's
+            // sustainable cadence — see SpikeBootstrap.DefaultDashPeriodSeconds),
+            // so it belongs in the scene definition rather than in whatever the
+            // component happened to serialize when it was first added.
+            bootstrapChanged |= SetFloat(bootstrapSo, "_dashPeriodSeconds",
+                SpikeBootstrap.DefaultDashPeriodSeconds);
+            if (bootstrapChanged)
             {
                 bootstrapSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
@@ -178,7 +185,7 @@ namespace Ring.Editor
 
         /// The owned player: a `NetworkObject` with prediction enabled plus the
         /// spike controller on the root, and an empty `Visual` child as the
-        /// graphical object FishNet's tick smoother interpolates (spec §3.9 Р78 —
+        /// graphical object FishNet's tick smoother interpolates (spec §3.9 P78 —
         /// the smoother owns that transform, so the capsule hangs one level below
         /// it and keeps its own standing offset).
         static NetworkObject GetOrCreatePlayerPrefab()
@@ -197,7 +204,7 @@ namespace Ring.Editor
                 // (Geometry/PlayerMovementSystem), never Unity physics.
                 EditorBootstrapUtils.RemoveCollider(body);
                 body.transform.SetParent(graphical.transform, false);
-                body.transform.localPosition = new Vector3(0f, 1f, 0f); // capsule pivot is its centre
+                body.transform.localPosition = new Vector3(0f, 1f, 0f); // capsule pivot is its center
 
                 var so = new SerializedObject(nob);
                 so.FindProperty("_enablePrediction").boolValue = true;
@@ -235,8 +242,22 @@ namespace Ring.Editor
             return true;
         }
 
+        /// Float sibling of SetInt above — same write-if-different contract.
+        static bool SetFloat(SerializedObject so, string fieldName, float value)
+        {
+            SerializedProperty prop = so.FindProperty(fieldName);
+            if (prop == null)
+                throw new System.InvalidOperationException(
+                    $"{so.targetObject.GetType().Name} has no serialized field '{fieldName}'.");
+            // ReSharper disable once CompareOfFloatsByEqualityOperator — the point
+            // is "is the serialized number already exactly this literal".
+            if (prop.floatValue == value) return false;
+            prop.floatValue = value;
+            return true;
+        }
+
         /// Ground reference: without something under the capsule a correction of a
-        /// few centimetres is invisible. Sized off ArenaConfig so the spike's
+        /// few centimeters is invisible. Sized off ArenaConfig so the spike's
         /// playfield matches the arena the movement tick actually collides with.
         static void BuildFloor(Scene scene, ArenaConfig arena, ref bool changed)
         {
