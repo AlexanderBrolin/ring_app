@@ -366,6 +366,155 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void LinkedSlide_CancelsDashCooldown_NextDashImmediatelyAvailable()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var move = new SimInput { MoveDir = new float2(1f, 0f) };
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // dash #1
+            Assert.AreEqual(1, w.Stats.DashesUsed);
+            for (int i = 0; i < 10; i++) w.Tick(move); // dash ends, post-dash window opens
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
+            Assert.Greater(w.Player.DashCooldown, 0f,
+                "test setup: dash #1's cooldown must still be running — this is what the cancel is for");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // linked slide
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+            Assert.AreEqual(0f, w.Player.DashCooldown, "linked slide must cancel the dash cooldown immediately");
+
+            int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
+            for (int i = 0; i < slideTicks; i++) w.Tick(move); // ride the slide out to its natural end
+            Assert.AreEqual(0f, w.Player.SlideTimer, "test setup: slide must have ended");
+            Assert.AreEqual(0f, w.Player.DashCooldown,
+                "test setup: the canceled cooldown must have stayed at 0 all through the slide");
+
+            // Proof by consequence: a dash requested the very next tick fires
+            // immediately — a non-canceled cooldown would still be counting
+            // down and would deny it outright.
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true });
+            Assert.AreEqual(2, w.Stats.DashesUsed,
+                "the dash cooldown was canceled by the linked slide — the next dash must be instantly available");
+        }
+
+        /// Local fixture (PD5, per DashRicochetTests.Fixture()'s pattern):
+        /// LinkRefund 20 instead of TestConfigs.Default()'s own 10, so the
+        /// five-move chain below drains StaminaMax to exactly 0 (worked out
+        /// against DashStaminaCost 40/SlideStaminaCost 30 — see the test's own
+        /// running-balance comments) instead of stopping short.
+        static SimConfig LinkRefund20Fixture()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Hero.LinkRefund = 20f;
+            return cfg;
+        }
+
+        [Test]
+        public void Chain_BaseLinkRefund_EndsAtExactRemainder_FourthMoveDenied()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var move = new SimInput { MoveDir = new float2(1f, 0f) };
+
+            // Fixture premise (PD5): a cold dash pays full price; every
+            // SUBSEQUENT move in the same dash<->slide chain also pays its own
+            // full price but executes inside the OTHER move's window, netting
+            // (cost - LinkRefund) — the SimConfigBuilder "no perpetual motion"
+            // rule (LinkRefund < min cost) is exactly what keeps that net
+            // positive, so the chain must bottom out, not run forever.
+            float expectedRemainder = cfg.Hero.StaminaMax - cfg.Hero.DashStaminaCost
+                - (cfg.Hero.SlideStaminaCost - cfg.Hero.LinkRefund)
+                - (cfg.Hero.DashStaminaCost - cfg.Hero.LinkRefund);
+            Assert.Less(expectedRemainder, cfg.Hero.SlideStaminaCost,
+                "fixture premise: the remainder must be too little for a 4th (slide) move");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // 1: dash (cold)
+            Assert.AreEqual(1, w.Stats.DashesUsed);
+            Assert.AreEqual(cfg.Hero.StaminaMax - cfg.Hero.DashStaminaCost, w.Player.Stamina, 1e-3f);
+
+            for (int i = 0; i < 10; i++) w.Tick(move); // dash ends, post-dash window opens
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // 2: linked slide
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+            float afterSlide = cfg.Hero.StaminaMax - cfg.Hero.DashStaminaCost
+                - cfg.Hero.SlideStaminaCost + cfg.Hero.LinkRefund;
+            Assert.AreEqual(afterSlide, w.Player.Stamina, 1e-3f);
+            Assert.AreEqual(0f, w.Player.DashCooldown, "linked slide must cancel the dash cooldown");
+
+            int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
+            for (int i = 0; i < slideTicks; i++) w.Tick(move); // ride the slide out to its natural end
+            Assert.AreEqual(0f, w.Player.SlideTimer, "test setup: slide must have ended");
+            Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // 3: linked dash
+            Assert.AreEqual(2, w.Stats.DashesUsed);
+            float afterDash2 = afterSlide - cfg.Hero.DashStaminaCost + cfg.Hero.LinkRefund;
+            Assert.AreEqual(afterDash2, w.Player.Stamina, 1e-3f);
+            Assert.AreEqual(expectedRemainder, w.Player.Stamina, 1e-3f);
+
+            for (int i = 0; i < 10; i++) w.Tick(move); // second dash ends, its own post-dash window opens
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: second post-dash window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // 4th move: denied
+            Assert.AreEqual(1, w.Stats.SlidesUsed, "4th move must not have started a second slide");
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.StaminaDenied));
+        }
+
+        [Test]
+        public void Chain_LinkRefund20Fixture_EndsAtExactlyZero_SixthMoveDenied()
+        {
+            var cfg = LinkRefund20Fixture();
+            var w = new SimulationWorld(1, cfg);
+            var move = new SimInput { MoveDir = new float2(1f, 0f) };
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // 1: dash (cold)
+            float balance = cfg.Hero.StaminaMax - cfg.Hero.DashStaminaCost;
+            Assert.AreEqual(balance, w.Player.Stamina, 1e-3f);
+
+            for (int i = 0; i < 10; i++) w.Tick(move);
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // 2: linked slide
+            balance = balance - cfg.Hero.SlideStaminaCost + cfg.Hero.LinkRefund;
+            Assert.AreEqual(balance, w.Player.Stamina, 1e-3f);
+            Assert.AreEqual(0f, w.Player.DashCooldown);
+
+            int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
+            for (int i = 0; i < slideTicks; i++) w.Tick(move);
+            Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // 3: linked dash
+            balance = balance - cfg.Hero.DashStaminaCost + cfg.Hero.LinkRefund;
+            Assert.AreEqual(balance, w.Player.Stamina, 1e-3f);
+
+            for (int i = 0; i < 10; i++) w.Tick(move);
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // 4: linked slide
+            balance = balance - cfg.Hero.SlideStaminaCost + cfg.Hero.LinkRefund;
+            Assert.AreEqual(balance, w.Player.Stamina, 1e-3f);
+            Assert.AreEqual(0f, w.Player.DashCooldown);
+
+            for (int i = 0; i < slideTicks; i++) w.Tick(move);
+            Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // 5: linked dash
+            balance = balance - cfg.Hero.DashStaminaCost + cfg.Hero.LinkRefund;
+            Assert.AreEqual(balance, w.Player.Stamina, 1e-3f);
+            Assert.AreEqual(0f, w.Player.Stamina, 1e-3f, "fixture premise: five moves must drain to exactly 0");
+            Assert.AreEqual(3, w.Stats.DashesUsed);
+            Assert.AreEqual(2, w.Stats.SlidesUsed);
+
+            for (int i = 0; i < 10; i++) w.Tick(move);
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // 6th move: denied
+            Assert.AreEqual(2, w.Stats.SlidesUsed, "6th move must not have started a third slide");
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.StaminaDenied));
+        }
+
+        [Test]
         public void SlideAlongWall_Continues()
         {
             var cfg = TestConfigs.Open();

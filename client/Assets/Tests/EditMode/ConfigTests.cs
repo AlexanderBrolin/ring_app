@@ -161,6 +161,16 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("AimMoveSpeedFrac"));
         }
 
+        [Test]
+        public void Validate_LinkRefundNotBelowMinCost_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            // Equality is also a violation (strict <) — В1 fix-wave 3 economy rework.
+            hero.LinkRefund = math.min(hero.DashStaminaCost, hero.SlideStaminaCost);
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("LinkRefund"));
+        }
+
         static void AssertHeroEqual(HeroSimConfig e, HeroSimConfig a)
         {
             Assert.AreEqual(e.MaxSpeed, a.MaxSpeed, Eps);
@@ -186,9 +196,9 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.StaminaMax, a.StaminaMax, Eps);
             Assert.AreEqual(e.DashStaminaCost, a.DashStaminaCost, Eps);
             Assert.AreEqual(e.SlideStaminaCost, a.SlideStaminaCost, Eps);
-            Assert.AreEqual(e.LinkedDashStaminaCost, a.LinkedDashStaminaCost, Eps);
             Assert.AreEqual(e.StaminaRegenPerSec, a.StaminaRegenPerSec, Eps);
             Assert.AreEqual(e.StaminaRegenDelay, a.StaminaRegenDelay, Eps);
+            Assert.AreEqual(e.LinkRefund, a.LinkRefund, Eps);
             Assert.AreEqual(e.SlideSpeed, a.SlideSpeed, Eps);
             Assert.AreEqual(e.SlideDuration, a.SlideDuration, Eps);
             Assert.AreEqual(e.SlideSteerRadPerSec, a.SlideSteerRadPerSec, Eps);

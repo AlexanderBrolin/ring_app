@@ -40,9 +40,9 @@ namespace Ring.Data
                     StaminaMax = hero.StaminaMax,
                     DashStaminaCost = hero.DashStaminaCost,
                     SlideStaminaCost = hero.SlideStaminaCost,
-                    LinkedDashStaminaCost = hero.LinkedDashStaminaCost,
                     StaminaRegenPerSec = hero.StaminaRegenPerSec,
                     StaminaRegenDelay = hero.StaminaRegenDelay,
+                    LinkRefund = hero.LinkRefund,
                     SlideSpeed = hero.SlideSpeed,
                     SlideDuration = hero.SlideDuration,
                     SlideSteerRadPerSec = hero.SlideSteerRadPerSec,
@@ -192,12 +192,16 @@ namespace Ring.Data
             ReqNonNegative(errors, "Hero.StaminaRegenDelay", cfg.Hero.StaminaRegenDelay);
             ReqCostWithinStamina(errors, "Hero.DashStaminaCost", cfg.Hero.DashStaminaCost, cfg.Hero.StaminaMax);
             ReqCostWithinStamina(errors, "Hero.SlideStaminaCost", cfg.Hero.SlideStaminaCost, cfg.Hero.StaminaMax);
-            ReqCostWithinStamina(errors, "Hero.LinkedDashStaminaCost", cfg.Hero.LinkedDashStaminaCost, cfg.Hero.StaminaMax);
-            if (cfg.Hero.LinkedDashStaminaCost > cfg.Hero.DashStaminaCost)
+            // В1 fix-wave 3 (owner economy rework): LinkRefund must stay
+            // non-negative and strictly below the cheaper of the two costs it
+            // discounts — equal-or-above either one would let a chain of
+            // linked moves net-gain stamina forever (perpetual motion).
+            ReqNonNegative(errors, "Hero.LinkRefund", cfg.Hero.LinkRefund);
+            float minLinkCost = math.min(cfg.Hero.DashStaminaCost, cfg.Hero.SlideStaminaCost);
+            if (cfg.Hero.LinkRefund >= minLinkCost)
             {
-                errors.Add("Hero.LinkedDashStaminaCost must be <= Hero.DashStaminaCost " +
-                    $"(got LinkedDashStaminaCost={cfg.Hero.LinkedDashStaminaCost:F3}, " +
-                    $"DashStaminaCost={cfg.Hero.DashStaminaCost:F3}).");
+                errors.Add("Hero.LinkRefund must be < min(Hero.DashStaminaCost, Hero.SlideStaminaCost) " +
+                    $"(got LinkRefund={cfg.Hero.LinkRefund:F3}, min cost={minLinkCost:F3}).");
             }
 
             // Task 2: slide kinematics + buffered-input windows.

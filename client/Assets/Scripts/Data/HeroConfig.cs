@@ -36,14 +36,17 @@ namespace Ring.Data
         [Range(1f, 6f)] public float MaxAimHeight = 3.8f;
 
         // Task 2 (spec stamina/slide/aim): stamina pool, per-action costs and regen —
-        // stamina drains on Dash/Slide/Linked-Dash and regenerates after a delay once
-        // no action is draining it.
-        [Range(1f, 300f)] public float StaminaMax = 90f;
-        [Range(0.1f, 300f)] public float DashStaminaCost = 48f;
-        [Range(0.1f, 300f)] public float SlideStaminaCost = 13f;
-        [Range(0.1f, 300f)] public float LinkedDashStaminaCost = 16f;
-        [Range(0.1f, 100f)] public float StaminaRegenPerSec = 22f;
-        [Range(0f, 5f)] public float StaminaRegenDelay = 0.72f;
+        // stamina drains on Dash/Slide and regenerates after a delay once no action
+        // is draining it.
+        // В1 fix-wave 3 (owner economy rework, app-n6g): LinkedDashStaminaCost's
+        // discounted-dash-in-window model is retired — dash/slide now always pay
+        // their own full price; LinkRefund (below, the class's new sync-marker
+        // field) is what makes chaining net-cheaper instead.
+        [Range(1f, 300f)] public float StaminaMax = 100f;
+        [Range(0.1f, 300f)] public float DashStaminaCost = 40f;
+        [Range(0.1f, 300f)] public float SlideStaminaCost = 30f;
+        [Range(0.1f, 100f)] public float StaminaRegenPerSec = 20f;
+        [Range(0f, 5f)] public float StaminaRegenDelay = 0.8f;
 
         // Task 2: slide kinematics (speed/duration/steering) and the buffered-input
         // windows that let a queued slide/dash chain into the next action instead of
@@ -65,7 +68,16 @@ namespace Ring.Data
         // slide-speed state by downstream movement code.
         [Range(0.01f, 1f)] public float AimMoveSpeedFrac = 0.8f;
         [Range(0.01f, 1f)] public float AimSlideSpeedMult = 0.5f;
-        [Range(0.05f, 2f)] public float AimSettleSeconds = 0.5f; // sync-marker key — keep LAST
+        [Range(0.05f, 2f)] public float AimSettleSeconds = 0.5f;
+
+        // В1 fix-wave 3 (owner economy rework, app-n6g): stamina credited back
+        // when a slide/dash executes inside its link window (PostDashSlideTimer
+        // for a linked slide, LinkWindowTimer for a linked dash — see
+        // PlayerMovementSystem.Update's two "linked" branches). Validated
+        // strictly below min(DashStaminaCost, SlideStaminaCost) by
+        // SimConfigBuilder — no perpetual motion, every linked move still nets
+        // a stamina drain.
+        [Range(0f, 40f)] public float LinkRefund = 10f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a

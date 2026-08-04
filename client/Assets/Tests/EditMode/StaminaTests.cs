@@ -80,7 +80,7 @@ namespace Ring.Simulation.Tests
         // by the reflective pass in HotTweakTests (QC7).
 
         [Test]
-        public void LinkedDash_DiscountAndCooldownBypass_ConsumesWindow()
+        public void LinkedDash_CooldownBypassAndRefund_ConsumesWindow()
         {
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
@@ -93,18 +93,22 @@ namespace Ring.Simulation.Tests
 
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide, via post-dash window
             Assert.AreEqual(1, w.Stats.SlidesUsed);
+            // NB (Б1 economy rework): the slide above is itself "linked" (it
+            // used the post-dash window) and so already zeroed DashCooldown —
+            // LinkedDash_BypassesStillRunningCooldown below owns the case
+            // where the cooldown genuinely is still running at request time;
+            // this test's own focus is the window/refund arithmetic.
 
             int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
             for (int i = 0; i < slideTicks; i++) w.Tick(move); // ride the slide out to its natural end
             Assert.AreEqual(0f, w.Player.SlideTimer, "test setup: slide must have ended");
             Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
-            Assert.Greater(w.Player.DashCooldown, 0f,
-                "test setup: dash #1's cooldown must still be running — this is what the bypass is for");
 
             float staminaBeforeLinkedDash = w.Player.Stamina;
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // linked dash, inside the window
-            Assert.AreEqual(2, w.Stats.DashesUsed, "cooldown bypass: the linked dash must have started");
-            Assert.AreEqual(staminaBeforeLinkedDash - cfg.Hero.LinkedDashStaminaCost, w.Player.Stamina, 1e-3f);
+            Assert.AreEqual(2, w.Stats.DashesUsed, "the linked dash must have started");
+            float expected = staminaBeforeLinkedDash - cfg.Hero.DashStaminaCost + cfg.Hero.LinkRefund;
+            Assert.AreEqual(expected, w.Player.Stamina, 1e-3f);
             Assert.AreEqual(0f, w.Player.LinkWindowTimer, "window must be consumed by the linked dash");
 
             // Immediate re-request (QA14): the window is gone and the fresh
@@ -117,55 +121,111 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void PerfectChain_CostsExactly_StaminaMax()
+        public void LinkedDash_BypassesStillRunningCooldown()
         {
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
             var move = new SimInput { MoveDir = new float2(1f, 0f) };
 
-            // Fixture premise (D5 "exactly two links"): dash + two slides + one
-            // linked dash must total exactly the starting stamina pool.
-            Assert.AreEqual(cfg.Hero.StaminaMax,
-                cfg.Hero.DashStaminaCost + 2f * cfg.Hero.SlideStaminaCost + cfg.Hero.LinkedDashStaminaCost,
-                1e-4f, "fixture premise: exactly two links must drain StaminaMax");
-
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // dash #1
             Assert.AreEqual(1, w.Stats.DashesUsed);
-            Assert.AreEqual(cfg.Hero.StaminaMax - cfg.Hero.DashStaminaCost, w.Player.Stamina, 1e-3f);
 
+            // Let the post-dash window close on its own (PostDashSlideWindow <
+            // DashCooldown, TestConfigs.Open()) while DashCooldown keeps
+            // counting down — a subsequent slide gated purely on RunUpTimer
+            // (QA1 seam below, same idiom as
+            // SlideTests.WallStop_KillsSlide_NoLinkWindow) is NOT "linked"
+            // (PostDashSlideTimer is 0), so unlike a post-dash-window slide
+            // (SlideTests.LinkedSlide_CancelsDashCooldown_...) it must leave
+            // DashCooldown running.
+            int postDashWindowTicks = (int)math.ceil(
+                (cfg.Hero.DashDuration + cfg.Hero.PostDashSlideWindow) / SimulationWorld.TickDt) + 2;
+            for (int i = 0; i < postDashWindowTicks; i++) w.Tick(move);
+            Assert.AreEqual(0f, w.Player.PostDashSlideTimer, "test setup: post-dash window must have closed");
+            Assert.Greater(w.Player.DashCooldown, 0f, "test setup: dash #1's cooldown must still be running");
+
+            var p = w.Player; // QA1 seam: satisfy the run-up gate without a real run-up
+            p.RunUpTimer = cfg.Hero.RunUpSeconds;
+            p.Vel = new float2(cfg.Hero.MaxSpeed, 0f);
+            w.SetPlayerForTest(p);
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // run-up slide, NOT linked
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+            Assert.Greater(w.Player.DashCooldown, 0f, "a non-linked (run-up) slide must not touch DashCooldown");
+
+            int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
+            for (int i = 0; i < slideTicks; i++) w.Tick(move);
+            Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
+            Assert.Greater(w.Player.DashCooldown, 0f,
+                "test setup: cooldown must still be running — this is what the bypass is for");
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // linked dash
+            Assert.AreEqual(2, w.Stats.DashesUsed, "cooldown bypass: the linked dash must have started");
+        }
+
+        [Test]
+        public void Slide_ViaFullRunUp_NoRefund()
+        {
+            // A slide started off a full run-up (not via the post-dash
+            // window) is not "linked" — it must cost exactly SlideStaminaCost,
+            // with LinkRefund never touched (refund NOT applied outside the
+            // window it's scoped to).
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player; // QA1 seam, same idiom as WallStop_KillsSlide_NoLinkWindow
+            p.RunUpTimer = cfg.Hero.RunUpSeconds;
+            p.Vel = new float2(cfg.Hero.MaxSpeed, 0f);
+            w.SetPlayerForTest(p);
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true });
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+            Assert.AreEqual(cfg.Hero.StaminaMax - cfg.Hero.SlideStaminaCost, w.Player.Stamina, 1e-3f);
+        }
+
+        [Test]
+        public void LinkedSlide_RefundsStamina()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var move = new SimInput { MoveDir = new float2(1f, 0f) };
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // dash
+            for (int i = 0; i < 10; i++) w.Tick(move); // dash ends, post-dash window opens
+            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
+            float staminaBeforeSlide = w.Player.Stamina;
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // linked slide
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+            float expected = staminaBeforeSlide - cfg.Hero.SlideStaminaCost + cfg.Hero.LinkRefund;
+            Assert.AreEqual(expected, w.Player.Stamina, 1e-3f);
+        }
+
+        [Test]
+        public void LinkedSlide_Refund_ClampsAtStaminaMax()
+        {
+            // Defensive clamp check (HotTweakTests-style out-of-range seed):
+            // LinkRefund < SlideStaminaCost is enforced by SimConfigBuilder, so
+            // a real cost-then-refund sequence starting within [0, StaminaMax]
+            // can never itself push Stamina over the ceiling — this forces an
+            // out-of-range starting value through the QA1 seam specifically to
+            // prove the refund's own math.min(StaminaMax, ...) clamp holds
+            // rather than compounding an already-desynced value further.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var move = new SimInput { MoveDir = new float2(1f, 0f) };
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // dash
             for (int i = 0; i < 10; i++) w.Tick(move); // dash ends, post-dash window opens
             Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
 
-            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide #1
+            var p = w.Player;
+            p.Stamina = cfg.Hero.StaminaMax + 1000f; // out-of-range seam value
+            w.SetPlayerForTest(p);
+
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // linked slide
             Assert.AreEqual(1, w.Stats.SlidesUsed);
-            float afterSlide1 = w.Player.Stamina;
-            Assert.AreEqual(cfg.Hero.StaminaMax - cfg.Hero.DashStaminaCost - cfg.Hero.SlideStaminaCost,
-                afterSlide1, 1e-3f);
-
-            int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
-            for (int i = 0; i < slideTicks; i++) w.Tick(move); // ride slide #1 out to its natural end
-            Assert.AreEqual(0f, w.Player.SlideTimer, "test setup: slide #1 must have ended");
-            Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
-
-            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // linked dash, inside the window
-            Assert.AreEqual(2, w.Stats.DashesUsed);
-            Assert.AreEqual(afterSlide1 - cfg.Hero.LinkedDashStaminaCost, w.Player.Stamina, 1e-3f);
-            Assert.AreEqual(0f, w.Player.LinkWindowTimer, "window must be consumed by the linked dash");
-
-            for (int i = 0; i < 10; i++) w.Tick(move); // linked dash ends, its own post-dash window opens
-            Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: second post-dash window must be open");
-
-            float beforeSlide2 = w.Player.Stamina;
-            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide #2
-            Assert.AreEqual(2, w.Stats.SlidesUsed);
-            Assert.AreEqual(beforeSlide2 - cfg.Hero.SlideStaminaCost, w.Player.Stamina, 1e-3f);
-
-            // Total spent across the whole chain equals exactly StaminaMax (D5):
-            // regen never gets a chance to run mid-chain — every dash/slide start
-            // re-primes StaminaRegenDelayTimer well before it could elapse, and
-            // SlideTimer itself blocks regen while a slide is active (QD10) — so
-            // this is pure arithmetic, not a coincidence of timing.
-            Assert.AreEqual(0f, w.Player.Stamina, 1e-3f);
+            Assert.AreEqual(cfg.Hero.StaminaMax, w.Player.Stamina, 1e-3f,
+                "linked-slide refund must clamp to StaminaMax, not compound an out-of-range value");
         }
     }
 }

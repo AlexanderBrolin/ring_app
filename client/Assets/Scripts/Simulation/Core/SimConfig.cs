@@ -18,8 +18,11 @@ namespace Ring.Simulation.Core
         public float SlideProfileTop, MuzzleHeight, SlideMuzzleHeight, MaxAimHeight;
 
         /// Stamina pool and per-action costs/regen (Task 2 — stamina/slide/dash economy).
-        public float StaminaMax, DashStaminaCost, SlideStaminaCost, LinkedDashStaminaCost,
-            StaminaRegenPerSec, StaminaRegenDelay;
+        /// LinkRefund (В1 fix-wave 3, owner economy rework): stamina credited back
+        /// when a slide/dash executes inside its link window — see
+        /// PlayerMovementSystem.Update's linked-slide/linked-dash branches.
+        public float StaminaMax, DashStaminaCost, SlideStaminaCost,
+            StaminaRegenPerSec, StaminaRegenDelay, LinkRefund;
 
         /// Slide kinematics and buffered-input windows (Task 2).
         public float SlideSpeed, SlideDuration, SlideSteerRadPerSec, SlideMinSpeedFrac,

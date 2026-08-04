@@ -255,7 +255,21 @@ namespace Ring.Simulation.Tests
             // previously-dormant slide/aim-mode branches, so the hash legitimately
             // differs from Task 15's. The scripted scenario now covers slide and
             // both fire modes end to end.
-            const ulong GoldenHash = 0xF66DA6A65EBBD03AUL; // = 17757032139275882554
+            // Re-pinned by В1 fix-wave 3 (owner-decided economy rework,
+            // app-n6g, repin #11): HeroConfig's stamina economy changed
+            // shape — StaminaMax 90->100, DashStaminaCost 48->40,
+            // SlideStaminaCost 13->30, StaminaRegenPerSec 22->20,
+            // StaminaRegenDelay 0.72->0.8, LinkedDashStaminaCost is deleted
+            // outright (replaced by the new LinkRefund field + gate/refund
+            // mechanics in PlayerMovementSystem.Update's linked-slide/
+            // linked-dash branches). PlayerState itself gained no new field
+            // (LinkRefund lives only on HeroConfig/HeroSimConfig), but every
+            // one of these numbers feeds Stamina/DashCooldown, both already
+            // folded into HashPlayer — so the scripted run's dash/slide
+            // stamina trace (and, via the new DashCooldown-cancel side
+            // effect of a linked slide, its dash-cooldown trace too)
+            // legitimately differs from Task 16's.
+            const ulong GoldenHash = 0x08AA06987E1C5CDAUL; // = 624318750364818650
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 

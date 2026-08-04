@@ -201,6 +201,14 @@ namespace Ring.Editor
     /// never reached an already-committed prefab — `SelfHealVisualScaleOnPrefab`
     /// (new, called alongside `SelfHealAimProxyOnPrefab` in that same branch)
     /// closes it, generically for both archetypes.
+    /// В1 fix-wave 3 (owner-decided economy rework, app-n6g): HeroConfig's
+    /// `LinkedDashStaminaCost` field is retired outright (the old
+    /// discounted-dash-in-window model) — `LinkRefund` (new, appended at the
+    /// end of the class) replaces it as the class's sync-marker field, per
+    /// the drill above: `EnsureAssetHasKey` now checks for `LinkRefund`
+    /// instead of `AimSettleSeconds`, so an already-committed HeroConfig.asset
+    /// predating this wave self-heals the new key on this Apply. No new
+    /// scene objects/references — this wave is config-shape only.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -366,10 +374,13 @@ namespace Ring.Editor
             // field (GameFeelConfig: `AimHoverGlowBoost` as of В1/В2 fix-wave 2
             // — was `LinkWindowFlashBoost` (В1 fix-wave 1) before that, and
             // `SlideDustSize` (Task 22, spec Г6) before THAT, see the field's
-            // own doc for the fuller history; HeroConfig/WeaponConfig/MobConfig's
-            // marker fields are new as of Task 17, so any asset committed
-            // before this task predates them and self-heals on this Apply).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "AimSettleSeconds");
+            // own doc for the fuller history; HeroConfig's marker is
+            // `LinkRefund` as of В1 fix-wave 3 (owner economy rework) — was
+            // `AimSettleSeconds` (Task 17) before that; WeaponConfig/
+            // MobConfig's marker fields are unchanged since Task 17, so any
+            // asset committed before that task predates them and self-heals
+            // on this Apply).
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "LinkRefund");
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");

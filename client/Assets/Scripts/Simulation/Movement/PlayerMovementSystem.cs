@@ -105,12 +105,15 @@ namespace Ring.Simulation.Movement
                 // the slide ends (or the buffer window itself expires).
                 // Task 11 (C6): a dash requested inside the post-slide link
                 // window bypasses the ordinary DashCooldown gate entirely —
-                // that bypass is the whole point of the window — but it still
-                // pays its OWN (discounted) stamina cost below.
+                // that bypass is the whole point of the window. В1 fix-wave 3
+                // (owner economy rework): it still pays the FULL dash cost —
+                // the old discounted-dash-in-window model is gone — but a
+                // linked dash's stamina GATE is lowered by LinkRefund below,
+                // since the refund is guaranteed the instant the dash starts.
             {
                 bool linked = p.LinkWindowTimer > 0f;
-                float cost = linked ? hero.LinkedDashStaminaCost : hero.DashStaminaCost;
-                if (p.Stamina >= cost)
+                float gate = linked ? hero.DashStaminaCost - hero.LinkRefund : hero.DashStaminaCost;
+                if (p.Stamina >= gate)
                 {
                     dashMoveTick = true;
                     float2 dir = math.lengthsq(input.MoveDir) > 1e-6f
@@ -126,7 +129,12 @@ namespace Ring.Simulation.Movement
                     // previous dash's ricochet-decayed speed.
                     p.DashSpeedCur = hero.DashSpeed;
                     p.Vel = dir * p.DashSpeedCur;
-                    p.Stamina -= cost;
+                    p.Stamina -= hero.DashStaminaCost;
+                    // В1 fix-wave 3: a linked dash's refund lands on top of
+                    // its own full-price payment, clamped to the pool — see
+                    // this branch's opening comment for the gate side of it.
+                    if (linked)
+                        p.Stamina = math.min(hero.StaminaMax, p.Stamina + hero.LinkRefund);
                     p.StaminaRegenDelayTimer = hero.StaminaRegenDelay;
                     // Task 11 (C6): the window is consumed by USE, whether it
                     // paid for this dash or (being un-opened) was already 0.
@@ -169,9 +177,28 @@ namespace Ring.Simulation.Movement
             }
             else if (p.SlideBufferTimer > 0f && slideGate) // slide start
             {
-                if (p.Stamina >= hero.SlideStaminaCost)
+                // В1 fix-wave 3 (owner economy rework): "linked slide" =
+                // started while the post-dash window was still open —
+                // captured BEFORE the window is zeroed below, same
+                // "started inside its window" contract as the dash branch's
+                // own LinkWindowTimer check above. Lowers the stamina gate
+                // by LinkRefund, same reasoning as the dash branch.
+                bool linked = p.PostDashSlideTimer > 0f;
+                float gate = linked ? hero.SlideStaminaCost - hero.LinkRefund : hero.SlideStaminaCost;
+                if (p.Stamina >= gate)
                 {
                     p.Stamina -= hero.SlideStaminaCost;
+                    if (linked)
+                    {
+                        // Refund lands on top of the full-price payment
+                        // above, clamped to the pool; canceling DashCooldown
+                        // is the other half of the reward for landing a
+                        // slide inside the post-dash window — the next dash
+                        // comes right back instead of waiting out the rest
+                        // of the old cooldown.
+                        p.Stamina = math.min(hero.StaminaMax, p.Stamina + hero.LinkRefund);
+                        p.DashCooldown = 0f;
+                    }
                     p.StaminaRegenDelayTimer = hero.StaminaRegenDelay;
                     p.SlideTimer = hero.SlideDuration;
                     // M2: no chaining off the run-up/post-dash gate that just
