@@ -33,6 +33,28 @@ namespace Ring.Simulation.AI
             return math.normalizesafe(predicted - from, new float2(1f, 0f));
         }
 
+        /// Melee swing-attack prediction (Task 13): the target's expected position
+        /// `seconds` from now, extrapolated linearly from its current velocity.
+        /// Unlike AimWithLead (projectile intercept at a fixed projectile speed —
+        /// B12), this is NOT reused for that purpose: it double-clamps instead of
+        /// solving an intercept time. First `maxSpeed` bounds the velocity itself,
+        /// so a burst well above normal running speed (a dash) pulls the same lead
+        /// a plain run at `maxSpeed` would, never further (A4/D2 — a dash must not
+        /// bait the swing from farther away than running would). Then `maxLead`
+        /// bounds the resulting offset distance in metres, so the swing's
+        /// anticipation never reaches absurdly far even for a very fast target.
+        public static float2 PredictPos(float2 pos, float2 vel, float maxSpeed,
+            float seconds, float factor, float maxLead)
+        {
+            float2 lead = vel;
+            float len = math.length(lead);
+            if (len > maxSpeed) lead *= maxSpeed / len;          // a dash doesn't bait (A4/D2)
+            float2 offset = lead * (seconds * factor);
+            float offLen = math.length(offset);
+            if (offLen > maxLead) offset *= maxLead / offLen;    // cap the lead distance
+            return pos + offset;
+        }
+
         /// Is the line of fire (segment from→to, projectile radius) clear of obstacles?
         public static bool HasLineOfFire(float2 from, float2 to, float padR,
             in ArenaSimConfig arena)

@@ -194,7 +194,14 @@ namespace Ring.Simulation.Tests
             // has always been able to send a dash into one of the scripted
             // scenario's five obstacles, and a dash that does now mirrors
             // instead of stopping dead — a further, real behaviour change.
-            const ulong GoldenHash = 0x77068112C0B36A3FUL; // = 8576684457916066367
+            // Re-pinned by Task 13 (predictive telegraph entry): the Chaser's
+            // Chase->Telegraph entry check now compares against
+            // Targeting.PredictPos(player.Pos, player.Vel, ...) instead of the
+            // player's raw position — the scripted scenario's player is moving
+            // (Scripted()'s MoveDir/DashRequested), so the predicted position
+            // legitimately differs from the raw one and shifts every Chaser's
+            // telegraph timing (and therefore hit/miss/damage trace) downstream.
+            const ulong GoldenHash = 0x32C3D0814379F95BUL; // = 3657996575956400475
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
