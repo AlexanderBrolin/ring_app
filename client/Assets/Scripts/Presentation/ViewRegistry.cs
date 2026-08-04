@@ -16,9 +16,10 @@ namespace Ring.Presentation
     ///    lerps between its position in `Prev` (falling back to `Curr` if that Id
     ///    isn't in `Prev`) and `Curr` by `Alpha`; an Id that drops out of `Curr`
     ///    returns its view to the pool. Every live mob (new or continuing) also
-    ///    gets `MobView.Sync(in MobState, float)` called here (Task 21, resolution "Bind
-    ///    contract") — the per-frame telegraph-pulse/Fire-glint accent read, same
-    ///    "no new subscriber" rule (П-1) as everything else in this class.
+    ///    gets `MobView.Sync(in MobState, float, bool, float)` called here (Task 21,
+    ///    resolution "Bind contract") — the per-frame telegraph-pulse/Fire-glint/
+    ///    hover-glow (В1/В2 fix-wave 2) accent read, same "no new subscriber"
+    ///    rule (П-1) as everything else in this class.
     ///  - `HandleEvent` (called by `SimEventRouter`, П-1's ordered fan-out — never
     ///    subscribed directly to any runner event): retires a view the instant its
     ///    entity's terminal event fires (MobDied for mobs; ProjectileBlocked /
@@ -43,6 +44,7 @@ namespace Ring.Presentation
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] ArenaConfig _arena;
+        [SerializeField] AimProvider _aimProvider;
         [SerializeField] MobView _chaserPrefab;
         [SerializeField] MobView _gunnerPrefab;
         [SerializeField] ProjectileView _projectilePrefab;
@@ -167,6 +169,11 @@ namespace Ring.Presentation
             // `_runner.World` is guaranteed non-null here, LateUpdate's own guard above
             // already returned early otherwise.
             float telegraphSeconds = _runner.World.Config.Chaser.TelegraphSeconds;
+            // В1/В2 fix-wave 2 (app-n6g item 3b): read once per frame, same
+            // shape as telegraphSeconds above — MobView.Sync takes plain
+            // values, never a GameFeelConfig/AimProvider reference of its own.
+            MobView hoveredMob = _aimProvider != null ? _aimProvider.CurrentHoveredMob : null;
+            float hoverGlowBoost = _gameFeel.AimHoverGlowBoost;
 
             // Task 10 (assets phase B spec §3.7): built once per frame, not
             // per-view — every live MobVisual reads the same feel numbers this
@@ -206,7 +213,7 @@ namespace Ring.Presentation
                     // Sync right away (Task 21 Bind/Sync contract) so a mob that's
                     // already mid-Telegraph the instant it becomes visible reads
                     // correctly this same frame, not one frame late.
-                    view.Sync(in m, telegraphSeconds);
+                    view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverGlowBoost);
                     view.Visual?.Sync(in m, in visualParams);
                     _activeMobs.Add(m.Id, view);
                     continue;
@@ -225,7 +232,7 @@ namespace Ring.Presentation
                     Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
                     view.transform.position = world + MobOffset;
                 }
-                view.Sync(in m, telegraphSeconds);
+                view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverGlowBoost);
                 // After the position write above (Б7): when frozen, position
                 // wasn't written this frame, so MobVisual's own prev/curr delta
                 // reads zero and it settles on Idle — no separate "frozen" branch

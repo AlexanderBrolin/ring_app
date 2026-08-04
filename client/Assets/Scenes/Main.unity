@@ -3575,6 +3575,7 @@ MonoBehaviour:
   _runner: {fileID: 1959383180}
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
   _arena: {fileID: 11400000, guid: 867e8c92b82842b1e997ed0f876471d0, type: 2}
+  _aimProvider: {fileID: 1959383182}
   _chaserPrefab: {fileID: 112095094450026238, guid: ce2393f3bafe8586a817a4e9fa2f3f96, type: 3}
   _gunnerPrefab: {fileID: 3360266603742807858, guid: 6a20fcac77baec07cad9f7b371359148, type: 3}
   _projectilePrefab: {fileID: 2834824209119835038, guid: 46258a528de6059eeb3ff46cde8d16fd, type: 3}

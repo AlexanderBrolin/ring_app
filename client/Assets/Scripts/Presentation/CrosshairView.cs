@@ -36,6 +36,7 @@ namespace Ring.Presentation
         public const int ConeSegments = 32;
 
         static readonly Vector3 GroundOffset = Vector3.up * 0.05f;
+        static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
 
         [SerializeField] Transform _marker;
         [SerializeField] LineRenderer _cone;
@@ -45,8 +46,24 @@ namespace Ring.Presentation
 
         readonly Vector3[] _conePoints = new Vector3[ConeSegments];
         Vector3 _markerBaseScale;
+        // В1/В2 fix-wave 2 (app-n6g item 3a): the marker doubles as the
+        // zone-colored aim dot while AimHeld — same MaterialPropertyBlock/
+        // _EmissionColor idiom every other accent in this project uses
+        // (PlayerVisual/MobView/CorpseView), never a material instance.
+        Renderer _markerRenderer;
+        MaterialPropertyBlock _block;
+        Color _markerBaseEmission;
 
-        void Awake() => _markerBaseScale = _marker.localScale;
+        void Awake()
+        {
+            _markerBaseScale = _marker.localScale;
+            _markerRenderer = _marker.GetComponent<Renderer>();
+            _block = new MaterialPropertyBlock();
+            // The marker's own baked "CrosshairEmissive" color (hip-fire /
+            // HitZone.None fallback) — read once, same "cache the material's
+            // own base" idiom AimRayView's Awake already uses for _baseColor.
+            _markerBaseEmission = _markerRenderer.sharedMaterial.GetColor(EmissionColorId);
+        }
 
         void OnEnable() => Cursor.visible = false;
 
@@ -73,6 +90,15 @@ namespace Ring.Presentation
             // Task 20 (PC8): the SAME marker serves as the aim dot while
             // AimHeld — shrunk by AimDotScale, never a second renderer.
             _marker.localScale = aimHeld ? _markerBaseScale * _gameFeel.AimDotScale : _markerBaseScale;
+
+            // В1/В2 fix-wave 2 (app-n6g item 3a): zone tint — `CurrentAimZone`
+            // is already `HitZone.None` whenever `!aimHeld` (AimProvider's own
+            // class doc), so `AimZoneColors.Resolve` falls back to the
+            // marker's baked color and hip-fire mode is visually unchanged.
+            Color zoneColor = AimZoneColors.Resolve(
+                _aimProvider.CurrentAimZone, _markerBaseEmission, _gameFeel);
+            _block.SetColor(EmissionColorId, zoneColor);
+            _markerRenderer.SetPropertyBlock(_block);
 
             // Task 20 (PD15): the cone only ever means "hip fire" — hidden the
             // instant AimHeld switches the player to aimed fire, and its

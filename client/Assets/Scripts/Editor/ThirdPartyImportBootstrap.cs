@@ -54,6 +54,22 @@ namespace Ring.Editor
             if (doll != null && AssetImporter.GetAtPath(TP.DollPath) is ModelImporter dollImporter)
                 ValidateClips(TP.DollPath, dollImporter, errors, ref healed);
             int remapped = RemapPackMaterials(robots);
+            // В1/В2 fix-wave 2 (app-n6g item 1, PROVEN root cause): the player
+            // doll (TP.DollPath) is excluded from `humanoids` above and never
+            // reaches `RemapPackMaterials(robots)` — "UAL mannequins are
+            // authored textureless and are not touched" (RemapPackMaterials'
+            // own doc). Its embedded FBX materials (`materialLocation:
+            // InPrefab`, confirmed in UAL1_Standard.fbx.meta — no external
+            // .mat asset exists for this pack anywhere on disk) therefore
+            // never get `_EMISSION` enabled by ANY step in this pipeline.
+            // `PlayerVisual.UpdateLinkWindowFlash`'s `MaterialPropertyBlock.
+            // SetColor("_EmissionColor", ...)` writes were consequently dead:
+            // with the keyword off, the shader variant compiled for the
+            // material has no emission sampling path at all, so no MPB value
+            // can ever show, regardless of the pulse math driving it (which
+            // was already correct). Fix below, right after RemapPackMaterials
+            // — same run.
+            if (doll != null) RemapDollMaterialsForEmission();
 
             Debug.Log($"[ThirdParty] validation done: {humanoids.Length} humanoid, " +
                       $"{robots.Length} robot/prop models, healed {healed}, " +
@@ -251,6 +267,64 @@ namespace Ring.Editor
                 // mask-less packs — the MPB accents are additive either way (ПБ2).
                 mat.SetColor("_EmissionColor", emissive != null ? Color.white : Color.black);
                 if (emissive != null) mat.SetTexture("_EmissionMap", emissive);
+            });
+        }
+
+        /// В1/В2 fix-wave 2 (app-n6g item 1): same `AddRemap`/external-material
+        /// idiom `RemapPackMaterials` above already uses for the robot packs,
+        /// applied to the player doll instead — the ONE model this pipeline
+        /// never routed through it (class doc at the `Apply` call site). No
+        /// texture lookup here (unlike `RemapPackMaterials`): the doll pack
+        /// ships no textures at all ("authored textureless"), so this only
+        /// needs to preserve each artifact material's own `_BaseColor` tint
+        /// and turn emission on — never touches meshes/textures/anything else
+        /// in the pack itself (global constraint: content outside `_Ring/`
+        /// stays untouched). Landing the remap materials in `_Ring/Materials/`
+        /// means `ReconcileRemapEmission` below heals these too on any future
+        /// drift, same as the robot remaps already get.
+        static void RemapDollMaterialsForEmission()
+        {
+            if (!(AssetImporter.GetAtPath(TP.DollPath) is ModelImporter importer)) return;
+            bool changed = false;
+            foreach (Material artifact in AssetDatabase.LoadAllAssetsAtPath(TP.DollPath)
+                         .OfType<Material>())
+            {
+                Color baseColor = artifact.HasProperty("_BaseColor")
+                    ? artifact.GetColor("_BaseColor") : Color.white;
+                Material remap = GetOrCreateDollRemapMaterial(artifact.name, baseColor);
+                importer.AddRemap(new AssetImporter.SourceAssetIdentifier(
+                    typeof(Material), artifact.name), remap);
+                changed = true;
+            }
+            if (changed)
+            {
+                importer.SaveAndReimport();
+                Debug.Log("[ThirdParty] doll materials remapped for emission: " + TP.DollPath);
+            }
+        }
+
+        /// `_Doll` suffix keeps the file distinct from any robot-pack remap
+        /// that happens to share a material name (`GetOrCreateRemapMaterial`
+        /// above uses the bare name) — two different packs, two different
+        /// assets, never a collision. `configure` only runs at creation
+        /// (`EditorBootstrapUtils.GetOrCreateMaterial`'s own contract), so an
+        /// owner's in-Editor tweak of the remap material survives a re-run.
+        static Material GetOrCreateDollRemapMaterial(string matName, Color baseColor)
+        {
+            string safe = new string(matName
+                .Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+            string path = TP.RingRoot + "Materials/" + safe + "_Doll.mat";
+            return EditorBootstrapUtils.GetOrCreateMaterial(
+                path, EditorBootstrapUtils.UrpLitShader, mat =>
+            {
+                mat.SetColor("_BaseColor", baseColor);
+                mat.EnableKeyword("_EMISSION");
+                mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                // Black at rest — PlayerVisual's MPB writes are the only thing
+                // that ever lights this up (LinkWindowFlashAccent * wave), same
+                // "textureless-pack" black-base convention GetOrCreateRemapMaterial
+                // above already follows.
+                mat.SetColor("_EmissionColor", Color.black);
             });
         }
 

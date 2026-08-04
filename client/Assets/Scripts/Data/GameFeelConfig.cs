@@ -81,9 +81,9 @@ namespace Ring.Data
         // (bootstrap:245) until the Б1 fix-wave-2 block below superseded it, and
         // `DashGlowSize` in turn until the Б1 fix-wave-3 field below superseded
         // THAT, and `CasingEjectSpeedMax` after that, then `AimDotScale`
-        // (Task 17), then `SlideDustSize` (Task 22, spec Г6) — `LinkWindowFlashBoost`
-        // is the current marker (В1 fix-wave 1, owner playtest feedback), see
-        // its own doc.
+        // (Task 17), then `SlideDustSize` (Task 22, spec Г6), then
+        // `LinkWindowFlashBoost` (В1 fix-wave 1) — `AimHoverGlowBoost` is the
+        // current marker (В1/В2 fix-wave 2), see its own doc.
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
         [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
@@ -121,9 +121,9 @@ namespace Ring.Data
         // (dash cooldown 1.2s vs ~2.5s life → 3 alive typ.). DashGlowSize was the
         // bootstrap sync-marker key until the Б1 fix-wave-3 field below
         // superseded it, then `CasingEjectSpeedMax`, then `AimDotScale`
-        // (Task 17), then `SlideDustSize` (Task 22, spec Г6) — `LinkWindowFlashBoost`
-        // is the current marker (В1 fix-wave 1, owner playtest feedback), see
-        // its own doc.
+        // (Task 17), then `SlideDustSize` (Task 22, spec Г6), then
+        // `LinkWindowFlashBoost` (В1 fix-wave 1) — `AimHoverGlowBoost` is the
+        // current marker (В1/В2 fix-wave 2), see its own doc.
         [Range(1, 32)] public int MaxDashGlows = 8;
         [Range(0.1f, 10f)] public float DashGlowSeconds = 2.5f;
         [Range(0.1f, 3f)] public float DashGlowSize = 0.9f;
@@ -198,12 +198,41 @@ namespace Ring.Data
         // scales its peak intensity on top of the fixed accent color
         // `PlayerVisual` reuses from `PlayerEmissive`/`DashGlowView` (Э1) —
         // same accent-constant-vs-SO-number split `MobView`'s Gunner glint
-        // already makes. `LinkWindowFlashBoost` is the new sync-marker key,
+        // already makes. `LinkWindowFlashBoost` was the sync-marker key,
         // superseding `SlideDustSize` (Task 22, spec Г6) — see that field's
         // own chain history in the doc paragraphs above (PlayerVisualScale /
-        // MaxDashGlows).
+        // MaxDashGlows) — until `AimHoverGlowBoost` below superseded it in
+        // turn (В1/В2 fix-wave 2).
         [Range(0.5f, 20f)] public float LinkWindowFlashHz = 6f;
-        [Range(1f, 4f)] public float LinkWindowFlashBoost = 1.6f; // sync-marker key — keep LAST
+        [Range(1f, 4f)] public float LinkWindowFlashBoost = 1.6f;
+
+        // В1/В2 fix-wave 2 (app-n6g item 3a, owner playtest feedback:
+        // headshot aiming was unreadable — "не видно куда точно целюсь").
+        // `AimProvider.TryAimProxy` now exposes WHICH `AimProxy_Legs/Body/
+        // Head` collider its raycast actually hit as `Ring.Simulation.Core.
+        // HitZone` (the same enum `SimEvent.Zone` already uses — Presentation
+        // reads it, never redefines a second one, Reuse > duplication). Both
+        // `CrosshairView`'s marker and `AimRayView`'s ray tint by the hit zone
+        // via the shared `AimZoneColors.Resolve` lookup: Legs/Body share the
+        // neutral `AimZoneBodyColor`; Head gets the distinct `AimZoneHeadColor`
+        // accent so a headshot lineup reads as visibly different before the
+        // trigger is even pulled. Only meaningful while `AimHeld` (zone is
+        // `None` otherwise — `AimProvider`'s own class doc); the marker/ray
+        // fall back to their existing baked color when the zone is `None`.
+        public Color AimZoneBodyColor = new Color(0.6f, 0.85f, 1f);
+        public Color AimZoneHeadColor = new Color(1f, 0.25f, 0.15f);
+
+        // Item 3b (same fix-wave, same owner request): while the aim-proxy
+        // hit belongs to a live mob (`AimProvider.CurrentHoveredMob`),
+        // `MobView.Sync` layers a soft extra glow (`MobView.HoverGlowAccent`)
+        // on top of whatever accent is already active that frame — same
+        // accent-constant-vs-SO-number-multiplier split `MobView`'s own
+        // `GunnerGlintAccent`/`TelegraphAccent` pairs already use, mirrored
+        // from `LinkWindowFlashAccent`/`LinkWindowFlashBoost` above. Range
+        // floors at 1x (never DIMS an already-visible accent, only adds to
+        // it) and caps at 3x; "keep subtle" per owner guidance, default 1.35.
+        // New sync-marker key, superseding `LinkWindowFlashBoost` above.
+        [Range(1f, 3f)] public float AimHoverGlowBoost = 1.35f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

@@ -98,7 +98,12 @@ namespace Ring.Presentation
             _line.SetPosition(1, aimPoint);
             _line.startWidth = _line.endWidth = _gameFeel.AimRayWidth;
 
-            Color dimmed = _baseColor * _gameFeel.AimRayAlpha;
+            // В1/В2 fix-wave 2 (app-n6g item 3a): same zone tint CrosshairView's
+            // marker applies, via the shared AimZoneColors lookup — falls back
+            // to the ray's own baked cyan (_baseColor) on HitZone.None, same as
+            // before this fix.
+            Color zoneColor = AimZoneColors.Resolve(_aimProvider.CurrentAimZone, _baseColor, _gameFeel);
+            Color dimmed = zoneColor * _gameFeel.AimRayAlpha;
             _block.SetColor("_BaseColor", new Color(dimmed.r, dimmed.g, dimmed.b, 1f));
             _line.SetPropertyBlock(_block);
         }

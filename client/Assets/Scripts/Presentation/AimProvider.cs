@@ -1,3 +1,4 @@
+using Ring.Simulation.Core;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -46,6 +47,11 @@ namespace Ring.Presentation
         float2 _lastValid;
         float2 _cachedAimSimPos;
         float _cachedAimHeight;
+        // В1/В2 fix-wave 2 (app-n6g item 3, headshot readability): cached
+        // alongside the height above, from the exact same proxy hit — same
+        // K15 "one cast, one frame-old value" contract.
+        HitZone _cachedAimZone;
+        MobView _cachedHoveredMob;
 
         void Awake()
         {
@@ -74,6 +80,8 @@ namespace Ring.Presentation
                 // at 0 here purely to keep the field finite/inert.
                 _cachedAimSimPos = planeAimSimPos;
                 _cachedAimHeight = 0f;
+                _cachedAimZone = HitZone.None;
+                _cachedHoveredMob = null;
                 return;
             }
 
@@ -82,15 +90,20 @@ namespace Ring.Presentation
             // above) — SyncTransforms flushes those Transform writes into PhysX
             // so the cast below sees THIS frame's proxy positions (C15).
             Physics.SyncTransforms();
-            if (TryAimProxy(out float2 proxySimPos, out float proxyHeight))
+            if (TryAimProxy(out float2 proxySimPos, out float proxyHeight,
+                    out HitZone zone, out MobView hoveredMob))
             {
                 _cachedAimSimPos = proxySimPos;
                 _cachedAimHeight = proxyHeight;
+                _cachedAimZone = zone;
+                _cachedHoveredMob = hoveredMob;
             }
             else
             {
                 _cachedAimSimPos = planeAimSimPos; // Э1 plane fallback
                 _cachedAimHeight = 0f; // "хоть в пол"
+                _cachedAimZone = HitZone.None;
+                _cachedHoveredMob = null;
             }
         }
 
@@ -124,13 +137,28 @@ namespace Ring.Presentation
         /// `QueryTriggerInteraction.Collide` is required — every proxy capsule is
         /// `isTrigger = true` (bootstrap), which `Physics.Raycast` ignores by
         /// default.
-        bool TryAimProxy(out float2 simPos, out float height)
+        ///
+        /// В1/В2 fix-wave 2 (app-n6g item 3): also resolves WHICH belt was hit
+        /// (`zone`, via the collider's own bootstrap-assigned name —
+        /// `StageOneSceneBootstrap.EnsureAimProxyCapsule` names the three
+        /// GameObjects "AimProxy_Legs"/"AimProxy_Body"/"AimProxy_Head"
+        /// literally, no extra marker component needed) and, if the hit
+        /// collider belongs to a live mob, that mob's own `MobView`
+        /// (`GetComponentInParent` — the proxy is a direct child of the same
+        /// root `MobView` sits on, `EnsureAimProxyChildren`'s own call sites).
+        /// A hit on the PLAYER's own proxy (also on this layer, Task 19)
+        /// naturally yields `hoveredMob == null` here (no `MobView` in that
+        /// parent chain), which is exactly the desired "never highlight the
+        /// player" behavior with no extra type check.
+        bool TryAimProxy(out float2 simPos, out float height, out HitZone zone, out MobView hoveredMob)
         {
             Mouse mouse = Mouse.current;
             if (mouse == null || _camera == null)
             {
                 simPos = default;
                 height = default;
+                zone = HitZone.None;
+                hoveredMob = null;
                 return false;
             }
 
@@ -141,12 +169,25 @@ namespace Ring.Presentation
             {
                 simPos = default;
                 height = default;
+                zone = HitZone.None;
+                hoveredMob = null;
                 return false;
             }
 
             simPos = SimSpace.ToSim(hit.point);
             height = hit.point.y;
+            zone = ClassifyProxyZone(hit.collider);
+            hoveredMob = hit.collider.GetComponentInParent<MobView>();
             return true;
+        }
+
+        static HitZone ClassifyProxyZone(Collider proxyCollider)
+        {
+            string colliderName = proxyCollider.name;
+            if (colliderName == "AimProxy_Legs") return HitZone.Legs;
+            if (colliderName == "AimProxy_Body") return HitZone.Body;
+            if (colliderName == "AimProxy_Head") return HitZone.Head;
+            return HitZone.None;
         }
 
         /// Current aim point in sim space (class doc: Э1 plane cast while
@@ -159,5 +200,15 @@ namespace Ring.Presentation
         /// doc / K15) — cached alongside `CurrentAimSimPos` from the exact same
         /// proxy hit when one lands.
         public float CurrentAimHeight => _cachedAimHeight;
+
+        /// В1/В2 fix-wave 2 (app-n6g item 3a): the zone belt the current proxy
+        /// hit landed on — `HitZone.None` while `!AimHeld` or on a miss (class
+        /// doc above / `TryAimProxy`'s own doc).
+        public HitZone CurrentAimZone => _cachedAimZone;
+
+        /// В1/В2 fix-wave 2 (app-n6g item 3b): the live mob the current proxy
+        /// hit belongs to, or null while `!AimHeld`, on a miss, or when the hit
+        /// proxy is the player's own (`TryAimProxy`'s own doc).
+        public MobView CurrentHoveredMob => _cachedHoveredMob;
     }
 }

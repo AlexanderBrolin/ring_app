@@ -100,3 +100,6 @@ MonoBehaviour:
   SlideDustSize: 0.14
   LinkWindowFlashHz: 6
   LinkWindowFlashBoost: 1.6
+  AimZoneBodyColor: {r: 0.6, g: 0.85, b: 1, a: 1}
+  AimZoneHeadColor: {r: 1, g: 0.25, b: 0.15, a: 1}
+  AimHoverGlowBoost: 1.35

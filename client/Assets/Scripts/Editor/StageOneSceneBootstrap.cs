@@ -363,17 +363,17 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `LinkWindowFlashBoost` as of В1 fix-wave 1
-            // — was `SlideDustSize` (Task 22, spec Г6) before that, and
-            // `AimDotScale` before THAT, see the field's own doc for the
-            // fuller history; HeroConfig/WeaponConfig/MobConfig's marker
-            // fields are new as of Task 17, so any asset committed before this
-            // task predates them and self-heals on this Apply).
+            // field (GameFeelConfig: `AimHoverGlowBoost` as of В1/В2 fix-wave 2
+            // — was `LinkWindowFlashBoost` (В1 fix-wave 1) before that, and
+            // `SlideDustSize` (Task 22, spec Г6) before THAT, see the field's
+            // own doc for the fuller history; HeroConfig/WeaponConfig/MobConfig's
+            // marker fields are new as of Task 17, so any asset committed
+            // before this task predates them and self-heals on this Apply).
             EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "AimSettleSeconds");
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "LinkWindowFlashBoost"); // В1 fix-wave 1
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimHoverGlowBoost"); // В1/В2 fix-wave 2
 
             AssetDatabase.SaveAssets();
 
@@ -1107,6 +1107,11 @@ namespace Ring.Editor
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_runner", runner);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gameFeel", gameFeel);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_arena", arena);
+            // В1/В2 fix-wave 2 (app-n6g item 3b): ViewRegistry.SyncMobs reads
+            // AimProvider.CurrentHoveredMob once per frame for the hover-glow
+            // boost — same reference already wired into CrosshairView/AimRayView
+            // above (`aimProvider` local var, still in scope).
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_aimProvider", aimProvider);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_chaserPrefab", chaserPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gunnerPrefab", gunnerPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_projectilePrefab", projectilePrefab);

@@ -50,6 +50,19 @@ namespace Ring.Presentation
         static readonly Color GunnerGlintAccent = new Color(0.6f, 0.6f, 1.3f);
         const float GunnerGlintHz = 3f;
 
+        // В1/В2 fix-wave 2 (app-n6g item 3b, headshot readability): a soft
+        // neutral-white rim added on top of whatever accent is already active
+        // while this mob is the one the aim-proxy raycast currently hovers
+        // (`AimProvider.CurrentHoveredMob`, `ViewRegistry.SyncMobs`'s own
+        // read). Deliberately neutral (unlike the zone colors on the
+        // crosshair itself) so it never fights the Legs/Body/Head read — it
+        // just says "this is the thing you're pointed at" — and dim enough
+        // not to compete with FlashAccent's hit-flash. Same accent-constant-
+        // vs-SO-number-multiplier split every other pair here already makes
+        // (GunnerGlintAccent has no SO field of its own either; the multiplier
+        // is GameFeelConfig.AimHoverGlowBoost).
+        static readonly Color HoverGlowAccent = new Color(1.3f, 1.3f, 1.3f);
+
         // Task 25 (owner requirement, веха 3): the hit-flash/accent read must be
         // independent of the placeholder capsule mesh — a future model swap
         // brings its own renderer hierarchy (body + attachments, possibly
@@ -117,7 +130,13 @@ namespace Ring.Presentation
         /// (L-13 fix-round) is `ViewRegistry`'s own read of
         /// `_runner.World.Config.Chaser.TelegraphSeconds` — the single source of
         /// truth the ramp now tracks instead of a locally-duplicated constant.
-        public void Sync(in MobState m, float telegraphSeconds)
+        /// В1/В2 fix-wave 2 (app-n6g item 3b): `hovered`/`hoverGlowBoost` are
+        /// `ViewRegistry.SyncMobs`'s own per-frame read of `AimProvider.
+        /// CurrentHoveredMob`/`GameFeelConfig.AimHoverGlowBoost` — passed as
+        /// plain values rather than handing this class a `GameFeelConfig`
+        /// reference of its own, same "caller pre-reads the config, callee
+        /// takes scalars" shape `telegraphSeconds` itself already follows.
+        public void Sync(in MobState m, float telegraphSeconds, bool hovered, float hoverGlowBoost)
         {
             Color emission = _baseEmission;
 
@@ -139,6 +158,8 @@ namespace Ring.Presentation
                 float t = Mathf.Clamp01(_flashTimer / _flashDuration);
                 emission += FlashAccent * t;
             }
+
+            if (hovered) emission += HoverGlowAccent * hoverGlowBoost;
 
             ApplyEmission(emission);
         }

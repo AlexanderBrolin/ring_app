@@ -279,9 +279,15 @@ namespace Ring.Presentation
         void HandleMobDied(in SimEvent e)
         {
             Vector3 pos = SimSpace.ToWorld(e.Pos) + Vector3.up * CorpseLift;
+            // В1/В2 fix-wave 2 (app-n6g item 2, BUG fix): same archetype-scale
+            // read `ViewRegistry.SyncMobs` uses for the live `MobVisual.Bind`
+            // call — `MobDied`'s own `MobType` is enough, no new SO field
+            // (CorpseView.Spawn's own doc).
+            float visualScale = e.MobType == MobType.Chaser
+                ? _gameFeel.ChaserVisualScale : _gameFeel.GunnerVisualScale;
 
             CorpseView corpse = _corpses.Rent();
-            corpse.Spawn(pos, e.MobType, _gameFeel.CorpseGlowFadeSeconds);
+            corpse.Spawn(pos, e.MobType, _gameFeel.CorpseGlowFadeSeconds, visualScale);
 
             PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
         }
