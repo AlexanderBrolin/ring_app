@@ -47,6 +47,14 @@ namespace Ring.Presentation
         [SerializeField] Transform _visual;
         [SerializeField] Transform _gun;
 
+        // Task Т23 (ADR-002 A10 amendment): the doll's slide pose sequence —
+        // Start (one-shot) -> Loop (held) -> Exit (one-shot back to
+        // locomotion), driven off RenderCurr.Player.SlideTimer the same
+        // "code-drives-the-hash, no controller transitions" way the Aim
+        // layer's own one-shot return already works (AnimIds.OneShotFinished
+        // + CrossFadeInFixedTime).
+        enum SlidePhase { None, Start, Loop, Exit }
+
         Transform _spine;
         Transform _chest;
         Quaternion _facing = Quaternion.identity;
@@ -55,6 +63,7 @@ namespace Ring.Presentation
         float _dashLean01;
         float _aimWeight = 1f;
         bool _dead;
+        SlidePhase _slidePhase = SlidePhase.None;
 
         Renderer[] _renderers;
         MaterialPropertyBlock _block;
@@ -88,6 +97,9 @@ namespace Ring.Presentation
             }
             if (!_animator.HasState(BaseLayer, AnimIds.Locomotion)
                 || !_animator.HasState(BaseLayer, AnimIds.Death)
+                || !_animator.HasState(BaseLayer, AnimIds.SlideStart)
+                || !_animator.HasState(BaseLayer, AnimIds.SlideLoop)
+                || !_animator.HasState(BaseLayer, AnimIds.SlideExit)
                 || !_animator.HasState(AimLayer, AnimIds.PistolShoot)
                 || !_animator.HasState(AimLayer, AnimIds.PistolAimNeutral))
                 Debug.LogError("PlayerVisual: PlayerAnimator is missing a mandatory state.");
@@ -166,12 +178,20 @@ namespace Ring.Presentation
             PlayerState player = _runner.RenderCurr.Player;
 
             UpdateLinkWindowFlash(in player);
+            UpdateSlideAnimation(in player, speed01);
 
             float leanTarget01 = player.DashTimer > 0f ? 1f : 0f;
             _dashLean01 = Mathf.MoveTowards(_dashLean01, leanTarget01,
                 dt / Mathf.Max(_gameFeel.DashLeanInOutSeconds, 1e-3f));
             Quaternion rotation = _facing;
-            if (_dashLean01 > 0.001f)
+            // Task Т23: the dash lean is a rotation OFFSET on top of the
+            // slide pose the Animator is already playing — while SlideTimer
+            // is open, skip it outright rather than let it fight the pose
+            // (DashTimer/SlideTimer are mutually exclusive in the sim, but
+            // _dashLean01 itself decays over DashLeanInOutSeconds, so a
+            // linked slide starting right after a dash ends can still catch
+            // it mid-decay).
+            if (_dashLean01 > 0.001f && player.SlideTimer <= 0f)
             {
                 Vector3 dashW = SimSpace.ToWorld(player.DashDir);
                 if (dashW.sqrMagnitude > 1e-6f)
@@ -233,6 +253,58 @@ namespace Ring.Presentation
             ApplyLinkWindowEmission(LinkWindowFlashAccent * wave * _gameFeel.LinkWindowFlashBoost);
         }
 
+        /// Task Т23 (ADR-002 A10 amendment): steps the slide pose FSM from
+        /// SlideTimer alone — SlideTimer > 0 is the sim's own "sliding right
+        /// now" predicate (ProjectileSystem/Spread/SimulationRunner already
+        /// read the exact same field, class docs of each). Start plays out
+        /// once (or is cut short if the slide itself ends first — SlideDuration
+        /// is only HeroConfig.SlideDuration=0.52s, shorter than Start can run
+        /// long), then Loop holds for the remainder, then Exit plays once and
+        /// hands back to Locomotion. Exit is allowed to cut short: a player
+        /// still holding move input drops straight into Locomotion instead of
+        /// waiting the stand-up clip out ("keep it snappy" — spec).
+        void UpdateSlideAnimation(in PlayerState player, float speed01)
+        {
+            bool sliding = player.SlideTimer > 0f;
+            switch (_slidePhase)
+            {
+                case SlidePhase.None:
+                    if (sliding) EnterSlidePhase(SlidePhase.Start, AnimIds.SlideStart);
+                    break;
+                case SlidePhase.Start:
+                    if (!sliding) EnterSlidePhase(SlidePhase.Exit, AnimIds.SlideExit);
+                    else if (AnimIds.OneShotFinished(_animator, BaseLayer, AnimIds.SlideStart))
+                        EnterSlidePhase(SlidePhase.Loop, AnimIds.SlideLoop);
+                    break;
+                case SlidePhase.Loop:
+                    if (!sliding) EnterSlidePhase(SlidePhase.Exit, AnimIds.SlideExit);
+                    break;
+                case SlidePhase.Exit:
+                    if (sliding)
+                    {
+                        // A new slide chained in (link window) before the
+                        // stand-up finished — restart the sequence from Start.
+                        EnterSlidePhase(SlidePhase.Start, AnimIds.SlideStart);
+                        break;
+                    }
+                    bool exitDone = AnimIds.OneShotFinished(_animator, BaseLayer, AnimIds.SlideExit);
+                    bool running = speed01 > _gameFeel.PlayerMoveThreshold01;
+                    if (exitDone || running)
+                    {
+                        _animator.CrossFadeInFixedTime(AnimIds.Locomotion,
+                            _gameFeel.LocomotionCrossFadeSeconds, BaseLayer, 0f);
+                        _slidePhase = SlidePhase.None;
+                    }
+                    break;
+            }
+        }
+
+        void EnterSlidePhase(SlidePhase phase, int stateHash)
+        {
+            _animator.CrossFadeInFixedTime(stateHash, _gameFeel.OneShotCrossFadeSeconds, BaseLayer, 0f);
+            _slidePhase = phase;
+        }
+
         void ApplyLinkWindowEmission(Color emission)
         {
             _block.SetColor(EmissionColorId, emission);
@@ -273,6 +345,11 @@ namespace Ring.Presentation
             _animator.Play(AnimIds.PistolAimNeutral, AimLayer, 0f);
             _animator.SetFloat(AnimIds.Speed, 0f);
             _dashLean01 = 0f;
+            // Task Т23: without this reset a mid-slide death-then-restart
+            // would leave _slidePhase at Loop/Exit; the very next LateUpdate
+            // would then see `sliding == false` and CrossFade into SlideExit,
+            // fighting the explicit Locomotion Play() two lines above.
+            _slidePhase = SlidePhase.None;
             _hasPrevPos = false; // restart teleports the player — no ghost speed spike
             ApplyLinkWindowEmission(Color.black); // В1 fix-wave 1: no pulse bleeding into the fresh run
         }

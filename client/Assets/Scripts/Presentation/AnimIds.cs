@@ -19,6 +19,13 @@ namespace Ring.Presentation
         public const string HitReactName = "HitReact";
         public const string HitReactHeadName = "HitReactHead";
         public const string DashName = "Dash";
+        // Task Т23 (ADR-002 A10 amendment): slide set — UAL2 pack clips
+        // Slide_Start/Slide_Loop/Slide_Exit (state names are OUR convention,
+        // same DashName/"Roll" split the dash state already uses — the pack
+        // clip key is bound at bootstrap time, not mirrored here).
+        public const string SlideStartName = "SlideStart";
+        public const string SlideLoopName = "SlideLoop";
+        public const string SlideExitName = "SlideExit";
         public const string AimLayerName = "Aim";
         // Aim-state constants double as the PACK CLIP KEYS they were created
         // from (AddAimState uses one string for both) — renaming either side
@@ -32,6 +39,9 @@ namespace Ring.Presentation
         public static readonly int Speed = Animator.StringToHash(SpeedName);
         public static readonly int Locomotion = Animator.StringToHash(LocomotionName);
         public static readonly int Death = Animator.StringToHash(DeathName);
+        public static readonly int SlideStart = Animator.StringToHash(SlideStartName);
+        public static readonly int SlideLoop = Animator.StringToHash(SlideLoopName);
+        public static readonly int SlideExit = Animator.StringToHash(SlideExitName);
         public static readonly int PistolAimNeutral = Animator.StringToHash(PistolAimNeutralName);
         public static readonly int PistolShoot = Animator.StringToHash(PistolShootName);
 
