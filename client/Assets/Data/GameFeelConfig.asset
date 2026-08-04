@@ -95,3 +95,6 @@ MonoBehaviour:
   AimRayAlpha: 0.35
   AimRayWidth: 0.03
   AimDotScale: 0.15
+  SlideDustLifetime: 0.35
+  SlideDustSpeed: 1.8
+  SlideDustSize: 0.14

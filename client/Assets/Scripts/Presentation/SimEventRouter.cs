@@ -19,7 +19,7 @@ namespace Ring.Presentation
     /// state for this frame. `PersistentPropsDirector` (Task 27, Приложение П-1)
     /// slots in right after it — casings/decals/corpses/sparks spawn purely from
     /// each event's own position, independent of anything the later slots do.
-    /// `HudController` (Т22, combat-depth Г6) slots in LAST — its one reaction
+    /// `HudController` (Task 22, spec Г6) slots in LAST — its one reaction
     /// (arming the stamina-bar's `StaminaDenied` pulse) reads/writes no state any
     /// other slot touches, so its position in the order is not load-bearing;
     /// appended after `DeathOverlayController` rather than interleaved, so this
@@ -55,7 +55,7 @@ namespace Ring.Presentation
                 _playerVisual.HandleEvent(in e); // animation retrigger/death (phase B)
                 _viewRegistry.HandleEvent(in e); // retire only — mapping/lerp is ViewRegistry's own LateUpdate
                 _deathOverlay.HandleEvent(in e); // death-screen show, last slot (Task 24, П-1)
-                _hud.HandleEvent(in e); // stamina-denied pulse, last slot (Т22)
+                _hud.HandleEvent(in e); // stamina-denied pulse, last slot (Task 22)
             }
         }
     }

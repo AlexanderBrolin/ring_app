@@ -80,8 +80,9 @@ namespace Ring.Data
         // by the bootstrap on every Apply. GunLocalEuler was the sync-marker key
         // (bootstrap:245) until the Б1 fix-wave-2 block below superseded it, and
         // `DashGlowSize` in turn until the Б1 fix-wave-3 field below superseded
-        // THAT, and `CasingEjectSpeedMax` after that — `AimDotScale` is the
-        // current marker (Task 17), see its own doc.
+        // THAT, and `CasingEjectSpeedMax` after that, then `AimDotScale`
+        // (Task 17) — `SlideDustSize` is the current marker (Task 22, spec Г6),
+        // see its own doc.
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
         [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
@@ -118,8 +119,9 @@ namespace Ring.Data
         // start point, fading out over a few seconds. MaxDashGlows is a pool cap
         // (dash cooldown 1.2s vs ~2.5s life → 3 alive typ.). DashGlowSize was the
         // bootstrap sync-marker key until the Б1 fix-wave-3 field below
-        // superseded it, then `CasingEjectSpeedMax` — `AimDotScale` is the
-        // current marker (Task 17), see its own doc.
+        // superseded it, then `CasingEjectSpeedMax`, then `AimDotScale`
+        // (Task 17) — `SlideDustSize` is the current marker (Task 22, spec Г6),
+        // see its own doc.
         [Range(1, 32)] public int MaxDashGlows = 8;
         [Range(0.1f, 10f)] public float DashGlowSeconds = 2.5f;
         [Range(0.1f, 3f)] public float DashGlowSize = 0.9f;
@@ -170,7 +172,20 @@ namespace Ring.Data
         [Range(0f, 1f)] public float AimProxyHeadRadiusFrac = 0.5f;
         [Range(0f, 1f)] public float AimRayAlpha = 0.35f;
         [Range(0f, 0.5f)] public float AimRayWidth = 0.03f;
-        [Range(0f, 2f)] public float AimDotScale = 0.15f; // sync-marker key — keep LAST
+        [Range(0f, 2f)] public float AimDotScale = 0.15f;
+
+        // Task 22 (spec Г6) fix-round: slide-dust burst lifetime/speed/size —
+        // review found these baked as `StageOneSceneBootstrap`-local literals,
+        // misdocumented as following the HitSpark/BlockSpark/DeathBurst split
+        // (those three DO config-source their own lifetime/speed/size; only
+        // the burst COUNT literal for DeathBurst, and coneAngle for all four,
+        // are the actual bootstrap-local exceptions). Moved here for the same
+        // reason the other three sparks' numbers already are — owner
+        // hot-tweak on playtest, GameFeelConfig class doc's "all game-feel
+        // numbers in ScriptableObjects" rule (client/CLAUDE.md).
+        [Range(0.01f, 2f)] public float SlideDustLifetime = 0.35f;
+        [Range(0f, 20f)] public float SlideDustSpeed = 1.8f;
+        [Range(0f, 2f)] public float SlideDustSize = 0.14f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

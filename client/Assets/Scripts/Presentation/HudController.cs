@@ -13,7 +13,7 @@ namespace Ring.Presentation
     /// Presentation a pure reader: it never computes game outcomes, only renders what
     /// the snapshot already decided.
     ///
-    /// Т22 (combat-depth Г6, spec brief): a third bar, stamina — same `GetOrCreateBar`
+    /// Task 22 (spec Г6, combat-depth): a third bar, stamina — same `GetOrCreateBar`
     /// shape as HP/dash (Background+Fill Image pair, no text label, QD7: bars are
     /// color+position coded, "Буст" stays a docs/settings term). Filled from
     /// `Curr.Player.Stamina`, NOT `RenderCurr` — same source as the HP/dash bars
@@ -23,7 +23,7 @@ namespace Ring.Presentation
         // Guards the dash-cooldown division against a zero HeroConfig.DashCooldown —
         // never hit in practice ([Range(0.1f, 10f)] on the SO), but cheap insurance
         // against a NaN fill on the bar during hot-tweak. Reused below for the
-        // stamina-max/threshold divisions (Т22), same rationale.
+        // stamina-max/threshold divisions (Task 22), same rationale.
         const float CooldownEps = 1e-4f;
 
         [SerializeField] SimulationRunner _runner;
@@ -33,7 +33,7 @@ namespace Ring.Presentation
         [SerializeField] Image _staminaFill;
         [SerializeField] TMP_Text _waveText;
 
-        // Т22: StaminaDenied pulse — armed by HandleEvent (SimEventRouter's
+        // Task 22: StaminaDenied pulse — armed by HandleEvent (SimEventRouter's
         // fan-out, П-1; this is the one per-event reaction this class needs, so
         // it joins the router rather than subscribing to TicksFlushed itself,
         // same rule every other Presentation class already follows), counted
@@ -74,7 +74,7 @@ namespace Ring.Presentation
                 _staminaDeniedTimer = _gameFeel.StaminaDeniedPulseSeconds;
         }
 
-        /// Т22 (spec brief): fill fraction, plus a color lerp from
+        /// Task 22 (spec brief): fill fraction, plus a color lerp from
         /// `StaminaBarFullColor` (at/above `StaminaBarLowThreshold`) towards
         /// `StaminaBarLowColor` as the remaining fraction drops through the
         /// threshold to empty — overridden by a flat `StaminaBarLowColor` while

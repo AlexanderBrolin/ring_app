@@ -55,8 +55,8 @@ namespace Ring.Presentation
         [SerializeField] AudioClip _mobDeathClip;
         [SerializeField] AudioClip _dashClip;
         [SerializeField] AudioClip _playerHitClip;
-        [SerializeField] AudioClip _staminaDeniedClip; // Т22
-        [SerializeField] AudioClip _ricochetClip; // Т22
+        [SerializeField] AudioClip _staminaDeniedClip; // Task 22
+        [SerializeField] AudioClip _ricochetClip; // Task 22
 
         AudioSource[] _voices;
         // Which SimEventKind each physical voice is currently sounding for
@@ -173,13 +173,13 @@ namespace Ring.Presentation
                 return;
             }
 
-            // Т22 (spec brief): zone-biased pitch — Head reads higher, Legs
+            // Task 22 (spec brief): zone-biased pitch — Head reads higher, Legs
             // lower, Body/None (and every non-blow kind, whose Zone defaults to
             // HitZone.None) stay at the plain PitchRange jitter.
             PlayClip(ClipFor(e.Kind), e.Kind, e.Pos, ZonePitchOffset(e.Zone));
         }
 
-        /// Т22: additive pitch bias layered on top of `PlayClip`'s ordinary
+        /// Task 22: additive pitch bias layered on top of `PlayClip`'s ordinary
         /// `PitchRange` jitter — never applied standalone, always summed with
         /// the random jitter so the zone bias reads as "this hit's pitch, plus
         /// its usual small randomization" rather than replacing it.
@@ -197,7 +197,7 @@ namespace Ring.Presentation
         /// path (Task 28): `MinSfxInterval`/`VoicesPerSfx` drop-only gates, then
         /// the round-robin voice pick. Returns whether a voice actually started
         /// playing — the predicted path only arms its suppression latch on
-        /// `true` (see `Update`'s doc above for why). `pitchOffset` (Т22)
+        /// `true` (see `Update`'s doc above for why). `pitchOffset` (Task 22)
         /// defaults to 0 for every call site that has no zone to bias by (the
         /// predicted-shot path above never passes one — a predicted shot has no
         /// SimEvent, hence no Zone, to read yet).
@@ -244,8 +244,8 @@ namespace Ring.Presentation
                 case SimEventKind.MobDied: return _mobDeathClip;
                 case SimEventKind.PlayerDashed: return _dashClip;
                 case SimEventKind.PlayerDamaged: return _playerHitClip;
-                case SimEventKind.StaminaDenied: return _staminaDeniedClip; // Т22
-                case SimEventKind.DashRicocheted: return _ricochetClip; // Т22
+                case SimEventKind.StaminaDenied: return _staminaDeniedClip; // Task 22
+                case SimEventKind.DashRicocheted: return _ricochetClip; // Task 22
                 default: return null;
             }
         }

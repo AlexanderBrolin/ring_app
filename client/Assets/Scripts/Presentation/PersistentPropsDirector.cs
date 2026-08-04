@@ -8,7 +8,7 @@ namespace Ring.Presentation
 {
     /// Persistent cosmetics — shell casings, impact decals, corpses, and the
     /// pooled spark/burst particle systems (Task 27, spec §3.11/§3.12,
-    /// Приложение П; a fourth kind, slide dust, joins in Т22 — see the pooling
+    /// Приложение П; a fourth kind, slide dust, joins in Task 22 — see the pooling
     /// split doc below). Slots into `SimEventRouter`'s fan-out (П-1) between
     /// `GameFeelDirector` and `AudioDirector` — never subscribes to
     /// `TicksFlushed` itself, same rule as every other class in this
@@ -32,7 +32,7 @@ namespace Ring.Presentation
     /// захода") — they use the single shared `RingBuffer&lt;T&gt;` (FIFO, oldest
     /// overwritten once full), one instance per kind, never separate copies of
     /// the same logic. The spark/burst particle systems (hit, block, death,
-    /// and — Т22 — slide dust) ARE ordinary "rent it, it finishes on its own,
+    /// and — Task 22 — slide dust) ARE ordinary "rent it, it finishes on its own,
     /// give it back" objects — they use
     /// `UnityEngine.Pool.ObjectPool&lt;ParticleSystem&gt;` instead, returned via
     /// `ParticleReturnToPool`'s `OnParticleSystemStopped` callback (prefab's
@@ -122,7 +122,7 @@ namespace Ring.Presentation
         const int HitSparkPoolCapacity = 32;
         const int BlockSparkPoolCapacity = 32;
         const int DeathBurstPoolCapacity = 16;
-        // Т22: slide dust — slides are gated by a run-up/stamina cost, far
+        // Task 22: slide dust — slides are gated by a run-up/stamina cost, far
         // rarer than gunfire, same "rare trigger → small pool" reasoning the
         // class doc already gives for DeathBurstPoolCapacity above.
         const int SlideDustPoolCapacity = 16;
@@ -136,7 +136,7 @@ namespace Ring.Presentation
         [SerializeField] ParticleSystem _hitSparkPrefab;
         [SerializeField] ParticleSystem _blockSparkPrefab;
         [SerializeField] ParticleSystem _deathBurstPrefab;
-        [SerializeField] ParticleSystem _slideDustPrefab; // Т22
+        [SerializeField] ParticleSystem _slideDustPrefab; // Task 22
 
         RingBuffer<CasingView> _casings;
         RingBuffer<DecalProjector> _decals;
@@ -145,7 +145,7 @@ namespace Ring.Presentation
         ObjectPool<ParticleSystem> _hitSparkPool;
         ObjectPool<ParticleSystem> _blockSparkPool;
         ObjectPool<ParticleSystem> _deathBurstPool;
-        ObjectPool<ParticleSystem> _slideDustPool; // Т22
+        ObjectPool<ParticleSystem> _slideDustPool; // Task 22
 
         void Awake()
         {
@@ -163,11 +163,11 @@ namespace Ring.Presentation
             _hitSparkPool = CreateParticlePool(_hitSparkPrefab, HitSparkPoolCapacity);
             _blockSparkPool = CreateParticlePool(_blockSparkPrefab, BlockSparkPoolCapacity);
             _deathBurstPool = CreateParticlePool(_deathBurstPrefab, DeathBurstPoolCapacity);
-            _slideDustPool = CreateParticlePool(_slideDustPrefab, SlideDustPoolCapacity); // Т22
+            _slideDustPool = CreateParticlePool(_slideDustPrefab, SlideDustPoolCapacity); // Task 22
             PrewarmParticlePool(_hitSparkPool, HitSparkPoolCapacity);
             PrewarmParticlePool(_blockSparkPool, BlockSparkPoolCapacity);
             PrewarmParticlePool(_deathBurstPool, DeathBurstPoolCapacity);
-            PrewarmParticlePool(_slideDustPool, SlideDustPoolCapacity); // Т22
+            PrewarmParticlePool(_slideDustPool, SlideDustPoolCapacity); // Task 22
         }
 
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
@@ -218,7 +218,7 @@ namespace Ring.Presentation
                     SpawnDashGlow(in e);
                     break;
                 case SimEventKind.PlayerSlideStarted:
-                    // Т22: dust kicked up at slide start — omnidirectional pop,
+                    // Task 22: dust kicked up at slide start — omnidirectional pop,
                     // same Quaternion.identity convention HitSpark/DeathBurst
                     // above already use for their own non-directional bursts.
                     PlayParticle(_slideDustPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
@@ -292,7 +292,7 @@ namespace Ring.Presentation
             glow.Spawn(SimSpace.ToWorld(e.Pos), _gameFeel.DashGlowSeconds, _gameFeel.DashGlowSize);
         }
 
-        /// Т22 (spec brief QA13/QC3): reuses the existing block-spark pool/
+        /// Task 22 (spec brief QA13/QC3): reuses the existing block-spark pool/
         /// prefab outright — no dedicated ricochet-spark asset, and no new
         /// burst-count field, `BlockSparkBurstCount` is already baked into the
         /// prefab (GameFeelConfig class doc: "RicochetSparkCount... deliberately
