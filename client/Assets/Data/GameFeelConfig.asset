@@ -103,3 +103,5 @@ MonoBehaviour:
   AimZoneBodyColor: {r: 0.6, g: 0.85, b: 1, a: 1}
   AimZoneHeadColor: {r: 1, g: 0.25, b: 0.15, a: 1}
   AimHoverGlowBoost: 1.35
+  AimMarkerHeadScaleBoost: 1.4
+  AimRayHeadAlphaBoost: 2

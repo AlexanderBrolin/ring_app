@@ -399,10 +399,10 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `AimHoverGlowBoost` as of В1/В2 fix-wave 2
-            // — was `LinkWindowFlashBoost` (В1 fix-wave 1) before that, and
-            // `SlideDustSize` (Task 22, spec Г6) before THAT, see the field's
-            // own doc for the fuller history; HeroConfig's marker is
+            // field (GameFeelConfig: `AimRayHeadAlphaBoost` as of В3 fix-wave 1
+            // — was `AimHoverGlowBoost` (В1/В2 fix-wave 2) before that, and
+            // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
+            // field's own doc for the fuller history; HeroConfig's marker is
             // `LinkRefund` as of В1 fix-wave 3 (owner economy rework) — was
             // `AimSettleSeconds` (Task 17) before that; WeaponConfig/
             // MobConfig's marker fields are unchanged since Task 17, so any
@@ -412,7 +412,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimHoverGlowBoost"); // В1/В2 fix-wave 2
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimRayHeadAlphaBoost"); // В3 fix-wave 1
 
             AssetDatabase.SaveAssets();
 
@@ -818,6 +818,10 @@ namespace Ring.Editor
             // Task 20: AimDotScale — the marker's own scale multiplier while
             // AimHeld (class doc, PC8).
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_gameFeel", gameFeel);
+            // В3 fix-wave 1 (app-n6g item 3a): billboards the marker toward
+            // this SAME camera (AimProvider's own `_camera` above, `mainCamera`
+            // local var still in scope).
+            crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_camera", mainCamera);
             if (crosshairRefsChanged)
             {
                 crosshairSo.ApplyModifiedPropertiesWithoutUndo();
@@ -2091,10 +2095,11 @@ namespace Ring.Editor
         /// LegR/Torso; `Leela_Parts.fbx`: Head/LegL/LegR/Torso). Order is
         /// whatever `LoadAllAssetsAtPath` returns — callers never assume a
         /// position, only `GibView.ClassifyPart(mesh.name)`'s own kind
-        /// (`PersistentPropsDirector.FindPart`/`PartHeight`). Throws (same
-        /// "hard error on unexpected setup state" policy as
+        /// (`PersistentPropsDirector.PartHeight`/`SpawnFullExplodeGibs`).
+        /// Throws (same "hard error on unexpected setup state" policy as
         /// `LoadMaterial`/`LoadAudioClip` below) if the FBX yields no
-        /// meshes at all, or no `Head` part — `SpawnHeadGib`'s headshot path
+        /// meshes at all, or no `Head` part — `SpawnFullExplodeGibs`'s
+        /// headshot directional-impulse special case (В3 fix-wave 1, item 2)
         /// depends on every archetype shipping exactly one.
         static Mesh[] LoadGibParts(string fbxPath)
         {

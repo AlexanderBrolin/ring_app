@@ -6,8 +6,10 @@ namespace Ring.Presentation
     /// Blender split — see `GibView`'s class doc for the full story). Drives
     /// per-part spawn height in `PersistentPropsDirector.SpawnFullExplodeGibs`
     /// (head/torso/arms/legs read different belts off the dying mob's own
-    /// `MobSimConfig`) and lets `SpawnHeadGib` pick the one array element that
-    /// matters for a headshot kill without hardcoding an index.
+    /// `MobSimConfig`) and — В3 fix-wave 1, item 2 — lets that same method
+    /// single out the HEAD part for a directional (killing-blow `HitDir`)
+    /// impulse on a headshot kill, instead of the random scatter every other
+    /// part gets, without hardcoding an array index.
     public enum GibPartKind { Head, Torso, ArmL, ArmR, LegL, LegR }
 
     /// Presentation view for a single pooled mech gib chunk.

@@ -1,4 +1,5 @@
 using Ring.Data;
+using Ring.Simulation.Core;
 using UnityEngine;
 
 namespace Ring.Presentation
@@ -101,9 +102,18 @@ namespace Ring.Presentation
             // В1/В2 fix-wave 2 (app-n6g item 3a): same zone tint CrosshairView's
             // marker applies, via the shared AimZoneColors lookup — falls back
             // to the ray's own baked cyan (_baseColor) on HitZone.None, same as
-            // before this fix.
+            // before this fix. Applied uniformly to the WHOLE LineRenderer via
+            // MaterialPropertyBlock (no per-vertex/gradient color anywhere on
+            // this component) — item 3b verified this already colors the
+            // entire ray, not just its tip.
             Color zoneColor = AimZoneColors.Resolve(_aimProvider.CurrentAimZone, _baseColor, _gameFeel);
-            Color dimmed = zoneColor * _gameFeel.AimRayAlpha;
+            // В3 fix-wave 1 (app-n6g item 3b): headshot alignment gets an
+            // extra brightness boost on top of the base AimRayAlpha dimming —
+            // GameFeelConfig's own class doc has the "unmistakable, not a
+            // faint dim-red tinge" rationale.
+            float alphaBoost = _aimProvider.CurrentAimZone == HitZone.Head
+                ? _gameFeel.AimRayHeadAlphaBoost : 1f;
+            Color dimmed = zoneColor * (_gameFeel.AimRayAlpha * alphaBoost);
             _block.SetColor("_BaseColor", new Color(dimmed.r, dimmed.g, dimmed.b, 1f));
             _line.SetPropertyBlock(_block);
         }

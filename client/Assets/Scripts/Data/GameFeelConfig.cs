@@ -232,7 +232,28 @@ namespace Ring.Data
         // floors at 1x (never DIMS an already-visible accent, only adds to
         // it) and caps at 3x; "keep subtle" per owner guidance, default 1.35.
         // New sync-marker key, superseding `LinkWindowFlashBoost` above.
-        [Range(1f, 3f)] public float AimHoverGlowBoost = 1.35f; // sync-marker key — keep LAST
+        [Range(1f, 3f)] public float AimHoverGlowBoost = 1.35f;
+
+        // В3 fix-wave 1 (app-n6g item 3, owner playtest feedback: "не видно,
+        // будет ли хедшот" — headshot aiming read as flat/2D). Two
+        // readability boosts, both applied ONLY while the aim-proxy hit is
+        // `HitZone.Head` (`AimProvider.CurrentAimZone`, `AimZoneColors`'s own
+        // switch — Legs/Body stay at their existing neutral treatment,
+        // unchanged by this fix-wave):
+        // `AimMarkerHeadScaleBoost` — `CrosshairView`'s marker (now billboarded
+        // to the camera and positioned at the proxy's own real 3D `hit.point`,
+        // `AimProvider.CurrentAimWorldPoint`, instead of a floor projection)
+        // grows by this multiplier on top of its existing `AimDotScale` shrink,
+        // so a headshot lineup visibly enlarges the dot, not just recolors it.
+        // `AimRayHeadAlphaBoost` — `AimRayView`'s existing whole-ray zone tint
+        // (`AimZoneColors.Resolve`, already applied uniformly via
+        // `MaterialPropertyBlock`, not just at the tip) gets an extra
+        // brightness multiplier on top of `AimRayAlpha` for Head specifically,
+        // so the color swap reads as unmistakable rather than a faint dim-red
+        // tinge under Bloom (`AimRayAlpha`'s own class doc: a lower alpha
+        // reads as a fainter glow, not literal translucency).
+        [Range(1f, 3f)] public float AimMarkerHeadScaleBoost = 1.4f;
+        [Range(1f, 4f)] public float AimRayHeadAlphaBoost = 2f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

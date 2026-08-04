@@ -31,28 +31,31 @@ namespace Ring.Presentation
     /// doc for the full "primitives only" story) added a fifth kind,
     /// `GibView`, driving EVERY kill's small explosion-style primitive-chunk
     /// scatter plus an extra headshot chunk. T24-2 (owner-approved Blender
-    /// split, spec item, `app-nco` vision) replaces that primitives-only
+    /// split, spec item, `app-nco` vision) replaced that primitives-only
     /// scatter with REAL mech part meshes and a death-VARIANT split instead
-    /// of "always scatter, always spawn a whole corpse":
-    /// `HandleMobDied` rolls `GibFullExplodeChance` (a code const, not a
-    /// GameFeelConfig field — cosmetic death-variant RNG, not a hot-tweak
-    /// feel number, same "structural, not feel" split the retired
-    /// `GibExplosionChunkCount` const used to draw) via `UnityEngine.Random`
-    /// (legal, casings precedent):
-    /// — FULL EXPLODE (`SpawnFullExplodeGibs`): every part of the dying
-    /// mob's own archetype (`_chaserParts`/`_gunnerParts`, wired by
-    /// `StageOneSceneBootstrap` from `George_Parts.fbx`/`Leela_Parts.fbx`,
-    /// `_Ring/Gibs/`) scatters from the event's own `Pos`, each at a
-    /// belt-derived height keyed off `GibView.ClassifyPart`'s per-part kind
-    /// (head at the head belt, legs low, torso/arms mid) with an
-    /// upward-biased random impulse (`GameFeelConfig.GibExplosionSpeed`) — NO
-    /// corpse spawns in this variant.
-    /// — OTHERWISE: a whole corpse spawns as before (`CorpseView.Spawn`);
-    /// IF the killing blow's own `Zone` is `HitZone.Head`, `SpawnHeadGib`
-    /// additionally launches ONLY that archetype's head part along the
-    /// blow's own `HitDir` (`GameFeelConfig.GibHeadImpulseSpeed`) from the
-    /// head belt — the one piece of directional feedback that reads as
-    /// "that shot took the head off," on top of the intact corpse.
+    /// of "always scatter, always spawn a whole corpse".
+    ///
+    /// В3 fix-wave 1 (app-n6g item 2, owner playtest feedback: headshots need
+    /// an unmistakable payoff, not a coin-flip) changed the variant-selection
+    /// rule in `HandleMobDied` to this:
+    /// — `e.Zone == HitZone.Head`: ALWAYS `SpawnFullExplodeGibs` — no corpse
+    /// ever spawns for a headshot kill, and the `GibFullExplodeChance` roll
+    /// below is skipped entirely for this event. Within the explode, the
+    /// HEAD part specifically launches along the killing blow's own `HitDir`
+    /// (`GameFeelConfig.GibHeadImpulseSpeed`) instead of the random
+    /// upward-biased scatter every other part gets — directional feedback
+    /// that reads as "that shot took the head off" (`SpawnFullExplodeGibs`'s
+    /// own doc has the exact split).
+    /// — Otherwise (non-head kill): unchanged from T24-2 — rolls
+    /// `GibFullExplodeChance` (a code const, not a GameFeelConfig field —
+    /// cosmetic death-variant RNG, not a hot-tweak feel number, same
+    /// "structural, not feel" split the retired `GibExplosionChunkCount`
+    /// const used to draw) via `UnityEngine.Random` (legal, casings
+    /// precedent): FULL EXPLODE (every part random-scatters, no directional
+    /// treatment — a non-head kill has no "which way did the head fly"
+    /// story to tell) or a whole corpse (`CorpseView.Spawn`, no head gib —
+    /// that side branch only ever applied to headshots, which no longer
+    /// reach the corpse branch at all).
     /// Every gib part's `transform.localScale` mirrors the SAME
     /// `visualScale` (`ChaserVisualScale`/`GunnerVisualScale`) the corpse
     /// itself gets, below — a part cut from the same mesh has to agree with
@@ -266,7 +269,7 @@ namespace Ring.Presentation
                     if (e.Owner == ProjectileOwner.Player) SpawnCasing(in e);
                     break;
                 case SimEventKind.ProjectileHit:
-                    PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
+                    SpawnHitSpark(in e);
                     break;
                 case SimEventKind.ProjectileBlocked:
                     HandleBlocked(in e);
@@ -309,6 +312,27 @@ namespace Ring.Presentation
             view.Spawn(pos, impulse, torque, _gameFeel.CasingPhysicsSeconds, _gameFeel.CasingScale);
         }
 
+        /// В3 fix-wave 1 (app-n6g item 3c, owner playtest feedback: hit
+        /// sparks were unreadable — spawned at a fixed floor height
+        /// (`SimSpace.ToWorld(e.Pos)`'s hardcoded Y=0) regardless of where
+        /// the shot actually landed on the mob). `ProjectileHit` genuinely
+        /// carries both `MobType` and `Zone` for every event of this kind —
+        /// `ProjectileSystem`'s `HitMob` case is the ONLY emitter (`HitPlayer`
+        /// routes through `DamagePlayer`/a different event kind entirely,
+        /// never `ProjectileHit`) — so both reads below are always
+        /// meaningful, never a defensive guess. `ZoneHeight` reads the SAME
+        /// `World.Config.Chaser`/`Gunner` belts `PartHeight`/`AimProxy_*`
+        /// already read (class doc), keyed off `HitZone` instead of
+        /// `GibPartKind` — the spark now visibly appears at head height for
+        /// a headshot, body height for a body shot, etc.
+        void SpawnHitSpark(in SimEvent e)
+        {
+            MobSimConfig archetype = e.MobType == MobType.Chaser
+                ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
+            float height = ZoneHeight(e.Zone, in archetype);
+            PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * height, Quaternion.identity);
+        }
+
         void HandleBlocked(in SimEvent e)
         {
             // Floor vs wall/obstacle (class doc): HitDir is exactly zero for a
@@ -348,9 +372,20 @@ namespace Ring.Presentation
 
             PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
 
-            // T24-2 (app-nco vision): a rolled fraction of kills explode into
-            // every part instead of leaving a whole corpse — class doc has
-            // the full variant split.
+            // В3 fix-wave 1 (app-n6g item 2, owner playtest feedback):
+            // headshots ALWAYS get the full-explode variant — never a
+            // corpse, and the roll below never runs for this event (class
+            // doc has the full rule). `SpawnFullExplodeGibs` itself checks
+            // `e.Zone` to give the HEAD part its own directional impulse.
+            if (e.Zone == HitZone.Head)
+            {
+                SpawnFullExplodeGibs(in e, visualScale);
+                return;
+            }
+
+            // T24-2 (app-nco vision): otherwise, a rolled fraction of kills
+            // explode into every part instead of leaving a whole corpse —
+            // class doc has the full variant split.
             if (Random.value < GibFullExplodeChance)
             {
                 SpawnFullExplodeGibs(in e, visualScale);
@@ -360,25 +395,33 @@ namespace Ring.Presentation
             Vector3 pos = SimSpace.ToWorld(e.Pos) + Vector3.up * CorpseLift;
             CorpseView corpse = _corpses.Rent();
             corpse.Spawn(pos, e.MobType, _gameFeel.CorpseGlowFadeSeconds, visualScale);
-
-            if (e.Zone == HitZone.Head) SpawnHeadGib(in e, visualScale);
         }
 
         /// T24-2 (app-nco vision, owner-approved Blender split): the "mech
-        /// explodes" death variant (`GibFullExplodeChance` roll in
-        /// `HandleMobDied`) — every part of the dying mob's own archetype
-        /// (`_chaserParts`/`_gunnerParts`) scatters from the event's own
-        /// `Pos` (owner requirement, веха 3 — XY always rides `e.Pos`, never
-        /// `ViewRegistry`/`MobView` state), each at a belt-derived height
-        /// keyed off its own `GibView.ClassifyPart` kind (`PartHeight` below)
-        /// — the SAME `World.Config.Chaser`/`Gunner` zone-geometry belts
-        /// `ProjectileSystem`'s hit-zone classification and the `AimProxy_*`
-        /// colliders already read. Impulse direction is upward-biased
-        /// (`Random.onUnitSphere`, reflected onto the upper hemisphere when
-        /// it rolls downward — a part launching straight into the floor
-        /// reads as a bug, not a death) at `GameFeelConfig.GibExplosionSpeed`.
-        /// NO corpse spawns in this variant — every part IS the "corpse"
-        /// here (class doc).
+        /// explodes" death variant — every part of the dying mob's own
+        /// archetype (`_chaserParts`/`_gunnerParts`) scatters from the
+        /// event's own `Pos` (owner requirement, веха 3 — XY always rides
+        /// `e.Pos`, never `ViewRegistry`/`MobView` state), each at a
+        /// belt-derived height keyed off its own `GibView.ClassifyPart` kind
+        /// (`PartHeight` below) — the SAME `World.Config.Chaser`/`Gunner`
+        /// zone-geometry belts `ProjectileSystem`'s hit-zone classification
+        /// and the `AimProxy_*` colliders already read. NO corpse spawns in
+        /// this variant — every part IS the "corpse" here (class doc).
+        /// Called for BOTH triggers `HandleMobDied` recognizes
+        /// (`GibFullExplodeChance` roll, or unconditionally on a headshot —
+        /// class doc): every part's impulse is the usual upward-biased
+        /// random scatter (`Random.onUnitSphere`, reflected onto the upper
+        /// hemisphere when it rolls downward — a part launching straight
+        /// into the floor reads as a bug, not a death) at
+        /// `GameFeelConfig.GibExplosionSpeed`, EXCEPT the HEAD part on a
+        /// headshot kill (`e.Zone == HitZone.Head`, В3 fix-wave 1 item 2):
+        /// that one part instead launches along the killing blow's own
+        /// `HitDir` at `GameFeelConfig.GibHeadImpulseSpeed` — directional
+        /// feedback that reads as "that shot took the head off" (same
+        /// formula/height Task 24's original standalone headshot chunk
+        /// used, folded into this method now that a headshot always takes
+        /// the full-explode path instead of adding one extra chunk on top
+        /// of an intact corpse).
         void SpawnFullExplodeGibs(in SimEvent e, float visualScale)
         {
             (Mesh[] parts, Material material) = e.MobType == MobType.Chaser
@@ -387,53 +430,29 @@ namespace Ring.Presentation
                 ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
             Vector3 worldPos = SimSpace.ToWorld(e.Pos);
             float settleSeconds = _gameFeel.GibPhysicsSeconds;
+            bool headshot = e.Zone == HitZone.Head;
 
             for (int i = 0; i < parts.Length; i++)
             {
                 Mesh part = parts[i];
-                float height = PartHeight(GibView.ClassifyPart(part.name), in archetype);
-                Vector3 dir = Random.onUnitSphere;
-                if (dir.y < 0f) dir.y = -dir.y; // upward-biased (class doc)
-                Vector3 impulse = dir * _gameFeel.GibExplosionSpeed;
+                GibPartKind kind = GibView.ClassifyPart(part.name);
+                float height = PartHeight(kind, in archetype);
+                Vector3 impulse;
+                if (headshot && kind == GibPartKind.Head)
+                {
+                    impulse = _gameFeel.GibHeadImpulseSpeed * SimSpace.ToWorld(e.HitDir);
+                }
+                else
+                {
+                    Vector3 dir = Random.onUnitSphere;
+                    if (dir.y < 0f) dir.y = -dir.y; // upward-biased (class doc)
+                    impulse = dir * _gameFeel.GibExplosionSpeed;
+                }
 
                 GibView gib = _gibs.Rent();
                 gib.SettleSeconds = settleSeconds;
                 gib.Spawn(worldPos + Vector3.up * height, impulse, part, material, visualScale);
             }
-        }
-
-        /// T24-2: the single head-part gib a headshot kill adds ON TOP OF the
-        /// otherwise-intact corpse (`HandleMobDied`'s `e.Zone == HitZone.Head`
-        /// branch, class doc) — launched along the killing blow's own
-        /// `HitDir`, from the head belt, same `GibHeadImpulseSpeed`/height
-        /// formula Task 24's original headshot chunk used, now carrying the
-        /// archetype's real head mesh instead of a primitive.
-        void SpawnHeadGib(in SimEvent e, float visualScale)
-        {
-            (Mesh[] parts, Material material) = e.MobType == MobType.Chaser
-                ? (_chaserParts, _chaserPartMaterial) : (_gunnerParts, _gunnerPartMaterial);
-            Mesh headPart = FindPart(parts, GibPartKind.Head);
-            // Defensive only — every archetype ships a Head part and
-            // StageOneSceneBootstrap validates that at wiring time; a live
-            // match should never actually hit this.
-            if (headPart == null) return;
-
-            MobSimConfig archetype = e.MobType == MobType.Chaser
-                ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
-            float headHeight = (archetype.BodyTop + archetype.HeadTop) * 0.5f;
-            Vector3 headImpulse = _gameFeel.GibHeadImpulseSpeed * SimSpace.ToWorld(e.HitDir);
-
-            GibView headGib = _gibs.Rent();
-            headGib.SettleSeconds = _gameFeel.GibPhysicsSeconds;
-            headGib.Spawn(SimSpace.ToWorld(e.Pos) + Vector3.up * headHeight, headImpulse,
-                headPart, material, visualScale);
-        }
-
-        static Mesh FindPart(Mesh[] parts, GibPartKind kind)
-        {
-            for (int i = 0; i < parts.Length; i++)
-                if (GibView.ClassifyPart(parts[i].name) == kind) return parts[i];
-            return null;
         }
 
         /// T24-2: per-part spawn height for `SpawnFullExplodeGibs`, keyed off
@@ -452,6 +471,29 @@ namespace Ring.Presentation
                     return archetype.LegsTop * 0.5f;
                 default: // Torso, ArmL, ArmR
                     return (archetype.LegsTop + archetype.BodyTop) * 0.5f;
+            }
+        }
+
+        /// В3 fix-wave 1 (app-n6g item 3c): `SpawnHitSpark`'s own
+        /// `HitZone`-keyed belt mid-height — same band split `PartHeight`
+        /// above already draws for gib parts, just keyed off `HitZone`
+        /// (`ProjectileSystem`'s hit-zone classification, `SimEvent.Zone`)
+        /// instead of `GibPartKind`. `HitZone.None` is defensive only — a
+        /// live `ProjectileHit` always carries a real zone (`SpawnHitSpark`'s
+        /// own doc) — and falls back to floor height (Y=0, the spark's
+        /// previous behavior) rather than guessing.
+        static float ZoneHeight(HitZone zone, in MobSimConfig archetype)
+        {
+            switch (zone)
+            {
+                case HitZone.Head:
+                    return (archetype.BodyTop + archetype.HeadTop) * 0.5f;
+                case HitZone.Body:
+                    return (archetype.LegsTop + archetype.BodyTop) * 0.5f;
+                case HitZone.Legs:
+                    return archetype.LegsTop * 0.5f;
+                default:
+                    return 0f;
             }
         }
 

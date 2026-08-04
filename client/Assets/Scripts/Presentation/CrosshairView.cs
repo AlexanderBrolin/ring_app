@@ -1,5 +1,6 @@
 using Ring.Data;
 using Ring.Simulation.Combat;
+using Ring.Simulation.Core;
 using Unity.Mathematics;
 using UnityEngine;
 
@@ -43,6 +44,13 @@ namespace Ring.Presentation
         [SerializeField] AimProvider _aimProvider;
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
+        // В3 fix-wave 1 (app-n6g item 3a): billboards the marker toward the
+        // camera while AimHeld — same MainCamera reference AimProvider's own
+        // `_camera` field is wired to (StageOneSceneBootstrap's `mainCamera`
+        // local var), a second slot rather than reaching through AimProvider
+        // since that field is private there (encapsulation, not a shared
+        // singleton).
+        [SerializeField] Camera _camera;
 
         readonly Vector3[] _conePoints = new Vector3[ConeSegments];
         Vector3 _markerBaseScale;
@@ -85,11 +93,46 @@ namespace Ring.Presentation
             bool aimHeld = _runner.LastFrameInput.AimHeld;
 
             float2 aimSim = _aimProvider.CurrentAimSimPos;
-            Vector3 aimWorld = SimSpace.ToWorld(aimSim);
-            _marker.position = aimWorld + GroundOffset;
+            Vector3 aimWorld;
+            if (aimHeld)
+            {
+                // В3 fix-wave 1 (app-n6g item 3a, owner playtest feedback:
+                // aiming "feels like a 2D crosshair with a ray"): the marker
+                // sits at the aim proxy's REAL 3D world point
+                // (AimProvider.CurrentAimWorldPoint — the proxy's own
+                // hit.point, real height on the mob's silhouette) instead of
+                // a floor-projected XY plus a flat ground offset — moving
+                // the cursor up a mob's body now visibly slides the marker
+                // UP the model. Billboarded to the camera every frame (the
+                // marker's local Y axis is its flat disc's cap normal) so it
+                // always reads as a coin facing the viewer, not a decal
+                // lying on whatever surface it currently touches.
+                aimWorld = _aimProvider.CurrentAimWorldPoint;
+                _marker.position = aimWorld + GroundOffset;
+                Vector3 toCamera = _camera != null
+                    ? _camera.transform.position - _marker.position : Vector3.up;
+                if (toCamera.sqrMagnitude < 1e-6f) toCamera = Vector3.up;
+                _marker.up = toCamera.normalized;
+            }
+            else
+            {
+                // Э1 unchanged: hip-fire keeps the marker flat on the floor,
+                // paired with the spread cone ring below (UpdateCone) — no
+                // billboard, matching this fix-wave's scope (headshot
+                // aiming only, not the hip-fire reticle).
+                aimWorld = SimSpace.ToWorld(aimSim);
+                _marker.position = aimWorld + GroundOffset;
+                _marker.rotation = Quaternion.identity;
+            }
             // Task 20 (PC8): the SAME marker serves as the aim dot while
             // AimHeld — shrunk by AimDotScale, never a second renderer.
-            _marker.localScale = aimHeld ? _markerBaseScale * _gameFeel.AimDotScale : _markerBaseScale;
+            // В3 fix-wave 1 (item 3a): head zone scales it back up a touch
+            // on top of that shrink — GameFeelConfig's own class doc has the
+            // "unmistakable, not just recolored" rationale.
+            float headBoost = _aimProvider.CurrentAimZone == HitZone.Head
+                ? _gameFeel.AimMarkerHeadScaleBoost : 1f;
+            _marker.localScale =
+                (aimHeld ? _markerBaseScale * _gameFeel.AimDotScale : _markerBaseScale) * headBoost;
 
             // В1/В2 fix-wave 2 (app-n6g item 3a): zone tint — `CurrentAimZone`
             // is already `HitZone.None` whenever `!aimHeld` (AimProvider's own

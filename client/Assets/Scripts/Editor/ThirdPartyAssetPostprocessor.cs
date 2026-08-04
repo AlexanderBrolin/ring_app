@@ -48,7 +48,47 @@ namespace Ring.Editor
         };
 
         /// Bump to force mass reimport when rules/constants change.
-        public override uint GetVersion() => 2;
+        public override uint GetVersion() => 3;
+
+        /// В3 fix-wave 1 (app-n6g item 1, PROVEN root cause of the "gib parts
+        /// vanish" bug — see `OnPreprocessModel`'s `GibsRoot` branch below for
+        /// the fix site, `GibScaleDiagnostics` (deleted before commit, see
+        /// `v3-wave1-report.md`) for the measurement method/evidence). This
+        /// pack's rig (`George.fbx`/`Leela.fbx`, and — because
+        /// `George_Parts.fbx`/`Leela_Parts.fbx` were Blender-split FROM the
+        /// same rig — their derivative too) carries a ~100× object-level
+        /// Transform scale on every mesh node that was never "Applied" before
+        /// export (a common Blender authoring gotcha: geometry modeled tiny,
+        /// compensated with an un-applied Object > Scale instead of baking it
+        /// into the vertex data). The LIVE mech/corpse visuals get this
+        /// factor for free because they instantiate the WHOLE FBX prefab
+        /// hierarchy (`EditorBootstrapUtils.EnsureVisual` →
+        /// `PrefabUtility.InstantiatePrefab`) — the ~100× sits on that
+        /// hierarchy's own node Transforms, cascading into the render
+        /// automatically. `PersistentPropsDirector`/`GibView`, however, only
+        /// ever consume the bare `Mesh` sub-asset (`StageOneSceneBootstrap.
+        /// LoadGibParts` → `AssetDatabase.LoadAllAssetsAtPath(path).
+        /// OfType&lt;Mesh&gt;()`) — raw vertex data, with NO hierarchy and
+        /// therefore none of that node-level correction — so every gib chunk
+        /// rendered ~100× too small (sub-centimeter, invisible at any
+        /// playable camera distance) on the `SpawnFullExplodeGibs` code path
+        /// (the only place `LoadGibParts`' meshes are ever spawned),
+        /// matching the owner's observed "~35% of deaths vanish" 1:1 with
+        /// `PersistentPropsDirector.GibFullExplodeChance = 0.35f`.
+        /// Empirically verified (not guessed): reimporting `_Ring/Gibs/*.fbx`
+        /// with `ModelImporter.globalScale` set to this value bakes the
+        /// factor DIRECTLY into the imported `Mesh` geometry (confirmed via
+        /// before/after `mesh.bounds` — grows by exactly this factor,
+        /// uniformly on all 3 axes) — unlike the pack's OWN node-level scale,
+        /// which stays exactly where it is regardless (a separate,
+        /// independent mechanism; the two are not the same knob). This is the
+        /// ONLY meta touched — `George.fbx`/`Leela.fbx` (outside `_Ring/`,
+        /// global constraint) are untouched, and `GibView.Spawn`'s own
+        /// `transform.localScale = Vector3.one * scale` formula (its class
+        /// doc's documented "mirrors the archetype's own visualScale"
+        /// contract) needed no runtime compensation once the geometry itself
+        /// carries the correct real-world unit scale.
+        const float GibPartsGlobalScale = 100f;
 
         public static bool IsHumanoidPath(string path) =>
             path.StartsWith(UalRoot, StringComparison.Ordinal)
@@ -162,6 +202,13 @@ namespace Ring.Editor
                 // takes (importedTakeInfos always empty), so this is
                 // unconditional, unlike the robot branch's per-file check.
                 importer.animationType = ModelImporterAnimationType.None;
+                // В3 fix-wave 1 (app-n6g item 1, PROVEN root cause — see
+                // GibPartsGlobalScale's own doc above): bakes the pack's
+                // missing ~100× unit-scale correction directly into the
+                // imported Mesh geometry so GibView's bare-Mesh consumption
+                // renders parts at the same real-world size the live mech
+                // hierarchy already gets for free.
+                importer.globalScale = GibPartsGlobalScale;
             }
         }
 

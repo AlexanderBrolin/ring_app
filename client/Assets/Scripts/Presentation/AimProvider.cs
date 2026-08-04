@@ -52,6 +52,16 @@ namespace Ring.Presentation
         // K15 "one cast, one frame-old value" contract.
         HitZone _cachedAimZone;
         MobView _cachedHoveredMob;
+        // В3 fix-wave 1 (app-n6g item 3a, owner playtest feedback: the
+        // crosshair marker read as "a 2D dot on the floor" even while aiming
+        // up a mob's body). The genuine 3D `hit.point` of the SAME proxy
+        // cast that already supplies `_cachedAimSimPos`/`_cachedAimHeight`
+        // above — was computed internally by `TryAimProxy` all along
+        // (`hit.point`, class doc) but never kept past that call. Cached
+        // here so `CrosshairView`'s marker can sit at the REAL struck point
+        // on the mob's silhouette instead of a floor-projected XY plus a
+        // flat height guess.
+        Vector3 _cachedAimWorldPoint;
 
         void Awake()
         {
@@ -82,6 +92,7 @@ namespace Ring.Presentation
                 _cachedAimHeight = 0f;
                 _cachedAimZone = HitZone.None;
                 _cachedHoveredMob = null;
+                _cachedAimWorldPoint = SimSpace.ToWorld(planeAimSimPos); // floor point, y=0
                 return;
             }
 
@@ -91,12 +102,13 @@ namespace Ring.Presentation
             // so the cast below sees THIS frame's proxy positions (C15).
             Physics.SyncTransforms();
             if (TryAimProxy(out float2 proxySimPos, out float proxyHeight,
-                    out HitZone zone, out MobView hoveredMob))
+                    out HitZone zone, out MobView hoveredMob, out Vector3 worldPoint))
             {
                 _cachedAimSimPos = proxySimPos;
                 _cachedAimHeight = proxyHeight;
                 _cachedAimZone = zone;
                 _cachedHoveredMob = hoveredMob;
+                _cachedAimWorldPoint = worldPoint; // the proxy's own real hit.point
             }
             else
             {
@@ -104,6 +116,7 @@ namespace Ring.Presentation
                 _cachedAimHeight = 0f; // "хоть в пол"
                 _cachedAimZone = HitZone.None;
                 _cachedHoveredMob = null;
+                _cachedAimWorldPoint = SimSpace.ToWorld(planeAimSimPos); // same floor fallback
             }
         }
 
@@ -150,7 +163,8 @@ namespace Ring.Presentation
         /// naturally yields `hoveredMob == null` here (no `MobView` in that
         /// parent chain), which is exactly the desired "never highlight the
         /// player" behavior with no extra type check.
-        bool TryAimProxy(out float2 simPos, out float height, out HitZone zone, out MobView hoveredMob)
+        bool TryAimProxy(out float2 simPos, out float height, out HitZone zone,
+            out MobView hoveredMob, out Vector3 worldPoint)
         {
             Mouse mouse = Mouse.current;
             if (mouse == null || _camera == null)
@@ -159,6 +173,7 @@ namespace Ring.Presentation
                 height = default;
                 zone = HitZone.None;
                 hoveredMob = null;
+                worldPoint = default;
                 return false;
             }
 
@@ -171,6 +186,7 @@ namespace Ring.Presentation
                 height = default;
                 zone = HitZone.None;
                 hoveredMob = null;
+                worldPoint = default;
                 return false;
             }
 
@@ -178,6 +194,12 @@ namespace Ring.Presentation
             height = hit.point.y;
             zone = ClassifyProxyZone(hit.collider);
             hoveredMob = hit.collider.GetComponentInParent<MobView>();
+            // В3 fix-wave 1 (app-n6g item 3a): the exact same hit.point this
+            // method already computes simPos/height from — kept verbatim
+            // rather than reconstructed from simPos/height, so it can never
+            // drift from the real cast result (class doc, K15 "one cast"
+            // contract).
+            worldPoint = hit.point;
             return true;
         }
 
@@ -210,5 +232,13 @@ namespace Ring.Presentation
         /// hit belongs to, or null while `!AimHeld`, on a miss, or when the hit
         /// proxy is the player's own (`TryAimProxy`'s own doc).
         public MobView CurrentHoveredMob => _cachedHoveredMob;
+
+        /// В3 fix-wave 1 (app-n6g item 3a): the genuine 3D world point the
+        /// aim currently targets — the proxy's own `hit.point` while
+        /// `AimHeld` and a proxy is actually hit (real height on the mob's
+        /// silhouette, not a floor projection), or the Э1 floor-plane point
+        /// (y=0) otherwise (`!AimHeld`, or a miss — class doc above). Cached
+        /// once per render frame alongside every other field here (K15).
+        public Vector3 CurrentAimWorldPoint => _cachedAimWorldPoint;
     }
 }

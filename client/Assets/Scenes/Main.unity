@@ -3283,6 +3283,7 @@ MonoBehaviour:
   _aimProvider: {fileID: 1959383182}
   _runner: {fileID: 1959383180}
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
+  _camera: {fileID: 330585545}
 --- !u!4 &1727949041
 Transform:
   m_ObjectHideFlags: 0
