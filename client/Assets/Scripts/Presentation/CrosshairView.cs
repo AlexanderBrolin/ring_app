@@ -54,6 +54,17 @@ namespace Ring.Presentation
 
         void LateUpdate()
         {
+            // Г5 review (Minor, same lens as AimRayView's Important — QA18
+            // pattern): UpdateCone below dereferences _runner.World.Config,
+            // same as RenderMuzzleHeight does for AimRayView — hide the cone
+            // and skip it until both exist, rather than crash on the cold
+            // start. Once running, behavior below is unchanged.
+            if (_runner == null || _runner.World == null)
+            {
+                _cone.enabled = false;
+                return;
+            }
+
             bool aimHeld = _runner.LastFrameInput.AimHeld;
 
             float2 aimSim = _aimProvider.CurrentAimSimPos;

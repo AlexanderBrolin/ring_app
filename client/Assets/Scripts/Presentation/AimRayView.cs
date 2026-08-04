@@ -43,12 +43,6 @@ namespace Ring.Presentation
     [RequireComponent(typeof(LineRenderer))]
     public sealed class AimRayView : MonoBehaviour
     {
-        // A cool cyan tint, distinct from the cone's warm-neon orange
-        // (SpreadConeEmissive) and the tracer's near-white cyan (TracerTrail)
-        // — HDR-overbright like every other emissive placeholder in the
-        // project, so it still blooms once dimmed by AimRayAlpha below.
-        static readonly Color BaseColor = new Color(0.6f, 2.4f, 3.2f);
-
         [SerializeField] SimulationRunner _runner;
         [SerializeField] AimProvider _aimProvider;
         [SerializeField] GameFeelConfig _gameFeel;
@@ -56,16 +50,41 @@ namespace Ring.Presentation
 
         LineRenderer _line;
         MaterialPropertyBlock _block;
+        // Г5 review (Minor): read from the bootstrap-created `_rayMaterial`
+        // itself instead of a second hardcoded literal here duplicating
+        // `StageOneSceneBootstrap`'s `AimRayEmissive` color — one number, one
+        // owner. `Color.white` is the harmless fallback for the (never
+        // expected in practice) case the reference isn't wired yet.
+        Color _baseColor;
 
         void Awake()
         {
             _line = GetComponent<LineRenderer>();
             _block = new MaterialPropertyBlock();
-            if (_rayMaterial != null) _line.sharedMaterial = _rayMaterial;
+            if (_rayMaterial != null)
+            {
+                _line.sharedMaterial = _rayMaterial;
+                _baseColor = _rayMaterial.GetColor("_BaseColor");
+            }
+            else
+            {
+                _baseColor = Color.white;
+            }
         }
 
         void LateUpdate()
         {
+            // Г5 review (Important): cold-start guard, same shape as
+            // AimProvider's own QA18 pattern — World isn't built yet on the
+            // very first frame(s) before SimulationRunner.Awake's
+            // RestartNewSeed completes (or a scene missing the wiring), and
+            // RenderMuzzleHeight below dereferences World.Config.
+            if (_runner == null || _runner.World == null)
+            {
+                _line.enabled = false;
+                return;
+            }
+
             bool aimHeld = _runner.LastFrameInput.AimHeld;
             _line.enabled = aimHeld;
             if (!aimHeld) return;
@@ -79,7 +98,7 @@ namespace Ring.Presentation
             _line.SetPosition(1, aimPoint);
             _line.startWidth = _line.endWidth = _gameFeel.AimRayWidth;
 
-            Color dimmed = BaseColor * _gameFeel.AimRayAlpha;
+            Color dimmed = _baseColor * _gameFeel.AimRayAlpha;
             _block.SetColor("_BaseColor", new Color(dimmed.r, dimmed.g, dimmed.b, 1f));
             _line.SetPropertyBlock(_block);
         }

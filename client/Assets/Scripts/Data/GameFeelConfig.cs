@@ -144,9 +144,14 @@ namespace Ring.Data
         // Task 17 (combat-depth Г5, spec §3.5 as corrected — QC3/QC4/QD12):
         // game-feel numbers for the combat-depth Presentation work later in
         // this phase (tracer visuals, slide dust, stamina bar, headshot
-        // hitstop/pitch, gib pooling, aim-proxy ray). No consumer yet — this
-        // task only delivers the fields + the bootstrap marker-sync (below);
-        // Г5's later tasks wire them up. `RicochetSparkCount` and
+        // hitstop/pitch, gib pooling, aim-proxy ray). Consumers wired
+        // incrementally as Г5 progressed, not all at once: `AimProxyHeadRadiusFrac`
+        // → `StageOneSceneBootstrap` (Task 19); `AimRayAlpha`/`AimRayWidth` →
+        // `AimRayView` and `AimDotScale` → `CrosshairView` (both Task 20);
+        // `TracerScale` → `ViewRegistry`/`ProjectileView` (Task 21). The rest
+        // (`SlideDustBurstCount`, `StaminaBar*`, `HeadHitstopScale`,
+        // `ZoneHitPitchOffset`, `Gib*`) still await their own later Г5 tasks.
+        // `RicochetSparkCount` and
         // `SlideWallSparkBurstCount` are deliberately NOT added here: ricochet
         // sparks reuse the baked `BlockSparkBurstCount` prefab, and neither
         // has a consumer.
