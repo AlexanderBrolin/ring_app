@@ -98,3 +98,5 @@ MonoBehaviour:
   SlideDustLifetime: 0.35
   SlideDustSpeed: 1.8
   SlideDustSize: 0.14
+  LinkWindowFlashHz: 6
+  LinkWindowFlashBoost: 1.6

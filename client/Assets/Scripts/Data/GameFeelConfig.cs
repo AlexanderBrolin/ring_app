@@ -81,8 +81,9 @@ namespace Ring.Data
         // (bootstrap:245) until the Б1 fix-wave-2 block below superseded it, and
         // `DashGlowSize` in turn until the Б1 fix-wave-3 field below superseded
         // THAT, and `CasingEjectSpeedMax` after that, then `AimDotScale`
-        // (Task 17) — `SlideDustSize` is the current marker (Task 22, spec Г6),
-        // see its own doc.
+        // (Task 17), then `SlideDustSize` (Task 22, spec Г6) — `LinkWindowFlashBoost`
+        // is the current marker (В1 fix-wave 1, owner playtest feedback), see
+        // its own doc.
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
         [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
@@ -120,8 +121,9 @@ namespace Ring.Data
         // (dash cooldown 1.2s vs ~2.5s life → 3 alive typ.). DashGlowSize was the
         // bootstrap sync-marker key until the Б1 fix-wave-3 field below
         // superseded it, then `CasingEjectSpeedMax`, then `AimDotScale`
-        // (Task 17) — `SlideDustSize` is the current marker (Task 22, spec Г6),
-        // see its own doc.
+        // (Task 17), then `SlideDustSize` (Task 22, spec Г6) — `LinkWindowFlashBoost`
+        // is the current marker (В1 fix-wave 1, owner playtest feedback), see
+        // its own doc.
         [Range(1, 32)] public int MaxDashGlows = 8;
         [Range(0.1f, 10f)] public float DashGlowSeconds = 2.5f;
         [Range(0.1f, 3f)] public float DashGlowSize = 0.9f;
@@ -185,7 +187,23 @@ namespace Ring.Data
         // numbers in ScriptableObjects" rule (client/CLAUDE.md).
         [Range(0.01f, 2f)] public float SlideDustLifetime = 0.35f;
         [Range(0f, 20f)] public float SlideDustSpeed = 1.8f;
-        [Range(0f, 2f)] public float SlideDustSize = 0.14f; // sync-marker key — keep LAST
+        [Range(0f, 2f)] public float SlideDustSize = 0.14f;
+
+        // В1 fix-wave 1 (owner playtest feedback, item 3 "мерцание сборщика"):
+        // the collector's doll pulses while a Dash↔Slide combo window is open
+        // (`PlayerVisual.UpdateLinkWindowFlash` reads `PlayerState.
+        // PostDashSlideTimer`/`LinkWindowTimer`, either > 0f — the same two
+        // timers `PlayerMovementSystem` already uses to gate the link itself).
+        // `LinkWindowFlashHz` is the pulse's oscillation rate; `LinkWindowFlashBoost`
+        // scales its peak intensity on top of the fixed accent color
+        // `PlayerVisual` reuses from `PlayerEmissive`/`DashGlowView` (Э1) —
+        // same accent-constant-vs-SO-number split `MobView`'s Gunner glint
+        // already makes. `LinkWindowFlashBoost` is the new sync-marker key,
+        // superseding `SlideDustSize` (Task 22, spec Г6) — see that field's
+        // own chain history in the doc paragraphs above (PlayerVisualScale /
+        // MaxDashGlows).
+        [Range(0.5f, 20f)] public float LinkWindowFlashHz = 6f;
+        [Range(1f, 4f)] public float LinkWindowFlashBoost = 1.6f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

@@ -186,6 +186,21 @@ namespace Ring.Editor
     /// idiom `GreyboxBuilder`'s floor/obstacles already use), self-healing an
     /// already-committed scene's stale Quad the same way the Player root's
     /// leftover capsule renderer self-heals above.
+    /// В1 fix-wave 1 (owner playtest feedback, app-n6g): item 1 retires the
+    /// HUD's dash-cooldown bar (two bars only, HP + Stamina) — the HUD bars
+    /// section below self-heals an already-committed scene's leftover
+    /// `DashBar` object out and slides `StaminaBar` up into its old slot;
+    /// `GetOrCreateBar`'s own existence branch grows a matching
+    /// anchoredPosition self-heal so that reposition actually reaches a
+    /// scene the bar already exists in, not just a fresh one. Item 4 (owner's
+    /// sanctioned milestone numbers, `GunnerVisualScale` 0.4→0.76) exposed a
+    /// separate self-heal gap: `GetOrCreateMobArchetypePrefab`'s early-return
+    /// path (prefab already on disk, model unchanged) called
+    /// `SelfHealAimProxyOnPrefab` but never re-applied `EnsureVisual`'s own
+    /// scale check, so a pure `ChaserVisualScale`/`GunnerVisualScale` retune
+    /// never reached an already-committed prefab — `SelfHealVisualScaleOnPrefab`
+    /// (new, called alongside `SelfHealAimProxyOnPrefab` in that same branch)
+    /// closes it, generically for both archetypes.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -348,8 +363,9 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `SlideDustSize` as of Task 22, spec Г6 —
-            // was `AimDotScale` before that, see the field's own doc for the
+            // field (GameFeelConfig: `LinkWindowFlashBoost` as of В1 fix-wave 1
+            // — was `SlideDustSize` (Task 22, spec Г6) before that, and
+            // `AimDotScale` before THAT, see the field's own doc for the
             // fuller history; HeroConfig/WeaponConfig/MobConfig's marker
             // fields are new as of Task 17, so any asset committed before this
             // task predates them and self-heals on this Apply).
@@ -357,7 +373,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "SlideDustSize"); // Task 22
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "LinkWindowFlashBoost"); // В1 fix-wave 1
 
             AssetDatabase.SaveAssets();
 
@@ -906,24 +922,35 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
-            // HP top-left, dash bar directly beneath it, both left-anchored so the
-            // fill grows rightward from a fixed origin (spec resolution П-2:
-            // fillOrigin Left, 1 = ready/full).
+            // HP top-left, both left-anchored so the fill grows rightward from
+            // a fixed origin (spec resolution П-2: fillOrigin Left, 1 = ready/
+            // full).
             Image hpFill = GetOrCreateBar(hudGo.transform, HpBarObjectName,
                 anchoredPos: new Vector2(24f, -24f), size: new Vector2(320f, 28f),
                 backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
                 fillColor: new Color(0.85f, 0.2f, 0.2f), ref sceneDirty);
-            Image dashFill = GetOrCreateBar(hudGo.transform, DashBarObjectName,
-                anchoredPos: new Vector2(24f, -60f), size: new Vector2(320f, 14f),
-                backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
-                fillColor: new Color(0.3f, 0.7f, 0.9f), ref sceneDirty);
-            // Task 22: third bar, directly beneath the dash bar (same left origin/
-            // sizing as dash, stamina depletes/regens more granularly so it
-            // reads better slim than HP-bar-thick). fillColor here is only the
-            // static creation-time default — HudController overwrites it every
-            // frame from GameFeelConfig once the bar exists.
+            // В1 fix-wave 1 (owner playtest feedback, item 1 "две полоски"):
+            // the dash-cooldown bar is retired outright — self-heals an
+            // already-committed scene's leftover "DashBar" object the same
+            // way Task 24's PracticeTargets retirement above does (presence,
+            // not absence, triggers sceneDirty here; the object is a child of
+            // the HUD canvas, not a scene root, so this uses Transform.Find
+            // rather than FindRootObject).
+            Transform staleDashBar = hudGo.transform.Find(DashBarObjectName);
+            if (staleDashBar != null)
+            {
+                Object.DestroyImmediate(staleDashBar.gameObject);
+                sceneDirty = true;
+            }
+            // Task 22's stamina bar now sits directly beneath HP, in the slot
+            // the retired dash bar used to occupy (same left origin/sizing,
+            // same ~8px gap under the HP bar's own bottom edge) — mirrors the
+            // dash bar's old layout math now that it's the second bar again.
+            // fillColor here is only the static creation-time default —
+            // HudController overwrites it every frame from GameFeelConfig
+            // once the bar exists.
             Image staminaFill = GetOrCreateBar(hudGo.transform, StaminaBarObjectName,
-                anchoredPos: new Vector2(24f, -84f), size: new Vector2(320f, 14f),
+                anchoredPos: new Vector2(24f, -60f), size: new Vector2(320f, 14f),
                 backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
                 fillColor: gameFeel.StaminaBarFullColor, ref sceneDirty);
             TMP_Text waveText = GetOrCreateWaveText(hudGo.transform, ref sceneDirty);
@@ -939,7 +966,6 @@ namespace Ring.Editor
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_runner", runner);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_gameFeel", gameFeel);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_hpFill", hpFill);
-            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_dashFill", dashFill);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_staminaFill", staminaFill);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_waveText", waveText);
             if (hudRefsChanged)
@@ -1500,6 +1526,7 @@ namespace Ring.Editor
                 {
                     SelfHealAimProxyOnPrefab(prefabPath, legsTop, bodyTop, headTop,
                         bodyRadius, headRadiusFrac);
+                    SelfHealVisualScaleOnPrefab(prefabPath, "Visual", visualScale);
                     return AssetDatabase.LoadAssetAtPath<MobView>(prefabPath);
                 }
                 AssetDatabase.DeleteAsset(prefabPath); // pair swapped: rebuild; SetRef re-wires
@@ -1781,6 +1808,39 @@ namespace Ring.Editor
                 bool changed = EnsureAimProxyChildren(contents.transform,
                     legsTop, bodyTop, headTop, bodyRadius, headRadiusFrac);
                 if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        /// В1 fix-wave 1 chore (owner's sanctioned milestone number,
+        /// `GunnerVisualScale` 0.4→0.76): `EditorBootstrapUtils.EnsureVisual`'s
+        /// own scale self-heal (its `localScale != Vector3.one * visualScale`
+        /// check) only ever runs when the "Visual" child branch inside it
+        /// actually executes — but `GetOrCreateMobArchetypePrefab`'s
+        /// early-return path (prefab already on disk, model path unchanged)
+        /// never calls `EnsureVisual` at all, so a pure `ChaserVisualScale`/
+        /// `GunnerVisualScale` retune alone never reached an already-committed
+        /// prefab before this. Same `LoadPrefabContents`/`SaveAsPrefabAsset`
+        /// shape as `SelfHealAimProxyOnPrefab` (called alongside it from the
+        /// same early-return branch) — kept as its own method rather than
+        /// folded into that one so each self-heal stays independently
+        /// testable/readable, same split the rest of this file's per-concern
+        /// self-heal helpers already follow.
+        static void SelfHealVisualScaleOnPrefab(string prefabPath, string childName, float visualScale)
+        {
+            GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                Transform child = contents.transform.Find(childName);
+                Vector3 target = Vector3.one * visualScale;
+                if (child != null && child.localScale != target)
+                {
+                    child.localScale = target;
+                    PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+                }
             }
             finally
             {
@@ -2130,6 +2190,18 @@ namespace Ring.Editor
             Transform existing = parent.Find(name);
             if (existing != null)
             {
+                // В1 fix-wave 1: self-heals an already-committed bar's stale
+                // anchoredPosition (StaminaBar sliding up into the retired
+                // DashBar's old slot, item 1) the same unconditional way the
+                // fillSprite check right below self-heals — a caller-side
+                // layout constant change alone wouldn't otherwise reach a bar
+                // object that already exists in the committed scene.
+                var existingRect = (RectTransform)existing;
+                if (existingRect.anchoredPosition != anchoredPos)
+                {
+                    existingRect.anchoredPosition = anchoredPos;
+                    sceneDirty = true;
+                }
                 Image existingFill = existing.Find(FillObjectName).GetComponent<Image>();
                 if (existingFill.sprite == null)
                 {

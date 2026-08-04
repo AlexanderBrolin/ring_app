@@ -15,10 +15,30 @@ namespace Ring.Presentation
     /// Aim layer faded out, Pistol_Shoot retrigger per own ProjectileFired.
     /// Events arrive via SimEventRouter's fan-out (П-1); WorldRestarted — by
     /// direct subscription (ViewRegistry's pattern).
+    ///
+    /// В1 fix-wave 1 (owner playtest feedback, item 3 "мерцание сборщика"):
+    /// pulses the doll's emission while a Dash↔Slide combo window is open
+    /// (`PlayerState.PostDashSlideTimer`/`LinkWindowTimer` — either > 0f,
+    /// `PlayerMovementSystem`'s own doc). Same `MaterialPropertyBlock`/
+    /// `_EmissionColor` idiom `MobView`'s Gunner "aiming" glint uses (a sine
+    /// wave at `GameFeelConfig.LinkWindowFlashHz`, unscaled time so hitstop/
+    /// slow-mo never touches it) — `_renderers` is cached once here the same
+    /// way `MobView`/`CorpseView` cache theirs (`GetComponentsInChildren
+    /// &lt;Renderer&gt;(true)`, one shared `MaterialPropertyBlock`, never a
+    /// material instance, П-2). `LinkWindowFlashAccent` reuses
+    /// `PlayerEmissive`/`DashGlowView`'s own established player-signature
+    /// cyan (Э1) rather than inventing a new accent color; `LinkWindowFlashBoost`
+    /// is a separate hot-tweak multiplier on the pulse's peak intensity, same
+    /// split every other Presentation accent-color-vs-SO-number pair already
+    /// makes (`MobView`'s `GunnerGlintAccent` constant vs. its `Hz` consts).
     public sealed class PlayerVisual : MonoBehaviour
     {
         const int BaseLayer = 0;
         const int AimLayer = 1;
+
+        static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
+        // = PlayerEmissive/DashGlowView's own accent (Э1) — reused, not reinvented.
+        static readonly Color LinkWindowFlashAccent = new Color(0f, 2.5f, 3f);
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] AimProvider _aimProvider;
@@ -36,6 +56,9 @@ namespace Ring.Presentation
         float _aimWeight = 1f;
         bool _dead;
 
+        Renderer[] _renderers;
+        MaterialPropertyBlock _block;
+
 #if UNITY_EDITOR
         Vector3 _appliedGunPosition;
         Vector3 _appliedGunEuler;
@@ -48,6 +71,13 @@ namespace Ring.Presentation
 
         void Start()
         {
+            // Renderers resolve once too (В1 fix-wave 1, same "resolve once"
+            // rule as the bones below) — GetComponentsInChildren covers the
+            // whole doll hierarchy under this component's own GameObject,
+            // same as MobView/CorpseView's Awake-time cache.
+            _renderers = GetComponentsInChildren<Renderer>(true);
+            _block = new MaterialPropertyBlock();
+
             // Bones resolve once; humanoid mapping is pack-name-agnostic (Б8).
             _spine = _animator.GetBoneTransform(HumanBodyBones.Spine);
             _chest = _animator.GetBoneTransform(HumanBodyBones.Chest);
@@ -134,6 +164,9 @@ namespace Ring.Presentation
 
             // Dash lean (7a): an offset over _facing, tilted toward DashDir.
             PlayerState player = _runner.RenderCurr.Player;
+
+            UpdateLinkWindowFlash(in player);
+
             float leanTarget01 = player.DashTimer > 0f ? 1f : 0f;
             _dashLean01 = Mathf.MoveTowards(_dashLean01, leanTarget01,
                 dt / Mathf.Max(_gameFeel.DashLeanInOutSeconds, 1e-3f));
@@ -179,6 +212,33 @@ namespace Ring.Presentation
             }
         }
 
+        /// В1 fix-wave 1 (class doc): the combo-window pulse, computed fresh
+        /// every render frame from the interpolated snapshot's own timers —
+        /// same "read RenderCurr, never branch on hitstop" contract every
+        /// other per-frame accent in this class already follows. Unconditional
+        /// `ApplyLinkWindowEmission` call every frame (black when the window
+        /// is closed) mirrors `MobView.Sync`'s own shape, so a window closing
+        /// mid-pulse always lands back at black the very next frame instead
+        /// of needing a separate "clear" path.
+        void UpdateLinkWindowFlash(in PlayerState player)
+        {
+            bool open = player.PostDashSlideTimer > 0f || player.LinkWindowTimer > 0f;
+            if (!open)
+            {
+                ApplyLinkWindowEmission(Color.black);
+                return;
+            }
+            float wave = 0.5f + 0.5f * Mathf.Sin(
+                Time.unscaledTime * _gameFeel.LinkWindowFlashHz * Mathf.PI * 2f);
+            ApplyLinkWindowEmission(LinkWindowFlashAccent * wave * _gameFeel.LinkWindowFlashBoost);
+        }
+
+        void ApplyLinkWindowEmission(Color emission)
+        {
+            _block.SetColor(EmissionColorId, emission);
+            for (int i = 0; i < _renderers.Length; i++) _renderers[i].SetPropertyBlock(_block);
+        }
+
         /// SimEventRouter fan-out slot (П-1): death and own-shot retrigger.
         public void HandleEvent(in SimEvent e)
         {
@@ -186,6 +246,11 @@ namespace Ring.Presentation
             {
                 case SimEventKind.PlayerDied:
                     _dead = true;
+                    // В1 fix-wave 1: a death mid-pulse must not freeze the
+                    // corpse doll glowing — LateUpdate's own `if (_dead)
+                    // return;` guard above skips UpdateLinkWindowFlash from
+                    // here on, so the clear has to happen once, right here.
+                    ApplyLinkWindowEmission(Color.black);
                     _animator.CrossFadeInFixedTime(AnimIds.Death,
                         _gameFeel.OneShotCrossFadeSeconds, BaseLayer, 0f);
                     break;
@@ -209,6 +274,7 @@ namespace Ring.Presentation
             _animator.SetFloat(AnimIds.Speed, 0f);
             _dashLean01 = 0f;
             _hasPrevPos = false; // restart teleports the player — no ghost speed spike
+            ApplyLinkWindowEmission(Color.black); // В1 fix-wave 1: no pulse bleeding into the fresh run
         }
 
 #if UNITY_EDITOR
