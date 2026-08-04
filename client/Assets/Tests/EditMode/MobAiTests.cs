@@ -164,7 +164,7 @@ namespace Ring.Simulation.Tests
         {
             var c = TestConfigs.Open();
             // Factor 0 -> PredictPos degenerates to the raw player position exactly
-            // (offset = lead * (seconds * 0) = zero vector) — the pre-Task-13 (Э1)
+            // (offset = lead * (seconds * 0) = zero vector) — the pre-Task-13 (E1)
             // raw-distance rule as a special case, bit-exact.
             c.Chaser.SwingLeadFactor = 0f;
             const float spawnX = 8f;

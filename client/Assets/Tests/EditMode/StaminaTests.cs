@@ -123,7 +123,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             var move = new SimInput { MoveDir = new float2(1f, 0f) };
 
-            // Fixture premise (Д5 "exactly two links"): dash + two slides + one
+            // Fixture premise (D5 "exactly two links"): dash + two slides + one
             // linked dash must total exactly the starting stamina pool.
             Assert.AreEqual(cfg.Hero.StaminaMax,
                 cfg.Hero.DashStaminaCost + 2f * cfg.Hero.SlideStaminaCost + cfg.Hero.LinkedDashStaminaCost,
@@ -160,7 +160,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, w.Stats.SlidesUsed);
             Assert.AreEqual(beforeSlide2 - cfg.Hero.SlideStaminaCost, w.Player.Stamina, 1e-3f);
 
-            // Total spent across the whole chain equals exactly StaminaMax (Д5):
+            // Total spent across the whole chain equals exactly StaminaMax (D5):
             // regen never gets a chance to run mid-chain — every dash/slide start
             // re-primes StaminaRegenDelayTimer well before it could elapse, and
             // SlideTimer itself blocks regen while a slide is active (QD10) — so

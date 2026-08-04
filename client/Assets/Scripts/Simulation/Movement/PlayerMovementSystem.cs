@@ -31,6 +31,12 @@ namespace Ring.Simulation.Movement
         {
             float dt = SimulationWorld.TickDt;
             var hero = cfg.Hero;
+            // Contract: DashRequested/SlideRequested are edge inputs — SimInputFrame.
+            // ForTick/InputSampler latch them true for exactly one tick per press, not
+            // for the whole time a key is held. A raw held-true request re-arms the
+            // buffer every tick it's seen, but by construction that means a fresh
+            // latch each time, so any deny event gated on the buffer still fires at
+            // most once per latch, not once per tick.
             p.DashBufferTimer = input.DashRequested
                 ? hero.DashBufferWindow
                 : math.max(0f, p.DashBufferTimer - dt);

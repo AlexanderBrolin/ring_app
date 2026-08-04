@@ -131,18 +131,31 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, w.Stats.SlidesUsed);
         }
 
+        /// Local fixture (PD5, per DashRicochetTests.Fixture()'s pattern): pins
+        /// DashDuration explicitly instead of riding TestConfigs.Open()'s current
+        /// default, so the buffered-through-dash loop bound below is a fixture
+        /// expression tied to this number, not a bare literal that silently
+        /// happens to match it.
+        static SimConfig MutualExclusionFixture()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Hero.DashDuration = 0.15f;
+            return cfg;
+        }
+
         [Test]
         public void Slide_MutualExclusionWithDash()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = MutualExclusionFixture();
 
             // A slide request buffered throughout a dash fires once the
             // post-dash window opens (buffer kept fresh across the dash so it
-            // survives the DashDuration == SlideBufferWindow coincidence in
-            // TestConfigs.Default()).
+            // survives the DashDuration == SlideBufferWindow coincidence — both
+            // 0.15s here, DashDuration pinned explicitly on the fixture above).
             var w = new SimulationWorld(1, cfg);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // dash starts
-            for (int i = 0; i < 5; i++)
+            int dashTicks = (int)math.ceil(cfg.Hero.DashDuration / SimulationWorld.TickDt);
+            for (int i = 0; i < dashTicks; i++)
                 w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // buffered through dash-end
             Assert.AreEqual(0, w.Stats.SlidesUsed, "still mid-dash — must not have fired yet");
             w.Tick(Move(1f, 0f)); // post-dash window open, buffer still alive

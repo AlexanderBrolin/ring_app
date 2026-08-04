@@ -19,7 +19,7 @@ namespace Ring.Simulation.Tests
         {
             var cfg = TestConfigs.Open();
             var w = World();
-            for (int i = 0; i < 60; i++) w.Tick(MoveAim(1f, 0f)); // 2 c — хватает разогнаться под капом
+            for (int i = 0; i < 60; i++) w.Tick(MoveAim(1f, 0f)); // 2 s — enough to reach the capped speed
             float expected = cfg.Hero.MaxSpeed * cfg.Hero.AimMoveSpeedFrac; // fixture expr, PD5
             Assert.AreEqual(expected, w.Player.Vel.x, 0.05f);
         }
