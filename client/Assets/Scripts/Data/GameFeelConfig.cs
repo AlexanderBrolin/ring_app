@@ -68,6 +68,15 @@ namespace Ring.Data
         // time, same as HitSparkLifetime/etc. above — StageOneSceneBootstrap's
         // GetOrCreateSparkPrefab self-heals an already-committed prefab
         // whose baked burst count no longer matches this field.
+        // В3 fix-wave 2 (item 2, sanctioned QB9 chore, owner playtest feedback:
+        // "мало искр при попадании по роботам") — GameFeelConfig.asset's
+        // HitSparkBurstCount hand-edited 15→30 (this C# initializer, like
+        // CasingScale's own, is intentionally NOT kept in sync with the tuned
+        // .asset — GameFeelConfig is never consumed by SimConfigBuilder, class
+        // doc above, so there is no TestConfigs-mirroring reason to touch it;
+        // the .asset is the sole source of truth an owner playtest actually
+        // exercises). BlockSparkBurstCount/DeathBurst untouched — no complaint
+        // about either.
         [Range(1, 64)] public int HitSparkBurstCount = 15;
         [Range(1, 64)] public int BlockSparkBurstCount = 18;
 

@@ -45,7 +45,7 @@ MonoBehaviour:
   DeathBurstLifetime: 0.3
   DeathBurstSpeed: 4
   DeathBurstSize: 0.12
-  HitSparkBurstCount: 15
+  HitSparkBurstCount: 30
   BlockSparkBurstCount: 18
   ImmediateMuzzleFeedback: 1
   ExtrapolateLocalPlayer: 0
