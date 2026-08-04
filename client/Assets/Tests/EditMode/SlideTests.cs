@@ -319,6 +319,40 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void AimHeld_SlowsSlide_SameTick()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            RunUp(w, cfg);
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide starts
+            Assert.AreEqual(1, w.Stats.SlidesUsed);
+            Assert.Greater(w.Player.SlideTimer, 0f, "test setup: must be sliding");
+
+            // Tick N: AimHeld goes up mid-slide — the multiplier must apply
+            // from THIS tick's Vel, not the next one (A11 — same tick).
+            w.Tick(new SimInput { MoveDir = new float2(1f, 0f), AimHeld = true });
+            float expected = cfg.Hero.SlideSpeed * cfg.Hero.AimSlideSpeedMult; // fixture expr, PD5
+            Assert.AreEqual(expected, math.length(w.Player.Vel), 0.05f);
+        }
+
+        [Test]
+        public void RunUp_ReachableUnderAimCap()
+        {
+            var cfg = TestConfigs.Open();
+            // AimMoveSpeedFrac (0.8) is validated strictly above SlideMinSpeedFrac
+            // (0.75, D15 in SimConfigBuilder) — running capped under aim must
+            // still clear the slide threshold, so RunUpTimer accrues to its
+            // full ceiling just like an un-aimed run-up.
+            Assert.Greater(cfg.Hero.AimMoveSpeedFrac, cfg.Hero.SlideMinSpeedFrac,
+                "test setup: fixture assumption AimMoveSpeedFrac > SlideMinSpeedFrac");
+            var w = new SimulationWorld(1, cfg);
+            int ticks = (int)math.ceil(cfg.Hero.RunUpSeconds / SimulationWorld.TickDt) + 24;
+            for (int i = 0; i < ticks; i++)
+                w.Tick(new SimInput { MoveDir = new float2(1f, 0f), AimHeld = true });
+            Assert.AreEqual(cfg.Hero.RunUpSeconds, w.Player.RunUpTimer, 1e-3f);
+        }
+
+        [Test]
         public void SlideAlongWall_Continues()
         {
             var cfg = TestConfigs.Open();

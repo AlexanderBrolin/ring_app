@@ -47,6 +47,12 @@ namespace Ring.Simulation.Movement
                 : math.max(0f, p.SlideBufferTimer - dt);
             p.PostDashSlideTimer = math.max(0f, p.PostDashSlideTimer - dt);
             p.LinkWindowTimer = math.max(0f, p.LinkWindowTimer - dt);
+            // Task 14: aim-down-sights settle progress — grows towards
+            // AimSettleSeconds while AimHeld, decays at 2x that growth rate
+            // once released; unconditional like the timers above.
+            p.AimSettleTimer = input.AimHeld
+                ? math.min(p.AimSettleTimer + dt, hero.AimSettleSeconds)
+                : math.max(0f, p.AimSettleTimer - 2f * dt);
 
             // Run-up accrues only while neither dash nor slide own this tick's
             // Vel (M9/C32), and only while actual speed clears the slide-start
@@ -130,7 +136,7 @@ namespace Ring.Simulation.Movement
                     // still be open (spec: denied no more than once per charge).
                     p.DashBufferTimer = 0f;
                     result.DashDenied = true;
-                    p.Vel = RegularMoveVel(p.Vel, input.MoveDir, hero, dt);
+                    p.Vel = RegularMoveVel(p.Vel, input.MoveDir, input.AimHeld, hero, dt);
                 }
             }
             else if (p.SlideTimer > 0f) // slide tick — link of the SAME chain (QC11)
@@ -141,8 +147,10 @@ namespace Ring.Simulation.Movement
                     ? math.normalize(input.MoveDir)
                     : p.SlideDir;
                 p.SlideDir = Geometry.RotateTowards(p.SlideDir, want, hero.SlideSteerRadPerSec * dt);
-                // AimHeld speed multiplier arrives in Task 14 — plain SlideSpeed here.
-                p.Vel = p.SlideDir * hero.SlideSpeed;
+                // Task 14 (A11): AimHeld slows the slide from THIS tick's Vel —
+                // reads input.AimHeld fresh every tick, so the multiplier takes
+                // effect the same tick aim goes up or down, never a tick late.
+                p.Vel = p.SlideDir * hero.SlideSpeed * (input.AimHeld ? hero.AimSlideSpeedMult : 1f);
                 // C22: a normal exit opens the link window and keeps this
                 // tick's full slide-speed Vel as exit momentum — the NEXT
                 // tick's regular-movement branch decays it towards MaxSpeed.
@@ -187,7 +195,7 @@ namespace Ring.Simulation.Movement
             }
             else
             {
-                p.Vel = RegularMoveVel(p.Vel, input.MoveDir, hero, dt);
+                p.Vel = RegularMoveVel(p.Vel, input.MoveDir, input.AimHeld, hero, dt);
             }
 
             // Stamina regen (Tasks 9/10): only once the post-dash delay has
@@ -243,10 +251,16 @@ namespace Ring.Simulation.Movement
             return result;
         }
 
-        static float2 RegularMoveVel(float2 vel, float2 moveDir, in HeroSimConfig hero, float dt)
-            => math.lengthsq(moveDir) > 1e-6f
-                ? MoveTowards(vel, moveDir * hero.MaxSpeed, hero.Accel * dt)
-                : MoveTowards(vel, float2.zero, hero.Friction * dt);
+        /// Task 14: `aimHeld` caps the target speed at MaxSpeed * AimMoveSpeedFrac
+        /// (the dash branches never call this — dash speed is untouched by the
+        /// aim cap by construction, not by a guard here).
+        static float2 RegularMoveVel(float2 vel, float2 moveDir, bool aimHeld, in HeroSimConfig hero, float dt)
+        {
+            if (math.lengthsq(moveDir) <= 1e-6f)
+                return MoveTowards(vel, float2.zero, hero.Friction * dt);
+            float maxSpeed = aimHeld ? hero.MaxSpeed * hero.AimMoveSpeedFrac : hero.MaxSpeed;
+            return MoveTowards(vel, moveDir * maxSpeed, hero.Accel * dt);
+        }
 
         /// Advances a dead player's body by one tick (spec §3.12): input, dash and
         /// weapon are inert once Alive is false, but the world keeps ticking — the

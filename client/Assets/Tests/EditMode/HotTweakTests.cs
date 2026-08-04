@@ -92,6 +92,8 @@ namespace Ring.Simulation.Tests
                 ["RunUpTimer"] = next.Hero.RunUpSeconds,
                 ["PostDashSlideTimer"] = next.Hero.PostDashSlideWindow,
                 ["LinkWindowTimer"] = next.Hero.LinkWindowSeconds,
+                // Task 14: aim-settle progress.
+                ["AimSettleTimer"] = next.Hero.AimSettleSeconds,
             };
 
             var w = new SimulationWorld(5, cfg);

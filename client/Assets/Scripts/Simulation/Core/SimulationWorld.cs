@@ -189,6 +189,8 @@ namespace Ring.Simulation.Core
             p.RunUpTimer = math.clamp(p.RunUpTimer, 0f, next.Hero.RunUpSeconds);
             p.PostDashSlideTimer = math.clamp(p.PostDashSlideTimer, 0f, next.Hero.PostDashSlideWindow);
             p.LinkWindowTimer = math.clamp(p.LinkWindowTimer, 0f, next.Hero.LinkWindowSeconds);
+            // Task 14: aim-settle progress, same clamp-to-new-ceiling contract.
+            p.AimSettleTimer = math.clamp(p.AimSettleTimer, 0f, next.Hero.AimSettleSeconds);
             _players[0] = p;
         }
 
@@ -408,6 +410,9 @@ namespace Ring.Simulation.Core
                 p.RunUpTimer = 0f;
                 p.PostDashSlideTimer = 0f;
                 p.LinkWindowTimer = 0f;
+                // Task 14: aim-settle progress clears the same way as the
+                // other movement timers above — a corpse doesn't keep aiming.
+                p.AimSettleTimer = 0f;
                 Emit(SimEventKind.PlayerDied, pos, 0, default, 0f, zone: zone, hitDir: dir);
             }
         }
@@ -583,6 +588,8 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.IframeTimer); h = StateHash64.Add(h, p.DashBufferTimer);
             h = StateHash64.Add(h, p.DashSpeedCur); // Task 12: ricochet-retained dash speed
             h = StateHash64.Add(h, p.FireCooldown); h = StateHash64.Add(h, p.Alive);
+            // Task 14: aim-down-sights settle progress.
+            h = StateHash64.Add(h, p.AimSettleTimer);
             // Task 10: slide state.
             h = StateHash64.Add(h, p.SlideDir); h = StateHash64.Add(h, p.SlideTimer);
             h = StateHash64.Add(h, p.SlideBufferTimer); h = StateHash64.Add(h, p.RunUpTimer);

@@ -19,6 +19,14 @@ namespace Ring.Simulation.Core
         public float DashSpeedCur;
         public bool Alive;
 
+        /// Aim-down-sights settle timer (Task 14): grows towards
+        /// Hero.AimSettleSeconds while input.AimHeld, decays at 2x that
+        /// growth rate once released (PlayerMovementSystem.Update, same
+        /// unconditional-every-tick contract as DashBufferTimer et al.).
+        /// Zeroed on death alongside the other movement timers (DamagePlayer);
+        /// clamped to [0, AimSettleSeconds] in ApplyConfig like the rest.
+        public float AimSettleTimer;
+
         /// Slide state (Task 10, spec §3.3 v5): SlideDir is the travel heading
         /// (steered towards input each tick, Geometry.RotateTowards-clamped);
         /// SlideTimer counts down the active slide; SlideBufferTimer is the

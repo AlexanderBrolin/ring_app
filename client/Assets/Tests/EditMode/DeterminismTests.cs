@@ -201,7 +201,13 @@ namespace Ring.Simulation.Tests
             // (Scripted()'s MoveDir/DashRequested), so the predicted position
             // legitimately differs from the raw one and shifts every Chaser's
             // telegraph timing (and therefore hit/miss/damage trace) downstream.
-            const ulong GoldenHash = 0x32C3D0814379F95BUL; // = 3657996575956400475
+            // Re-pinned by Task 14 (aim-in-motion cap/slide-mult/settle):
+            // PlayerState gained AimSettleTimer, folded into HashPlayer right
+            // after Alive — Scripted()'s input never sets AimHeld (that arrives
+            // in Task 16), so the field itself stays at its zero default the
+            // whole run, but it is still a new per-tick trace inside HashPlayer,
+            // so the hash legitimately changes even with AimHeld dormant.
+            const ulong GoldenHash = 0x8DE10048EC3EF11BUL; // = 10223452942308929819
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
