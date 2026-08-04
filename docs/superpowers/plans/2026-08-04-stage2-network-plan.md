@@ -210,10 +210,31 @@ headless-образ в Docker Hub, лаг-гейт механик и спайк 
 **Interfaces:**
 - `Networking.asmdef`: `"name": "Ring.Networking"`, `"references":
   ["Ring.Simulation", "Ring.Data", "FishNet.Runtime", "Unity.Mathematics"]`.
-- Спайк — **временный код**: `Spike/` и сцена `NetSpike.unity` **удаляются в
-  Т26**. Внутри `Spike/` разрешено срезать углы (нет фильтра, снапшота,
-  мультиплеера) — это разведка; правило «не срезать» снято письменно и только
-  здесь. Сцена в `EditorBuildSettings` не регистрируется.
+- Спайк — **временный код**: `Spike/`, сцена `NetSpike.unity`, префаб
+  `SpikePlayer.prefab`, `Editor/SpikeSceneBootstrap.cs` и временный шов в
+  `PlayerMovementSystem` **удаляются в Т30** — вместе с появлением
+  `PlayerPrediction.Step`, который их и замещает. (**Исправление v3:** здесь
+  стояло «в Т26», что противоречило Files Т30; удаление в Т26 оставило бы фазу
+  Ф7 без спайка при ещё ненаписанном предсказании.) Внутри `Spike/` разрешено
+  срезать углы (нет фильтра, снапшота, мультиплеера) — это разведка; правило
+  «не срезать» снято письменно и только здесь. Сцена в `EditorBuildSettings`
+  не регистрируется.
+- **Фактический состав Т3 шире списка Files выше** (зафиксировано при
+  исполнении): сцены в этом проекте строятся только бутстрапом (критическое
+  правило), поэтому добавляются `client/Assets/Scripts/Editor/SpikeSceneBootstrap.cs`
+  с идемпотентным `Apply()` и правка `Editor/Editor.asmdef` (+`Ring.Networking`,
+  `FishNet.Runtime`) — без неё бутстрап не компилируется; бутстрап порождает
+  артефакты `client/Assets/Scenes/NetSpike.unity` и
+  `client/Assets/Prefabs/SpikePlayer.prefab` (префаб обязан быть отдельным
+  ассетом, иначе `PlayerSpawner` его не заспавнит), а FishNet-постпроцессор
+  дописывает префаб в уже закоммиченный `DefaultPrefabObjects.asset`.
+- **Ввод спайка — скриптованный, а не ручной.** Проект Input-System-only, а
+  ссылки `Ring.Networking` запинены спекой §3.1 четвёркой без `Unity.InputSystem`;
+  тянуть его в постоянный asmdef ради временного спайка — расширение
+  архитектурного решения. Инпут подаётся детерминированной траекторией через
+  `SetPendingInput` (тот самый шов, который штатно заводит Т34), поэтому четыре
+  наблюдения снимаются **воспроизводимо**. «Пощупать руками» — задача вехи В1,
+  а не Т3.
 
 - [ ] **Step 1:** asmdef + сцена-песочница (с `.meta` в коммите).
 - [ ] **Step 2:** `SpikePlayerController : NetworkBehaviour` — `[Replicate]`
