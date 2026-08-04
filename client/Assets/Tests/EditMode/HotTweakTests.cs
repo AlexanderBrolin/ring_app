@@ -81,6 +81,9 @@ namespace Ring.Simulation.Tests
                 ["DashCooldown"] = next.Hero.DashCooldown,
                 ["IframeTimer"] = next.Hero.DashIframes,
                 ["DashBufferTimer"] = next.Hero.DashBufferWindow,
+                // Task 12: ricochet-decayed dash speed clamps to the new
+                // DashSpeed ceiling, same contract as the dash timers above.
+                ["DashSpeedCur"] = next.Hero.DashSpeed,
                 ["FireCooldown"] = next.Weapon.FireInterval,
                 ["RecoilOffset"] = float.PositiveInfinity, // clamped by WeaponSystem, not ApplyConfig
                 // Task 10: slide timers.

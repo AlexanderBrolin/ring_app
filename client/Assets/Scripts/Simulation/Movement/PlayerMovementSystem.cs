@@ -7,11 +7,17 @@ namespace Ring.Simulation.Movement
     /// contract back to SimulationWorld.Tick, replacing the old plain-bool
     /// return (dash-started only). Later tasks extend it as more movement
     /// outcomes need to reach the world layer (slide/link-window — QC12);
-    /// Task 10 adds the slide pair below (ricochet fields arrive in Task 12).
+    /// Task 10 adds the slide pair below.
     public struct MovementResult
     {
         public bool DashStarted, DashDenied;
         public bool SlideStarted, SlideDenied;
+        /// Task 12: an active dash mirrored off a wall/obstacle this tick.
+        /// RicochetPos is MoveWithCollisions' first-contact point, RicochetNormal
+        /// its surface normal — SimulationWorld.Tick emits DashRicocheted with
+        /// these as Pos/HitDir.
+        public bool Ricocheted;
+        public float2 RicochetPos, RicochetNormal;
     }
 
     internal static class PlayerMovementSystem
@@ -65,10 +71,16 @@ namespace Ring.Simulation.Movement
             // so wall-stop damping — which only applies to slide movement —
             // needs its own flag to know which branch owned this tick.
             bool slideMoveTick = false;
+            // Task 12: mirrors slideMoveTick — MoveWithCollisions is the single
+            // shared call site at the bottom of this method, so the ricochet
+            // check (which only makes sense for a tick the DASH branch owned)
+            // needs its own flag, same reasoning as slideMoveTick's own comment.
+            bool dashMoveTick = false;
             if (p.DashTimer > 0f)
             {
+                dashMoveTick = true;
                 p.DashTimer = math.max(0f, p.DashTimer - dt);
-                p.Vel = p.DashDir * hero.DashSpeed;
+                p.Vel = p.DashDir * p.DashSpeedCur;
                 // C13: opened exactly on the tick DashTimer crosses to 0, not
                 // held open for the whole dash — checked here, right after the
                 // decrement that can cause the transition.
@@ -88,6 +100,7 @@ namespace Ring.Simulation.Movement
                 float cost = linked ? hero.LinkedDashStaminaCost : hero.DashStaminaCost;
                 if (p.Stamina >= cost)
                 {
+                    dashMoveTick = true;
                     float2 dir = math.lengthsq(input.MoveDir) > 1e-6f
                         ? math.normalizesafe(input.MoveDir)
                         : math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f));
@@ -96,7 +109,11 @@ namespace Ring.Simulation.Movement
                     p.DashCooldown = hero.DashCooldown;
                     p.IframeTimer = hero.DashIframes;
                     p.DashBufferTimer = 0f;
-                    p.Vel = dir * hero.DashSpeed;
+                    // Task 12: DashSpeedCur starts every fresh dash at full
+                    // Hero.DashSpeed — a linked/re-dash never inherits a
+                    // previous dash's ricochet-decayed speed.
+                    p.DashSpeedCur = hero.DashSpeed;
+                    p.Vel = dir * p.DashSpeedCur;
                     p.Stamina -= cost;
                     p.StaminaRegenDelayTimer = hero.StaminaRegenDelay;
                     // Task 11 (C6): the window is consumed by USE, whether it
@@ -181,7 +198,7 @@ namespace Ring.Simulation.Movement
 
             float2 target = p.Pos + p.Vel * dt;
             MoveWithCollisions(ref p.Pos, ref p.Vel, target, hero.Radius, cfg.Arena,
-                out bool hit, out float2 hitNormal, out _);
+                out bool hit, out float2 hitNormal, out float2 contact);
 
             // Task 11 (M3/QA12): a slide that rams into a wall/obstacle near
             // head-on kills the slide outright instead of sliding along it —
@@ -200,6 +217,28 @@ namespace Ring.Simulation.Movement
                 p.Vel = math.normalizesafe(p.Vel, p.SlideDir) * hero.MaxSpeed;
                 p.RunUpTimer = 0f;
                 p.LinkWindowTimer = 0f;
+            }
+
+            // Task 12 (guard at the CALLER, not inside MoveWithCollisions):
+            // mirror the dash off the surface it just rammed into, dashMoveTick
+            // restricting this to a tick the dash branch actually owned (a
+            // stale DashDir from a long-finished dash must never mirror off an
+            // unrelated wall the player later just walks into).
+            // !result.Ricocheted caps this at <=1 per tick (M8): MoveWithCollisions
+            // may run up to 3 internal correction iterations in a corner, but
+            // hit/normal/contact only ever report the FIRST of them.
+            if (dashMoveTick && hit && math.dot(p.DashDir, hitNormal) < 0f && !result.Ricocheted)
+            {
+                p.DashDir = math.reflect(p.DashDir, hitNormal);        // mirror (D9)
+                p.DashSpeedCur *= hero.RicochetRetention;
+                result.Ricocheted = true;                           // MovementResult (QC12)
+                result.RicochetPos = contact; result.RicochetNormal = hitNormal;
+                // Reflected vector applies FROM THE NEXT tick (D16): this
+                // tick's Vel was already resolved by the slide inside
+                // MoveWithCollisions above (it is NOT overwritten here) — only
+                // the NEXT dash-continue tick reads the updated DashDir/
+                // DashSpeedCur via `p.Vel = p.DashDir * p.DashSpeedCur` at the
+                // top of this method.
             }
             return result;
         }

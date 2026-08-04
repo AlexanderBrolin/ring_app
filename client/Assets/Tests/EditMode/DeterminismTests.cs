@@ -185,7 +185,16 @@ namespace Ring.Simulation.Tests
             // scripted MoveDir and PostDashSlideTimer opens on every scripted
             // dash's end — both are new per-tick trace inside HashPlayer, so
             // the hash legitimately changes even with slide itself dormant.
-            const ulong GoldenHash = 0x5D8AF580F3587000UL; // = 6740469726500646912
+            // Re-pinned by Task 12 (dash ricochet): PlayerState gained
+            // DashSpeedCur, folded into HashPlayer right after DashBufferTimer
+            // — every scripted tick now carries its trace even on runs where
+            // no dash ever hits a wall (dash start alone sets it to
+            // Hero.DashSpeed), so the hash legitimately changes on that field
+            // alone; on top of that, Scripted()'s DashRequested (5% per tick)
+            // has always been able to send a dash into one of the scripted
+            // scenario's five obstacles, and a dash that does now mirrors
+            // instead of stopping dead — a further, real behaviour change.
+            const ulong GoldenHash = 0x77068112C0B36A3FUL; // = 8576684457916066367
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 

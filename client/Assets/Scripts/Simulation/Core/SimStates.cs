@@ -9,6 +9,14 @@ namespace Ring.Simulation.Core
         public float RecoilOffset,
             Hp, Stamina, StaminaRegenDelayTimer,
             DashTimer, DashCooldown, IframeTimer, DashBufferTimer, FireCooldown;
+        /// Task 12: the dash's current speed — set to Hero.DashSpeed on dash
+        /// start, then multiplied by Hero.RicochetRetention each time the dash
+        /// mirrors off a wall/obstacle (PlayerMovementSystem), so consecutive
+        /// ricochets compound instead of resetting. Only meaningful while
+        /// DashTimer > 0 (mirrors DashDir's "heading, not a timer" role, but
+        /// unlike DashDir it IS zeroed on death — see DamagePlayer — because a
+        /// stale nonzero speed with no active dash reads as inconsistent).
+        public float DashSpeedCur;
         public bool Alive;
 
         /// Slide state (Task 10, spec §3.3 v5): SlideDir is the travel heading

@@ -124,6 +124,13 @@ namespace Ring.Simulation.Core
                     Emit(SimEventKind.StaminaDenied, _players[0].Pos, 0, default,
                         _config.Hero.SlideStaminaCost - _players[0].Stamina);
                 }
+                if (moveResult.Ricocheted)
+                {
+                    // Task 12: Pos is the contact point (not the player's
+                    // post-slide position), HitDir the surface normal.
+                    Emit(SimEventKind.DashRicocheted, moveResult.RicochetPos, 0, default, 0f,
+                        hitDir: moveResult.RicochetNormal);
+                }
                 WeaponSystem.Update(this, ref _players[0], in input);
             }
             else
@@ -168,6 +175,10 @@ namespace Ring.Simulation.Core
             p.StaminaRegenDelayTimer = math.clamp(p.StaminaRegenDelayTimer, 0f, next.Hero.StaminaRegenDelay);
             p.DashTimer = math.clamp(p.DashTimer, 0f, next.Hero.DashDuration);
             p.DashCooldown = math.clamp(p.DashCooldown, 0f, next.Hero.DashCooldown);
+            // Task 12: a ricochet-decayed DashSpeedCur must not exceed the new
+            // config's DashSpeed ceiling — same clamp-to-new-ceiling contract
+            // as every other dash timer/value here.
+            p.DashSpeedCur = math.clamp(p.DashSpeedCur, 0f, next.Hero.DashSpeed);
             p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
             p.DashBufferTimer = math.clamp(p.DashBufferTimer, 0f, next.Hero.DashBufferWindow);
             p.FireCooldown = math.clamp(p.FireCooldown, 0f, next.Weapon.FireInterval);
@@ -379,6 +390,11 @@ namespace Ring.Simulation.Core
                 p.Alive = false;
                 _stats.DeathTick = _tick;
                 p.DashTimer = 0f;
+                // Task 12: DashSpeedCur has no meaning without an active dash
+                // (DashTimer == 0 already says "not dashing") — zeroed for the
+                // same clean-corpse-read reason as DashTimer itself, unlike
+                // DashDir (a heading, deliberately left as-is below).
+                p.DashSpeedCur = 0f;
                 p.IframeTimer = 0f;
                 // Task 9: Stamina itself freezes for free (UpdateDead never
                 // touches it), but the regen-delay countdown is reset so a
@@ -565,6 +581,7 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.Stamina); h = StateHash64.Add(h, p.StaminaRegenDelayTimer);
             h = StateHash64.Add(h, p.DashTimer); h = StateHash64.Add(h, p.DashCooldown);
             h = StateHash64.Add(h, p.IframeTimer); h = StateHash64.Add(h, p.DashBufferTimer);
+            h = StateHash64.Add(h, p.DashSpeedCur); // Task 12: ricochet-retained dash speed
             h = StateHash64.Add(h, p.FireCooldown); h = StateHash64.Add(h, p.Alive);
             // Task 10: slide state.
             h = StateHash64.Add(h, p.SlideDir); h = StateHash64.Add(h, p.SlideTimer);

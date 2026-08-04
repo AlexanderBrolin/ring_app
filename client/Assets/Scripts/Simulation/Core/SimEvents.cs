@@ -26,7 +26,13 @@ namespace Ring.Simulation.Core
         /// Task 10: a slide started — Pos is the player's position for this
         /// tick (spec §3.4 payload convention, same as PlayerDashed), HitDir
         /// carries the slide's travel direction (SlideDir).
-        PlayerSlideStarted
+        PlayerSlideStarted,
+        /// Task 12: an active dash mirrored off a wall/obstacle — Pos is the
+        /// contact point (MoveWithCollisions' first-contact `contact` out
+        /// param, not the player's post-slide position), HitDir carries the
+        /// surface normal at contact (same "unused for every other kind"
+        /// convention as Amount/Owner/Zone above).
+        DashRicocheted
     }
 
     public struct SimEvent
