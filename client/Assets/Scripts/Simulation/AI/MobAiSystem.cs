@@ -65,22 +65,37 @@ namespace Ring.Simulation.AI
 
                 case MobAiState.Chase:
                 {
-                    // Entry criterion (centre-to-centre <= AttackRange) is
-                    // intentionally stricter than the strike's hit criterion below
-                    // (CircleOverlap, which also folds in the hero's own body
-                    // radius: effectively centre-to-centre < AttackRange +
-                    // hero.Radius). That's a deliberate asymmetry, not something to
-                    // unify: since AttackRange and hero.Radius are both positive,
-                    // the moment Telegraph is entered the player is already well
-                    // inside the strike's looser hit range too (by a hero.Radius
-                    // margin), so the windup tolerates the player drifting or
-                    // dashing a bit without the strike missing purely because of
-                    // the two checks' different shapes. Tightening the entry check
-                    // to match the hit check (or vice versa) would only make the
-                    // Chaser commit to a windup either later or from further away
-                    // than intended — not something either radius/range pair in
-                    // the current balance needs.
-                    float dist = math.distance(m.Pos, player.Pos);
+                    // Entry criterion (Task 13/spec §3.6 v2): mob-centre to the
+                    // player's PREDICTED position (Targeting.PredictPos, fed
+                    // Hero.MaxSpeed/TelegraphSeconds/SwingLeadFactor/
+                    // SwingLeadMaxMeters) <= AttackRange — not raw centre-to-centre.
+                    // A player closing in (running or dashing at the mob) gets a
+                    // forward-shifted prediction, so the windup can start before
+                    // raw contact and the strike below lands on a target that kept
+                    // closing instead of always being a beat late. A player
+                    // standing still or moving away gets little or no forward
+                    // shift — PredictPos degenerates to the exact raw position when
+                    // SwingLeadFactor is 0 (see
+                    // MobAiTests.SwingLeadZero_EntryTickEqualsE1Rule) — so entry
+                    // stays at least as tight as the pre-Task-13 raw-distance rule
+                    // in that case.
+                    //
+                    // This is intentionally NOT unified with the strike's hit
+                    // criterion below (CircleOverlap, which folds in the hero's own
+                    // body radius: effectively centre-to-centre < AttackRange +
+                    // hero.Radius) — which of the two is the looser check now
+                    // depends on the player's velocity at the entry tick (the
+                    // predictive lead can make entry the looser one while the
+                    // player is closing fast; it reverts to the old
+                    // always-tighter-than-the-hit-check relationship otherwise).
+                    // Either way, the strike still re-validates centre-to-centre
+                    // distance honestly after TelegraphSeconds (see below) — an
+                    // early predictive entry is never an automatic hit, only an
+                    // earlier start of the windup clock.
+                    float2 predictedPlayerPos = Targeting.PredictPos(player.Pos, player.Vel,
+                        w.Config.Hero.MaxSpeed, cfg.TelegraphSeconds, cfg.SwingLeadFactor,
+                        cfg.SwingLeadMaxMeters);
+                    float dist = math.distance(m.Pos, predictedPlayerPos);
                     if (dist <= cfg.AttackRange)
                     {
                         m.Ai = MobAiState.Telegraph;
@@ -111,7 +126,17 @@ namespace Ring.Simulation.AI
                         // looser than the entry check is intentional.
                         if (Geometry.CircleOverlap(m.Pos, cfg.AttackRange,
                                 player.Pos, w.Config.Hero.Radius))
-                            w.DamagePlayer(cfg.ContactDamage, m.Pos);
+                        {
+                            // A fist is not aimed: it always reports Body and is
+                            // NOT scaled by the zone table (Task 6) — the
+                            // multipliers exist to reward aiming, which melee
+                            // does none of. Direction is attacker → victim, the
+                            // knock-reaction axis Presentation needs; the same
+                            // pre-motion `player` snapshot the overlap check
+                            // above uses, so both read one consistent frame.
+                            w.DamagePlayer(cfg.ContactDamage, m.Pos, HitZone.Body,
+                                math.normalizesafe(player.Pos - m.Pos, new float2(1f, 0f)));
+                        }
                         m.Ai = MobAiState.Recover;
                         m.StateTimer = 0f;
                     }
@@ -190,8 +215,11 @@ namespace Ring.Simulation.AI
             {
                 float2 aimDir = Targeting.AimWithLead(m.Pos, player.Pos, player.Vel,
                     cfg.ProjectileSpeed, cfg.LeadFactor);
+                // Height/VelZ (Task 4): flat trajectory for now — spawns at the
+                // gunner's muzzle height with zero vertical velocity.
                 w.SpawnProjectile(ProjectileOwner.Mob, m.Pos + aimDir * cfg.Radius,
-                    aimDir * cfg.ProjectileSpeed, cfg.ProjectileDamage, cfg.ProjectileRadius,
+                    aimDir * cfg.ProjectileSpeed, cfg.MuzzleHeight, 0f,
+                    cfg.ProjectileDamage, cfg.ProjectileRadius,
                     cfg.ProjectileLifetime);
                 m.FireCooldown += cfg.FireInterval;
             }
@@ -206,7 +234,8 @@ namespace Ring.Simulation.AI
         static void ApplyMotion(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena, float dt)
         {
             float2 target = m.Pos + m.Vel * dt;
-            PlayerMovementSystem.MoveWithCollisions(ref m.Pos, ref m.Vel, target, cfg.Radius, in arena);
+            PlayerMovementSystem.MoveWithCollisions(ref m.Pos, ref m.Vel, target, cfg.Radius, in arena,
+                out _, out _, out _);
         }
 
         /// Steering direction toward `targetPos`: the direct line unless an obstacle

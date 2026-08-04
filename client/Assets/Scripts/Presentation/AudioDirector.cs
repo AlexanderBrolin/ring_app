@@ -47,6 +47,9 @@ namespace Ring.Presentation
     public sealed class AudioDirector : MonoBehaviour
     {
         const int VoiceCount = 16;
+        // В3 fix-wave 2 (item 3c): sentinel `_voiceKind` value for a physical
+        // voice slot borrowed by `PlayHeadHoverTick` — see that method's own doc.
+        const SimEventKind NotAnEventKind = (SimEventKind)255;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
@@ -55,6 +58,9 @@ namespace Ring.Presentation
         [SerializeField] AudioClip _mobDeathClip;
         [SerializeField] AudioClip _dashClip;
         [SerializeField] AudioClip _playerHitClip;
+        [SerializeField] AudioClip _staminaDeniedClip; // Task 22
+        [SerializeField] AudioClip _ricochetClip; // Task 22
+        [SerializeField] AudioClip _headHoverTickClip; // В3 fix-wave 2, item 3c
 
         AudioSource[] _voices;
         // Which SimEventKind each physical voice is currently sounding for
@@ -74,6 +80,11 @@ namespace Ring.Presentation
         // for the full rationale.
         bool _predicted;
         float _predictedExpireAt;
+
+        // В3 fix-wave 2 (item 3c): last-play timestamp for the head-hover tick,
+        // parallel to `_lastPlayTime` above but NOT indexed by `SimEventKind` —
+        // see `PlayHeadHoverTick`'s own doc for why.
+        float _lastHeadHoverTickTime = float.NegativeInfinity;
 
         void Awake()
         {
@@ -107,6 +118,43 @@ namespace Ring.Presentation
         public void StopAll()
         {
             for (int i = 0; i < _voices.Length; i++) _voices[i].Stop();
+        }
+
+        /// В3 fix-wave 2 (app-n6g item 3c): a subtle one-shot the instant the
+        /// aim-proxy hover zone ENTERS Head — edge-triggered by the caller
+        /// (`CrosshairView` tracks its own previous-frame zone and calls this
+        /// exactly once per entry, never every frame the cursor stays over Head),
+        /// reinforcing the marker pulse (`HeadHoverPulseHz`/`Amp`) and mob glow
+        /// boost (`ViewRegistry.SyncMobs`) above with a matching sound. Rate-limited
+        /// by the SAME `GameFeelConfig.MinSfxInterval` anti-spam knob `PlayClip`'s
+        /// per-kind gate already reads, via its own dedicated timestamp rather than
+        /// `PlayClip`'s `_lastPlayTime[(int)kind]` bucket: a hover transition is a
+        /// Presentation-only signal (`AimProvider`'s raycast, never emitted by the
+        /// sim) with no `SimEventKind` of its own, and inventing a fake one just to
+        /// share that array would touch Simulation code for a purely cosmetic
+        /// reason — out of scope this fix-wave (Simulation changes are sanctioned
+        /// ONLY by a proven bug, item 4's investigation). Shares the same physical
+        /// round-robin voice pool as every other clip (`_voices`/`_nextVoice`); no
+        /// `VoicesPerSfx` cap here (nothing to bucket concurrent voices by), the
+        /// same trade-off `MinSfxInterval` alone already accepts for this one
+        /// low-frequency cue. `NotAnEventKind` marks the stolen physical slot in
+        /// `_voiceKind` so `CountActiveVoices(realKind)` can never mistake this
+        /// clip for that real kind's own voice while both happen to be sounding
+        /// at once (the array only ever holds genuine `SimEventKind` values
+        /// otherwise, all < 14 — `byte 255` can never collide with one).
+        public void PlayHeadHoverTick(float2 simPos)
+        {
+            if (_headHoverTickClip == null) return;
+            float now = Time.unscaledTime;
+            if (now - _lastHeadHoverTickTime < _gameFeel.MinSfxInterval) return;
+
+            AudioSource source = _voices[_nextVoice];
+            _voiceKind[_nextVoice] = NotAnEventKind;
+            _nextVoice = (_nextVoice + 1) % _voices.Length;
+            source.transform.position = SimSpace.ToWorld(simPos);
+            source.pitch = 1f + Random.Range(-_gameFeel.PitchRange, _gameFeel.PitchRange);
+            source.PlayOneShot(_headHoverTickClip);
+            _lastHeadHoverTickTime = now;
         }
 
         /// Task 28: per-frame prediction — see the class doc above and
@@ -171,15 +219,35 @@ namespace Ring.Presentation
                 return;
             }
 
-            PlayClip(ClipFor(e.Kind), e.Kind, e.Pos);
+            // Task 22 (spec brief): zone-biased pitch — Head reads higher, Legs
+            // lower, Body/None (and every non-blow kind, whose Zone defaults to
+            // HitZone.None) stay at the plain PitchRange jitter.
+            PlayClip(ClipFor(e.Kind), e.Kind, e.Pos, ZonePitchOffset(e.Zone));
+        }
+
+        /// Task 22: additive pitch bias layered on top of `PlayClip`'s ordinary
+        /// `PitchRange` jitter — never applied standalone, always summed with
+        /// the random jitter so the zone bias reads as "this hit's pitch, plus
+        /// its usual small randomization" rather than replacing it.
+        float ZonePitchOffset(HitZone zone)
+        {
+            switch (zone)
+            {
+                case HitZone.Head: return _gameFeel.ZoneHitPitchOffset;
+                case HitZone.Legs: return -_gameFeel.ZoneHitPitchOffset;
+                default: return 0f;
+            }
         }
 
         /// Shared by the event-driven `HandleEvent` and the predicted `Update`
         /// path (Task 28): `MinSfxInterval`/`VoicesPerSfx` drop-only gates, then
         /// the round-robin voice pick. Returns whether a voice actually started
         /// playing — the predicted path only arms its suppression latch on
-        /// `true` (see `Update`'s doc above for why).
-        bool PlayClip(AudioClip clip, SimEventKind kind, float2 simPos)
+        /// `true` (see `Update`'s doc above for why). `pitchOffset` (Task 22)
+        /// defaults to 0 for every call site that has no zone to bias by (the
+        /// predicted-shot path above never passes one — a predicted shot has no
+        /// SimEvent, hence no Zone, to read yet).
+        bool PlayClip(AudioClip clip, SimEventKind kind, float2 simPos, float pitchOffset = 0f)
         {
             if (clip == null) return false;
 
@@ -191,7 +259,7 @@ namespace Ring.Presentation
             _voiceKind[_nextVoice] = kind;
             _nextVoice = (_nextVoice + 1) % _voices.Length;
             source.transform.position = SimSpace.ToWorld(simPos);
-            source.pitch = 1f + Random.Range(-_gameFeel.PitchRange, _gameFeel.PitchRange);
+            source.pitch = 1f + Random.Range(-_gameFeel.PitchRange, _gameFeel.PitchRange) + pitchOffset;
             source.PlayOneShot(clip);
             _lastPlayTime[(int)kind] = now;
             return true;
@@ -222,6 +290,8 @@ namespace Ring.Presentation
                 case SimEventKind.MobDied: return _mobDeathClip;
                 case SimEventKind.PlayerDashed: return _dashClip;
                 case SimEventKind.PlayerDamaged: return _playerHitClip;
+                case SimEventKind.StaminaDenied: return _staminaDeniedClip; // Task 22
+                case SimEventKind.DashRicocheted: return _ricochetClip; // Task 22
                 default: return null;
             }
         }

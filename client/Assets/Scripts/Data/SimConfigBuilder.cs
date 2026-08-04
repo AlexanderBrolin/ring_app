@@ -26,7 +26,37 @@ namespace Ring.Data
                     DashDuration = hero.DashDuration,
                     DashCooldown = hero.DashCooldown,
                     DashIframes = hero.DashIframes,
-                    DashBufferWindow = hero.DashBufferWindow
+                    DashBufferWindow = hero.DashBufferWindow,
+                    LegsTop = hero.LegsTop,
+                    BodyTop = hero.BodyTop,
+                    HeadTop = hero.HeadTop,
+                    LegsDamageMult = hero.LegsDamageMult,
+                    BodyDamageMult = hero.BodyDamageMult,
+                    HeadDamageMult = hero.HeadDamageMult,
+                    SlideProfileTop = hero.SlideProfileTop,
+                    MuzzleHeight = hero.MuzzleHeight,
+                    SlideMuzzleHeight = hero.SlideMuzzleHeight,
+                    MaxAimHeight = hero.MaxAimHeight,
+                    StaminaMax = hero.StaminaMax,
+                    DashStaminaCost = hero.DashStaminaCost,
+                    SlideStaminaCost = hero.SlideStaminaCost,
+                    StaminaRegenPerSec = hero.StaminaRegenPerSec,
+                    StaminaRegenDelay = hero.StaminaRegenDelay,
+                    LinkRefund = hero.LinkRefund,
+                    SlideSpeed = hero.SlideSpeed,
+                    SlideDuration = hero.SlideDuration,
+                    SlideSteerRadPerSec = hero.SlideSteerRadPerSec,
+                    SlideMinSpeedFrac = hero.SlideMinSpeedFrac,
+                    RunUpSeconds = hero.RunUpSeconds,
+                    RunUpDecayMult = hero.RunUpDecayMult,
+                    SlideBufferWindow = hero.SlideBufferWindow,
+                    LinkWindowSeconds = hero.LinkWindowSeconds,
+                    PostDashSlideWindow = hero.PostDashSlideWindow,
+                    SlideWallStopDot = hero.SlideWallStopDot,
+                    RicochetRetention = hero.RicochetRetention,
+                    AimMoveSpeedFrac = hero.AimMoveSpeedFrac,
+                    AimSlideSpeedMult = hero.AimSlideSpeedMult,
+                    AimSettleSeconds = hero.AimSettleSeconds
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -40,7 +70,11 @@ namespace Ring.Data
                     RecoilRecoveryRadPerSec = weapon.RecoilRecoveryRadPerSec,
                     RecoilMaxRad = weapon.RecoilMaxRad,
                     MuzzleOffset = weapon.MuzzleOffset,
-                    CanFireWhileDash = weapon.CanFireWhileDash
+                    CanFireWhileDash = weapon.CanFireWhileDash,
+                    CanFireWhileSlide = weapon.CanFireWhileSlide,
+                    SpreadRunMult = weapon.SpreadRunMult,
+                    SpreadSlideMult = weapon.SpreadSlideMult,
+                    RunSpreadSpeedFrac = weapon.RunSpreadSpeedFrac
                 },
                 Chaser = ToMobSimConfig(chaser),
                 Gunner = ToMobSimConfig(gunner),
@@ -87,7 +121,16 @@ namespace Ring.Data
             SeparationRadius = m.SeparationRadius,
             SeparationStrength = m.SeparationStrength,
             AvoidLookahead = m.AvoidLookahead,
-            AvoidMargin = m.AvoidMargin
+            AvoidMargin = m.AvoidMargin,
+            LegsTop = m.LegsTop,
+            BodyTop = m.BodyTop,
+            HeadTop = m.HeadTop,
+            LegsDamageMult = m.LegsDamageMult,
+            BodyDamageMult = m.BodyDamageMult,
+            HeadDamageMult = m.HeadDamageMult,
+            MuzzleHeight = m.MuzzleHeight,
+            SwingLeadFactor = m.SwingLeadFactor,
+            SwingLeadMaxMeters = m.SwingLeadMaxMeters
         };
 
         static ArenaSimConfig ToArenaSimConfig(ArenaConfig a)
@@ -143,8 +186,101 @@ namespace Ring.Data
             ReqNonNegative(errors, "Weapon.RecoilMaxRad", cfg.Weapon.RecoilMaxRad);
             ReqNonNegative(errors, "Weapon.MuzzleOffset", cfg.Weapon.MuzzleOffset);
 
+            // Task 2 (spec stamina/slide/aim): stamina pool + action costs/regen.
+            ReqPositive(errors, "Hero.StaminaMax", cfg.Hero.StaminaMax);
+            ReqPositive(errors, "Hero.StaminaRegenPerSec", cfg.Hero.StaminaRegenPerSec);
+            ReqNonNegative(errors, "Hero.StaminaRegenDelay", cfg.Hero.StaminaRegenDelay);
+            ReqCostWithinStamina(errors, "Hero.DashStaminaCost", cfg.Hero.DashStaminaCost, cfg.Hero.StaminaMax);
+            ReqCostWithinStamina(errors, "Hero.SlideStaminaCost", cfg.Hero.SlideStaminaCost, cfg.Hero.StaminaMax);
+            // В1 fix-wave 3 (owner economy rework): LinkRefund must stay
+            // non-negative and strictly below the cheaper of the two costs it
+            // discounts — equal-or-above either one would let a chain of
+            // linked moves net-gain stamina forever (perpetual motion).
+            ReqNonNegative(errors, "Hero.LinkRefund", cfg.Hero.LinkRefund);
+            float minLinkCost = math.min(cfg.Hero.DashStaminaCost, cfg.Hero.SlideStaminaCost);
+            if (cfg.Hero.LinkRefund >= minLinkCost)
+            {
+                errors.Add("Hero.LinkRefund must be < min(Hero.DashStaminaCost, Hero.SlideStaminaCost) " +
+                    $"(got LinkRefund={cfg.Hero.LinkRefund:F3}, min cost={minLinkCost:F3}).");
+            }
+
+            // Task 2: slide kinematics + buffered-input windows.
+            ReqPositive(errors, "Hero.SlideSpeed", cfg.Hero.SlideSpeed);
+            ReqPositive(errors, "Hero.SlideDuration", cfg.Hero.SlideDuration);
+            ReqPositive(errors, "Hero.RunUpSeconds", cfg.Hero.RunUpSeconds);
+            ReqNonNegative(errors, "Hero.RunUpDecayMult", cfg.Hero.RunUpDecayMult);
+            ReqNonNegative(errors, "Hero.SlideBufferWindow", cfg.Hero.SlideBufferWindow);
+            ReqNonNegative(errors, "Hero.LinkWindowSeconds", cfg.Hero.LinkWindowSeconds);
+            ReqNonNegative(errors, "Hero.PostDashSlideWindow", cfg.Hero.PostDashSlideWindow);
+            ReqInRange(errors, "Hero.SlideMinSpeedFrac", cfg.Hero.SlideMinSpeedFrac, 0f, 1f, minExclusive: true);
+            ReqInRange(errors, "Hero.SlideWallStopDot", cfg.Hero.SlideWallStopDot, -1f, 1f);
+            ReqInRange(errors, "Hero.RicochetRetention", cfg.Hero.RicochetRetention, 0f, 1f);
+
+            // Task 2: aim-down-sights movement/settle profile. AimMoveSpeedFrac must
+            // stay strictly above SlideMinSpeedFrac (D15) — checked separately from the
+            // (0,1] range so its message names AimMoveSpeedFrac specifically.
+            ReqInRange(errors, "Hero.AimMoveSpeedFrac", cfg.Hero.AimMoveSpeedFrac, 0f, 1f, minExclusive: true);
+            if (cfg.Hero.AimMoveSpeedFrac <= cfg.Hero.SlideMinSpeedFrac)
+            {
+                errors.Add("Hero.AimMoveSpeedFrac must be > Hero.SlideMinSpeedFrac (D15) " +
+                    $"(got AimMoveSpeedFrac={cfg.Hero.AimMoveSpeedFrac:F3}, " +
+                    $"SlideMinSpeedFrac={cfg.Hero.SlideMinSpeedFrac:F3}).");
+            }
+            ReqInRange(errors, "Hero.AimSlideSpeedMult", cfg.Hero.AimSlideSpeedMult, 0f, 1f, minExclusive: true);
+            ReqPositive(errors, "Hero.AimSettleSeconds", cfg.Hero.AimSettleSeconds);
+
+            // Task 2: movement-driven spread widening while running/sliding.
+            ReqAtLeast(errors, "Weapon.SpreadRunMult", cfg.Weapon.SpreadRunMult, 1f);
+            ReqAtLeast(errors, "Weapon.SpreadSlideMult", cfg.Weapon.SpreadSlideMult, 1f);
+            ReqInRange(errors, "Weapon.RunSpreadSpeedFrac", cfg.Weapon.RunSpreadSpeedFrac, 0f, 1f);
+
             ValidateMob(errors, "Chaser", cfg.Chaser);
             ValidateMob(errors, "Gunner", cfg.Gunner);
+
+            ValidateZones(errors, "Hero", cfg.Hero.LegsTop, cfg.Hero.BodyTop, cfg.Hero.HeadTop,
+                cfg.Hero.LegsDamageMult, cfg.Hero.BodyDamageMult, cfg.Hero.HeadDamageMult);
+            ValidateZones(errors, "Chaser", cfg.Chaser.LegsTop, cfg.Chaser.BodyTop, cfg.Chaser.HeadTop,
+                cfg.Chaser.LegsDamageMult, cfg.Chaser.BodyDamageMult, cfg.Chaser.HeadDamageMult);
+            ValidateZones(errors, "Gunner", cfg.Gunner.LegsTop, cfg.Gunner.BodyTop, cfg.Gunner.HeadTop,
+                cfg.Gunner.LegsDamageMult, cfg.Gunner.BodyDamageMult, cfg.Gunner.HeadDamageMult);
+
+            ReqPositive(errors, "Hero.SlideProfileTop", cfg.Hero.SlideProfileTop);
+            if (cfg.Hero.SlideProfileTop > cfg.Hero.BodyTop)
+            {
+                errors.Add("Hero.SlideProfileTop must be <= Hero.BodyTop " +
+                    $"(got SlideProfileTop={cfg.Hero.SlideProfileTop:F3}, BodyTop={cfg.Hero.BodyTop:F3}).");
+            }
+            if (cfg.Hero.LegsTop > cfg.Hero.SlideProfileTop)
+            {
+                errors.Add("Hero.SlideProfileTop must be >= Hero.LegsTop " +
+                    $"(got SlideProfileTop={cfg.Hero.SlideProfileTop:F3}, LegsTop={cfg.Hero.LegsTop:F3}).");
+            }
+            if (cfg.Hero.SlideProfileTop + cfg.Gunner.ProjectileRadius >= cfg.Gunner.MuzzleHeight)
+            {
+                errors.Add("Hero.SlideProfileTop + Gunner.ProjectileRadius must be < Gunner.MuzzleHeight " +
+                    $"(got SlideProfileTop={cfg.Hero.SlideProfileTop:F3}, " +
+                    $"Gunner.ProjectileRadius={cfg.Gunner.ProjectileRadius:F3}, " +
+                    $"Gunner.MuzzleHeight={cfg.Gunner.MuzzleHeight:F3}).");
+            }
+
+            if (cfg.Hero.MuzzleHeight > cfg.Hero.HeadTop)
+            {
+                errors.Add("Hero.MuzzleHeight must be <= Hero.HeadTop " +
+                    $"(got MuzzleHeight={cfg.Hero.MuzzleHeight:F3}, HeadTop={cfg.Hero.HeadTop:F3}).");
+            }
+            if (cfg.Hero.SlideMuzzleHeight > cfg.Hero.SlideProfileTop)
+            {
+                errors.Add("Hero.SlideMuzzleHeight must be <= Hero.SlideProfileTop " +
+                    $"(got SlideMuzzleHeight={cfg.Hero.SlideMuzzleHeight:F3}, " +
+                    $"SlideProfileTop={cfg.Hero.SlideProfileTop:F3}).");
+            }
+
+            float maxHeadTop = math.max(cfg.Hero.HeadTop, math.max(cfg.Chaser.HeadTop, cfg.Gunner.HeadTop));
+            if (cfg.Hero.MaxAimHeight < maxHeadTop)
+            {
+                errors.Add("Hero.MaxAimHeight must be >= max(Hero.HeadTop, Chaser.HeadTop, Gunner.HeadTop) " +
+                    $"(got MaxAimHeight={cfg.Hero.MaxAimHeight:F3}, max HeadTop={maxHeadTop:F3}).");
+            }
 
             ReqNonNegative(errors, "Wave.FirstWaveDelay", cfg.Wave.FirstWaveDelay);
             ReqPositive(errors, "Wave.WavePause", cfg.Wave.WavePause);
@@ -193,6 +329,28 @@ namespace Ring.Data
                 throw new ArgumentException("SimConfig validation failed:\n- " + string.Join("\n- ", errors));
         }
 
+        /// Shared hit-zone body validated for Hero, Chaser and Gunner alike (PC5):
+        /// the three vertical zone tops must be strictly increasing and the per-zone
+        /// damage multipliers must be non-negative.
+        static void ValidateZones(List<string> errors, string who, float legs, float body, float head,
+            float legsMult, float bodyMult, float headMult)
+        {
+            ReqPositive(errors, $"{who}.LegsTop", legs);
+            if (legs >= body)
+            {
+                errors.Add($"{who}.LegsTop must be < {who}.BodyTop " +
+                    $"(got LegsTop={legs:F3}, BodyTop={body:F3}).");
+            }
+            if (body >= head)
+            {
+                errors.Add($"{who}.BodyTop must be < {who}.HeadTop " +
+                    $"(got BodyTop={body:F3}, HeadTop={head:F3}).");
+            }
+            ReqNonNegative(errors, $"{who}.LegsDamageMult", legsMult);
+            ReqNonNegative(errors, $"{who}.BodyDamageMult", bodyMult);
+            ReqNonNegative(errors, $"{who}.HeadDamageMult", headMult);
+        }
+
         static void ValidateMob(List<string> errors, string name, MobSimConfig m)
         {
             ReqPositive(errors, $"{name}.MaxSpeed", m.MaxSpeed);
@@ -216,6 +374,12 @@ namespace Ring.Data
             ReqNonNegative(errors, $"{name}.SeparationStrength", m.SeparationStrength);
             ReqNonNegative(errors, $"{name}.AvoidLookahead", m.AvoidLookahead);
             ReqNonNegative(errors, $"{name}.AvoidMargin", m.AvoidMargin);
+            // I3 (final review wave, app-n6g): spec-mandated per-archetype
+            // range — MobConfig's own [Range(0f, 2f)] Inspector hint is never
+            // enforced outside the Editor UI, so the builder must reject an
+            // out-of-range value reaching it programmatically too.
+            ReqInRange(errors, $"{name}.SwingLeadFactor", m.SwingLeadFactor, 0f, 2f);
+            ReqNonNegative(errors, $"{name}.SwingLeadMaxMeters", m.SwingLeadMaxMeters);
         }
 
         static void ReqFinite(List<string> errors, string name, float value)
@@ -248,6 +412,45 @@ namespace Ring.Data
         {
             if (value < 0)
                 errors.Add($"{name} must be >= 0 (got {value}).");
+        }
+
+        /// Task 2: a stamina-cost field must be positive and not exceed the pool it
+        /// draws from (Hero.StaminaMax).
+        static void ReqCostWithinStamina(List<string> errors, string name, float value, float staminaMax)
+        {
+            ReqPositive(errors, name, value);
+            if (value > staminaMax)
+            {
+                errors.Add($"{name} must be <= Hero.StaminaMax " +
+                    $"(got {name}={value:F3}, StaminaMax={staminaMax:F3}).");
+            }
+        }
+
+        /// Task 2: bounded fractions/dot-products (min optionally exclusive, max always
+        /// inclusive — matches every (0,1]/[0,1]/[-1,1] shape this task's fields need).
+        static void ReqInRange(List<string> errors, string name, float value, float min, float max,
+            bool minExclusive = false)
+        {
+            bool finite = !(float.IsNaN(value) || float.IsInfinity(value));
+            ReqFinite(errors, name, value);
+            if (!finite)
+                return;
+
+            bool minOk = minExclusive ? value > min : value >= min;
+            if (!minOk || value > max)
+            {
+                string minBrace = minExclusive ? "(" : "[";
+                errors.Add($"{name} must be in {minBrace}{min}, {max}] (got {value:F3}).");
+            }
+        }
+
+        /// Task 2: a lower-bounded multiplier (e.g. spread multipliers must be >= 1 —
+        /// they only ever widen the cone, never narrow it).
+        static void ReqAtLeast(List<string> errors, string name, float value, float min)
+        {
+            ReqFinite(errors, name, value);
+            if (value < min)
+                errors.Add($"{name} must be >= {min} (got {value:F3}).");
         }
     }
 }

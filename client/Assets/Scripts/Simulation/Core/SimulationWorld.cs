@@ -5,7 +5,11 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.Core
 {
-    /// Deterministic world: fixed-dt ticks, single RNG seeded from match-config.
+    /// Deterministic world: fixed-dt ticks, two independent RNG streams seeded
+    /// from match-config (Task 3: split from the former single shared Random) —
+    /// weapon spread (_spreadRng) and wave director (_waveRng) draw from
+    /// separate streams so one system's RNG consumption never perturbs the
+    /// other's sequence.
     /// No UnityEngine (asmdef: noEngineReferences) — Critical Rule 1.
     public sealed class SimulationWorld
     {
@@ -13,7 +17,8 @@ namespace Ring.Simulation.Core
         public const float TickDt = 1f / 30f;
 
         int _tick;
-        Random _rng;
+        Random _spreadRng;
+        Random _waveRng;
         SimConfig _config;
         readonly PlayerState[] _players = new PlayerState[1];
         MatchStats _stats;
@@ -29,6 +34,13 @@ namespace Ring.Simulation.Core
         readonly float2[] _sepForces;
         ProjectileState[] _projectiles;
         int _projectileCount;
+        // Scratch buffer for ProjectileSystem's per-tick candidate min-scan
+        // (Task 5) — preallocated here so the hot path never allocates; every
+        // slot is overwritten before being read each tick, so like _sepForces
+        // above it carries no state across ticks and is deliberately excluded
+        // from SaveState/RestoreState and StateHash. Sized to MaxMobs + 3: one
+        // slot per live mob plus barrier, player, and floor (Task 7).
+        readonly (float t, int kind, int index)[] _projCandidates;
         WaveState _wave;
         int _nextEntityId = 1;
 
@@ -48,10 +60,16 @@ namespace Ring.Simulation.Core
         public SimulationWorld(long seed, in SimConfig config)
         {
             uint folded = (uint)(seed ^ (seed >> 32));
-            // Unity.Mathematics.Random rejects seed 0.
-            _rng = new Random(folded == 0 ? 0x9E3779B9u : folded);
+            // Task 3: two independent streams, each derived from the same folded
+            // seed XORed with a stream-specific constant so weapon spread and wave
+            // spawns never share (and therefore never perturb) each other's RNG
+            // sequence. Fold() re-applies the zero-guard per stream — u-suffixes
+            // are required so the XOR operands stay uint (PA9).
+            _spreadRng = new Random(Fold(folded ^ 0xB5297A4Du));
+            _waveRng = new Random(Fold(folded ^ 0x68E31DA4u));
             _config = config;
-            _players[0] = new PlayerState { Hp = config.Hero.MaxHp, Alive = true };
+            _players[0] = new PlayerState
+                { Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true };
             // Wave director starts idle, counting down to the first wave (Task 22
             // Interfaces) — WavePhase.Waiting is the enum's zero value, but
             // PhaseTimer must be set explicitly or the countdown would start
@@ -60,6 +78,7 @@ namespace Ring.Simulation.Core
             _mobs = new MobState[config.Arena.MaxMobs];
             _sepForces = new float2[config.Arena.MaxMobs];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
+            _projCandidates = new (float t, int kind, int index)[config.Arena.MaxMobs + 3];
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
         }
 
@@ -78,10 +97,39 @@ namespace Ring.Simulation.Core
             if (_players[0].Alive)
             {
                 _players[0].AimPoint = input.AimPoint;
-                if (PlayerMovementSystem.Update(ref _players[0], in input, in _config))
+                MovementResult moveResult = PlayerMovementSystem.Update(ref _players[0], in input, in _config);
+                if (moveResult.DashStarted)
                 {
                     _stats.DashesUsed++;
                     Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
+                }
+                if (moveResult.DashDenied)
+                {
+                    // Missing cost (Task 9 Interfaces): Update() never touches
+                    // Stamina on a denied attempt, so the pre-tick value is
+                    // exactly what's still sitting on _players[0] right now.
+                    Emit(SimEventKind.StaminaDenied, _players[0].Pos, 0, default,
+                        _config.Hero.DashStaminaCost - _players[0].Stamina);
+                }
+                if (moveResult.SlideStarted)
+                {
+                    _stats.SlidesUsed++;
+                    Emit(SimEventKind.PlayerSlideStarted, _players[0].Pos, 0, default, 0f,
+                        hitDir: _players[0].SlideDir);
+                }
+                if (moveResult.SlideDenied)
+                {
+                    // Same missing-cost contract as DashDenied above, against
+                    // SlideStaminaCost (Task 10).
+                    Emit(SimEventKind.StaminaDenied, _players[0].Pos, 0, default,
+                        _config.Hero.SlideStaminaCost - _players[0].Stamina);
+                }
+                if (moveResult.Ricocheted)
+                {
+                    // Task 12: Pos is the contact point (not the player's
+                    // post-slide position), HitDir the surface normal.
+                    Emit(SimEventKind.DashRicocheted, moveResult.RicochetPos, 0, default, 0f,
+                        hitDir: moveResult.RicochetNormal);
                 }
                 WeaponSystem.Update(this, ref _players[0], in input);
             }
@@ -123,13 +171,32 @@ namespace Ring.Simulation.Core
 
             PlayerState p = _players[0];
             p.Hp = math.min(p.Hp, next.Hero.MaxHp);
+            p.Stamina = math.clamp(p.Stamina, 0f, next.Hero.StaminaMax);
+            p.StaminaRegenDelayTimer = math.clamp(p.StaminaRegenDelayTimer, 0f, next.Hero.StaminaRegenDelay);
             p.DashTimer = math.clamp(p.DashTimer, 0f, next.Hero.DashDuration);
             p.DashCooldown = math.clamp(p.DashCooldown, 0f, next.Hero.DashCooldown);
+            // Task 12: a ricochet-decayed DashSpeedCur must not exceed the new
+            // config's DashSpeed ceiling — same clamp-to-new-ceiling contract
+            // as every other dash timer/value here.
+            p.DashSpeedCur = math.clamp(p.DashSpeedCur, 0f, next.Hero.DashSpeed);
             p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
             p.DashBufferTimer = math.clamp(p.DashBufferTimer, 0f, next.Hero.DashBufferWindow);
             p.FireCooldown = math.clamp(p.FireCooldown, 0f, next.Weapon.FireInterval);
+            // Task 10: slide timers, same clamp-to-new-ceiling contract as the
+            // dash timers above.
+            p.SlideTimer = math.clamp(p.SlideTimer, 0f, next.Hero.SlideDuration);
+            p.SlideBufferTimer = math.clamp(p.SlideBufferTimer, 0f, next.Hero.SlideBufferWindow);
+            p.RunUpTimer = math.clamp(p.RunUpTimer, 0f, next.Hero.RunUpSeconds);
+            p.PostDashSlideTimer = math.clamp(p.PostDashSlideTimer, 0f, next.Hero.PostDashSlideWindow);
+            p.LinkWindowTimer = math.clamp(p.LinkWindowTimer, 0f, next.Hero.LinkWindowSeconds);
+            // Task 14: aim-settle progress, same clamp-to-new-ceiling contract.
+            p.AimSettleTimer = math.clamp(p.AimSettleTimer, 0f, next.Hero.AimSettleSeconds);
             _players[0] = p;
         }
+
+        /// Unity.Mathematics.Random rejects seed 0 — remaps it to a fixed nonzero
+        /// constant (Task 3, same zero-guard as Task 1's single-stream version).
+        static uint Fold(uint x) => x == 0 ? 0x9E3779B9u : x;
 
         static bool ArenaTopologyMatches(in ArenaSimConfig a, in ArenaSimConfig b)
         {
@@ -153,6 +220,12 @@ namespace Ring.Simulation.Core
             float maxR = _config.Arena.Radius * 2f;
             if (math.lengthsq(rel) > maxR * maxR)
                 s.AimPoint = _players[0].Pos + math.normalizesafe(rel) * maxR;
+            // Task 8: non-finite AimHeight maps to standing muzzle height, then
+            // the result is clamped into the arena-wide aim-ray height cap —
+            // sanitized unconditionally so the field stays finite regardless of
+            // AimHeld (the consumer that gates on AimHeld arrives in Task 15).
+            if (!math.isfinite(s.AimHeight)) s.AimHeight = _config.Hero.MuzzleHeight;
+            s.AimHeight = math.clamp(s.AimHeight, 0f, _config.Hero.MaxAimHeight);
             return s;
         }
 
@@ -163,16 +236,22 @@ namespace Ring.Simulation.Core
         /// `owner` (F-3 fix-round) is meaningful only for ProjectileFired — every
         /// other call site omits it and gets the default `ProjectileOwner.Player`,
         /// same "unused for every other kind" contract `SimEvent.Owner`'s own doc
-        /// describes.
+        /// describes. `zone`/`hitDir` (Task 6) are meaningful only for the four
+        /// blow-carrying kinds (ProjectileHit, MobDied, PlayerDamaged,
+        /// PlayerDied); both are optional so the existing call sites that emit
+        /// non-blow events keep passing five arguments and get the neutral
+        /// HitZone.None / zero direction.
         internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType, float amount,
-            ProjectileOwner owner = ProjectileOwner.Player)
+            ProjectileOwner owner = ProjectileOwner.Player,
+            HitZone zone = HitZone.None, float2 hitDir = default)
         {
             if (_eventCount < _events.Length)
             {
                 _events[_eventCount++] = new SimEvent
                 {
                     Kind = kind, Tick = _tick, Pos = pos,
-                    EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner
+                    EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner,
+                    Zone = zone, HitDir = hitDir
                 };
             }
             else
@@ -181,9 +260,14 @@ namespace Ring.Simulation.Core
             }
         }
 
-        /// Combat systems' seam into the single world RNG (Critical Rule: one shared
-        /// Random, no ad-hoc Unity.Mathematics.Random instances in Simulation).
-        internal ref Random Rng => ref _rng;
+        /// WeaponSystem's seam into the weapon-spread RNG stream (Task 3; consumer
+        /// lands in Task 15) — Critical Rule: no ad-hoc Unity.Mathematics.Random
+        /// instances in Simulation, every draw goes through one of these two seams.
+        internal ref Random SpreadRng => ref _spreadRng;
+
+        /// WaveSystem's seam into the wave-director RNG stream (Task 3) — split
+        /// from SpreadRng so weapon fire never shifts wave spawn draws.
+        internal ref Random WaveRng => ref _waveRng;
 
         /// Combat systems' seam into per-match counters (ShotsFired, skip counts, ...).
         internal ref MatchStats StatsRef => ref _stats;
@@ -204,16 +288,21 @@ namespace Ring.Simulation.Core
         /// (Task 20) — sized to Arena.MaxMobs, recomputed every tick, never grown.
         internal float2[] SepForces => _sepForces;
 
+        /// ProjectileSystem's seam into its preallocated per-tick candidate
+        /// scratch (Task 5) — sized to Arena.MaxMobs + 3, recomputed every
+        /// tick, never grown.
+        internal (float t, int kind, int index)[] ProjCandidates => _projCandidates;
+
         /// WaveSystem's seam into the wave director's live state (Task 22) — same
-        /// ref-return pattern as Rng, so the system mutates it in place instead of
-        /// round-tripping copies every tick.
+        /// ref-return pattern as SpreadRng/WaveRng, so the system mutates it in
+        /// place instead of round-tripping copies every tick.
         internal ref WaveState WaveRef => ref _wave;
 
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
         /// once full, spawns are skipped and counted rather than growing the array,
         /// keeping the cap degradation allocation-free and deterministic.
         internal int SpawnProjectile(ProjectileOwner owner, float2 pos, float2 vel,
-            float damage, float radius, float ttl)
+            float height, float velZ, float damage, float radius, float ttl)
         {
             if (_projectileCount >= _projectiles.Length)
             {
@@ -224,6 +313,7 @@ namespace Ring.Simulation.Core
             _projectiles[_projectileCount++] = new ProjectileState
             {
                 Id = id, Owner = owner, Pos = pos, PrevPos = pos, Vel = vel,
+                Height = height, PrevHeight = height, VelZ = velZ,
                 Damage = damage, Radius = radius, Ttl = ttl
             };
             // Amount carries the shot's sim-plane velocity angle (Presentation
@@ -254,14 +344,21 @@ namespace Ring.Simulation.Core
         /// playing out (spec §3.12) — but ShotsHit/Kills route through private
         /// helpers guarded on player Alive, so a projectile fired before death that
         /// connects afterwards still kills the mob without crediting the run's stats.
-        internal void DamageMob(int index, float dmg, float2 pos)
+        /// `dmg` is the POST-multiplier amount (Task 6 — ProjectileSystem applies
+        /// the hit zone's multiplier before calling in), `zone`/`dir` describe the
+        /// blow and are forwarded to MobDied for Presentation.
+        internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir)
         {
             _mobs[index].Hp -= dmg;
             IncrementShotsHit();
             if (_mobs[index].Hp <= 0f)
             {
                 IncrementKills();
-                Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg);
+                // Headshot kills count the KILLING blow's zone only: earlier
+                // headshots on the same mob are already reflected in Hp.
+                if (zone == HitZone.Head) IncrementHeadshotKills();
+                Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg,
+                    zone: zone, hitDir: dir);
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
@@ -270,13 +367,17 @@ namespace Ring.Simulation.Core
         /// dies, even for damage from projectiles already in flight at that moment.
         void IncrementShotsHit() { if (_players[0].Alive) _stats.ShotsHit++; }
         void IncrementKills() { if (_players[0].Alive) _stats.Kills++; }
+        void IncrementHeadshotKills() { if (_players[0].Alive) _stats.HeadshotKills++; }
 
         /// Applies projectile damage to the player (spec Interfaces, Task 16/23): a
         /// no-op once the player is already dead (spec §3.12 — stats stay frozen and
         /// no further PlayerDamaged/PlayerDied events fire); otherwise active dash
         /// i-frames absorb the hit with no event, else Hp drops and, once it reaches
         /// zero, the player dies exactly once.
-        internal void DamagePlayer(float dmg, float2 pos)
+        /// `dmg` is the POST-multiplier amount, same contract as DamageMob above;
+        /// `zone`/`dir` ride along on PlayerDamaged and, on the killing blow, on
+        /// PlayerDied too (the death VFX wants the blow that ended the run).
+        internal void DamagePlayer(float dmg, float2 pos, HitZone zone, float2 dir)
         {
             ref PlayerState p = ref _players[0];
             if (!p.Alive) return;
@@ -284,15 +385,35 @@ namespace Ring.Simulation.Core
 
             p.Hp -= dmg;
             _stats.DamageTaken += dmg;
-            Emit(SimEventKind.PlayerDamaged, pos, 0, default, dmg);
+            Emit(SimEventKind.PlayerDamaged, pos, 0, default, dmg, zone: zone, hitDir: dir);
 
             if (p.Hp <= 0f)
             {
                 p.Alive = false;
                 _stats.DeathTick = _tick;
                 p.DashTimer = 0f;
+                // Task 12: DashSpeedCur has no meaning without an active dash
+                // (DashTimer == 0 already says "not dashing") — zeroed for the
+                // same clean-corpse-read reason as DashTimer itself, unlike
+                // DashDir (a heading, deliberately left as-is below).
+                p.DashSpeedCur = 0f;
                 p.IframeTimer = 0f;
-                Emit(SimEventKind.PlayerDied, pos, 0, default, 0f);
+                // Task 9: Stamina itself freezes for free (UpdateDead never
+                // touches it), but the regen-delay countdown is reset so a
+                // corpse's PlayerState reads clean, same as the dash timers above.
+                p.StaminaRegenDelayTimer = 0f;
+                // Task 10 (M11/QD9): every slide timer clears the same way —
+                // SlideDir is a heading, not a timer, so (like DashDir) it is
+                // deliberately left as-is.
+                p.SlideTimer = 0f;
+                p.SlideBufferTimer = 0f;
+                p.RunUpTimer = 0f;
+                p.PostDashSlideTimer = 0f;
+                p.LinkWindowTimer = 0f;
+                // Task 14: aim-settle progress clears the same way as the
+                // other movement timers above — a corpse doesn't keep aiming.
+                p.AimSettleTimer = 0f;
+                Emit(SimEventKind.PlayerDied, pos, 0, default, 0f, zone: zone, hitDir: dir);
             }
         }
 
@@ -338,13 +459,23 @@ namespace Ring.Simulation.Core
         /// Test-only wrapper over SpawnProjectile (Task 16 Interfaces) — same spawn
         /// path production code uses, named for test call-sites.
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
-            float damage, float radius, float ttl)
-            => SpawnProjectile(owner, pos, vel, damage, radius, ttl);
+            float height, float velZ, float damage, float radius, float ttl)
+            => SpawnProjectile(owner, pos, vel, height, velZ, damage, radius, ttl);
 
         /// Test-only seam (Task 19 Interfaces): kills the player outright via the
         /// normal damage path (overkill amount) so MobAiSystem's "player dead"
-        /// branch (all mobs → Idle) can be exercised deterministically.
-        internal void KillPlayerForTest() => DamagePlayer(_config.Hero.MaxHp + 1f, _players[0].Pos);
+        /// branch (all mobs → Idle) can be exercised deterministically. Reports a
+        /// Body hit from +X (Task 6 signature ripple): the seam models "something
+        /// killed the player", and Body/no-multiplier is the neutral choice — no
+        /// caller of this seam asserts on the zone.
+        internal void KillPlayerForTest()
+            => DamagePlayer(_config.Hero.MaxHp + 1f, _players[0].Pos,
+                HitZone.Body, new float2(1f, 0f));
+
+        /// Test-only seam (Task 8 Interfaces): exposes the private Sanitize step
+        /// so tests can assert the AimHeight NaN-map/clamp behaviour directly,
+        /// without threading it through a full Tick().
+        internal SimInput SanitizeForTest(in SimInput raw) => Sanitize(raw);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// Dev-only mob placeholder spawn for Presentation milestone 2 (spec Interfaces).
@@ -377,7 +508,8 @@ namespace Ring.Simulation.Core
             var save = new WorldSave
             {
                 Tick = _tick,
-                Rng = _rng,
+                SpreadRng = _spreadRng,
+                WaveRng = _waveRng,
                 NextEntityId = _nextEntityId,
                 Player = _players[0],
                 MobCount = _mobCount,
@@ -395,7 +527,8 @@ namespace Ring.Simulation.Core
         public void RestoreState(WorldSave save)
         {
             _tick = save.Tick;
-            _rng = save.Rng;
+            _spreadRng = save.SpreadRng;
+            _waveRng = save.WaveRng;
             _nextEntityId = save.NextEntityId;
             _players[0] = save.Player;
             _mobCount = save.MobCount;
@@ -420,13 +553,20 @@ namespace Ring.Simulation.Core
         internal void SetProjectileForTest(int index, in ProjectileState p) => _projectiles[index] = p;
         internal void SetWaveForTest(in WaveState w) => _wave = w;
 
-        /// Canonical order (spec §3.3): tick → rng → nextEntityId → player →
+        /// Test-only seam (Task 4): reads a live projectile slot back —
+        /// SetProjectileForTest's counterpart, for tests asserting on
+        /// post-tick projectile state (e.g. Height/PrevHeight after VelZ integration).
+        internal ProjectileState GetProjectileForTest(int index) => _projectiles[index];
+
+        /// Canonical order (spec §3.3; Task 3 — split rng into spreadRng/waveRng):
+        /// tick → spreadRng → waveRng → nextEntityId → player →
         /// mobCount+mobs → projectileCount+projectiles → wave → stats.
         public ulong StateHash()
         {
             ulong h = StateHash64.Begin();
             h = StateHash64.Add(h, (ulong)_tick);
-            h = StateHash64.Add(h, _rng.state);
+            h = StateHash64.Add(h, _spreadRng.state);
+            h = StateHash64.Add(h, _waveRng.state);
             h = StateHash64.Add(h, _nextEntityId);
             h = HashPlayer(h, in _players[0]);
             h = StateHash64.Add(h, _mobCount);
@@ -443,9 +583,17 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.Pos); h = StateHash64.Add(h, p.Vel);
             h = StateHash64.Add(h, p.AimPoint); h = StateHash64.Add(h, p.DashDir);
             h = StateHash64.Add(h, p.RecoilOffset); h = StateHash64.Add(h, p.Hp);
+            h = StateHash64.Add(h, p.Stamina); h = StateHash64.Add(h, p.StaminaRegenDelayTimer);
             h = StateHash64.Add(h, p.DashTimer); h = StateHash64.Add(h, p.DashCooldown);
             h = StateHash64.Add(h, p.IframeTimer); h = StateHash64.Add(h, p.DashBufferTimer);
+            h = StateHash64.Add(h, p.DashSpeedCur); // Task 12: ricochet-retained dash speed
             h = StateHash64.Add(h, p.FireCooldown); h = StateHash64.Add(h, p.Alive);
+            // Task 14: aim-down-sights settle progress.
+            h = StateHash64.Add(h, p.AimSettleTimer);
+            // Task 10: slide state.
+            h = StateHash64.Add(h, p.SlideDir); h = StateHash64.Add(h, p.SlideTimer);
+            h = StateHash64.Add(h, p.SlideBufferTimer); h = StateHash64.Add(h, p.RunUpTimer);
+            h = StateHash64.Add(h, p.PostDashSlideTimer); h = StateHash64.Add(h, p.LinkWindowTimer);
             return h;
         }
 
@@ -465,6 +613,8 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.Pos); h = StateHash64.Add(h, p.PrevPos);
             h = StateHash64.Add(h, p.Vel); h = StateHash64.Add(h, p.Damage);
             h = StateHash64.Add(h, p.Radius); h = StateHash64.Add(h, p.Ttl);
+            h = StateHash64.Add(h, p.Height); h = StateHash64.Add(h, p.PrevHeight);
+            h = StateHash64.Add(h, p.VelZ);
             return h;
         }
 
@@ -478,9 +628,11 @@ namespace Ring.Simulation.Core
 
         static ulong HashStats(ulong h, in MatchStats s)
         {
-            h = StateHash64.Add(h, s.Kills); h = StateHash64.Add(h, s.WavesCleared);
+            h = StateHash64.Add(h, s.Kills); h = StateHash64.Add(h, s.HeadshotKills);
+            h = StateHash64.Add(h, s.WavesCleared);
             h = StateHash64.Add(h, s.ShotsFired); h = StateHash64.Add(h, s.ShotsHit);
             h = StateHash64.Add(h, s.DashesUsed);
+            h = StateHash64.Add(h, s.SlidesUsed);
             h = StateHash64.Add(h, s.MobSpawnsSkipped);
             h = StateHash64.Add(h, s.ProjectileSpawnsSkipped);
             h = StateHash64.Add(h, s.DeathTick); h = StateHash64.Add(h, s.DamageTaken);

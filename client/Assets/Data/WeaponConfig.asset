@@ -13,8 +13,8 @@ MonoBehaviour:
   m_Name: WeaponConfig
   m_EditorClassIdentifier: Ring.Data::Ring.Data.WeaponConfig
   FireInterval: 0.12
-  ProjectileSpeed: 35
-  ProjectileRadius: 0.12
+  ProjectileSpeed: 52.5
+  ProjectileRadius: 0.08
   ProjectileLifetime: 1.5
   Damage: 12
   SpreadRad: 0.026
@@ -23,3 +23,7 @@ MonoBehaviour:
   RecoilMaxRad: 0.07
   MuzzleOffset: 0.6
   CanFireWhileDash: 0
+  CanFireWhileSlide: 1
+  SpreadRunMult: 1.5
+  SpreadSlideMult: 2
+  RunSpreadSpeedFrac: 0.5

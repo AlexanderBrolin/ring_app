@@ -19,6 +19,13 @@ namespace Ring.Data
         [Range(0f, 5f)] public float MuzzleOffset = 0.6f;
         public bool CanFireWhileDash = false;
 
+        // Task 2 (spec stamina/slide/aim): movement-driven spread widening while
+        // running/sliding, and whether the weapon can fire at all mid-slide.
+        public bool CanFireWhileSlide = true;
+        [Range(1f, 5f)] public float SpreadRunMult = 1.5f;
+        [Range(1f, 5f)] public float SpreadSlideMult = 2.0f;
+        [Range(0f, 1f)] public float RunSpreadSpeedFrac = 0.5f; // sync-marker key — keep LAST
+
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR
         void OnValidate() => RingDataChanged.Raise();

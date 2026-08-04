@@ -68,7 +68,18 @@ namespace Ring.Presentation
         /// — the capsule prefab still lies flat on its side
         /// (`Quaternion.Euler(90f, yaw, 0f)`) as before, kept honest but no
         /// longer wired anywhere after T12.
-        public void Spawn(Vector3 pos, MobType type, float glowFadeSeconds)
+        /// В1/В2 fix-wave 2 (app-n6g item 2, BUG fix): `visualScale` mirrors
+        /// `MobVisual.Bind`'s own `_visual.localScale = Vector3.one *
+        /// visualScale` write for the LIVE mob (`ViewRegistry.SyncMobs`'
+        /// `GameFeelConfig.ChaserVisualScale`/`GunnerVisualScale` read) — the
+        /// caller (`PersistentPropsDirector.HandleMobDied`) resolves the same
+        /// archetype scale from the `MobDied` event's own `MobType` and passes
+        /// it straight through, no new SO field needed. Before this fix the
+        /// corpse's `_chaserVisual`/`_gunnerVisual` child kept whatever scale
+        /// was baked on the CorpseView prefab (1x) regardless of the dying
+        /// mob's own scale, so a Gunner corpse visibly popped to a different
+        /// size than the mob had a frame earlier.
+        public void Spawn(Vector3 pos, MobType type, float glowFadeSeconds, float visualScale)
         {
             gameObject.SetActive(true);
             float yaw = Random.Range(0f, 360f);
@@ -80,6 +91,8 @@ namespace Ring.Presentation
                 bool chaser = type == MobType.Chaser;
                 _chaserVisual.SetActive(chaser);
                 _gunnerVisual.SetActive(!chaser);
+                GameObject activeVisual = chaser ? _chaserVisual : _gunnerVisual;
+                activeVisual.transform.localScale = Vector3.one * visualScale;
                 _activeAnimator = chaser ? _chaserAnimator : _gunnerAnimator;
                 // Mandatory re-arm: a FIFO-reused slot arrives with the animator
                 // disabled by a finished previous death (Б4).

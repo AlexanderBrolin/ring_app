@@ -107,6 +107,14 @@ namespace Ring.Editor
             if (existingController != null)
             {
                 ReconcileSpeedDefault(existingController);
+                // Task 23: the guard above deliberately never recreates an
+                // existing controller (would change its GUID and break scene
+                // refs — class doc) — but a NEW mandatory state set still has
+                // to reach an already-committed controller somehow, so it is
+                // appended in place here instead. Idempotent by construction:
+                // a second run finds all three states already present and
+                // no-ops (R-IDEM).
+                EnsureSlideStates(existingController);
                 Debug.Log("[ThirdPartyAnimators] exists, reconciled: " + PlayerControllerPath);
                 return;
             }
@@ -130,6 +138,7 @@ namespace Ring.Editor
             AddOptionalState(controller, clips, "Hit_Head", AnimIds.HitReactHeadName);
             controller.AddMotion(Require(clips, "Death01"), 0).name = AnimIds.DeathName;
             AddOptionalState(controller, clips, "Roll", AnimIds.DashName);
+            EnsureSlideStates(controller);
 
             controller.AddLayer(AnimIds.AimLayerName);
             AnimatorControllerLayer[] layers = controller.layers; // returns a copy
@@ -164,6 +173,37 @@ namespace Ring.Editor
                 }
             }
             if (changed) controller.parameters = parameters;
+        }
+
+        /// Task 23 (ADR-002 A10 amendment): the slide set — clips live in
+        /// UAL2_Standard.fbx (same rig family as the doll, retarget via its
+        /// shared avatar — TP.Ual2StandardPath), not the doll's own FBX, so
+        /// they need their own ClipsOf() lookup. Per-state existence check
+        /// (not a single "all three or none" gate) so a partially-applied
+        /// controller from an interrupted run still heals correctly; mirrors
+        /// the file's other Get-or-create guards (GetOrCreateUpperBodyMask).
+        static void EnsureSlideStates(AnimatorController controller)
+        {
+            AnimatorStateMachine sm = controller.layers[0].stateMachine;
+            bool needStart = !HasMotionState(sm, AnimIds.SlideStartName);
+            bool needLoop = !HasMotionState(sm, AnimIds.SlideLoopName);
+            bool needExit = !HasMotionState(sm, AnimIds.SlideExitName);
+            if (!needStart && !needLoop && !needExit) return;
+            Dictionary<string, AnimationClip> ual2Clips = ClipsOf(TP.Ual2StandardPath);
+            if (needStart)
+                controller.AddMotion(Require(ual2Clips, "Slide_Start"), 0).name = AnimIds.SlideStartName;
+            if (needLoop)
+                controller.AddMotion(Require(ual2Clips, "Slide_Loop"), 0).name = AnimIds.SlideLoopName;
+            if (needExit)
+                controller.AddMotion(Require(ual2Clips, "Slide_Exit"), 0).name = AnimIds.SlideExitName;
+            Debug.Log("[ThirdPartyAnimators] slide states ensured on " + PlayerControllerPath);
+        }
+
+        static bool HasMotionState(AnimatorStateMachine sm, string name)
+        {
+            foreach (ChildAnimatorState child in sm.states)
+                if (child.state.name == name) return true;
+            return false;
         }
 
         /// UAL2 rig check (spec §9 risk): a second doll instance plays UAL2

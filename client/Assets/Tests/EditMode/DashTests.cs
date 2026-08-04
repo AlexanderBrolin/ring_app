@@ -67,15 +67,23 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void DashIntoObstacle_StopsAtSurface_NoTunnel()
+        public void DashIntoObstacle_Ricochets_NoTunnel()
         {
+            // A9: retargeted from the pre-Task-12 "stops at surface" behaviour
+            // — a head-on dash now mirrors off the obstacle instead of just
+            // stopping dead, so the surviving invariant is no tunneling, not a
+            // pinned position.
             var cfg = TestConfigs.Open();
             cfg.Arena.ObstacleCount = 1;
             cfg.Arena.ObstaclePos = new[] { new float2(2f, 0f) };
             cfg.Arena.ObstacleRadius = new[] { 0.6f }; // дэш-шаг 0.73 м > диаметра нет, но свип обязан
             var w = new SimulationWorld(1, cfg);
-            for (int i = 0; i < 10; i++) w.Tick(DashRight);
-            Assert.Less(w.Player.Pos.x, 2f - 0.6f); // остановился до центра препятствия
+            for (int i = 0; i < 10; i++)
+            {
+                w.Tick(DashRight);
+                Assert.IsFalse(Geometry.CircleOverlap(w.Player.Pos, cfg.Hero.Radius - 0.01f,
+                    new float2(2f, 0f), 0.6f), "player tunneled into the obstacle");
+            }
         }
     }
 }

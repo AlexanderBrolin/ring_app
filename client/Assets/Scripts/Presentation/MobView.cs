@@ -50,6 +50,29 @@ namespace Ring.Presentation
         static readonly Color GunnerGlintAccent = new Color(0.6f, 0.6f, 1.3f);
         const float GunnerGlintHz = 3f;
 
+        // В1/В2 fix-wave 2 (app-n6g item 3b, headshot readability): a rim
+        // added on top of whatever accent is already active while this mob
+        // is the one the aim-proxy raycast currently hovers
+        // (`AimProvider.CurrentHoveredMob`, `ViewRegistry.SyncMobs`'s own
+        // read) — dim enough not to compete with FlashAccent's hit-flash.
+        // app-7pk (cheap version, Task 24 fold-in, owner accept pending on
+        // В3): the rim is now TINTED by the hovered zone instead of a flat
+        // neutral white — `ViewRegistry.SyncMobs` resolves the actual color
+        // via the same `AimZoneColors.Resolve` lookup `CrosshairView`/
+        // `AimRayView` already use (Head red, Legs/Body the shared neutral
+        // blue) and passes it into `Sync` as `hoverAccent`, so this now
+        // REINFORCES the Legs/Body/Head read from the crosshair/ray instead
+        // of deliberately staying neutral against it (the original rationale
+        // this field's own name still nods to — kept only as the defensive
+        // fallback `AimZoneColors.Resolve` falls back to on a `HitZone.None`
+        // it shouldn't ever actually see while `hovered` is true, since
+        // `AimProvider.CurrentHoveredMob`/`CurrentAimZone` are cached from
+        // the exact same proxy hit). Same accent-constant-vs-SO-number-
+        // multiplier split every other pair here already makes
+        // (GunnerGlintAccent has no SO field of its own either; the multiplier
+        // is GameFeelConfig.AimHoverGlowBoost).
+        internal static readonly Color HoverGlowAccent = new Color(1.3f, 1.3f, 1.3f);
+
         // Task 25 (owner requirement, веха 3): the hit-flash/accent read must be
         // independent of the placeholder capsule mesh — a future model swap
         // brings its own renderer hierarchy (body + attachments, possibly
@@ -117,7 +140,18 @@ namespace Ring.Presentation
         /// (L-13 fix-round) is `ViewRegistry`'s own read of
         /// `_runner.World.Config.Chaser.TelegraphSeconds` — the single source of
         /// truth the ramp now tracks instead of a locally-duplicated constant.
-        public void Sync(in MobState m, float telegraphSeconds)
+        /// В1/В2 fix-wave 2 (app-n6g item 3b): `hovered`/`hoverGlowBoost` are
+        /// `ViewRegistry.SyncMobs`'s own per-frame read of `AimProvider.
+        /// CurrentHoveredMob`/`GameFeelConfig.AimHoverGlowBoost` — passed as
+        /// plain values rather than handing this class a `GameFeelConfig`
+        /// reference of its own, same "caller pre-reads the config, callee
+        /// takes scalars" shape `telegraphSeconds` itself already follows.
+        /// app-7pk: `hoverAccent` is `ViewRegistry`'s own resolved
+        /// `AimZoneColors.Resolve(AimProvider.CurrentAimZone, ...)` result —
+        /// same shape, just a `Color` instead of a bare `float`/`bool` (this
+        /// class still never touches `AimZoneColors`/`HitZone`/
+        /// `GameFeelConfig` itself, `ViewRegistry` does all the reading).
+        public void Sync(in MobState m, float telegraphSeconds, bool hovered, Color hoverAccent, float hoverGlowBoost)
         {
             Color emission = _baseEmission;
 
@@ -139,6 +173,8 @@ namespace Ring.Presentation
                 float t = Mathf.Clamp01(_flashTimer / _flashDuration);
                 emission += FlashAccent * t;
             }
+
+            if (hovered) emission += hoverAccent * hoverGlowBoost;
 
             ApplyEmission(emission);
         }

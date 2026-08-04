@@ -91,8 +91,9 @@ namespace Ring.Simulation.AI
             }
         }
 
-        /// Candidate angles are drawn only from `w.Rng.NextFloat(0, 2*PI)` (RNG
-        /// discipline, spec §3.6) — up to MaxSpawnAttempts draws. The FallbackSlots
+        /// Candidate angles are drawn only from `w.WaveRng.NextFloat(0, 2*PI)` (RNG
+        /// discipline, spec §3.6; Task 3 — dedicated wave-director stream, split
+        /// from weapon spread) — up to MaxSpawnAttempts draws. The FallbackSlots
         /// grid below is deliberately RNG-free (fixed, uniform angles): whether the
         /// fallback triggers or not never changes how much RNG state a candidate
         /// search consumes, keeping RNG consumption a pure function of world state
@@ -106,7 +107,7 @@ namespace Ring.Simulation.AI
 
             for (int i = 0; i < cfg.MaxSpawnAttempts; i++)
             {
-                float angle = w.Rng.NextFloat(0f, 2f * math.PI);
+                float angle = w.WaveRng.NextFloat(0f, 2f * math.PI);
                 float2 candidate = ringRadius * new float2(math.cos(angle), math.sin(angle));
                 if (IsValidSpawn(w, in arena, in cfg, candidate, mobRadius))
                 {

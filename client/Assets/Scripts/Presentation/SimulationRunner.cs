@@ -100,6 +100,20 @@ namespace Ring.Presentation
             SimSpace.ToWorld(RenderPrev.Player.Pos),
             SimSpace.ToWorld(RenderCurr.Player.Pos), RenderAlpha);
 
+        /// Task 21 (PC7 — single home of the muzzle-height ternary): the exact
+        /// slide-aware pick `WeaponSystem.Update` uses for the authoritative
+        /// shot's own muzzle height (`SlideTimer > 0 ? SlideMuzzleHeight :
+        /// MuzzleHeight`). Every Presentation-layer consumer of the hero's
+        /// muzzle height (`MuzzleFlashView`'s prediction and player-branch
+        /// burst, `PersistentPropsDirector.SpawnCasing`, `AimRayView`'s ray
+        /// origin) reads THIS instead of re-deriving the ternary locally —
+        /// previously each one duplicated it ad hoc (`AimRayView`'s own,
+        /// pre-Task-21 doc explicitly flagged this as a placeholder). Reads
+        /// off `RenderCurr` — the last COMPLETE tick's state — same
+        /// client-boundary rule as `WouldFireThisFrame` below.
+        public float RenderMuzzleHeight => RenderCurr.Player.SlideTimer > 0f
+            ? World.Config.Hero.SlideMuzzleHeight : World.Config.Hero.MuzzleHeight;
+
         public SimulationWorld World => _world;
         public long Seed { get; private set; }
         public bool ConfigTweaked;
@@ -109,11 +123,13 @@ namespace Ring.Presentation
         /// source of truth for `MuzzleFlashView`/`AudioDirector`'s per-frame
         /// prediction, so the two components' decisions can never drift apart.
         /// Mirrors `WeaponSystem.Update`'s own `canFire` gate exactly (`FireHeld
-        /// && Alive && FireCooldown <= 0 && (CanFireWhileDash || DashTimer <= 0)`
-        /// — fix-round review #4: an earlier revision of this doc paraphrased
-        /// the gate without the `FireCooldown <= 0` term even though the code
-        /// below always had it; the property itself was correct, only the prose
-        /// was incomplete), but reads it off
+        /// && Alive && FireCooldown <= 0 && (CanFireWhileDash || DashTimer <= 0)
+        /// && (CanFireWhileSlide || SlideTimer <= 0)` — fix-round review #4: an
+        /// earlier revision of this doc paraphrased the gate without the
+        /// `FireCooldown <= 0` term even though the code below always had it;
+        /// the property itself was correct, only the prose was incomplete;
+        /// Task 21 adds the `CanFireWhileSlide` term, previously missing from
+        /// both the code and this doc), but reads it off
         /// `RenderCurr` — the last COMPLETE tick's state — instead of any
         /// Simulation internals, per client/CLAUDE.md's "клиент не решает
         /// игровые исходы" boundary (this predicts client-local cosmetics only;
@@ -125,7 +141,8 @@ namespace Ring.Presentation
             {
                 PlayerState p = RenderCurr.Player;
                 return LastFrameInput.FireHeld && p.Alive && p.FireCooldown <= 0f
-                    && (_weapon.CanFireWhileDash || p.DashTimer <= 0f);
+                    && (_weapon.CanFireWhileDash || p.DashTimer <= 0f)
+                    && (_weapon.CanFireWhileSlide || p.SlideTimer <= 0f);
             }
         }
 

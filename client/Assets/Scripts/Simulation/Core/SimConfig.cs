@@ -7,6 +7,30 @@ namespace Ring.Simulation.Core
     {
         public float MaxSpeed, Accel, Friction, Radius, MaxHp,
             DashSpeed, DashDuration, DashCooldown, DashIframes, DashBufferWindow;
+
+        /// Vertical hit-zone bounds (metres above ground) and per-zone damage
+        /// multipliers for the raycast aim system (Task 4+).
+        public float LegsTop, BodyTop, HeadTop,
+            LegsDamageMult, BodyDamageMult, HeadDamageMult;
+
+        /// Slide stamina-movement profile height, hero muzzle heights (standing /
+        /// mid-slide), and the arena-wide aim-ray height cap.
+        public float SlideProfileTop, MuzzleHeight, SlideMuzzleHeight, MaxAimHeight;
+
+        /// Stamina pool and per-action costs/regen (Task 2 — stamina/slide/dash economy).
+        /// LinkRefund (В1 fix-wave 3, owner economy rework): stamina credited back
+        /// when a slide/dash executes inside its link window — see
+        /// PlayerMovementSystem.Update's linked-slide/linked-dash branches.
+        public float StaminaMax, DashStaminaCost, SlideStaminaCost,
+            StaminaRegenPerSec, StaminaRegenDelay, LinkRefund;
+
+        /// Slide kinematics and buffered-input windows (Task 2).
+        public float SlideSpeed, SlideDuration, SlideSteerRadPerSec, SlideMinSpeedFrac,
+            RunUpSeconds, RunUpDecayMult, SlideBufferWindow, LinkWindowSeconds,
+            PostDashSlideWindow, SlideWallStopDot, RicochetRetention;
+
+        /// Aim-down-sights movement/settle profile (Task 2).
+        public float AimMoveSpeedFrac, AimSlideSpeedMult, AimSettleSeconds;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).
@@ -16,6 +40,11 @@ namespace Ring.Simulation.Core
             ProjectileLifetime, Damage, SpreadRad, RecoilPerShotRad, RecoilRecoveryRadPerSec,
             RecoilMaxRad, MuzzleOffset;
         public bool CanFireWhileDash;
+
+        /// Movement-driven spread widening while running/sliding, and whether the
+        /// weapon can fire at all mid-slide (Task 2).
+        public bool CanFireWhileSlide;
+        public float SpreadRunMult, SpreadSlideMult, RunSpreadSpeedFrac;
     }
 
     /// Balance numbers shared by all mob archetypes (chaser/gunner use the same shape).
@@ -25,6 +54,15 @@ namespace Ring.Simulation.Core
             AttackRange, TelegraphSeconds, AttackCooldown, PreferredRange, RangeTolerance,
             StrafeSpeed, FireInterval, ProjectileSpeed, ProjectileRadius, ProjectileLifetime,
             ProjectileDamage, LeadFactor, SeparationRadius, SeparationStrength, AvoidLookahead;
+
+        /// Vertical hit-zone bounds (metres above ground) and per-zone damage
+        /// multipliers for the raycast aim system (Task 4+); MuzzleHeight is read for the
+        /// Gunner archetype only.
+        public float LegsTop, BodyTop, HeadTop,
+            LegsDamageMult, BodyDamageMult, HeadDamageMult, MuzzleHeight;
+
+        /// Melee swing-attack target lead (Chaser archetype, Task 15+).
+        public float SwingLeadFactor, SwingLeadMaxMeters;
 
         /// Extra clearance `Ring.Simulation.AI.MobAiSystem.SteerAround` adds on top
         /// of `Radius` when deciding whether an obstacle still blocks the path to a

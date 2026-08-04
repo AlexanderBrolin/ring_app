@@ -52,7 +52,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(2, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(3f, 0f),
-                new float2(35f, 0f), 100f, 0.12f, 2f);
+                new float2(35f, 0f), 1f, 0f, 100f, 0.12f, 2f);
             w.KillPlayerForTest();
             for (int i = 0; i < 10; i++) w.Tick(default); // projectile arrives and kills
             Assert.AreEqual(0, w.Stats.Kills); // does not count toward the run

@@ -7,8 +7,9 @@ using UnityEngine.Rendering.Universal;
 namespace Ring.Presentation
 {
     /// Persistent cosmetics — shell casings, impact decals, corpses, and the
-    /// three pooled spark/burst particle systems (Task 27, spec §3.11/§3.12,
-    /// Приложение П). Slots into `SimEventRouter`'s fan-out (П-1) between
+    /// pooled spark/burst particle systems (Task 27, spec §3.11/§3.12,
+    /// Приложение П; a fourth kind, slide dust, joins in Task 22 — see the pooling
+    /// split doc below). Slots into `SimEventRouter`'s fan-out (П-1) between
     /// `GameFeelDirector` and `AudioDirector` — never subscribes to
     /// `TicksFlushed` itself, same rule as every other class in this
     /// namespace. Muzzle flash itself is Task 17's `MuzzleFlashView` and is
@@ -26,12 +27,53 @@ namespace Ring.Presentation
     /// spawned on `PlayerDashed` the same way every other event here spawns
     /// its own cosmetic.
     ///
-    /// Pooling split (Приложение П-7): casings/decals/corpses/dash-glows have
-    /// no "done with it" moment during a live match (spec: "живут до конца
-    /// захода") — they use the single shared `RingBuffer&lt;T&gt;` (FIFO, oldest
-    /// overwritten once full), one instance per kind, never separate copies of
-    /// the same logic. The three spark/burst particle systems ARE ordinary
-    /// "rent it, it finishes on its own, give it back" objects — they use
+    /// Task 24 (revised per `app-1zf`'s investigation — see `GibView`'s class
+    /// doc for the full "primitives only" story) added a fifth kind,
+    /// `GibView`, driving EVERY kill's small explosion-style primitive-chunk
+    /// scatter plus an extra headshot chunk. T24-2 (owner-approved Blender
+    /// split, spec item, `app-nco` vision) replaced that primitives-only
+    /// scatter with REAL mech part meshes and a death-VARIANT split instead
+    /// of "always scatter, always spawn a whole corpse".
+    ///
+    /// В3 fix-wave 1 (app-n6g item 2, owner playtest feedback: headshots need
+    /// an unmistakable payoff, not a coin-flip) changed the variant-selection
+    /// rule in `HandleMobDied` to this:
+    /// — `e.Zone == HitZone.Head`: ALWAYS `SpawnFullExplodeGibs` — no corpse
+    /// ever spawns for a headshot kill, and the `GibFullExplodeChance` roll
+    /// below is skipped entirely for this event. Within the explode, the
+    /// HEAD part specifically launches along the killing blow's own `HitDir`
+    /// (`GameFeelConfig.GibHeadImpulseSpeed`) instead of the random
+    /// upward-biased scatter every other part gets — directional feedback
+    /// that reads as "that shot took the head off" (`SpawnFullExplodeGibs`'s
+    /// own doc has the exact split).
+    /// — Otherwise (non-head kill): unchanged from T24-2 — rolls
+    /// `GibFullExplodeChance` (a code const, not a GameFeelConfig field —
+    /// cosmetic death-variant RNG, not a hot-tweak feel number, same
+    /// "structural, not feel" split the retired `GibExplosionChunkCount`
+    /// const used to draw) via `UnityEngine.Random` (legal, casings
+    /// precedent): FULL EXPLODE (every part random-scatters, no directional
+    /// treatment — a non-head kill has no "which way did the head fly"
+    /// story to tell) or a whole corpse (`CorpseView.Spawn`, no head gib —
+    /// that side branch only ever applied to headshots, which no longer
+    /// reach the corpse branch at all).
+    /// Every gib part's `transform.localScale` mirrors the SAME
+    /// `visualScale` (`ChaserVisualScale`/`GunnerVisualScale`) the corpse
+    /// itself gets, below — a part cut from the same mesh has to agree with
+    /// the archetype's own live/corpse scale or it visibly mismatches.
+    /// `GibMetal.mat` (Task 24's flat gunmetal material) is no longer the
+    /// gib's own material — it's kept on disk purely as the fallback wired
+    /// into `_chaserPartMaterial`/`_gunnerPartMaterial` if a remap material
+    /// is ever missing (`StageOneSceneBootstrap.GetOrCreateGibPrefab`'s own
+    /// doc), which should never happen in practice since the parts FBXs
+    /// share their material NAME with the already-remapped live mechs.
+    ///
+    /// Pooling split (Приложение П-7): casings/decals/corpses/dash-glows/gibs
+    /// have no "done with it" moment during a live match (spec: "живут до
+    /// конца захода") — they use the single shared `RingBuffer&lt;T&gt;` (FIFO,
+    /// oldest overwritten once full), one instance per kind, never separate
+    /// copies of the same logic. The spark/burst particle systems (hit, block,
+    /// death, and — Task 22 — slide dust) ARE ordinary "rent it, it finishes
+    /// on its own, give it back" objects — they use
     /// `UnityEngine.Pool.ObjectPool&lt;ParticleSystem&gt;` instead, returned via
     /// `ParticleReturnToPool`'s `OnParticleSystemStopped` callback (prefab's
     /// `stopAction = Callback`, `StageOneSceneBootstrap`), not a second
@@ -63,21 +105,19 @@ namespace Ring.Presentation
     /// Unity's default "collide" and is exactly what makes casings bounce off
     /// the greybox geometry at all.
     ///
-    /// `ProjectileBlocked`'s decal/block-spark normal is computed purely
-    /// analytically from `ArenaConfig` (spec/resolution: "нормаль — от
-    /// ближайшего препятствия/стены арены из World.Config — вычисли
-    /// аналитически") — the contact point (a swept-circle collision result,
-    /// `ProjectileSystem`) sits at combined-radius distance from whichever
-    /// obstacle/the outer wall it actually hit; `ComputeBlockNormal` below
-    /// picks whichever candidate surface (each of `ArenaConfig.Obstacles`, or
-    /// the ring wall) the contact's distance best matches and returns the
-    /// outward-facing normal for that surface. All arithmetic stays in
-    /// Unity's own `Vector3` (world space, Y=0 plane — same convention
-    /// `GreyboxBuilder.BuildObstacles` already uses for
-    /// `ArenaConfig.Obstacle.Pos`, a plain `Vector2`) rather than
-    /// `Unity.Mathematics.float2` specifically so this file never needs both
-    /// `Unity.Mathematics` and `UnityEngine` `Random` in scope at once (the
-    /// two `Random` types would otherwise collide).
+    /// `ProjectileBlocked`'s decal/block-spark normal and height are read
+    /// straight off the triggering `SimEvent` (Task 21, PC4 — one home, not
+    /// two): `ProjectileSystem` already computes the exact contact geometry
+    /// server-side (a swept-circle collision result) and carries it out on
+    /// the event itself since Task 7 — `HitDir` is the real surface normal
+    /// for a wall/obstacle hit, or exactly `float2.zero` (never an
+    /// approximation) for a floor hit, and `Amount` is the contact height in
+    /// both cases. `HandleBlocked` below only has to tell the two cases apart
+    /// (`HitDir == 0` ⇒ floor, decal flat with an up-facing normal) and
+    /// convert into `UnityEngine.Vector3`/`Quaternion` — no more re-deriving
+    /// the normal analytically against `ArenaConfig.Obstacles`/the ring wall
+    /// the way the pre-Task-21 `ComputeBlockNormal` had to (back when the
+    /// event carried neither a normal nor a height).
     public sealed class PersistentPropsDirector : MonoBehaviour
     {
         /// User layer 9 — "Casings" in `ProjectSettings/TagManager.asset`
@@ -90,11 +130,11 @@ namespace Ring.Presentation
         // Structural spawn-positioning offsets — NOT feel numbers (owner
         // guidance, review fix-round: these stay code constants, only the
         // actual game-feel numbers below moved into GameFeelConfig).
-        // Casing spawn height rides GameFeelConfig.MuzzleLiftY — the muzzle
-        // height is a single source (Б1-веха fix: casings were born at ankle
-        // height inside the doll mesh).
+        // Casing spawn height rides SimulationRunner.RenderMuzzleHeight (Task
+        // 21, PC7 — was GameFeelConfig.MuzzleLiftY; the muzzle height is a
+        // single source, Б1-веха fix: casings were born at ankle height
+        // inside the doll mesh).
         const float CasingLateralOffset = 0.15f;
-        const float DecalHeightOffset = 1f;
         const float DecalNearOffset = 0.1f;
 
         // Mech pivot sits at the feet (same convention as MobVisual/ViewRegistry's
@@ -122,25 +162,50 @@ namespace Ring.Presentation
         const int HitSparkPoolCapacity = 32;
         const int BlockSparkPoolCapacity = 32;
         const int DeathBurstPoolCapacity = 16;
+        // Task 22: slide dust — slides are gated by a run-up/stamina cost, far
+        // rarer than gunfire, same "rare trigger → small pool" reasoning the
+        // class doc already gives for DeathBurstPoolCapacity above.
+        const int SlideDustPoolCapacity = 16;
+
+        // T24-2 (app-nco vision, owner-approved Blender split): fraction of
+        // kills that get the "mech explodes into every part" variant instead
+        // of a whole corpse (+ at most one head gib on a headshot). Kept a
+        // code const, not a GameFeelConfig field — cosmetic death-variant
+        // RNG, not a hot-tweak feel number (class doc, same split
+        // GibExplosionChunkCount used to draw before this task retired it).
+        const float GibFullExplodeChance = 0.35f;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
-        [SerializeField] ArenaConfig _arena;
         [SerializeField] CasingView _casingPrefab;
         [SerializeField] DecalProjector _decalPrefab;
         [SerializeField] CorpseView _corpsePrefab;
         [SerializeField] DashGlowView _dashGlowPrefab;
+        [SerializeField] GibView _gibPrefab;
+        // T24-2: per-archetype gib PART meshes (George: Head/ArmL/ArmR/LegL/
+        // LegR/Torso; Leela: Head/LegL/LegR/Torso) plus the single material
+        // each archetype's parts all share — wired by StageOneSceneBootstrap
+        // from the George_Parts.fbx/Leela_Parts.fbx sub-assets
+        // (`_Ring/Gibs/`). See class doc for the death-variant logic that
+        // consumes these.
+        [SerializeField] Mesh[] _chaserParts;
+        [SerializeField] Mesh[] _gunnerParts;
+        [SerializeField] Material _chaserPartMaterial;
+        [SerializeField] Material _gunnerPartMaterial;
         [SerializeField] ParticleSystem _hitSparkPrefab;
         [SerializeField] ParticleSystem _blockSparkPrefab;
         [SerializeField] ParticleSystem _deathBurstPrefab;
+        [SerializeField] ParticleSystem _slideDustPrefab; // Task 22
 
         RingBuffer<CasingView> _casings;
         RingBuffer<DecalProjector> _decals;
         RingBuffer<CorpseView> _corpses;
         RingBuffer<DashGlowView> _dashGlows;
+        RingBuffer<GibView> _gibs;
         ObjectPool<ParticleSystem> _hitSparkPool;
         ObjectPool<ParticleSystem> _blockSparkPool;
         ObjectPool<ParticleSystem> _deathBurstPool;
+        ObjectPool<ParticleSystem> _slideDustPool; // Task 22
 
         void Awake()
         {
@@ -150,17 +215,21 @@ namespace Ring.Presentation
             _decals = new RingBuffer<DecalProjector>(_gameFeel.MaxDecals, CreateDecal);
             _corpses = new RingBuffer<CorpseView>(_gameFeel.MaxCorpses, CreateCorpse);
             _dashGlows = new RingBuffer<DashGlowView>(_gameFeel.MaxDashGlows, CreateDashGlow);
+            _gibs = new RingBuffer<GibView>(_gameFeel.GibPartsFifoLimit, CreateGib);
             _casings.Prewarm();
             _decals.Prewarm();
             _corpses.Prewarm();
             _dashGlows.Prewarm();
+            _gibs.Prewarm();
 
             _hitSparkPool = CreateParticlePool(_hitSparkPrefab, HitSparkPoolCapacity);
             _blockSparkPool = CreateParticlePool(_blockSparkPrefab, BlockSparkPoolCapacity);
             _deathBurstPool = CreateParticlePool(_deathBurstPrefab, DeathBurstPoolCapacity);
+            _slideDustPool = CreateParticlePool(_slideDustPrefab, SlideDustPoolCapacity); // Task 22
             PrewarmParticlePool(_hitSparkPool, HitSparkPoolCapacity);
             PrewarmParticlePool(_blockSparkPool, BlockSparkPoolCapacity);
             PrewarmParticlePool(_deathBurstPool, DeathBurstPoolCapacity);
+            PrewarmParticlePool(_slideDustPool, SlideDustPoolCapacity); // Task 22
         }
 
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
@@ -182,6 +251,7 @@ namespace Ring.Presentation
             _decals.Clear(decal => decal.gameObject.SetActive(false));
             _corpses.Clear(corpse => corpse.gameObject.SetActive(false));
             _dashGlows.Clear(glow => glow.gameObject.SetActive(false));
+            _gibs.Clear(gib => gib.gameObject.SetActive(false)); // Task 24 (D10)
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's
@@ -199,7 +269,7 @@ namespace Ring.Presentation
                     if (e.Owner == ProjectileOwner.Player) SpawnCasing(in e);
                     break;
                 case SimEventKind.ProjectileHit:
-                    PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
+                    SpawnHitSpark(in e);
                     break;
                 case SimEventKind.ProjectileBlocked:
                     HandleBlocked(in e);
@@ -210,6 +280,15 @@ namespace Ring.Presentation
                 case SimEventKind.PlayerDashed:
                     SpawnDashGlow(in e);
                     break;
+                case SimEventKind.PlayerSlideStarted:
+                    // Task 22: dust kicked up at slide start — omnidirectional pop,
+                    // same Quaternion.identity convention HitSpark/DeathBurst
+                    // above already use for their own non-directional bursts.
+                    PlayParticle(_slideDustPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
+                    break;
+                case SimEventKind.DashRicocheted:
+                    HandleRicocheted(in e);
+                    break;
             }
         }
 
@@ -217,7 +296,7 @@ namespace Ring.Presentation
         {
             Vector3 lateral = new Vector3(
                 Random.Range(-CasingLateralOffset, CasingLateralOffset),
-                _gameFeel.MuzzleLiftY,
+                _runner.RenderMuzzleHeight,
                 Random.Range(-CasingLateralOffset, CasingLateralOffset));
             Vector3 pos = SimSpace.ToWorld(e.Pos) + lateral;
             // Eject to the shooter's RIGHT of the shot direction (e.Amount is the
@@ -233,35 +312,214 @@ namespace Ring.Presentation
             view.Spawn(pos, impulse, torque, _gameFeel.CasingPhysicsSeconds, _gameFeel.CasingScale);
         }
 
+        /// В3 fix-wave 1 (app-n6g item 3c, owner playtest feedback: hit
+        /// sparks were unreadable — spawned at a fixed floor height
+        /// (`SimSpace.ToWorld(e.Pos)`'s hardcoded Y=0) regardless of where
+        /// the shot actually landed on the mob). `ProjectileHit` genuinely
+        /// carries both `MobType` and `Zone` for every event of this kind —
+        /// `ProjectileSystem`'s `HitMob` case is the ONLY emitter (`HitPlayer`
+        /// routes through `DamagePlayer`/a different event kind entirely,
+        /// never `ProjectileHit`) — so both reads below are always
+        /// meaningful, never a defensive guess. `ZoneHeight` reads the SAME
+        /// `World.Config.Chaser`/`Gunner` belts `PartHeight`/`AimProxy_*`
+        /// already read (class doc), keyed off `HitZone` instead of
+        /// `GibPartKind` — the spark now visibly appears at head height for
+        /// a headshot, body height for a body shot, etc.
+        void SpawnHitSpark(in SimEvent e)
+        {
+            MobSimConfig archetype = e.MobType == MobType.Chaser
+                ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
+            float height = ZoneHeight(e.Zone, in archetype);
+            PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * height, Quaternion.identity);
+        }
+
         void HandleBlocked(in SimEvent e)
         {
-            Vector3 contactFlat = SimSpace.ToWorld(e.Pos);
-            Vector3 normal = ComputeBlockNormal(contactFlat, _arena);
-            Vector3 contactWorld = contactFlat + Vector3.up * DecalHeightOffset;
+            // Floor vs wall/obstacle (class doc): HitDir is exactly zero for a
+            // floor contact — ProjectileSystem's own gate (Task 7), not an
+            // epsilon check.
+            bool isFloor = e.HitDir.x == 0f && e.HitDir.y == 0f;
+            Vector3 normal = isFloor ? Vector3.up : new Vector3(e.HitDir.x, 0f, e.HitDir.y);
+            // Amount is the sim's own contact height for BOTH branches
+            // (ProjectileSystem's HitBarrier/HitFloor cases share one
+            // formula) — the event is now the sole home for height, same as
+            // HitDir already is for the normal (class doc, PC4).
+            Vector3 contactWorld = SimSpace.ToWorld(e.Pos) + Vector3.up * e.Amount;
+            // A floor's normal (world up) can't double as LookRotation's own
+            // "up" hint — forward (-normal) and the hint would be
+            // anti-parallel, a degenerate case. A horizontal hint sidesteps
+            // it; the wall branch keeps its original roll convention.
+            Vector3 upHint = isFloor ? Vector3.forward : Vector3.up;
 
             DecalProjector decal = _decals.Rent();
             decal.gameObject.SetActive(true);
             decal.transform.SetPositionAndRotation(
                 contactWorld + normal * DecalNearOffset,
-                Quaternion.LookRotation(-normal, Vector3.up));
+                Quaternion.LookRotation(-normal, upHint));
 
-            PlayParticle(_blockSparkPool, contactWorld, Quaternion.LookRotation(normal, Vector3.up));
+            PlayParticle(_blockSparkPool, contactWorld, Quaternion.LookRotation(normal, upHint));
         }
 
         void HandleMobDied(in SimEvent e)
         {
-            Vector3 pos = SimSpace.ToWorld(e.Pos) + Vector3.up * CorpseLift;
-
-            CorpseView corpse = _corpses.Rent();
-            corpse.Spawn(pos, e.MobType, _gameFeel.CorpseGlowFadeSeconds);
+            // В1/В2 fix-wave 2 (app-n6g item 2, BUG fix): same archetype-scale
+            // read `ViewRegistry.SyncMobs` uses for the live `MobVisual.Bind`
+            // call — `MobDied`'s own `MobType` is enough, no new SO field
+            // (CorpseView.Spawn's own doc). T24-2: also the scale every
+            // spawned gib part's transform.localScale mirrors (class doc).
+            float visualScale = e.MobType == MobType.Chaser
+                ? _gameFeel.ChaserVisualScale : _gameFeel.GunnerVisualScale;
 
             PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
+
+            // В3 fix-wave 1 (app-n6g item 2, owner playtest feedback):
+            // headshots ALWAYS get the full-explode variant — never a
+            // corpse, and the roll below never runs for this event (class
+            // doc has the full rule). `SpawnFullExplodeGibs` itself checks
+            // `e.Zone` to give the HEAD part its own directional impulse.
+            if (e.Zone == HitZone.Head)
+            {
+                SpawnFullExplodeGibs(in e, visualScale);
+                return;
+            }
+
+            // T24-2 (app-nco vision): otherwise, a rolled fraction of kills
+            // explode into every part instead of leaving a whole corpse —
+            // class doc has the full variant split.
+            if (Random.value < GibFullExplodeChance)
+            {
+                SpawnFullExplodeGibs(in e, visualScale);
+                return;
+            }
+
+            Vector3 pos = SimSpace.ToWorld(e.Pos) + Vector3.up * CorpseLift;
+            CorpseView corpse = _corpses.Rent();
+            corpse.Spawn(pos, e.MobType, _gameFeel.CorpseGlowFadeSeconds, visualScale);
+        }
+
+        /// T24-2 (app-nco vision, owner-approved Blender split): the "mech
+        /// explodes" death variant — every part of the dying mob's own
+        /// archetype (`_chaserParts`/`_gunnerParts`) scatters from the
+        /// event's own `Pos` (owner requirement, веха 3 — XY always rides
+        /// `e.Pos`, never `ViewRegistry`/`MobView` state), each at a
+        /// belt-derived height keyed off its own `GibView.ClassifyPart` kind
+        /// (`PartHeight` below) — the SAME `World.Config.Chaser`/`Gunner`
+        /// zone-geometry belts `ProjectileSystem`'s hit-zone classification
+        /// and the `AimProxy_*` colliders already read. NO corpse spawns in
+        /// this variant — every part IS the "corpse" here (class doc).
+        /// Called for BOTH triggers `HandleMobDied` recognizes
+        /// (`GibFullExplodeChance` roll, or unconditionally on a headshot —
+        /// class doc): every part's impulse is the usual upward-biased
+        /// random scatter (`Random.onUnitSphere`, reflected onto the upper
+        /// hemisphere when it rolls downward — a part launching straight
+        /// into the floor reads as a bug, not a death) at
+        /// `GameFeelConfig.GibExplosionSpeed`, EXCEPT the HEAD part on a
+        /// headshot kill (`e.Zone == HitZone.Head`, В3 fix-wave 1 item 2):
+        /// that one part instead launches along the killing blow's own
+        /// `HitDir` at `GameFeelConfig.GibHeadImpulseSpeed` — directional
+        /// feedback that reads as "that shot took the head off" (same
+        /// formula/height Task 24's original standalone headshot chunk
+        /// used, folded into this method now that a headshot always takes
+        /// the full-explode path instead of adding one extra chunk on top
+        /// of an intact corpse).
+        void SpawnFullExplodeGibs(in SimEvent e, float visualScale)
+        {
+            (Mesh[] parts, Material material) = e.MobType == MobType.Chaser
+                ? (_chaserParts, _chaserPartMaterial) : (_gunnerParts, _gunnerPartMaterial);
+            MobSimConfig archetype = e.MobType == MobType.Chaser
+                ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
+            Vector3 worldPos = SimSpace.ToWorld(e.Pos);
+            float settleSeconds = _gameFeel.GibPhysicsSeconds;
+            bool headshot = e.Zone == HitZone.Head;
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                Mesh part = parts[i];
+                GibPartKind kind = GibView.ClassifyPart(part.name);
+                float height = PartHeight(kind, in archetype);
+                Vector3 impulse;
+                if (headshot && kind == GibPartKind.Head)
+                {
+                    impulse = _gameFeel.GibHeadImpulseSpeed * SimSpace.ToWorld(e.HitDir);
+                }
+                else
+                {
+                    Vector3 dir = Random.onUnitSphere;
+                    if (dir.y < 0f) dir.y = -dir.y; // upward-biased (class doc)
+                    impulse = dir * _gameFeel.GibExplosionSpeed;
+                }
+
+                GibView gib = _gibs.Rent();
+                gib.SettleSeconds = settleSeconds;
+                gib.Spawn(worldPos + Vector3.up * height, impulse, part, material, visualScale);
+            }
+        }
+
+        /// T24-2: per-part spawn height for `SpawnFullExplodeGibs`, keyed off
+        /// the dying mob's own archetype belts — head at the head belt (Task
+        /// 24's original formula), legs low (below the legs belt), torso AND
+        /// arms mid (the body belt band — George's arms read the same band
+        /// as its torso, task brief: "arms mid for George").
+        static float PartHeight(GibPartKind kind, in MobSimConfig archetype)
+        {
+            switch (kind)
+            {
+                case GibPartKind.Head:
+                    return (archetype.BodyTop + archetype.HeadTop) * 0.5f;
+                case GibPartKind.LegL:
+                case GibPartKind.LegR:
+                    return archetype.LegsTop * 0.5f;
+                default: // Torso, ArmL, ArmR
+                    return (archetype.LegsTop + archetype.BodyTop) * 0.5f;
+            }
+        }
+
+        /// В3 fix-wave 1 (app-n6g item 3c): `SpawnHitSpark`'s own
+        /// `HitZone`-keyed belt mid-height — same band split `PartHeight`
+        /// above already draws for gib parts, just keyed off `HitZone`
+        /// (`ProjectileSystem`'s hit-zone classification, `SimEvent.Zone`)
+        /// instead of `GibPartKind`. `HitZone.None` is defensive only — a
+        /// live `ProjectileHit` always carries a real zone (`SpawnHitSpark`'s
+        /// own doc) — and falls back to floor height (Y=0, the spark's
+        /// previous behavior) rather than guessing.
+        static float ZoneHeight(HitZone zone, in MobSimConfig archetype)
+        {
+            switch (zone)
+            {
+                case HitZone.Head:
+                    return (archetype.BodyTop + archetype.HeadTop) * 0.5f;
+                case HitZone.Body:
+                    return (archetype.LegsTop + archetype.BodyTop) * 0.5f;
+                case HitZone.Legs:
+                    return archetype.LegsTop * 0.5f;
+                default:
+                    return 0f;
+            }
         }
 
         void SpawnDashGlow(in SimEvent e)
         {
             DashGlowView glow = _dashGlows.Rent();
             glow.Spawn(SimSpace.ToWorld(e.Pos), _gameFeel.DashGlowSeconds, _gameFeel.DashGlowSize);
+        }
+
+        /// Task 22 (spec brief QA13/QC3): reuses the existing block-spark pool/
+        /// prefab outright — no dedicated ricochet-spark asset, and no new
+        /// burst-count field, `BlockSparkBurstCount` is already baked into the
+        /// prefab (GameFeelConfig class doc: "RicochetSparkCount... deliberately
+        /// NOT added — ricochet sparks reuse the baked BlockSparkBurstCount").
+        /// Guard mirrors `HandleBlocked`'s own zero-normal check above:
+        /// `Quaternion.LookRotation(Vector3.zero, ...)` logs an error (which
+        /// would fail the log gate, the batchmode error-grep every Unity run
+        /// is checked against) rather than throwing, so this can't rely on
+        /// the sim never emitting a degenerate contact normal — Presentation
+        /// checks for itself.
+        void HandleRicocheted(in SimEvent e)
+        {
+            if (e.HitDir.x == 0f && e.HitDir.y == 0f) return;
+
+            PlayParticle(_blockSparkPool, SimSpace.ToWorld(e.Pos),
+                Quaternion.LookRotation(SimSpace.ToWorld(e.HitDir), Vector3.up));
         }
 
         void PlayParticle(ObjectPool<ParticleSystem> pool, Vector3 worldPos, Quaternion rotation)
@@ -300,6 +558,13 @@ namespace Ring.Presentation
             return view;
         }
 
+        GibView CreateGib()
+        {
+            GibView view = Instantiate(_gibPrefab, transform);
+            view.gameObject.SetActive(false);
+            return view;
+        }
+
         ObjectPool<ParticleSystem> CreateParticlePool(ParticleSystem prefab, int capacity)
         {
             ObjectPool<ParticleSystem> pool = null;
@@ -326,33 +591,5 @@ namespace Ring.Presentation
             for (int i = 0; i < count; i++) scratch[i] = pool.Get();
             for (int i = 0; i < count; i++) pool.Release(scratch[i]);
         }
-
-        /// See class doc — analytic normal for a `ProjectileBlocked` contact
-        /// point. `contactFlat` is world-space with Y already pinned to 0 by
-        /// `SimSpace.ToWorld`.
-        static Vector3 ComputeBlockNormal(Vector3 contactFlat, ArenaConfig arena)
-        {
-            float bestError = Mathf.Abs(contactFlat.magnitude - arena.Radius);
-            Vector3 bestNormal = SafeNormalize(-contactFlat); // ring wall: inward, toward center
-
-            ArenaConfig.Obstacle[] obstacles = arena.Obstacles;
-            if (obstacles != null)
-            {
-                for (int i = 0; i < obstacles.Length; i++)
-                {
-                    Vector3 center = new Vector3(obstacles[i].Pos.x, 0f, obstacles[i].Pos.y);
-                    Vector3 delta = contactFlat - center;
-                    float error = Mathf.Abs(delta.magnitude - obstacles[i].Radius);
-                    if (error < bestError)
-                    {
-                        bestError = error;
-                        bestNormal = SafeNormalize(delta); // obstacle: outward, away from its center
-                    }
-                }
-            }
-            return bestNormal;
-        }
-
-        static Vector3 SafeNormalize(Vector3 v) => v.sqrMagnitude > 1e-8f ? v.normalized : Vector3.right;
     }
 }

@@ -45,13 +45,13 @@ MonoBehaviour:
   DeathBurstLifetime: 0.3
   DeathBurstSpeed: 4
   DeathBurstSize: 0.12
-  HitSparkBurstCount: 15
+  HitSparkBurstCount: 30
   BlockSparkBurstCount: 18
   ImmediateMuzzleFeedback: 1
   ExtrapolateLocalPlayer: 0
   PlayerVisualScale: 1
   ChaserVisualScale: 0.4
-  GunnerVisualScale: 0.4
+  GunnerVisualScale: 0.76
   SpeedDampTime: 0.1
   PlayerMoveThreshold01: 0.05
   VisualTurnDegPerSec: 720
@@ -76,6 +76,35 @@ MonoBehaviour:
   MaxDashGlows: 8
   DashGlowSeconds: 2.5
   DashGlowSize: 0.9
-  CasingScale: 0.08
+  CasingScale: 0.067
   CasingEjectSpeedMin: 0.8
   CasingEjectSpeedMax: 1.4
+  TracerScale: 0.7
+  SlideDustBurstCount: 14
+  StaminaBarFullColor: {r: 0.15, g: 0.95, b: 0.85, a: 1}
+  StaminaBarLowColor: {r: 1, g: 0.25, b: 0.15, a: 1}
+  StaminaBarLowThreshold: 0.25
+  StaminaDeniedPulseSeconds: 0.2
+  HeadHitstopScale: 1.4
+  ZoneHitPitchOffset: 0.06
+  GibHeadImpulseSpeed: 6
+  GibExplosionSpeed: 4
+  GibPartsFifoLimit: 24
+  GibPhysicsSeconds: 3
+  AimProxyHeadRadiusFrac: 0.8
+  AimRayAlpha: 0.35
+  AimRayWidth: 0.03
+  AimDotScale: 0.15
+  SlideDustLifetime: 0.35
+  SlideDustSpeed: 1.8
+  SlideDustSize: 0.14
+  LinkWindowFlashHz: 6
+  LinkWindowFlashBoost: 1.6
+  AimZoneBodyColor: {r: 0.6, g: 0.85, b: 1, a: 1}
+  AimZoneHeadColor: {r: 1, g: 0.25, b: 0.15, a: 1}
+  AimHoverGlowBoost: 1.35
+  AimMarkerHeadScaleBoost: 1.4
+  AimRayHeadAlphaBoost: 2
+  ProjectileBallScale: 1
+  HeadHoverPulseHz: 5
+  HeadHoverPulseAmp: 0.25

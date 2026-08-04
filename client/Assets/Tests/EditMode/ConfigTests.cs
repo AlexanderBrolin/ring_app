@@ -21,6 +21,14 @@ namespace Ring.Simulation.Tests
             return (hero, weapon, chaser, gunner, wave, arena);
         }
 
+        /// Builds a SimConfig from a caller-supplied hero and default everything else —
+        /// for zone-validation tests (Task 1) that only need to vary Hero fields.
+        static SimConfig BuildWith(HeroConfig hero)
+        {
+            var (_, w, c, g, wv, a) = MakeDefaults();
+            return SimConfigBuilder.Build(hero, w, c, g, wv, a);
+        }
+
         [Test]
         public void Build_DefaultAssets_ProducesValidConfig()
         {
@@ -90,6 +98,13 @@ namespace Ring.Simulation.Tests
             g.SeparationStrength = expected.Gunner.SeparationStrength;
             g.AvoidLookahead = expected.Gunner.AvoidLookahead;
             g.AvoidMargin = expected.Gunner.AvoidMargin;
+            g.LegsTop = expected.Gunner.LegsTop;
+            g.BodyTop = expected.Gunner.BodyTop;
+            g.HeadTop = expected.Gunner.HeadTop;
+            g.LegsDamageMult = expected.Gunner.LegsDamageMult;
+            g.BodyDamageMult = expected.Gunner.BodyDamageMult;
+            g.HeadDamageMult = expected.Gunner.HeadDamageMult;
+            g.MuzzleHeight = expected.Gunner.MuzzleHeight;
 
             SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
 
@@ -107,6 +122,82 @@ namespace Ring.Simulation.Tests
             Assert.AreNotEqual(cfg.Chaser.FireInterval, cfg.Gunner.FireInterval);
         }
 
+        [Test]
+        public void Validate_ZoneOrderViolated_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.LegsTop = 1.0f; hero.BodyTop = 0.5f; // zone order violated
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("LegsTop"));
+        }
+
+        [Test]
+        public void Validate_SlideProfileAboveGunnerMuzzle_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            // NB (QA2/QD3): a fresh MobConfig has ProjectileRadius = 0 (chaser
+            // defaults), so 1.0 is used: 1.0 + 0 >= MuzzleHeight(0.95) — rule D5
+            // violated, while 1.0 <= Hero.BodyTop (1.35) — the other rules stay quiet.
+            hero.SlideProfileTop = 1.0f;
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("SlideProfileTop"));
+        }
+
+        [Test]
+        public void Validate_ZeroStaminaRegen_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.StaminaRegenPerSec = 0f;
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("StaminaRegenPerSec"));
+        }
+
+        [Test]
+        public void Validate_AimFracNotAboveSlideFrac_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.AimMoveSpeedFrac = hero.SlideMinSpeedFrac; // equality is also a violation (strict >)
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("AimMoveSpeedFrac"));
+        }
+
+        [Test]
+        public void Validate_SwingLeadFactorOutOfRange_Throws()
+        {
+            // I3 (final review wave, app-n6g): SwingLeadFactor is spec-mandated
+            // to stay within [0,2] per archetype (MobConfig's own [Range(0f,
+            // 2f)] Inspector hint — never enforced outside the Editor UI, so
+            // SimConfigBuilder must reject it too) but ValidateMob never
+            // checked it.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            c.SwingLeadFactor = 2.5f; // outside [0, 2]
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("SwingLeadFactor"));
+        }
+
+        [Test]
+        public void Validate_SwingLeadMaxMetersNegative_Throws()
+        {
+            // I3 (final review wave, app-n6g): SwingLeadMaxMeters must stay
+            // non-negative per archetype — ValidateMob never checked it.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            c.SwingLeadMaxMeters = -1f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("SwingLeadMaxMeters"));
+        }
+
+        [Test]
+        public void Validate_LinkRefundNotBelowMinCost_Throws()
+        {
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            // Equality is also a violation (strict <) — В1 fix-wave 3 economy rework.
+            hero.LinkRefund = math.min(hero.DashStaminaCost, hero.SlideStaminaCost);
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("LinkRefund"));
+        }
+
         static void AssertHeroEqual(HeroSimConfig e, HeroSimConfig a)
         {
             Assert.AreEqual(e.MaxSpeed, a.MaxSpeed, Eps);
@@ -119,6 +210,36 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.DashCooldown, a.DashCooldown, Eps);
             Assert.AreEqual(e.DashIframes, a.DashIframes, Eps);
             Assert.AreEqual(e.DashBufferWindow, a.DashBufferWindow, Eps);
+            Assert.AreEqual(e.LegsTop, a.LegsTop, Eps);
+            Assert.AreEqual(e.BodyTop, a.BodyTop, Eps);
+            Assert.AreEqual(e.HeadTop, a.HeadTop, Eps);
+            Assert.AreEqual(e.LegsDamageMult, a.LegsDamageMult, Eps);
+            Assert.AreEqual(e.BodyDamageMult, a.BodyDamageMult, Eps);
+            Assert.AreEqual(e.HeadDamageMult, a.HeadDamageMult, Eps);
+            Assert.AreEqual(e.SlideProfileTop, a.SlideProfileTop, Eps);
+            Assert.AreEqual(e.MuzzleHeight, a.MuzzleHeight, Eps);
+            Assert.AreEqual(e.SlideMuzzleHeight, a.SlideMuzzleHeight, Eps);
+            Assert.AreEqual(e.MaxAimHeight, a.MaxAimHeight, Eps);
+            Assert.AreEqual(e.StaminaMax, a.StaminaMax, Eps);
+            Assert.AreEqual(e.DashStaminaCost, a.DashStaminaCost, Eps);
+            Assert.AreEqual(e.SlideStaminaCost, a.SlideStaminaCost, Eps);
+            Assert.AreEqual(e.StaminaRegenPerSec, a.StaminaRegenPerSec, Eps);
+            Assert.AreEqual(e.StaminaRegenDelay, a.StaminaRegenDelay, Eps);
+            Assert.AreEqual(e.LinkRefund, a.LinkRefund, Eps);
+            Assert.AreEqual(e.SlideSpeed, a.SlideSpeed, Eps);
+            Assert.AreEqual(e.SlideDuration, a.SlideDuration, Eps);
+            Assert.AreEqual(e.SlideSteerRadPerSec, a.SlideSteerRadPerSec, Eps);
+            Assert.AreEqual(e.SlideMinSpeedFrac, a.SlideMinSpeedFrac, Eps);
+            Assert.AreEqual(e.RunUpSeconds, a.RunUpSeconds, Eps);
+            Assert.AreEqual(e.RunUpDecayMult, a.RunUpDecayMult, Eps);
+            Assert.AreEqual(e.SlideBufferWindow, a.SlideBufferWindow, Eps);
+            Assert.AreEqual(e.LinkWindowSeconds, a.LinkWindowSeconds, Eps);
+            Assert.AreEqual(e.PostDashSlideWindow, a.PostDashSlideWindow, Eps);
+            Assert.AreEqual(e.SlideWallStopDot, a.SlideWallStopDot, Eps);
+            Assert.AreEqual(e.RicochetRetention, a.RicochetRetention, Eps);
+            Assert.AreEqual(e.AimMoveSpeedFrac, a.AimMoveSpeedFrac, Eps);
+            Assert.AreEqual(e.AimSlideSpeedMult, a.AimSlideSpeedMult, Eps);
+            Assert.AreEqual(e.AimSettleSeconds, a.AimSettleSeconds, Eps);
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)
@@ -134,6 +255,10 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.RecoilMaxRad, a.RecoilMaxRad, Eps);
             Assert.AreEqual(e.MuzzleOffset, a.MuzzleOffset, Eps);
             Assert.AreEqual(e.CanFireWhileDash, a.CanFireWhileDash);
+            Assert.AreEqual(e.CanFireWhileSlide, a.CanFireWhileSlide);
+            Assert.AreEqual(e.SpreadRunMult, a.SpreadRunMult, Eps);
+            Assert.AreEqual(e.SpreadSlideMult, a.SpreadSlideMult, Eps);
+            Assert.AreEqual(e.RunSpreadSpeedFrac, a.RunSpreadSpeedFrac, Eps);
         }
 
         static void AssertMobEqual(MobSimConfig e, MobSimConfig a)
@@ -159,6 +284,15 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.SeparationStrength, a.SeparationStrength, Eps);
             Assert.AreEqual(e.AvoidLookahead, a.AvoidLookahead, Eps);
             Assert.AreEqual(e.AvoidMargin, a.AvoidMargin, Eps);
+            Assert.AreEqual(e.LegsTop, a.LegsTop, Eps);
+            Assert.AreEqual(e.BodyTop, a.BodyTop, Eps);
+            Assert.AreEqual(e.HeadTop, a.HeadTop, Eps);
+            Assert.AreEqual(e.LegsDamageMult, a.LegsDamageMult, Eps);
+            Assert.AreEqual(e.BodyDamageMult, a.BodyDamageMult, Eps);
+            Assert.AreEqual(e.HeadDamageMult, a.HeadDamageMult, Eps);
+            Assert.AreEqual(e.MuzzleHeight, a.MuzzleHeight, Eps);
+            Assert.AreEqual(e.SwingLeadFactor, a.SwingLeadFactor, Eps);
+            Assert.AreEqual(e.SwingLeadMaxMeters, a.SwingLeadMaxMeters, Eps);
         }
 
         static void AssertWaveEqual(WaveSimConfig e, WaveSimConfig a)

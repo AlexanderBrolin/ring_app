@@ -42,20 +42,23 @@ namespace Ring.Presentation
     /// hook into it) skips that ease — a hard cut back to live is the right call
     /// the instant a death screen is about to cover the whole frame anyway.
     ///
-    /// Budget (spec Interfaces): a trailing 1-second window tracks every
-    /// ACCEPTED trigger's timestamp; a new `ProjectileHit` is only granted
-    /// hitstop if the window's already-spent seconds plus this trigger's
-    /// `HitstopSeconds` stay under `MaxHitstopRatio` (a fraction of that 1s
-    /// window — e.g. 0.35 == 350ms of hitstop per real second) — otherwise the
-    /// freeze/target-freeze step is skipped outright, so hold-fire through a
-    /// wave doesn't turn into a slideshow. The hit-flash and trauma bump still
-    /// fire on every hit regardless of budget — only the freeze itself is
-    /// rate-limited. Per-trigger cost is approximated as the window's accepted-
-    /// trigger COUNT times the CURRENT `HitstopSeconds` value rather than
-    /// storing each trigger's own duration — simpler, and correct for the
-    /// overwhelming common case (the value doesn't hot-tweak mid-window); a
-    /// tweak landing exactly inside an active window very slightly over/under-
-    /// counts for that one window only, never a hard bug.
+    /// Budget (spec Interfaces): a trailing 1-second window tracks each
+    /// ACCEPTED trigger's own `(timestamp, seconds)` pair; a new
+    /// `ProjectileHit` is only granted hitstop if the window's summed seconds
+    /// plus this trigger's own duration stay under `MaxHitstopRatio` (a
+    /// fraction of that 1s window — e.g. 0.35 == 350ms of hitstop per real
+    /// second) — otherwise the freeze/target-freeze step is skipped outright,
+    /// so hold-fire through a wave doesn't turn into a slideshow. The
+    /// hit-flash and trauma bump still fire on every hit regardless of
+    /// budget — only the freeze itself is rate-limited. Task 22 (spec Г6)
+    /// fix-round: each entry stores its OWN accepted duration rather than the
+    /// window's accepted-trigger COUNT times the CURRENT `HitstopSeconds`
+    /// value — that shortcut was only correct while every hit in a window
+    /// shared one flat duration; once `HandleProjectileHit` started passing a
+    /// zone-scaled duration (`HeadHitstopScale`), a window mixing head and
+    /// body hits under the old approximation mis-priced every entry as
+    /// whichever duration happened to be current at CHECK time, not the
+    /// duration each entry actually spent.
     ///
     /// `AddTrauma`: max-pulse + linear decay, the standard "trauma" shape
     /// (Squirrel Eiserloh's screen-shake talk) — every event that should drive
@@ -86,7 +89,10 @@ namespace Ring.Presentation
         [SerializeField] ViewRegistry _viewRegistry;
         [SerializeField] Image _vignette;
 
-        readonly Queue<float> _hitstopBudget = new Queue<float>(BudgetHistoryCapacity);
+        // Task 22 (spec Г6) fix-round: (timestamp, seconds) pairs — see the
+        // Budget doc paragraph above — instead of a bare timestamp queue.
+        readonly Queue<(float timestamp, float seconds)> _hitstopBudget =
+            new Queue<(float timestamp, float seconds)>(BudgetHistoryCapacity);
 
         float _hitstopTimer;
         // The scope captured at TriggerHitstop time, not re-read from `_gameFeel`
@@ -195,12 +201,21 @@ namespace Ring.Presentation
             // freeze itself is rate-limited (class doc, Budget).
             if (hasView) targetView.Flash(_gameFeel.FlashDuration);
 
-            if (TryConsumeHitstopBudget(_gameFeel.HitstopSeconds))
+            // Task 22 (spec brief): a headshot lands harder — HitstopSeconds scaled
+            // by HeadHitstopScale BEFORE the budget check/trigger below, so a
+            // head hit both costs more of the 1s hitstop budget and freezes
+            // longer, same "duration IS the everything" contract TriggerHitstop
+            // itself already follows for the flat case.
+            float hitstopSeconds = e.Zone == HitZone.Head
+                ? _gameFeel.HitstopSeconds * _gameFeel.HeadHitstopScale
+                : _gameFeel.HitstopSeconds;
+
+            if (TryConsumeHitstopBudget(hitstopSeconds))
             {
-                TriggerHitstop(_gameFeel.HitstopSeconds);
+                TriggerHitstop(hitstopSeconds);
                 if (hasView && _activeScope == GameFeelConfig.HitstopScopeMode.TargetOnly)
                 {
-                    targetView.FreezePosition(_gameFeel.HitstopSeconds);
+                    targetView.FreezePosition(hitstopSeconds);
                     _hitstopTargetView = targetView;
                 }
             }
@@ -238,13 +253,20 @@ namespace Ring.Presentation
         {
             float now = Time.unscaledTime;
             float windowStart = now - BudgetWindowSeconds;
-            while (_hitstopBudget.Count > 0 && _hitstopBudget.Peek() < windowStart)
+            while (_hitstopBudget.Count > 0 && _hitstopBudget.Peek().timestamp < windowStart)
                 _hitstopBudget.Dequeue();
 
-            float used = _hitstopBudget.Count * seconds;
+            // Task 22 (spec Г6) fix-round: sum each entry's OWN accepted
+            // duration — a plain `foreach` over the concrete `Queue<T>` field
+            // (not the `IEnumerable<T>` interface) binds to `Queue<T>`'s own
+            // struct enumerator, so this allocates nothing despite the loop
+            // (same "zero allocation once warmed up" constraint every other
+            // per-event Presentation path already follows).
+            float used = 0f;
+            foreach (var entry in _hitstopBudget) used += entry.seconds;
             if (used + seconds > _gameFeel.MaxHitstopRatio) return false;
 
-            _hitstopBudget.Enqueue(now);
+            _hitstopBudget.Enqueue((now, seconds));
             return true;
         }
 

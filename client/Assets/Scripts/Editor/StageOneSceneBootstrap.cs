@@ -1,3 +1,4 @@
+using System.Linq;
 using Ring.Data;
 using Ring.Presentation;
 using TMPro;
@@ -101,9 +102,11 @@ namespace Ring.Editor
     /// (loaded via its `Packages/com.unity.render-pipelines.universal/...`
     /// virtual path) rather than hand-building a `Shader Graphs/Decal`
     /// material from scratch; (3) a `PersistentProps` object carrying
-    /// `PersistentPropsDirector`, wired to every prefab above plus `_arena`
-    /// (decal/block-spark normal computation) and `_gameFeel`; (4)
-    /// `SimEventRouter`'s new `_persistentProps` slot.
+    /// `PersistentPropsDirector`, wired to every prefab above plus
+    /// `_gameFeel` (Task 21 drops the `_arena` slot this director used to
+    /// need — the decal/block-spark normal now comes straight off the
+    /// triggering event's own `HitDir`, `PersistentPropsDirector`'s class
+    /// doc); (4) `SimEventRouter`'s new `_persistentProps` slot.
     /// Task 27 review fix-round adds a fifth step: `EnsureCasingsLayer`
     /// claims user layer 9 ("Casings") in `ProjectSettings/TagManager.asset`
     /// — casings originally shared `GreyboxBuilder.CosmeticsLayer`/8 with the
@@ -175,6 +178,53 @@ namespace Ring.Editor
     /// and on disk (ПБ13, `CorpseView` doc) but is no longer wired to
     /// `PersistentPropsDirector` — `CorpseMechView` takes its `_corpsePrefab`
     /// slot instead.
+    /// Task 24 (revised per app-1zf's investigation: primitives only, see
+    /// `GibView`'s class doc) adds an eighth persistent-cosmetic prefab:
+    /// `Gib` (`GetOrCreateGibPrefab`), reusing `PersistentPropsDirector.
+    /// CasingsLayer` outright rather than claiming a new one —
+    /// `PersistentPropsDirector`'s existing wiring block gains a
+    /// `_gibPrefab` slot alongside `_casingPrefab`/`_decalPrefab`/
+    /// `_corpsePrefab`/`_dashGlowPrefab`.
+    /// T24-2 (owner-approved Blender split) keeps `Gib.prefab`'s slot but
+    /// changes its own internal shape (`GetOrCreateGibPrefab`'s doc) and adds
+    /// four more `PersistentPropsDirector` slots: `_chaserParts`/
+    /// `_gunnerParts` (`Mesh[]`, `LoadGibParts` off `George_Parts.fbx`/
+    /// `Leela_Parts.fbx`, `_Ring/Gibs/`) and `_chaserPartMaterial`/
+    /// `_gunnerPartMaterial` (the live mechs' own `_Ring/Materials/
+    /// *_Texture.mat` remaps, loaded not created — `ThirdPartyImportBootstrap`
+    /// is what actually produces/reuses them).
+    /// Task 20 (spec Г5, PC6/PC8/QA10) adds the aim-assist ray: a new `AimRay`
+    /// root object carrying `LineRenderer` + `AimRayView`, wired to `_runner`/
+    /// `_aimProvider`/`_gameFeel`/`_rayMaterial` — the last built here via a
+    /// new `GetOrCreateUnlitMaterial("AimRayEmissive", ...)` call alongside
+    /// `spreadConeMat`'s own. The existing `Crosshair/Marker` swaps its
+    /// square Quad primitive for a flat round `Cylinder` disc (same shape
+    /// idiom `GreyboxBuilder`'s floor/obstacles already use), self-healing an
+    /// already-committed scene's stale Quad the same way the Player root's
+    /// leftover capsule renderer self-heals above.
+    /// В1 fix-wave 1 (owner playtest feedback, app-n6g): item 1 retires the
+    /// HUD's dash-cooldown bar (two bars only, HP + Stamina) — the HUD bars
+    /// section below self-heals an already-committed scene's leftover
+    /// `DashBar` object out and slides `StaminaBar` up into its old slot;
+    /// `GetOrCreateBar`'s own existence branch grows a matching
+    /// anchoredPosition self-heal so that reposition actually reaches a
+    /// scene the bar already exists in, not just a fresh one. Item 4 (owner's
+    /// sanctioned milestone numbers, `GunnerVisualScale` 0.4→0.76) exposed a
+    /// separate self-heal gap: `GetOrCreateMobArchetypePrefab`'s early-return
+    /// path (prefab already on disk, model unchanged) called
+    /// `SelfHealAimProxyOnPrefab` but never re-applied `EnsureVisual`'s own
+    /// scale check, so a pure `ChaserVisualScale`/`GunnerVisualScale` retune
+    /// never reached an already-committed prefab — `SelfHealVisualScaleOnPrefab`
+    /// (new, called alongside `SelfHealAimProxyOnPrefab` in that same branch)
+    /// closes it, generically for both archetypes.
+    /// В1 fix-wave 3 (owner-decided economy rework, app-n6g): HeroConfig's
+    /// `LinkedDashStaminaCost` field is retired outright (the old
+    /// discounted-dash-in-window model) — `LinkRefund` (new, appended at the
+    /// end of the class) replaces it as the class's sync-marker field, per
+    /// the drill above: `EnsureAssetHasKey` now checks for `LinkRefund`
+    /// instead of `AimSettleSeconds`, so an already-committed HeroConfig.asset
+    /// predating this wave self-heals the new key on this Apply. No new
+    /// scene objects/references — this wave is config-shape only.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -186,11 +236,13 @@ namespace Ring.Editor
         const string CrosshairObjectName = "Crosshair";
         const string MarkerObjectName = "Marker";
         const string SpreadConeObjectName = "SpreadCone";
+        const string AimRayObjectName = "AimRay"; // Task 20
         const string ArenaObjectName = "Arena";
         const string EventSystemObjectName = "EventSystem";
         const string HudObjectName = "HUD";
         const string HpBarObjectName = "HpBar";
         const string DashBarObjectName = "DashBar";
+        const string StaminaBarObjectName = "StaminaBar"; // Task 22
         const string WaveTextObjectName = "WaveText";
         const string BackgroundObjectName = "Background";
         const string FillObjectName = "Fill";
@@ -204,6 +256,11 @@ namespace Ring.Editor
         const string MuzzleFlashObjectName = "MuzzleFlash";
         const string EventRouterObjectName = "EventRouter";
         const string PracticeTargetsObjectName = "PracticeTargets";
+        // В3 fix-wave 2 (item 1): only the PREFAB ASSET's own cold Inspector/preview
+        // scale now — `ProjectileView.Bind` overwrites `transform.localScale` with
+        // this SHOT's own live sim-radius-derived diameter on every rent, before
+        // the pooled view is ever re-enabled/rendered (ViewRegistry.SyncProjectiles),
+        // so this constant no longer reaches the screen in play.
         const float ProjectileDiameter = 0.24f;
 
         // Task 21.
@@ -230,12 +287,28 @@ namespace Ring.Editor
         const string HitSparkPrefabPath = PrefabsDir + "/HitSpark.prefab";
         const string BlockSparkPrefabPath = PrefabsDir + "/BlockSpark.prefab";
         const string DeathBurstPrefabPath = PrefabsDir + "/DeathBurst.prefab";
+        const string SlideDustPrefabPath = PrefabsDir + "/SlideDust.prefab"; // Task 22
         const string PersistentPropsObjectName = "PersistentProps";
         const string TagManagerPath = "ProjectSettings/TagManager.asset";
         const string CasingsLayerName = "Casings";
 
+        // Task 19 (spec QA7/QD1): the 3D aim-proxy raycast layer.
+        const string AimProxyLayerName = "AimProxy";
+
         // Б1 fix-wave 2 (app-9av): dash-start floor mark.
         const string DashGlowPrefabPath = PrefabsDir + "/DashGlow.prefab";
+
+        // Task 24 (revised per app-1zf: primitives only — see GibView's class doc);
+        // T24-2 (owner-approved Blender split) swaps the prefab's SHAPE to a
+        // single mesh-swappable object — same path, see GetOrCreateGibPrefab.
+        const string GibPrefabPath = PrefabsDir + "/Gib.prefab";
+        // T24-2: gib part meshes, cut from the SAME source mechs
+        // (ChaserModelPath/GunnerModelPath below) — same material slot names
+        // ("George_Texture"/"Leela_Texture"), so ThirdPartyImportBootstrap's
+        // RemapPackMaterials reuses the live mechs' own remap materials
+        // rather than creating duplicates (see that class's doc).
+        const string ChaserGibPartsPath = ThirdPartyAssetPostprocessor.GibsRoot + "George_Parts.fbx";
+        const string GunnerGibPartsPath = ThirdPartyAssetPostprocessor.GibsRoot + "Leela_Parts.fbx";
 
         // Task 8 (assets phase B plan, spec §3.2): the pistol in the doll's hand.
         const string GunObjectName = "Gun";
@@ -267,6 +340,19 @@ namespace Ring.Editor
             WeaponConfig weapon = GetOrCreate<WeaponConfig>("WeaponConfig");
             MobConfig chaser = GetOrCreate<MobConfig>("MobChaserConfig");
             MobConfig gunner = GetOrCreate<MobConfig>("MobGunnerConfig", out bool gunnerCreated);
+
+            // Task 17 race-order guard (QD6): snapshot whether the already-
+            // committed MobGunnerConfig.asset carries the MobConfig sync-marker
+            // key BEFORE any EnsureAssetHasKey/SetDirty/SaveAssets call below
+            // can touch it. ApplyGunnerZoneDefaults' gate needs "does this
+            // asset predate the whole Task 1 zone-field block" — independent
+            // of `gunnerCreated`, which only tells us "brand new asset this
+            // run" and says nothing about an older asset that already existed
+            // but was committed before those fields existed at all.
+            bool gunnerMarkerPresent = System.IO.File
+                .ReadAllText($"{DataDir}/MobGunnerConfig.asset")
+                .Contains("SwingLeadMaxMeters");
+
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
             GameFeelConfig gameFeel = GetOrCreate<GameFeelConfig>("GameFeelConfig");
@@ -286,30 +372,53 @@ namespace Ring.Editor
             // where every field is still MobConfig's own chaser-mirrored class
             // default and genuinely needs the gunner numbers seeded once.
             bool gunnerChanged = gunnerCreated && ApplyGunnerDefaults(gunner);
+
+            // Task 17: the Task 1 hit-zone-geometry block (LegsTop/BodyTop/
+            // HeadTop/*DamageMult/MuzzleHeight) never got a gunner-archetype
+            // override — ApplyGunnerDefaults above only covers the older
+            // chaser-mirrored field block, so a committed MobGunnerConfig.asset
+            // still carries the chaser's shorter silhouette. Same first-
+            // creation contract as ApplyGunnerDefaults (F-5 regression guard —
+            // PA4/PB2/PC3), PLUS a one-time backfill when the committed asset
+            // predates the whole block (`gunnerMarkerPresent`, snapshotted
+            // above before this run could change it). `SwingLead*` is
+            // deliberately left untouched — the gunner archetype ignores melee
+            // swing lead entirely (A15).
+            gunnerChanged |= (gunnerCreated || !gunnerMarkerPresent) && ApplyGunnerZoneDefaults(gunner);
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
 
             // Task 27 review fix-round (extended by the milestone-4 DoD
-            // iteration): an already-committed GameFeelConfig.asset predates
-            // whichever feel fields most recently landed — Unity only writes
-            // a ScriptableObject's CURRENT field set to disk when something
+            // iteration, generalized to five assets by Task 17): an already-
+            // committed SO asset predates whichever feel/balance field most
+            // recently landed on its class — Unity only writes a
+            // ScriptableObject's CURRENT field set to disk when something
             // marks it dirty (missing keys silently fall back to the C#
             // field initializer at load time either way, so this is a
             // traceability fix, not a correctness one: the owner should see
             // real numbers to hot-tweak in the Inspector/YAML, not an absent
-            // key). Checked via a direct text read (same technique the now-
-            // removed HasStaleSerializedField migration helper used — Task 28
-            // dropped it once its one caller, MuzzleFlashView's `_runner`
-            // field, went from stale-to-detect back to legitimately wired —
-            // inverted here: detects a MISSING key instead of a stale one) so
-            // this is a one-time sync, not an unconditional touch every run.
-            // The marker key is always the MOST RECENTLY added field
-            // (currently `CasingEjectSpeedMax`, Б1 fix-wave 5 (app-xjz) — was
-            // `CasingScale` before that, `DashGlowSize` (app-9av) before that,
-            // and `GunLocalEuler` before that) so a fresh field addition is
-            // what re-triggers the sync, regardless of which older fields an
-            // already-committed asset already happens to carry.
-            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("CasingEjectSpeedMax"))
-                EditorUtility.SetDirty(gameFeel);
+            // key). `EditorBootstrapUtils.EnsureAssetHasKey` checks via a
+            // direct text read (same technique the now-removed
+            // HasStaleSerializedField migration helper used — Task 28 dropped
+            // it once its one caller, MuzzleFlashView's `_runner` field, went
+            // from stale-to-detect back to legitimately wired — inverted
+            // here: detects a MISSING key instead of a stale one) so this is
+            // a one-time sync per field addition, not an unconditional touch
+            // every run. Each marker key is that class's MOST RECENTLY added
+            // field (GameFeelConfig: `HeadHoverPulseAmp` as of В3 fix-wave 2 —
+            // was `AimRayHeadAlphaBoost` (В3 fix-wave 1) before that,
+            // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
+            // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
+            // field's own doc for the fuller history; HeroConfig's marker is
+            // `LinkRefund` as of В1 fix-wave 3 (owner economy rework) — was
+            // `AimSettleSeconds` (Task 17) before that; WeaponConfig/
+            // MobConfig's marker fields are unchanged since Task 17, so any
+            // asset committed before that task predates them and self-heals
+            // on this Apply).
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "LinkRefund");
+            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
+            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
+            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "HeadHoverPulseAmp"); // В3 fix-wave 2
 
             AssetDatabase.SaveAssets();
 
@@ -327,6 +436,11 @@ namespace Ring.Editor
             // class doc for the bug this fixes) — EnsureCasingsLayer claims
             // user layer 9 in TagManager.asset, idempotently.
             bool casingsLayerChanged = EnsureCasingsLayer();
+
+            // Task 19 (spec QA7/QD1): the 3D aim-proxy raycast layer, user layer
+            // 10 — same idempotent TagManager claim as casings above, now shared
+            // via EnsureUserLayer (QC14).
+            bool aimProxyLayerChanged = EnsureAimProxyLayer();
 
             SimulationRunner runner = FindRunner(scene);
             bool sceneDirty = false;
@@ -353,7 +467,13 @@ namespace Ring.Editor
                     "StageOneSceneBootstrap: no Camera tagged MainCamera found in the scene.");
 
             var aimSo = new SerializedObject(aimProvider);
-            bool aimRefsChanged = EditorBootstrapUtils.SetRef(aimSo, "_camera", mainCamera);
+            bool aimRefsChanged = false;
+            aimRefsChanged |= EditorBootstrapUtils.SetRef(aimSo, "_camera", mainCamera);
+            // Task 19 (PA8/PD16): AimProvider needs the runner for LastFrameInput.
+            // AimHeld (gates the proxy cast) and World.Config.Arena.Radius (the
+            // cast's maxDistance) — same "Simulation" GameObject, so this is
+            // always just self-referencing the very runner AimProvider lives on.
+            aimRefsChanged |= EditorBootstrapUtils.SetRef(aimSo, "_runner", runner);
             if (aimRefsChanged)
             {
                 aimSo.ApplyModifiedPropertiesWithoutUndo();
@@ -430,6 +550,12 @@ namespace Ring.Editor
             // emissive tint (unlit, like the tracer/muzzle materials — a
             // `LineRenderer` strip isn't meant to be shaded).
             Material spreadConeMat = GetOrCreateUnlitMaterial("SpreadConeEmissive", new Color(3.5f, 1.2f, 0f));
+            // Task 20: a cool cyan tint for the aim-assist ray, distinct from
+            // the cone's warm-neon orange above and the tracer's near-white
+            // cyan below — AimRayView reads AimRayWidth/AimRayAlpha off
+            // GameFeelConfig fresh every frame, this material just supplies
+            // the base emissive color those numbers scale.
+            Material aimRayMat = GetOrCreateUnlitMaterial("AimRayEmissive", new Color(0.6f, 2.4f, 3.2f));
 
             GameObject playerGo = EditorBootstrapUtils.FindRootObject(scene, PlayerObjectName);
             if (playerGo == null)
@@ -466,6 +592,15 @@ namespace Ring.Editor
                 playerSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
+
+            // Task 19 (spec QA7/QD1): the player doll carries the same
+            // AimProxy_Legs/Body/Head belts as the mob archetypes, sized from
+            // HeroConfig's own zone-geometry fields — spec Interfaces treats
+            // every hittable actor's proxy the same way; this task wires only
+            // the local player's own AimProvider, but the layer/geometry
+            // contract itself is symmetric across player and mobs.
+            sceneDirty |= EnsureAimProxyChildren(playerGo.transform,
+                hero.LegsTop, hero.BodyTop, hero.HeadTop, hero.Radius, gameFeel.AimProxyHeadRadiusFrac);
 
             // Assets phase B (spec §3.2, task 8): the collector doll — a named
             // "Visual" child instantiated from the UAL1 doll FBX, driven by
@@ -599,17 +734,36 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
             Transform markerTf = crosshairGo.transform.Find(MarkerObjectName);
+            if (markerTf != null)
+            {
+                // Task 20 (PC8, round mini-disc): an already-committed scene may
+                // still carry the old square Quad marker — self-heal it the same
+                // way the Player root's stale MeshRenderer/MeshFilter above are
+                // torn down, rather than leaving the retired shape in place
+                // forever under the plain-existence guard below.
+                MeshFilter staleMarkerFilter = markerTf.GetComponent<MeshFilter>();
+                if (staleMarkerFilter == null || staleMarkerFilter.sharedMesh == null
+                    || staleMarkerFilter.sharedMesh.name != "Cylinder")
+                {
+                    Object.DestroyImmediate(markerTf.gameObject);
+                    markerTf = null;
+                    sceneDirty = true;
+                }
+            }
             GameObject markerGo;
             if (markerTf == null)
             {
-                markerGo = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                markerGo = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
                 markerGo.name = MarkerObjectName;
                 EditorBootstrapUtils.RemoveCollider(markerGo);
                 markerGo.transform.SetParent(crosshairGo.transform, false);
-                // Quad's default normal faces -Z; lay it flat, normal up, for a
-                // top-down ¾ camera.
-                markerGo.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-                markerGo.transform.localScale = Vector3.one * 0.5f;
+                // Cylinder's own axis is already Y (flat circular caps facing
+                // up/down) — no extra rotation needed, unlike the retired
+                // Quad's -Z-facing default. Thin in Y, round in XZ: a genuine
+                // disc for the top-down ¾ camera, the same flat-round-shape
+                // idiom `GreyboxBuilder.BuildFloor`/`BuildObstacles` already
+                // use (their own Cylinder floor/obstacle discs).
+                markerGo.transform.localScale = new Vector3(0.5f, 0.03f, 0.5f);
                 sceneDirty = true;
             }
             else
@@ -667,9 +821,70 @@ namespace Ring.Editor
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_aimProvider", aimProvider);
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_cone", spreadCone);
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_runner", runner);
+            // Task 20: AimDotScale — the marker's own scale multiplier while
+            // AimHeld (class doc, PC8).
+            crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_gameFeel", gameFeel);
+            // В3 fix-wave 1 (app-n6g item 3a): billboards the marker toward
+            // this SAME camera (AimProvider's own `_camera` above, `mainCamera`
+            // local var still in scope).
+            crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_camera", mainCamera);
             if (crosshairRefsChanged)
             {
                 crosshairSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // Task 20 (spec Г5, PC6/PC8/QA10): the aim-assist ray — a two-point
+            // world-space LineRenderer from the weapon's muzzle to the current
+            // aim point, visible only while AimHeld (AimRayView.LateUpdate). Its
+            // own root object, not a Crosshair child: CrosshairView never drives
+            // it, and it carries no marker of its own (the Crosshair's existing
+            // `_marker` doubles as the aim dot while AimHeld, PC8 above).
+            GameObject aimRayGo = EditorBootstrapUtils.FindRootObject(scene, AimRayObjectName);
+            if (aimRayGo == null)
+            {
+                aimRayGo = new GameObject(AimRayObjectName);
+                sceneDirty = true;
+            }
+            // LineRenderer BEFORE AimRayView (MuzzleFlashView/ParticleSystem
+            // precedent, F-style ordering): AimRayView carries
+            // `[RequireComponent(typeof(LineRenderer))]`, which auto-adds a
+            // bare default-configured LineRenderer the instant
+            // `AddComponent<AimRayView>()` runs if one isn't already present
+            // — creating the component here FIRST means that implicit add is
+            // a no-op instead of silently pre-empting (and skipping) the
+            // one-time module setup below.
+            LineRenderer aimRayLine = aimRayGo.GetComponent<LineRenderer>();
+            if (aimRayLine == null)
+            {
+                aimRayLine = aimRayGo.AddComponent<LineRenderer>();
+                aimRayLine.useWorldSpace = true;
+                aimRayLine.positionCount = 2;
+                aimRayLine.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                aimRayLine.enabled = false; // AimRayView.LateUpdate only enables it while AimHeld
+                sceneDirty = true;
+            }
+            if (aimRayLine.sharedMaterial != aimRayMat)
+            {
+                aimRayLine.sharedMaterial = aimRayMat;
+                sceneDirty = true;
+            }
+            AimRayView aimRayView = aimRayGo.GetComponent<AimRayView>();
+            if (aimRayView == null)
+            {
+                aimRayView = aimRayGo.AddComponent<AimRayView>();
+                sceneDirty = true;
+            }
+
+            var aimRaySo = new SerializedObject(aimRayView);
+            bool aimRayRefsChanged = false;
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_runner", runner);
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_aimProvider", aimProvider);
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_gameFeel", gameFeel);
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_rayMaterial", aimRayMat);
+            if (aimRayRefsChanged)
+            {
+                aimRaySo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -756,17 +971,37 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
-            // HP top-left, dash bar directly beneath it, both left-anchored so the
-            // fill grows rightward from a fixed origin (spec resolution П-2:
-            // fillOrigin Left, 1 = ready/full).
+            // HP top-left, both left-anchored so the fill grows rightward from
+            // a fixed origin (spec resolution П-2: fillOrigin Left, 1 = ready/
+            // full).
             Image hpFill = GetOrCreateBar(hudGo.transform, HpBarObjectName,
                 anchoredPos: new Vector2(24f, -24f), size: new Vector2(320f, 28f),
                 backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
                 fillColor: new Color(0.85f, 0.2f, 0.2f), ref sceneDirty);
-            Image dashFill = GetOrCreateBar(hudGo.transform, DashBarObjectName,
+            // В1 fix-wave 1 (owner playtest feedback, item 1 "две полоски"):
+            // the dash-cooldown bar is retired outright — self-heals an
+            // already-committed scene's leftover "DashBar" object the same
+            // way Task 24's PracticeTargets retirement above does (presence,
+            // not absence, triggers sceneDirty here; the object is a child of
+            // the HUD canvas, not a scene root, so this uses Transform.Find
+            // rather than FindRootObject).
+            Transform staleDashBar = hudGo.transform.Find(DashBarObjectName);
+            if (staleDashBar != null)
+            {
+                Object.DestroyImmediate(staleDashBar.gameObject);
+                sceneDirty = true;
+            }
+            // Task 22's stamina bar now sits directly beneath HP, in the slot
+            // the retired dash bar used to occupy (same left origin/sizing,
+            // same ~8px gap under the HP bar's own bottom edge) — mirrors the
+            // dash bar's old layout math now that it's the second bar again.
+            // fillColor here is only the static creation-time default —
+            // HudController overwrites it every frame from GameFeelConfig
+            // once the bar exists.
+            Image staminaFill = GetOrCreateBar(hudGo.transform, StaminaBarObjectName,
                 anchoredPos: new Vector2(24f, -60f), size: new Vector2(320f, 14f),
                 backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
-                fillColor: new Color(0.3f, 0.7f, 0.9f), ref sceneDirty);
+                fillColor: gameFeel.StaminaBarFullColor, ref sceneDirty);
             TMP_Text waveText = GetOrCreateWaveText(hudGo.transform, ref sceneDirty);
 
             HudController hud = hudGo.GetComponent<HudController>();
@@ -778,8 +1013,9 @@ namespace Ring.Editor
             var hudSo = new SerializedObject(hud);
             bool hudRefsChanged = false;
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_runner", runner);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_gameFeel", gameFeel);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_hpFill", hpFill);
-            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_dashFill", dashFill);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_staminaFill", staminaFill);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_waveText", waveText);
             if (hudRefsChanged)
             {
@@ -893,9 +1129,13 @@ namespace Ring.Editor
             // source-path guard (PrefabVisualsMatch) rebuilds the prefab if
             // the mapping above ever changes.
             MobView chaserPrefab = GetOrCreateMobArchetypePrefab(
-                MobChaserPrefabPath, ChaserModelPath, gameFeel.ChaserVisualScale);
+                MobChaserPrefabPath, ChaserModelPath, gameFeel.ChaserVisualScale,
+                chaser.LegsTop, chaser.BodyTop, chaser.HeadTop, chaser.Radius,
+                gameFeel.AimProxyHeadRadiusFrac);
             MobView gunnerPrefab = GetOrCreateMobArchetypePrefab(
-                MobGunnerPrefabPath, GunnerModelPath, gameFeel.GunnerVisualScale);
+                MobGunnerPrefabPath, GunnerModelPath, gameFeel.GunnerVisualScale,
+                gunner.LegsTop, gunner.BodyTop, gunner.HeadTop, gunner.Radius,
+                gameFeel.AimProxyHeadRadiusFrac);
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
 
@@ -916,6 +1156,11 @@ namespace Ring.Editor
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_runner", runner);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gameFeel", gameFeel);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_arena", arena);
+            // В1/В2 fix-wave 2 (app-n6g item 3b): ViewRegistry.SyncMobs reads
+            // AimProvider.CurrentHoveredMob once per frame for the hover-glow
+            // boost — same reference already wired into CrosshairView/AimRayView
+            // above (`aimProvider` local var, still in scope).
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_aimProvider", aimProvider);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_chaserPrefab", chaserPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gunnerPrefab", gunnerPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
@@ -944,6 +1189,15 @@ namespace Ring.Editor
             AudioClip mobDeathClip = LoadAudioClip("mob_death.wav");
             AudioClip dashClip = LoadAudioClip("dash.wav");
             AudioClip playerHitClip = LoadAudioClip("player_hit.wav");
+            AudioClip staminaDeniedClip = LoadAudioClip("denied.wav"); // Task 22
+            AudioClip ricochetClip = LoadAudioClip("ricochet.wav"); // Task 22
+            // В3 fix-wave 2 (item 3c): same synthesized-placeholder idiom as
+            // denied.wav/ricochet.wav above (44.1kHz/16-bit PCM mono, LFS —
+            // `client/**/*.wav` already covers this path, no `.gitattributes`
+            // touch needed) — a short (~55ms) bright downward chirp (2200→1500Hz)
+            // with a fast percussive attack/decay envelope, audibly distinct from
+            // denied.wav's own low 200→130Hz buzz/sweep.
+            AudioClip headHoverTickClip = LoadAudioClip("head_hover_tick.wav");
 
             GameObject audioGo = EditorBootstrapUtils.FindRootObject(scene, AudioDirectorObjectName);
             if (audioGo == null)
@@ -966,9 +1220,27 @@ namespace Ring.Editor
             audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_mobDeathClip", mobDeathClip);
             audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_dashClip", dashClip);
             audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_playerHitClip", playerHitClip);
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_staminaDeniedClip", staminaDeniedClip); // Task 22
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_ricochetClip", ricochetClip); // Task 22
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_headHoverTickClip", headHoverTickClip); // В3 fix-wave 2
             if (audioRefsChanged)
             {
                 audioSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // В3 fix-wave 2 (item 3c): second `CrosshairView` wiring pass —
+            // `audioDirector` now exists (just created above); `crosshairView`/
+            // `crosshairSo` are the SAME local vars the first pass (near the
+            // `Crosshair` object's own creation, earlier in this method) already
+            // set up, still in scope — same "second wiring pass" idiom as
+            // `gameFeelDirectorSo2` above (that block's own comment).
+            var crosshairSo2 = new SerializedObject(crosshairView);
+            bool crosshairRefsChanged2 = false;
+            crosshairRefsChanged2 |= EditorBootstrapUtils.SetRef(crosshairSo2, "_audio", audioDirector);
+            if (crosshairRefsChanged2)
+            {
+                crosshairSo2.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -1011,9 +1283,10 @@ namespace Ring.Editor
             }
 
             // Task 27 (spec §3.11, Приложение П): persistent cosmetics —
-            // shell casings, impact decals, corpses, and the three pooled
+            // shell casings, impact decals, corpses, and the four pooled
             // spark/burst particle systems (muzzle flash itself is the
-            // MuzzleFlashView object just above, not duplicated here).
+            // MuzzleFlashView object just above, not duplicated here; slide
+            // dust is Task 22, spec Г6).
             Material casingMat = GetOrCreateMaterial(
                 "CasingBrass", baseColor: new Color(0.25f, 0.16f, 0.05f), emissionColor: Color.black);
             Material corpseMat = GetOrCreateMaterial(
@@ -1022,11 +1295,24 @@ namespace Ring.Editor
             Material hitSparkMat = GetOrCreateUnlitMaterial("HitSpark", new Color(3.5f, 3f, 1.6f));
             Material blockSparkMat = GetOrCreateUnlitMaterial("BlockSpark", new Color(2f, 2.3f, 3f));
             Material deathBurstMat = GetOrCreateUnlitMaterial("DeathBurst", new Color(4f, 1.3f, 0.3f));
+            // Task 22: slide dust — a muted, non-HDR tan (unlike the sparks above,
+            // this isn't a combat-feedback flash meant to bloom, just a
+            // traversal-cosmetic puff), still an Unlit material like every
+            // other burst here (same spark-pool precedent, GetOrCreateSparkPrefab
+            // below).
+            Material slideDustMat = GetOrCreateUnlitMaterial("SlideDust", new Color(0.55f, 0.5f, 0.4f));
             // Б1 fix-wave 2 review (app-9av): unlit quad, not a decal — see
             // GetOrCreateDecalMaterial's doc for why a decal material can't
             // glow at all. Color mirrors PlayerEmissive's accent (Э1) so the
             // mark reads as "this player's" trail, not a generic FX color.
             Material dashGlowMat = GetOrCreateUnlitMaterial("DashGlow", new Color(0f, 2.5f, 3f));
+            // Task 24 (revised per app-1zf — primitives only, GibView's class
+            // doc): a dark gunmetal Lit material, same non-HDR/black-emission
+            // shape as CasingBrass above. T24-2 (real part meshes) demotes
+            // this to a FALLBACK only — see chaserPartMat/gunnerPartMat below
+            // and PersistentPropsDirector's class doc.
+            Material gibMat = GetOrCreateMaterial(
+                "GibMetal", baseColor: new Color(0.12f, 0.12f, 0.14f), emissionColor: Color.black);
 
             CasingView casingPrefab = GetOrCreateCasingPrefab(casingMat);
             DecalProjector decalPrefab = GetOrCreateDecalPrefab(decalMat, gameFeel.DecalSize);
@@ -1039,6 +1325,25 @@ namespace Ring.Editor
                 CorpseMechPrefabPath, ChaserModelPath, GunnerModelPath,
                 gameFeel.ChaserVisualScale, gameFeel.GunnerVisualScale);
             DashGlowView dashGlowPrefab = GetOrCreateDashGlowPrefab(dashGlowMat);
+            GibView gibPrefab = GetOrCreateGibPrefab();
+
+            // T24-2 (owner-approved Blender split): per-archetype gib part
+            // meshes + the single material each archetype's parts all
+            // share. The material is the SAME `_Ring/Materials/*_Texture.mat`
+            // remap the live mechs already use (ThirdPartyImportBootstrap's
+            // RemapPackMaterials, extended per its own doc to cover
+            // `_Ring/Gibs/` too) — loaded here, not created, same "already
+            // exists by the time StageOneSceneBootstrap runs" contract the
+            // Floor/Wall/Obstacle materials above follow. `gibMat` (GibMetal)
+            // is the fallback ONLY if a remap is somehow missing — should
+            // never trigger in practice, since the parts FBXs share their
+            // material NAME with the already-remapped live mechs.
+            Mesh[] chaserParts = LoadGibParts(ChaserGibPartsPath);
+            Mesh[] gunnerParts = LoadGibParts(GunnerGibPartsPath);
+            Material chaserPartMat = AssetDatabase.LoadAssetAtPath<Material>(
+                ThirdPartyAnimatorBootstrap.MaterialsRoot + "George_Texture.mat") ?? gibMat;
+            Material gunnerPartMat = AssetDatabase.LoadAssetAtPath<Material>(
+                ThirdPartyAnimatorBootstrap.MaterialsRoot + "Leela_Texture.mat") ?? gibMat;
             // lifetime/speed/size/burstCount read from GameFeelConfig at
             // prefab-creation time (review fix-round — same "creation-time SO
             // read" contract as TracerFadeSeconds/GetOrCreateProjectilePrefab
@@ -1060,6 +1365,18 @@ namespace Ring.Editor
             ParticleSystem deathBurstPrefab = GetOrCreateSparkPrefab(DeathBurstPrefabPath, "DeathBurst", deathBurstMat,
                 lifetime: gameFeel.DeathBurstLifetime, speed: gameFeel.DeathBurstSpeed, size: gameFeel.DeathBurstSize,
                 burstCount: 24, coneAngle: 90f);
+            // Task 22 (spec Г6) fix-round: slide dust reuses GetOrCreateSparkPrefab
+            // outright (following the same pattern as the other spark pools, per
+            // the brief) — lifetime/speed/size/
+            // burstCount are ALL config-sourced, same as HitSpark/BlockSpark/
+            // DeathBurst's own lifetime/speed/size above (review caught an
+            // earlier version of this comment misstating that split as
+            // "lifetime/speed/size stay literals" — they don't, for any of the
+            // four spark kinds; only coneAngle, and DeathBurst's burstCount
+            // literal specifically, are the actual bootstrap-local exceptions).
+            ParticleSystem slideDustPrefab = GetOrCreateSparkPrefab(SlideDustPrefabPath, "SlideDust", slideDustMat,
+                lifetime: gameFeel.SlideDustLifetime, speed: gameFeel.SlideDustSpeed, size: gameFeel.SlideDustSize,
+                burstCount: gameFeel.SlideDustBurstCount, coneAngle: 60f);
 
             GameObject persistentPropsGo = EditorBootstrapUtils.FindRootObject(scene, PersistentPropsObjectName);
             if (persistentPropsGo == null)
@@ -1077,14 +1394,20 @@ namespace Ring.Editor
             bool persistentPropsRefsChanged = false;
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_runner", runner);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gameFeel", gameFeel);
-            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_arena", arena);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_casingPrefab", casingPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpseMechPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_dashGlowPrefab", dashGlowPrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gibPrefab", gibPrefab); // Task 24
+            // T24-2.
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetObjectArray(persistentPropsSo, "_chaserParts", chaserParts);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetObjectArray(persistentPropsSo, "_gunnerParts", gunnerParts);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_chaserPartMaterial", chaserPartMat);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gunnerPartMaterial", gunnerPartMat);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_hitSparkPrefab", hitSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_slideDustPrefab", slideDustPrefab); // Task 22
             if (persistentPropsRefsChanged)
             {
                 persistentPropsSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1113,6 +1436,7 @@ namespace Ring.Editor
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_playerVisual", playerVisual);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_viewRegistry", viewRegistry);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_deathOverlay", deathOverlay);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_hud", hud); // Task 22
             if (routerRefsChanged)
             {
                 routerSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1174,6 +1498,7 @@ namespace Ring.Editor
             Debug.Log($"StageOneSceneBootstrap: gunner {(gunnerChanged ? "updated" : "ok")}, " +
                 $"decal feature {(decalFeatureChanged ? "added" : "ok")}, " +
                 $"casings layer {(casingsLayerChanged ? "added" : "ok")}, " +
+                $"aim proxy layer {(aimProxyLayerChanged ? "added" : "ok")}, " +
                 $"scene {(sceneDirty ? "updated" : "already up to date")}.");
         }
 
@@ -1208,6 +1533,28 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.SeparationStrength, 6f);
             changed |= SetIfDifferent(ref m.AvoidLookahead, 3f);
             changed |= SetIfDifferent(ref m.AvoidMargin, 1f);
+            return changed;
+        }
+
+        /// Task 17 (spec §3.6/§3.7, hit-zone geometry): the gunner archetype's
+        /// silhouette is the taller ranged mech, not the chaser's — overrides
+        /// the Task 1 zone-field block (LegsTop/BodyTop/HeadTop/*DamageMult/
+        /// MuzzleHeight) that ApplyGunnerDefaults above never touches. Same
+        /// first-creation/backfill-only contract as ApplyGunnerDefaults (see
+        /// its own doc + the call site's gate) — never reapplied
+        /// unconditionally, so an owner hand-tweak of these fields survives a
+        /// re-run. `SwingLead*` is deliberately absent: the gunner archetype
+        /// never melees, so it ignores swing lead entirely (A15).
+        static bool ApplyGunnerZoneDefaults(MobConfig m)
+        {
+            bool changed = false;
+            changed |= SetIfDifferent(ref m.LegsTop, 1.10f);
+            changed |= SetIfDifferent(ref m.BodyTop, 2.70f);
+            changed |= SetIfDifferent(ref m.HeadTop, 3.50f);
+            changed |= SetIfDifferent(ref m.LegsDamageMult, 0.75f);
+            changed |= SetIfDifferent(ref m.BodyDamageMult, 1.0f);
+            changed |= SetIfDifferent(ref m.HeadDamageMult, 1.7f);
+            changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
             return changed;
         }
 
@@ -1272,13 +1619,26 @@ namespace Ring.Editor
         /// is never re-authored UNLESS the mapping at the top of this file
         /// picks a different model — then the stale prefab is deleted and
         /// rebuilt so an owner's pair swap actually takes effect.
+        /// Task 19 (spec QA7/QD1) adds `legsTop`/`bodyTop`/`headTop`/
+        /// `bodyRadius`/`headRadiusFrac`: the archetype's zone-geometry SO
+        /// fields, used to size the `AimProxy_*` belts (`EnsureAimProxyChildren`).
+        /// The self-heal reaches BOTH paths — an already-committed prefab
+        /// whose visuals already match (`SelfHealAimProxyOnPrefab`, UNDER the
+        /// `PrefabVisualsMatch` early return, PC2) and a freshly-built one
+        /// (inline in the `build()` closure below).
         static MobView GetOrCreateMobArchetypePrefab(string prefabPath, string modelPath,
-            float visualScale)
+            float visualScale, float legsTop, float bodyTop, float headTop,
+            float bodyRadius, float headRadiusFrac)
         {
             if (AssetDatabase.LoadAssetAtPath<MobView>(prefabPath) != null)
             {
                 if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath, ("Visual", modelPath)))
+                {
+                    SelfHealAimProxyOnPrefab(prefabPath, legsTop, bodyTop, headTop,
+                        bodyRadius, headRadiusFrac);
+                    SelfHealVisualScaleOnPrefab(prefabPath, "Visual", visualScale);
                     return AssetDatabase.LoadAssetAtPath<MobView>(prefabPath);
+                }
                 AssetDatabase.DeleteAsset(prefabPath); // pair swapped: rebuild; SetRef re-wires
             }
             return EditorBootstrapUtils.BuildPrefab<MobView>(prefabPath, () =>
@@ -1294,6 +1654,10 @@ namespace Ring.Editor
                 EditorBootstrapUtils.SetRef(so, "_animator", visual.GetComponent<Animator>());
                 EditorBootstrapUtils.SetRef(so, "_visual", visual.transform);
                 so.ApplyModifiedPropertiesWithoutUndo();
+                // Task 19: AimProxy_Legs/Body/Head siblings of Visual, at
+                // prefab-root local space (EnsureAimProxyChildren's own doc).
+                EnsureAimProxyChildren(go.transform, legsTop, bodyTop, headTop,
+                    bodyRadius, headRadiusFrac);
                 return go;
             });
         }
@@ -1340,10 +1704,15 @@ namespace Ring.Editor
         }
 
         /// Task 17: the shared `ProjectileView` prefab — a small emissive sphere
-        /// (~0.24 diameter) plus a `TrailRenderer` tracer. `TrailRenderer.time` is
-        /// only seeded here from the `GameFeelConfig` value at bootstrap time;
-        /// `ProjectileView.Bind` re-applies it live every spawn so PlayMode
-        /// hot-tweaking `TracerFadeSeconds` (spec §3.9) still takes effect.
+        /// (~0.24 diameter at rest, in the Inspector/preview only) plus a
+        /// `TrailRenderer` tracer. `TrailRenderer.time` is only seeded here from
+        /// the `GameFeelConfig` value at bootstrap time; `ProjectileView.Bind`
+        /// re-applies it live every spawn so PlayMode hot-tweaking
+        /// `TracerFadeSeconds` (spec §3.9) still takes effect — В3 fix-wave 2
+        /// (item 1) extends that same live-rebind treatment to the sphere's own
+        /// `transform.localScale`, off this shot's real `ProjectileState.Radius`
+        /// (`ProjectileBallScale`'s own `GameFeelConfig` doc), so the bare
+        /// `ProjectileDiameter` baked here is only ever a cold placeholder.
         /// Existence-guarded the same way as the mech/corpse prefabs above.
         static ProjectileView GetOrCreateProjectilePrefab(Material sphereMat, Material trailMat,
             float tracerFadeSeconds)
@@ -1412,19 +1781,34 @@ namespace Ring.Editor
         }
 
         /// Task 27 review fix-round: claims user layer 9 as "Casings" in
-        /// `ProjectSettings/TagManager.asset` — the standard editor-script
-        /// recipe for programmatically naming a layer (`SerializedObject`
-        /// over the `layers` string array, no dedicated public API exists).
-        /// Verified empty before this task claimed it (`grep` against the
-        /// committed `TagManager.asset`, T13's `GreyboxBuilder.CosmeticsLayer`
-        /// already owns layer 8). Idempotent: a second run sees `"Casings"`
-        /// already in the slot and no-ops. Defensively throws instead of
-        /// silently overwriting if slot 9 ever ends up holding some OTHER
-        /// name (e.g. a teammate claims it for something else first) — same
-        /// "hard error on unexpected setup state" policy as
-        /// `LoadMaterial`/`LoadAudioClip` below. Returns whether it actually
-        /// changed anything.
-        static bool EnsureCasingsLayer()
+        /// `ProjectSettings/TagManager.asset`. Task 19 (QC14) extracted the
+        /// actual claim/refuse logic into the shared `EnsureUserLayer` below —
+        /// this is now a thin wrapper so both call sites (this one, and
+        /// `EnsureAimProxyLayer`) share one idempotent implementation instead
+        /// of two near-identical copies.
+        static bool EnsureCasingsLayer() =>
+            EnsureUserLayer(PersistentPropsDirector.CasingsLayer, CasingsLayerName);
+
+        /// Task 19 (spec QA7/QD1): claims user layer 10 as "AimProxy" —
+        /// verified empty before this task claimed it (`grep` against the
+        /// committed `TagManager.asset`; layer 9 already belongs to
+        /// `CasingsLayerName` above). Second `EnsureUserLayer` call site.
+        static bool EnsureAimProxyLayer() =>
+            EnsureUserLayer(AimProvider.AimProxyLayer, AimProxyLayerName);
+
+        /// Task 19 (QC14): the shared TagManager-layer-claim logic — was
+        /// `EnsureCasingsLayer`'s entire body alone (Task 27 review
+        /// fix-round), generalized so `EnsureAimProxyLayer` above reuses the
+        /// exact same sequence instead of a second copy. Standard
+        /// editor-script recipe for programmatically naming a layer
+        /// (`SerializedObject` over the `layers` string array, no dedicated
+        /// public API exists). Idempotent: a second run sees `name` already
+        /// in the slot and no-ops. Defensively throws instead of silently
+        /// overwriting if `slot` ever ends up holding some OTHER name (e.g. a
+        /// teammate claims it for something else first) — same "hard error on
+        /// unexpected setup state" policy as `LoadMaterial`/`LoadAudioClip`
+        /// below. Returns whether it actually changed anything.
+        static bool EnsureUserLayer(int slot, string name)
         {
             Object[] tagManagerAssets = AssetDatabase.LoadAllAssetsAtPath(TagManagerPath);
             if (tagManagerAssets == null || tagManagerAssets.Length == 0)
@@ -1433,18 +1817,150 @@ namespace Ring.Editor
 
             var so = new SerializedObject(tagManagerAssets[0]);
             SerializedProperty layers = so.FindProperty("layers");
-            SerializedProperty slot = layers.GetArrayElementAtIndex(PersistentPropsDirector.CasingsLayer);
+            SerializedProperty slotProp = layers.GetArrayElementAtIndex(slot);
 
-            if (slot.stringValue == CasingsLayerName) return false;
-            if (!string.IsNullOrEmpty(slot.stringValue))
+            if (slotProp.stringValue == name) return false;
+            if (!string.IsNullOrEmpty(slotProp.stringValue))
                 throw new System.InvalidOperationException(
-                    $"StageOneSceneBootstrap: layer {PersistentPropsDirector.CasingsLayer} is already " +
-                    $"named '{slot.stringValue}' — refusing to overwrite it with '{CasingsLayerName}'.");
+                    $"StageOneSceneBootstrap: layer {slot} is already named " +
+                    $"'{slotProp.stringValue}' — refusing to overwrite it with '{name}'.");
 
-            slot.stringValue = CasingsLayerName;
+            slotProp.stringValue = name;
             so.ApplyModifiedProperties();
             AssetDatabase.SaveAssets();
             return true;
+        }
+
+        /// Task 19 (spec QA7/QD1): three `CapsuleCollider` triggers on
+        /// `AimProvider.AimProxyLayer` — Legs/Body/Head belts sized from the
+        /// archetype's own zone-geometry SO fields (`LegsTop`/`BodyTop`/
+        /// `HeadTop`, the exact numbers `SimulationWorld`'s zone-damage
+        /// lookup already keys off — this proxy is a SEPARATE, purely-visual
+        /// raycast target that Simulation never touches; "no sim changes").
+        /// Head radius is scaled by `GameFeelConfig.AimProxyHeadRadiusFrac`
+        /// for a narrower headshot volume than the body/legs. Attached at
+        /// ROOT local space, unscaled — same convention the zone-geometry
+        /// fields themselves assume (mirrors `Visual`'s own un-scaled
+        /// parent). Idempotent per-field diff, like every other self-heal in
+        /// this file. Returns whether anything changed.
+        static bool EnsureAimProxyChildren(Transform root, float legsTop, float bodyTop,
+            float headTop, float bodyRadius, float headRadiusFrac)
+        {
+            bool changed = false;
+            changed |= EnsureAimProxyCapsule(root, "AimProxy_Legs", 0f, legsTop, bodyRadius);
+            changed |= EnsureAimProxyCapsule(root, "AimProxy_Body", legsTop, bodyTop, bodyRadius);
+            changed |= EnsureAimProxyCapsule(root, "AimProxy_Head", bodyTop, headTop,
+                bodyRadius * headRadiusFrac);
+            return changed;
+        }
+
+        static bool EnsureAimProxyCapsule(Transform root, string childName, float bottom,
+            float top, float radius)
+        {
+            bool changed = false;
+            Transform tf = root.Find(childName);
+            GameObject go;
+            if (tf == null)
+            {
+                go = new GameObject(childName);
+                go.transform.SetParent(root, false);
+                changed = true;
+            }
+            else
+            {
+                go = tf.gameObject;
+            }
+            if (go.layer != AimProvider.AimProxyLayer)
+            {
+                go.layer = AimProvider.AimProxyLayer;
+                changed = true;
+            }
+            CapsuleCollider capsule = go.GetComponent<CapsuleCollider>();
+            if (capsule == null)
+            {
+                capsule = go.AddComponent<CapsuleCollider>();
+                changed = true;
+            }
+            if (!capsule.isTrigger)
+            {
+                capsule.isTrigger = true;
+                changed = true;
+            }
+            float height = Mathf.Max(top - bottom, 0.01f);
+            var center = new Vector3(0f, bottom + height * 0.5f, 0f);
+            if (!Mathf.Approximately(capsule.height, height))
+            {
+                capsule.height = height;
+                changed = true;
+            }
+            if (capsule.center != center)
+            {
+                capsule.center = center;
+                changed = true;
+            }
+            if (!Mathf.Approximately(capsule.radius, radius))
+            {
+                capsule.radius = radius;
+                changed = true;
+            }
+            return changed;
+        }
+
+        /// Task 19 (self-heal idiom PC2 — mirrors `GetOrCreateCasingPrefab`'s
+        /// unconditional layer self-heal): reopens an ALREADY-COMMITTED
+        /// prefab asset and patches its `AimProxy_*` children in place. This
+        /// is what makes the self-heal reach a prefab built by an earlier
+        /// task/commit — `GetOrCreateMobArchetypePrefab`'s own `build()`
+        /// closure handles the fresh-build case inline instead. Same
+        /// `LoadPrefabContents`/`SaveAsPrefabAsset`/`UnloadPrefabContents`
+        /// shape as `EditorBootstrapUtils.PrefabVisualsMatch`.
+        static void SelfHealAimProxyOnPrefab(string prefabPath, float legsTop, float bodyTop,
+            float headTop, float bodyRadius, float headRadiusFrac)
+        {
+            GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                bool changed = EnsureAimProxyChildren(contents.transform,
+                    legsTop, bodyTop, headTop, bodyRadius, headRadiusFrac);
+                if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        /// В1 fix-wave 1 chore (owner's sanctioned milestone number,
+        /// `GunnerVisualScale` 0.4→0.76): `EditorBootstrapUtils.EnsureVisual`'s
+        /// own scale self-heal (its `localScale != Vector3.one * visualScale`
+        /// check) only ever runs when the "Visual" child branch inside it
+        /// actually executes — but `GetOrCreateMobArchetypePrefab`'s
+        /// early-return path (prefab already on disk, model path unchanged)
+        /// never calls `EnsureVisual` at all, so a pure `ChaserVisualScale`/
+        /// `GunnerVisualScale` retune alone never reached an already-committed
+        /// prefab before this. Same `LoadPrefabContents`/`SaveAsPrefabAsset`
+        /// shape as `SelfHealAimProxyOnPrefab` (called alongside it from the
+        /// same early-return branch) — kept as its own method rather than
+        /// folded into that one so each self-heal stays independently
+        /// testable/readable, same split the rest of this file's per-concern
+        /// self-heal helpers already follow.
+        static void SelfHealVisualScaleOnPrefab(string prefabPath, string childName, float visualScale)
+        {
+            GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                Transform child = contents.transform.Find(childName);
+                Vector3 target = Vector3.one * visualScale;
+                if (child != null && child.localScale != target)
+                {
+                    child.localScale = target;
+                    PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+                }
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
         }
 
         /// Task 27: the shared `CasingView` prefab — a small primitive
@@ -1545,6 +2061,95 @@ namespace Ring.Editor
             });
         }
 
+        /// Task 24 (revised per app-1zf's investigation — George/Leela were
+        /// monolithic skinned meshes with no separable sub-mesh, so gibs
+        /// shipped as PRIMITIVES ONLY: two colliderless children,
+        /// `GibBox`/`GibCapsule`, toggled at random by `GibView.Spawn`).
+        /// T24-2 (owner-approved Blender split) replaces that pair with a
+        /// SINGLE object carrying `MeshFilter`/`MeshRenderer` — `GibView.
+        /// Spawn` now swaps in the actual part mesh/material every call
+        /// instead of picking a primitive shape (that class's doc has the
+        /// full story). The ROOT still carries the actual physics — a
+        /// `SphereCollider` (`GibView.Spawn` resizes/recentres it from the
+        /// swapped-in mesh's own `bounds` every call — no `MeshCollider`,
+        /// task brief) + `Rigidbody` — on `PersistentPropsDirector.
+        /// CasingsLayer` (Task 27 review fix-round, self-collision already
+        /// isolated in `PersistentPropsDirector.Awake`), unchanged from
+        /// Task 24. Self-heals an already-committed Task 24 `Gib.prefab`:
+        /// its old `GibBox`/`GibCapsule` shape has no `MeshFilter` on the
+        /// root, which is what this factory checks for before deciding to
+        /// delete-and-rebuild — same "structural shape changed" guard
+        /// `GetOrCreateMobArchetypePrefab`'s `PrefabVisualsMatch` uses,
+        /// simplified to a single component-presence check since there's no
+        /// per-model source path to compare here.
+        static GibView GetOrCreateGibPrefab()
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<GibView>(GibPrefabPath);
+            if (existing != null && existing.GetComponent<MeshFilter>() == null)
+            {
+                AssetDatabase.DeleteAsset(GibPrefabPath);
+                existing = null;
+            }
+            if (existing != null)
+            {
+                if (existing.gameObject.layer != PersistentPropsDirector.CasingsLayer)
+                {
+                    existing.gameObject.layer = PersistentPropsDirector.CasingsLayer;
+                    EditorUtility.SetDirty(existing.gameObject);
+                    AssetDatabase.SaveAssets();
+                }
+                return existing;
+            }
+
+            return EditorBootstrapUtils.BuildPrefab<GibView>(GibPrefabPath, () =>
+            {
+                var go = new GameObject("Gib");
+                go.layer = PersistentPropsDirector.CasingsLayer;
+
+                MeshFilter meshFilter = go.AddComponent<MeshFilter>();
+                MeshRenderer meshRenderer = go.AddComponent<MeshRenderer>();
+
+                SphereCollider collider = go.AddComponent<SphereCollider>();
+                collider.radius = 0.08f; // resized per-spawn from the swapped mesh's own bounds (GibView.Spawn)
+                Rigidbody rb = go.AddComponent<Rigidbody>();
+                rb.mass = 0.35f;
+                rb.linearDamping = 0.15f;
+                rb.angularDamping = 0.3f;
+
+                GibView view = go.AddComponent<GibView>();
+                var so = new SerializedObject(view);
+                EditorBootstrapUtils.SetRef(so, "_meshFilter", meshFilter);
+                EditorBootstrapUtils.SetRef(so, "_meshRenderer", meshRenderer);
+                so.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
+
+        /// T24-2: loads a gib parts FBX's own `Mesh` sub-assets — one per
+        /// capped-cut body part (`George_Parts.fbx`: Head/ArmL/ArmR/LegL/
+        /// LegR/Torso; `Leela_Parts.fbx`: Head/LegL/LegR/Torso). Order is
+        /// whatever `LoadAllAssetsAtPath` returns — callers never assume a
+        /// position, only `GibView.ClassifyPart(mesh.name)`'s own kind
+        /// (`PersistentPropsDirector.PartHeight`/`SpawnFullExplodeGibs`).
+        /// Throws (same "hard error on unexpected setup state" policy as
+        /// `LoadMaterial`/`LoadAudioClip` below) if the FBX yields no
+        /// meshes at all, or no `Head` part — `SpawnFullExplodeGibs`'s
+        /// headshot directional-impulse special case (В3 fix-wave 1, item 2)
+        /// depends on every archetype shipping exactly one.
+        static Mesh[] LoadGibParts(string fbxPath)
+        {
+            Mesh[] parts = AssetDatabase.LoadAllAssetsAtPath(fbxPath)
+                .OfType<Mesh>().ToArray();
+            if (parts.Length == 0)
+                throw new System.InvalidOperationException(
+                    "StageOneSceneBootstrap: no Mesh sub-assets at " + fbxPath);
+            if (!parts.Any(m => GibView.ClassifyPart(m.name) == GibPartKind.Head))
+                throw new System.InvalidOperationException(
+                    "StageOneSceneBootstrap: no Head part among gib meshes at " + fbxPath);
+            Debug.Log($"[StageOneSceneBootstrap] {fbxPath}: {parts.Length} gib parts");
+            return parts;
+        }
+
         /// Task 27: the shared `CorpseView` prefab — a bare, uncollided
         /// (`RemoveCollider`, same treatment as `MobView`/`ProjectileView`)
         /// Capsule; per-death tint comes from a `MaterialPropertyBlock`
@@ -1563,8 +2168,9 @@ namespace Ring.Editor
             });
         }
 
-        /// Task 27: existence-guarded factory for the three pooled spark/burst
-        /// particle prefabs (hit-spark, block-spark, death-burst) —
+        /// Task 27: existence-guarded factory for the four pooled spark/burst
+        /// particle prefabs (hit-spark, block-spark, death-burst, and — Task 22,
+        /// spec Г6 — slide-dust) —
         /// `ConfigureBurstParticles` bakes an authored `Burst` at time 0 into
         /// the Emission module (unlike `ConfigureMuzzleParticles`'s manual
         /// `Emit()` call, `PersistentPropsDirector.PlayParticle` only ever
@@ -1788,6 +2394,18 @@ namespace Ring.Editor
             Transform existing = parent.Find(name);
             if (existing != null)
             {
+                // В1 fix-wave 1: self-heals an already-committed bar's stale
+                // anchoredPosition (StaminaBar sliding up into the retired
+                // DashBar's old slot, item 1) the same unconditional way the
+                // fillSprite check right below self-heals — a caller-side
+                // layout constant change alone wouldn't otherwise reach a bar
+                // object that already exists in the committed scene.
+                var existingRect = (RectTransform)existing;
+                if (existingRect.anchoredPosition != anchoredPos)
+                {
+                    existingRect.anchoredPosition = anchoredPos;
+                    sceneDirty = true;
+                }
                 Image existingFill = existing.Find(FillObjectName).GetComponent<Image>();
                 if (existingFill.sprite == null)
                 {

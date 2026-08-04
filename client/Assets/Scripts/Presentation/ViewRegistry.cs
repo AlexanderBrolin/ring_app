@@ -16,9 +16,10 @@ namespace Ring.Presentation
     ///    lerps between its position in `Prev` (falling back to `Curr` if that Id
     ///    isn't in `Prev`) and `Curr` by `Alpha`; an Id that drops out of `Curr`
     ///    returns its view to the pool. Every live mob (new or continuing) also
-    ///    gets `MobView.Sync(in MobState, float)` called here (Task 21, resolution "Bind
-    ///    contract") — the per-frame telegraph-pulse/Fire-glint accent read, same
-    ///    "no new subscriber" rule (П-1) as everything else in this class.
+    ///    gets `MobView.Sync(in MobState, float, bool, float)` called here (Task 21,
+    ///    resolution "Bind contract") — the per-frame telegraph-pulse/Fire-glint/
+    ///    hover-glow (В1/В2 fix-wave 2) accent read, same "no new subscriber"
+    ///    rule (П-1) as everything else in this class.
     ///  - `HandleEvent` (called by `SimEventRouter`, П-1's ordered fan-out — never
     ///    subscribed directly to any runner event): retires a view the instant its
     ///    entity's terminal event fires (MobDied for mobs; ProjectileBlocked /
@@ -39,11 +40,11 @@ namespace Ring.Presentation
         // capsule fallback's pivot was its center, hence the +1m lift; a real
         // model needs none.
         static readonly Vector3 MobOffset = Vector3.zero;
-        static readonly Vector3 ProjectileOffset = Vector3.up * 1f;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] ArenaConfig _arena;
+        [SerializeField] AimProvider _aimProvider;
         [SerializeField] MobView _chaserPrefab;
         [SerializeField] MobView _gunnerPrefab;
         [SerializeField] ProjectileView _projectilePrefab;
@@ -168,6 +169,30 @@ namespace Ring.Presentation
             // `_runner.World` is guaranteed non-null here, LateUpdate's own guard above
             // already returned early otherwise.
             float telegraphSeconds = _runner.World.Config.Chaser.TelegraphSeconds;
+            // В1/В2 fix-wave 2 (app-n6g item 3b): read once per frame, same
+            // shape as telegraphSeconds above — MobView.Sync takes plain
+            // values, never a GameFeelConfig/AimProvider reference of its own.
+            MobView hoveredMob = _aimProvider != null ? _aimProvider.CurrentHoveredMob : null;
+            // app-7pk (cheap version, Task 24 fold-in): the hover rim is
+            // tinted by the SAME hovered zone the crosshair/aim-ray already
+            // teach the player, via the shared `AimZoneColors.Resolve`
+            // lookup (Reuse > duplication, AGENT.md §4 — one switch, not a
+            // third copy). Fallback is `MobView.HoverGlowAccent`'s own
+            // pre-app-7pk neutral white, for the defensive `HitZone.None`
+            // case `hovered` shouldn't actually reach (see MobView.Sync's
+            // own doc).
+            HitZone hoveredZone = _aimProvider != null ? _aimProvider.CurrentAimZone : HitZone.None;
+            Color hoverAccent = AimZoneColors.Resolve(hoveredZone, MobView.HoverGlowAccent, _gameFeel);
+            // В3 fix-wave 2 (app-n6g item 3b, owner playtest feedback: "хочется
+            // больше акцента на хедшоте"): a Head hover boosts the glow further
+            // still — derived (×1.5 on top of the existing AimHoverGlowBoost)
+            // rather than a new SO field, per the brief's own instruction ("derive,
+            // don't add a field"). The COLOR side of "strictly AimZoneHeadColor"
+            // needs no extra code — AimZoneColors.Resolve above already maps
+            // HitZone.Head to AimZoneHeadColor unconditionally (its own class
+            // doc); only the intensity multiplier needed strengthening.
+            float hoverGlowBoost = hoveredZone == HitZone.Head
+                ? _gameFeel.AimHoverGlowBoost * 1.5f : _gameFeel.AimHoverGlowBoost;
 
             // Task 10 (assets phase B spec §3.7): built once per frame, not
             // per-view — every live MobVisual reads the same feel numbers this
@@ -207,7 +232,7 @@ namespace Ring.Presentation
                     // Sync right away (Task 21 Bind/Sync contract) so a mob that's
                     // already mid-Telegraph the instant it becomes visible reads
                     // correctly this same frame, not one frame late.
-                    view.Sync(in m, telegraphSeconds);
+                    view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverAccent, hoverGlowBoost);
                     view.Visual?.Sync(in m, in visualParams);
                     _activeMobs.Add(m.Id, view);
                     continue;
@@ -226,7 +251,7 @@ namespace Ring.Presentation
                     Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
                     view.transform.position = world + MobOffset;
                 }
-                view.Sync(in m, telegraphSeconds);
+                view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverAccent, hoverGlowBoost);
                 // After the position write above (Б7): when frozen, position
                 // wasn't written this frame, so MobVisual's own prev/curr delta
                 // reads zero and it settles on Idle — no separate "frozen" branch
@@ -271,15 +296,40 @@ namespace Ring.Presentation
                     // there to the new spawn point every time a view came out of
                     // the pool: exactly the "rays at ~20° off the aim direction on
                     // almost every shot" the owner saw in the milestone-2 playtest.
-                    view.transform.position = SimSpace.ToWorld(p.Pos) + ProjectileOffset;
-                    view.Bind(_gameFeel.TracerFadeSeconds);
+                    // Task 21 (K8): height comes from the projectile's own
+                    // simulated `Height` (Task 4) instead of a flat guessed
+                    // lift — no interpolation needed for a brand-new entity,
+                    // same "snap, don't lerp" rule the position half already
+                    // follows (spec §3.7).
+                    view.transform.position = SimSpace.ToWorld(p.Pos) + Vector3.up * p.Height;
+                    // В3 fix-wave 2 (app-n6g item 1): the ball's own diameter, read
+                    // straight off THIS shot's real sim radius — ProjectileState.Radius
+                    // is Weapon.ProjectileRadius for a player shot, Gunner.ProjectileRadius
+                    // for a mob shot (SimulationWorld.SpawnProjectile's own `radius`
+                    // param, both owners flow through the SAME field, no per-owner
+                    // branch needed here) — × the owner-tunable GameFeelConfig.
+                    // ProjectileBallScale multiplier. See ProjectileBallScale's own
+                    // doc for why a Gunner shot's ball growing slightly past the old
+                    // flat placeholder size is correct, not a regression.
+                    float ballDiameter = p.Radius * 2f * _gameFeel.ProjectileBallScale;
+                    view.Bind(_gameFeel.TracerFadeSeconds, _gameFeel.TracerScale, ballDiameter);
                     _activeProjectiles.Add(p.Id, view);
                     continue;
                 }
 
                 float2 prevPos = FindProjectilePrevPos(prev, p.Id, p.Pos);
                 Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(p.Pos), alpha);
-                view.transform.position = world + ProjectileOffset;
+                // Task 21 (K8): vertical interpolation mirrors the horizontal
+                // lerp above, but sources both ends straight off THIS struct's
+                // own Height/PrevHeight pair (`ProjectileState`'s own doc:
+                // "PrevHeight mirrors PrevPos's role for interpolation") rather
+                // than a second `Find...PrevHeight` snapshot walk — Task 25's
+                // render double-buffer shifts by exactly one tick per flush
+                // (SimulationRunner.Update), so `p.PrevHeight` (this struct,
+                // read off RenderCurr) already equals what a `prev`-snapshot
+                // lookup of `.Height` would return, with no extra scan.
+                world.y = Mathf.Lerp(p.PrevHeight, p.Height, alpha);
+                view.transform.position = world;
             }
 
             _staleIdsScratch.Clear();

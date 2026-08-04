@@ -14,5 +14,20 @@ namespace Ring.Simulation.Tests
                 if (w.GetEvent(i).Kind == kind) count++;
             return count;
         }
+
+        /// First buffered event of `kind` (Task 6) — the "what did that blow
+        /// report" lookup zone/amount fixtures need, next to CountOf rather than
+        /// copied into every test class that inspects a single event.
+        public static bool TryFirstOf(SimulationWorld w, SimEventKind kind, out SimEvent found)
+        {
+            for (int i = 0; i < w.EventCount; i++)
+            {
+                if (w.GetEvent(i).Kind != kind) continue;
+                found = w.GetEvent(i);
+                return true;
+            }
+            found = default;
+            return false;
+        }
     }
 }

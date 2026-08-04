@@ -22,3 +22,33 @@ MonoBehaviour:
   DashCooldown: 0.9
   DashIframes: 0.2
   DashBufferWindow: 0.15
+  LegsTop: 0.55
+  BodyTop: 1.35
+  HeadTop: 1.75
+  LegsDamageMult: 0.75
+  BodyDamageMult: 1
+  HeadDamageMult: 1.7
+  SlideProfileTop: 0.55
+  MuzzleHeight: 1
+  SlideMuzzleHeight: 0.45
+  MaxAimHeight: 3.8
+  StaminaMax: 100
+  DashStaminaCost: 40
+  SlideStaminaCost: 30
+  StaminaRegenPerSec: 20
+  StaminaRegenDelay: 0.8
+  SlideSpeed: 13.5
+  SlideDuration: 0.52
+  SlideSteerRadPerSec: 1.2
+  SlideMinSpeedFrac: 0.75
+  RunUpSeconds: 1.18
+  RunUpDecayMult: 3
+  SlideBufferWindow: 0.15
+  LinkWindowSeconds: 0.25
+  PostDashSlideWindow: 0.32
+  SlideWallStopDot: 0.7
+  RicochetRetention: 0.8
+  AimMoveSpeedFrac: 0.8
+  AimSlideSpeedMult: 0.5
+  AimSettleSeconds: 0.5
+  LinkRefund: 10

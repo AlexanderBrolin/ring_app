@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NUnit.Framework;
 using Ring.Simulation.Core;
 
@@ -40,6 +41,84 @@ namespace Ring.Simulation.Tests
             var next = TestConfigs.Default();
             next.Arena.Radius = 20f;
             Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        /// Reflective clamp-pass (QC7 — home of ApplyConfig's clamp contract,
+        /// not WorldLifecycleTests): every float field of PlayerState is pinned
+        /// at 1e6 through the canon test-seam, ApplyConfig runs with reduced
+        /// maxima, then each field is checked by reflection against a local
+        /// field->ceiling map below. A field with no map entry fails LOUDLY —
+        /// that's the point: a newly declared PlayerState float field must get
+        /// a line here in the SAME task that adds it, whether ApplyConfig
+        /// clamps it (map to that ceiling) or deliberately leaves it alone (map
+        /// to float.PositiveInfinity, a documented "not clamped", not an
+        /// oversight — see RecoilOffset below, re-clamped every tick by
+        /// WeaponSystem against RecoilMaxRad instead of by ApplyConfig).
+        /// Populated by Task 9 (Stamina, StaminaRegenDelayTimer). Extended by
+        /// Task 10 (SlideTimer et al.), Task 11 (LinkWindowTimer), Task 12
+        /// (DashSpeedCur), Task 14 (AimSettleTimer) — add a line here as part
+        /// of that task's GREEN step, not as an afterthought.
+        [Test]
+        public void ApplyConfig_ReflectiveClampPass_EveryFloatFieldWithinNewMax()
+        {
+            var cfg = TestConfigs.Default();
+            var next = TestConfigs.Default();
+            next.Hero.MaxHp = 40f;
+            next.Hero.DashDuration = 0.05f;
+            next.Hero.DashCooldown = 0.4f;
+            next.Hero.DashIframes = 0.05f;
+            next.Hero.DashBufferWindow = 0.05f;
+            next.Hero.StaminaMax = 20f;
+            next.Hero.StaminaRegenDelay = 0.2f;
+            next.Weapon.FireInterval = 0.04f;
+
+            var ceilingByField = new Dictionary<string, float>
+            {
+                ["Hp"] = next.Hero.MaxHp,
+                ["Stamina"] = next.Hero.StaminaMax,
+                ["StaminaRegenDelayTimer"] = next.Hero.StaminaRegenDelay,
+                ["DashTimer"] = next.Hero.DashDuration,
+                ["DashCooldown"] = next.Hero.DashCooldown,
+                ["IframeTimer"] = next.Hero.DashIframes,
+                ["DashBufferTimer"] = next.Hero.DashBufferWindow,
+                // Task 12: ricochet-decayed dash speed clamps to the new
+                // DashSpeed ceiling, same contract as the dash timers above.
+                ["DashSpeedCur"] = next.Hero.DashSpeed,
+                ["FireCooldown"] = next.Weapon.FireInterval,
+                ["RecoilOffset"] = float.PositiveInfinity, // clamped by WeaponSystem, not ApplyConfig
+                // Task 10: slide timers.
+                ["SlideTimer"] = next.Hero.SlideDuration,
+                ["SlideBufferTimer"] = next.Hero.SlideBufferWindow,
+                ["RunUpTimer"] = next.Hero.RunUpSeconds,
+                ["PostDashSlideTimer"] = next.Hero.PostDashSlideWindow,
+                ["LinkWindowTimer"] = next.Hero.LinkWindowSeconds,
+                // Task 14: aim-settle progress.
+                ["AimSettleTimer"] = next.Hero.AimSettleSeconds,
+            };
+
+            var w = new SimulationWorld(5, cfg);
+            object boxedPlayer = w.Player;
+            foreach (var field in typeof(PlayerState).GetFields())
+            {
+                if (field.FieldType != typeof(float)) continue;
+                field.SetValue(boxedPlayer, 1e6f);
+            }
+            w.SetPlayerForTest((PlayerState)boxedPlayer);
+
+            w.ApplyConfig(next);
+
+            foreach (var field in typeof(PlayerState).GetFields())
+            {
+                if (field.FieldType != typeof(float)) continue;
+                Assert.IsTrue(ceilingByField.TryGetValue(field.Name, out float ceiling),
+                    $"PlayerState.{field.Name} is a new float field with no clamp-pass " +
+                    "entry in ApplyConfig_ReflectiveClampPass_EveryFloatFieldWithinNewMax's " +
+                    "ceilingByField map — add a line mapping it to its ApplyConfig ceiling, " +
+                    "or to float.PositiveInfinity if ApplyConfig intentionally leaves it unclamped.");
+                float actual = (float)field.GetValue(w.Player);
+                Assert.LessOrEqual(actual, ceiling,
+                    $"PlayerState.{field.Name} exceeded its ApplyConfig ceiling after hot-tweak");
+            }
         }
     }
 }

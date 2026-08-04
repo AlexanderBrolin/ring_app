@@ -26,18 +26,21 @@ namespace Ring.Presentation
     /// collider (see `GreyboxBuilder`'s class doc) had just launched them
     /// upward — the timer ran out before they ever landed. `Update` now also
     /// requires the casing to actually be at rest (low linear velocity)
-    /// before freezing, with a hard-cap timer (`HardCapMultiplier` ×
-    /// `settleSeconds`) as a structural backstop so a casing that somehow
-    /// never settles (e.g. stuck oscillating in a geometry seam) still stops
-    /// paying PhysX cost eventually.
+    /// before freezing, with a hard-cap timer as a structural backstop so a
+    /// casing that somehow never settles (e.g. stuck oscillating in a
+    /// geometry seam) still stops paying PhysX cost eventually. Task 24
+    /// (QC15/PC14): this freeze predicate is now the shared `PropSettle.
+    /// ShouldFreeze` helper — `GibView` needs the exact same rule, so it
+    /// moved out to a class of its own rather than being copied a second
+    /// time (Reuse &gt; duplication, AGENT.md §4); behavior here is
+    /// unchanged, only the down-counting `_settleTimer`/`_hardCapTimer` pair
+    /// became a single up-counting `_elapsed` that `PropSettle` itself
+    /// compares against `settleSeconds`.
     public sealed class CasingView : MonoBehaviour
     {
-        const float HardCapMultiplier = 4f;   // structural, not feel
-        const float SettleSpeedSqr = 0.01f;   // (0.1 m/s)^2 — "stopped rolling"
-
         Rigidbody _rb;
-        float _settleTimer;
-        float _hardCapTimer;
+        float _elapsed;
+        float _settleSeconds;
 
         void Awake() => _rb = GetComponent<Rigidbody>();
 
@@ -69,21 +72,19 @@ namespace Ring.Presentation
             // (app-xjz, Э1 bug unmasked at milestone Б1).
             _rb.AddForce(impulse, ForceMode.VelocityChange);
             _rb.AddTorque(torque, ForceMode.VelocityChange);
-            _settleTimer = settleSeconds;
-            _hardCapTimer = settleSeconds * HardCapMultiplier;
+            _elapsed = 0f;
+            _settleSeconds = settleSeconds;
         }
 
         void Update()
         {
             if (_rb.isKinematic) return;
-            float dt = Time.unscaledDeltaTime;
-            _settleTimer -= dt;
-            _hardCapTimer -= dt;
-            if (_settleTimer > 0f) return;
+            _elapsed += Time.unscaledDeltaTime;
             // Freeze only once the casing actually came to rest on the floor —
-            // the old pure-timer freeze pinned mid-air casings (app-4qc); the
-            // hard cap still guarantees the PhysX cost ends for every casing.
-            if (_rb.linearVelocity.sqrMagnitude < SettleSpeedSqr || _hardCapTimer <= 0f)
+            // the old pure-timer freeze pinned mid-air casings (app-4qc);
+            // PropSettle's own hard cap still guarantees the PhysX cost ends
+            // for every casing (class doc).
+            if (PropSettle.ShouldFreeze(_rb, _elapsed, _settleSeconds))
                 _rb.isKinematic = true;
         }
     }

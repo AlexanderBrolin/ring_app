@@ -74,6 +74,133 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Chaser_TelegraphsAheadOfRunner_AndConnects()
+        {
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c);
+            w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f));
+            var run = new SimInput { MoveDir = new float2(1f, 0f) }; // player charges straight at the chaser
+            float hp0 = c.Hero.MaxHp;
+
+            bool sawTelegraph = false;
+            float distAtEntry = 0f;
+            MobAiState prevAi = MobAiState.Idle;
+            for (int i = 0; i < 200 && w.Player.Hp >= hp0; i++)
+            {
+                w.Tick(run);
+                MobAiState ai = w.Mobs[0].Ai;
+                if (!sawTelegraph && ai == MobAiState.Telegraph && prevAi != MobAiState.Telegraph)
+                {
+                    sawTelegraph = true;
+                    distAtEntry = math.distance(w.Mobs[0].Pos, w.Player.Pos);
+                }
+                prevAi = ai;
+            }
+
+            Assert.IsTrue(sawTelegraph, "chaser never entered Telegraph");
+            // Predicted lead pulls the windup earlier than raw contact (A15/D9):
+            // entry still fires while the runner is outside melee range.
+            Assert.Greater(distAtEntry, c.Chaser.AttackRange);
+            // ...and thanks to the strike's honest re-validation, the runner's own
+            // continued closing still lands the hit — the early windup is not a
+            // free miss.
+            Assert.AreEqual(hp0 - c.Chaser.ContactDamage, w.Player.Hp, 1e-3f);
+        }
+
+        [Test]
+        public void Chaser_Standing_FarPlayer_NoTelegraph()
+        {
+            var c = TestConfigs.Open();
+            // QA15: keeps the chaser from physically closing the gap itself over the
+            // 60-tick budget — isolates the entry check from turning into a tick-count race.
+            c.Chaser.MaxSpeed = 0f;
+            var w = new SimulationWorld(1, c);
+            float dist = c.Chaser.AttackRange + c.Chaser.SwingLeadMaxMeters + 0.5f;
+            w.SpawnMobForTest(MobType.Chaser, new float2(dist, 0f)); // player stands still at the origin
+            for (int i = 0; i < 60; i++) w.Tick(Idle);
+            Assert.AreNotEqual(MobAiState.Telegraph, w.Mobs[0].Ai);
+        }
+
+        [Test]
+        public void Chaser_DashDoesNotBaitFromAfar()
+        {
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c);
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            w.Tick(Idle); // mandatory Idle->Chase warm-up tick (no entry check happens on it)
+            var p = w.Player;
+            p.Vel = new float2(c.Hero.DashSpeed, 0f); // dash-speed burst toward the chaser
+            w.SetPlayerForTest(p);
+            w.Tick(Idle); // the tick that evaluates Telegraph entry against this burst velocity
+            Assert.AreNotEqual(MobAiState.Telegraph, w.Mobs[0].Ai); // lead is clamped by Hero.MaxSpeed, not the dash speed
+        }
+
+        [Test]
+        public void Chaser_LeadClampedByMaxMeters()
+        {
+            var c = TestConfigs.Open();
+            c.Chaser.MaxSpeed = 0f; // isolate the cap check from the chaser's own approach
+            var w = new SimulationWorld(1, c);
+            w.SpawnMobForTest(MobType.Chaser, new float2(20f, 0f));
+            var run = new SimInput { MoveDir = new float2(1f, 0f) };
+
+            float distAtEntry = -1f;
+            for (int i = 0; i < 200 && distAtEntry < 0f; i++)
+            {
+                w.Tick(run);
+                if (w.Mobs[0].Ai == MobAiState.Telegraph)
+                    distAtEntry = math.distance(w.Mobs[0].Pos, w.Player.Pos);
+            }
+
+            Assert.GreaterOrEqual(distAtEntry, 0f, "chaser never entered Telegraph");
+            // One tick's worth of the runner's own closing speed as discretisation slack.
+            float maxEntryDist = c.Chaser.AttackRange + c.Chaser.SwingLeadMaxMeters
+                + c.Hero.MaxSpeed * SimulationWorld.TickDt;
+            Assert.LessOrEqual(distAtEntry, maxEntryDist);
+        }
+
+        [Test]
+        public void SwingLeadZero_EntryTickEqualsE1Rule()
+        {
+            var c = TestConfigs.Open();
+            // Factor 0 -> PredictPos degenerates to the raw player position exactly
+            // (offset = lead * (seconds * 0) = zero vector) — the pre-Task-13 (E1)
+            // raw-distance rule as a special case, bit-exact.
+            c.Chaser.SwingLeadFactor = 0f;
+            const float spawnX = 8f;
+
+            // Sim A: the tick the AI itself actually enters Telegraph.
+            var wa = new SimulationWorld(1, c);
+            wa.SpawnMobForTest(MobType.Chaser, new float2(spawnX, 0f));
+            int entryTickAi = -1;
+            for (int i = 1; i <= 200 && entryTickAi < 0; i++)
+            {
+                wa.Tick(Idle);
+                if (wa.Mobs[0].Ai == MobAiState.Telegraph) entryTickAi = i;
+            }
+
+            // Sim B: identical setup/seed, independently tracking the first tick the
+            // raw centre-to-centre distance crosses AttackRange — using exactly the
+            // positions the entry check itself reads: the mob's position as it stood
+            // BEFORE this tick's motion, against the player's position AFTER this
+            // tick's movement (movement runs before the AI check inside Tick()).
+            var wb = new SimulationWorld(1, c);
+            wb.SpawnMobForTest(MobType.Chaser, new float2(spawnX, 0f));
+            int entryTickRaw = -1;
+            for (int i = 1; i <= 200 && entryTickRaw < 0; i++)
+            {
+                float2 mobPosBefore = wb.Mobs[0].Pos;
+                wb.Tick(Idle);
+                float2 playerPosAfter = wb.Player.Pos;
+                if (math.distance(mobPosBefore, playerPosAfter) <= c.Chaser.AttackRange)
+                    entryTickRaw = i;
+            }
+
+            Assert.Greater(entryTickAi, 0, "chaser never entered Telegraph");
+            Assert.AreEqual(entryTickRaw, entryTickAi);
+        }
+
+        [Test]
         public void Chaser_BehindObstacle_SteersAroundNotStuck()
         {
             var c = TestConfigs.Open();

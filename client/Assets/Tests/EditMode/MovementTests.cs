@@ -11,6 +11,49 @@ namespace Ring.Simulation.Tests
         static SimInput Move(float x, float y)
             => new SimInput { MoveDir = new float2(x, y) };
 
+        static SimInput MoveAim(float x, float y)
+            => new SimInput { MoveDir = new float2(x, y), AimHeld = true };
+
+        [Test]
+        public void AimHeld_CapsRunSpeed()
+        {
+            var cfg = TestConfigs.Open();
+            var w = World();
+            for (int i = 0; i < 60; i++) w.Tick(MoveAim(1f, 0f)); // 2 s — enough to reach the capped speed
+            float expected = cfg.Hero.MaxSpeed * cfg.Hero.AimMoveSpeedFrac; // fixture expr, PD5
+            Assert.AreEqual(expected, w.Player.Vel.x, 0.05f);
+        }
+
+        [Test]
+        public void AimReleased_RestoresMaxSpeed()
+        {
+            var cfg = TestConfigs.Open();
+            var w = World();
+            for (int i = 0; i < 60; i++) w.Tick(MoveAim(1f, 0f)); // capped under aim
+            float capped = cfg.Hero.MaxSpeed * cfg.Hero.AimMoveSpeedFrac;
+            Assert.AreEqual(capped, w.Player.Vel.x, 0.05f, "test setup: must be capped under aim");
+
+            for (int i = 0; i < 60; i++) w.Tick(Move(1f, 0f)); // aim released — cap lifts immediately
+            Assert.AreEqual(cfg.Hero.MaxSpeed, w.Player.Vel.x, 0.05f);
+        }
+
+        [Test]
+        public void AimSettle_GrowsAndDecaysTwiceAsFast()
+        {
+            var w = World();
+            // Grow for a few ticks, well short of the AimSettleSeconds ceiling.
+            const int growTicks = 3;
+            for (int i = 0; i < growTicks; i++) w.Tick(new SimInput { AimHeld = true });
+            float expectedGrown = growTicks * SimulationWorld.TickDt; // fixture expr, PD5
+            Assert.AreEqual(expectedGrown, w.Player.AimSettleTimer, 1e-4f);
+
+            // Release: decays at 2x the growth rate (spec — A11 decay x2).
+            const int decayTicks = 1;
+            for (int i = 0; i < decayTicks; i++) w.Tick(default);
+            float expectedDecayed = math.max(0f, expectedGrown - 2f * decayTicks * SimulationWorld.TickDt);
+            Assert.AreEqual(expectedDecayed, w.Player.AimSettleTimer, 1e-4f);
+        }
+
         [Test]
         public void HoldRight_AcceleratesToMaxSpeed()
         {

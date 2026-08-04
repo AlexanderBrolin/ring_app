@@ -32,6 +32,79 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void SegmentCircleInterval_ReturnsEnterAndExit()
+        {
+            bool hit = Geometry.SegmentCircleInterval(
+                new float2(-2f, 0f), new float2(2f, 0f), 0f,
+                float2.zero, 1f, out float tEnter, out float tExit);
+            Assert.IsTrue(hit);
+            Assert.AreEqual(0.25f, tEnter, 1e-4f); // enters the circle at x = -1
+            Assert.AreEqual(0.75f, tExit, 1e-4f);  // leaves it at x = +1
+        }
+
+        [Test]
+        public void SegmentCircleInterval_Tangent_EnterEqualsExit()
+        {
+            // grazes the top of the unit circle: the quadratic has a double root
+            bool hit = Geometry.SegmentCircleInterval(
+                new float2(-2f, 1f), new float2(2f, 1f), 0f,
+                float2.zero, 1f, out float tEnter, out float tExit);
+            Assert.IsTrue(hit);
+            Assert.AreEqual(tEnter, tExit, 1e-4f);
+            Assert.AreEqual(0.5f, tEnter, 1e-4f);
+        }
+
+        [Test]
+        public void SegmentCircleInterval_StartInside_ClipsEnterToZero()
+        {
+            bool hit = Geometry.SegmentCircleInterval(
+                float2.zero, new float2(2f, 0f), 0f,
+                float2.zero, 1f, out float tEnter, out float tExit);
+            Assert.IsTrue(hit);
+            Assert.AreEqual(0f, tEnter, 1e-6f); // the negative root is clipped away
+            Assert.AreEqual(0.5f, tExit, 1e-4f);
+        }
+
+        [Test]
+        public void SegmentCircleInterval_EndsInside_ClipsExitToOne()
+        {
+            bool hit = Geometry.SegmentCircleInterval(
+                new float2(-2f, 0f), float2.zero, 0f,
+                float2.zero, 1f, out float tEnter, out float tExit);
+            Assert.IsTrue(hit);
+            Assert.AreEqual(0.5f, tEnter, 1e-4f);
+            Assert.AreEqual(1f, tExit, 1e-6f);
+        }
+
+        [Test]
+        public void SegmentCircleInterval_Miss_ReturnsFalse()
+        {
+            Assert.IsFalse(Geometry.SegmentCircleInterval(
+                new float2(-2f, 2f), new float2(2f, 2f), 0f,
+                float2.zero, 1f, out _, out _));
+        }
+
+        [Test]
+        public void SegmentCircleInterval_CircleBeyondSegmentEnd_ReturnsFalse()
+        {
+            // the whole chord lies at t > 1 — a miss for THIS tick's sweep
+            Assert.IsFalse(Geometry.SegmentCircleInterval(
+                new float2(-4f, 0f), new float2(-3f, 0f), 0f,
+                float2.zero, 1f, out _, out _));
+        }
+
+        [Test]
+        public void SegmentCircleInterval_PadRadiusWidensTheChord()
+        {
+            // padding inflates the target circle by padR, exactly like SegmentCircle
+            Assert.IsTrue(Geometry.SegmentCircleInterval(
+                new float2(-2f, 0f), new float2(2f, 0f), 0.5f,
+                float2.zero, 1f, out float tEnter, out float tExit));
+            Assert.AreEqual(0.125f, tEnter, 1e-4f); // enters at x = -1.5
+            Assert.AreEqual(0.875f, tExit, 1e-4f);  // leaves at x = +1.5
+        }
+
+        [Test]
         public void SegmentRingWall_ExitFromInside_Found()
         {
             Assert.IsTrue(Geometry.SegmentRingWall(new float2(34f, 0f), new float2(36f, 0f),
@@ -73,6 +146,40 @@ namespace Ring.Simulation.Tests
             float2 r = Geometry.Rotate(new float2(1f, 0f), math.PI / 2f);
             Assert.AreEqual(0f, r.x, 1e-5f);
             Assert.AreEqual(1f, r.y, 1e-5f);
+        }
+
+        [Test]
+        public void RotateTowards_WithinMaxAngle_SnapsToTarget()
+        {
+            // 10-degree gap, 90-degree/step budget: reaches the target exactly.
+            float2 from = new float2(1f, 0f);
+            float2 to = Geometry.Rotate(from, math.radians(10f));
+            float2 r = Geometry.RotateTowards(from, to, math.PI / 2f);
+            Assert.AreEqual(to.x, r.x, 1e-4f);
+            Assert.AreEqual(to.y, r.y, 1e-4f);
+        }
+
+        [Test]
+        public void RotateTowards_BeyondMaxAngle_ClampsRotation_PreservesLength()
+        {
+            // 180-degree flip, clamped to a much smaller per-call budget.
+            float2 from = new float2(2f, 0f); // non-unit on purpose: length must survive
+            float2 to = new float2(-1f, 0f);
+            float maxRad = 0.1f;
+            float2 r = Geometry.RotateTowards(from, to, maxRad);
+
+            Assert.AreEqual(math.length(from), math.length(r), 1e-4f); // magnitude preserved
+            float angle = math.acos(math.clamp(
+                math.dot(math.normalizesafe(from), math.normalizesafe(r)), -1f, 1f));
+            Assert.AreEqual(maxRad, angle, 1e-4f); // rotated by exactly the budget, no more
+        }
+
+        [Test]
+        public void RotateTowards_ZeroLengthInput_ReturnsFromUnchanged()
+        {
+            Assert.AreEqual(float2.zero, Geometry.RotateTowards(float2.zero, new float2(1f, 0f), 1f));
+            float2 from = new float2(1f, 0f);
+            Assert.AreEqual(from, Geometry.RotateTowards(from, float2.zero, 1f));
         }
 
         [Test]

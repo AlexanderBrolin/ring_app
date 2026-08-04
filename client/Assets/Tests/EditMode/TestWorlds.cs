@@ -37,5 +37,53 @@ namespace Ring.Simulation.Tests
 
             return world;
         }
+
+        /// Places a batch of mobs in one call (Task 6) — the tuple form keeps a
+        /// multi-mob fixture readable as a single statement instead of a column
+        /// of SpawnMobForTest calls. Slot order equals argument order, which the
+        /// candidate tie-break tests depend on.
+        public static void SpawnMobsAt(SimulationWorld world,
+            params (MobType type, float2 pos)[] mobs)
+        {
+            for (int i = 0; i < mobs.Length; i++)
+                world.SpawnMobForTest(mobs[i].type, mobs[i].pos);
+        }
+
+        /// Test-only 3D-aimed shot (Task 6): builds the velocity from the unit
+        /// 3D direction (origin, muzzleH) → (targetXY, targetH) scaled by
+        /// Weapon.ProjectileSpeed, so the projectile's height at horizontal
+        /// distance d is exactly muzzleH + d·(targetH − muzzleH)/|targetXY −
+        /// origin| — the straight line a height-gating fixture reasons about.
+        /// Weapon damage/radius/lifetime come from the world's own config, so a
+        /// caller only ever states geometry.
+        public static int FireAimed3D(SimulationWorld world, float2 origin, float muzzleH,
+            float2 targetXY, float targetH)
+        {
+            WeaponSimConfig weapon = world.Config.Weapon;
+            float2 flat = targetXY - origin;
+            float dz = targetH - muzzleH;
+            float len = math.sqrt(math.lengthsq(flat) + dz * dz);
+            float2 dir = len > 1e-6f ? flat / len : new float2(1f, 0f);
+            float velZ = len > 1e-6f ? dz / len * weapon.ProjectileSpeed : 0f;
+            return world.SpawnProjectileForTest(ProjectileOwner.Player, origin,
+                dir * weapon.ProjectileSpeed, muzzleH, velZ,
+                weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime);
+        }
+
+        /// Ticks with idle input until no projectile is left in flight (or the
+        /// tick budget runs out) and returns how many ticks that took. `maxTicks`
+        /// is a stall guard, not an expectation: a fixture whose mobs shoot back
+        /// legitimately runs to the cap, so callers assert on world state, never
+        /// on the return value being below it.
+        public static int RunUntilProjectilesDie(SimulationWorld world, int maxTicks = 120)
+        {
+            int ticks = 0;
+            while (ticks < maxTicks && world.ProjectileCount > 0)
+            {
+                world.Tick(default);
+                ticks++;
+            }
+            return ticks;
+        }
     }
 }

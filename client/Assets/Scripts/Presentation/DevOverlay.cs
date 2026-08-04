@@ -90,6 +90,8 @@ namespace Ring.Presentation
             GUILayout.Label($"FPS: {_fps:F0}");
             GUILayout.Label($"Tick: {_runner.World.CurrentTick}");
             GUILayout.Label($"Mobs: {_runner.Curr.MobCount}  Projectiles: {_runner.Curr.ProjectileCount}");
+            // Task 22 (A16): match counters, not "silent loss" — no red highlight.
+            GUILayout.Label($"Slides: {_runner.Curr.Stats.SlidesUsed}  Headshots: {_runner.Curr.Stats.HeadshotKills}");
 
             DrawIntCounter("DroppedEvents", _runner.World.DroppedEvents);
             DrawIntCounter("MobSpawnsSkipped", _runner.Curr.Stats.MobSpawnsSkipped);
