@@ -33,3 +33,12 @@ MonoBehaviour:
   SeparationStrength: 6
   AvoidLookahead: 3
   AvoidMargin: 1
+  LegsTop: 1.1
+  BodyTop: 2.7
+  HeadTop: 3.5
+  LegsDamageMult: 0.75
+  BodyDamageMult: 1
+  HeadDamageMult: 1.7
+  MuzzleHeight: 0.95
+  SwingLeadFactor: 1
+  SwingLeadMaxMeters: 2

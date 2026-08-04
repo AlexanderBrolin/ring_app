@@ -77,7 +77,8 @@ namespace Ring.Data
         // by the bootstrap on every Apply. GunLocalEuler was the sync-marker key
         // (bootstrap:245) until the Б1 fix-wave-2 block below superseded it, and
         // `DashGlowSize` in turn until the Б1 fix-wave-3 field below superseded
-        // THAT — `CasingEjectSpeedMax` is the current marker, see its own doc.
+        // THAT, and `CasingEjectSpeedMax` after that — `AimDotScale` is the
+        // current marker (Task 17), see its own doc.
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
         [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
@@ -107,8 +108,8 @@ namespace Ring.Data
         // start point, fading out over a few seconds. MaxDashGlows is a pool cap
         // (dash cooldown 1.2s vs ~2.5s life → 3 alive typ.). DashGlowSize was the
         // bootstrap sync-marker key until the Б1 fix-wave-3 field below
-        // superseded it — `CasingEjectSpeedMax` is the current marker, see its
-        // own doc.
+        // superseded it, then `CasingEjectSpeedMax` — `AimDotScale` is the
+        // current marker (Task 17), see its own doc.
         [Range(1, 32)] public int MaxDashGlows = 8;
         [Range(0.1f, 10f)] public float DashGlowSeconds = 2.5f;
         [Range(0.1f, 3f)] public float DashGlowSize = 0.9f;
@@ -126,11 +127,35 @@ namespace Ring.Data
         // so these are direct meters-per-second along a *directed* eject
         // vector (PersistentPropsDirector.SpawnCasing ejects to the
         // shooter's right of the shot, like a real pistol's ejection port)
-        // rather than an undirected impulse. `CasingEjectSpeedMax` is the
-        // bootstrap sync-marker key (bootstrap:245) now — keep it the LAST
-        // field of this class.
+        // rather than an undirected impulse.
         [Range(0f, 5f)] public float CasingEjectSpeedMin = 0.8f;
-        [Range(0f, 5f)] public float CasingEjectSpeedMax = 1.4f; // sync-marker key — keep LAST
+        [Range(0f, 5f)] public float CasingEjectSpeedMax = 1.4f;
+
+        // Task 17 (combat-depth Г5, spec §3.5 as corrected — QC3/QC4/QD12):
+        // game-feel numbers for the combat-depth Presentation work later in
+        // this phase (tracer visuals, slide dust, stamina bar, headshot
+        // hitstop/pitch, gib pooling, aim-proxy ray). No consumer yet — this
+        // task only delivers the fields + the bootstrap marker-sync (below);
+        // Г5's later tasks wire them up. `RicochetSparkCount` and
+        // `SlideWallSparkBurstCount` are deliberately NOT added here: ricochet
+        // sparks reuse the baked `BlockSparkBurstCount` prefab, and neither
+        // has a consumer.
+        [Range(0.1f, 3f)] public float TracerScale = 0.7f;
+        [Range(1, 64)] public int SlideDustBurstCount = 14;
+        public Color StaminaBarFullColor = new Color(0.15f, 0.95f, 0.85f);
+        public Color StaminaBarLowColor = new Color(1f, 0.25f, 0.15f);
+        [Range(0f, 1f)] public float StaminaBarLowThreshold = 0.25f;
+        [Range(0f, 1f)] public float StaminaDeniedPulseSeconds = 0.2f;
+        [Range(1f, 5f)] public float HeadHitstopScale = 1.4f;
+        [Range(0f, 1f)] public float ZoneHitPitchOffset = 0.06f;
+        [Range(0f, 20f)] public float GibHeadImpulseSpeed = 6f;
+        [Range(0f, 20f)] public float GibExplosionSpeed = 4f;
+        [Range(1, 512)] public int GibPartsFifoLimit = 24;
+        [Range(0f, 10f)] public float GibPhysicsSeconds = 3f;
+        [Range(0f, 1f)] public float AimProxyHeadRadiusFrac = 0.5f;
+        [Range(0f, 1f)] public float AimRayAlpha = 0.35f;
+        [Range(0f, 0.5f)] public float AimRayWidth = 0.03f;
+        [Range(0f, 2f)] public float AimDotScale = 0.15f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

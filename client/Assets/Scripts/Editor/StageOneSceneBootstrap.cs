@@ -267,6 +267,19 @@ namespace Ring.Editor
             WeaponConfig weapon = GetOrCreate<WeaponConfig>("WeaponConfig");
             MobConfig chaser = GetOrCreate<MobConfig>("MobChaserConfig");
             MobConfig gunner = GetOrCreate<MobConfig>("MobGunnerConfig", out bool gunnerCreated);
+
+            // Task 17 race-order guard (QD6): snapshot whether the already-
+            // committed MobGunnerConfig.asset carries the MobConfig sync-marker
+            // key BEFORE any EnsureAssetHasKey/SetDirty/SaveAssets call below
+            // can touch it. ApplyGunnerZoneDefaults' gate needs "does this
+            // asset predate the whole Task 1 zone-field block" — independent
+            // of `gunnerCreated`, which only tells us "brand new asset this
+            // run" and says nothing about an older asset that already existed
+            // but was committed before those fields existed at all.
+            bool gunnerMarkerPresent = System.IO.File
+                .ReadAllText($"{DataDir}/MobGunnerConfig.asset")
+                .Contains("SwingLeadMaxMeters");
+
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
             GameFeelConfig gameFeel = GetOrCreate<GameFeelConfig>("GameFeelConfig");
@@ -286,30 +299,48 @@ namespace Ring.Editor
             // where every field is still MobConfig's own chaser-mirrored class
             // default and genuinely needs the gunner numbers seeded once.
             bool gunnerChanged = gunnerCreated && ApplyGunnerDefaults(gunner);
+
+            // Task 17: the Task 1 hit-zone-geometry block (LegsTop/BodyTop/
+            // HeadTop/*DamageMult/MuzzleHeight) never got a gunner-archetype
+            // override — ApplyGunnerDefaults above only covers the older
+            // chaser-mirrored field block, so a committed MobGunnerConfig.asset
+            // still carries the chaser's shorter silhouette. Same first-
+            // creation contract as ApplyGunnerDefaults (F-5 regression guard —
+            // PA4/PB2/PC3), PLUS a one-time backfill when the committed asset
+            // predates the whole block (`gunnerMarkerPresent`, snapshotted
+            // above before this run could change it). `SwingLead*` is
+            // deliberately left untouched — the gunner archetype ignores melee
+            // swing lead entirely (A15).
+            gunnerChanged |= (gunnerCreated || !gunnerMarkerPresent) && ApplyGunnerZoneDefaults(gunner);
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
 
             // Task 27 review fix-round (extended by the milestone-4 DoD
-            // iteration): an already-committed GameFeelConfig.asset predates
-            // whichever feel fields most recently landed — Unity only writes
-            // a ScriptableObject's CURRENT field set to disk when something
+            // iteration, generalized to five assets by Task 17): an already-
+            // committed SO asset predates whichever feel/balance field most
+            // recently landed on its class — Unity only writes a
+            // ScriptableObject's CURRENT field set to disk when something
             // marks it dirty (missing keys silently fall back to the C#
             // field initializer at load time either way, so this is a
             // traceability fix, not a correctness one: the owner should see
             // real numbers to hot-tweak in the Inspector/YAML, not an absent
-            // key). Checked via a direct text read (same technique the now-
-            // removed HasStaleSerializedField migration helper used — Task 28
-            // dropped it once its one caller, MuzzleFlashView's `_runner`
-            // field, went from stale-to-detect back to legitimately wired —
-            // inverted here: detects a MISSING key instead of a stale one) so
-            // this is a one-time sync, not an unconditional touch every run.
-            // The marker key is always the MOST RECENTLY added field
-            // (currently `CasingEjectSpeedMax`, Б1 fix-wave 5 (app-xjz) — was
-            // `CasingScale` before that, `DashGlowSize` (app-9av) before that,
-            // and `GunLocalEuler` before that) so a fresh field addition is
-            // what re-triggers the sync, regardless of which older fields an
-            // already-committed asset already happens to carry.
-            if (!System.IO.File.ReadAllText($"{DataDir}/GameFeelConfig.asset").Contains("CasingEjectSpeedMax"))
-                EditorUtility.SetDirty(gameFeel);
+            // key). `EditorBootstrapUtils.EnsureAssetHasKey` checks via a
+            // direct text read (same technique the now-removed
+            // HasStaleSerializedField migration helper used — Task 28 dropped
+            // it once its one caller, MuzzleFlashView's `_runner` field, went
+            // from stale-to-detect back to legitimately wired — inverted
+            // here: detects a MISSING key instead of a stale one) so this is
+            // a one-time sync per field addition, not an unconditional touch
+            // every run. Each marker key is that class's MOST RECENTLY added
+            // field (GameFeelConfig: `AimDotScale` as of Task 17 — was
+            // `CasingEjectSpeedMax` before that, see the field's own doc for
+            // the fuller history; HeroConfig/WeaponConfig/MobConfig's marker
+            // fields are new as of Task 17, so any asset committed before this
+            // task predates them and self-heals on this Apply).
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "AimSettleSeconds");
+            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
+            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
+            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimDotScale");
 
             AssetDatabase.SaveAssets();
 
@@ -1208,6 +1239,28 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.SeparationStrength, 6f);
             changed |= SetIfDifferent(ref m.AvoidLookahead, 3f);
             changed |= SetIfDifferent(ref m.AvoidMargin, 1f);
+            return changed;
+        }
+
+        /// Task 17 (spec §3.6/§3.7, hit-zone geometry): the gunner archetype's
+        /// silhouette is the taller ranged mech, not the chaser's — overrides
+        /// the Task 1 zone-field block (LegsTop/BodyTop/HeadTop/*DamageMult/
+        /// MuzzleHeight) that ApplyGunnerDefaults above never touches. Same
+        /// first-creation/backfill-only contract as ApplyGunnerDefaults (see
+        /// its own doc + the call site's gate) — never reapplied
+        /// unconditionally, so an owner hand-tweak of these fields survives a
+        /// re-run. `SwingLead*` is deliberately absent: the gunner archetype
+        /// never melees, so it ignores swing lead entirely (A15).
+        static bool ApplyGunnerZoneDefaults(MobConfig m)
+        {
+            bool changed = false;
+            changed |= SetIfDifferent(ref m.LegsTop, 1.10f);
+            changed |= SetIfDifferent(ref m.BodyTop, 2.70f);
+            changed |= SetIfDifferent(ref m.HeadTop, 3.50f);
+            changed |= SetIfDifferent(ref m.LegsDamageMult, 0.75f);
+            changed |= SetIfDifferent(ref m.BodyDamageMult, 1.0f);
+            changed |= SetIfDifferent(ref m.HeadDamageMult, 1.7f);
+            changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
             return changed;
         }
 

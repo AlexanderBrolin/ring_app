@@ -79,3 +79,19 @@ MonoBehaviour:
   CasingScale: 0.08
   CasingEjectSpeedMin: 0.8
   CasingEjectSpeedMax: 1.4
+  TracerScale: 0.7
+  SlideDustBurstCount: 14
+  StaminaBarFullColor: {r: 0.15, g: 0.95, b: 0.85, a: 1}
+  StaminaBarLowColor: {r: 1, g: 0.25, b: 0.15, a: 1}
+  StaminaBarLowThreshold: 0.25
+  StaminaDeniedPulseSeconds: 0.2
+  HeadHitstopScale: 1.4
+  ZoneHitPitchOffset: 0.06
+  GibHeadImpulseSpeed: 6
+  GibExplosionSpeed: 4
+  GibPartsFifoLimit: 24
+  GibPhysicsSeconds: 3
+  AimProxyHeadRadiusFrac: 0.5
+  AimRayAlpha: 0.35
+  AimRayWidth: 0.03
+  AimDotScale: 0.15

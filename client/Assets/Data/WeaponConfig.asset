@@ -23,3 +23,7 @@ MonoBehaviour:
   RecoilMaxRad: 0.07
   MuzzleOffset: 0.6
   CanFireWhileDash: 0
+  CanFireWhileSlide: 1
+  SpreadRunMult: 1.5
+  SpreadSlideMult: 2
+  RunSpreadSpeedFrac: 0.5

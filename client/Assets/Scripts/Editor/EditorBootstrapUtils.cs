@@ -208,5 +208,23 @@ namespace Ring.Editor
             return AssetDatabase.LoadAssetAtPath<
                 UnityEditor.Animations.AnimatorController>(path) != null ? path : null;
         }
+
+        /// One-time sync guard (Task 17, extracted from the Task 27-review
+        /// GameFeelConfig-only inline check in StageOneSceneBootstrap): an
+        /// already-committed SO asset predates whichever field the caller
+        /// passes as `markerField` (the class's LAST field, PB9's sync-marker
+        /// convention) — Unity only writes an SO's CURRENT field set to disk
+        /// when something marks it dirty, so a stale committed asset falls
+        /// back to the C# field initializer at load time (not wrong, just
+        /// invisible to the owner's Inspector/YAML hand-tweak). Detected via
+        /// a direct text read of the asset file rather than SerializedObject
+        /// — cheap, no reimport needed; `AssetDatabase.SaveAssets()` (called
+        /// once by the caller, after every `EnsureAssetHasKey`) is what
+        /// actually flushes the dirtied SO's full current field set to disk.
+        public static void EnsureAssetHasKey(Object so, string assetPath, string markerField)
+        {
+            if (!File.ReadAllText(assetPath).Contains(markerField))
+                EditorUtility.SetDirty(so);
+        }
     }
 }
