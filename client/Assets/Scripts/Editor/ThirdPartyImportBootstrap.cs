@@ -44,8 +44,16 @@ namespace Ring.Editor
             string[] humanoids = TP.FindModels(TP.UalRoot)
                 .Concat(TP.FindModels(TP.Ual2Root))
                 .Where(p => p != TP.DollPath).ToArray();
+            // T24-2: gib part meshes (George_Parts.fbx/Leela_Parts.fbx, `_Ring/
+            // Gibs/`) validate and remap exactly like the robot/prop models —
+            // no clips, no avatar, materials remapped by NAME to the SAME
+            // `_Ring/Materials/` assets the live mechs already use (verified:
+            // both parts FBXs carry a single material slot each, named
+            // "George_Texture"/"Leela_Texture" — identical to the source
+            // mechs' own slot names, RemapPackMaterials' doc below).
             string[] robots = TP.FindModels(TP.MechRoot)
-                .Concat(TP.FindModels(TP.SciFiRoot)).ToArray();
+                .Concat(TP.FindModels(TP.SciFiRoot))
+                .Concat(TP.FindModels(TP.GibsRoot)).ToArray();
 
             foreach (string path in humanoids)
                 ValidateModel(path, doll, errors, ref healed);
@@ -187,6 +195,13 @@ namespace Ring.Editor
         /// wired to the pack texture found by naming convention, and remap the
         /// importer to it (persistent — Phase B instantiations get it for free).
         /// UAL mannequins are authored textureless and are not touched.
+        /// T24-2: `robotModels` now also carries the gib part FBXs (`_Ring/
+        /// Gibs/`) — their material names ("George_Texture"/"Leela_Texture")
+        /// are IDENTICAL to the live mechs' own slot names, so
+        /// `GetOrCreateRemapMaterial`'s existence-guarded `path` lookup
+        /// resolves to the exact SAME `_Ring/Materials/*.mat` asset the mechs
+        /// already remap to — no duplicate material is ever created, gib
+        /// parts and live mechs share one material per archetype.
         static int RemapPackMaterials(string[] robotModels)
         {
             int remapped = 0;
@@ -227,9 +242,15 @@ namespace Ring.Editor
         /// Convention lookup in the pack's Textures/ folder:
         /// "George_Texture" (+"") → George_Texture.png;
         /// "MI_Trim_02" (+"_BaseColor") → T_Trim_02_BaseColor.png.
+        /// T24-2: gib part models live under `_Ring/Gibs/`, not `MechRoot`
+        /// itself (they're OUR derivative, not vendored pack content — see
+        /// `ThirdPartyAssetPostprocessor.GibsRoot`'s doc) but their single
+        /// material slot is cut from the SAME mech, so the lookup still
+        /// belongs in `MechRoot`'s own `Textures/` folder.
         static Texture FindPackTexture(string modelPath, string matName, string suffix)
         {
             string root = modelPath.StartsWith(TP.MechRoot, StringComparison.Ordinal)
+                || modelPath.StartsWith(TP.GibsRoot, StringComparison.Ordinal)
                 ? TP.MechRoot : TP.SciFiRoot;
             string dir = root + "Textures/";
             string stripped = matName;

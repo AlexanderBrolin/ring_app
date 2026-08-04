@@ -28,17 +28,41 @@ namespace Ring.Presentation
     /// its own cosmetic.
     ///
     /// Task 24 (revised per `app-1zf`'s investigation — see `GibView`'s class
-    /// doc for the full "primitives only" story) adds a fifth kind,
-    /// `GibView`: `HandleMobDied` now also spawns mech-debris chunks —
-    /// EVERY kill gets a small explosion-style scatter of chunks
-    /// (`GameFeelConfig.GibExplosionSpeed`, random directions, random
-    /// heights in `[0, HeadTop]`); a kill whose killing blow landed in
-    /// `HitZone.Head` gets ONE additional chunk launched along the blow's own
-    /// `HitDir` (`GameFeelConfig.GibHeadImpulseSpeed`) from a config-derived
-    /// head height. No headless-corpse branch exists (the original plan's B5
-    /// item) — George/Leela have no separable head sub-mesh to hide, and the
-    /// corpse stays whole; a follow-up art issue (`app-vli`) tracks giving
-    /// the corpse model an actual detachable head for a future pass.
+    /// doc for the full "primitives only" story) added a fifth kind,
+    /// `GibView`, driving EVERY kill's small explosion-style primitive-chunk
+    /// scatter plus an extra headshot chunk. T24-2 (owner-approved Blender
+    /// split, spec item, `app-nco` vision) replaces that primitives-only
+    /// scatter with REAL mech part meshes and a death-VARIANT split instead
+    /// of "always scatter, always spawn a whole corpse":
+    /// `HandleMobDied` rolls `GibFullExplodeChance` (a code const, not a
+    /// GameFeelConfig field — cosmetic death-variant RNG, not a hot-tweak
+    /// feel number, same "structural, not feel" split the retired
+    /// `GibExplosionChunkCount` const used to draw) via `UnityEngine.Random`
+    /// (legal, casings precedent):
+    /// — FULL EXPLODE (`SpawnFullExplodeGibs`): every part of the dying
+    /// mob's own archetype (`_chaserParts`/`_gunnerParts`, wired by
+    /// `StageOneSceneBootstrap` from `George_Parts.fbx`/`Leela_Parts.fbx`,
+    /// `_Ring/Gibs/`) scatters from the event's own `Pos`, each at a
+    /// belt-derived height keyed off `GibView.ClassifyPart`'s per-part kind
+    /// (head at the head belt, legs low, torso/arms mid) with an
+    /// upward-biased random impulse (`GameFeelConfig.GibExplosionSpeed`) — NO
+    /// corpse spawns in this variant.
+    /// — OTHERWISE: a whole corpse spawns as before (`CorpseView.Spawn`);
+    /// IF the killing blow's own `Zone` is `HitZone.Head`, `SpawnHeadGib`
+    /// additionally launches ONLY that archetype's head part along the
+    /// blow's own `HitDir` (`GameFeelConfig.GibHeadImpulseSpeed`) from the
+    /// head belt — the one piece of directional feedback that reads as
+    /// "that shot took the head off," on top of the intact corpse.
+    /// Every gib part's `transform.localScale` mirrors the SAME
+    /// `visualScale` (`ChaserVisualScale`/`GunnerVisualScale`) the corpse
+    /// itself gets, below — a part cut from the same mesh has to agree with
+    /// the archetype's own live/corpse scale or it visibly mismatches.
+    /// `GibMetal.mat` (Task 24's flat gunmetal material) is no longer the
+    /// gib's own material — it's kept on disk purely as the fallback wired
+    /// into `_chaserPartMaterial`/`_gunnerPartMaterial` if a remap material
+    /// is ever missing (`StageOneSceneBootstrap.GetOrCreateGibPrefab`'s own
+    /// doc), which should never happen in practice since the parts FBXs
+    /// share their material NAME with the already-remapped live mechs.
     ///
     /// Pooling split (Приложение П-7): casings/decals/corpses/dash-glows/gibs
     /// have no "done with it" moment during a live match (spec: "живут до
@@ -140,13 +164,13 @@ namespace Ring.Presentation
         // class doc already gives for DeathBurstPoolCapacity above.
         const int SlideDustPoolCapacity = 16;
 
-        // Task 24 (revision brief, item 3 — "keep counts modest, code const
-        // with a doc comment, do NOT add a new SO field this wave"): explosion
-        // chunks per kill, independent of the optional head gib. Picked at the
-        // middle of the brief's own 4-6 suggested range — dense enough to read
-        // as "the mech burst apart" without flooding the 24-slot GibView ring
-        // buffer (GameFeelConfig.GibPartsFifoLimit) after only a few kills.
-        const int GibExplosionChunkCount = 5;
+        // T24-2 (app-nco vision, owner-approved Blender split): fraction of
+        // kills that get the "mech explodes into every part" variant instead
+        // of a whole corpse (+ at most one head gib on a headshot). Kept a
+        // code const, not a GameFeelConfig field — cosmetic death-variant
+        // RNG, not a hot-tweak feel number (class doc, same split
+        // GibExplosionChunkCount used to draw before this task retired it).
+        const float GibFullExplodeChance = 0.35f;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
@@ -155,6 +179,16 @@ namespace Ring.Presentation
         [SerializeField] CorpseView _corpsePrefab;
         [SerializeField] DashGlowView _dashGlowPrefab;
         [SerializeField] GibView _gibPrefab;
+        // T24-2: per-archetype gib PART meshes (George: Head/ArmL/ArmR/LegL/
+        // LegR/Torso; Leela: Head/LegL/LegR/Torso) plus the single material
+        // each archetype's parts all share — wired by StageOneSceneBootstrap
+        // from the George_Parts.fbx/Leela_Parts.fbx sub-assets
+        // (`_Ring/Gibs/`). See class doc for the death-variant logic that
+        // consumes these.
+        [SerializeField] Mesh[] _chaserParts;
+        [SerializeField] Mesh[] _gunnerParts;
+        [SerializeField] Material _chaserPartMaterial;
+        [SerializeField] Material _gunnerPartMaterial;
         [SerializeField] ParticleSystem _hitSparkPrefab;
         [SerializeField] ParticleSystem _blockSparkPrefab;
         [SerializeField] ParticleSystem _deathBurstPrefab;
@@ -304,60 +338,120 @@ namespace Ring.Presentation
 
         void HandleMobDied(in SimEvent e)
         {
-            Vector3 pos = SimSpace.ToWorld(e.Pos) + Vector3.up * CorpseLift;
             // В1/В2 fix-wave 2 (app-n6g item 2, BUG fix): same archetype-scale
             // read `ViewRegistry.SyncMobs` uses for the live `MobVisual.Bind`
             // call — `MobDied`'s own `MobType` is enough, no new SO field
-            // (CorpseView.Spawn's own doc).
+            // (CorpseView.Spawn's own doc). T24-2: also the scale every
+            // spawned gib part's transform.localScale mirrors (class doc).
             float visualScale = e.MobType == MobType.Chaser
                 ? _gameFeel.ChaserVisualScale : _gameFeel.GunnerVisualScale;
 
+            PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
+
+            // T24-2 (app-nco vision): a rolled fraction of kills explode into
+            // every part instead of leaving a whole corpse — class doc has
+            // the full variant split.
+            if (Random.value < GibFullExplodeChance)
+            {
+                SpawnFullExplodeGibs(in e, visualScale);
+                return;
+            }
+
+            Vector3 pos = SimSpace.ToWorld(e.Pos) + Vector3.up * CorpseLift;
             CorpseView corpse = _corpses.Rent();
             corpse.Spawn(pos, e.MobType, _gameFeel.CorpseGlowFadeSeconds, visualScale);
 
-            PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
-
-            SpawnGibs(in e);
+            if (e.Zone == HitZone.Head) SpawnHeadGib(in e, visualScale);
         }
 
-        /// Task 24 (revision brief): mech debris on every kill. Heights come
-        /// exclusively from the dying mob's OWN archetype config
-        /// (`World.Config.Chaser`/`Gunner` by `e.MobType`, same zone-geometry
-        /// fields `ProjectileSystem`'s hit-zone classification and the
-        /// `AimProxy_*` belts already read) — never from `ViewRegistry`/
-        /// `MobView` state, same "spawn positions come only from the event"
-        /// rule the rest of this class follows (class doc). XY always rides
-        /// `e.Pos` (owner requirement, веха 3).
-        ///
-        /// `e.Zone == HitZone.Head` adds exactly ONE extra chunk on top of
-        /// the always-on explosion scatter below, launched along the killing
-        /// blow's own `HitDir` — the one piece of directional feedback that
-        /// reads as "that shot took the head off," even though (app-1zf)
-        /// there is no actual head sub-mesh to detach. Every OTHER kill
-        /// (body/legs blow, or overkill) only gets the explosion scatter.
-        void SpawnGibs(in SimEvent e)
+        /// T24-2 (app-nco vision, owner-approved Blender split): the "mech
+        /// explodes" death variant (`GibFullExplodeChance` roll in
+        /// `HandleMobDied`) — every part of the dying mob's own archetype
+        /// (`_chaserParts`/`_gunnerParts`) scatters from the event's own
+        /// `Pos` (owner requirement, веха 3 — XY always rides `e.Pos`, never
+        /// `ViewRegistry`/`MobView` state), each at a belt-derived height
+        /// keyed off its own `GibView.ClassifyPart` kind (`PartHeight` below)
+        /// — the SAME `World.Config.Chaser`/`Gunner` zone-geometry belts
+        /// `ProjectileSystem`'s hit-zone classification and the `AimProxy_*`
+        /// colliders already read. Impulse direction is upward-biased
+        /// (`Random.onUnitSphere`, reflected onto the upper hemisphere when
+        /// it rolls downward — a part launching straight into the floor
+        /// reads as a bug, not a death) at `GameFeelConfig.GibExplosionSpeed`.
+        /// NO corpse spawns in this variant — every part IS the "corpse"
+        /// here (class doc).
+        void SpawnFullExplodeGibs(in SimEvent e, float visualScale)
         {
+            (Mesh[] parts, Material material) = e.MobType == MobType.Chaser
+                ? (_chaserParts, _chaserPartMaterial) : (_gunnerParts, _gunnerPartMaterial);
             MobSimConfig archetype = e.MobType == MobType.Chaser
                 ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
             Vector3 worldPos = SimSpace.ToWorld(e.Pos);
             float settleSeconds = _gameFeel.GibPhysicsSeconds;
 
-            if (e.Zone == HitZone.Head)
+            for (int i = 0; i < parts.Length; i++)
             {
-                float headHeight = (archetype.BodyTop + archetype.HeadTop) * 0.5f;
-                Vector3 headImpulse = _gameFeel.GibHeadImpulseSpeed * SimSpace.ToWorld(e.HitDir);
-                GibView headGib = _gibs.Rent();
-                headGib.SettleSeconds = settleSeconds;
-                headGib.Spawn(worldPos + Vector3.up * headHeight, headImpulse);
-            }
+                Mesh part = parts[i];
+                float height = PartHeight(GibView.ClassifyPart(part.name), in archetype);
+                Vector3 dir = Random.onUnitSphere;
+                if (dir.y < 0f) dir.y = -dir.y; // upward-biased (class doc)
+                Vector3 impulse = dir * _gameFeel.GibExplosionSpeed;
 
-            for (int i = 0; i < GibExplosionChunkCount; i++)
+                GibView gib = _gibs.Rent();
+                gib.SettleSeconds = settleSeconds;
+                gib.Spawn(worldPos + Vector3.up * height, impulse, part, material, visualScale);
+            }
+        }
+
+        /// T24-2: the single head-part gib a headshot kill adds ON TOP OF the
+        /// otherwise-intact corpse (`HandleMobDied`'s `e.Zone == HitZone.Head`
+        /// branch, class doc) — launched along the killing blow's own
+        /// `HitDir`, from the head belt, same `GibHeadImpulseSpeed`/height
+        /// formula Task 24's original headshot chunk used, now carrying the
+        /// archetype's real head mesh instead of a primitive.
+        void SpawnHeadGib(in SimEvent e, float visualScale)
+        {
+            (Mesh[] parts, Material material) = e.MobType == MobType.Chaser
+                ? (_chaserParts, _chaserPartMaterial) : (_gunnerParts, _gunnerPartMaterial);
+            Mesh headPart = FindPart(parts, GibPartKind.Head);
+            // Defensive only — every archetype ships a Head part and
+            // StageOneSceneBootstrap validates that at wiring time; a live
+            // match should never actually hit this.
+            if (headPart == null) return;
+
+            MobSimConfig archetype = e.MobType == MobType.Chaser
+                ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
+            float headHeight = (archetype.BodyTop + archetype.HeadTop) * 0.5f;
+            Vector3 headImpulse = _gameFeel.GibHeadImpulseSpeed * SimSpace.ToWorld(e.HitDir);
+
+            GibView headGib = _gibs.Rent();
+            headGib.SettleSeconds = _gameFeel.GibPhysicsSeconds;
+            headGib.Spawn(SimSpace.ToWorld(e.Pos) + Vector3.up * headHeight, headImpulse,
+                headPart, material, visualScale);
+        }
+
+        static Mesh FindPart(Mesh[] parts, GibPartKind kind)
+        {
+            for (int i = 0; i < parts.Length; i++)
+                if (GibView.ClassifyPart(parts[i].name) == kind) return parts[i];
+            return null;
+        }
+
+        /// T24-2: per-part spawn height for `SpawnFullExplodeGibs`, keyed off
+        /// the dying mob's own archetype belts — head at the head belt (Task
+        /// 24's original formula), legs low (below the legs belt), torso AND
+        /// arms mid (the body belt band — George's arms read the same band
+        /// as its torso, task brief: "arms mid for George").
+        static float PartHeight(GibPartKind kind, in MobSimConfig archetype)
+        {
+            switch (kind)
             {
-                float height = Random.Range(0f, archetype.HeadTop);
-                Vector3 impulse = Random.onUnitSphere * _gameFeel.GibExplosionSpeed;
-                GibView chunk = _gibs.Rent();
-                chunk.SettleSeconds = settleSeconds;
-                chunk.Spawn(worldPos + Vector3.up * height, impulse);
+                case GibPartKind.Head:
+                    return (archetype.BodyTop + archetype.HeadTop) * 0.5f;
+                case GibPartKind.LegL:
+                case GibPartKind.LegR:
+                    return archetype.LegsTop * 0.5f;
+                default: // Torso, ArmL, ArmR
+                    return (archetype.LegsTop + archetype.BodyTop) * 0.5f;
             }
         }
 

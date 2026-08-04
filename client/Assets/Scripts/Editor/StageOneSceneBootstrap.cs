@@ -1,3 +1,4 @@
+using System.Linq;
 using Ring.Data;
 using Ring.Presentation;
 using TMPro;
@@ -184,6 +185,14 @@ namespace Ring.Editor
     /// `PersistentPropsDirector`'s existing wiring block gains a
     /// `_gibPrefab` slot alongside `_casingPrefab`/`_decalPrefab`/
     /// `_corpsePrefab`/`_dashGlowPrefab`.
+    /// T24-2 (owner-approved Blender split) keeps `Gib.prefab`'s slot but
+    /// changes its own internal shape (`GetOrCreateGibPrefab`'s doc) and adds
+    /// four more `PersistentPropsDirector` slots: `_chaserParts`/
+    /// `_gunnerParts` (`Mesh[]`, `LoadGibParts` off `George_Parts.fbx`/
+    /// `Leela_Parts.fbx`, `_Ring/Gibs/`) and `_chaserPartMaterial`/
+    /// `_gunnerPartMaterial` (the live mechs' own `_Ring/Materials/
+    /// *_Texture.mat` remaps, loaded not created — `ThirdPartyImportBootstrap`
+    /// is what actually produces/reuses them).
     /// Task 20 (spec Г5, PC6/PC8/QA10) adds the aim-assist ray: a new `AimRay`
     /// root object carrying `LineRenderer` + `AimRayView`, wired to `_runner`/
     /// `_aimProvider`/`_gameFeel`/`_rayMaterial` — the last built here via a
@@ -284,8 +293,17 @@ namespace Ring.Editor
         // Б1 fix-wave 2 (app-9av): dash-start floor mark.
         const string DashGlowPrefabPath = PrefabsDir + "/DashGlow.prefab";
 
-        // Task 24 (revised per app-1zf: primitives only — see GibView's class doc).
+        // Task 24 (revised per app-1zf: primitives only — see GibView's class doc);
+        // T24-2 (owner-approved Blender split) swaps the prefab's SHAPE to a
+        // single mesh-swappable object — same path, see GetOrCreateGibPrefab.
         const string GibPrefabPath = PrefabsDir + "/Gib.prefab";
+        // T24-2: gib part meshes, cut from the SAME source mechs
+        // (ChaserModelPath/GunnerModelPath below) — same material slot names
+        // ("George_Texture"/"Leela_Texture"), so ThirdPartyImportBootstrap's
+        // RemapPackMaterials reuses the live mechs' own remap materials
+        // rather than creating duplicates (see that class's doc).
+        const string ChaserGibPartsPath = ThirdPartyAssetPostprocessor.GibsRoot + "George_Parts.fbx";
+        const string GunnerGibPartsPath = ThirdPartyAssetPostprocessor.GibsRoot + "Leela_Parts.fbx";
 
         // Task 8 (assets phase B plan, spec §3.2): the pistol in the doll's hand.
         const string GunObjectName = "Gun";
@@ -1257,8 +1275,9 @@ namespace Ring.Editor
             Material dashGlowMat = GetOrCreateUnlitMaterial("DashGlow", new Color(0f, 2.5f, 3f));
             // Task 24 (revised per app-1zf — primitives only, GibView's class
             // doc): a dark gunmetal Lit material, same non-HDR/black-emission
-            // shape as CasingBrass above (a scattered mech chunk, not a
-            // combat-feedback bloom flash like the spark materials).
+            // shape as CasingBrass above. T24-2 (real part meshes) demotes
+            // this to a FALLBACK only — see chaserPartMat/gunnerPartMat below
+            // and PersistentPropsDirector's class doc.
             Material gibMat = GetOrCreateMaterial(
                 "GibMetal", baseColor: new Color(0.12f, 0.12f, 0.14f), emissionColor: Color.black);
 
@@ -1273,7 +1292,25 @@ namespace Ring.Editor
                 CorpseMechPrefabPath, ChaserModelPath, GunnerModelPath,
                 gameFeel.ChaserVisualScale, gameFeel.GunnerVisualScale);
             DashGlowView dashGlowPrefab = GetOrCreateDashGlowPrefab(dashGlowMat);
-            GibView gibPrefab = GetOrCreateGibPrefab(gibMat);
+            GibView gibPrefab = GetOrCreateGibPrefab();
+
+            // T24-2 (owner-approved Blender split): per-archetype gib part
+            // meshes + the single material each archetype's parts all
+            // share. The material is the SAME `_Ring/Materials/*_Texture.mat`
+            // remap the live mechs already use (ThirdPartyImportBootstrap's
+            // RemapPackMaterials, extended per its own doc to cover
+            // `_Ring/Gibs/` too) — loaded here, not created, same "already
+            // exists by the time StageOneSceneBootstrap runs" contract the
+            // Floor/Wall/Obstacle materials above follow. `gibMat` (GibMetal)
+            // is the fallback ONLY if a remap is somehow missing — should
+            // never trigger in practice, since the parts FBXs share their
+            // material NAME with the already-remapped live mechs.
+            Mesh[] chaserParts = LoadGibParts(ChaserGibPartsPath);
+            Mesh[] gunnerParts = LoadGibParts(GunnerGibPartsPath);
+            Material chaserPartMat = AssetDatabase.LoadAssetAtPath<Material>(
+                ThirdPartyAnimatorBootstrap.MaterialsRoot + "George_Texture.mat") ?? gibMat;
+            Material gunnerPartMat = AssetDatabase.LoadAssetAtPath<Material>(
+                ThirdPartyAnimatorBootstrap.MaterialsRoot + "Leela_Texture.mat") ?? gibMat;
             // lifetime/speed/size/burstCount read from GameFeelConfig at
             // prefab-creation time (review fix-round — same "creation-time SO
             // read" contract as TracerFadeSeconds/GetOrCreateProjectilePrefab
@@ -1328,6 +1365,11 @@ namespace Ring.Editor
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpseMechPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_dashGlowPrefab", dashGlowPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gibPrefab", gibPrefab); // Task 24
+            // T24-2.
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetObjectArray(persistentPropsSo, "_chaserParts", chaserParts);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetObjectArray(persistentPropsSo, "_gunnerParts", gunnerParts);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_chaserPartMaterial", chaserPartMat);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gunnerPartMaterial", gunnerPartMat);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_hitSparkPrefab", hitSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
@@ -1980,23 +2022,35 @@ namespace Ring.Editor
             });
         }
 
-        /// Task 24 (revised per app-1zf's investigation — George/Leela are
-        /// monolithic skinned meshes with no separable sub-mesh, so gibs are
-        /// PRIMITIVES ONLY, no `_Ring/Gibs/` FBX assets, no LFS — GibView's
-        /// class doc). Two colliderless primitive children (`RemoveCollider`,
-        /// same treatment CorpseMechView's `VisualChaser`/`VisualGunner` and
-        /// ProjectileView get), `GibBox`/`GibCapsule`, toggled at random by
-        /// `GibView.Spawn` for shape variety across a burst. The ROOT carries
-        /// the actual physics — a single small `SphereCollider` (shape-
-        /// agnostic, so either visual child can be active without touching
-        /// the collider) + `Rigidbody` — and `PersistentPropsDirector.
-        /// CasingsLayer`: gibs reuse the SAME dedicated layer casings already
-        /// got (Task 27 review fix-round, self-collision already isolated in
-        /// `PersistentPropsDirector.Awake`), no second layer/TagManager edit
-        /// needed for this task.
-        static GibView GetOrCreateGibPrefab(Material gibMat)
+        /// Task 24 (revised per app-1zf's investigation — George/Leela were
+        /// monolithic skinned meshes with no separable sub-mesh, so gibs
+        /// shipped as PRIMITIVES ONLY: two colliderless children,
+        /// `GibBox`/`GibCapsule`, toggled at random by `GibView.Spawn`).
+        /// T24-2 (owner-approved Blender split) replaces that pair with a
+        /// SINGLE object carrying `MeshFilter`/`MeshRenderer` — `GibView.
+        /// Spawn` now swaps in the actual part mesh/material every call
+        /// instead of picking a primitive shape (that class's doc has the
+        /// full story). The ROOT still carries the actual physics — a
+        /// `SphereCollider` (`GibView.Spawn` resizes/recentres it from the
+        /// swapped-in mesh's own `bounds` every call — no `MeshCollider`,
+        /// task brief) + `Rigidbody` — on `PersistentPropsDirector.
+        /// CasingsLayer` (Task 27 review fix-round, self-collision already
+        /// isolated in `PersistentPropsDirector.Awake`), unchanged from
+        /// Task 24. Self-heals an already-committed Task 24 `Gib.prefab`:
+        /// its old `GibBox`/`GibCapsule` shape has no `MeshFilter` on the
+        /// root, which is what this factory checks for before deciding to
+        /// delete-and-rebuild — same "structural shape changed" guard
+        /// `GetOrCreateMobArchetypePrefab`'s `PrefabVisualsMatch` uses,
+        /// simplified to a single component-presence check since there's no
+        /// per-model source path to compare here.
+        static GibView GetOrCreateGibPrefab()
         {
             var existing = AssetDatabase.LoadAssetAtPath<GibView>(GibPrefabPath);
+            if (existing != null && existing.GetComponent<MeshFilter>() == null)
+            {
+                AssetDatabase.DeleteAsset(GibPrefabPath);
+                existing = null;
+            }
             if (existing != null)
             {
                 if (existing.gameObject.layer != PersistentPropsDirector.CasingsLayer)
@@ -2013,25 +2067,11 @@ namespace Ring.Editor
                 var go = new GameObject("Gib");
                 go.layer = PersistentPropsDirector.CasingsLayer;
 
-                GameObject boxVisual = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                boxVisual.name = "GibBox";
-                boxVisual.transform.SetParent(go.transform, false);
-                boxVisual.transform.localScale = new Vector3(0.16f, 0.12f, 0.1f);
-                boxVisual.layer = PersistentPropsDirector.CasingsLayer;
-                EditorBootstrapUtils.RemoveCollider(boxVisual);
-                boxVisual.GetComponent<MeshRenderer>().sharedMaterial = gibMat;
-
-                GameObject capsuleVisual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                capsuleVisual.name = "GibCapsule";
-                capsuleVisual.transform.SetParent(go.transform, false);
-                capsuleVisual.transform.localScale = new Vector3(0.08f, 0.1f, 0.08f);
-                capsuleVisual.layer = PersistentPropsDirector.CasingsLayer;
-                EditorBootstrapUtils.RemoveCollider(capsuleVisual);
-                capsuleVisual.GetComponent<MeshRenderer>().sharedMaterial = gibMat;
-                capsuleVisual.SetActive(false); // Spawn() flips per random pick, same as CorpseMechView's gunnerVisual
+                MeshFilter meshFilter = go.AddComponent<MeshFilter>();
+                MeshRenderer meshRenderer = go.AddComponent<MeshRenderer>();
 
                 SphereCollider collider = go.AddComponent<SphereCollider>();
-                collider.radius = 0.08f;
+                collider.radius = 0.08f; // resized per-spawn from the swapped mesh's own bounds (GibView.Spawn)
                 Rigidbody rb = go.AddComponent<Rigidbody>();
                 rb.mass = 0.35f;
                 rb.linearDamping = 0.15f;
@@ -2039,11 +2079,35 @@ namespace Ring.Editor
 
                 GibView view = go.AddComponent<GibView>();
                 var so = new SerializedObject(view);
-                EditorBootstrapUtils.SetRef(so, "_boxVisual", boxVisual);
-                EditorBootstrapUtils.SetRef(so, "_capsuleVisual", capsuleVisual);
+                EditorBootstrapUtils.SetRef(so, "_meshFilter", meshFilter);
+                EditorBootstrapUtils.SetRef(so, "_meshRenderer", meshRenderer);
                 so.ApplyModifiedPropertiesWithoutUndo();
                 return go;
             });
+        }
+
+        /// T24-2: loads a gib parts FBX's own `Mesh` sub-assets — one per
+        /// capped-cut body part (`George_Parts.fbx`: Head/ArmL/ArmR/LegL/
+        /// LegR/Torso; `Leela_Parts.fbx`: Head/LegL/LegR/Torso). Order is
+        /// whatever `LoadAllAssetsAtPath` returns — callers never assume a
+        /// position, only `GibView.ClassifyPart(mesh.name)`'s own kind
+        /// (`PersistentPropsDirector.FindPart`/`PartHeight`). Throws (same
+        /// "hard error on unexpected setup state" policy as
+        /// `LoadMaterial`/`LoadAudioClip` below) if the FBX yields no
+        /// meshes at all, or no `Head` part — `SpawnHeadGib`'s headshot path
+        /// depends on every archetype shipping exactly one.
+        static Mesh[] LoadGibParts(string fbxPath)
+        {
+            Mesh[] parts = AssetDatabase.LoadAllAssetsAtPath(fbxPath)
+                .OfType<Mesh>().ToArray();
+            if (parts.Length == 0)
+                throw new System.InvalidOperationException(
+                    "StageOneSceneBootstrap: no Mesh sub-assets at " + fbxPath);
+            if (!parts.Any(m => GibView.ClassifyPart(m.name) == GibPartKind.Head))
+                throw new System.InvalidOperationException(
+                    "StageOneSceneBootstrap: no Head part among gib meshes at " + fbxPath);
+            Debug.Log($"[StageOneSceneBootstrap] {fbxPath}: {parts.Length} gib parts");
+            return parts;
         }
 
         /// Task 27: the shared `CorpseView` prefab — a bare, uncollided

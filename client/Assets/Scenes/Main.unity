@@ -1426,7 +1426,21 @@ MonoBehaviour:
   _decalPrefab: {fileID: 6084807468969330963, guid: c256b7427e75671e68ff2afcfcb29eff, type: 3}
   _corpsePrefab: {fileID: 563010563106822884, guid: bfa36846e880d0a1bad03fc676bc476f, type: 3}
   _dashGlowPrefab: {fileID: 3945040351260055807, guid: 7f14bcc847533bf10bcbb64ff6baaf01, type: 3}
-  _gibPrefab: {fileID: 3761343940376435217, guid: 3ccbec15044e430419b988bcf78aa9bf, type: 3}
+  _gibPrefab: {fileID: 5002777372219679321, guid: 3ccbec15044e430419b988bcf78aa9bf, type: 3}
+  _chaserParts:
+  - {fileID: -5068123331788559575, guid: 82bc2f2e61832bcd4a1df36b8bfb5518, type: 3}
+  - {fileID: 368580959385072988, guid: 82bc2f2e61832bcd4a1df36b8bfb5518, type: 3}
+  - {fileID: 2529521956157097309, guid: 82bc2f2e61832bcd4a1df36b8bfb5518, type: 3}
+  - {fileID: 3211390878678800091, guid: 82bc2f2e61832bcd4a1df36b8bfb5518, type: 3}
+  - {fileID: 5659311595603948052, guid: 82bc2f2e61832bcd4a1df36b8bfb5518, type: 3}
+  - {fileID: 8954712576772509076, guid: 82bc2f2e61832bcd4a1df36b8bfb5518, type: 3}
+  _gunnerParts:
+  - {fileID: -6815360667427624112, guid: 13f8a85fe1b65b8bd9f3f40f396fbccd, type: 3}
+  - {fileID: -3538857615257233806, guid: 13f8a85fe1b65b8bd9f3f40f396fbccd, type: 3}
+  - {fileID: -893199691889506987, guid: 13f8a85fe1b65b8bd9f3f40f396fbccd, type: 3}
+  - {fileID: -812218472916803845, guid: 13f8a85fe1b65b8bd9f3f40f396fbccd, type: 3}
+  _chaserPartMaterial: {fileID: 2100000, guid: 421c95197139a63008a9f3ceef4c0192, type: 2}
+  _gunnerPartMaterial: {fileID: 2100000, guid: f273cb3e5b2d6562d8ca9e387241a08f, type: 2}
   _hitSparkPrefab: {fileID: 7374377401012443161, guid: 42ec01c09f06985e2ba187ed4e79aa15, type: 3}
   _blockSparkPrefab: {fileID: 3910514533307916869, guid: 373685f485adaed9fb5cfe233b98cdeb, type: 3}
   _deathBurstPrefab: {fileID: 1797491183300419661, guid: 0f59ad34e3d1f87219e73d7b5b0239b4, type: 3}

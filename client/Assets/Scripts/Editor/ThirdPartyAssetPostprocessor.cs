@@ -20,6 +20,15 @@ namespace Ring.Editor
         public const string Ual2Root = Root + "UniversalAnimationLibrary2/";
         public const string MechRoot = Root + "AnimatedMechPack/";
         public const string SciFiRoot = Root + "SciFiEssentialsKit/";
+        /// T24-2 (owner-approved Blender split, supersedes app-1zf's "no
+        /// separable sub-mesh" finding — `GibView`'s class doc): capped-cut,
+        /// static mech PART meshes (George_Parts.fbx/Leela_Parts.fbx), same
+        /// material slots as the source mechs. Lives under `_Ring/` (our own
+        /// content) rather than `MechRoot` (the vendored pack itself) — these
+        /// files are OUR derivative, not pack content — so `IsRobotPath`
+        /// deliberately does NOT cover this root; see the dedicated branch in
+        /// `OnPreprocessModel` below.
+        public const string GibsRoot = RingRoot + "Gibs/";
         public const string ScenePath = "Assets/Scenes/AssetPreview.unity";
         /// Single FBX carrying both the doll mesh and its 43 takes (INSPECTION.md).
         public const string DollPath = UalRoot + "UAL1_Standard.fbx";
@@ -144,6 +153,15 @@ namespace Ring.Editor
                     AnimatedRobotFiles.Contains(Path.GetFileName(assetPath))
                         ? ModelImporterAnimationType.Generic
                         : ModelImporterAnimationType.None; // props/guns: no avatar
+            }
+            else if (assetPath.StartsWith(GibsRoot, StringComparison.Ordinal))
+            {
+                // T24-2: capped-cut static part meshes — explicitly no rig,
+                // no animation (task brief). Distinct branch rather than
+                // folding into IsRobotPath above: these never carry embedded
+                // takes (importedTakeInfos always empty), so this is
+                // unconditional, unlike the robot branch's per-file check.
+                importer.animationType = ModelImporterAnimationType.None;
             }
         }
 

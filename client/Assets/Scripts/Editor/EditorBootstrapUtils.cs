@@ -49,6 +49,33 @@ namespace Ring.Editor
             return true;
         }
 
+        /// Array sibling of `SetRef` (T24-2: `PersistentPropsDirector`'s
+        /// per-archetype `Mesh[]` gib-part fields) — `SetRef` only ever
+        /// touches a single `objectReferenceValue`, arrays need their own
+        /// element-by-element diff so a re-Apply with an unchanged FBX stays
+        /// a no-op like every other wiring call in this file.
+        public static bool SetObjectArray(SerializedObject so, string fieldName, Object[] values)
+        {
+            SerializedProperty prop = so.FindProperty(fieldName);
+            if (prop == null)
+                throw new InvalidOperationException(
+                    $"{so.targetObject.GetType().Name} has no serialized field '{fieldName}'.");
+            bool changed = false;
+            if (prop.arraySize != values.Length)
+            {
+                prop.arraySize = values.Length;
+                changed = true;
+            }
+            for (int i = 0; i < values.Length; i++)
+            {
+                SerializedProperty element = prop.GetArrayElementAtIndex(i);
+                if (element.objectReferenceValue == values[i]) continue;
+                element.objectReferenceValue = values[i];
+                changed = true;
+            }
+            return changed;
+        }
+
         public static void RemoveCollider(GameObject go)
         {
             Collider collider = go.GetComponent<Collider>();
