@@ -55,6 +55,8 @@ namespace Ring.Presentation
         [SerializeField] AudioClip _mobDeathClip;
         [SerializeField] AudioClip _dashClip;
         [SerializeField] AudioClip _playerHitClip;
+        [SerializeField] AudioClip _staminaDeniedClip; // Т22
+        [SerializeField] AudioClip _ricochetClip; // Т22
 
         AudioSource[] _voices;
         // Which SimEventKind each physical voice is currently sounding for
@@ -171,15 +173,35 @@ namespace Ring.Presentation
                 return;
             }
 
-            PlayClip(ClipFor(e.Kind), e.Kind, e.Pos);
+            // Т22 (spec brief): zone-biased pitch — Head reads higher, Legs
+            // lower, Body/None (and every non-blow kind, whose Zone defaults to
+            // HitZone.None) stay at the plain PitchRange jitter.
+            PlayClip(ClipFor(e.Kind), e.Kind, e.Pos, ZonePitchOffset(e.Zone));
+        }
+
+        /// Т22: additive pitch bias layered on top of `PlayClip`'s ordinary
+        /// `PitchRange` jitter — never applied standalone, always summed with
+        /// the random jitter so the zone bias reads as "this hit's pitch, plus
+        /// its usual small randomization" rather than replacing it.
+        float ZonePitchOffset(HitZone zone)
+        {
+            switch (zone)
+            {
+                case HitZone.Head: return _gameFeel.ZoneHitPitchOffset;
+                case HitZone.Legs: return -_gameFeel.ZoneHitPitchOffset;
+                default: return 0f;
+            }
         }
 
         /// Shared by the event-driven `HandleEvent` and the predicted `Update`
         /// path (Task 28): `MinSfxInterval`/`VoicesPerSfx` drop-only gates, then
         /// the round-robin voice pick. Returns whether a voice actually started
         /// playing — the predicted path only arms its suppression latch on
-        /// `true` (see `Update`'s doc above for why).
-        bool PlayClip(AudioClip clip, SimEventKind kind, float2 simPos)
+        /// `true` (see `Update`'s doc above for why). `pitchOffset` (Т22)
+        /// defaults to 0 for every call site that has no zone to bias by (the
+        /// predicted-shot path above never passes one — a predicted shot has no
+        /// SimEvent, hence no Zone, to read yet).
+        bool PlayClip(AudioClip clip, SimEventKind kind, float2 simPos, float pitchOffset = 0f)
         {
             if (clip == null) return false;
 
@@ -191,7 +213,7 @@ namespace Ring.Presentation
             _voiceKind[_nextVoice] = kind;
             _nextVoice = (_nextVoice + 1) % _voices.Length;
             source.transform.position = SimSpace.ToWorld(simPos);
-            source.pitch = 1f + Random.Range(-_gameFeel.PitchRange, _gameFeel.PitchRange);
+            source.pitch = 1f + Random.Range(-_gameFeel.PitchRange, _gameFeel.PitchRange) + pitchOffset;
             source.PlayOneShot(clip);
             _lastPlayTime[(int)kind] = now;
             return true;
@@ -222,6 +244,8 @@ namespace Ring.Presentation
                 case SimEventKind.MobDied: return _mobDeathClip;
                 case SimEventKind.PlayerDashed: return _dashClip;
                 case SimEventKind.PlayerDamaged: return _playerHitClip;
+                case SimEventKind.StaminaDenied: return _staminaDeniedClip; // Т22
+                case SimEventKind.DashRicocheted: return _ricochetClip; // Т22
                 default: return null;
             }
         }

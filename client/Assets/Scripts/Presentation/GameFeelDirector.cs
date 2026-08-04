@@ -195,12 +195,21 @@ namespace Ring.Presentation
             // freeze itself is rate-limited (class doc, Budget).
             if (hasView) targetView.Flash(_gameFeel.FlashDuration);
 
-            if (TryConsumeHitstopBudget(_gameFeel.HitstopSeconds))
+            // Т22 (spec brief): a headshot lands harder — HitstopSeconds scaled
+            // by HeadHitstopScale BEFORE the budget check/trigger below, so a
+            // head hit both costs more of the 1s hitstop budget and freezes
+            // longer, same "duration IS the everything" contract TriggerHitstop
+            // itself already follows for the flat case.
+            float hitstopSeconds = e.Zone == HitZone.Head
+                ? _gameFeel.HitstopSeconds * _gameFeel.HeadHitstopScale
+                : _gameFeel.HitstopSeconds;
+
+            if (TryConsumeHitstopBudget(hitstopSeconds))
             {
-                TriggerHitstop(_gameFeel.HitstopSeconds);
+                TriggerHitstop(hitstopSeconds);
                 if (hasView && _activeScope == GameFeelConfig.HitstopScopeMode.TargetOnly)
                 {
-                    targetView.FreezePosition(_gameFeel.HitstopSeconds);
+                    targetView.FreezePosition(hitstopSeconds);
                     _hitstopTargetView = targetView;
                 }
             }

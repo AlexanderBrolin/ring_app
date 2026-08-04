@@ -203,6 +203,7 @@ namespace Ring.Editor
         const string HudObjectName = "HUD";
         const string HpBarObjectName = "HpBar";
         const string DashBarObjectName = "DashBar";
+        const string StaminaBarObjectName = "StaminaBar"; // Т22
         const string WaveTextObjectName = "WaveText";
         const string BackgroundObjectName = "Background";
         const string FillObjectName = "Fill";
@@ -242,6 +243,7 @@ namespace Ring.Editor
         const string HitSparkPrefabPath = PrefabsDir + "/HitSpark.prefab";
         const string BlockSparkPrefabPath = PrefabsDir + "/BlockSpark.prefab";
         const string DeathBurstPrefabPath = PrefabsDir + "/DeathBurst.prefab";
+        const string SlideDustPrefabPath = PrefabsDir + "/SlideDust.prefab"; // Т22
         const string PersistentPropsObjectName = "PersistentProps";
         const string TagManagerPath = "ProjectSettings/TagManager.asset";
         const string CasingsLayerName = "Casings";
@@ -915,6 +917,15 @@ namespace Ring.Editor
                 anchoredPos: new Vector2(24f, -60f), size: new Vector2(320f, 14f),
                 backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
                 fillColor: new Color(0.3f, 0.7f, 0.9f), ref sceneDirty);
+            // Т22: third bar, directly beneath the dash bar (same left origin/
+            // sizing as dash, stamina depletes/regens more granularly so it
+            // reads better slim than HP-bar-thick). fillColor here is only the
+            // static creation-time default — HudController overwrites it every
+            // frame from GameFeelConfig once the bar exists.
+            Image staminaFill = GetOrCreateBar(hudGo.transform, StaminaBarObjectName,
+                anchoredPos: new Vector2(24f, -84f), size: new Vector2(320f, 14f),
+                backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
+                fillColor: gameFeel.StaminaBarFullColor, ref sceneDirty);
             TMP_Text waveText = GetOrCreateWaveText(hudGo.transform, ref sceneDirty);
 
             HudController hud = hudGo.GetComponent<HudController>();
@@ -926,8 +937,10 @@ namespace Ring.Editor
             var hudSo = new SerializedObject(hud);
             bool hudRefsChanged = false;
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_runner", runner);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_gameFeel", gameFeel);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_hpFill", hpFill);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_dashFill", dashFill);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_staminaFill", staminaFill);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_waveText", waveText);
             if (hudRefsChanged)
             {
@@ -1096,6 +1109,8 @@ namespace Ring.Editor
             AudioClip mobDeathClip = LoadAudioClip("mob_death.wav");
             AudioClip dashClip = LoadAudioClip("dash.wav");
             AudioClip playerHitClip = LoadAudioClip("player_hit.wav");
+            AudioClip staminaDeniedClip = LoadAudioClip("denied.wav"); // Т22
+            AudioClip ricochetClip = LoadAudioClip("ricochet.wav"); // Т22
 
             GameObject audioGo = EditorBootstrapUtils.FindRootObject(scene, AudioDirectorObjectName);
             if (audioGo == null)
@@ -1118,6 +1133,8 @@ namespace Ring.Editor
             audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_mobDeathClip", mobDeathClip);
             audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_dashClip", dashClip);
             audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_playerHitClip", playerHitClip);
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_staminaDeniedClip", staminaDeniedClip); // Т22
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_ricochetClip", ricochetClip); // Т22
             if (audioRefsChanged)
             {
                 audioSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1174,6 +1191,12 @@ namespace Ring.Editor
             Material hitSparkMat = GetOrCreateUnlitMaterial("HitSpark", new Color(3.5f, 3f, 1.6f));
             Material blockSparkMat = GetOrCreateUnlitMaterial("BlockSpark", new Color(2f, 2.3f, 3f));
             Material deathBurstMat = GetOrCreateUnlitMaterial("DeathBurst", new Color(4f, 1.3f, 0.3f));
+            // Т22: slide dust — a muted, non-HDR tan (unlike the sparks above,
+            // this isn't a combat-feedback flash meant to bloom, just a
+            // traversal-cosmetic puff), still an Unlit material like every
+            // other burst here (same spark-pool precedent, GetOrCreateSparkPrefab
+            // below).
+            Material slideDustMat = GetOrCreateUnlitMaterial("SlideDust", new Color(0.55f, 0.5f, 0.4f));
             // Б1 fix-wave 2 review (app-9av): unlit quad, not a decal — see
             // GetOrCreateDecalMaterial's doc for why a decal material can't
             // glow at all. Color mirrors PlayerEmissive's accent (Э1) so the
@@ -1212,6 +1235,18 @@ namespace Ring.Editor
             ParticleSystem deathBurstPrefab = GetOrCreateSparkPrefab(DeathBurstPrefabPath, "DeathBurst", deathBurstMat,
                 lifetime: gameFeel.DeathBurstLifetime, speed: gameFeel.DeathBurstSpeed, size: gameFeel.DeathBurstSize,
                 burstCount: 24, coneAngle: 90f);
+            // Т22: slide dust reuses GetOrCreateSparkPrefab outright (по
+            // образцу спарк-пулов, brief) — only burstCount is config-sourced
+            // (SlideDustBurstCount, GameFeelConfig class doc: the field was
+            // already reserved for this task); lifetime/speed/size stay
+            // bootstrap-local literals, same split HitSpark/BlockSpark/
+            // DeathBurst already draw between config-sourced feel numbers and
+            // pure-shape values (coneAngle, never config-sourced either) —
+            // GameFeelConfig reserves no dust-specific lifetime/speed/size
+            // fields.
+            ParticleSystem slideDustPrefab = GetOrCreateSparkPrefab(SlideDustPrefabPath, "SlideDust", slideDustMat,
+                lifetime: 0.35f, speed: 1.8f, size: 0.14f,
+                burstCount: gameFeel.SlideDustBurstCount, coneAngle: 60f);
 
             GameObject persistentPropsGo = EditorBootstrapUtils.FindRootObject(scene, PersistentPropsObjectName);
             if (persistentPropsGo == null)
@@ -1236,6 +1271,7 @@ namespace Ring.Editor
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_hitSparkPrefab", hitSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_slideDustPrefab", slideDustPrefab); // Т22
             if (persistentPropsRefsChanged)
             {
                 persistentPropsSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1264,6 +1300,7 @@ namespace Ring.Editor
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_playerVisual", playerVisual);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_viewRegistry", viewRegistry);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_deathOverlay", deathOverlay);
+            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_hud", hud); // Т22
             if (routerRefsChanged)
             {
                 routerSo.ApplyModifiedPropertiesWithoutUndo();
