@@ -260,7 +260,8 @@ DoD Э1 закрыт плейтестом; пакет — вставка меж�
 | SO | Поля (дефолт) |
 |---|---|
 | `HeroConfig` — зоны | `LegsTop 0.55`, `BodyTop 1.35`, `HeadTop 1.75`, `LegsDamageMult 0.75`, `BodyDamageMult 1.0`, `HeadDamageMult 1.7`, `SlideProfileTop 0.55`, `MuzzleHeight 1.0`, `SlideMuzzleHeight 0.45`, `MaxAimHeight 3.8` (≥ головы ганнера) |
-| `HeroConfig` — Буст | `StaminaMax 90`, `DashStaminaCost 48`, `SlideStaminaCost 13`, `LinkedDashStaminaCost 16`, `StaminaRegenPerSec 22`, `StaminaRegenDelay 0.72` |
+| `HeroConfig` — Буст (v5, **заменено v6** — см. §6a) | `StaminaMax 90`, `DashStaminaCost 48`, `SlideStaminaCost 13`, `LinkedDashStaminaCost 16`, `StaminaRegenPerSec 22`, `StaminaRegenDelay 0.72` |
+| `HeroConfig` — Буст (**v6**, вехи В1–В3, 2026-08-04) | `StaminaMax 100`, `DashStaminaCost 40`, `SlideStaminaCost 30`, `LinkedDashStaminaCost` **удалено** → `LinkRefund 10` (рефанд в оба окна связки), `StaminaRegenPerSec 20`, `StaminaRegenDelay 0.8` |
 | `HeroConfig` — слайд/дэш | `SlideSpeed 13.5`, `SlideDuration 0.52`, `SlideSteerRadPerSec 1.2`, `SlideMinSpeedFrac 0.75`, `RunUpSeconds 1.18` (середина тик-корзины, C6), `RunUpDecayMult 3.0` (C5), `SlideBufferWindow 0.15`, `LinkWindowSeconds 0.25`, `PostDashSlideWindow 0.32`, `SlideWallStopDot 0.7`, `RicochetRetention 0.8` |
 | `HeroConfig` — прицел | `AimMoveSpeedFrac 0.8`, `AimSlideSpeedMult 0.5`, `AimSettleSeconds 0.5` (Д15; прокачка уменьшает; маркер) |
 | `WeaponConfig` | `CanFireWhileSlide true`, `SpreadRunMult 1.5`, `SpreadSlideMult 2.0`, `RunSpreadSpeedFrac 0.5` (маркер); радиус снаряда — балансовый PR на В2 |
@@ -345,7 +346,9 @@ max(HeadTop)`; `SlideMinSpeedFrac ∈ (0,1]`; `SlideWallStopDot ∈ [−1,1]`;
 - **Deny-фидбек (C11):** `StaminaDenied` → пульс полоски цветом
   `StaminaBarLowColor` (`StaminaDeniedPulseSeconds`) + короткий звук.
 - **Слайд-визуал:** клип Mixamo `Running Slide` (A10, импорт по ASSETS-001
-  §4.2 в `_Ring/`); фолбэк — процедурный присед (владелец, В3). Поза
+  §4.2 в `_Ring/`); фолбэк — процедурный присед (владелец, В3). **[v6,
+  2026-08-04]:** заменено UAL2-сетом вместо Mixamo (ADR-002 Amendment A10
+  переписан, см. §6a) — фолбэк-присед снят за ненадобностью. Поза
   слайда/дуло — гизмо + `ContextMenu Capture` по образцу `PlayerVisual`
   (урок 33, B15). Пыль/искры — `PlayerSlideStarted` + контакты.
 - **Обломки:** пятый `RingBuffer<GibView>` в `PersistentPropsDirector`
@@ -489,6 +492,33 @@ II); конвертация всех окон в int-тики (C6 — рефак
   Sim-дуло ганнера остаётся 0.95 при виз-росте ×2 (иначе горизонтальный
   выстрел уходит над головой носителя и слайд-подныривание умирает).
 
+## 6a. Decision log v6 (вехи В1–В3, 2026-08-04)
+
+- **v6 (владелец, вехи В1–В3):** экономика «Буста» переработана — пул
+  `StaminaMax 100`, дэш `DashStaminaCost 40`, слайд `SlideStaminaCost 30`;
+  `LinkedDashStaminaCost` удалён (v5-идея «скидка на связанный дэш» заменена
+  `LinkRefund 10` — рефанд в ОБА окна связки, дэш→слайд и слайд→дэш, не
+  только дэш). КД дэша (`DashCooldown`) остаётся и обходится ТОЛЬКО дэшем,
+  начатым внутри окна связки (`LinkWindowTimer`/`PostDashSlideTimer`) —
+  связанный слайд его НЕ сбрасывает и не банкует глобально (уточнение
+  владельца по итогам ревью финал-волны — ранняя формулировка «слайд
+  отменяет КД дэша» была неверной, см. фикс C1/final-fix-wave). Реген
+  `StaminaRegenPerSec 20`, `StaminaRegenDelay 0.8`. §3.5's Буст-таблица
+  размечена v6 ниже.
+- **v6:** слайд-анимация — UAL2-сет вместо клипа Mixamo `Running Slide`
+  (ADR-002 Amendment A10 переписан под UAL2 — ретаргет-риск Р1/§8 не
+  реализовался, клип берётся готовым из пака, процедурный присед-фолбэк
+  снят за ненадобностью).
+- **v6:** обломки — настоящие Blender-split части вместо примитив-фолбэка
+  (`app-1zf` подтвердил: исходные меши архетипов поставлялись монолитными —
+  риск Р2/§8 реализовался; закрыт настоящим split-паком, не примитивами);
+  хедшот ЛЮБОГО архетипа теперь ВСЕГДА даёт полный развал с отдельно
+  летящей головой (не «труп + голова» — полный набор Blender-частей).
+- **v6:** «труп без головы» (B5, `CorpseView.Spawn`'s headless branch, §3.6)
+  снят из скоупа пакета — монолитные исходники мешей не позволяли построить
+  его честно без художественной доработки; headless-труп остаётся арт-долгом
+  `app-vli`.
+
 ## 7. DoD пакета
 
 1. Полный EditMode зелёный (93 старых + новые классы §4), golden пересеян
@@ -501,9 +531,12 @@ II); конвертация всех окон в int-тики (C6 — рефак
 ## 8. Риски
 
 - **Р1:** ретаргет Mixamo-клипа кривой → процедурный присед (одобрен
-  заранее; слово владельца на В3).
+  заранее; слово владельца на В3). **[снято v6]:** Mixamo заменён
+  UAL2-сетом — риск закрыт, см. §6a.
 - **Р2:** меши не делятся на под-меши → отлёт целых голов/примитивов;
-  проверка — `app-1zf` ДО В3.
+  проверка — `app-1zf` ДО В3. **[реализовался, закрыт v6]:** `app-1zf`
+  подтвердил монолитные меши; заменено настоящим Blender-split паком,
+  см. §6a.
 - **Р3:** прицел в голову курсором в ¾ неточен/фрустрирует → ручки
   `AimProxyHeadRadiusFrac` (узкий прокси = сложнее, A13; асимметрия
   прокси/сим-радиуса записана), пояса; далее `AimSnapScreenRadius` (C9);
