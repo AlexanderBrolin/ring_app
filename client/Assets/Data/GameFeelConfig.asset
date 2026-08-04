@@ -76,7 +76,7 @@ MonoBehaviour:
   MaxDashGlows: 8
   DashGlowSeconds: 2.5
   DashGlowSize: 0.9
-  CasingScale: 0.08
+  CasingScale: 0.067
   CasingEjectSpeedMin: 0.8
   CasingEjectSpeedMax: 1.4
   TracerScale: 0.7
