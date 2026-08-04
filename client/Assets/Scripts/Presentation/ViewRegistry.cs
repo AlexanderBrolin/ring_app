@@ -174,6 +174,16 @@ namespace Ring.Presentation
             // values, never a GameFeelConfig/AimProvider reference of its own.
             MobView hoveredMob = _aimProvider != null ? _aimProvider.CurrentHoveredMob : null;
             float hoverGlowBoost = _gameFeel.AimHoverGlowBoost;
+            // app-7pk (cheap version, Task 24 fold-in): the hover rim is
+            // tinted by the SAME hovered zone the crosshair/aim-ray already
+            // teach the player, via the shared `AimZoneColors.Resolve`
+            // lookup (Reuse > duplication, AGENT.md §4 — one switch, not a
+            // third copy). Fallback is `MobView.HoverGlowAccent`'s own
+            // pre-app-7pk neutral white, for the defensive `HitZone.None`
+            // case `hovered` shouldn't actually reach (see MobView.Sync's
+            // own doc).
+            HitZone hoveredZone = _aimProvider != null ? _aimProvider.CurrentAimZone : HitZone.None;
+            Color hoverAccent = AimZoneColors.Resolve(hoveredZone, MobView.HoverGlowAccent, _gameFeel);
 
             // Task 10 (assets phase B spec §3.7): built once per frame, not
             // per-view — every live MobVisual reads the same feel numbers this
@@ -213,7 +223,7 @@ namespace Ring.Presentation
                     // Sync right away (Task 21 Bind/Sync contract) so a mob that's
                     // already mid-Telegraph the instant it becomes visible reads
                     // correctly this same frame, not one frame late.
-                    view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverGlowBoost);
+                    view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverAccent, hoverGlowBoost);
                     view.Visual?.Sync(in m, in visualParams);
                     _activeMobs.Add(m.Id, view);
                     continue;
@@ -232,7 +242,7 @@ namespace Ring.Presentation
                     Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
                     view.transform.position = world + MobOffset;
                 }
-                view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverGlowBoost);
+                view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverAccent, hoverGlowBoost);
                 // After the position write above (Б7): when frozen, position
                 // wasn't written this frame, so MobVisual's own prev/curr delta
                 // reads zero and it settles on Idle — no separate "frozen" branch

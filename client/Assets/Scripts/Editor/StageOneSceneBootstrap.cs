@@ -177,6 +177,13 @@ namespace Ring.Editor
     /// and on disk (ПБ13, `CorpseView` doc) but is no longer wired to
     /// `PersistentPropsDirector` — `CorpseMechView` takes its `_corpsePrefab`
     /// slot instead.
+    /// Task 24 (revised per app-1zf's investigation: primitives only, see
+    /// `GibView`'s class doc) adds an eighth persistent-cosmetic prefab:
+    /// `Gib` (`GetOrCreateGibPrefab`), reusing `PersistentPropsDirector.
+    /// CasingsLayer` outright rather than claiming a new one —
+    /// `PersistentPropsDirector`'s existing wiring block gains a
+    /// `_gibPrefab` slot alongside `_casingPrefab`/`_decalPrefab`/
+    /// `_corpsePrefab`/`_dashGlowPrefab`.
     /// Task 20 (spec Г5, PC6/PC8/QA10) adds the aim-assist ray: a new `AimRay`
     /// root object carrying `LineRenderer` + `AimRayView`, wired to `_runner`/
     /// `_aimProvider`/`_gameFeel`/`_rayMaterial` — the last built here via a
@@ -276,6 +283,9 @@ namespace Ring.Editor
 
         // Б1 fix-wave 2 (app-9av): dash-start floor mark.
         const string DashGlowPrefabPath = PrefabsDir + "/DashGlow.prefab";
+
+        // Task 24 (revised per app-1zf: primitives only — see GibView's class doc).
+        const string GibPrefabPath = PrefabsDir + "/Gib.prefab";
 
         // Task 8 (assets phase B plan, spec §3.2): the pistol in the doll's hand.
         const string GunObjectName = "Gun";
@@ -1245,6 +1255,12 @@ namespace Ring.Editor
             // glow at all. Color mirrors PlayerEmissive's accent (Э1) so the
             // mark reads as "this player's" trail, not a generic FX color.
             Material dashGlowMat = GetOrCreateUnlitMaterial("DashGlow", new Color(0f, 2.5f, 3f));
+            // Task 24 (revised per app-1zf — primitives only, GibView's class
+            // doc): a dark gunmetal Lit material, same non-HDR/black-emission
+            // shape as CasingBrass above (a scattered mech chunk, not a
+            // combat-feedback bloom flash like the spark materials).
+            Material gibMat = GetOrCreateMaterial(
+                "GibMetal", baseColor: new Color(0.12f, 0.12f, 0.14f), emissionColor: Color.black);
 
             CasingView casingPrefab = GetOrCreateCasingPrefab(casingMat);
             DecalProjector decalPrefab = GetOrCreateDecalPrefab(decalMat, gameFeel.DecalSize);
@@ -1257,6 +1273,7 @@ namespace Ring.Editor
                 CorpseMechPrefabPath, ChaserModelPath, GunnerModelPath,
                 gameFeel.ChaserVisualScale, gameFeel.GunnerVisualScale);
             DashGlowView dashGlowPrefab = GetOrCreateDashGlowPrefab(dashGlowMat);
+            GibView gibPrefab = GetOrCreateGibPrefab(gibMat);
             // lifetime/speed/size/burstCount read from GameFeelConfig at
             // prefab-creation time (review fix-round — same "creation-time SO
             // read" contract as TracerFadeSeconds/GetOrCreateProjectilePrefab
@@ -1310,6 +1327,7 @@ namespace Ring.Editor
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpseMechPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_dashGlowPrefab", dashGlowPrefab);
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gibPrefab", gibPrefab); // Task 24
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_hitSparkPrefab", hitSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
@@ -1957,6 +1975,72 @@ namespace Ring.Editor
                 DashGlowView view = go.AddComponent<DashGlowView>();
                 var so = new SerializedObject(view);
                 EditorBootstrapUtils.SetRef(so, "_renderer", renderer);
+                so.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
+
+        /// Task 24 (revised per app-1zf's investigation — George/Leela are
+        /// monolithic skinned meshes with no separable sub-mesh, so gibs are
+        /// PRIMITIVES ONLY, no `_Ring/Gibs/` FBX assets, no LFS — GibView's
+        /// class doc). Two colliderless primitive children (`RemoveCollider`,
+        /// same treatment CorpseMechView's `VisualChaser`/`VisualGunner` and
+        /// ProjectileView get), `GibBox`/`GibCapsule`, toggled at random by
+        /// `GibView.Spawn` for shape variety across a burst. The ROOT carries
+        /// the actual physics — a single small `SphereCollider` (shape-
+        /// agnostic, so either visual child can be active without touching
+        /// the collider) + `Rigidbody` — and `PersistentPropsDirector.
+        /// CasingsLayer`: gibs reuse the SAME dedicated layer casings already
+        /// got (Task 27 review fix-round, self-collision already isolated in
+        /// `PersistentPropsDirector.Awake`), no second layer/TagManager edit
+        /// needed for this task.
+        static GibView GetOrCreateGibPrefab(Material gibMat)
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<GibView>(GibPrefabPath);
+            if (existing != null)
+            {
+                if (existing.gameObject.layer != PersistentPropsDirector.CasingsLayer)
+                {
+                    existing.gameObject.layer = PersistentPropsDirector.CasingsLayer;
+                    EditorUtility.SetDirty(existing.gameObject);
+                    AssetDatabase.SaveAssets();
+                }
+                return existing;
+            }
+
+            return EditorBootstrapUtils.BuildPrefab<GibView>(GibPrefabPath, () =>
+            {
+                var go = new GameObject("Gib");
+                go.layer = PersistentPropsDirector.CasingsLayer;
+
+                GameObject boxVisual = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                boxVisual.name = "GibBox";
+                boxVisual.transform.SetParent(go.transform, false);
+                boxVisual.transform.localScale = new Vector3(0.16f, 0.12f, 0.1f);
+                boxVisual.layer = PersistentPropsDirector.CasingsLayer;
+                EditorBootstrapUtils.RemoveCollider(boxVisual);
+                boxVisual.GetComponent<MeshRenderer>().sharedMaterial = gibMat;
+
+                GameObject capsuleVisual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                capsuleVisual.name = "GibCapsule";
+                capsuleVisual.transform.SetParent(go.transform, false);
+                capsuleVisual.transform.localScale = new Vector3(0.08f, 0.1f, 0.08f);
+                capsuleVisual.layer = PersistentPropsDirector.CasingsLayer;
+                EditorBootstrapUtils.RemoveCollider(capsuleVisual);
+                capsuleVisual.GetComponent<MeshRenderer>().sharedMaterial = gibMat;
+                capsuleVisual.SetActive(false); // Spawn() flips per random pick, same as CorpseMechView's gunnerVisual
+
+                SphereCollider collider = go.AddComponent<SphereCollider>();
+                collider.radius = 0.08f;
+                Rigidbody rb = go.AddComponent<Rigidbody>();
+                rb.mass = 0.35f;
+                rb.linearDamping = 0.15f;
+                rb.angularDamping = 0.3f;
+
+                GibView view = go.AddComponent<GibView>();
+                var so = new SerializedObject(view);
+                EditorBootstrapUtils.SetRef(so, "_boxVisual", boxVisual);
+                EditorBootstrapUtils.SetRef(so, "_capsuleVisual", capsuleVisual);
                 so.ApplyModifiedPropertiesWithoutUndo();
                 return go;
             });

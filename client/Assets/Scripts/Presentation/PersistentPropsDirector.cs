@@ -27,13 +27,26 @@ namespace Ring.Presentation
     /// spawned on `PlayerDashed` the same way every other event here spawns
     /// its own cosmetic.
     ///
-    /// Pooling split (Приложение П-7): casings/decals/corpses/dash-glows have
-    /// no "done with it" moment during a live match (spec: "живут до конца
-    /// захода") — they use the single shared `RingBuffer&lt;T&gt;` (FIFO, oldest
-    /// overwritten once full), one instance per kind, never separate copies of
-    /// the same logic. The spark/burst particle systems (hit, block, death,
-    /// and — Task 22 — slide dust) ARE ordinary "rent it, it finishes on its own,
-    /// give it back" objects — they use
+    /// Task 24 (revised per `app-1zf`'s investigation — see `GibView`'s class
+    /// doc for the full "primitives only" story) adds a fifth kind,
+    /// `GibView`: `HandleMobDied` now also spawns mech-debris chunks —
+    /// EVERY kill gets a small explosion-style scatter of chunks
+    /// (`GameFeelConfig.GibExplosionSpeed`, random directions, random
+    /// heights in `[0, HeadTop]`); a kill whose killing blow landed in
+    /// `HitZone.Head` gets ONE additional chunk launched along the blow's own
+    /// `HitDir` (`GameFeelConfig.GibHeadImpulseSpeed`) from a config-derived
+    /// head height. No headless-corpse branch exists (the original plan's B5
+    /// item) — George/Leela have no separable head sub-mesh to hide, and the
+    /// corpse stays whole; a follow-up art issue (`app-vli`) tracks giving
+    /// the corpse model an actual detachable head for a future pass.
+    ///
+    /// Pooling split (Приложение П-7): casings/decals/corpses/dash-glows/gibs
+    /// have no "done with it" moment during a live match (spec: "живут до
+    /// конца захода") — they use the single shared `RingBuffer&lt;T&gt;` (FIFO,
+    /// oldest overwritten once full), one instance per kind, never separate
+    /// copies of the same logic. The spark/burst particle systems (hit, block,
+    /// death, and — Task 22 — slide dust) ARE ordinary "rent it, it finishes
+    /// on its own, give it back" objects — they use
     /// `UnityEngine.Pool.ObjectPool&lt;ParticleSystem&gt;` instead, returned via
     /// `ParticleReturnToPool`'s `OnParticleSystemStopped` callback (prefab's
     /// `stopAction = Callback`, `StageOneSceneBootstrap`), not a second
@@ -127,12 +140,21 @@ namespace Ring.Presentation
         // class doc already gives for DeathBurstPoolCapacity above.
         const int SlideDustPoolCapacity = 16;
 
+        // Task 24 (revision brief, item 3 — "keep counts modest, code const
+        // with a doc comment, do NOT add a new SO field this wave"): explosion
+        // chunks per kill, independent of the optional head gib. Picked at the
+        // middle of the brief's own 4-6 suggested range — dense enough to read
+        // as "the mech burst apart" without flooding the 24-slot GibView ring
+        // buffer (GameFeelConfig.GibPartsFifoLimit) after only a few kills.
+        const int GibExplosionChunkCount = 5;
+
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] CasingView _casingPrefab;
         [SerializeField] DecalProjector _decalPrefab;
         [SerializeField] CorpseView _corpsePrefab;
         [SerializeField] DashGlowView _dashGlowPrefab;
+        [SerializeField] GibView _gibPrefab;
         [SerializeField] ParticleSystem _hitSparkPrefab;
         [SerializeField] ParticleSystem _blockSparkPrefab;
         [SerializeField] ParticleSystem _deathBurstPrefab;
@@ -142,6 +164,7 @@ namespace Ring.Presentation
         RingBuffer<DecalProjector> _decals;
         RingBuffer<CorpseView> _corpses;
         RingBuffer<DashGlowView> _dashGlows;
+        RingBuffer<GibView> _gibs;
         ObjectPool<ParticleSystem> _hitSparkPool;
         ObjectPool<ParticleSystem> _blockSparkPool;
         ObjectPool<ParticleSystem> _deathBurstPool;
@@ -155,10 +178,12 @@ namespace Ring.Presentation
             _decals = new RingBuffer<DecalProjector>(_gameFeel.MaxDecals, CreateDecal);
             _corpses = new RingBuffer<CorpseView>(_gameFeel.MaxCorpses, CreateCorpse);
             _dashGlows = new RingBuffer<DashGlowView>(_gameFeel.MaxDashGlows, CreateDashGlow);
+            _gibs = new RingBuffer<GibView>(_gameFeel.GibPartsFifoLimit, CreateGib);
             _casings.Prewarm();
             _decals.Prewarm();
             _corpses.Prewarm();
             _dashGlows.Prewarm();
+            _gibs.Prewarm();
 
             _hitSparkPool = CreateParticlePool(_hitSparkPrefab, HitSparkPoolCapacity);
             _blockSparkPool = CreateParticlePool(_blockSparkPrefab, BlockSparkPoolCapacity);
@@ -189,6 +214,7 @@ namespace Ring.Presentation
             _decals.Clear(decal => decal.gameObject.SetActive(false));
             _corpses.Clear(corpse => corpse.gameObject.SetActive(false));
             _dashGlows.Clear(glow => glow.gameObject.SetActive(false));
+            _gibs.Clear(gib => gib.gameObject.SetActive(false)); // Task 24 (D10)
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's
@@ -290,6 +316,49 @@ namespace Ring.Presentation
             corpse.Spawn(pos, e.MobType, _gameFeel.CorpseGlowFadeSeconds, visualScale);
 
             PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
+
+            SpawnGibs(in e);
+        }
+
+        /// Task 24 (revision brief): mech debris on every kill. Heights come
+        /// exclusively from the dying mob's OWN archetype config
+        /// (`World.Config.Chaser`/`Gunner` by `e.MobType`, same zone-geometry
+        /// fields `ProjectileSystem`'s hit-zone classification and the
+        /// `AimProxy_*` belts already read) — never from `ViewRegistry`/
+        /// `MobView` state, same "spawn positions come only from the event"
+        /// rule the rest of this class follows (class doc). XY always rides
+        /// `e.Pos` (owner requirement, веха 3).
+        ///
+        /// `e.Zone == HitZone.Head` adds exactly ONE extra chunk on top of
+        /// the always-on explosion scatter below, launched along the killing
+        /// blow's own `HitDir` — the one piece of directional feedback that
+        /// reads as "that shot took the head off," even though (app-1zf)
+        /// there is no actual head sub-mesh to detach. Every OTHER kill
+        /// (body/legs blow, or overkill) only gets the explosion scatter.
+        void SpawnGibs(in SimEvent e)
+        {
+            MobSimConfig archetype = e.MobType == MobType.Chaser
+                ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
+            Vector3 worldPos = SimSpace.ToWorld(e.Pos);
+            float settleSeconds = _gameFeel.GibPhysicsSeconds;
+
+            if (e.Zone == HitZone.Head)
+            {
+                float headHeight = (archetype.BodyTop + archetype.HeadTop) * 0.5f;
+                Vector3 headImpulse = _gameFeel.GibHeadImpulseSpeed * SimSpace.ToWorld(e.HitDir);
+                GibView headGib = _gibs.Rent();
+                headGib.SettleSeconds = settleSeconds;
+                headGib.Spawn(worldPos + Vector3.up * headHeight, headImpulse);
+            }
+
+            for (int i = 0; i < GibExplosionChunkCount; i++)
+            {
+                float height = Random.Range(0f, archetype.HeadTop);
+                Vector3 impulse = Random.onUnitSphere * _gameFeel.GibExplosionSpeed;
+                GibView chunk = _gibs.Rent();
+                chunk.SettleSeconds = settleSeconds;
+                chunk.Spawn(worldPos + Vector3.up * height, impulse);
+            }
         }
 
         void SpawnDashGlow(in SimEvent e)
@@ -347,6 +416,13 @@ namespace Ring.Presentation
         DashGlowView CreateDashGlow()
         {
             DashGlowView view = Instantiate(_dashGlowPrefab, transform);
+            view.gameObject.SetActive(false);
+            return view;
+        }
+
+        GibView CreateGib()
+        {
+            GibView view = Instantiate(_gibPrefab, transform);
             view.gameObject.SetActive(false);
             return view;
         }

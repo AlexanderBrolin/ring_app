@@ -1426,6 +1426,7 @@ MonoBehaviour:
   _decalPrefab: {fileID: 6084807468969330963, guid: c256b7427e75671e68ff2afcfcb29eff, type: 3}
   _corpsePrefab: {fileID: 563010563106822884, guid: bfa36846e880d0a1bad03fc676bc476f, type: 3}
   _dashGlowPrefab: {fileID: 3945040351260055807, guid: 7f14bcc847533bf10bcbb64ff6baaf01, type: 3}
+  _gibPrefab: {fileID: 3761343940376435217, guid: 3ccbec15044e430419b988bcf78aa9bf, type: 3}
   _hitSparkPrefab: {fileID: 7374377401012443161, guid: 42ec01c09f06985e2ba187ed4e79aa15, type: 3}
   _blockSparkPrefab: {fileID: 3910514533307916869, guid: 373685f485adaed9fb5cfe233b98cdeb, type: 3}
   _deathBurstPrefab: {fileID: 1797491183300419661, guid: 0f59ad34e3d1f87219e73d7b5b0239b4, type: 3}
