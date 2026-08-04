@@ -253,7 +253,49 @@ namespace Ring.Data
         // tinge under Bloom (`AimRayAlpha`'s own class doc: a lower alpha
         // reads as a fainter glow, not literal translucency).
         [Range(1f, 3f)] public float AimMarkerHeadScaleBoost = 1.4f;
-        [Range(1f, 4f)] public float AimRayHeadAlphaBoost = 2f; // sync-marker key — keep LAST
+        [Range(1f, 4f)] public float AimRayHeadAlphaBoost = 2f;
+
+        // В3 fix-wave 2 (app-n6g item 1, owner playtest feedback: "шар — большой,
+        // хвост — маленький"). `ProjectileView`'s ball never read anything but a
+        // flat `StageOneSceneBootstrap.ProjectileDiameter` constant baked into the
+        // prefab once at bootstrap time — identical for every shot, regardless of
+        // owner or sim radius, even after wave-1's chore shrank the PLAYER weapon's
+        // sim `ProjectileRadius` 0.12→0.08 (×1.5). `ViewRegistry.SyncProjectiles`
+        // now binds the ball's live diameter straight off the SAME per-shot
+        // `ProjectileState.Radius` every projectile already carries
+        // (`SimulationWorld.SpawnProjectile`'s own `radius` param — `Weapon.
+        // ProjectileRadius` for the player, `Gunner.ProjectileRadius` for a mob
+        // shot; both owners flow through this ONE multiplier, no per-owner branch
+        // needed — Reuse > duplication). Default 1 already reads as sim-accurate:
+        // a player shot's ball becomes 0.08*2*1=0.16m, exactly ×1.5 smaller than
+        // the old flat 0.24m (matching the owner's own complaint 1:1 with no knob
+        // touched); a Gunner shot's ball becomes 0.15*2*1=0.30m — slightly LARGER
+        // than the old flat 0.24m, which is correct, not a regression: item 4d
+        // (В3 fix-wave 2 investigation) wants mob projectiles reading their real,
+        // more dangerous collision size rather than an undersized decorative ball
+        // that could make a genuine hit look like it "passed over." The range
+        // lets the owner push either direction further on playtest.
+        [Range(0.2f, 3f)] public float ProjectileBallScale = 1f;
+
+        // В3 fix-wave 2 (app-n6g item 3a, owner playtest feedback: "хочется больше
+        // акцента на хедшоте" — the head-zone marker scale boost from В3 fix-wave 1
+        // (`AimMarkerHeadScaleBoost` above) reads as a static size bump; the owner
+        // asked for MORE emphasis without reviving `AimSnapScreenRadius` (explicitly
+        // rejected). `CrosshairView.LateUpdate` now layers a breathing scale PULSE
+        // on top of that boost while the aim-proxy hit is `HitZone.Head`: the same
+        // `0.5+0.5*Mathf.Sin(Time.unscaledTime * Hz * 2π)`-shaped oscillation
+        // `PlayerVisual.UpdateLinkWindowFlash`/`MobView`'s telegraph/glint pulses
+        // already use (Reuse > duplication — this project has exactly one pulse
+        // idiom, not a second one per feature), remapped from that method's [0,1]
+        // emission-intensity range to a signed [-1,1] SCALE offset around 1 (a
+        // marker should visibly grow AND shrink, not just fade in/out):
+        // `1 + HeadHoverPulseAmp * Mathf.Sin(...)`. `HeadHoverPulseHz` is the
+        // oscillation rate; `HeadHoverPulseAmp` is the peak deviation from 1 —
+        // default 0.25 swings the marker between 0.75x and 1.25x of its existing
+        // `AimMarkerHeadScaleBoost`-boosted size, never zero/negative (amp capped
+        // at 1). New sync-marker key, superseding `AimRayHeadAlphaBoost` above.
+        [Range(0.5f, 15f)] public float HeadHoverPulseHz = 5f;
+        [Range(0f, 1f)] public float HeadHoverPulseAmp = 0.25f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

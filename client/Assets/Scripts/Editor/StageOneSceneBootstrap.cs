@@ -256,6 +256,11 @@ namespace Ring.Editor
         const string MuzzleFlashObjectName = "MuzzleFlash";
         const string EventRouterObjectName = "EventRouter";
         const string PracticeTargetsObjectName = "PracticeTargets";
+        // В3 fix-wave 2 (item 1): only the PREFAB ASSET's own cold Inspector/preview
+        // scale now — `ProjectileView.Bind` overwrites `transform.localScale` with
+        // this SHOT's own live sim-radius-derived diameter on every rent, before
+        // the pooled view is ever re-enabled/rendered (ViewRegistry.SyncProjectiles),
+        // so this constant no longer reaches the screen in play.
         const float ProjectileDiameter = 0.24f;
 
         // Task 21.
@@ -399,8 +404,9 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `AimRayHeadAlphaBoost` as of В3 fix-wave 1
-            // — was `AimHoverGlowBoost` (В1/В2 fix-wave 2) before that, and
+            // field (GameFeelConfig: `HeadHoverPulseAmp` as of В3 fix-wave 2 —
+            // was `AimRayHeadAlphaBoost` (В3 fix-wave 1) before that,
+            // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
             // field's own doc for the fuller history; HeroConfig's marker is
             // `LinkRefund` as of В1 fix-wave 3 (owner economy rework) — was
@@ -412,7 +418,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimRayHeadAlphaBoost"); // В3 fix-wave 1
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "HeadHoverPulseAmp"); // В3 fix-wave 2
 
             AssetDatabase.SaveAssets();
 
@@ -1185,6 +1191,13 @@ namespace Ring.Editor
             AudioClip playerHitClip = LoadAudioClip("player_hit.wav");
             AudioClip staminaDeniedClip = LoadAudioClip("denied.wav"); // Task 22
             AudioClip ricochetClip = LoadAudioClip("ricochet.wav"); // Task 22
+            // В3 fix-wave 2 (item 3c): same synthesized-placeholder idiom as
+            // denied.wav/ricochet.wav above (44.1kHz/16-bit PCM mono, LFS —
+            // `client/**/*.wav` already covers this path, no `.gitattributes`
+            // touch needed) — a short (~55ms) bright downward chirp (2200→1500Hz)
+            // with a fast percussive attack/decay envelope, audibly distinct from
+            // denied.wav's own low 200→130Hz buzz/sweep.
+            AudioClip headHoverTickClip = LoadAudioClip("head_hover_tick.wav");
 
             GameObject audioGo = EditorBootstrapUtils.FindRootObject(scene, AudioDirectorObjectName);
             if (audioGo == null)
@@ -1209,9 +1222,25 @@ namespace Ring.Editor
             audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_playerHitClip", playerHitClip);
             audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_staminaDeniedClip", staminaDeniedClip); // Task 22
             audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_ricochetClip", ricochetClip); // Task 22
+            audioRefsChanged |= EditorBootstrapUtils.SetRef(audioSo, "_headHoverTickClip", headHoverTickClip); // В3 fix-wave 2
             if (audioRefsChanged)
             {
                 audioSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // В3 fix-wave 2 (item 3c): second `CrosshairView` wiring pass —
+            // `audioDirector` now exists (just created above); `crosshairView`/
+            // `crosshairSo` are the SAME local vars the first pass (near the
+            // `Crosshair` object's own creation, earlier in this method) already
+            // set up, still in scope — same "second wiring pass" idiom as
+            // `gameFeelDirectorSo2` above (that block's own comment).
+            var crosshairSo2 = new SerializedObject(crosshairView);
+            bool crosshairRefsChanged2 = false;
+            crosshairRefsChanged2 |= EditorBootstrapUtils.SetRef(crosshairSo2, "_audio", audioDirector);
+            if (crosshairRefsChanged2)
+            {
+                crosshairSo2.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -1674,10 +1703,15 @@ namespace Ring.Editor
         }
 
         /// Task 17: the shared `ProjectileView` prefab — a small emissive sphere
-        /// (~0.24 diameter) plus a `TrailRenderer` tracer. `TrailRenderer.time` is
-        /// only seeded here from the `GameFeelConfig` value at bootstrap time;
-        /// `ProjectileView.Bind` re-applies it live every spawn so PlayMode
-        /// hot-tweaking `TracerFadeSeconds` (spec §3.9) still takes effect.
+        /// (~0.24 diameter at rest, in the Inspector/preview only) plus a
+        /// `TrailRenderer` tracer. `TrailRenderer.time` is only seeded here from
+        /// the `GameFeelConfig` value at bootstrap time; `ProjectileView.Bind`
+        /// re-applies it live every spawn so PlayMode hot-tweaking
+        /// `TracerFadeSeconds` (spec §3.9) still takes effect — В3 fix-wave 2
+        /// (item 1) extends that same live-rebind treatment to the sphere's own
+        /// `transform.localScale`, off this shot's real `ProjectileState.Radius`
+        /// (`ProjectileBallScale`'s own `GameFeelConfig` doc), so the bare
+        /// `ProjectileDiameter` baked here is only ever a cold placeholder.
         /// Existence-guarded the same way as the mech/corpse prefabs above.
         static ProjectileView GetOrCreateProjectilePrefab(Material sphereMat, Material trailMat,
             float tracerFadeSeconds)

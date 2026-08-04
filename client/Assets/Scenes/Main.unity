@@ -352,6 +352,7 @@ MonoBehaviour:
   _playerHitClip: {fileID: 8300000, guid: 32cef33d5b7ca3c2f8c4ba4ec25dbb9b, type: 3}
   _staminaDeniedClip: {fileID: 8300000, guid: 9464e621a3c1f020e9b94cc7480bdef7, type: 3}
   _ricochetClip: {fileID: 8300000, guid: e3de1df123cc5456fa3b50d3bdd4e7f2, type: 3}
+  _headHoverTickClip: {fileID: 8300000, guid: 5c38b5357cd5f0936afb16aeef094d30, type: 3}
 --- !u!4 &216495217
 Transform:
   m_ObjectHideFlags: 0
@@ -3284,6 +3285,7 @@ MonoBehaviour:
   _runner: {fileID: 1959383180}
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
   _camera: {fileID: 330585545}
+  _audio: {fileID: 216495216}
 --- !u!4 &1727949041
 Transform:
   m_ObjectHideFlags: 0

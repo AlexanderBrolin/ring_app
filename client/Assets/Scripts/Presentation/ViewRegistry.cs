@@ -173,7 +173,6 @@ namespace Ring.Presentation
             // shape as telegraphSeconds above — MobView.Sync takes plain
             // values, never a GameFeelConfig/AimProvider reference of its own.
             MobView hoveredMob = _aimProvider != null ? _aimProvider.CurrentHoveredMob : null;
-            float hoverGlowBoost = _gameFeel.AimHoverGlowBoost;
             // app-7pk (cheap version, Task 24 fold-in): the hover rim is
             // tinted by the SAME hovered zone the crosshair/aim-ray already
             // teach the player, via the shared `AimZoneColors.Resolve`
@@ -184,6 +183,16 @@ namespace Ring.Presentation
             // own doc).
             HitZone hoveredZone = _aimProvider != null ? _aimProvider.CurrentAimZone : HitZone.None;
             Color hoverAccent = AimZoneColors.Resolve(hoveredZone, MobView.HoverGlowAccent, _gameFeel);
+            // В3 fix-wave 2 (app-n6g item 3b, owner playtest feedback: "хочется
+            // больше акцента на хедшоте"): a Head hover boosts the glow further
+            // still — derived (×1.5 on top of the existing AimHoverGlowBoost)
+            // rather than a new SO field, per the brief's own instruction ("derive,
+            // don't add a field"). The COLOR side of "strictly AimZoneHeadColor"
+            // needs no extra code — AimZoneColors.Resolve above already maps
+            // HitZone.Head to AimZoneHeadColor unconditionally (its own class
+            // doc); only the intensity multiplier needed strengthening.
+            float hoverGlowBoost = hoveredZone == HitZone.Head
+                ? _gameFeel.AimHoverGlowBoost * 1.5f : _gameFeel.AimHoverGlowBoost;
 
             // Task 10 (assets phase B spec §3.7): built once per frame, not
             // per-view — every live MobVisual reads the same feel numbers this
@@ -293,7 +302,17 @@ namespace Ring.Presentation
                     // same "snap, don't lerp" rule the position half already
                     // follows (spec §3.7).
                     view.transform.position = SimSpace.ToWorld(p.Pos) + Vector3.up * p.Height;
-                    view.Bind(_gameFeel.TracerFadeSeconds, _gameFeel.TracerScale);
+                    // В3 fix-wave 2 (app-n6g item 1): the ball's own diameter, read
+                    // straight off THIS shot's real sim radius — ProjectileState.Radius
+                    // is Weapon.ProjectileRadius for a player shot, Gunner.ProjectileRadius
+                    // for a mob shot (SimulationWorld.SpawnProjectile's own `radius`
+                    // param, both owners flow through the SAME field, no per-owner
+                    // branch needed here) — × the owner-tunable GameFeelConfig.
+                    // ProjectileBallScale multiplier. See ProjectileBallScale's own
+                    // doc for why a Gunner shot's ball growing slightly past the old
+                    // flat placeholder size is correct, not a regression.
+                    float ballDiameter = p.Radius * 2f * _gameFeel.ProjectileBallScale;
+                    view.Bind(_gameFeel.TracerFadeSeconds, _gameFeel.TracerScale, ballDiameter);
                     _activeProjectiles.Add(p.Id, view);
                     continue;
                 }

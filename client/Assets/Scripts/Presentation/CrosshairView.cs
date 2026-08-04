@@ -51,6 +51,12 @@ namespace Ring.Presentation
         // since that field is private there (encapsulation, not a shared
         // singleton).
         [SerializeField] Camera _camera;
+        // В3 fix-wave 2 (app-n6g item 3c): the head-hover audio tick lives on
+        // AudioDirector (same "one AudioSource pool, every clip through it"
+        // idiom every other SFX in this project uses) — this class only owns
+        // the edge-detection (see `_prevHoverZone` below) that decides WHEN to
+        // ask for it.
+        [SerializeField] AudioDirector _audio;
 
         readonly Vector3[] _conePoints = new Vector3[ConeSegments];
         Vector3 _markerBaseScale;
@@ -61,6 +67,10 @@ namespace Ring.Presentation
         Renderer _markerRenderer;
         MaterialPropertyBlock _block;
         Color _markerBaseEmission;
+        // В3 fix-wave 2 (item 3c): last frame's hovered zone, so the audio tick
+        // fires once on the None/Legs/Body → Head EDGE, not every frame the
+        // cursor happens to still be resting on Head.
+        HitZone _prevHoverZone;
 
         void Awake()
         {
@@ -129,17 +139,38 @@ namespace Ring.Presentation
             // В3 fix-wave 1 (item 3a): head zone scales it back up a touch
             // on top of that shrink — GameFeelConfig's own class doc has the
             // "unmistakable, not just recolored" rationale.
-            float headBoost = _aimProvider.CurrentAimZone == HitZone.Head
-                ? _gameFeel.AimMarkerHeadScaleBoost : 1f;
+            // В3 fix-wave 2 (item 3a): a breathing scale PULSE layers on top of
+            // that boost while on Head — same `0.5+0.5*sin(...)`-shaped
+            // oscillation idiom as PlayerVisual/MobView's own pulses (class doc
+            // above the GameFeelConfig fields), remapped to a signed [-1,1]
+            // swing around 1 so the dot visibly grows AND shrinks, not just
+            // fades.
+            HitZone hoverZone = _aimProvider.CurrentAimZone;
+            float headBoost = 1f;
+            if (hoverZone == HitZone.Head)
+            {
+                float pulse = 1f + _gameFeel.HeadHoverPulseAmp * Mathf.Sin(
+                    Time.unscaledTime * _gameFeel.HeadHoverPulseHz * Mathf.PI * 2f);
+                headBoost = _gameFeel.AimMarkerHeadScaleBoost * pulse;
+            }
             _marker.localScale =
                 (aimHeld ? _markerBaseScale * _gameFeel.AimDotScale : _markerBaseScale) * headBoost;
+
+            // В3 fix-wave 2 (item 3c): fire the audio tick exactly on the
+            // None/Legs/Body → Head EDGE (CurrentAimZone is None whenever
+            // !aimHeld, AimProvider's own class doc, so hip-fire cursor
+            // movement never spuriously counts as "entering Head").
+            if (hoverZone == HitZone.Head && _prevHoverZone != HitZone.Head && _audio != null)
+                _audio.PlayHeadHoverTick(aimSim);
+            _prevHoverZone = hoverZone;
 
             // В1/В2 fix-wave 2 (app-n6g item 3a): zone tint — `CurrentAimZone`
             // is already `HitZone.None` whenever `!aimHeld` (AimProvider's own
             // class doc), so `AimZoneColors.Resolve` falls back to the
             // marker's baked color and hip-fire mode is visually unchanged.
-            Color zoneColor = AimZoneColors.Resolve(
-                _aimProvider.CurrentAimZone, _markerBaseEmission, _gameFeel);
+            // `hoverZone` (В3 fix-wave 2) is the same `CurrentAimZone` read
+            // once above, reused here rather than a second property read.
+            Color zoneColor = AimZoneColors.Resolve(hoverZone, _markerBaseEmission, _gameFeel);
             _block.SetColor(EmissionColorId, zoneColor);
             _markerRenderer.SetPropertyBlock(_block);
 
