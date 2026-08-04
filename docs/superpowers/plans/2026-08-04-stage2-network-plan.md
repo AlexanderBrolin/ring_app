@@ -29,11 +29,14 @@ headless-образ в Docker Hub, лаг-гейт механик и спайк 
 **FishNet 4.7.2** (UPM git-URL; новый пакет, санкционирован ADR-002 T2),
 **MetaVoiceChat** (MIT, вендоринг, спайк), Docker + Docker Hub.
 
-**Спека:** v3 (С1–С21, Р1–Р89; два круга self-review).
-**Статус плана:** **v2** — v1 → self-review по `review_plan.md` четырьмя
+**Спека:** v3 (С1–С21, Р1–Р100; два круга self-review + аудит перед имплементацией).
+**Статус плана:** **v3** — v1 → self-review по `review_plan.md` четырьмя
 субагентами (A корректность кода, B конвенции, C переиспользование, D TDD и
 полнота): 7 Critical + ~25 Important + ~25 Minor, все закрыты; сводка — раздел
-«Правки по self-review» в конце.
+«Правки по self-review» в конце. **v3 (2026-08-05) — аудит перед имплементацией**
+двумя Explore-субагентами на Opus со сверкой по коду, все вердикты перепроверены
+главным агентом командой (урок 49); 4 развилки решены владельцем (F1a–F4a), сводка
+— раздел «Правки по аудиту перед имплементацией» в конце.
 
 ## Global Constraints (каждый таск обязан соблюдать)
 
@@ -309,9 +312,20 @@ public void ThreePlayers_MoveIndependently()
 **Files:**
 - Modify: `.../Core/SimStates.cs`, `.../Core/SimulationWorld.cs`,
   `.../Core/WorldSave.cs`, `.../Core/RenderSnapshot.cs`, `.../AI/WaveSystem.cs`,
+  **`.../Combat/WeaponSystem.cs`** (единственный писатель `ShotsFired` — `:48`
+  `ref MatchStats stats = ref w.StatsRef`, `:96` `stats.ShotsFired++`; без него
+  RED-тест `PersonalStats_DoNotMix` не позеленеет),
   **`.../Presentation/SimulationRunner.cs`** (`CopySnapshot`),
-  `.../Presentation/DevOverlay.cs`
-- Modify: `MultiPlayerWorldTests.cs`, `WaveTests.cs`, `TestWorlds.cs`
+  `.../Presentation/DevOverlay.cs`,
+  **`.../Presentation/DeathOverlayController.cs`** (`:121` `stats.WavesCleared`),
+  **`client/Assets/Scripts/Editor/LongRunHarness.cs`** (`:63` заголовок CSV,
+  `:77` `stats.MobSpawnsSkipped`/`ProjectileSpawnsSkipped`)
+- Modify: `MultiPlayerWorldTests.cs`, `WaveTests.cs`, `TestWorlds.cs`,
+  **`WeaponTests.cs`** (`:117` `w2.Stats.ProjectileSpawnsSkipped`)
+
+**Аудит перед имплементацией (2026-08-05):** четыре последних файла в v2 отсутствовали —
+перенос трёх счётчиков в `WorldStats` давал три ошибки CS вне списка правок, и шаг
+GREEN не скомпилировался бы.
 
 **Interfaces:**
 
@@ -370,7 +384,14 @@ reference, in SimConfig cfg)` — **дословный перенос** прив
 
 **Files:** Modify `.../Core/SimStates.cs`, `.../Core/SimEvents.cs`,
 `.../Core/SimulationWorld.cs`, `.../Combat/WeaponSystem.cs`, `.../AI/MobAiSystem.cs`,
-`EventTests.cs`, `ProjectileTests.cs`.
+`EventTests.cs`, `ProjectileTests.cs`, **`WorldLifecycleTests.cs`**.
+
+**Аудит перед имплементацией (решение владельца F2a):** существующий рефлексивный
+`EveryPlayerAndStatsFieldAffectsHash` (`WorldLifecycleTests.cs:36–101`) ассертит
+вхождение **каждого** поля `ProjectileState` в хеш, а `OwnerIndex` входит туда только
+в Т10 — тест упал бы здесь. Плюс `Bump` (`:103–116`) не знает `byte` и бросил бы
+`NotSupportedException`. Решение — **тот же санкционированный паттерн, что у
+временного `HashStats` в Т5**: именованный временный skip-list, снимаемый в Т10.
 
 **Interfaces:**
 
@@ -390,22 +411,47 @@ internal int SpawnProjectile(ProjectileOwner owner, byte ownerIndex, …);
 - [ ] **Step 1 (RED):** `PlayerEvents_CarryPlayerIndex`,
   `MobProjectile_HasNoOwnerIndex`.
 - [ ] **Step 2:** заглушки → FAIL. **Step 3 (GREEN)**.
-- [ ] **Step 4:** R-FILTER `EventTests`+`ProjectileTests` → PASS; R-TEST.
+- [ ] **Step 3a:** в `WorldLifecycleTests` — ветка `byte b => (byte)(b + 1)` в `Bump`
+  (постоянная, тип обязан поддерживаться) и **временный** skip-list:
+
+```csharp
+// TEMPORARY (T7 -> T10): OwnerIndex enters the hash in T10 together with the
+// canonical field order and the sanctioned golden re-pin. Until then the
+// reflective sweep would assert on a field that is deliberately not hashed yet.
+// T10 removes this set and proves the removal (see its Step 3b).
+static readonly System.Collections.Generic.HashSet<string> PendingHashFields = new() { "OwnerIndex" };
+```
+
+- [ ] **Step 4:** R-FILTER `EventTests`+`ProjectileTests`+**`WorldLifecycleTests`** →
+  PASS; R-TEST → **golden не изменился**.
 - [ ] **Step 5:** R-COMMIT `feat(app-5nu): Т7 — владелец снаряда и индекс игрока
   в событиях`.
 
-### Task Т8: рейт-лимит краевых запросов, общий `KillPlayer`, `NearestAlivePlayer`
+### Task Т8: общий `KillPlayer`, `NearestAlivePlayer`, поле конфига краевых запросов
 
-**Files:** Modify `.../Core/SimStates.cs`, `.../Movement/PlayerMovementSystem.cs`,
-`.../Core/SimulationWorld.cs`, `.../AI/Targeting.cs`, `.../AI/MobAiSystem.cs`,
-`.../AI/WaveSystem.cs`, `client/Assets/Scripts/Data/HeroConfig.cs`,
-`SimConfig.cs`, `SimConfigBuilder.cs`; Create `EdgeRateLimitTests.cs` (+ `.meta`);
-Modify `MultiPlayerWorldTests.cs`, `MobAiTests.cs`, `HotTweakTests.cs`.
+**Files:** Modify `.../Core/SimulationWorld.cs`, `.../AI/Targeting.cs`,
+`.../AI/MobAiSystem.cs`, `.../AI/WaveSystem.cs`,
+`client/Assets/Scripts/Data/HeroConfig.cs`, `SimConfig.cs`, `SimConfigBuilder.cs`;
+Modify `MultiPlayerWorldTests.cs`, `MobAiTests.cs`.
+
+**Аудит перед имплементацией (решение владельца F1a) — ГЕЙТ КРАЕВЫХ ЗАПРОСОВ
+ПЕРЕЕХАЛ В Т10.** Причина: `HashPlayer` хеширует `DashBufferTimer`
+(`SimulationWorld.cs:588`) и `SlideBufferTimer` (`:595`), а латч буфера армируется
+**сырым** `input.DashRequested` (`PlayerMovementSystem.cs:40–42`, `:51–53`).
+Golden-сценарий подаёт краевые запросы с вероятностью 0.05/тик на 1000 тиков
+(`DeterminismTests.cs:43–44`) — пара запросов внутри окна гейта в 3 тика
+практически неизбежна (P(ни одной) ≈ 0.7 %). Подавляет гейт латч — хеш расходится
+на первом же отброшенном запросе, то есть golden уехал бы **в Т8**; не подавляет —
+гейт бессилен под спамом, потому что `DashBufferWindow` = 0.15 с = 4.5 тика
+**шире** окна гейта. Обоснование hash-нейтральности из v2 («меняется только частота
+нехешируемого `StaminaDenied`») **неверно** и снято. Инвариант «перепинов ровно два»
+сохраняется: гейт исполняется в Т10, где сдвиг хеша санкционирован.
+
+**Здесь остаётся только hash-нейтральное.**
 
 **Interfaces:**
 
 ```csharp
-public struct PlayerState { … public int DashRequestCooldownTicks, SlideRequestCooldownTicks; }
 public static bool NearestAlivePlayer(SimulationWorld w, float2 from, out int index);
 // false + index = -1 при нуле живых; тай-брейк — меньший индекс
 
@@ -413,18 +459,117 @@ void KillPlayer(int index, HitZone zone, float2 dir);   // приватный: �
                                                         // обнуления таймеров + DeathTick + PlayerDied
 public void KillPlayerNoDamage(int index);              // зовёт KillPlayer, без урона/статистики
 // ветка смерти в DamagePlayer тоже зовёт KillPlayer — список таймеров существует один раз
+
+// Данные-только, поведения ещё нет (потребитель — гейт в Т10). Хеш-нейтрально:
+// SimConfig в StateHash не входит, SimConfigHash появляется лишь в Т23.
+// HeroConfig.EdgeRequestMinTicks [Range(0,15)] = 3 — маркер ПЕРЕЕЗЖАЕТ с LinkRefund
+// (фактический маркер сегодня — HeroConfig.cs:80, бутстрап StageOneSceneBootstrap.cs:417);
+// доставка ключа — Т9, поэтому поле обязано появиться здесь, до Т9.
 ```
 
+- **`NearestAlivePlayer` — правка по call-site, а не по функции с таким именем**
+  (аудит): `Targeting.SwingLead` не существует; прогноз замаха собран в
+  `MobAiSystem.cs:96–97` (`cfg.SwingLeadFactor`, `SwingLeadMaxMeters`,
+  `w.Config.Hero.MaxSpeed`) из копии `in PlayerState`, взятой в `MobAiSystem.cs:34`.
+  В `Targeting.cs` есть `AimWithLead` (`:9`), `PredictPos` (`:46`),
+  `HasLineOfFire` (`:59`).
+- Ветка «цели нет» уже существует и переиспользуется, а не пишется заново
+  (правило 2): `WaveSystem.cs:22` (`if (!w.Player.Alive) return;`),
+  `MobAiSystem.cs:36–43` (`!player.Alive` → `Idle` + затухание).
+
+- [ ] **Step 1 (RED):** в `MultiPlayerWorldTests` — `KillPlayerNoDamage`
+  (`Alive == false`, `DamageTaken` не изменился, ровно одно `PlayerDied`, зачёт
+  никому; снаряды покинувшего наносят урон); в `MobAiTests` —
+  `NearestAlivePlayer` при нуле живых → мобы в `Idle`; смена цели при смерти.
+- [ ] **Step 2:** заглушки → R-FILTER → FAIL.
+- [ ] **Step 3 (GREEN):** реализация; `HeroConfig.EdgeRequestMinTicks` +
+  `HeroSimConfig.EdgeRequestMinTicks` + проводка в `SimConfigBuilder` + валидация
+  `EdgeRequestMinTicks ≥ 0` — **поле объявлено, гейта ещё нет**.
+- [ ] **Step 4:** R-FILTER затронутых → PASS; R-TEST (**golden не тронут** —
+  поехал, значит объявление поля конфига что-то задело, **стоп**).
+- [ ] **Step 5:** R-COMMIT `feat(app-5nu): Т8 — выход игрока, ближайшая живая цель,
+  поле лимита краевых запросов`.
+
+### Task Т9: доставка новых ключей в `.asset` (бутстрап)
+
+**Files:** Modify `client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs`.
+
+**Interfaces:**
+- **Отдельный таск, потому что механизм не автоматический:** вызовы
+  `EditorBootstrapUtils.EnsureAssetHasKey` захардкожены пофайлово (строки
+  417–421), и для `ArenaConfig` их сегодня нет вовсе. Без этого таска новые поля
+  Т4/Т8 не доедут до `.asset`, а фазы Ф3+ работали бы на старых числах при
+  зелёных тестах.
+- Добавить: `ArenaConfig` → маркер `PlayerSpawnRingFrac`; `HeroConfig` → маркер
+  переезжает на `EdgeRequestMinTicks`.
+- **`EnsureAssetHasKey` доставляет только ОТСУТСТВУЮЩИЕ ключи и не переписывает
+  существующие значения** (подтверждено аудитом: `EditorBootstrapUtils.cs:251–255`
+  — тело сводится к `if (!File.ReadAllText(assetPath).Contains(markerField))
+  SetDirty(so)`, значения не читаются и не сравниваются) — поэтому здесь же
+  заводится каркас `ApplyStageTwoBalance()` (пустой; наполняется в Т16).
+- **Аудит перед имплементацией (решение владельца F3a) — образец берётся ТОЛЬКО
+  по телу, не по вызову.** `ApplyGunnerZoneDefaults` действительно написан через
+  `SetIfDifferent` (`StageOneSceneBootstrap.cs:1548–1560`), но его **вызов
+  гейтирован** `(gunnerCreated || !gunnerMarkerPresent)` (`:387`) с явно
+  задекларированным контрактом backfill-only («never reapplied unconditionally, so
+  an owner hand-tweak of these fields survives a re-run», `:1540–1547`). При
+  буквальном копировании вызова Т16 **не перезаписал бы** `Radius 35 → 65`, потому
+  что маркер `ArenaConfig` доставлен уже здесь, в Т9 — тесты остались бы зелёными
+  (они смотрят на C#-дефолты), а Ф3+ поехала бы на старой арене. Принятая форма:
+
+```csharp
+// Body: SetIfDifferent, exactly like ApplyGunnerZoneDefaults.
+// Call gate: NOT the backfill marker. Stage-2 balance is delivered ONCE, keyed on
+// "walls have not been delivered yet" — after T16 the owner tunes these numbers at
+// milestone B1, and no later R-APPLY may stomp that tuning back to the spec values.
+bool stageTwoPending = arena.Walls == null || arena.Walls.Length == 0;
+arenaChanged |= stageTwoPending && ApplyStageTwoBalance(arena, wave, gameFeel);
+```
+
+  Так одноразовость обеспечена признаком самого этапа, а не маркер-механизмом,
+  и правило «тюнинг владельца переживает повторный прогон» не нарушается.
+
+- [ ] **Step 1:** правка бутстрапа; R-APPLY-`StageOneSceneBootstrap`.
+- [ ] **Step 2:** `git diff -- client/Assets/Data/` → **только** новые ключи с
+  дефолтами; R-IDEM.
+- [ ] **Step 3:** R-TEST полный (golden не тронут — числа равны дефолтам).
+- [ ] **Step 4:** R-COMMIT `chore(app-5nu): Т9 — доставка ключей этапа 2 в ассеты`.
+
+### Task Т10: рейт-лимит краевых запросов + канонический порядок хеша + **перепин golden №1**
+
+**Files:** Modify `.../Core/SimStates.cs`, `.../Movement/PlayerMovementSystem.cs`,
+`.../Core/SimulationWorld.cs`, `.../Core/WorldSave.cs`;
+Create `EdgeRateLimitTests.cs` (+ `.meta`);
+Modify `DeterminismTests.cs`, `WorldLifecycleTests.cs`, `HotTweakTests.cs`.
+
+**Аудит перед имплементацией (решение владельца F1a/F2a):** таск собирает **всё,
+что входит в хеш**, чтобы сдвиг случился ровно один раз. Сюда переехал гейт краевых
+запросов из Т8 (обоснование — в шапке Т8) вместе с двумя полями `PlayerState`,
+`EdgeRateLimitTests` и правкой существующих тестов; здесь же снимается временный
+skip-list рефлексивного теста, заведённый в Т7.
+
+**Interfaces:**
+
+```csharp
+public struct PlayerState { … public int DashRequestCooldownTicks, SlideRequestCooldownTicks; }
+```
+
+- Порядок хеша: `tick → spreadRng → waveRng → nextEntityId → playerCount →
+  players[0..n) → mobCount+mobs → projectileCount+projectiles → wave → worldStats →
+  statsCount+stats[0..n)`; `HashPlayer` += оба таймера краевых запросов;
+  `HashProjectile` += `OwnerIndex`; `HashStats` теряет временные мировые счётчики
+  (Т5), появляется `HashWorldStats`; `EveryPlayerAndStatsFieldAffectsHash`
+  расширяется на второго игрока и на `WorldStats`.
 - Гейт краевых запросов — **внутри `PlayerMovementSystem.Update`**, таймер **на
-  вид** (общий резал бы связку дэш→слайд). Отброшенный запрос не эмитит
-  `StaminaDenied` и не пишет в `MatchStats` (сетевой счётчик — Т28).
-- **Обоснование hash-нейтральности** (обязательная строка в bd note): окно
-  `EdgeRequestMinTicks = 3` тика против `DashCooldown = 1.2 с = 36 тиков` в
-  `TestConfigs` — в golden-сценарии число принятых дэшей и слайдов не меняется;
-  меняется только частота нехешируемого `StaminaDenied`.
+  вид** (общий резал бы легальную связку дэш→слайд, Р26). Отброшенный запрос не
+  эмитит `StaminaDenied` и не пишет в `MatchStats` (сетевой счётчик — Т23/Т28).
+  Гейт **подавляет латч буфера** — именно это и двигает хеш, и именно поэтому таск
+  один с перепином.
 
 - [ ] **Step 1 (RED):** `EdgeRateLimitTests.cs` — **фикстура обязана снять
-  кулдаун**, иначе тест меряет не гейт, а `DashCooldown`:
+  кулдаун**, иначе тест меряет не гейт, а `DashCooldown` (фактические числа
+  `TestConfigs`: `DashCooldown 1.2`, `DashDuration 0.15`, `StaminaMax 100`,
+  `DashStaminaCost 40` — пула хватает ровно на два дэша):
 
 ```csharp
 static SimConfig Fixture()
@@ -450,70 +595,35 @@ public void SpammedDash_AcceptedOncePerWindow()
 [Test] public void RejectedRequests_AreCounted() { /* счётчик отброшенных — через тест-шов */ }
 [Test] public void DashThenSlide_BothAccepted() { /* связку резать нельзя */ }
 [Test] public void HonestRhythm_NotThrottled() { /* нажатия реже окна — все приняты */ }
+[Test] public void RejectedRequest_DoesNotRearmBuffer() { /* отброшенный запрос НЕ армирует
+    DashBufferTimer — иначе гейт бессилен: окно буфера 4.5 тика шире окна гейта 3 */ }
 ```
 
-- [ ] **Step 2 (RED):** в `MultiPlayerWorldTests` — `KillPlayerNoDamage`
-  (`Alive == false`, `DamageTaken` не изменился, ровно одно `PlayerDied`, зачёт
-  никому; снаряды покинувшего наносят урон); в `MobAiTests` —
-  `NearestAlivePlayer` при нуле живых → мобы в `Idle`; смена цели при смерти.
-- [ ] **Step 3:** заглушки → R-FILTER → FAIL.
-- [ ] **Step 4 (GREEN):** реализация; `HeroConfig.EdgeRequestMinTicks
-  [Range(0,15)]` — **маркер переезжает** с `LinkRefund`; `ApplyConfig` клампит
-  оба счётчика + строки в карту рефлексивного прохода `HotTweakTests`.
-- [ ] **Step 5:** **правка существующих тестов**, спамящих `DashRequested`
-  каждый тик: `grep -rn "DashRequested = true" client/Assets/Tests/EditMode/` →
-  привести ожидания к гейту **явно**; каждая правка — строкой в bd note.
-- [ ] **Step 6:** R-FILTER затронутых → PASS; R-TEST (**golden не тронут**).
-- [ ] **Step 7:** R-COMMIT `feat(app-5nu): Т8 — рейт-лимит краевых запросов,
-  выход игрока, ближайшая живая цель`.
-
-### Task Т9: доставка новых ключей в `.asset` (бутстрап)
-
-**Files:** Modify `client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs`.
-
-**Interfaces:**
-- **Отдельный таск, потому что механизм не автоматический:** вызовы
-  `EditorBootstrapUtils.EnsureAssetHasKey` захардкожены пофайлово (строки
-  417–421), и для `ArenaConfig` их сегодня нет вовсе. Без этого таска новые поля
-  Т4/Т8 не доедут до `.asset`, а фазы Ф3+ работали бы на старых числах при
-  зелёных тестах.
-- Добавить: `ArenaConfig` → маркер `PlayerSpawnRingFrac`; `HeroConfig` → маркер
-  переезжает на `EdgeRequestMinTicks`.
-- **`EnsureAssetHasKey` доставляет только ОТСУТСТВУЮЩИЕ ключи и не переписывает
-  существующие значения** — поэтому здесь же заводится каркас
-  `ApplyStageTwoBalance()` (пустой; наполняется в Т16) по образцу
-  `ApplyGunnerZoneDefaults` из `app-n6g`.
-
-- [ ] **Step 1:** правка бутстрапа; R-APPLY-`StageOneSceneBootstrap`.
-- [ ] **Step 2:** `git diff -- client/Assets/Data/` → **только** новые ключи с
-  дефолтами; R-IDEM.
-- [ ] **Step 3:** R-TEST полный (golden не тронут — числа равны дефолтам).
-- [ ] **Step 4:** R-COMMIT `chore(app-5nu): Т9 — доставка ключей этапа 2 в ассеты`.
-
-### Task Т10: канонический порядок хеша + **перепин golden №1**
-
-**Files:** Modify `.../Core/SimulationWorld.cs`, `.../Core/WorldSave.cs`,
-`DeterminismTests.cs`, `WorldLifecycleTests.cs`.
-
-**Interfaces:** порядок `tick → spreadRng → waveRng → nextEntityId →
-playerCount → players[0..n) → mobCount+mobs → projectileCount+projectiles →
-wave → worldStats → statsCount+stats[0..n)`; `HashPlayer` += оба таймера
-краевых запросов; `HashProjectile` += `OwnerIndex`; `HashStats` теряет временные
-мировые счётчики (Т5), появляется `HashWorldStats`;
-`EveryPlayerAndStatsFieldAffectsHash` расширяется на второго игрока и на
-`WorldStats`.
-
-- [ ] **Step 1 (RED):** расширить рефлексивный тест; добавить
-  `MultiPlayerGoldenHash_ScriptedScenario` (три игрока, 1000 тиков, независимые
-  вводы от локального `Random` с фиксированным seed), константа `0UL`.
-- [ ] **Step 2:** R-FILTER `DeterminismTests` → FAIL обоих.
-- [ ] **Step 3 (GREEN):** порядок хеша; **R-GOLDEN ×2** — перепин соло
-  («Т10 — массив игроков, WorldStats, OwnerIndex, таймеры краевых запросов
-  вошли в хеш») и пин мультиплеерного.
-- [ ] **Step 4:** R-FILTER `DeterminismTests`+`WorldLifecycleTests` → PASS;
-  R-TEST полный; оба хеша — в bd note.
-- [ ] **Step 5:** R-COMMIT `feat(app-5nu): Т10 — состав хеша под мультиплеер
-  (перепин golden №1)`.
+- [ ] **Step 2 (RED):** расширить рефлексивный тест на второго игрока и на
+  `WorldStats`; добавить `MultiPlayerGoldenHash_ScriptedScenario` (три игрока,
+  1000 тиков, независимые вводы от локального `Random` с фиксированным seed),
+  константа `0UL`.
+- [ ] **Step 3:** заглушки → R-FILTER `EdgeRateLimitTests`+`DeterminismTests` →
+  FAIL всех.
+- [ ] **Step 3a (GREEN, гейт):** гейт в `PlayerMovementSystem.Update`; `ApplyConfig`
+  клампит оба счётчика + строки в карту рефлексивного прохода `HotTweakTests`.
+- [ ] **Step 3b (снятие временного skip-list, доказательство):** удалить
+  `PendingHashFields` из `WorldLifecycleTests` (Т7) → **временно** вынуть
+  `OwnerIndex` и оба таймера из `HashPlayer`/`HashProjectile` → R-FILTER
+  `WorldLifecycleTests` обязан **покраснеть** с именем каждого из трёх полей →
+  вернуть их в хеш → PASS. Без этого шага снятие skip-list'а не доказано.
+- [ ] **Step 4 (GREEN, хеш):** канонический порядок; **R-GOLDEN ×2** — перепин соло
+  («Т10 — массив игроков, WorldStats, OwnerIndex, таймеры краевых запросов и гейт
+  краевых вошли в хеш») и пин мультиплеерного.
+- [ ] **Step 5:** **правка существующих тестов**, спамящих `DashRequested` каждый
+  тик: `grep -rn "DashRequested = true" client/Assets/Tests/EditMode/` (аудит: **31
+  вхождение в 10 файлах**, истинный спам каждый тик — три места: `DashTests.cs:81–87`,
+  `DashRicochetTests.cs:87–94`, `DeterminismTests.cs:149`) → привести ожидания к
+  гейту **явно**; каждая правка — строкой в bd note.
+- [ ] **Step 6:** R-FILTER `EdgeRateLimitTests`+`DeterminismTests`+
+  `WorldLifecycleTests`+`HotTweakTests` → PASS; R-TEST полный; оба хеша — в bd note.
+- [ ] **Step 7:** R-COMMIT `feat(app-5nu): Т10 — рейт-лимит краевых запросов и
+  состав хеша под мультиплеер (перепин golden №1)`.
 
 **Гейт фазы Ф2:** R-TEST (≈ 189 + 15); **ровно один перепин соло-golden**;
 push; jsonl-chore; bd note с обоими хешами; `bd close` сабтаска Ф2.
@@ -563,6 +673,15 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
 **Interfaces:** `SweepArena` — круги → **стены** → кольцевая стена;
 `Depenetrate` — та же вставка; сигнатуры не меняются.
 
+**Аудит перед имплементацией:** `MoveWithCollisions` живёт **не в `Geometry`**, а в
+`.../Movement/PlayerMovementSystem.cs:348`, и именно его поведение проверяет Т15
+(collide-and-slide, гашение слайда, рикошет дэша). Правок он не требует — `SweepArena`
+зовётся изнутри, — но при красном в Т15 разбор начинается с него, а не только с
+Т11–Т14. Hash-нейтральность Т12 подтверждена структурно: `Geometry.cs:172–190`
+(`SweepArena`: цикл по `ObstacleCount` → `SegmentRingWall` со строгим `tw < t`) и
+`:194–208` (`Depenetrate`), вставленный цикл по стенам при `WallCount == 0`
+исполняется ноль раз.
+
 - [ ] **Step 1 (RED):** `SweepArena_PrefersNearestAcrossKinds`,
   `Depenetrate_PushesOutOfWall`.
 - [ ] **Step 2:** FAIL → **Step 3 (GREEN)**.
@@ -595,6 +714,15 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
 **Interfaces:** `SteerAround` += ветка `SegmentStadium` (тот же
 `padR = Radius + AvoidMargin`); `IsValidSpawn` += `OverlapsStadium`;
 `ArenaTopologyMatches` += стены, `MaxPlayers`, `PlayerSpawnRingFrac`, капы.
+
+**Аудит перед имплементацией:** сегодня `ArenaTopologyMatches`
+(`SimulationWorld.cs:201–211`) сравнивает только `Radius`, `ObstacleCount`,
+`ObstaclePos[]`, `ObstacleRadius[]`, а единственный тест гварда
+(`HotTweakTests.cs:38–42`) тюнит лишь `Radius`. Красного здесь не будет, но после
+Т16 (`MaxMobs 64→96`, `MaxProjectiles 256→384`, `MaxEventsPerFrame 256→512` в
+`.asset`) hot-tweak с ассетов старого поколения начнёт бросать и уводить
+`SimulationRunner` в `Restart` — ожидаемое следствие расширения гварда, а не
+регрессия; строкой в bd note.
 
 - [ ] **Step 1 (RED):** `Chaser_NavigatesAroundWall`, `Spawn_InsideWall_Rejected`,
   `HotTweak_WallChange_Throws`.
@@ -636,7 +764,10 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
 **Files:**
 - Modify: `client/Assets/Scripts/Data/ArenaConfig.cs` (`Walls[]` — **перед**
   маркером), `.../Data/WaveConfig.cs` (`PerPlayerCountFrac` — **последним полем,
-  маркер заводится впервые**), `.../Data/SimConfigBuilder.cs`,
+  маркер заводится впервые**), **`.../Data/GameFeelConfig.cs`**
+  (C#-дефолты `MaxCasings :27`, `MaxDecals :28`, `MaxCorpses :29` — иначе `.asset`
+  уедет в 3072/1536/128 при дефолтах 1024/512/64, а это новое расхождение, которого
+  спека §0 не санкционирует и ни один тест не пинит), `.../Data/SimConfigBuilder.cs`,
   `.../Simulation/AI/WaveSystem.cs`,
   **`client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs`**
   (`ApplyStageTwoBalance` наполняется здесь)
@@ -650,8 +781,14 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
   `MaxMobs 64 → 96`, `MaxProjectiles 256 → 384`, `MaxEventsPerFrame 256 → 512`,
   `MaxMobsPerWave 24 → 36`, `MaxCorpses 64 → 128`, `MaxCasings 1024 → 3072`,
   `MaxDecals 512 → 1536`.
+- **Вызов `ApplyStageTwoBalance` — одноразовый по признаку «стены не доставлены»**,
+  а не по маркеру (решение владельца F3a, обоснование и код гейта — в Т9).
 - **Новые данные:** шесть стен по таблице спеки §3.15 **и три дополнительных
   круга-препятствия** (спека §3.4 — «к 5 кругам добавляются круги до 8»).
+  **Аудит: в v2 раскладки кругов не существовало ни в спеке, ни в плане** — Step 4
+  был неисполним, а данные входят в перепин golden №2. Раскладка внесена в спеку
+  §3.15 (решение владельца F4a) и берётся оттуда, а не изобретается в таске.
+  Итог: 8 кругов + 6 стен = **14** препятствий — внутри вилки С10 (12–15).
 - **`TestConfigs.DefaultArena()` меняется синхронно** — иначе перепин golden не
   произойдёт, а `Build_DefaultAssets_MatchesTestConfigsBaseline` упадёт.
 - Формула: `count = (int)math.round((BaseCount + CountGrowth * waveIndex) *
@@ -703,7 +840,17 @@ internal void DamagePlayer(int victimIndex, byte attackerIndex, float dmg,
   `OwnerIndex`**; снаряд моба — всех живых (атакующий = `NoOwner`). Само-урон
   невозможен по построению.
 - **`ShotsHit` стрелка инкрементится и при попадании по игроку** (сегодня — только
-  в `DamageMob`); `Kills`/`HeadshotKills` — `StatsAt(attackerIndex)`.
+  в `DamageMob`, `SimulationWorld.cs:353`); `Kills`/`HeadshotKills` —
+  `StatsAt(attackerIndex)`.
+- **Аудит: инкремент ОБЯЗАН быть отгорожен `attackerIndex != NoOwner`.** `ShotsHit`
+  входит в `HashStats` (`SimulationWorld.cs:633`), а в соло-golden ганнеры регулярно
+  попадают по игроку — без гварда мобий выстрел начал бы засчитываться, и golden
+  уехал бы **в Т17** вопреки инварианту «перепинов ровно два».
+- **Аудит: место вставки игроков в скретч кандидатов.** Канонический порядок паковки
+  сегодня — «0 = barrier → мобы по индексу → player → floor»
+  (`ProjectileSystem.cs:38–43`, `:44–90`). Игроки допаковываются **в слот после
+  мобов**, на место нынешнего одиночного `player`, а не перед `HitBarrier` — иначе
+  порядок кандидатов, а с ним и исход соло-сценария, изменится.
 - `AcceptCandidate` переводится с `w.Player` на `w.PlayerAt(index)` — обе строки
   (позиция цели и `SlideTimer` для срезанного профиля).
 - **Скретч:** `_projCandidates = new (float,int,int)[MaxMobs + MaxPlayers + 2]`
@@ -863,16 +1010,27 @@ public static class EventRelevance
 ### Task Т22: проводка `VisibilityConfig` во все четыре дома
 
 **Files:** Modify `.../Data/SimConfigBuilder.cs` (сигнатура `Build`),
-`.../Presentation/SimulationRunner.cs` (поле `[SerializeField] VisibilityConfig`),
-`client/Assets/Scripts/Editor/LongRunHarness.cs` (`BuildBattleConfig`),
+`.../Presentation/SimulationRunner.cs` (поле `[SerializeField] VisibilityConfig`
+**и ОБА call-site `SimConfigBuilder.Build` — `:231` hot-tweak `ApplyConfig` и
+`:366` `Restart`**), `client/Assets/Scripts/Editor/LongRunHarness.cs`
+(`BuildBattleConfig`, `:122`),
 `client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs`
-(`GetOrCreate<VisibilityConfig>` + `EnsureAssetHasKey` + wiring в раннер).
+(`GetOrCreate<VisibilityConfig>` + `EnsureAssetHasKey` + wiring в раннер),
+**`client/Assets/Tests/EditMode/ConfigTests.cs`**.
 
 **Interfaces:**
-- Спека Р52 называет **четыре** места, перечисляющих SO поимённо — все они
-  правятся здесь, иначе конфиг видимости не доедет ни до игры, ни до
-  long-run-прогонов.
+- **Аудит перед имплементацией — CRITICAL:** спека Р52 называет **четыре** места,
+  перечисляющих SO поимённо; фактически домов **пять**, а точек правки сигнатуры —
+  **шесть**. Пятый дом — `ConfigTests.cs:13–21` (`MakeDefaults()` создаёт те же
+  шесть SO через `ScriptableObject.CreateInstance<>`) с **восемью** вызовами
+  `SimConfigBuilder.Build` (`:29, :36, :48, :57, :67, :109, :175, :187`); шестая
+  точка — второй call-site в раннере (`:231` против `:366`). Без правки
+  `ConfigTests.cs` седьмой параметр `Build` **ломает компиляцию тестового
+  ассембли**, и R-COMPILE Step 1 краснеет до Step 3, каскадом блокируя всё до Ф8.
+  Без правки обоих call-site раннера hot-tweak и рестарт разъедутся по составу
+  конфига.
 - Ассет `VisibilityConfig.asset` создаётся бутстрапом с дефолтами.
+- Спека §3.15 и Р52 правятся строкой «пять домов / шесть точек» (см. §6c).
 
 - [ ] **Step 1:** правки; R-COMPILE.
 - [ ] **Step 2:** R-APPLY-`StageOneSceneBootstrap` → `VisibilityConfig.asset`
@@ -1432,6 +1590,16 @@ Modify `client/Assets/Scripts/Editor/BuildCommands.cs`,
 - `StageTwoSceneBootstrap.Apply` — идемпотентно строит `Server.unity` (без
   камеры, HUD, вьюх, партиклов) и регистрирует обе сцены в `EditorBuildSettings`
   в детерминированном порядке.
+- **Аудит перед имплементацией:** прецедента идемпотентной **записи**
+  `EditorBuildSettings` в репо нет — единственные обращения к нему сегодня на
+  чтение (`BuildCommands.cs:29`, гвард `:34`), поэтому R-IDEM для этого куска
+  строится с нуля и проверяется отдельно (два прогона Apply подряд → `git diff --
+  client/ProjectSettings/EditorBuildSettings.asset` пуст). Плюс в
+  `client/Assets/Scenes/` лежит **`AssetPreview.unity`, сегодня НЕ
+  зарегистрированная** (в `EditorBuildSettings` одна запись — `Main.unity`):
+  «регистрирует обе сцены» означает `Main.unity` + `Server.unity`,
+  `AssetPreview.unity` осознанно остаётся вне списка (иначе она попала бы в
+  клиентские сборки). Записать строкой в bd note.
 - **`NetInvariants` — чистые предикаты** (Р72; единственное место, где видны оба
   конфига): `LingerTicks ≥ InterpBufferTicks + 2`,
   `SnapshotMaxBytes ≤ MTU − накладные` (MTU — из заметки Т2 п.3),
@@ -1478,12 +1646,20 @@ push; jsonl-chore; `bd close` сабтаска Ф8.
 
 **Files:** Modify `.../Presentation/SimulationRunner.cs`; Create
 `.../Presentation/ISimBackend.cs`, `LocalSimBackend.cs` (+ `.meta`);
-Modify `Presentation.asmdef` (+`Ring.Networking`); Modify **десять** читателей
-`World.Config` (`AimProvider`, `AimRayView`, `CrosshairView`, `AudioDirector`,
-`MuzzleFlashView`, `HudController`, `ViewRegistry`, `PlayerVisual`, `MobView`,
-`PersistentPropsDirector`) и **семь** носителей гварда `World == null`
-(`AimProvider`, `AimRayView`, `CrosshairView`, `DevOverlay`, `HudController`,
-`PlayerVisual`, `ViewRegistry`), `SimEventRouter`.
+Modify `Presentation.asmdef` (+`Ring.Networking`); Modify **восемь** читателей
+`World.Config` — `AimProvider` (`:194`), `AudioDirector` (`:179`), `HudController`
+(`:64`), `CrosshairView` (`:206`), `PlayerVisual` (`:154`), `MuzzleFlashView`
+(`:96`, `:140`), `PersistentPropsDirector` (`:331`, `:430`), `ViewRegistry`
+(`:171`) — плюс сам фасад (`SimulationRunner.cs:115`); и **семь** носителей гварда
+`World == null` (`AimProvider`, `AimRayView`, `CrosshairView`, `DevOverlay`,
+`HudController`, `PlayerVisual`, `ViewRegistry`), `SimEventRouter`.
+
+**Аудит перед имплементацией:** «десять читателей» в v2 плана завышено — `AimRayView`
+(`:82`) и `MobView` (`:141`) упоминают `World.Config` **только в комментариях**, у
+`MobView` вообще нет поля `_runner`. Спека §3.12 («8 классов») права. Чек-лист Step 2
+закрывается по восьми реальным диффам плюс фасад; два «недостающих» — правка
+комментария, если она вообще нужна. Счёт гвардов (семь) и подписчиков
+`WorldRestarted` (десять, Р89) аудит подтвердил.
 
 **Interfaces:**
 - Фасад: `Config`, `CurrentTick`, `EventCount`/`GetEvent`/`ClearEvents`,
@@ -1568,7 +1744,26 @@ Create `.../Presentation/PlayerVisualParams.cs` (+ `.meta`).
 - **Новые поля `GameFeelConfig`** (спека §3.15; в v1 плана их никто не добавлял):
   `RemotePlayerEmission` (цвет), `SpectatorSwitchCooldown [Range(0.05f,2f)] = 0.35f`
   — **маркер переезжает** на последнее; доставка — `EnsureAssetHasKey` в
-  бутстрапе + R-APPLY.
+  бутстрапе + R-APPLY. **Аудит: фактический маркер сегодня —
+  `HeadHoverPulseAmp`** (`GameFeelConfig.cs:313`, бутстрап
+  `StageOneSceneBootstrap.cs:421`), а не `CasingEjectSpeedMax` (устаревшая запись в
+  handoff'е; в коде это обычное поле `:161`). Историческую цепочку маркеров в
+  комментарии Apply дополнить новым звеном — иначе расхождение с уроком 40.
+- **Аудит: перестановка слота `_playerVisual` — поведенческая правка роутера.**
+  `SimEventRouter` держит прямую ссылку на куклу (`:34` `[SerializeField]
+  PlayerVisual _playerVisual;`, `:55` `_playerVisual.HandleEvent(in e);`) внутри
+  фиксированного фан-аута из восьми слотов, чей **порядок объявлен load-bearing** в
+  доке класса (`:6–26`, `GameFeelDirector` обязан быть первым). Перевод куклы на
+  `ViewRegistry.HandlePlayerEvent(index, …)` обязан сохранить относительный порядок
+  остальных семи слотов; изменение порядка — находка ревью, а не деталь.
+- **Аудит: `CaptureGunTransformToConfig` переносится не один.**
+  `PlayerVisual.cs:367–381` — приватный `[ContextMenu]` под `#if UNITY_EDITOR`,
+  который пишет `_gameFeel.GunLocalPosition/GunLocalEuler` из `_gun` **и
+  синхронизирует внутреннее состояние вьюхи** `_appliedGunPosition`,
+  `_appliedGunEuler`, `_gunApplied`, читаемое в горячем пути (`:136–147`). Перенос
+  требует либо публичного шва к `_gun`/`_gunApplied`, либо переезда всего
+  gun-apply-блока, а числа позы ствола тогда приходят через `PlayerVisualParams`.
+  Объём фиксируется до начала таска, «просто вынести метод» неисполнимо.
 - **`ExtrapolateLocalPlayer` удаляется** из `GameFeelConfig` и всех чтений
   (спека §3.12; закрывает `app-j6m`).
 
@@ -1601,7 +1796,17 @@ Create `.../Presentation/PlayerVisualParams.cs` (+ `.meta`).
 ### Task Т47: наблюдение и `ObservedIndex`
 
 **Files:** Modify `CameraRig.cs`, `HudController.cs`, `CrosshairView.cs`,
-`AimRayView.cs`, `DeathOverlayController.cs`, `NetworkSimBackend.cs`.
+`AimRayView.cs`, `DeathOverlayController.cs`, `NetworkSimBackend.cs`,
+**`.../Presentation/SimulationRunner.cs`**.
+
+**Аудит перед имплементацией:** в Presentation сегодня **нет никакого понятия
+индекса игрока** — `grep` по `LocalPlayerIndex|ObservedIndex|PlayerIndex` во всём
+`client/Assets/Scripts/` даёт **ноль** совпадений, а `RenderPlayerWorldPos`
+(`SimulationRunner.cs:99`), `RenderMuzzleHeight` (`:114`) и `WouldFireThisFrame`
+(`:142`) захардкожены на единственный `RenderCurr.Player`. Поэтому: (1) таск
+опирается на `Players[]`/`LocalPlayerIndex` из Т4 и блок игроков снапшота из Т27 и
+раньше них не стартует; (2) `SimulationRunner.cs` — обязательный файл правки,
+в v2 плана он в Files отсутствовал.
 
 **Interfaces:** **`ObservedIndex` отдельно от `LocalPlayerIndex`** (Р88): камера,
 HUD, прицел и луч читают его; в наблюдении прицел и луч **скрыты**, HUD —
@@ -1623,6 +1828,14 @@ HUD, прицел и луч читают его; в наблюдении при�
 было видно, под каким лагом снят замер. На локальном бэкенде секция скрыта;
 `StateHash` на сетевом — прочерк; кнопки `DevSpawnMob` скрыты (CR 3).
 **Это приборная панель лаг-гейта В3** — без неё гейт не проводится.
+
+**Аудит перед имплементацией:** область оверлея фиксирована —
+`GUILayout.BeginArea(new Rect(10f, 10f, 300f, 560f), …)` (`DevOverlay.cs:88`), и
+объявленные ~13 сетевых строк в неё не влезут: высота (и, вероятно, ширина под
+подписи вроде `InputOverwritten`) правится этим же таском. Кроме того, весь оверлей
+сегодня стоит за гвардом `World == null` (`:86`) — на сетевом бэкенде он не
+отрисуется вовсе, пока Т43 не переведёт гвард на `Ready`; порядок Т43 → Т48
+обязателен.
 
 - [ ] **Step 1:** реализация; R-COMPILE.
 - [ ] **Step 2 (PlayMode-смоук):** цифры меняются под симулятором.
@@ -1928,11 +2141,82 @@ PvP (A-I1); инверсия сэмплинга ввода — цикл asmdef N
 `NetworkSimBackend` (D-I15).
 
 **Minor:** `TryFirstOf` вместо нового `FirstOf`; десять читателей `Config`, а не
-восемь; API линжера в `VisibilitySet`; симметрия `Unit`/`UnitBack`; `NetConfig`
+восемь (**отменено аудитом v3 — их восемь**); API линжера в `VisibilitySet`;
+симметрия `Unit`/`UnitBack`; `NetConfig`
 первым в Ф6; `seq` расширен до `ushort`; 8 Б инпута вместо 9; `waveIndex`
 0-based в шве; имена asmdef без префикса `Ring.`; американская орфография
 (`Quantize`); `Create` вместо `Modify` у новых файлов; `[CreateAssetMenu]` и
 `OnValidate` у новых SO; кросс-ссылка на токен; пространство имён
 `Ring.Networking.Server` против asmdef `Ring.Server`; аргумент
-hash-нейтральности Т8 записан явно; baseline-шаг в Т30; строка лога с временем
+hash-нейтральности Т8 записан явно (**отменён аудитом v3 — аргумент неверен**);
+baseline-шаг в Т30; строка лога с временем
 тика; применение избыточности инпутов (Р24) — в Т36.
+
+## Правки по аудиту перед имплементацией (v2 → v3, 2026-08-05)
+
+Два Explore-субагента на Opus сверили спеку и план с кодом worktree; **каждый
+вердикт перепроверен главным агентом командой** (урок 49). Четыре находки оказались
+развилками (golden-инвариант и тюнинг вехи В1) и решены владельцем.
+
+**Развилки, решённые владельцем:**
+
+1. **F1a — гейт краевых запросов переехал из Т8 в Т10.** `HashPlayer` хеширует
+   `DashBufferTimer`/`SlideBufferTimer` (`SimulationWorld.cs:588`, `:595`), латч
+   армируется сырым `input.DashRequested` (`PlayerMovementSystem.cs:40–42`,
+   `:51–53`), golden подаёт краевые запросы с p = 0.05/тик на 1000 тиков
+   (`DeterminismTests.cs:43–44`) → пара внутри окна гейта почти неизбежна
+   (P(ни одной) ≈ 0.7 %). Гейт в Т8 сдвинул бы golden в Т8; «hash-нейтральность
+   Т8» из v2 **неверна и снята**. Инвариант «перепинов ровно два» сохранён.
+2. **F2a — временный skip-list рефлексивного теста** (`WorldLifecycleTests.cs:36–101`
+   ассертит вхождение каждого поля в хеш; `Bump` `:103–116` не знает `byte`).
+   Заводится в Т7 на `OwnerIndex`, снимается в Т10 **с доказательством** (Т10
+   Step 3b: поля временно вынимаются из хеша → тест обязан покраснеть). Паттерн —
+   тот же, что у санкционированного временного `HashStats` в Т5.
+3. **F3a — `ApplyStageTwoBalance` одноразовый по признаку «стены не доставлены»**, а
+   не по backfill-маркеру: образец `ApplyGunnerZoneDefaults` гейтирован
+   `(created || !markerPresent)` (`:387`) с контрактом «hand-tweak владельца
+   переживает re-run», и буквальная копия **не доставила бы** `Radius 35 → 65`.
+4. **F4a — раскладка трёх дополнительных кругов** внесена в спеку §3.15 (её не
+   существовало нигде, а Т16 обязан её применить и запинить golden №2).
+
+**Critical, исправленные правкой документов:**
+
+5. **Т22 — `ConfigTests.cs` пятый дом перечисления SO** (`:13–21`, восемь вызовов
+   `Build`) и **второй call-site `Build` в раннере** (`:231` против `:366`): без них
+   седьмой параметр ломает компиляцию тестового ассембли и каскадом блокирует всё
+   до Ф8. Спека Р52 «четыре места» → пять домов / шесть точек.
+6. **Т5 — четыре потребителя мировых счётчиков вне Files** (`WeaponSystem.cs:96` —
+   единственный писатель `ShotsFired`; `DeathOverlayController.cs:121`;
+   `LongRunHarness.cs:63/:77`; `WeaponTests.cs:117`): шаг GREEN не скомпилировался бы.
+7. **Т17 — `ShotsHit` обязан быть отгорожен `attackerIndex != NoOwner`**: он входит
+   в `HashStats` (`:633`), а в соло ганнеры попадают по игроку — golden уехал бы в Т17.
+
+**Important:** Т43 — читателей `World.Config` восемь, а не десять (`AimRayView`,
+`MobView` держат его только в комментариях); Т47 — в Presentation ноль вхождений
+индекса игрока, `SimulationRunner.cs` добавлен в Files, зависимость от Т4/Т27
+зафиксирована; Т16 — `GameFeelConfig.cs` добавлен в Files (иначе несанкционированное
+расхождение `.asset` против C#-дефолтов по трём FIFO-лимитам); Т45 — фактический
+маркер `HeadHoverPulseAmp`, перестановка слота `_playerVisual` меняет load-bearing
+порядок фан-аута `SimEventRouter` (`:6–26`), объём переноса
+`CaptureGunTransformToConfig` (переплетён с `_appliedGun*`, читаемыми в горячем
+пути); Т41 — прецедента идемпотентной записи `EditorBuildSettings` нет, судьба
+`AssetPreview.unity` зафиксирована; Т48 — `Rect(…, 300, 560)` не вмещает сетевую
+секцию, порядок Т43 → Т48 обязателен; Т14 — расширение `ArenaTopologyMatches`
+капами начнёт бросать на ассетах старого поколения после Т16; Т12 —
+`MoveWithCollisions` живёт в `PlayerMovementSystem.cs:348`, а не в `Geometry`;
+Т8 — `Targeting.SwingLead` не существует, правка идёт по call-site
+`MobAiSystem.cs:96–97`.
+
+**Подтверждено сошедшимся (правок не потребовало):** 43 вызова `Tick(default)`
+(аргумент за имя `TickAll`); `HashStats` строки 632/636/637; `_projCandidates =
+MaxMobs + 3` (`:81`); пять `EnsureAssetHasKey` на `:417–421` без `ArenaConfig`/
+`WaveConfig`; `EnsureAssetHasKey` не переписывает значения (`EditorBootstrapUtils.cs:251–255`);
+семь гвардов `World == null`; десять подписчиков `WorldRestarted`; порядок тика §3.2
+буквально; ровно три фактических расхождения `.asset` против C#-дефолтов
+(`ProjectileSpeed`, `MaxSpeed`, `DashSpeed`), все целевые числа Т16 внутри
+существующих `[Range]`; hash-нейтральность Т12 при `WallCount == 0`; «при нуле живых
+директор волн не тикает» уже реализовано (`WaveSystem.cs:22`); все тест-хелперы
+существуют с заявленными именами и сигнатурами; asmdef-конвенция; `CheckJunk`
+действительно обосновывает `Plugins/`; `Scripts/Networking`/`Scripts/Server` пусты
+с `.meta`; FishNet отсутствует в манифесте, прецедент git-URL есть; маска LFS
+`client/**/*.dll` на месте; 189 `[Test]` подтверждено счётом.
