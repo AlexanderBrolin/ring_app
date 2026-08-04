@@ -175,6 +175,15 @@ namespace Ring.Editor
     /// and on disk (ПБ13, `CorpseView` doc) but is no longer wired to
     /// `PersistentPropsDirector` — `CorpseMechView` takes its `_corpsePrefab`
     /// slot instead.
+    /// Task 20 (spec Г5, PC6/PC8/QA10) adds the aim-assist ray: a new `AimRay`
+    /// root object carrying `LineRenderer` + `AimRayView`, wired to `_runner`/
+    /// `_aimProvider`/`_gameFeel`/`_rayMaterial` — the last built here via a
+    /// new `GetOrCreateUnlitMaterial("AimRayEmissive", ...)` call alongside
+    /// `spreadConeMat`'s own. The existing `Crosshair/Marker` swaps its
+    /// square Quad primitive for a flat round `Cylinder` disc (same shape
+    /// idiom `GreyboxBuilder`'s floor/obstacles already use), self-healing an
+    /// already-committed scene's stale Quad the same way the Player root's
+    /// leftover capsule renderer self-heals above.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -186,6 +195,7 @@ namespace Ring.Editor
         const string CrosshairObjectName = "Crosshair";
         const string MarkerObjectName = "Marker";
         const string SpreadConeObjectName = "SpreadCone";
+        const string AimRayObjectName = "AimRay"; // Task 20
         const string ArenaObjectName = "Arena";
         const string EventSystemObjectName = "EventSystem";
         const string HudObjectName = "HUD";
@@ -475,6 +485,12 @@ namespace Ring.Editor
             // emissive tint (unlit, like the tracer/muzzle materials — a
             // `LineRenderer` strip isn't meant to be shaded).
             Material spreadConeMat = GetOrCreateUnlitMaterial("SpreadConeEmissive", new Color(3.5f, 1.2f, 0f));
+            // Task 20: a cool cyan tint for the aim-assist ray, distinct from
+            // the cone's warm-neon orange above and the tracer's near-white
+            // cyan below — AimRayView reads AimRayWidth/AimRayAlpha off
+            // GameFeelConfig fresh every frame, this material just supplies
+            // the base emissive color those numbers scale.
+            Material aimRayMat = GetOrCreateUnlitMaterial("AimRayEmissive", new Color(0.6f, 2.4f, 3.2f));
 
             GameObject playerGo = EditorBootstrapUtils.FindRootObject(scene, PlayerObjectName);
             if (playerGo == null)
@@ -653,17 +669,36 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
             Transform markerTf = crosshairGo.transform.Find(MarkerObjectName);
+            if (markerTf != null)
+            {
+                // Task 20 (PC8, round mini-disc): an already-committed scene may
+                // still carry the old square Quad marker — self-heal it the same
+                // way the Player root's stale MeshRenderer/MeshFilter above are
+                // torn down, rather than leaving the retired shape in place
+                // forever under the plain-existence guard below.
+                MeshFilter staleMarkerFilter = markerTf.GetComponent<MeshFilter>();
+                if (staleMarkerFilter == null || staleMarkerFilter.sharedMesh == null
+                    || staleMarkerFilter.sharedMesh.name != "Cylinder")
+                {
+                    Object.DestroyImmediate(markerTf.gameObject);
+                    markerTf = null;
+                    sceneDirty = true;
+                }
+            }
             GameObject markerGo;
             if (markerTf == null)
             {
-                markerGo = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                markerGo = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
                 markerGo.name = MarkerObjectName;
                 EditorBootstrapUtils.RemoveCollider(markerGo);
                 markerGo.transform.SetParent(crosshairGo.transform, false);
-                // Quad's default normal faces -Z; lay it flat, normal up, for a
-                // top-down ¾ camera.
-                markerGo.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-                markerGo.transform.localScale = Vector3.one * 0.5f;
+                // Cylinder's own axis is already Y (flat circular caps facing
+                // up/down) — no extra rotation needed, unlike the retired
+                // Quad's -Z-facing default. Thin in Y, round in XZ: a genuine
+                // disc for the top-down ¾ camera, the same flat-round-shape
+                // idiom `GreyboxBuilder.BuildFloor`/`BuildObstacles` already
+                // use (their own Cylinder floor/obstacle discs).
+                markerGo.transform.localScale = new Vector3(0.5f, 0.03f, 0.5f);
                 sceneDirty = true;
             }
             else
@@ -721,9 +756,66 @@ namespace Ring.Editor
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_aimProvider", aimProvider);
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_cone", spreadCone);
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_runner", runner);
+            // Task 20: AimDotScale — the marker's own scale multiplier while
+            // AimHeld (class doc, PC8).
+            crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_gameFeel", gameFeel);
             if (crosshairRefsChanged)
             {
                 crosshairSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // Task 20 (spec Г5, PC6/PC8/QA10): the aim-assist ray — a two-point
+            // world-space LineRenderer from the weapon's muzzle to the current
+            // aim point, visible only while AimHeld (AimRayView.LateUpdate). Its
+            // own root object, not a Crosshair child: CrosshairView never drives
+            // it, and it carries no marker of its own (the Crosshair's existing
+            // `_marker` doubles as the aim dot while AimHeld, PC8 above).
+            GameObject aimRayGo = EditorBootstrapUtils.FindRootObject(scene, AimRayObjectName);
+            if (aimRayGo == null)
+            {
+                aimRayGo = new GameObject(AimRayObjectName);
+                sceneDirty = true;
+            }
+            // LineRenderer BEFORE AimRayView (MuzzleFlashView/ParticleSystem
+            // precedent, F-style ordering): AimRayView carries
+            // `[RequireComponent(typeof(LineRenderer))]`, which auto-adds a
+            // bare default-configured LineRenderer the instant
+            // `AddComponent<AimRayView>()` runs if one isn't already present
+            // — creating the component here FIRST means that implicit add is
+            // a no-op instead of silently pre-empting (and skipping) the
+            // one-time module setup below.
+            LineRenderer aimRayLine = aimRayGo.GetComponent<LineRenderer>();
+            if (aimRayLine == null)
+            {
+                aimRayLine = aimRayGo.AddComponent<LineRenderer>();
+                aimRayLine.useWorldSpace = true;
+                aimRayLine.positionCount = 2;
+                aimRayLine.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                aimRayLine.enabled = false; // AimRayView.LateUpdate only enables it while AimHeld
+                sceneDirty = true;
+            }
+            if (aimRayLine.sharedMaterial != aimRayMat)
+            {
+                aimRayLine.sharedMaterial = aimRayMat;
+                sceneDirty = true;
+            }
+            AimRayView aimRayView = aimRayGo.GetComponent<AimRayView>();
+            if (aimRayView == null)
+            {
+                aimRayView = aimRayGo.AddComponent<AimRayView>();
+                sceneDirty = true;
+            }
+
+            var aimRaySo = new SerializedObject(aimRayView);
+            bool aimRayRefsChanged = false;
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_runner", runner);
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_aimProvider", aimProvider);
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_gameFeel", gameFeel);
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_rayMaterial", aimRayMat);
+            if (aimRayRefsChanged)
+            {
+                aimRaySo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
