@@ -19,16 +19,35 @@ namespace Ring.Simulation.Tests
 
         /// Scripted input generator (Task 29 Interfaces) — a separate Random in
         /// TEST code is fine, this is not Simulation. Drives every input axis so
-        /// the determinism/golden runs below exercise movement, aiming, firing
-        /// and dashing together instead of just idle-input replay.
-        static SimInput Scripted(ref Unity.Mathematics.Random rng)
+        /// the determinism/golden runs below exercise movement, aiming, firing,
+        /// dashing, sliding and both fire modes together instead of just
+        /// idle-input replay. `aimHeld` is threaded in by ref from RunScripted
+        /// (a LOCAL there, not a static field here — statics would leak across
+        /// RunScripted's three per-test-session calls and make the golden hash
+        /// order-dependent, Task 16 QA5/QB5/QD5) so the aim level persists
+        /// across ticks within one scripted run.
+        /// Draw order is FIXED (reorder only with a golden repin): MoveDir
+        /// direction, MoveDir magnitude, AimPoint, FireHeld, DashRequested,
+        /// SlideRequested, aimHeld toggle roll, AimHeight.
+        static SimInput Scripted(ref Unity.Mathematics.Random rng, ref bool aimHeld)
         {
+            var moveDir = rng.NextFloat2Direction() * rng.NextFloat();
+            var aimPoint = rng.NextFloat2(new float2(-30f, -30f), new float2(30f, 30f));
+            bool fireHeld = rng.NextFloat() < 0.7f;
+            bool dashRequested = rng.NextFloat() < 0.05f;
+            bool slideRequested = rng.NextFloat() < 0.05f;
+            if (rng.NextFloat() < 0.03f) aimHeld = !aimHeld; // ~3%/tick toggle chance
+            float aimHeight = rng.NextFloat(0f, 3.8f); // tower head belts [2.70, 3.50] reachable
+
             return new SimInput
             {
-                MoveDir = rng.NextFloat2Direction() * rng.NextFloat(),
-                AimPoint = rng.NextFloat2(new float2(-30f, -30f), new float2(30f, 30f)),
-                FireHeld = rng.NextFloat() < 0.7f,
-                DashRequested = rng.NextFloat() < 0.05f
+                MoveDir = moveDir,
+                AimPoint = aimPoint,
+                FireHeld = fireHeld,
+                DashRequested = dashRequested,
+                SlideRequested = slideRequested,
+                AimHeld = aimHeld,
+                AimHeight = aimHeight
             };
         }
 
@@ -39,8 +58,9 @@ namespace Ring.Simulation.Tests
         {
             var world = new SimulationWorld(42, TestConfigs.Default());
             var rng = new Random(inputSeed);
+            bool aimHeld = false; // LOCAL — RunScripted runs 3x/session, no static leak (QA5/QB5/QD5)
             for (int i = 0; i < ticks; i++)
-                world.Tick(Scripted(ref rng));
+                world.Tick(Scripted(ref rng, ref aimHeld));
             return world.StateHash();
         }
 
@@ -216,7 +236,18 @@ namespace Ring.Simulation.Tests
             // (SpreadRad > 0 keeps the new draw-guard open on every hip shot), but
             // the drawn ANGLE is wider, so every shot's velocity — and with it the
             // whole downstream hit/kill trace — legitimately differs.
-            const ulong GoldenHash = 0xC23068BF22FA8577UL; // = 13992799212375016823
+            // Re-pinned by Task 16 (FINAL repin of this package): Scripted() now
+            // draws SlideRequested (5%/tick), rolls a ~3%/tick aimHeld toggle, and
+            // draws AimHeight (0..3.8, covering the tower head belts [2.70, 3.50])
+            // on every tick, in that fixed order after DashRequested — so every
+            // scripted run now legitimately drives SlideRequested-triggered slides
+            // and both fire modes (hip AND aimed, per the toggled aimHeld level)
+            // instead of hip-only with slide permanently dormant. This changes the
+            // RNG draw sequence itself (three new draws/tick) on top of exercising
+            // previously-dormant slide/aim-mode branches, so the hash legitimately
+            // differs from Task 15's. The scripted scenario now covers slide and
+            // both fire modes end to end.
+            const ulong GoldenHash = 0xF66DA6A65EBBD03AUL; // = 17757032139275882554
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
