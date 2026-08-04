@@ -107,7 +107,7 @@ namespace Ring.Editor
             if (existingController != null)
             {
                 ReconcileSpeedDefault(existingController);
-                // Task Т23: the guard above deliberately never recreates an
+                // Task 23: the guard above deliberately never recreates an
                 // existing controller (would change its GUID and break scene
                 // refs — class doc) — but a NEW mandatory state set still has
                 // to reach an already-committed controller somehow, so it is
@@ -175,7 +175,7 @@ namespace Ring.Editor
             if (changed) controller.parameters = parameters;
         }
 
-        /// Task Т23 (ADR-002 A10 amendment): the slide set — clips live in
+        /// Task 23 (ADR-002 A10 amendment): the slide set — clips live in
         /// UAL2_Standard.fbx (same rig family as the doll, retarget via its
         /// shared avatar — TP.Ual2StandardPath), not the doll's own FBX, so
         /// they need their own ClipsOf() lookup. Per-state existence check

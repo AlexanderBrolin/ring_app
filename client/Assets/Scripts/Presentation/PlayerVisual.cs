@@ -47,7 +47,7 @@ namespace Ring.Presentation
         [SerializeField] Transform _visual;
         [SerializeField] Transform _gun;
 
-        // Task Т23 (ADR-002 A10 amendment): the doll's slide pose sequence —
+        // Task 23 (ADR-002 A10 amendment): the doll's slide pose sequence —
         // Start (one-shot) -> Loop (held) -> Exit (one-shot back to
         // locomotion), driven off RenderCurr.Player.SlideTimer the same
         // "code-drives-the-hash, no controller transitions" way the Aim
@@ -184,14 +184,19 @@ namespace Ring.Presentation
             _dashLean01 = Mathf.MoveTowards(_dashLean01, leanTarget01,
                 dt / Mathf.Max(_gameFeel.DashLeanInOutSeconds, 1e-3f));
             Quaternion rotation = _facing;
-            // Task Т23: the dash lean is a rotation OFFSET on top of the
+            // Task 23: the dash lean is a rotation OFFSET on top of the
             // slide pose the Animator is already playing — while SlideTimer
             // is open, skip it outright rather than let it fight the pose
             // (DashTimer/SlideTimer are mutually exclusive in the sim, but
             // _dashLean01 itself decays over DashLeanInOutSeconds, so a
             // linked slide starting right after a dash ends can still catch
-            // it mid-decay).
-            if (_dashLean01 > 0.001f && player.SlideTimer <= 0f)
+            // it mid-decay). Г7-review fix: SlideTimer alone isn't enough —
+            // it hits 0 the instant the Exit phase begins, so a lean could
+            // still layer over the SlideExit stand-up clip for ~1 frame.
+            // _slidePhase == None is the true "fully out of the slide
+            // sequence" predicate (SlideExit->Locomotion only flips it back
+            // to None once Exit itself is done or cut short).
+            if (_dashLean01 > 0.001f && player.SlideTimer <= 0f && _slidePhase == SlidePhase.None)
             {
                 Vector3 dashW = SimSpace.ToWorld(player.DashDir);
                 if (dashW.sqrMagnitude > 1e-6f)
@@ -253,7 +258,7 @@ namespace Ring.Presentation
             ApplyLinkWindowEmission(LinkWindowFlashAccent * wave * _gameFeel.LinkWindowFlashBoost);
         }
 
-        /// Task Т23 (ADR-002 A10 amendment): steps the slide pose FSM from
+        /// Task 23 (ADR-002 A10 amendment): steps the slide pose FSM from
         /// SlideTimer alone — SlideTimer > 0 is the sim's own "sliding right
         /// now" predicate (ProjectileSystem/Spread/SimulationRunner already
         /// read the exact same field, class docs of each). Start plays out
@@ -345,7 +350,7 @@ namespace Ring.Presentation
             _animator.Play(AnimIds.PistolAimNeutral, AimLayer, 0f);
             _animator.SetFloat(AnimIds.Speed, 0f);
             _dashLean01 = 0f;
-            // Task Т23: without this reset a mid-slide death-then-restart
+            // Task 23: without this reset a mid-slide death-then-restart
             // would leave _slidePhase at Loop/Exit; the very next LateUpdate
             // would then see `sliding == false` and CrossFade into SlideExit,
             // fighting the explicit Locomotion Play() two lines above.

@@ -19,7 +19,7 @@ namespace Ring.Presentation
         public const string HitReactName = "HitReact";
         public const string HitReactHeadName = "HitReactHead";
         public const string DashName = "Dash";
-        // Task Т23 (ADR-002 A10 amendment): slide set — UAL2 pack clips
+        // Task 23 (ADR-002 A10 amendment): slide set — UAL2 pack clips
         // Slide_Start/Slide_Loop/Slide_Exit (state names are OUR convention,
         // same DashName/"Roll" split the dash state already uses — the pack
         // clip key is bound at bootstrap time, not mirrored here).
