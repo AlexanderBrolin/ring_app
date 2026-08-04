@@ -158,6 +158,81 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void AimedShot_HitsExactPoint_IncludingFloor() // Task 15
+        {
+            // Fully settled aim (AimSettleTimer at its cap, QA1 seam) on a fresh
+            // world (RecoilOffset still 0) leaves the effective cone at exactly
+            // zero, so no spread is drawn at all and the round must fly along the
+            // muzzle -> (AimPoint, AimHeight) line. Aimed at a point ON the floor,
+            // that line's end IS the impact point — up to the one geometric offset
+            // the floor test carries: it stops the sphere when its CENTRE reaches
+            // Radius (ProjectileSystem's t_floor), i.e. Radius / tan(descent)
+            // short of the aimed point along the line. The fixture shrinks
+            // ProjectileRadius so that offset stays well inside the tolerance and
+            // this assert measures aim accuracy, not sphere size.
+            var cfg = TestConfigs.Open();
+            cfg.Weapon.ProjectileRadius = 0.01f;
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player;
+            p.AimSettleTimer = cfg.Hero.AimSettleSeconds;
+            w.SetPlayerForTest(p);
+
+            var floorPoint = new float2(2f, 1.5f); // 2.5 m out, diagonal: both axes are asserted
+            w.Tick(new SimInput { AimPoint = floorPoint, AimHeight = 0f,
+                                  AimHeld = true, FireHeld = true });
+            TestWorlds.RunUntilProjectilesDie(w);
+
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked));
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked,
+                out SimEvent blocked));
+            // floor contact: centre height == Radius, no surface normal (Task 7)
+            Assert.AreEqual(cfg.Weapon.ProjectileRadius, blocked.Amount, 1e-4f);
+            Assert.AreEqual(0f, blocked.HitDir.x, 1e-6f);
+            Assert.AreEqual(0f, blocked.HitDir.y, 1e-6f);
+            Assert.AreEqual(floorPoint.x, blocked.Pos.x, 0.05f);
+            Assert.AreEqual(floorPoint.y, blocked.Pos.y, 0.05f);
+        }
+
+        [Test]
+        public void HipShot_HorizontalAtMuzzleHeight() // Task 15
+        {
+            // Hip fire keeps the flat Phase-1 geometry: the round leaves the
+            // standing muzzle horizontally whatever height the (unheld) aim
+            // carries — AimHeight is the aimed branch's input alone.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            w.Tick(new SimInput { AimPoint = new float2(10f, 0f),
+                                  AimHeight = cfg.Hero.MaxAimHeight, FireHeld = true });
+
+            Assert.AreEqual(1, w.ProjectileCount);
+            ProjectileState shot = w.GetProjectileForTest(0);
+            Assert.AreEqual(0f, shot.VelZ, 1e-6f);
+            Assert.AreEqual(cfg.Hero.MuzzleHeight, shot.Height, 1e-4f);
+            // the whole speed budget stays horizontal (nothing was spent climbing)
+            Assert.AreEqual(cfg.Weapon.ProjectileSpeed, math.length(shot.Vel), 1e-3f);
+        }
+
+        [Test]
+        public void SlideFire_FromSlideMuzzleHeight() // Task 15
+        {
+            // Mid-slide the hero is low to the ground, so the shot leaves the
+            // slide muzzle height instead of the standing one.
+            var cfg = TestConfigs.Open();
+            Assert.IsTrue(cfg.Weapon.CanFireWhileSlide,
+                "fixture: this weapon must be allowed to fire mid-slide");
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player;
+            p.SlideTimer = cfg.Hero.SlideDuration; // QA1 seam — no run-up choreography needed
+            p.SlideDir = new float2(1f, 0f);
+            w.SetPlayerForTest(p);
+
+            w.Tick(new SimInput { AimPoint = new float2(10f, 0f), FireHeld = true });
+
+            Assert.AreEqual(1, w.ProjectileCount);
+            Assert.AreEqual(cfg.Hero.SlideMuzzleHeight, w.GetProjectileForTest(0).Height, 1e-4f);
+        }
+
+        [Test]
         public void EqualT_TieBreaksLowerIndex()
         {
             var cfg = TestConfigs.Open();

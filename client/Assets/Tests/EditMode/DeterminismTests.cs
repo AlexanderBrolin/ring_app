@@ -207,7 +207,16 @@ namespace Ring.Simulation.Tests
             // in Task 16), so the field itself stays at its zero default the
             // whole run, but it is still a new per-tick trace inside HashPlayer,
             // so the hash legitimately changes even with AimHeld dormant.
-            const ulong GoldenHash = 0x8DE10048EC3EF11BUL; // = 10223452942308929819
+            // Re-pinned by Task 15 (two fire modes): Scripted()'s input never sets
+            // AimHeld, so every shot in this run still takes the HIP branch — but
+            // that branch's cone is now Spread.HipRadians, i.e. the base cone plus
+            // recoil TIMES a movement multiplier (x1.5 above RunSpreadSpeedFrac of
+            // MaxSpeed, which the scripted MoveDir crosses constantly), where Phase
+            // 1 had no multiplier at all. The number of RNG draws is unchanged
+            // (SpreadRad > 0 keeps the new draw-guard open on every hip shot), but
+            // the drawn ANGLE is wider, so every shot's velocity — and with it the
+            // whole downstream hit/kill trace — legitimately differs.
+            const ulong GoldenHash = 0xC23068BF22FA8577UL; // = 13992799212375016823
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
