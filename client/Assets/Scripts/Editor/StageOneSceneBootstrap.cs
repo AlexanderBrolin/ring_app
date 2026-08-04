@@ -234,6 +234,9 @@ namespace Ring.Editor
         const string TagManagerPath = "ProjectSettings/TagManager.asset";
         const string CasingsLayerName = "Casings";
 
+        // Task 19 (spec QA7/QD1): the 3D aim-proxy raycast layer.
+        const string AimProxyLayerName = "AimProxy";
+
         // Б1 fix-wave 2 (app-9av): dash-start floor mark.
         const string DashGlowPrefabPath = PrefabsDir + "/DashGlow.prefab";
 
@@ -359,6 +362,11 @@ namespace Ring.Editor
             // user layer 9 in TagManager.asset, idempotently.
             bool casingsLayerChanged = EnsureCasingsLayer();
 
+            // Task 19 (spec QA7/QD1): the 3D aim-proxy raycast layer, user layer
+            // 10 — same idempotent TagManager claim as casings above, now shared
+            // via EnsureUserLayer (QC14).
+            bool aimProxyLayerChanged = EnsureAimProxyLayer();
+
             SimulationRunner runner = FindRunner(scene);
             bool sceneDirty = false;
             if (runner == null)
@@ -384,7 +392,13 @@ namespace Ring.Editor
                     "StageOneSceneBootstrap: no Camera tagged MainCamera found in the scene.");
 
             var aimSo = new SerializedObject(aimProvider);
-            bool aimRefsChanged = EditorBootstrapUtils.SetRef(aimSo, "_camera", mainCamera);
+            bool aimRefsChanged = false;
+            aimRefsChanged |= EditorBootstrapUtils.SetRef(aimSo, "_camera", mainCamera);
+            // Task 19 (PA8/PD16): AimProvider needs the runner for LastFrameInput.
+            // AimHeld (gates the proxy cast) and World.Config.Arena.Radius (the
+            // cast's maxDistance) — same "Simulation" GameObject, so this is
+            // always just self-referencing the very runner AimProvider lives on.
+            aimRefsChanged |= EditorBootstrapUtils.SetRef(aimSo, "_runner", runner);
             if (aimRefsChanged)
             {
                 aimSo.ApplyModifiedPropertiesWithoutUndo();
@@ -497,6 +511,15 @@ namespace Ring.Editor
                 playerSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
+
+            // Task 19 (spec QA7/QD1): the player doll carries the same
+            // AimProxy_Legs/Body/Head belts as the mob archetypes, sized from
+            // HeroConfig's own zone-geometry fields — spec Interfaces treats
+            // every hittable actor's proxy the same way; this task wires only
+            // the local player's own AimProvider, but the layer/geometry
+            // contract itself is symmetric across player and mobs.
+            sceneDirty |= EnsureAimProxyChildren(playerGo.transform,
+                hero.LegsTop, hero.BodyTop, hero.HeadTop, hero.Radius, gameFeel.AimProxyHeadRadiusFrac);
 
             // Assets phase B (spec §3.2, task 8): the collector doll — a named
             // "Visual" child instantiated from the UAL1 doll FBX, driven by
@@ -924,9 +947,13 @@ namespace Ring.Editor
             // source-path guard (PrefabVisualsMatch) rebuilds the prefab if
             // the mapping above ever changes.
             MobView chaserPrefab = GetOrCreateMobArchetypePrefab(
-                MobChaserPrefabPath, ChaserModelPath, gameFeel.ChaserVisualScale);
+                MobChaserPrefabPath, ChaserModelPath, gameFeel.ChaserVisualScale,
+                chaser.LegsTop, chaser.BodyTop, chaser.HeadTop, chaser.Radius,
+                gameFeel.AimProxyHeadRadiusFrac);
             MobView gunnerPrefab = GetOrCreateMobArchetypePrefab(
-                MobGunnerPrefabPath, GunnerModelPath, gameFeel.GunnerVisualScale);
+                MobGunnerPrefabPath, GunnerModelPath, gameFeel.GunnerVisualScale,
+                gunner.LegsTop, gunner.BodyTop, gunner.HeadTop, gunner.Radius,
+                gameFeel.AimProxyHeadRadiusFrac);
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
 
@@ -1205,6 +1232,7 @@ namespace Ring.Editor
             Debug.Log($"StageOneSceneBootstrap: gunner {(gunnerChanged ? "updated" : "ok")}, " +
                 $"decal feature {(decalFeatureChanged ? "added" : "ok")}, " +
                 $"casings layer {(casingsLayerChanged ? "added" : "ok")}, " +
+                $"aim proxy layer {(aimProxyLayerChanged ? "added" : "ok")}, " +
                 $"scene {(sceneDirty ? "updated" : "already up to date")}.");
         }
 
@@ -1325,13 +1353,25 @@ namespace Ring.Editor
         /// is never re-authored UNLESS the mapping at the top of this file
         /// picks a different model — then the stale prefab is deleted and
         /// rebuilt so an owner's pair swap actually takes effect.
+        /// Task 19 (spec QA7/QD1) adds `legsTop`/`bodyTop`/`headTop`/
+        /// `bodyRadius`/`headRadiusFrac`: the archetype's zone-geometry SO
+        /// fields, used to size the `AimProxy_*` belts (`EnsureAimProxyChildren`).
+        /// The self-heal reaches BOTH paths — an already-committed prefab
+        /// whose visuals already match (`SelfHealAimProxyOnPrefab`, UNDER the
+        /// `PrefabVisualsMatch` early return, PC2) and a freshly-built one
+        /// (inline in the `build()` closure below).
         static MobView GetOrCreateMobArchetypePrefab(string prefabPath, string modelPath,
-            float visualScale)
+            float visualScale, float legsTop, float bodyTop, float headTop,
+            float bodyRadius, float headRadiusFrac)
         {
             if (AssetDatabase.LoadAssetAtPath<MobView>(prefabPath) != null)
             {
                 if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath, ("Visual", modelPath)))
+                {
+                    SelfHealAimProxyOnPrefab(prefabPath, legsTop, bodyTop, headTop,
+                        bodyRadius, headRadiusFrac);
                     return AssetDatabase.LoadAssetAtPath<MobView>(prefabPath);
+                }
                 AssetDatabase.DeleteAsset(prefabPath); // pair swapped: rebuild; SetRef re-wires
             }
             return EditorBootstrapUtils.BuildPrefab<MobView>(prefabPath, () =>
@@ -1347,6 +1387,10 @@ namespace Ring.Editor
                 EditorBootstrapUtils.SetRef(so, "_animator", visual.GetComponent<Animator>());
                 EditorBootstrapUtils.SetRef(so, "_visual", visual.transform);
                 so.ApplyModifiedPropertiesWithoutUndo();
+                // Task 19: AimProxy_Legs/Body/Head siblings of Visual, at
+                // prefab-root local space (EnsureAimProxyChildren's own doc).
+                EnsureAimProxyChildren(go.transform, legsTop, bodyTop, headTop,
+                    bodyRadius, headRadiusFrac);
                 return go;
             });
         }
@@ -1465,19 +1509,34 @@ namespace Ring.Editor
         }
 
         /// Task 27 review fix-round: claims user layer 9 as "Casings" in
-        /// `ProjectSettings/TagManager.asset` — the standard editor-script
-        /// recipe for programmatically naming a layer (`SerializedObject`
-        /// over the `layers` string array, no dedicated public API exists).
-        /// Verified empty before this task claimed it (`grep` against the
-        /// committed `TagManager.asset`, T13's `GreyboxBuilder.CosmeticsLayer`
-        /// already owns layer 8). Idempotent: a second run sees `"Casings"`
-        /// already in the slot and no-ops. Defensively throws instead of
-        /// silently overwriting if slot 9 ever ends up holding some OTHER
-        /// name (e.g. a teammate claims it for something else first) — same
-        /// "hard error on unexpected setup state" policy as
-        /// `LoadMaterial`/`LoadAudioClip` below. Returns whether it actually
-        /// changed anything.
-        static bool EnsureCasingsLayer()
+        /// `ProjectSettings/TagManager.asset`. Task 19 (QC14) extracted the
+        /// actual claim/refuse logic into the shared `EnsureUserLayer` below —
+        /// this is now a thin wrapper so both call sites (this one, and
+        /// `EnsureAimProxyLayer`) share one idempotent implementation instead
+        /// of two near-identical copies.
+        static bool EnsureCasingsLayer() =>
+            EnsureUserLayer(PersistentPropsDirector.CasingsLayer, CasingsLayerName);
+
+        /// Task 19 (spec QA7/QD1): claims user layer 10 as "AimProxy" —
+        /// verified empty before this task claimed it (`grep` against the
+        /// committed `TagManager.asset`; layer 9 already belongs to
+        /// `CasingsLayerName` above). Second `EnsureUserLayer` call site.
+        static bool EnsureAimProxyLayer() =>
+            EnsureUserLayer(AimProvider.AimProxyLayer, AimProxyLayerName);
+
+        /// Task 19 (QC14): the shared TagManager-layer-claim logic — was
+        /// `EnsureCasingsLayer`'s entire body alone (Task 27 review
+        /// fix-round), generalized so `EnsureAimProxyLayer` above reuses the
+        /// exact same sequence instead of a second copy. Standard
+        /// editor-script recipe for programmatically naming a layer
+        /// (`SerializedObject` over the `layers` string array, no dedicated
+        /// public API exists). Idempotent: a second run sees `name` already
+        /// in the slot and no-ops. Defensively throws instead of silently
+        /// overwriting if `slot` ever ends up holding some OTHER name (e.g. a
+        /// teammate claims it for something else first) — same "hard error on
+        /// unexpected setup state" policy as `LoadMaterial`/`LoadAudioClip`
+        /// below. Returns whether it actually changed anything.
+        static bool EnsureUserLayer(int slot, string name)
         {
             Object[] tagManagerAssets = AssetDatabase.LoadAllAssetsAtPath(TagManagerPath);
             if (tagManagerAssets == null || tagManagerAssets.Length == 0)
@@ -1486,18 +1545,117 @@ namespace Ring.Editor
 
             var so = new SerializedObject(tagManagerAssets[0]);
             SerializedProperty layers = so.FindProperty("layers");
-            SerializedProperty slot = layers.GetArrayElementAtIndex(PersistentPropsDirector.CasingsLayer);
+            SerializedProperty slotProp = layers.GetArrayElementAtIndex(slot);
 
-            if (slot.stringValue == CasingsLayerName) return false;
-            if (!string.IsNullOrEmpty(slot.stringValue))
+            if (slotProp.stringValue == name) return false;
+            if (!string.IsNullOrEmpty(slotProp.stringValue))
                 throw new System.InvalidOperationException(
-                    $"StageOneSceneBootstrap: layer {PersistentPropsDirector.CasingsLayer} is already " +
-                    $"named '{slot.stringValue}' — refusing to overwrite it with '{CasingsLayerName}'.");
+                    $"StageOneSceneBootstrap: layer {slot} is already named " +
+                    $"'{slotProp.stringValue}' — refusing to overwrite it with '{name}'.");
 
-            slot.stringValue = CasingsLayerName;
+            slotProp.stringValue = name;
             so.ApplyModifiedProperties();
             AssetDatabase.SaveAssets();
             return true;
+        }
+
+        /// Task 19 (spec QA7/QD1): three `CapsuleCollider` triggers on
+        /// `AimProvider.AimProxyLayer` — Legs/Body/Head belts sized from the
+        /// archetype's own zone-geometry SO fields (`LegsTop`/`BodyTop`/
+        /// `HeadTop`, the exact numbers `SimulationWorld`'s zone-damage
+        /// lookup already keys off — this proxy is a SEPARATE, purely-visual
+        /// raycast target that Simulation never touches; "no sim changes").
+        /// Head radius is scaled by `GameFeelConfig.AimProxyHeadRadiusFrac`
+        /// for a narrower headshot volume than the body/legs. Attached at
+        /// ROOT local space, unscaled — same convention the zone-geometry
+        /// fields themselves assume (mirrors `Visual`'s own un-scaled
+        /// parent). Idempotent per-field diff, like every other self-heal in
+        /// this file. Returns whether anything changed.
+        static bool EnsureAimProxyChildren(Transform root, float legsTop, float bodyTop,
+            float headTop, float bodyRadius, float headRadiusFrac)
+        {
+            bool changed = false;
+            changed |= EnsureAimProxyCapsule(root, "AimProxy_Legs", 0f, legsTop, bodyRadius);
+            changed |= EnsureAimProxyCapsule(root, "AimProxy_Body", legsTop, bodyTop, bodyRadius);
+            changed |= EnsureAimProxyCapsule(root, "AimProxy_Head", bodyTop, headTop,
+                bodyRadius * headRadiusFrac);
+            return changed;
+        }
+
+        static bool EnsureAimProxyCapsule(Transform root, string childName, float bottom,
+            float top, float radius)
+        {
+            bool changed = false;
+            Transform tf = root.Find(childName);
+            GameObject go;
+            if (tf == null)
+            {
+                go = new GameObject(childName);
+                go.transform.SetParent(root, false);
+                changed = true;
+            }
+            else
+            {
+                go = tf.gameObject;
+            }
+            if (go.layer != AimProvider.AimProxyLayer)
+            {
+                go.layer = AimProvider.AimProxyLayer;
+                changed = true;
+            }
+            CapsuleCollider capsule = go.GetComponent<CapsuleCollider>();
+            if (capsule == null)
+            {
+                capsule = go.AddComponent<CapsuleCollider>();
+                changed = true;
+            }
+            if (!capsule.isTrigger)
+            {
+                capsule.isTrigger = true;
+                changed = true;
+            }
+            float height = Mathf.Max(top - bottom, 0.01f);
+            var center = new Vector3(0f, bottom + height * 0.5f, 0f);
+            if (!Mathf.Approximately(capsule.height, height))
+            {
+                capsule.height = height;
+                changed = true;
+            }
+            if (capsule.center != center)
+            {
+                capsule.center = center;
+                changed = true;
+            }
+            if (!Mathf.Approximately(capsule.radius, radius))
+            {
+                capsule.radius = radius;
+                changed = true;
+            }
+            return changed;
+        }
+
+        /// Task 19 (self-heal idiom PC2 — mirrors `GetOrCreateCasingPrefab`'s
+        /// unconditional layer self-heal): reopens an ALREADY-COMMITTED
+        /// prefab asset and patches its `AimProxy_*` children in place. This
+        /// is what makes the self-heal reach a prefab built by an earlier
+        /// task/commit — `GetOrCreateMobArchetypePrefab`'s own `build()`
+        /// closure handles the fresh-build case inline instead. Same
+        /// `LoadPrefabContents`/`SaveAsPrefabAsset`/`UnloadPrefabContents`
+        /// shape as `EditorBootstrapUtils.PrefabVisualsMatch`.
+        static void SelfHealAimProxyOnPrefab(string prefabPath, float legsTop, float bodyTop,
+            float headTop, float bodyRadius, float headRadiusFrac)
+        {
+            GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                bool changed = EnsureAimProxyChildren(contents.transform,
+                    legsTop, bodyTop, headTop, bodyRadius, headRadiusFrac);
+                if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
         }
 
         /// Task 27: the shared `CasingView` prefab — a small primitive

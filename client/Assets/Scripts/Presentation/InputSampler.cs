@@ -88,11 +88,12 @@ namespace Ring.Presentation
                 // phantom extra aim frame the way the dash/slide edges intentionally
                 // do — AimHeld must track exactly whether the button is down right now.
                 AimHeld = _aimHold.IsPressed(),
-                // Height comes from AimProvider once Task 19 wires vertical aim; until
-                // then the sampler has no config access (and must not gain one — QD11)
-                // to derive a height itself, so it reports NaN and SimulationWorld.
-                // Sanitize (Task 8) maps that to the standing MuzzleHeight.
-                AimHeight = float.NaN
+                // Task 19: height now comes from AimProvider — meaningful only
+                // while AimHeld (WeaponSystem's hip-fire branch never reads it,
+                // AimProvider's own class doc); the sampler still has no config
+                // access of its own (QD11) and never needs one, since the height
+                // arrives fully formed from the provider's cached proxy cast.
+                AimHeight = _aimProvider.CurrentAimHeight
             };
         }
 
