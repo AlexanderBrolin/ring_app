@@ -39,7 +39,6 @@ namespace Ring.Presentation
         // capsule fallback's pivot was its center, hence the +1m lift; a real
         // model needs none.
         static readonly Vector3 MobOffset = Vector3.zero;
-        static readonly Vector3 ProjectileOffset = Vector3.up * 1f;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
@@ -271,15 +270,30 @@ namespace Ring.Presentation
                     // there to the new spawn point every time a view came out of
                     // the pool: exactly the "rays at ~20° off the aim direction on
                     // almost every shot" the owner saw in the milestone-2 playtest.
-                    view.transform.position = SimSpace.ToWorld(p.Pos) + ProjectileOffset;
-                    view.Bind(_gameFeel.TracerFadeSeconds);
+                    // Task 21 (K8): height comes from the projectile's own
+                    // simulated `Height` (Task 4) instead of a flat guessed
+                    // lift — no interpolation needed for a brand-new entity,
+                    // same "snap, don't lerp" rule the position half already
+                    // follows (spec §3.7).
+                    view.transform.position = SimSpace.ToWorld(p.Pos) + Vector3.up * p.Height;
+                    view.Bind(_gameFeel.TracerFadeSeconds, _gameFeel.TracerScale);
                     _activeProjectiles.Add(p.Id, view);
                     continue;
                 }
 
                 float2 prevPos = FindProjectilePrevPos(prev, p.Id, p.Pos);
                 Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(p.Pos), alpha);
-                view.transform.position = world + ProjectileOffset;
+                // Task 21 (K8): vertical interpolation mirrors the horizontal
+                // lerp above, but sources both ends straight off THIS struct's
+                // own Height/PrevHeight pair (`ProjectileState`'s own doc:
+                // "PrevHeight mirrors PrevPos's role for interpolation") rather
+                // than a second `Find...PrevHeight` snapshot walk — Task 25's
+                // render double-buffer shifts by exactly one tick per flush
+                // (SimulationRunner.Update), so `p.PrevHeight` (this struct,
+                // read off RenderCurr) already equals what a `prev`-snapshot
+                // lookup of `.Height` would return, with no extra scan.
+                world.y = Mathf.Lerp(p.PrevHeight, p.Height, alpha);
+                view.transform.position = world;
             }
 
             _staleIdsScratch.Clear();

@@ -35,13 +35,11 @@ namespace Ring.Presentation
     /// convention-consistent simplification; a real transparent surface is a
     /// separate scope decision for whoever wants it later.
     ///
-    /// Muzzle height: reads the exact ternary `WeaponSystem.Update` itself
-    /// uses for the authoritative shot's own muzzle height
-    /// (`SlideTimer > 0 ? SlideMuzzleHeight : MuzzleHeight`) so the ray's
-    /// visible origin never disagrees with where the server actually spawns
-    /// the round. `Task 21 switches this to RenderMuzzleHeight` once that
-    /// canonical accessor exists — this is the sim-correct equivalent
-    /// available today, not a placeholder guess.
+    /// Muzzle height: reads `SimulationRunner.RenderMuzzleHeight` (Task 21,
+    /// PC7's single home of the `SlideTimer > 0 ? SlideMuzzleHeight :
+    /// MuzzleHeight` ternary `WeaponSystem.Update` itself uses for the
+    /// authoritative shot) so the ray's visible origin never disagrees with
+    /// where the server actually spawns the round.
     [RequireComponent(typeof(LineRenderer))]
     public sealed class AimRayView : MonoBehaviour
     {
@@ -73,10 +71,7 @@ namespace Ring.Presentation
             if (!aimHeld) return;
 
             var player = _runner.RenderCurr.Player;
-            var hero = _runner.World.Config.Hero;
-            // Task 21 switches this to RenderMuzzleHeight (class doc above).
-            float muzzleHeight = player.SlideTimer > 0f ? hero.SlideMuzzleHeight : hero.MuzzleHeight;
-            Vector3 muzzle = SimSpace.ToWorld(player.Pos) + Vector3.up * muzzleHeight;
+            Vector3 muzzle = SimSpace.ToWorld(player.Pos) + Vector3.up * _runner.RenderMuzzleHeight;
             Vector3 aimPoint = SimSpace.ToWorld(_aimProvider.CurrentAimSimPos)
                 + Vector3.up * _aimProvider.CurrentAimHeight;
 

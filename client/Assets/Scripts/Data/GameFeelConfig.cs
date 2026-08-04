@@ -36,8 +36,11 @@ namespace Ring.Data
         // "все числа game feel — в ScriptableObjects" rule. Structural spawn
         // offsets (lateral/vertical spawn nudges, decal near-offset/height —
         // positioning epsilons, not feel) deliberately stay as code constants,
-        // same split the rest of this file already makes (e.g. `MobOffset`/
-        // `ProjectileOffset` in ViewRegistry are also never SO fields).
+        // same split the rest of this file already makes (e.g. `MobOffset` in
+        // ViewRegistry is also never an SO field; ViewRegistry's own former
+        // `ProjectileOffset` constant was Task 21's approximate-height guess,
+        // removed once the projectile's real simulated `Height`/`PrevHeight`
+        // — Task 4 — became available to read instead).
         [Range(0f, 10f)] public float CasingImpulseUpMin = 1.2f;
         [Range(0f, 10f)] public float CasingImpulseUpMax = 2.2f;
         [Range(0f, 30f)] public float CasingTorqueScale = 12f; // rad/s via VelocityChange since app-xjz
@@ -100,6 +103,13 @@ namespace Ring.Data
         [Range(0.01f, 0.5f)] public float DashLeanInOutSeconds = 0.08f;
         [Range(0f, 0.5f)] public float LocomotionCrossFadeSeconds = 0.12f;
         [Range(0f, 0.3f)] public float OneShotCrossFadeSeconds = 0.06f;
+        // Deprecated, not read (Task 21, PB11): every former consumer
+        // (MuzzleFlashView's prediction/player-branch burst,
+        // PersistentPropsDirector.SpawnCasing) switched to
+        // SimulationRunner.RenderMuzzleHeight — the sim's own slide-aware
+        // muzzle height (PC7) — instead of this flat guessed lift. Field kept
+        // rather than deleted so an already-authored .asset doesn't silently
+        // lose a serialized value; no code path reads it anymore.
         [Range(0f, 2f)] public float MuzzleLiftY = 1.1f;
         public Vector3 GunLocalPosition = Vector3.zero;
         public Vector3 GunLocalEuler = Vector3.zero;

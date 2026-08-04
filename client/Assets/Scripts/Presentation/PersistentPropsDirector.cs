@@ -63,21 +63,19 @@ namespace Ring.Presentation
     /// Unity's default "collide" and is exactly what makes casings bounce off
     /// the greybox geometry at all.
     ///
-    /// `ProjectileBlocked`'s decal/block-spark normal is computed purely
-    /// analytically from `ArenaConfig` (spec/resolution: "нормаль — от
-    /// ближайшего препятствия/стены арены из World.Config — вычисли
-    /// аналитически") — the contact point (a swept-circle collision result,
-    /// `ProjectileSystem`) sits at combined-radius distance from whichever
-    /// obstacle/the outer wall it actually hit; `ComputeBlockNormal` below
-    /// picks whichever candidate surface (each of `ArenaConfig.Obstacles`, or
-    /// the ring wall) the contact's distance best matches and returns the
-    /// outward-facing normal for that surface. All arithmetic stays in
-    /// Unity's own `Vector3` (world space, Y=0 plane — same convention
-    /// `GreyboxBuilder.BuildObstacles` already uses for
-    /// `ArenaConfig.Obstacle.Pos`, a plain `Vector2`) rather than
-    /// `Unity.Mathematics.float2` specifically so this file never needs both
-    /// `Unity.Mathematics` and `UnityEngine` `Random` in scope at once (the
-    /// two `Random` types would otherwise collide).
+    /// `ProjectileBlocked`'s decal/block-spark normal and height are read
+    /// straight off the triggering `SimEvent` (Task 21, PC4 — one home, not
+    /// two): `ProjectileSystem` already computes the exact contact geometry
+    /// server-side (a swept-circle collision result) and carries it out on
+    /// the event itself since Task 7 — `HitDir` is the real surface normal
+    /// for a wall/obstacle hit, or exactly `float2.zero` (never an
+    /// approximation) for a floor hit, and `Amount` is the contact height in
+    /// both cases. `HandleBlocked` below only has to tell the two cases apart
+    /// (`HitDir == 0` ⇒ floor, decal flat with an up-facing normal) and
+    /// convert into `UnityEngine.Vector3`/`Quaternion` — no more re-deriving
+    /// the normal analytically against `ArenaConfig.Obstacles`/the ring wall
+    /// the way the pre-Task-21 `ComputeBlockNormal` had to (back when the
+    /// event carried neither a normal nor a height).
     public sealed class PersistentPropsDirector : MonoBehaviour
     {
         /// User layer 9 — "Casings" in `ProjectSettings/TagManager.asset`
@@ -90,11 +88,11 @@ namespace Ring.Presentation
         // Structural spawn-positioning offsets — NOT feel numbers (owner
         // guidance, review fix-round: these stay code constants, only the
         // actual game-feel numbers below moved into GameFeelConfig).
-        // Casing spawn height rides GameFeelConfig.MuzzleLiftY — the muzzle
-        // height is a single source (Б1-веха fix: casings were born at ankle
-        // height inside the doll mesh).
+        // Casing spawn height rides SimulationRunner.RenderMuzzleHeight (Task
+        // 21, PC7 — was GameFeelConfig.MuzzleLiftY; the muzzle height is a
+        // single source, Б1-веха fix: casings were born at ankle height
+        // inside the doll mesh).
         const float CasingLateralOffset = 0.15f;
-        const float DecalHeightOffset = 1f;
         const float DecalNearOffset = 0.1f;
 
         // Mech pivot sits at the feet (same convention as MobVisual/ViewRegistry's
@@ -125,7 +123,6 @@ namespace Ring.Presentation
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
-        [SerializeField] ArenaConfig _arena;
         [SerializeField] CasingView _casingPrefab;
         [SerializeField] DecalProjector _decalPrefab;
         [SerializeField] CorpseView _corpsePrefab;
@@ -217,7 +214,7 @@ namespace Ring.Presentation
         {
             Vector3 lateral = new Vector3(
                 Random.Range(-CasingLateralOffset, CasingLateralOffset),
-                _gameFeel.MuzzleLiftY,
+                _runner.RenderMuzzleHeight,
                 Random.Range(-CasingLateralOffset, CasingLateralOffset));
             Vector3 pos = SimSpace.ToWorld(e.Pos) + lateral;
             // Eject to the shooter's RIGHT of the shot direction (e.Amount is the
@@ -235,17 +232,29 @@ namespace Ring.Presentation
 
         void HandleBlocked(in SimEvent e)
         {
-            Vector3 contactFlat = SimSpace.ToWorld(e.Pos);
-            Vector3 normal = ComputeBlockNormal(contactFlat, _arena);
-            Vector3 contactWorld = contactFlat + Vector3.up * DecalHeightOffset;
+            // Floor vs wall/obstacle (class doc): HitDir is exactly zero for a
+            // floor contact — ProjectileSystem's own gate (Task 7), not an
+            // epsilon check.
+            bool isFloor = e.HitDir.x == 0f && e.HitDir.y == 0f;
+            Vector3 normal = isFloor ? Vector3.up : new Vector3(e.HitDir.x, 0f, e.HitDir.y);
+            // Amount is the sim's own contact height for BOTH branches
+            // (ProjectileSystem's HitBarrier/HitFloor cases share one
+            // formula) — the event is now the sole home for height, same as
+            // HitDir already is for the normal (class doc, PC4).
+            Vector3 contactWorld = SimSpace.ToWorld(e.Pos) + Vector3.up * e.Amount;
+            // A floor's normal (world up) can't double as LookRotation's own
+            // "up" hint — forward (-normal) and the hint would be
+            // anti-parallel, a degenerate case. A horizontal hint sidesteps
+            // it; the wall branch keeps its original roll convention.
+            Vector3 upHint = isFloor ? Vector3.forward : Vector3.up;
 
             DecalProjector decal = _decals.Rent();
             decal.gameObject.SetActive(true);
             decal.transform.SetPositionAndRotation(
                 contactWorld + normal * DecalNearOffset,
-                Quaternion.LookRotation(-normal, Vector3.up));
+                Quaternion.LookRotation(-normal, upHint));
 
-            PlayParticle(_blockSparkPool, contactWorld, Quaternion.LookRotation(normal, Vector3.up));
+            PlayParticle(_blockSparkPool, contactWorld, Quaternion.LookRotation(normal, upHint));
         }
 
         void HandleMobDied(in SimEvent e)
@@ -326,33 +335,5 @@ namespace Ring.Presentation
             for (int i = 0; i < count; i++) scratch[i] = pool.Get();
             for (int i = 0; i < count; i++) pool.Release(scratch[i]);
         }
-
-        /// See class doc — analytic normal for a `ProjectileBlocked` contact
-        /// point. `contactFlat` is world-space with Y already pinned to 0 by
-        /// `SimSpace.ToWorld`.
-        static Vector3 ComputeBlockNormal(Vector3 contactFlat, ArenaConfig arena)
-        {
-            float bestError = Mathf.Abs(contactFlat.magnitude - arena.Radius);
-            Vector3 bestNormal = SafeNormalize(-contactFlat); // ring wall: inward, toward center
-
-            ArenaConfig.Obstacle[] obstacles = arena.Obstacles;
-            if (obstacles != null)
-            {
-                for (int i = 0; i < obstacles.Length; i++)
-                {
-                    Vector3 center = new Vector3(obstacles[i].Pos.x, 0f, obstacles[i].Pos.y);
-                    Vector3 delta = contactFlat - center;
-                    float error = Mathf.Abs(delta.magnitude - obstacles[i].Radius);
-                    if (error < bestError)
-                    {
-                        bestError = error;
-                        bestNormal = SafeNormalize(delta); // obstacle: outward, away from its center
-                    }
-                }
-            }
-            return bestNormal;
-        }
-
-        static Vector3 SafeNormalize(Vector3 v) => v.sqrMagnitude > 1e-8f ? v.normalized : Vector3.right;
     }
 }

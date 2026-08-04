@@ -101,9 +101,11 @@ namespace Ring.Editor
     /// (loaded via its `Packages/com.unity.render-pipelines.universal/...`
     /// virtual path) rather than hand-building a `Shader Graphs/Decal`
     /// material from scratch; (3) a `PersistentProps` object carrying
-    /// `PersistentPropsDirector`, wired to every prefab above plus `_arena`
-    /// (decal/block-spark normal computation) and `_gameFeel`; (4)
-    /// `SimEventRouter`'s new `_persistentProps` slot.
+    /// `PersistentPropsDirector`, wired to every prefab above plus
+    /// `_gameFeel` (Task 21 drops the `_arena` slot this director used to
+    /// need — the decal/block-spark normal now comes straight off the
+    /// triggering event's own `HitDir`, `PersistentPropsDirector`'s class
+    /// doc); (4) `SimEventRouter`'s new `_persistentProps` slot.
     /// Task 27 review fix-round adds a fifth step: `EnsureCasingsLayer`
     /// claims user layer 9 ("Casings") in `ProjectSettings/TagManager.asset`
     /// — casings originally shared `GreyboxBuilder.CosmeticsLayer`/8 with the
@@ -1227,7 +1229,6 @@ namespace Ring.Editor
             bool persistentPropsRefsChanged = false;
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_runner", runner);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gameFeel", gameFeel);
-            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_arena", arena);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_casingPrefab", casingPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpseMechPrefab);

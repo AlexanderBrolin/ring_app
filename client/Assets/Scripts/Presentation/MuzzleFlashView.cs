@@ -94,7 +94,7 @@ namespace Ring.Presentation
             dir.Normalize();
 
             float muzzleOffset = _runner.World.Config.Weapon.MuzzleOffset;
-            EmitBurst(posW + dir * muzzleOffset, dir, _gameFeel.MuzzleLiftY);
+            EmitBurst(posW + dir * muzzleOffset, dir, _runner.RenderMuzzleHeight);
             _predicted = true;
             _predictedExpireAt = Time.unscaledTime + SimulationRunner.ImmediatePredictionTtlSeconds;
         }
@@ -128,13 +128,22 @@ namespace Ring.Presentation
             // position — always unit-length, never the degenerate zero-vector
             // case a position difference could hit.
             Vector3 dir = new Vector3(Mathf.Cos(e.Amount), 0f, Mathf.Sin(e.Amount));
-            EmitBurst(SimSpace.ToWorld(e.Pos), dir,
-                e.Owner == ProjectileOwner.Player ? _gameFeel.MuzzleLiftY : 0f);
+            // Task 21 (QC9): a Gunner mob fires from `MobConfig.MuzzleHeight`
+            // (0.95, Task 4/Task 17) in the sim — the flash must match that
+            // exact height, not the old flat ground-anchor `lift = 0`, or the
+            // burst would visibly float below/above the Gunner's own muzzle.
+            // The player branch reads `_runner.RenderMuzzleHeight` (PC7's
+            // single home) instead of `GameFeelConfig.MuzzleLiftY`, same
+            // canonical accessor `SpawnCasing`/`AimRayView` now use.
+            float lift = e.Owner == ProjectileOwner.Player
+                ? _runner.RenderMuzzleHeight
+                : _runner.World.Config.Gunner.MuzzleHeight;
+            EmitBurst(SimSpace.ToWorld(e.Pos), dir, lift);
         }
 
-        /// Phase B: lift raises the burst to the doll's muzzle height for the
-        /// player's own shots (mech shots stay at ground-anchor height, `lift`
-        /// = 0 — mobs never got the doll lift in the first place, ПБ2).
+        /// Phase B: lift raises the burst to the shooter's muzzle height (Task
+        /// 21 — both branches now read a real muzzle height instead of the
+        /// player-only doll lift / flat mob `0`, see `HandleEvent` above).
         void EmitBurst(Vector3 worldPos, Vector3 dir, float lift)
         {
             transform.position = worldPos + Vector3.up * lift;
