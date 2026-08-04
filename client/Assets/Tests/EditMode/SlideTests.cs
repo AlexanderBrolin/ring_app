@@ -541,6 +541,47 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void SlideDenied_VelTracksInput_DuringBufferWindow()
+        {
+            // C1 (final review wave, app-n6g): the slide-start branch's
+            // gate-failed path used to leave p.Vel completely untouched —
+            // unlike the dash branch's own gate-fail else (:153), which
+            // already calls RegularMoveVel — so a denied slide coasted at
+            // frozen velocity for the whole SlideBufferWindow (~5 ticks at
+            // TickDt, reachable as the 4th move of the owner's signature
+            // 100/40/30/refund-10 chain). This pins Vel actually tracking
+            // input during that window instead.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            RunUp(w, cfg); // primes RunUpTimer to the slide gate, Vel -> MaxSpeed on +X
+
+            var p = w.Player;
+            const float missing = 1f;
+            p.Stamina = cfg.Hero.SlideStaminaCost - missing; // gate WILL fail
+            w.SetPlayerForTest(p);
+
+            float2 velBefore = w.Player.Vel;
+            Assert.Greater(velBefore.x, 0f, "test setup: must be moving in +X before the denied slide");
+
+            // Request a slide with input reversed — must be denied (stamina
+            // gate fails) yet Vel must still turn toward the new (reversed)
+            // MoveDir instead of staying frozen at velBefore.
+            w.Tick(new SimInput { MoveDir = new float2(-1f, 0f), SlideRequested = true });
+            Assert.AreEqual(0, w.Stats.SlidesUsed, "test setup: must have been denied, not started");
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.StaminaDenied));
+            Assert.Less(w.Player.Vel.x, velBefore.x,
+                "Vel must track input on the tick the slide is denied, not stay frozen");
+
+            // A further silent retry tick (buffer still alive, no fresh
+            // request this tick — C11) must ALSO keep tracking input, not
+            // just the request's own tick.
+            float2 velAfterFirstTick = w.Player.Vel;
+            w.Tick(new SimInput { MoveDir = new float2(-1f, 0f) });
+            Assert.Less(w.Player.Vel.x, velAfterFirstTick.x,
+                "Vel must keep tracking input on a silent buffer-retry tick too");
+        }
+
+        [Test]
         public void SlideAlongWall_Continues()
         {
             var cfg = TestConfigs.Open();

@@ -162,6 +162,33 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Validate_SwingLeadFactorOutOfRange_Throws()
+        {
+            // I3 (final review wave, app-n6g): SwingLeadFactor is spec-mandated
+            // to stay within [0,2] per archetype (MobConfig's own [Range(0f,
+            // 2f)] Inspector hint — never enforced outside the Editor UI, so
+            // SimConfigBuilder must reject it too) but ValidateMob never
+            // checked it.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            c.SwingLeadFactor = 2.5f; // outside [0, 2]
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("SwingLeadFactor"));
+        }
+
+        [Test]
+        public void Validate_SwingLeadMaxMetersNegative_Throws()
+        {
+            // I3 (final review wave, app-n6g): SwingLeadMaxMeters must stay
+            // non-negative per archetype — ValidateMob never checked it.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            c.SwingLeadMaxMeters = -1f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("SwingLeadMaxMeters"));
+        }
+
+        [Test]
         public void Validate_LinkRefundNotBelowMinCost_Throws()
         {
             var hero = ScriptableObject.CreateInstance<HeroConfig>();

@@ -264,13 +264,86 @@ namespace Ring.Simulation.Tests
             // mechanics in PlayerMovementSystem.Update's linked-slide/
             // linked-dash branches). PlayerState itself gained no new field
             // (LinkRefund lives only on HeroConfig/HeroSimConfig), but every
-            // one of these numbers feeds Stamina/DashCooldown, both already
-            // folded into HashPlayer — so the scripted run's dash/slide
-            // stamina trace (and, via the new DashCooldown-cancel side
-            // effect of a linked slide, its dash-cooldown trace too)
-            // legitimately differs from Task 16's.
-            const ulong GoldenHash = 0x08AA06987E1C5CDAUL; // = 624318750364818650
+            // one of these numbers feeds Stamina, already folded into
+            // HashPlayer — so the scripted run's dash/slide stamina trace
+            // legitimately differs from Task 16's. Corrected note (final
+            // review wave, this paragraph originally claimed a linked slide
+            // "cancels the dash cooldown" — that was mis-scoped and never
+            // shipped: DashCooldown counts down untouched by either linked
+            // branch, per SlideTests.LinkedSlide_DoesNotCancelDashCooldown_
+            // OutOfWindowDashStillDenied and PlayerMovementSystem's own
+            // linked-slide comment; the hash delta here is the changed
+            // stamina numbers alone, nothing DashCooldown-related).
+            //
+            // Re-pinned by the final-fix-wave review round (C1, app-n6g,
+            // repin #12): the slide-start branch's gate-failed path used to
+            // leave p.Vel completely untouched for the whole
+            // SlideBufferWindow every tick the buffer kept retrying/decaying
+            // — it now calls RegularMoveVel there too, same as the dash
+            // branch's own gate-fail else always has. Scripted()'s
+            // SlideRequested draw (~5%/tick) can land on a tick the stamina
+            // gate fails, so the scripted run's Vel/Pos trace on those ticks
+            // legitimately differs from repin #11's.
+            const ulong GoldenHash = 0x760AEB00D11301C4UL; // = 8505869234982814148
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
+        }
+
+        [Test]
+        public void GoldenScenario_ExercisesAllMechanics_Coverage()
+        {
+            // I4 (final review wave, app-n6g): a companion to
+            // GoldenHash_ScriptedScenario over the SAME Scripted() generator,
+            // same fixed world seed (42) / input seed (123) / tick count as
+            // the golden — so this can never flake, it just asserts the
+            // scenario the golden pins actually DRIVES the mechanics it
+            // claims to (slide, dash, ricochet, both fire modes), not merely
+            // that its hash is stable.
+            //
+            // The event buffer is not auto-cleared per tick (SimulationWorld.
+            // Tick never calls ClearEvents() itself — only ClearEvents()
+            // callers decide when), and it stops recording once it hits
+            // Arena.MaxEventsPerFrame (256 in TestConfigs.Default()) rather
+            // than wrapping — over 1000 ticks that cap would silently drop
+            // most of the run's events. So this counts DIRECTLY off each
+            // tick's freshly-emitted slice and clears immediately after,
+            // instead of reading the accumulated buffer once at the end.
+            SimConfig cfg = TestConfigs.Default();
+            var world = new SimulationWorld(42, cfg);
+            var rng = new Random(123);
+            bool aimHeld = false; // LOCAL, same no-static-leak reasoning as RunScripted's own
+
+            int dashRicochetCount = 0;
+            int headshotProjectileHits = 0;
+            bool anyAimedProjectileFired = false; // VelZ != 0 -> the AimHeld branch actually spawned a shot
+
+            for (int i = 0; i < Ticks; i++)
+            {
+                world.Tick(Scripted(ref rng, ref aimHeld, cfg.Hero.MaxAimHeight));
+
+                for (int e = 0; e < world.EventCount; e++)
+                {
+                    SimEvent ev = world.GetEvent(e);
+                    if (ev.Kind == SimEventKind.DashRicocheted) dashRicochetCount++;
+                    if (ev.Kind == SimEventKind.ProjectileHit && ev.Zone == HitZone.Head)
+                        headshotProjectileHits++;
+                }
+                world.ClearEvents();
+
+                for (int p = 0; p < world.ProjectileCount; p++)
+                {
+                    if (world.Projectiles[p].VelZ != 0f) { anyAimedProjectileFired = true; break; }
+                }
+            }
+
+            Assert.Greater(world.Stats.SlidesUsed, 0,
+                "the golden scenario must actually exercise sliding, not leave it dormant");
+            Assert.Greater(world.Stats.DashesUsed, 0,
+                "the golden scenario must actually exercise dashing, not leave it dormant");
+            Assert.GreaterOrEqual(dashRicochetCount, 1,
+                "the golden scenario must ricochet a dash off an obstacle at least once");
+            Assert.IsTrue(headshotProjectileHits >= 1 || anyAimedProjectileFired,
+                "the golden scenario must either land a Head-zone hit, or at minimum fire at " +
+                "least one aimed (VelZ != 0) shot, proving the AimHeld branch actually fired");
         }
 
         [Test]

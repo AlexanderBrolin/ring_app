@@ -509,9 +509,11 @@ namespace Ring.Presentation
         /// prefab (GameFeelConfig class doc: "RicochetSparkCount... deliberately
         /// NOT added — ricochet sparks reuse the baked BlockSparkBurstCount").
         /// Guard mirrors `HandleBlocked`'s own zero-normal check above:
-        /// `Quaternion.LookRotation(Vector3.zero, ...)` logs an error (ГЕЙТ-ЛОГ)
-        /// rather than throwing, so this can't rely on the sim never emitting a
-        /// degenerate contact normal — Presentation checks for itself.
+        /// `Quaternion.LookRotation(Vector3.zero, ...)` logs an error (which
+        /// would fail the log gate, the batchmode error-grep every Unity run
+        /// is checked against) rather than throwing, so this can't rely on
+        /// the sim never emitting a degenerate contact normal — Presentation
+        /// checks for itself.
         void HandleRicocheted(in SimEvent e)
         {
             if (e.HitDir.x == 0f && e.HitDir.y == 0f) return;

@@ -1366,7 +1366,8 @@ namespace Ring.Editor
                 lifetime: gameFeel.DeathBurstLifetime, speed: gameFeel.DeathBurstSpeed, size: gameFeel.DeathBurstSize,
                 burstCount: 24, coneAngle: 90f);
             // Task 22 (spec Г6) fix-round: slide dust reuses GetOrCreateSparkPrefab
-            // outright (по образцу спарк-пулов, brief) — lifetime/speed/size/
+            // outright (following the same pattern as the other spark pools, per
+            // the brief) — lifetime/speed/size/
             // burstCount are ALL config-sourced, same as HitSpark/BlockSpark/
             // DeathBurst's own lifetime/speed/size above (review caught an
             // earlier version of this comment misstating that split as

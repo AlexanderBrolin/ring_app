@@ -216,15 +216,28 @@ namespace Ring.Simulation.Movement
                             : math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f));
                     result.SlideStarted = true; // world: PlayerSlideStarted + SlidesUsed++
                 }
-                else if (input.SlideRequested)
+                else
                 {
-                    // C11: unlike dash, the buffer is NOT cleared on a missed
-                    // attempt — it keeps decaying/rechecking every tick so a
-                    // late stamina regen can still cover the cost before the
-                    // window closes (PD12). Denied fires only on the request's
-                    // own tick, so a still-buffered retry doesn't re-emit it
-                    // every tick (symmetry with dash: once per charge).
-                    result.SlideDenied = true; // world: StaminaDenied
+                    // C1 (final review wave, app-n6g): the gate-failed path
+                    // must still drive Vel from this tick's input — same
+                    // "denied path still moves" contract as the dash
+                    // branch's own gate-fail else above (:153) — otherwise
+                    // the player coasts at frozen velocity for the whole
+                    // SlideBufferWindow (~5 ticks at TickDt) every tick the
+                    // buffer keeps retrying/decaying (C11 below), not just
+                    // the request's own tick.
+                    p.Vel = RegularMoveVel(p.Vel, input.MoveDir, input.AimHeld, hero, dt);
+                    if (input.SlideRequested)
+                    {
+                        // C11: unlike dash, the buffer is NOT cleared on a
+                        // missed attempt — it keeps decaying/rechecking
+                        // every tick so a late stamina regen can still
+                        // cover the cost before the window closes (PD12).
+                        // Denied fires only on the request's own tick, so a
+                        // still-buffered retry doesn't re-emit it every
+                        // tick (symmetry with dash: once per charge).
+                        result.SlideDenied = true; // world: StaminaDenied
+                    }
                 }
             }
             else

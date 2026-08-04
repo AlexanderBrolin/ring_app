@@ -95,6 +95,12 @@ namespace Ring.Data
         // current marker (В1/В2 fix-wave 2), see its own doc.
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
+        // I5 reviewer rec #5 (final review wave, app-n6g): this scale is NOT
+        // auto-coupled to MobGunnerConfig's zone-top geometry (LegsTop/
+        // BodyTop/HeadTop) or the AimProxy_Legs/Body/Head belts sized from
+        // those tops (StageOneSceneBootstrap.EnsureAimProxyChildren) — a
+        // retune of one alone silently desyncs the visible model from its
+        // hittable silhouette. A GunnerVisualScale change must move both.
         [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
         [Range(0f, 0.5f)] public float SpeedDampTime = 0.1f;
         [Range(0f, 1f)] public float PlayerMoveThreshold01 = 0.05f;

@@ -85,9 +85,10 @@ namespace Ring.Presentation
         }
 
         /// (Re)spawns this pooled instance at `pos` with the given launch
-        /// impulse (`ForceMode.VelocityChange` — урок 28, same
-        /// meters-per-second-direct contract `CasingView.Spawn`'s own doc
-        /// explains). Explicitly resets `isKinematic`/velocity — a
+        /// impulse (`ForceMode.VelocityChange` — lesson 28: apply the
+        /// impulse as a direct velocity, same meters-per-second-direct
+        /// contract `CasingView.Spawn`'s own doc explains). Explicitly
+        /// resets `isKinematic`/velocity — a
         /// FIFO-reused instance may still be frozen from its previous life in
         /// the ring buffer.
         ///

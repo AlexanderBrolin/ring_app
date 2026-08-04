@@ -374,6 +374,12 @@ namespace Ring.Data
             ReqNonNegative(errors, $"{name}.SeparationStrength", m.SeparationStrength);
             ReqNonNegative(errors, $"{name}.AvoidLookahead", m.AvoidLookahead);
             ReqNonNegative(errors, $"{name}.AvoidMargin", m.AvoidMargin);
+            // I3 (final review wave, app-n6g): spec-mandated per-archetype
+            // range — MobConfig's own [Range(0f, 2f)] Inspector hint is never
+            // enforced outside the Editor UI, so the builder must reject an
+            // out-of-range value reaching it programmatically too.
+            ReqInRange(errors, $"{name}.SwingLeadFactor", m.SwingLeadFactor, 0f, 2f);
+            ReqNonNegative(errors, $"{name}.SwingLeadMaxMeters", m.SwingLeadMaxMeters);
         }
 
         static void ReqFinite(List<string> errors, string name, float value)

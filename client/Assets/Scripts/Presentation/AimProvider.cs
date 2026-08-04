@@ -159,10 +159,23 @@ namespace Ring.Presentation
         /// collider belongs to a live mob, that mob's own `MobView`
         /// (`GetComponentInParent` — the proxy is a direct child of the same
         /// root `MobView` sits on, `EnsureAimProxyChildren`'s own call sites).
-        /// A hit on the PLAYER's own proxy (also on this layer, Task 19)
-        /// naturally yields `hoveredMob == null` here (no `MobView` in that
-        /// parent chain), which is exactly the desired "never highlight the
-        /// player" behavior with no extra type check.
+        ///
+        /// I1 (final review wave, app-n6g): a hit on the PLAYER's own proxy
+        /// (also on this layer, Task 19 — `StageOneSceneBootstrap` wires the
+        /// SAME `EnsureAimProxyChildren` onto the player doll as onto every
+        /// mob archetype) is excluded outright, treated exactly like a cast
+        /// miss. It used to fall through and still populate `simPos`/
+        /// `height`/`zone` from the self-hit (`hoveredMob` alone came back
+        /// null, since no `MobView` sits on the player) — aiming near your
+        /// own feet/torso/head read as a false head-hover cue on YOURSELF
+        /// (pulse/tick/red ray, every consumer below reads `CurrentAimZone`
+        /// directly, not `CurrentHoveredMob`: `CrosshairView`/`AimRayView`)
+        /// and collapsed `CurrentAimSimPos` onto the player's own position
+        /// (the aimed shot then degenerates to `WeaponSystem`'s zero-length
+        /// fallback direction). `GetComponentInParent&lt;PlayerView&gt;` only
+        /// ever resolves on the player's own doll (`StageOneSceneBootstrap`'s
+        /// `playerGo` carries it, no mob prefab does) — a pure self-hit
+        /// check, not a "which player" one.
         bool TryAimProxy(out float2 simPos, out float height, out HitZone zone,
             out MobView hoveredMob, out Vector3 worldPoint)
         {
@@ -181,6 +194,18 @@ namespace Ring.Presentation
             float maxDistance = _runner.World.Config.Arena.Radius * 2f;
             if (!Physics.Raycast(ray, out RaycastHit hit, maxDistance,
                     1 << AimProxyLayer, QueryTriggerInteraction.Collide))
+            {
+                simPos = default;
+                height = default;
+                zone = HitZone.None;
+                hoveredMob = null;
+                worldPoint = default;
+                return false;
+            }
+
+            // I1: self-hit — behave exactly like the miss branch above (the
+            // caller (LateUpdate) falls through to the Э1 plane cast).
+            if (hit.collider.GetComponentInParent<PlayerView>() != null)
             {
                 simPos = default;
                 height = default;
