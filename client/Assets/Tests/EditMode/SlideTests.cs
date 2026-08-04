@@ -365,10 +365,30 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(cfg.Hero.RunUpSeconds, w.Player.RunUpTimer, 1e-3f);
         }
 
-        [Test]
-        public void LinkedSlide_CancelsDashCooldown_NextDashImmediatelyAvailable()
+        /// Local fixture (PD5): DashCooldown 3s, comfortably longer than the
+        /// post-dash-window wait + a full slide + the link window that
+        /// follows it (~0.9s total at TestConfigs.Open()'s own numbers) —
+        /// guarantees the cooldown is STILL running once the link window has
+        /// fully closed, so a subsequent out-of-window dash attempt has a
+        /// real gate to be denied by (not a coincidentally-already-expired
+        /// one).
+        static SimConfig CooldownOutlastsWindowsFixture()
         {
             var cfg = TestConfigs.Open();
+            cfg.Hero.DashCooldown = 3f;
+            return cfg;
+        }
+
+        [Test]
+        public void LinkedSlide_DoesNotCancelDashCooldown_OutOfWindowDashStillDenied()
+        {
+            // Owner clarification (В1 fix-wave 3 review): "cancels the dash
+            // cooldown" was mis-scoped in the first pass — a linked slide
+            // does NOT bank/reset DashCooldown globally. Chain continuation
+            // is exclusively the linked-DASH rule (a dash started while
+            // LinkWindowTimer > 0 bypasses the remainder) — a dash attempted
+            // OUTSIDE that window still obeys the ordinary cooldown gate.
+            var cfg = CooldownOutlastsWindowsFixture();
             var w = new SimulationWorld(1, cfg);
             var move = new SimInput { MoveDir = new float2(1f, 0f) };
 
@@ -376,25 +396,31 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, w.Stats.DashesUsed);
             for (int i = 0; i < 10; i++) w.Tick(move); // dash ends, post-dash window opens
             Assert.Greater(w.Player.PostDashSlideTimer, 0f, "test setup: post-dash window must be open");
-            Assert.Greater(w.Player.DashCooldown, 0f,
-                "test setup: dash #1's cooldown must still be running — this is what the cancel is for");
 
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // linked slide
             Assert.AreEqual(1, w.Stats.SlidesUsed);
-            Assert.AreEqual(0f, w.Player.DashCooldown, "linked slide must cancel the dash cooldown immediately");
+            Assert.Greater(w.Player.DashCooldown, 0f,
+                "a linked slide must NOT cancel the dash cooldown (owner clarification)");
 
             int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
             for (int i = 0; i < slideTicks; i++) w.Tick(move); // ride the slide out to its natural end
             Assert.AreEqual(0f, w.Player.SlideTimer, "test setup: slide must have ended");
-            Assert.AreEqual(0f, w.Player.DashCooldown,
-                "test setup: the canceled cooldown must have stayed at 0 all through the slide");
+            Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
+            Assert.Greater(w.Player.DashCooldown, 0f, "test setup: cooldown must still be running");
 
-            // Proof by consequence: a dash requested the very next tick fires
-            // immediately — a non-canceled cooldown would still be counting
-            // down and would deny it outright.
+            // Let the link window close WITHOUT dashing into it.
+            int linkWindowTicks = (int)math.ceil(cfg.Hero.LinkWindowSeconds / SimulationWorld.TickDt) + 2;
+            for (int i = 0; i < linkWindowTicks; i++) w.Tick(move);
+            Assert.AreEqual(0f, w.Player.LinkWindowTimer, "test setup: link window must have closed");
+            Assert.Greater(w.Player.DashCooldown, 0f,
+                "test setup: cooldown must still be running once the window has closed");
+
+            // Outside any window now: a dash attempt obeys the normal
+            // cooldown gate and does not start.
+            int dashesBefore = w.Stats.DashesUsed;
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true });
-            Assert.AreEqual(2, w.Stats.DashesUsed,
-                "the dash cooldown was canceled by the linked slide — the next dash must be instantly available");
+            Assert.AreEqual(dashesBefore, w.Stats.DashesUsed,
+                "a dash outside the link window must respect the still-running cooldown");
         }
 
         /// Local fixture (PD5, per DashRicochetTests.Fixture()'s pattern):
@@ -440,13 +466,15 @@ namespace Ring.Simulation.Tests
             float afterSlide = cfg.Hero.StaminaMax - cfg.Hero.DashStaminaCost
                 - cfg.Hero.SlideStaminaCost + cfg.Hero.LinkRefund;
             Assert.AreEqual(afterSlide, w.Player.Stamina, 1e-3f);
-            Assert.AreEqual(0f, w.Player.DashCooldown, "linked slide must cancel the dash cooldown");
 
             int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
             for (int i = 0; i < slideTicks; i++) w.Tick(move); // ride the slide out to its natural end
             Assert.AreEqual(0f, w.Player.SlideTimer, "test setup: slide must have ended");
             Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
 
+            // 3rd move (dash) starts inside LinkWindowTimer, so it bypasses
+            // whatever DashCooldown remains from dash #1 regardless of the
+            // slide above never having touched it (owner clarification).
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // 3: linked dash
             Assert.AreEqual(2, w.Stats.DashesUsed);
             float afterDash2 = afterSlide - cfg.Hero.DashStaminaCost + cfg.Hero.LinkRefund;
@@ -478,7 +506,6 @@ namespace Ring.Simulation.Tests
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // 2: linked slide
             balance = balance - cfg.Hero.SlideStaminaCost + cfg.Hero.LinkRefund;
             Assert.AreEqual(balance, w.Player.Stamina, 1e-3f);
-            Assert.AreEqual(0f, w.Player.DashCooldown);
 
             int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
             for (int i = 0; i < slideTicks; i++) w.Tick(move);
@@ -494,7 +521,6 @@ namespace Ring.Simulation.Tests
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // 4: linked slide
             balance = balance - cfg.Hero.SlideStaminaCost + cfg.Hero.LinkRefund;
             Assert.AreEqual(balance, w.Player.Stamina, 1e-3f);
-            Assert.AreEqual(0f, w.Player.DashCooldown);
 
             for (int i = 0; i < slideTicks; i++) w.Tick(move);
             Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");

@@ -191,13 +191,14 @@ namespace Ring.Simulation.Movement
                     if (linked)
                     {
                         // Refund lands on top of the full-price payment
-                        // above, clamped to the pool; canceling DashCooldown
-                        // is the other half of the reward for landing a
-                        // slide inside the post-dash window — the next dash
-                        // comes right back instead of waiting out the rest
-                        // of the old cooldown.
+                        // above, clamped to the pool. Owner clarification
+                        // (В1 fix-wave 3 review): this is NOT a banked/global
+                        // cooldown reset — DashCooldown keeps counting down
+                        // untouched here. Chain continuation is exclusively
+                        // the dash branch's own LinkWindowTimer bypass above:
+                        // only a dash that ITSELF lands inside the window
+                        // skips the remainder (and gets its own refund).
                         p.Stamina = math.min(hero.StaminaMax, p.Stamina + hero.LinkRefund);
-                        p.DashCooldown = 0f;
                     }
                     p.StaminaRegenDelayTimer = hero.StaminaRegenDelay;
                     p.SlideTimer = hero.SlideDuration;

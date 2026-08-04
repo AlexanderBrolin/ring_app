@@ -93,16 +93,17 @@ namespace Ring.Simulation.Tests
 
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide, via post-dash window
             Assert.AreEqual(1, w.Stats.SlidesUsed);
-            // NB (Б1 economy rework): the slide above is itself "linked" (it
-            // used the post-dash window) and so already zeroed DashCooldown —
-            // LinkedDash_BypassesStillRunningCooldown below owns the case
-            // where the cooldown genuinely is still running at request time;
-            // this test's own focus is the window/refund arithmetic.
 
             int slideTicks = (int)math.ceil(cfg.Hero.SlideDuration / SimulationWorld.TickDt);
             for (int i = 0; i < slideTicks; i++) w.Tick(move); // ride the slide out to its natural end
             Assert.AreEqual(0f, w.Player.SlideTimer, "test setup: slide must have ended");
             Assert.Greater(w.Player.LinkWindowTimer, 0f, "test setup: link window must be open");
+            // Owner clarification (В1 fix-wave 3 review): a linked slide
+            // does NOT cancel DashCooldown — dash #1's cooldown is still
+            // running here, which is exactly what the LinkWindowTimer
+            // bypass below is for.
+            Assert.Greater(w.Player.DashCooldown, 0f,
+                "test setup: dash #1's cooldown must still be running — this is what the bypass is for");
 
             float staminaBeforeLinkedDash = w.Player.Stamina;
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true }); // linked dash, inside the window
@@ -132,12 +133,15 @@ namespace Ring.Simulation.Tests
 
             // Let the post-dash window close on its own (PostDashSlideWindow <
             // DashCooldown, TestConfigs.Open()) while DashCooldown keeps
-            // counting down — a subsequent slide gated purely on RunUpTimer
-            // (QA1 seam below, same idiom as
-            // SlideTests.WallStop_KillsSlide_NoLinkWindow) is NOT "linked"
-            // (PostDashSlideTimer is 0), so unlike a post-dash-window slide
-            // (SlideTests.LinkedSlide_CancelsDashCooldown_...) it must leave
-            // DashCooldown running.
+            // counting down — a slide (linked or not) never touches
+            // DashCooldown (owner clarification, В1 fix-wave 3 review: only
+            // a dash that itself lands inside LinkWindowTimer bypasses the
+            // remainder). This particular slide is gated purely on
+            // RunUpTimer (QA1 seam below, same idiom as
+            // SlideTests.WallStop_KillsSlide_NoLinkWindow), so it isn't even
+            // "linked" — a belt-and-suspenders variant of the same guarantee
+            // LinkedDash_CooldownBypassAndRefund_ConsumesWindow's own linked
+            // slide now demonstrates too.
             int postDashWindowTicks = (int)math.ceil(
                 (cfg.Hero.DashDuration + cfg.Hero.PostDashSlideWindow) / SimulationWorld.TickDt) + 2;
             for (int i = 0; i < postDashWindowTicks; i++) w.Tick(move);
