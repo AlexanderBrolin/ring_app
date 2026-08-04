@@ -32,12 +32,11 @@ MonoBehaviour:
   MuzzleHeight: 1
   SlideMuzzleHeight: 0.45
   MaxAimHeight: 3.8
-  StaminaMax: 90
-  DashStaminaCost: 48
-  SlideStaminaCost: 13
-  LinkedDashStaminaCost: 16
-  StaminaRegenPerSec: 22
-  StaminaRegenDelay: 0.72
+  StaminaMax: 100
+  DashStaminaCost: 40
+  SlideStaminaCost: 30
+  StaminaRegenPerSec: 20
+  StaminaRegenDelay: 0.8
   SlideSpeed: 13.5
   SlideDuration: 0.52
   SlideSteerRadPerSec: 1.2
@@ -52,3 +51,4 @@ MonoBehaviour:
   AimMoveSpeedFrac: 0.8
   AimSlideSpeedMult: 0.5
   AimSettleSeconds: 0.5
+  LinkRefund: 10
