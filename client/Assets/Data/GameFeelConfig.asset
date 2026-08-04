@@ -51,7 +51,7 @@ MonoBehaviour:
   ExtrapolateLocalPlayer: 0
   PlayerVisualScale: 1
   ChaserVisualScale: 0.4
-  GunnerVisualScale: 0.4
+  GunnerVisualScale: 0.76
   SpeedDampTime: 0.1
   PlayerMoveThreshold01: 0.05
   VisualTurnDegPerSec: 720
@@ -91,7 +91,7 @@ MonoBehaviour:
   GibExplosionSpeed: 4
   GibPartsFifoLimit: 24
   GibPhysicsSeconds: 3
-  AimProxyHeadRadiusFrac: 0.5
+  AimProxyHeadRadiusFrac: 0.8
   AimRayAlpha: 0.35
   AimRayWidth: 0.03
   AimDotScale: 0.15
