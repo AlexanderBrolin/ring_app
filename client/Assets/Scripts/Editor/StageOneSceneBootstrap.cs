@@ -483,6 +483,12 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "HeadHoverPulseAmp"); // В3 fix-wave 2
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "PlayerSpawnRingFrac"); // Stage 2 Task 9
+            // WaveConfig joins the marker mechanism for the first time in Stage 2
+            // Task 16, with PerPlayerCountFrac (the class's newest field) as its
+            // marker — the per-extra-player wave scale is a NEW key, and new keys
+            // are exactly what this mechanism is for (ApplyStageTwoBalance above
+            // only rewrites values that already exist on disk).
+            EditorBootstrapUtils.EnsureAssetHasKey(wave, $"{DataDir}/WaveConfig.asset", "PerPlayerCountFrac"); // Stage 2 Task 16
 
             AssetDatabase.SaveAssets();
 
@@ -1622,56 +1628,104 @@ namespace Ring.Editor
             return changed;
         }
 
-        /// Stage 2 Task 9 scaffold (owner decision F3a) — body populated by
-        /// Task 16 once the Stage 2 balance numbers exist. Will mirror
-        /// ApplyGunnerZoneDefaults: SetIfDifferent per field for the `ref
-        /// float` fields below, plus new `ref int`/array overloads Task 16
-        /// adds (five of the eight sanctioned numbers are ints, plus the
-        /// Walls array itself — the existing SetIfDifferent(ref float,
-        /// float) does not cover them), so a post-delivery owner hand-tune at
-        /// milestone B1 survives every later R-APPLY. Called behind the
-        /// on-disk `stageTwoPending` gate above — see that call site's doc
-        /// (fix-round 1, C-1) for why it reads ArenaConfig.asset's text
-        /// instead of the loaded object. `wave`/`gameFeel` are already
-        /// accepted, and the two `out` flags let the call site SetDirty all
-        /// three touched assets independently (fix-round 1, I-2: Task 16's
-        /// numbers span ArenaConfig, WaveConfig's MaxMobsPerWave and
-        /// GameFeelConfig's MaxCorpses/MaxCasings/MaxDecals — a single dirty
-        /// flag on `arena` alone would silently drop the other two assets'
-        /// changes), so Task 16 does not need to touch this signature, only
-        /// this method's body.
+        /// Stage 2 Task 9 scaffold (owner decision F3a), body filled by Task 16:
+        /// the ONE-TIME delivery of Stage 2's sanctioned balance edits into the
+        /// already-committed `.asset`s. Mirrors ApplyGunnerZoneDefaults'
+        /// body — SetIfDifferent per field, so a post-delivery owner hand-tune at
+        /// milestone В1 survives every later R-APPLY. Called behind the on-disk
+        /// `stageTwoPending` gate above; see that call site's doc (fix-round 1,
+        /// C-1) for why it reads ArenaConfig.asset's TEXT instead of the loaded
+        /// object, and why that gate is the gate's PERMANENT form which Task 16
+        /// must not replace. Task 9's tripwire (a throw that fired the moment
+        /// `ArenaConfig.Walls` was declared) has done its job and is gone.
         ///
-        /// Fix-round 1 tripwire (mandatory, review-requested): the moment
-        /// Task 16 declares `ArenaConfig.Walls`, this stub throws instead of
-        /// silently staying empty — Task 16 physically cannot land the field
-        /// without also filling this method's body, by construction. Owner
-        /// decision F3a: the call site's on-disk `stageTwoPending` gate (see
-        /// that call site's own doc, ~:419-422, and spec §3.15) is the gate's
-        /// PERMANENT form — it stays forever, distinguishing "never touched
-        /// disk" from "already balanced" on every future run, not just
-        /// through Task 16. Task 16 removes ONLY this tripwire (the
-        /// `if (typeof(ArenaConfig).GetField("Walls") != null) throw ...`
-        /// below), never the gate itself. No automated test guards this
-        /// (Tests.EditMode's asmdef does not reference Ring.Editor); the
-        /// throw is the guard.
+        /// The VALUES are not restated here. Spec §0's two-sources discipline
+        /// makes the C# field initializer the starting-balance source of truth,
+        /// so a pristine `CreateInstance` of each class supplies them and this
+        /// method only decides WHICH fields are sanctioned to move (spec §3.15):
+        /// ArenaConfig's Radius/MaxMobs/MaxProjectiles/MaxEventsPerFrame plus the
+        /// Obstacles and Walls arrays, WaveConfig's MaxMobsPerWave, and
+        /// GameFeelConfig's MaxCorpses/MaxCasings/MaxDecals. Everything else on
+        /// those three assets — SpawnClearance, wave pacing, every game-feel
+        /// number the owner tuned across milestones Б/В — is deliberately left
+        /// untouched. A literal copy of the numbers here would have been a THIRD
+        /// place to keep them in sync, on top of the C# defaults and TestConfigs.
+        ///
+        /// `PerPlayerCountFrac` is absent on purpose: it is a NEW key, and new
+        /// keys arrive through the marker mechanism (EnsureAssetHasKey on
+        /// WaveConfig, added by this same task) — this method exists only for
+        /// EXISTING values, which that mechanism never rewrites.
+        ///
+        /// The two `out` flags let the call site SetDirty all three touched
+        /// assets independently (fix-round 1, I-2): MaxMobsPerWave lives on
+        /// WaveConfig and the three FIFO limits on GameFeelConfig, so a single
+        /// dirty flag on `arena` would silently drop them.
         static bool ApplyStageTwoBalance(ArenaConfig arena, WaveConfig wave, GameFeelConfig gameFeel,
             out bool waveChanged, out bool feelChanged)
         {
-            if (typeof(ArenaConfig).GetField("Walls") != null)
-                throw new System.InvalidOperationException(
-                    "Stage 2 Task 16: ArenaConfig.Walls exists — fill ApplyStageTwoBalance's " +
-                    "body and remove this tripwire. Leave the call site's on-disk " +
-                    "stageTwoPending gate alone — it is the gate's permanent form " +
-                    "(owner decision F3a), not something Task 16 replaces.");
+            var arenaDefaults = ScriptableObject.CreateInstance<ArenaConfig>();
+            var waveDefaults = ScriptableObject.CreateInstance<WaveConfig>();
+            var feelDefaults = ScriptableObject.CreateInstance<GameFeelConfig>();
+            try
+            {
+                bool arenaChanged = false;
+                arenaChanged |= SetIfDifferent(ref arena.Radius, arenaDefaults.Radius);
+                arenaChanged |= SetIfDifferent(ref arena.MaxMobs, arenaDefaults.MaxMobs);
+                arenaChanged |= SetIfDifferent(ref arena.MaxProjectiles, arenaDefaults.MaxProjectiles);
+                arenaChanged |= SetIfDifferent(ref arena.MaxEventsPerFrame, arenaDefaults.MaxEventsPerFrame);
+                arenaChanged |= SetIfDifferent(ref arena.Obstacles, arenaDefaults.Obstacles);
+                arenaChanged |= SetIfDifferent(ref arena.Walls, arenaDefaults.Walls);
 
-            waveChanged = false;
-            feelChanged = false;
-            return false;
+                waveChanged = SetIfDifferent(ref wave.MaxMobsPerWave, waveDefaults.MaxMobsPerWave);
+
+                feelChanged = false;
+                feelChanged |= SetIfDifferent(ref gameFeel.MaxCorpses, feelDefaults.MaxCorpses);
+                feelChanged |= SetIfDifferent(ref gameFeel.MaxCasings, feelDefaults.MaxCasings);
+                feelChanged |= SetIfDifferent(ref gameFeel.MaxDecals, feelDefaults.MaxDecals);
+
+                return arenaChanged;
+            }
+            finally
+            {
+                Object.DestroyImmediate(arenaDefaults);
+                Object.DestroyImmediate(waveDefaults);
+                Object.DestroyImmediate(feelDefaults);
+            }
         }
 
         static bool SetIfDifferent(ref float field, float value)
         {
             if (field == value) return false;
+            field = value;
+            return true;
+        }
+
+        /// Stage 2 Task 16: five of the eight sanctioned numbers are ints — the
+        /// `ref float` overload above silently would not bind to them.
+        static bool SetIfDifferent(ref int field, int value)
+        {
+            if (field == value) return false;
+            field = value;
+            return true;
+        }
+
+        /// Stage 2 Task 16: the arena's Obstacles/Walls arrays. Length first,
+        /// then element-wise via the struct's own value equality — an
+        /// already-delivered asset must compare equal so a re-Apply stays a
+        /// no-op (R-IDEM). Both failure modes are safe: a false "different"
+        /// verdict assigns an equal array (no YAML delta), and a false "same"
+        /// verdict cannot happen on the delivery run itself, where the lengths
+        /// differ (5 -> 8 circles, 0 -> 6 walls).
+        static bool SetIfDifferent<T>(ref T[] field, T[] value) where T : struct
+        {
+            if (field != null && field.Length == value.Length)
+            {
+                var comparer = System.Collections.Generic.EqualityComparer<T>.Default;
+                bool same = true;
+                for (int i = 0; i < value.Length && same; i++)
+                    same = comparer.Equals(field[i], value[i]);
+                if (same) return false;
+            }
             field = value;
             return true;
         }

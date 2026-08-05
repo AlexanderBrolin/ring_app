@@ -26,9 +26,9 @@ MonoBehaviour:
   PitchRange: 0.12
   TracerFadeSeconds: 0.4
   CasingPhysicsSeconds: 1.5
-  MaxCasings: 1024
-  MaxDecals: 512
-  MaxCorpses: 64
+  MaxCasings: 3072
+  MaxDecals: 1536
+  MaxCorpses: 128
   VoicesPerSfx: 6
   MinSfxInterval: 0.03
   CasingImpulseUpMin: 0.2
