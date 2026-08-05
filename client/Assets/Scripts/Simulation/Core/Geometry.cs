@@ -115,6 +115,41 @@ namespace Ring.Simulation.Core
             return a + d * s;
         }
 
+        /// Shared stadium-surface normal (fixwave Ф3 item 3, backlog M-4):
+        /// PushOutOfStadium and SweepArena's wall branch both derived a
+        /// normal from a `point` and its already-projected `closest` point
+        /// on the wall's a→b axis the same way — radial delta when the two
+        /// differ, falling back to the axis' own perpendicular (oriented by
+        /// which side of the axis `sideRef` sits on) when `point` lands
+        /// exactly on the axis, and further back to (1,0) only if the axis
+        /// itself is degenerate (a == b). The point-to-segment PROJECTION
+        /// itself is not duplicated here — that's ClosestPointOnSegment's
+        /// job, called once by each caller before this — only the normal
+        /// derivation FROM that projection is. `sideRef` lets PushOutOfStadium
+        /// and SweepArena each supply their own reference point for the
+        /// on-axis fallback's side test (PushOutOfStadium passes `point`
+        /// itself, since it has no separate sweep-start point; SweepArena
+        /// passes the sweep's own p0) without this function needing to know
+        /// which kind of caller it has.
+        static float2 StadiumNormal(float2 point, float2 closest, float2 a, float2 b, float2 sideRef)
+        {
+            float2 delta = point - closest;
+            float distSq = math.lengthsq(delta);
+            if (distSq > 1e-12f)
+            {
+                return delta / math.sqrt(distSq);
+            }
+            float2 axis = b - a;
+            float axisLen = math.length(axis);
+            if (axisLen > 1e-6f)
+            {
+                float2 perp = new float2(-axis.y, axis.x) / axisLen;
+                float side = math.dot(sideRef - a, perp);
+                return side >= 0f ? perp : -perp;
+            }
+            return new float2(1f, 0f);
+        }
+
         /// Static stadium overlap — segment a→b inflated by halfW (Stage 2
         /// Task 11). Used directly for spawn-clearance rejection, and as
         /// SegmentStadium's "already inside at the start" branch, which also
@@ -257,23 +292,16 @@ namespace Ring.Simulation.Core
         {
             normal = float2.zero;
             float2 closest = ClosestPointOnSegment(pos, a, b, out _);
-            float2 delta = pos - closest;
             float r = radius + halfW;
-            float distSq = math.lengthsq(delta);
+            float distSq = math.lengthsq(pos - closest);
             if (distSq >= r * r) return false;
-            float dist = math.sqrt(distSq);
-            if (dist > 1e-6f)
-            {
-                normal = delta / dist;
-            }
-            else
-            {
-                float2 axis = b - a;
-                float axisLen = math.length(axis);
-                normal = axisLen > 1e-6f
-                    ? new float2(-axis.y, axis.x) / axisLen
-                    : new float2(1f, 0f);
-            }
+            // sideRef = pos: PushOutOfStadium has no separate sweep-start
+            // point to offer the on-axis fallback's side test, so it hands
+            // StadiumNormal the same point it's already pushing — which the
+            // on-axis case makes ~coincident with `closest` anyway, always
+            // landing side == 0 → +perp (fix-round 1 M-7's pinned choice,
+            // verified numerically unchanged by this refactor).
+            normal = StadiumNormal(pos, closest, a, b, pos);
             pos = closest + normal * (r + Skin);
             return true;
         }
@@ -360,54 +388,28 @@ namespace Ring.Simulation.Core
                 {
                     t = tWall; hit = true;
                     // SegmentStadium only reports t, not a normal, so rebuild
-                    // it the same way PushOutOfStadium already does (Task 11):
-                    // project the contact onto the wall's own segment and take
-                    // the direction away from that projection. One formula
+                    // it the same way PushOutOfStadium already does (Task 11,
+                    // fixwave Ф3 item 3: shared via StadiumNormal): project
+                    // the contact onto the wall's own segment and take the
+                    // direction away from that projection. One formula
                     // covers both the flat side (projection lands in the
                     // interior, delta ⊥ axis) and a rounded cap (projection
                     // lands on an endpoint, delta is radial from that cap's
-                    // own centre).
+                    // own centre). sideRef = p0 for the on-axis fallback's
+                    // side test — fix-round 1 M-7: this branch only runs when
+                    // the CONTACT sits exactly on the axis, which forces p0
+                    // onto the axis too (the start-inside branch of
+                    // SegmentStadium is the only way to reach t == 0 with a
+                    // zero delta) — so `side` is ALWAYS exactly 0.0f here in
+                    // practice (verified numerically), and either branch of
+                    // StadiumNormal's ternary is reachable only in the sense
+                    // of documenting the INTENDED orientation, not as a live
+                    // discriminator on today's callers.
                     float2 contact = math.lerp(p0, p1, tWall);
                     float2 closest = ClosestPointOnSegment(
                         contact, arena.WallA[wIdx], arena.WallB[wIdx], out _);
-                    float2 delta = contact - closest;
-                    float distSq = math.lengthsq(delta);
-                    if (distSq > 1e-12f)
-                    {
-                        normal = delta / math.sqrt(distSq);
-                    }
-                    else
-                    {
-                        // On-axis fallback (carryover-t12.md #1): the naive
-                        // normalizesafe(delta, (1,0)) would point ALONG the
-                        // wall when the contact sits exactly on its axis (the
-                        // same failure PushOutOfStadium's own fallback guards
-                        // against in Task 11). Fall back to the axis' own
-                        // perpendicular, oriented toward p0's side, rather
-                        // than a fixed world direction.
-                        float2 axis = arena.WallB[wIdx] - arena.WallA[wIdx];
-                        float axisLen = math.length(axis);
-                        if (axisLen > 1e-6f)
-                        {
-                            float2 perp = new float2(-axis.y, axis.x) / axisLen;
-                            float side = math.dot(p0 - arena.WallA[wIdx], perp);
-                            // Fix-round 1 M-7: this branch only runs when the
-                            // CONTACT sits exactly on the axis (delta ~ 0
-                            // above), which forces p0 onto the axis too (the
-                            // start-inside branch of SegmentStadium is the
-                            // only way to reach t == 0 with a zero delta) —
-                            // so `side` is ALWAYS exactly 0.0f here in
-                            // practice (verified numerically), and either
-                            // branch of this ternary is reachable only in the
-                            // sense of documenting the INTENDED orientation,
-                            // not as a live discriminator on today's callers.
-                            normal = side >= 0f ? perp : -perp;
-                        }
-                        else
-                        {
-                            normal = new float2(1f, 0f);
-                        }
-                    }
+                    normal = StadiumNormal(contact, closest,
+                        arena.WallA[wIdx], arena.WallB[wIdx], p0);
                 }
 
             if (includeWall && SegmentRingWall(p0, p1, padR, arena.Radius, out float tw)
