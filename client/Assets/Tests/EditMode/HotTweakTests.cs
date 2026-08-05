@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using Ring.Simulation.Core;
+using Unity.Mathematics;
 
 namespace Ring.Simulation.Tests
 {
@@ -120,12 +121,38 @@ namespace Ring.Simulation.Tests
 
             w.ApplyConfig(next);
 
+            // Fix-round 1 (M-3): field types this pass deliberately does NOT
+            // measure, each for a stated reason. Anything outside both this set
+            // and the measured types below is a hard failure — extending the
+            // pass to int (Stage 2 Task 10) would otherwise have left the exact
+            // same silent hole for the next new type (a byte, an enum) that the
+            // old float-only filter left for int.
+            var unmeasuredFieldTypes = new HashSet<System.Type>
+            {
+                // Headings and positions (Pos, Vel, AimPoint, DashDir, SlideDir):
+                // ApplyConfig has no per-axis ceiling to clamp them to — arena
+                // containment is Geometry's job, every tick, not a hot-tweak's.
+                typeof(float2),
+                // Alive: a state flag, not a magnitude — nothing to clamp.
+                typeof(bool),
+            };
+
             foreach (var field in typeof(PlayerState).GetFields())
             {
                 float actual;
                 if (field.FieldType == typeof(float)) actual = (float)field.GetValue(w.Player);
                 else if (field.FieldType == typeof(int)) actual = (int)field.GetValue(w.Player);
-                else continue;
+                else
+                {
+                    if (!unmeasuredFieldTypes.Contains(field.FieldType))
+                    {
+                        Assert.Fail($"PlayerState.{field.Name} has type {field.FieldType.Name}, " +
+                            "which this clamp-pass neither measures (float, int) nor lists in " +
+                            "unmeasuredFieldTypes as deliberately unmeasured — decide which it is " +
+                            "in the SAME task that declares the field, and say so here.");
+                    }
+                    continue;
+                }
                 Assert.IsTrue(ceilingByField.TryGetValue(field.Name, out float ceiling),
                     $"PlayerState.{field.Name} is a new float/int field with no clamp-pass " +
                     "entry in ApplyConfig_ReflectiveClampPass_EveryFloatFieldWithinNewMax's " +

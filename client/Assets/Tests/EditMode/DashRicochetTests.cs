@@ -104,9 +104,15 @@ namespace Ring.Simulation.Tests
                     "more than one DashRicocheted reported for a single tick");
                 totalRicochets += thisTick;
             }
+            // Fix-round 1 (M-4): this is a FIXTURE HEALTH CHECK, not a check on
+            // the rate limit. With Hero.DashCooldown at 36 ticks against a
+            // 3-tick gate window, the gate does not bound this run's dash count
+            // at all — what does is the cooldown and the stamina economy. So if
+            // this line ever goes red, look at the fixture's own numbers first,
+            // not at the gate.
             Assert.Greater(totalRicochets, 0,
-                "the run must actually ricochet at least once — a rate limit that starved " +
-                "this fixture of dashes would leave the per-tick cap vacuously true");
+                "fixture health check: this run must still produce dashes that reach the " +
+                "corner and bounce — otherwise the per-tick cap above is vacuously true");
         }
 
         [Test]

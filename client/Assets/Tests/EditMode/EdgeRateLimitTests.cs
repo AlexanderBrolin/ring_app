@@ -10,6 +10,12 @@ namespace Ring.Simulation.Tests
     /// request, and — critically — a dropped request never latches the input
     /// buffer (see RejectedRequest_DoesNotRearmBuffer for why that is the whole
     /// mechanism rather than a detail of it).
+    ///
+    /// Both kinds are covered symmetrically (fix-round 1, I-1): the slide half
+    /// of the gate is invisible to the golden hash on two of its three lines —
+    /// the StaminaDenied suppression and the rejected-request tally are events
+    /// and diagnostics, neither of which is hashed — so without the slide tests
+    /// below both could be reverted with every other test still green.
     public class EdgeRateLimitTests
     {
         /// The fixture MUST clear the dash cooldown, or every test here would be
@@ -34,12 +40,44 @@ namespace Ring.Simulation.Tests
             // applying this tick's dash velocity (same arithmetic
             // DashRicochetTests.Fixture's own comment spells out). So 2f/30f
             // owns ticks 0..2 and covers the 3-tick gate window exactly, making
-            // the test pass with or without a gate; 1f/30f owns ticks 0..1 and
+            // the test pass with or without a gate; ONE TICK owns ticks 0..1 and
             // leaves tick 2 free, where only the gate can still hold a request
             // back. The plan's stated intent ("the dash must not overlap the
-            // limiter's window") is what this number honours.
-            cfg.Hero.DashDuration = 1f / 30f;
+            // limiter's window") is what this honours.
+            //
+            // Fix-round 1 (I-2): written as TickDt itself, not as the literal
+            // 1f/30f it happens to equal today. The property this whole fixture
+            // rests on is "the dash lasts exactly ONE tick", not the number
+            // 1/30 — a future TickDt of 1/60 would silently turn that literal
+            // into two ticks, re-covering the gate window and quietly restoring
+            // the very defect this deviation exists to remove.
+            cfg.Hero.DashDuration = SimulationWorld.TickDt;
             cfg.Hero.StaminaMax = 1000f;  // stamina must not become the limiter either
+            return cfg;
+        }
+
+        /// Fixture() with the slide made measurable the same way the dash is:
+        /// the run-up gate must not be what refuses a slide (RunUpSeconds 1.18 s
+        /// = ~36 ticks would space slides far wider than the gate ever could),
+        /// and a slide must own fewer ticks than the gate window, for exactly
+        /// the reason spelled out in Fixture() above.
+        static SimConfig SlideFixture()
+        {
+            var cfg = Fixture();
+            cfg.Hero.RunUpSeconds = 0f;                        // slide is always run-up-eligible
+            cfg.Hero.SlideDuration = SimulationWorld.TickDt;   // one tick, same reasoning as the dash
+            return cfg;
+        }
+
+        /// SlideFixture() with an empty, non-refilling stamina pool: every
+        /// ACCEPTED slide request is then refused on cost and emits exactly one
+        /// StaminaDenied, which is what RejectedSlide_EmitsNoStaminaDenied
+        /// counts the dropped requests against.
+        static SimConfig StarvedSlideFixture()
+        {
+            var cfg = SlideFixture();
+            cfg.Hero.StaminaMax = 0f;          // the world starts the player at StaminaMax
+            cfg.Hero.StaminaRegenPerSec = 0f;  // and nothing lifts it back over SlideStaminaCost
             return cfg;
         }
 
@@ -49,17 +87,26 @@ namespace Ring.Simulation.Tests
 
         const int SpamTicks = 6;
 
+        /// ceil(SpamTicks / EdgeRequestMinTicks) — with a request on every tick
+        /// the gate accepts ticks 0, W, 2W, … and drops the rest. A fixture
+        /// expression over the configured window (C14), never a restated number:
+        /// widening EdgeRequestMinTicks must move the expectation with it, not
+        /// turn the tests red.
+        static int ExpectedAcceptedUnderSpam(in SimConfig cfg)
+            => (SpamTicks + cfg.Hero.EdgeRequestMinTicks - 1) / cfg.Hero.EdgeRequestMinTicks;
+
         [Test]
         public void SpammedDash_AcceptedOncePerWindow()
         {
-            var w = new SimulationWorld(1, Fixture());
+            var cfg = Fixture();
+            var w = new SimulationWorld(1, cfg);
             for (int t = 0; t < SpamTicks; t++) w.Tick(Dash);
-            // tick 0 accepted (dash owns ticks 0-1); ticks 1-2 dropped by the
+            // tick 0 accepted (the dash owns ticks 0-1); ticks 1-2 dropped by the
             // gate — tick 2 is the load-bearing one, the dash is already over
-            // there and only the gate is still refusing; tick 3 accepted;
-            // ticks 4-5 dropped again. Without the gate the request on tick 2
-            // would start a third dash inside these six ticks.
-            Assert.AreEqual(2, w.Stats.DashesUsed);
+            // there and only the gate is still refusing; tick 3 accepted; ticks
+            // 4-5 dropped again. Without the gate the request on tick 2 would
+            // start a third dash inside these six ticks.
+            Assert.AreEqual(ExpectedAcceptedUnderSpam(cfg), w.Stats.DashesUsed);
         }
 
         [Test]
@@ -79,6 +126,50 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void SpammedSlide_AcceptedOncePerWindow()
+        {
+            // Fix-round 1 (I-1): the dash half of the gate was covered from the
+            // start, the slide half was not. This is the symmetric twin of
+            // SpammedDash_AcceptedOncePerWindow, and it also pins the slide's
+            // share of the rejected-request tally — the increment in
+            // SimulationWorld.TickMovement that nothing else observes.
+            var cfg = SlideFixture();
+            var w = new SimulationWorld(1, cfg);
+            for (int t = 0; t < SpamTicks; t++) w.Tick(Slide);
+            int expected = ExpectedAcceptedUnderSpam(cfg);
+            Assert.AreEqual(expected, w.Stats.SlidesUsed);
+            Assert.AreEqual(SpamTicks - w.Stats.SlidesUsed, w.RejectedEdgeRequestsForTest,
+                "every spammed tick is either an accepted slide or a counted drop");
+        }
+
+        [Test]
+        public void RejectedSlide_EmitsNoStaminaDenied()
+        {
+            // Fix-round 1 (I-1): events are not hashed, so a slide gate that
+            // dropped the request but still let it emit StaminaDenied would move
+            // no golden and break no other test — while flooding Presentation
+            // with one denial per tick instead of one per accepted request, and
+            // costing the future network counter half its drops.
+            var cfg = StarvedSlideFixture();
+            var w = new SimulationWorld(1, cfg);
+            Assert.Less(w.Player.Stamina, cfg.Hero.SlideStaminaCost,
+                "fixture premise: the pool must be too small for a slide, so every " +
+                "ACCEPTED request is refused on cost and emits its one StaminaDenied");
+
+            for (int t = 0; t < SpamTicks; t++) w.Tick(Slide);
+
+            Assert.AreEqual(0, w.Stats.SlidesUsed, "fixture premise: no slide may actually start");
+            // One denial per ACCEPTED request and not one more. Note the buffer
+            // is deliberately NOT cleared on a cost-refused slide (C11 — it keeps
+            // retrying while a late regen could still cover the cost), so on a
+            // gate that read the raw input this would fire on every one of the
+            // SpamTicks ticks instead.
+            Assert.AreEqual(ExpectedAcceptedUnderSpam(cfg),
+                TestEvents.CountOf(w, SimEventKind.StaminaDenied),
+                "a dropped request must emit no StaminaDenied at all");
+        }
+
+        [Test]
         public void DashThenSlide_BothAccepted()
         {
             // Р26: the timer is per KIND. A single shared counter would cut the
@@ -88,9 +179,13 @@ namespace Ring.Simulation.Tests
             // that slide is allowed to follow.
             var w = new SimulationWorld(1, Fixture());
             w.Tick(Dash);   // tick 0: dash accepted, the DASH counter arms
-            w.Tick(Move);   // tick 1: the dash's last owned tick
-            w.Tick(Slide);  // tick 2: a shared counter would drop this; a per-kind one accepts it
-            w.Tick(Move);   // tick 3: buffered slide starts off the post-dash window
+            w.Tick(Move);   // tick 1: the dash's last owned tick — post-dash window opens
+            // Tick 2: a shared counter would drop this request; a per-kind one
+            // accepts it, and since the post-dash window is still open the
+            // buffered slide starts on this very tick (fix-round 1, M-1 — the
+            // earlier comment here misplaced the start one tick later).
+            w.Tick(Slide);
+            w.Tick(Move);   // tick 3: the slide is already running, this just rides it
             Assert.AreEqual(1, w.Stats.DashesUsed);
             Assert.AreEqual(1, w.Stats.SlidesUsed,
                 "a per-kind gate must not cut the legal dash->slide link");
