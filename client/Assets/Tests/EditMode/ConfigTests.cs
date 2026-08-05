@@ -331,7 +331,10 @@ namespace Ring.Simulation.Tests
         public void Layout_HasCorridorAtLeast20mLongWithSixMetreGap()
         {
             // Spec §3.4 requirement (b): a corridor is a PAIR of parallel walls
-            // — length >= 20 m, free passage >= 6 m between their inner faces.
+            // — running alongside each other for >= 20 m, with a free passage
+            // >= 6 m between their inner faces. The length that matters is the
+            // SHARED span, not either wall's own length (see the overlap
+            // computation below).
             const float MinCorridorLength = 20f;
             const float MinCorridorGap = 6f;
 
@@ -362,7 +365,23 @@ namespace Ring.Simulation.Tests
                     float separation = math.abs(offset.x * dirI.y - offset.y * dirI.x);
                     float gap = separation - (cfg.Arena.WallHalfWidth[i] + cfg.Arena.WallHalfWidth[j]);
 
-                    if (math.min(lenI, lenJ) >= MinCorridorLength - Eps && gap >= MinCorridorGap - Eps)
+                    // Longitudinal overlap (review of Stage 2 Task 16, I-2): parallel
+                    // and 6 m apart is not a corridor unless the two walls actually
+                    // run ALONGSIDE each other. Without this, wall 1 (x in [-28,-8],
+                    // y = 10) and wall 3 (x in [12,34], y = -6) — one from each of
+                    // the two real corridors — satisfied every other clause, so the
+                    // test stayed green even with both partner walls deleted, i.e.
+                    // spec §3.4 (b) was not pinned at all. Project all four ends onto
+                    // dirI and require the shared span to carry the corridor itself.
+                    float baseI = math.dot(cfg.Arena.WallA[i], dirI);
+                    float sIa = math.dot(cfg.Arena.WallA[i], dirI) - baseI;
+                    float sIb = math.dot(cfg.Arena.WallB[i], dirI) - baseI;
+                    float sJa = math.dot(cfg.Arena.WallA[j], dirI) - baseI;
+                    float sJb = math.dot(cfg.Arena.WallB[j], dirI) - baseI;
+                    float overlap = math.min(math.max(sIa, sIb), math.max(sJa, sJb))
+                        - math.max(math.min(sIa, sIb), math.min(sJa, sJb));
+
+                    if (overlap >= MinCorridorLength - Eps && gap >= MinCorridorGap - Eps)
                         found = true;
                 }
             }
@@ -426,6 +445,34 @@ namespace Ring.Simulation.Tests
             float rimEnd = a.Radius - halfWidth; // passes "inside Radius - HalfWidth", fails 7c
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(rimEnd - 10f, 0f), B = new Vector2(rimEnd, 0f), HalfWidth = halfWidth } };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("arena rim"));
+        }
+
+        [Test]
+        public void Validate_WallRimRuleUsesLargestBody_NotJustHero()
+        {
+            // Review of Stage 2 Task 16, I-1: the rim rule must clear the LARGEST
+            // body that can be wedged there, not the hero. A mob is wider than the
+            // hero (MobConfig.Radius 0.5 against HeroConfig.Radius 0.45), so a
+            // hero-only rule leaves a band where a wall passes validation and a mob
+            // driven into it by separation still soft-locks. This fixture places a
+            // wall end inside that band: it clears the hero-sized rule and fails the
+            // mob-sized one, so it must be rejected. Expressed as fixture arithmetic
+            // — no literal reproduces the builder's formula.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            float halfWidth = 0.8f;
+            float heroBound = a.Radius - h.Radius - halfWidth - h.Radius;   // hero-sized rule
+            float mobRadius = math.max(c.Radius, g.Radius);
+            float mobBound = a.Radius - mobRadius - halfWidth - mobRadius;  // mob-sized rule
+            Assert.Greater(heroBound, mobBound,
+                "fixture premise: the mob is the wider body, so its bound is the tighter one");
+            float farEnd = 0.5f * (heroBound + mobBound); // strictly between the two bounds
+
+            a.Walls = new[] { new ArenaConfig.Wall
+                { A = new Vector2(farEnd - 10f, 0f), B = new Vector2(farEnd, 0f), HalfWidth = halfWidth } };
+
             var ex = Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a));
             Assert.That(ex.Message, Does.Contain("arena rim"));

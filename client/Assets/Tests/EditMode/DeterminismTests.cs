@@ -457,15 +457,28 @@ namespace Ring.Simulation.Tests
             //     scripted run is built from — grew from Radius 35 / 5 circles
             //     / 0 walls to Radius 65 / 8 circles / 6 walls. Radius feeds
             //     SimInputSanitizer's AimPoint clamp, ClampInsideRing,
-            //     SweepArena's ring boundary and WaveSystem's spawn ring; the
-            //     three new circles and six walls are new blockers for
-            //     movement, dash ricochets, projectiles, LoS and mob steering.
-            //     The scripted player walks and shoots into all of them.
-            // (2) WORLD CAPS. MaxMobs 64 -> 96, MaxProjectiles 256 -> 384,
-            //     MaxEventsPerFrame 256 -> 512 and Wave.MaxMobsPerWave 24 -> 36:
-            //     the run now keeps mobs and rounds alive that the old caps
-            //     silently dropped (MobSpawnsSkipped/ProjectileSpawnsSkipped are
-            //     themselves hashed via WorldStats).
+            //     SweepArena's ring boundary, WaveSystem's wave-spawn ring AND
+            //     Geometry.SpawnPosFor's PLAYER spawn ring (Radius *
+            //     PlayerSpawnRingFrac: 28 -> 52 — added by the Task 16 review,
+            //     M-2, which caught it missing from this list; it moves nothing
+            //     solo, where spawn is the origin, and is the heaviest single
+            //     channel for the multiplayer golden below, whose three start
+            //     positions all shift by 24 m). The three new circles and six
+            //     walls are new blockers for movement, dash ricochets,
+            //     projectiles, LoS and mob steering. The scripted player walks
+            //     and shoots into all of them.
+            // (2) WORLD CAPS. MaxMobs 64 -> 96, MaxProjectiles 256 -> 384 and
+            //     Wave.MaxMobsPerWave 24 -> 36 are CAPABLE of moving the hash:
+            //     a run that reaches them keeps mobs and rounds the old caps
+            //     silently dropped, and the drop counters themselves are hashed
+            //     via WorldStats. Whether this 1000-tick solo run actually
+            //     reaches any of them is not claimed here — it very likely does
+            //     not (waves of 4/6/8 mobs, ~12 live rounds), and the honest
+            //     statement is "capable", not "did" (Task 16 review, M-1).
+            //     MaxEventsPerFrame 256 -> 512 is NOT a channel at all: events
+            //     have been outside the hash since stage 1 and Emit drops
+            //     silently with no hashed counter — it was listed here in
+            //     error.
             // (3) WAVE SCALE. WaveSystem.CountForTest replaces the inline
             //     count formula. At playerCount 1 the scale factor is exactly
             //     1, so this changes NOTHING for the solo golden by itself —

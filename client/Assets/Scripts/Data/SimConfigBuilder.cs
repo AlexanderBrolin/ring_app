@@ -425,7 +425,14 @@ namespace Ring.Data
         /// from such a position returns t == 0 on all three MoveWithCollisions
         /// iterations, i.e. no tangential motion either — a soft-locked player or
         /// mob. The working rule keeps a full body diameter of slack:
-        ///   max(|A|,|B|) + HalfWidth + Hero.Radius + Skin &lt;= Radius - Hero.Radius.
+        ///   max(|A|,|B|) + HalfWidth + bodyRadius + Skin &lt;= Radius - bodyRadius,
+        /// where bodyRadius is the LARGEST body that can end up wedged there —
+        /// max(Hero, Chaser, Gunner), not the hero alone. A mob is 0.5 against the
+        /// hero's 0.45, so hero-only slack leaves a ~0.1 m band in which a wall
+        /// passes validation and a mob driven into it by separation still
+        /// soft-locks — exactly the failure this rule exists to prevent (review
+        /// of Stage 2 Task 16, I-1). The wave-spawn-ring check below already
+        /// derives its own body radius the same way.
         ///
         /// Spawn coverage reuses Geometry.SpawnPosFor over the same candidate set
         /// the obstacle loop walks (solo centre + every ring size up to
@@ -433,7 +440,9 @@ namespace Ring.Data
         /// WaveSystem.TryFindSpawnPos' RNG-free FallbackSlots grid.
         static void ValidateWalls(List<string> errors, in SimConfig cfg, float spawnClearance)
         {
-            float rimLimit = cfg.Arena.Radius - cfg.Hero.Radius;
+            float wallBodyRadius = math.max(cfg.Hero.Radius,
+                math.max(cfg.Chaser.Radius, cfg.Gunner.Radius));
+            float rimLimit = cfg.Arena.Radius - wallBodyRadius;
             float spawnClearanceNeeded = cfg.Hero.Radius + spawnClearance;
 
             for (int i = 0; i < cfg.Arena.WallCount; i++)
@@ -457,12 +466,13 @@ namespace Ring.Data
                 }
 
                 float farEnd = math.max(math.length(a), math.length(b));
-                float reach = farEnd + halfWidth + cfg.Hero.Radius + Geometry.Skin;
+                float reach = farEnd + halfWidth + wallBodyRadius + Geometry.Skin;
                 if (reach > rimLimit)
                 {
                     errors.Add($"{tag} sits too close to the arena rim " +
-                        $"(max(|A|,|B|)+HalfWidth+Hero.Radius+Skin={reach:F3} > " +
-                        $"Arena.Radius-Hero.Radius={rimLimit:F3}) — a body wedged between the " +
+                        $"(max(|A|,|B|)+HalfWidth+bodyRadius+Skin={reach:F3} > " +
+                        $"Arena.Radius-bodyRadius={rimLimit:F3}, bodyRadius=" +
+                        $"{wallBodyRadius:F3}) — a body wedged between the " +
                         "wall and the ring can neither be pushed out nor slide along it.");
                 }
 
