@@ -558,12 +558,16 @@ namespace Ring.Simulation.Tests
             // side of that line, which made the test pass on pre-Task-14 code
             // (a straight run never touches such a wall) and therefore proved
             // nothing; it was moved back here together with the coordinator's
-            // fix to the tangent-side choice. Before that fix this fixture
-            // dead-stopped the chaser against the wall's flat face: the
-            // short-way tangent to the end cap cuts through the wall's body,
-            // the collide-and-slide cancels the resulting velocity, and the
-            // next tick reproduces the same geometry. The mutation that
-            // restores the old shorter-turn rule for walls reddens this test.
+            // waypoint fix. Fix-round T14 (M-2): this comment used to describe
+            // that fix in "tangent-side choice"/"shorter-turn rule" terms —
+            // language from the tangent-to-end-cap algorithm the waypoint
+            // approach replaced, not what SteerAround actually does now (see
+            // its XML doc for the current rule). Before that fix this fixture
+            // dead-stopped the chaser against the wall's flat face: a tangent
+            // to the nearer end cap cuts through the wall's body, the
+            // collide-and-slide cancels the resulting velocity, and the next
+            // tick reproduces the same geometry. A mutation that reintroduces
+            // tangent-to-end-cap steering for walls reddens this test.
             var c = TestConfigs.Open();
             c.Arena.WallCount = 1;
             c.Arena.WallA = new[] { new float2(7f, -3f) };
@@ -583,17 +587,25 @@ namespace Ring.Simulation.Tests
             // Coordinator addition (task-14-context.md): the regression this
             // guards against is subtler than "does the chaser eventually get
             // around" (Chaser_NavigatesAroundWall above already covers that).
-            // A steering fix that reduced the wall to an equivalent circle at
-            // the NEAREST POINT ON ITS AXIS instead of the nearest END would
-            // still eventually round the corner via the physical
-            // collide-and-slide alone (MoveWithCollisions), just very
-            // slowly — the steering keeps re-aiming almost straight back
-            // into the wall face every tick instead of committing to a
-            // detour. Over a fixed window that shows up as motion that is
-            // mostly perpendicular churn against the wall with little
-            // progress ALONG it; this test measures exactly that ratio,
-            // spawning the chaser squarely on the wall's flat side, far from
-            // either end.
+            // Reviewed in fix-round T14 (M-1): this fixture does NOT redden
+            // from reducing the wall to an equivalent circle at the nearest
+            // point on its axis, as an earlier revision of this comment
+            // claimed — that reduction clamps `ratio` to 1 (the mob starts
+            // inside the padded circle), `theta` becomes 90 degrees, and the
+            // resulting tangent gives the mob its MAXIMUM possible axial
+            // component, i.e. exactly the "commit to a detour along the
+            // wall" behaviour this test wants, not the churn it's meant to
+            // catch. What DOES redden it: dropping the wall loop entirely
+            // (SteerAround never even sees the wall, so the mob walks
+            // straight into its flat side and the physical collide-and-slide
+            // alone has to grind it around, very slowly) and a broken `face`
+            // normal (aimed into the wall instead of away from it, so the
+            // waypoint sits on the wrong side and steering re-aims almost
+            // straight back at the face every tick). Over a fixed window
+            // that shows up as motion that is mostly perpendicular churn
+            // against the wall with little progress ALONG it; this test
+            // measures exactly that ratio, spawning the chaser squarely on
+            // the wall's flat side, far from either end.
             var c = TestConfigs.Open();
             c.Arena.WallCount = 1;
             c.Arena.WallA = new[] { new float2(6f, -15f) };
@@ -631,20 +643,23 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SteerAround_PrefersNearestBlocker_AcrossKinds()
         {
-            // Coordinator addition: circles and walls compete for the SAME
-            // "nearest blocker" slot (task-14-context.md — same rule
-            // SweepArena already uses for circle-then-wall order). The two
-            // fixtures below place both an obstacle AND a wall in the mob's
-            // lookahead at different distances from it — whichever is
-            // nearer must determine the steer, regardless of kind. Checked
-            // by the SIGN of the resulting steer's y-component: the circle
-            // sits north of the direct line in both fixtures and the wall
-            // spans south of it, so "the circle won" and "the wall won"
-            // push the tangent to opposite sides of zero — a mutant that
-            // always prefers one kind over the other flips the sign in
-            // exactly one of the two fixtures below (both distances/signs
-            // verified offline against the tangent formula before writing
-            // this assertion).
+            // Coordinator addition, revised in fix-round T14 (I-1): circles
+            // and walls compete for the SAME "nearest blocker" slot
+            // (task-14-context.md — same rule SweepArena already uses for
+            // circle-then-wall order). The two fixtures below place both an
+            // obstacle AND a wall in the mob's lookahead at different
+            // distances from it — whichever is nearer must determine the
+            // steer, regardless of kind. A bare same-sign check stopped
+            // being discriminating once the wall branch switched from a
+            // tangent to a waypoint detour (the coordinator's Т14 fix):
+            // fixture A's geometry now steers the mob south whichever kind
+            // wins, so a mutant that always prefers the wall over the
+            // circle would still pass a lone "Vel.y &lt; -0.3" assertion here
+            // — it did, undetected, until this revision. Each fixture below
+            // therefore compares against the SAME world with the
+            // non-winning kind removed — a mutant that swaps which kind
+            // wins collapses that difference to near zero — plus a sign
+            // check as a sanity read on which side the mob actually went.
             float2 mobStart = new float2(-10f, 0f);
 
             // Fixture A: the CIRCLE is nearer along the lookahead segment.
@@ -661,8 +676,25 @@ namespace Ring.Simulation.Tests
                 w.SpawnMobForTest(MobType.Chaser, mobStart);
                 w.Tick(Idle); // Idle->Chase warm-up, no steering yet
                 w.Tick(Idle); // first tick SteerAround actually runs
-                Assert.Less(w.Mobs[0].Vel.y, -0.3f,
+                float2 steerWithCircle = w.Mobs[0].Vel;
+
+                // Same world with the circle removed: whatever the wall
+                // alone would have produced.
+                var noCircle = TestConfigs.Open();
+                noCircle.Arena.WallCount = 1;
+                noCircle.Arena.WallA = new[] { new float2(-7.2f, -0.3f) };
+                noCircle.Arena.WallB = new[] { new float2(-7.2f, 6f) };
+                noCircle.Arena.WallHalfWidth = new[] { 0.3f };
+                var w2 = new SimulationWorld(1, noCircle);
+                w2.SpawnMobForTest(MobType.Chaser, mobStart);
+                w2.Tick(Idle);
+                w2.Tick(Idle);
+                float2 steerWithoutCircle = w2.Mobs[0].Vel;
+
+                Assert.Greater(math.distance(steerWithCircle, steerWithoutCircle), 0.3f,
                     "the nearer CIRCLE should have determined the steer, not the farther wall");
+                Assert.Less(steerWithCircle.y, -0.3f,
+                    "the circle sits north of the direct line — the tangent past it steers south");
             }
 
             // Fixture B: same two shapes, swapped distances — the WALL is now nearer.
@@ -703,6 +735,55 @@ namespace Ring.Simulation.Tests
                 Assert.Less(steerWithWall.y, 0f,
                     "the only way past this wall is below its lower end");
             }
+        }
+
+        [Test]
+        public void SteerAround_Waypoint_PinsBothFaceAndAxisOffsets()
+        {
+            // I-7 (fix-round T14): `waypoint = end + axis * clearance +
+            // face * clearance` was previously only pinned as a WHOLE — a
+            // mutation dropping either addend on its own still greened every
+            // existing test (`waypoint = end` is the only combination those
+            // caught). This fixture isolates each addend's own sign/
+            // dominance in the returned direction.
+            //
+            // Geometry: a vertical wall from (7,-3) to (7,3), halfWidth 1.
+            // The mob sits due WEST of end A=(7,-3), at exactly the
+            // physical-contact x-distance from the wall's flat face
+            // (wallHalfWidth + Chaser.Radius = 1.5m: pos.x = 5.5) and at the
+            // SAME y as A — the direct-line target (9,-3) sits due EAST,
+            // clearly closer to A than to B, so A wins with no near-tie
+            // involved. With both offsets applied, `end - pos = (1.5, 0)`
+            // and the returned direction points WEST and SOUTH:
+            // west because `face * clearance` (2.5m off the face, more than
+            // the 1.5m the mob already stands off it) overshoots the mob's
+            // own position outward past the face; south because
+            // `axis * clearance` pushes 2.5m past A along the wall's axis.
+            // Dropping `face * clearance` removes the only westward pull,
+            // flipping Vel.x positive (the waypoint would sit EAST of the
+            // mob, back toward the wall). Dropping `axis * clearance`
+            // removes the only southward pull, collapsing Vel.y to ~0 (the
+            // waypoint would sit level with the mob, offering no route past
+            // the end).
+            var c = TestConfigs.Open();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(7f, -3f) };
+            c.Arena.WallB = new[] { new float2(7f, 3f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
+            var w = new SimulationWorld(1, c);
+            var player = w.Player;
+            player.Pos = new float2(9f, -3f);
+            w.SetPlayerForTest(player);
+            float contactX = 7f - (c.Arena.WallHalfWidth[0] + c.Chaser.Radius);
+            w.SpawnMobForTest(MobType.Chaser, new float2(contactX, -3f));
+            w.Tick(Idle); // Idle->Chase warm-up, no steering yet
+            w.Tick(Idle); // first tick SteerAround actually runs
+            float2 vel = w.Mobs[0].Vel;
+
+            Assert.Less(vel.x, 0f,
+                "face*clearance pin: without it the waypoint sits on the WRONG side of the mob (east, toward the wall)");
+            Assert.Less(vel.y, -0.5f,
+                "axis*clearance pin: without it the waypoint sits level with the mob (no route past the end)");
         }
     }
 }

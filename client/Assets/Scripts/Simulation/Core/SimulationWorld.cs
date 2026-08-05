@@ -292,9 +292,12 @@ namespace Ring.Simulation.Core
 
         /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
         /// the tick boundary (caller must only invoke this between ticks). Arena
-        /// topology (radius, obstacle count/positions/radii) must stay identical —
-        /// a change there invalidates collision/spawn geometry that isn't reconciled
-        /// here, so it throws instead; Presentation reacts by restarting the world.
+        /// topology — radius, obstacle count/positions/radii, wall count/endpoints/
+        /// half-width, player cap, spawn ring fraction, and the three per-match
+        /// entity caps (see ArenaTopologyMatches below for the full field list) —
+        /// must stay identical: a change there invalidates collision/spawn geometry
+        /// or array sizing that isn't reconciled here, so it throws instead;
+        /// Presentation reacts by restarting the world.
         /// Migration: Hp clamps down to the new max, every player timer clamps into
         /// [0, its new max], wave-state (including WaveIndex) is left untouched.
         /// Stage 2 Task 4: migrates every player in the match, not just player 0 — for
@@ -305,8 +308,8 @@ namespace Ring.Simulation.Core
             if (!ArenaTopologyMatches(in _config.Arena, in next.Arena))
             {
                 throw new System.ArgumentException("SimulationWorld.ApplyConfig: arena topology " +
-                    "changed (radius/obstacles/walls/player cap/entity caps) — restart the world " +
-                    "instead of hot-tweaking it.");
+                    "changed (radius/obstacles/walls/player cap/spawn ring/entity caps) — restart " +
+                    "the world instead of hot-tweaking it.");
             }
 
             _config = next;
@@ -379,13 +382,25 @@ namespace Ring.Simulation.Core
             // hot-tweak lowering it below the match's actual live player
             // count would silently succeed, leaving the world's player array
             // longer than its own new cap. Requiring an exact match (not
-            // just ">= the current player count", which ApplyConfig has no
-            // way to check without threading playerCount through here)
-            // forces ANY MaxPlayers change through a restart instead,
-            // closing the hole. PlayerSpawnRingFrac and the three per-match
-            // caps below are topology the same way Radius is: they size
-            // arrays / define spawn geometry at construction time, not
-            // something ApplyConfig reconciles mid-match.
+            // just ">= the current player count") forces ANY MaxPlayers
+            // change through a restart instead, closing the hole.
+            // Fix-round T14 (M-5): an earlier revision of this comment
+            // justified the exact match by claiming ApplyConfig "has no way
+            // to check [>= playerCount] without threading playerCount
+            // through here" — false: `_players.Length` is right there, read
+            // by the very loop this method returns into a few lines below.
+            // The real reason is simplicity: exact equality keeps this
+            // check the SAME shape as every other field compared in this
+            // function (Radius, ObstacleCount, WallCount, ...), and it's a
+            // strictly SAFER choice than the laxer ">= playerCount" rule,
+            // not merely a simpler one — every hot-tweak this stricter
+            // check rejects that the laxer one would allow just falls back
+            // to a restart, which is always correct, only occasionally
+            // more disruptive than strictly necessary. PlayerSpawnRingFrac
+            // and the three per-match caps below are topology the same way
+            // Radius is: they size arrays / define spawn geometry at
+            // construction time, not something ApplyConfig reconciles
+            // mid-match.
             if (a.MaxPlayers != b.MaxPlayers || a.PlayerSpawnRingFrac != b.PlayerSpawnRingFrac)
                 return false;
             if (a.MaxMobs != b.MaxMobs || a.MaxProjectiles != b.MaxProjectiles

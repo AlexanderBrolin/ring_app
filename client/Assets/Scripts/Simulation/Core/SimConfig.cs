@@ -94,6 +94,16 @@ namespace Ring.Simulation.Core
         /// current Chaser/Gunner numbers (empirically, >=0.8 already suffices —
         /// verified in an offline replay of the collision/steering math before
         /// touching Unity, see the Task 19 report).
+        /// Fix-round T14: the wall branch of SteerAround carries a second,
+        /// independent guarantee scaled by this same field — offset directly
+        /// off a wall's face at a mob sitting in exact physical contact with
+        /// it, the resulting waypoint clears that face by exactly
+        /// `AvoidMargin`. At `AvoidMargin == 0` that clearance vanishes (a
+        /// dead stop right against the flat face becomes reachable again),
+        /// which is why `SimConfigBuilder` validates this field with
+        /// `ReqNonNegative`, not `ReqPositive`: 0 is a legal value, it just
+        /// spends away this particular guarantee — a config choice, not a
+        /// validation bug.
         public float AvoidMargin;
     }
 

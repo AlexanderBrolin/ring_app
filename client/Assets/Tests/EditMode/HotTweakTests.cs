@@ -205,7 +205,10 @@ namespace Ring.Simulation.Tests
             // (MaxMobs/MaxProjectiles/MaxEventsPerFrame) added to
             // ArenaTopologyMatches — without this, resizing a cap mid-match
             // would pass as a hot-tweak even though the backing arrays it
-            // sized at construction can't grow.
+            // sized at construction can't grow. This particular fixture
+            // exercises MaxProjectiles; MaxMobs and MaxEventsPerFrame get
+            // their own dedicated throws below (I-6, fix-round T14) — before
+            // this round only MaxProjectiles had any coverage at all.
             var c = TestConfigs.Default();
             var w = new SimulationWorld(3, c);
             var next = c;
@@ -214,7 +217,53 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void HotTweak_MaxPlayersBelowPlayerCount_Throws()
+        public void HotTweak_MaxMobsChange_Throws()
+        {
+            // I-6 (fix-round T14): MaxMobs had no dedicated coverage before
+            // this round — only MaxProjectiles was exercised, by
+            // HotTweak_CapChange_Throws above. This matters concretely from
+            // Task 16 onward: carryover-t14.md #3 predicts the .asset's
+            // MaxMobs moving 64->96 will make an old-generation config's
+            // hot-tweak throw here, by design — this test pins the
+            // mechanism that makes that true.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.MaxMobs = c.Arena.MaxMobs + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_MaxEventsPerFrameChange_Throws()
+        {
+            // I-6 (fix-round T14): same gap as HotTweak_MaxMobsChange_Throws
+            // above, for MaxEventsPerFrame. carryover-t14.md #3 predicts the
+            // .asset's MaxEventsPerFrame moving 256->512 at Task 16 will hit
+            // exactly this throw for an old-generation config.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.MaxEventsPerFrame = c.Arena.MaxEventsPerFrame + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_PlayerSpawnRingFracChange_Throws()
+        {
+            // I-6 (fix-round T14): PlayerSpawnRingFrac had NO coverage at
+            // all before this round, despite ArenaTopologyMatches comparing
+            // it right alongside MaxPlayers (Stage 2 Task 14) — it defines
+            // spawn geometry at construction time the same way Radius does,
+            // so a hot-tweak changing it must be rejected the same way.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.PlayerSpawnRingFrac = c.Arena.PlayerSpawnRingFrac + 0.05f;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_MaxPlayersChange_Throws()
         {
             // Carryover-t14.md #1 (deferred from Task 4's review, M-4): a
             // hot-tweak lowering MaxPlayers below the match's actual live
@@ -222,7 +271,13 @@ namespace Ring.Simulation.Tests
             // now compares MaxPlayers like any other topology field, so ANY
             // change (not only a dedicated "< PlayerCount" special case)
             // forces the restart path instead of leaving the world's player
-            // array longer than its own new cap.
+            // array longer than its own new cap. Renamed in fix-round T14
+            // (M-6, was HotTweak_MaxPlayersBelowPlayerCount_Throws): the old
+            // name promised a narrow "specifically below player count"
+            // semantic this test never actually isolated — the fixture
+            // below is one instance of the "ANY change throws" rule the
+            // comment above already documents, nothing about it is specific
+            // to the below-count case.
             var c = TestConfigs.Default();
             var w = new SimulationWorld(3, c, playerCount: 3); // uses the full MaxPlayers(3) cap
             var next = c;

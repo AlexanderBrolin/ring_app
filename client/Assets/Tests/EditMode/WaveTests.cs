@@ -148,8 +148,14 @@ namespace Ring.Simulation.Tests
             var snap = new RenderSnapshot(c.Arena);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0); // the wave still found room elsewhere on the ring
+            // M-7 (fix-round T14): IsValidSpawn checks each mob against its
+            // OWN archetype radius (c.Chaser.Radius == c.Gunner.Radius ==
+            // 0.5 in TestConfigs, not the 0.4 literal an earlier revision
+            // of this assertion used) — reading it from config instead of
+            // hardcoding it keeps this test honest if the archetypes' radii
+            // ever diverge.
             for (int m = 0; m < snap.MobCount; m++)
-                Assert.IsFalse(Geometry.OverlapsStadium(snap.Mobs[m].Pos, 0.4f,
+                Assert.IsFalse(Geometry.OverlapsStadium(snap.Mobs[m].Pos, c.Chaser.Radius,
                     c.Arena.WallA[0], c.Arena.WallB[0], c.Arena.WallHalfWidth[0]));
         }
 
@@ -183,8 +189,11 @@ namespace Ring.Simulation.Tests
             var snap = new RenderSnapshot(c.Arena);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0);
+            // M-7 (fix-round T14): same fix as Spawn_InsideWall_Rejected
+            // above — the archetype radius comes from config, not a 0.4
+            // literal.
             for (int m = 0; m < snap.MobCount; m++)
-                Assert.IsFalse(Geometry.OverlapsStadium(snap.Mobs[m].Pos, 0.4f,
+                Assert.IsFalse(Geometry.OverlapsStadium(snap.Mobs[m].Pos, c.Chaser.Radius,
                     c.Arena.WallA[0], c.Arena.WallB[0], c.Arena.WallHalfWidth[0]));
         }
     }
