@@ -326,27 +326,12 @@ namespace Ring.Simulation.Core
         }
 
         /// Stage 2 Task 4: takes the sanitizing player's index — every reference point
-        /// below (AimPoint fallback, Pos-relative AimPoint clamp) must read
-        /// THAT player's own state, not always player 0's.
-        SimInput Sanitize(in SimInput raw, int index)
-        {
-            SimInput s = raw;
-            if (!math.all(math.isfinite(s.MoveDir))) s.MoveDir = float2.zero;
-            float lsq = math.lengthsq(s.MoveDir);
-            if (lsq > 1f) s.MoveDir /= math.sqrt(lsq);
-            if (!math.all(math.isfinite(s.AimPoint))) s.AimPoint = _players[index].AimPoint;
-            float2 rel = s.AimPoint - _players[index].Pos;
-            float maxR = _config.Arena.Radius * 2f;
-            if (math.lengthsq(rel) > maxR * maxR)
-                s.AimPoint = _players[index].Pos + math.normalizesafe(rel) * maxR;
-            // Task 8: non-finite AimHeight maps to standing muzzle height, then
-            // the result is clamped into the arena-wide aim-ray height cap —
-            // sanitized unconditionally so the field stays finite regardless of
-            // AimHeld (the consumer that gates on AimHeld arrives in Task 15).
-            if (!math.isfinite(s.AimHeight)) s.AimHeight = _config.Hero.MuzzleHeight;
-            s.AimHeight = math.clamp(s.AimHeight, 0f, _config.Hero.MaxAimHeight);
-            return s;
-        }
+        /// (AimPoint fallback, Pos-relative AimPoint clamp) must read THAT
+        /// player's own state, not always player 0's. Stage 2 Task 6: the body
+        /// itself moved verbatim to the public seam SimInputSanitizer.Sanitize
+        /// (spec §3.1, client-prediction shares it in Task 30) — this is now
+        /// just the world supplying its own per-player state/config to that seam.
+        SimInput Sanitize(in SimInput raw, int index) => SimInputSanitizer.Sanitize(raw, _players[index], _config);
 
         /// Records a VFX/SFX-relevant occurrence for this tick (spec §3.7). The
         /// per-frame buffer is preallocated to Arena.MaxEventsPerFrame; once full,

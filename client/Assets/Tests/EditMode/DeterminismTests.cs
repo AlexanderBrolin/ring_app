@@ -168,6 +168,59 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Sanitizer_MatchesWorldBehaviour()
+        {
+            // Stage 2 Task 6: SimInputSanitizer.Sanitize is a verbatim extraction
+            // of the world's own private Sanitize step, callable from outside
+            // the world (Task 30's client prediction seam). Compared
+            // directly against the world's behaviour on the SAME inputs, not
+            // against hand-written expected numbers (Task 6 context §3, decision
+            // 3) — otherwise this would just pin a second copy of the formula
+            // instead of proving the two are equivalent.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player;
+            p.Pos = new float2(5f, -3f);
+            p.AimPoint = new float2(1f, 1f);
+            w.SetPlayerForTest(p);
+
+            SimInput[] hostileInputs =
+            {
+                // 1) non-finite MoveDir -> zero.
+                new SimInput { MoveDir = new float2(float.NaN, float.PositiveInfinity),
+                    AimPoint = new float2(2f, 2f), AimHeight = 1f },
+                // 2) over-length MoveDir (|v| = 5) -> normalized down to unit length.
+                new SimInput { MoveDir = new float2(3f, 4f),
+                    AimPoint = new float2(2f, 2f), AimHeight = 1f },
+                // 3) sub-unit MoveDir (|v| = 0.5) -> partial stick deflection
+                //    preserved, NOT forced up to 1.0 (spec §3.8).
+                new SimInput { MoveDir = new float2(0.5f, 0f),
+                    AimPoint = new float2(2f, 2f), AimHeight = 1f },
+                // 4) non-finite AimPoint -> falls back to the reference player's
+                //    own AimPoint.
+                new SimInput { MoveDir = float2.zero,
+                    AimPoint = new float2(float.NaN, float.NegativeInfinity), AimHeight = 1f },
+                // 5) AimPoint far outside Arena.Radius * 2 from the reference
+                //    player's Pos -> clamped into that radius, AND non-finite
+                //    AimHeight -> muzzle height.
+                new SimInput { MoveDir = float2.zero,
+                    AimPoint = new float2(1e9f, -1e9f), AimHeight = float.NaN },
+            };
+
+            foreach (var raw in hostileInputs)
+            {
+                SimInput expected = w.SanitizeForTest(raw);
+                SimInput actual = SimInputSanitizer.Sanitize(raw, w.Player, w.Config);
+
+                Assert.AreEqual(expected.MoveDir.x, actual.MoveDir.x, 1e-5f);
+                Assert.AreEqual(expected.MoveDir.y, actual.MoveDir.y, 1e-5f);
+                Assert.AreEqual(expected.AimPoint.x, actual.AimPoint.x, 1e-5f);
+                Assert.AreEqual(expected.AimPoint.y, actual.AimPoint.y, 1e-5f);
+                Assert.AreEqual(expected.AimHeight, actual.AimHeight, 1e-5f);
+            }
+        }
+
+        [Test]
         public void ScriptedRun_SameSeed_SameHash()
         {
             Assert.AreEqual(RunScripted(123, Ticks), RunScripted(123, Ticks));
