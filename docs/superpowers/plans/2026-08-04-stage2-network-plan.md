@@ -764,14 +764,14 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
   `HasLineOfFire` (Т13).
 - `ArenaSimConfig` += `WallCount`, `WallA[]`, `WallB[]`, `WallHalfWidth[]`.
 
-- [ ] **Step 1 (RED):** `SegmentStadium_HitsFlatSide` (t = (3−0.5)/6),
+- [x] **Step 1 (RED):** `SegmentStadium_HitsFlatSide` (t = (3−0.5)/6),
   `..._HitsRoundedCap`, `..._MissesPastEnd`, `..._StartInside_ReturnsZero`,
   `PushOutOfStadium_NormalPerpendicularToSide`,
   `OverlapsStadium_MatchesSweepAtZeroLength`.
-- [ ] **Step 2:** заглушки → FAIL. **Step 3 (GREEN)**.
-- [ ] **Step 4:** R-FILTER `GeometryTests` → PASS; R-TEST → **golden не
+- [x] **Step 2:** заглушки → FAIL. **Step 3 (GREEN)**.
+- [x] **Step 4:** R-FILTER `GeometryTests` → PASS; R-TEST → **golden не
   меняется**.
-- [ ] **Step 5:** R-COMMIT `feat(app-5nu): Т11 — примитив стены (стадион)`.
+- [x] **Step 5:** R-COMMIT `feat(app-5nu): Т11 — примитив стены (стадион)`.
 
 ### Task Т12: стены в свипе арены и депенетрации
 
@@ -789,12 +789,12 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
 `:194–208` (`Depenetrate`), вставленный цикл по стенам при `WallCount == 0`
 исполняется ноль раз.
 
-- [ ] **Step 1 (RED):** `SweepArena_PrefersNearestAcrossKinds`,
+- [x] **Step 1 (RED):** `SweepArena_PrefersNearestAcrossKinds`,
   `Depenetrate_PushesOutOfWall`.
-- [ ] **Step 2:** FAIL → **Step 3 (GREEN)**.
-- [ ] **Step 4:** R-FILTER `GeometryTests`+`MovementTests`+`DashTests` → PASS;
+- [x] **Step 2:** FAIL → **Step 3 (GREEN)**.
+- [x] **Step 4:** R-FILTER `GeometryTests`+`MovementTests`+`DashTests` → PASS;
   R-TEST → **golden не меняется** (`WallCount == 0`). Поехал — **стоп**.
-- [ ] **Step 5:** R-COMMIT `feat(app-5nu): Т12 — стены в свипе и депенетрации`.
+- [x] **Step 5:** R-COMMIT `feat(app-5nu): Т12 — стены в свипе и депенетрации`.
 
 ### Task Т13: LoS со стенами и кламп отрицательного отступа
 
@@ -806,11 +806,11 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
 отступ консервативной видимости (Т21) превратил бы мелкое препятствие в
 фантомное радиуса `|r|`. **Второй LoS-функции не заводится.**
 
-- [ ] **Step 1 (RED):** `LineOfFire_BlockedByWall`, `LineOfFire_ClearAlongWall`,
+- [x] **Step 1 (RED):** `LineOfFire_BlockedByWall`, `LineOfFire_ClearAlongWall`,
   `LineOfFire_NegativePadClamped` (R = 0.2, `padR = −0.45` → свободно).
-- [ ] **Step 2:** FAIL → **Step 3 (GREEN)**.
-- [ ] **Step 4:** R-FILTER `MobAiTests` → PASS; R-TEST → golden не меняется.
-- [ ] **Step 5:** R-COMMIT `feat(app-5nu): Т13 — линия видимости через стены`.
+- [x] **Step 2:** FAIL → **Step 3 (GREEN)**.
+- [x] **Step 4:** R-FILTER `MobAiTests` → PASS; R-TEST → golden не меняется.
+- [x] **Step 5:** R-COMMIT `feat(app-5nu): Т13 — линия видимости через стены`.
 
 ### Task Т14: стены в ИИ, спавне волн и гварде hot-tweak
 
@@ -831,12 +831,12 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
 `SimulationRunner` в `Restart` — ожидаемое следствие расширения гварда, а не
 регрессия; строкой в bd note.
 
-- [ ] **Step 1 (RED):** `Chaser_NavigatesAroundWall`, `Spawn_InsideWall_Rejected`,
+- [x] **Step 1 (RED):** `Chaser_NavigatesAroundWall`, `Spawn_InsideWall_Rejected`,
   `HotTweak_WallChange_Throws`.
-- [ ] **Step 2:** FAIL → **Step 3 (GREEN)**.
-- [ ] **Step 4:** R-FILTER `MobAiTests`+`WaveTests`+`HotTweakTests` → PASS;
+- [x] **Step 2:** FAIL → **Step 3 (GREEN)**.
+- [x] **Step 4:** R-FILTER `MobAiTests`+`WaveTests`+`HotTweakTests` → PASS;
   R-TEST → golden не меняется.
-- [ ] **Step 5:** R-COMMIT `feat(app-5nu): Т14 — стены в обходе, спавне и гварде`.
+- [x] **Step 5:** R-COMMIT `feat(app-5nu): Т14 — стены в обходе, спавне и гварде`.
 
 ### Task Т15: механики движения на плоскости (`WallGeometryTests`)
 
@@ -850,7 +850,7 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
 - Конфиг со стенами собирается **в тесте** (`TestConfigs.Open()` + явная
   раскладка), а не из `.asset`; ожидания — фикстурными выражениями.
 
-- [ ] **Step 1:** написать пять тестов:
+- [x] **Step 1:** написать пять тестов:
   - `SlideAlongFlatWall_DoesNotAccelerate` — модуль скорости вдоль боковины не
     растёт;
   - `SlideHeadOnIntoWall_IsDamped` — `SlideTimer == 0`, `|Vel| == MaxSpeed`,
@@ -860,10 +860,10 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
   - `CorridorSeam_NoSticking` — движение через стык торцевого круга и боковины:
     пройдено ≥ 90% ожидаемого пути (митигация Р-В);
   - `CorridorTraversal_NoTunneling` — дэш поперёк коридора не проходит сквозь.
-- [ ] **Step 2:** прогон; **любой красный — находка в Т11–Т14**, чинить там, а
+- [x] **Step 2:** прогон; **любой красный — находка в Т11–Т14**, чинить там, а
   не подгонять тест.
-- [ ] **Step 3:** R-FILTER `WallGeometryTests` → PASS; R-TEST.
-- [ ] **Step 4:** R-COMMIT `test(app-5nu): Т15 — механики движения на плоских
+- [x] **Step 3:** R-FILTER `WallGeometryTests` → PASS; R-TEST.
+- [x] **Step 4:** R-COMMIT `test(app-5nu): Т15 — механики движения на плоских
   стенах`.
 
 ### Task Т16: арена под троих, `TestConfigs`, волны → **перепин golden №2**
@@ -910,20 +910,20 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
   **`waveIndex` 0-based** (в живом состоянии `WaveState.WaveIndex` 1-based:
   оговорить в докстринге, иначе ожидание `BaseCount` не сойдётся).
 
-- [ ] **Step 1 (RED):** `WaveScalingTests.cs` — масштаб от числа игроков
+- [x] **Step 1 (RED):** `WaveScalingTests.cs` — масштаб от числа игроков
   (фикстурным выражением), кап, `MinSpawnDistanceToPlayer` до ближайшего живого,
   **«при нуле живых директор волн не тикает — фаза и таймер замирают»**.
-- [ ] **Step 2 (RED):** в `ConfigTests` — раскладка: пара спавнов без прямой
+- [x] **Step 2 (RED):** в `ConfigTests` — раскладка: пара спавнов без прямой
   видимости; коридор ≥ 20 м со свободным проходом ≥ 6 м; кольцо спавна волн не
   заперто.
-- [ ] **Step 3:** FAIL → **Step 4 (GREEN)**: поля, формула, валидация,
+- [x] **Step 3:** FAIL → **Step 4 (GREEN)**: поля, формула, валидация,
   `TestConfigs`.
-- [ ] **Step 5:** R-APPLY-`StageOneSceneBootstrap` →
+- [x] **Step 5:** R-APPLY-`StageOneSceneBootstrap` →
   `git diff -- client/Assets/Data/` показывает **ровно** санкционированный
   список (включая `HeroConfig.asset` с ключом Т8 из Т9); R-IDEM.
-- [ ] **Step 6:** **R-GOLDEN ×2** («Т16 — новая геометрия арены и капы»);
+- [x] **Step 6:** **R-GOLDEN ×2** («Т16 — новая геометрия арены и капы»);
   R-TEST полный.
-- [ ] **Step 7:** R-COMMIT `feat(app-5nu): Т16 — арена под троих, стены и
+- [x] **Step 7:** R-COMMIT `feat(app-5nu): Т16 — арена под троих, стены и
   масштаб волн (перепин golden №2)`.
 
 **Гейт фазы Ф3:** R-TEST (≈ +22); **ровно один перепин**; `WallGeometryTests`
