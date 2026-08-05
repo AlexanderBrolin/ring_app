@@ -621,8 +621,17 @@ public void KillPlayerNoDamage(int index);              // зовёт KillPlayer
 // Снимок берётся ДО блока EnsureAssetHasKey/SaveAssets.
 bool stageTwoPending = !System.IO.File
     .ReadAllText($"{DataDir}/ArenaConfig.asset").Contains("Walls:");
-arenaChanged |= stageTwoPending && ApplyStageTwoBalance(arena, wave, gameFeel);
+// Три флага dirty: MaxMobsPerWave живёт в WaveConfig, а MaxCorpses/MaxCasings/
+// MaxDecals — в GameFeelConfig; одного SetDirty(arena) на восемь чисел мало.
+arenaChanged |= stageTwoPending
+    && ApplyStageTwoBalance(arena, wave, gameFeel, out bool waveDelta, out bool feelDelta);
+waveChanged |= waveDelta;
+feelChanged |= feelDelta;
 ```
+
+Фактическая реализация каркаса — `StageOneSceneBootstrap.cs` (заведена Т9,
+там же tripwire, роняющий `Apply`, как только `ArenaConfig.Walls` объявлен).
+Т16 наполняет тело и снимает tripwire, своего блока доставки не пишет.
 
   Так одноразовость обеспечена признаком самого этапа, а не маркер-механизмом,
   и правило «тюнинг владельца переживает повторный прогон» не нарушается.
