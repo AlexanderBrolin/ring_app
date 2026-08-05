@@ -114,5 +114,78 @@ namespace Ring.Simulation.Tests
             }
             Assert.AreEqual(Run(c), Run(c)); // deterministic degradation under the cap
         }
+
+        [Test]
+        public void Spawn_InsideWall_Rejected()
+        {
+            // Stage 2 Task 14 (spec §3.3): IsValidSpawn grows a wall-overlap
+            // loop mirroring the existing obstacle loop, via the same
+            // Geometry.OverlapsStadium idiom the obstacle/mob loops already
+            // use — no second overlap function. MaxSpawnAttempts = 0 forces
+            // every candidate through the FIXED FallbackSlots grid instead
+            // of WaveRng draws — fully deterministic (no seed-dependent luck
+            // needed to actually land a candidate on the blocked arc below),
+            // and BaseCount well past the open-slot count forces the
+            // deterministic sequence to spill into it once the open slots
+            // fill up.
+            var c = TestConfigs.Default();
+            c.Wave.MaxSpawnAttempts = 0;
+            c.Wave.BaseCount = 48;
+            c.Wave.MaxMobsPerWave = 48;
+            float ringRadius = c.Arena.Radius - c.Wave.SpawnRingInset;
+            // A wide band crossing the ring well north of the player/default
+            // obstacles (all within radius ~17 of the origin) — covers
+            // roughly a third of the ring's candidate angles without
+            // touching anything else already in the arena.
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(-ringRadius - 5f, 25f) };
+            c.Arena.WallB = new[] { new float2(ringRadius + 5f, 25f) };
+            c.Arena.WallHalfWidth = new[] { 10f };
+
+            var w = new SimulationWorld(11, c);
+            int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 10;
+            for (int i = 0; i < delayTicks; i++) w.Tick(default);
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            Assert.Greater(snap.MobCount, 0); // the wave still found room elsewhere on the ring
+            for (int m = 0; m < snap.MobCount; m++)
+                Assert.IsFalse(Geometry.OverlapsStadium(snap.Mobs[m].Pos, 0.4f,
+                    c.Arena.WallA[0], c.Arena.WallB[0], c.Arena.WallHalfWidth[0]));
+        }
+
+        [Test]
+        public void Spawn_InsideWallCap_Rejected()
+        {
+            // Coordinator addition: Spawn_InsideWall_Rejected above only
+            // exercises rejection via a wall's FLAT side. This fixture is a
+            // short wall ending a few metres short of the spawn ring, so a
+            // candidate at that angle can only be rejected through the
+            // ROUNDED END CAP (Geometry.ClosestPointOnSegment clamps to the
+            // endpoint out there, not the flat band) — proving IsValidSpawn's
+            // wall loop catches that case too, not only the straight side.
+            // MaxSpawnAttempts = 0 (see Spawn_InsideWall_Rejected above) makes
+            // slot 0 — angle zero, squarely on this wall's cap — the very
+            // FIRST candidate the very first pending mob ever tries, with no
+            // RNG involved at all.
+            var c = TestConfigs.Default();
+            c.Wave.MaxSpawnAttempts = 0;
+            c.Wave.BaseCount = 48;
+            c.Wave.MaxMobsPerWave = 48;
+            float ringRadius = c.Arena.Radius - c.Wave.SpawnRingInset;
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(ringRadius - 21f, 0f) };
+            c.Arena.WallB = new[] { new float2(ringRadius - 2f, 0f) }; // ends short of the ring
+            c.Arena.WallHalfWidth = new[] { 8f }; // the cap alone still reaches the ring near angle 0
+
+            var w = new SimulationWorld(11, c);
+            int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 10;
+            for (int i = 0; i < delayTicks; i++) w.Tick(default);
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            Assert.Greater(snap.MobCount, 0);
+            for (int m = 0; m < snap.MobCount; m++)
+                Assert.IsFalse(Geometry.OverlapsStadium(snap.Mobs[m].Pos, 0.4f,
+                    c.Arena.WallA[0], c.Arena.WallB[0], c.Arena.WallHalfWidth[0]));
+        }
     }
 }

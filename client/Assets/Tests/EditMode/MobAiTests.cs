@@ -542,5 +542,142 @@ namespace Ring.Simulation.Tests
             float2 mid = (snap.Mobs[0].Pos + snap.Mobs[1].Pos) * 0.5f;
             Assert.AreEqual(12f, mid.x, 0.05f);
         }
+
+        [Test]
+        public void Chaser_NavigatesAroundWall()
+        {
+            // Mirrors Chaser_BehindObstacle_SteersAroundNotStuck above,
+            // substituting a wall for the circular obstacle (Stage 2 Task 14,
+            // spec §3.3): SteerAround must treat WallCount the same way it
+            // already treats ObstacleCount. The wall sits entirely to ONE
+            // side of the direct mob->player line (not straddling it like
+            // the obstacle version above) — a wall centred dead-on the
+            // approach line pins the mob against its own flat side instead
+            // (RED found the equivalent-circle tangent, aimed at the FAR
+            // end, going exactly parallel to the near flat face at a
+            // specific offset — a genuine stable dead end of the
+            // nearest-end approach, reproducible from several starting
+            // offsets; see the task report). A wall offset like this one, so
+            // only its nearer end ever competes for "nearest blocker",
+            // avoids that dead end and exercises the intended detour.
+            var c = TestConfigs.Open();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(7f, 3f) };
+            c.Arena.WallB = new[] { new float2(7f, 8f) };
+            c.Arena.WallHalfWidth = new[] { 2f };
+            var w = new SimulationWorld(1, c);
+            w.SpawnMobForTest(MobType.Chaser, new float2(14f, 0f)); // player at (0,0)
+            for (int i = 0; i < 300; i++) w.Tick(Idle);
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), 3f); // reached it by going around
+        }
+
+        [Test]
+        public void Chaser_DoesNotRubAlongWall()
+        {
+            // Coordinator addition (task-14-context.md): the regression this
+            // guards against is subtler than "does the chaser eventually get
+            // around" (Chaser_NavigatesAroundWall above already covers that).
+            // A steering fix that reduced the wall to an equivalent circle at
+            // the NEAREST POINT ON ITS AXIS instead of the nearest END would
+            // still eventually round the corner via the physical
+            // collide-and-slide alone (MoveWithCollisions), just very
+            // slowly — the steering keeps re-aiming almost straight back
+            // into the wall face every tick instead of committing to a
+            // detour. Over a fixed window that shows up as motion that is
+            // mostly perpendicular churn against the wall with little
+            // progress ALONG it; this test measures exactly that ratio,
+            // spawning the chaser squarely on the wall's flat side, far from
+            // either end.
+            var c = TestConfigs.Open();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(6f, -15f) };
+            c.Arena.WallB = new[] { new float2(6f, 15f) };
+            c.Arena.WallHalfWidth = new[] { 1.5f };
+
+            var w = new SimulationWorld(1, c);
+            var player = w.Player;
+            player.Pos = new float2(-6f, -1f); // west of the wall, off-centre like the chaser below
+            w.SetPlayerForTest(player);
+            // East of the wall, at the same off-centre offset — squarely on
+            // the flat side, far from either rounded end.
+            w.SpawnMobForTest(MobType.Chaser, new float2(12f, -1f));
+
+            float2 prevPos = w.Mobs[0].Pos;
+            float startY = prevPos.y;
+            float pathLength = 0f;
+            const int ticks = 200;
+            for (int i = 0; i < ticks; i++)
+            {
+                w.Tick(Idle);
+                float2 pos = w.Mobs[0].Pos;
+                pathLength += math.distance(pos, prevPos);
+                prevPos = pos;
+            }
+
+            float axialProgress = math.abs(prevPos.y - startY);
+            Assert.Greater(pathLength, 5f, "chaser barely moved at all over the window");
+            Assert.GreaterOrEqual(axialProgress, 0.2f * pathLength,
+                $"axial progress along the wall ({axialProgress:F2}) should track a " +
+                $"meaningful fraction of the total distance travelled ({pathLength:F2}) — " +
+                "a mob rubbing along the wall face instead of heading for its end would fail this");
+        }
+
+        [Test]
+        public void SteerAround_PrefersNearestBlocker_AcrossKinds()
+        {
+            // Coordinator addition: circles and walls compete for the SAME
+            // "nearest blocker" slot (task-14-context.md — same rule
+            // SweepArena already uses for circle-then-wall order). The two
+            // fixtures below place both an obstacle AND a wall in the mob's
+            // lookahead at different distances from it — whichever is
+            // nearer must determine the steer, regardless of kind. Checked
+            // by the SIGN of the resulting steer's y-component: the circle
+            // sits north of the direct line in both fixtures and the wall
+            // spans south of it, so "the circle won" and "the wall won"
+            // push the tangent to opposite sides of zero — a mutant that
+            // always prefers one kind over the other flips the sign in
+            // exactly one of the two fixtures below (both distances/signs
+            // verified offline against the tangent formula before writing
+            // this assertion).
+            float2 mobStart = new float2(-10f, 0f);
+
+            // Fixture A: the CIRCLE is nearer along the lookahead segment.
+            {
+                var c = TestConfigs.Open();
+                c.Arena.ObstacleCount = 1;
+                c.Arena.ObstaclePos = new[] { new float2(-8f, 0.8f) };
+                c.Arena.ObstacleRadius = new[] { 0.5f };
+                c.Arena.WallCount = 1;
+                c.Arena.WallA = new[] { new float2(-7.2f, -0.3f) };
+                c.Arena.WallB = new[] { new float2(-7.2f, 6f) };
+                c.Arena.WallHalfWidth = new[] { 0.3f };
+                var w = new SimulationWorld(1, c);
+                w.SpawnMobForTest(MobType.Chaser, mobStart);
+                w.Tick(Idle); // Idle->Chase warm-up, no steering yet
+                w.Tick(Idle); // first tick SteerAround actually runs
+                Assert.Less(w.Mobs[0].Vel.y, -0.3f,
+                    "the nearer CIRCLE should have determined the steer, not the farther wall");
+            }
+
+            // Fixture B: same two shapes, swapped distances — the WALL is now nearer.
+            {
+                var c = TestConfigs.Open();
+                c.Arena.ObstacleCount = 1;
+                c.Arena.ObstaclePos = new[] { new float2(-7f, 1.4f) };
+                c.Arena.ObstacleRadius = new[] { 0.3f };
+                c.Arena.WallCount = 1;
+                c.Arena.WallA = new[] { new float2(-7.6f, -0.3f) };
+                c.Arena.WallB = new[] { new float2(-7.6f, 6f) };
+                c.Arena.WallHalfWidth = new[] { 0.7f };
+                var w = new SimulationWorld(1, c);
+                w.SpawnMobForTest(MobType.Chaser, mobStart);
+                w.Tick(Idle);
+                w.Tick(Idle);
+                Assert.Greater(w.Mobs[0].Vel.y, 0.3f,
+                    "the nearer WALL should have determined the steer, not the farther circle");
+            }
+        }
     }
 }

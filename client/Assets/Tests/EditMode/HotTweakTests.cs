@@ -162,5 +162,72 @@ namespace Ring.Simulation.Tests
                     $"PlayerState.{field.Name} exceeded its ApplyConfig ceiling after hot-tweak");
             }
         }
+
+        [Test]
+        public void HotTweak_WallChange_Throws()
+        {
+            // Stage 2 Task 14 (spec §3.3): ArenaTopologyMatches grows a wall
+            // comparison mirroring the existing obstacle one — same
+            // WallCount, only a coordinate moves.
+            var c = TestConfigs.Default();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(5f, -5f) };
+            c.Arena.WallB = new[] { new float2(5f, 5f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.WallB = new[] { new float2(5f, 6f) }; // same count/half-width, moved coordinate
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_WallHalfWidthChange_Throws()
+        {
+            // Carryover-t14.md #2 (Task 12 review): comparing only WallA/
+            // WallB and skipping WallHalfWidth would let a corridor-width
+            // tuning pass as a hot-tweak while Depenetrate keeps pushing
+            // bodies out to the OLD width — same A/B here, only the width changes.
+            var c = TestConfigs.Default();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(5f, -5f) };
+            c.Arena.WallB = new[] { new float2(5f, 5f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.WallHalfWidth = new[] { 1.5f };
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_CapChange_Throws()
+        {
+            // Coordinator addition: one of the three per-match entity caps
+            // (MaxMobs/MaxProjectiles/MaxEventsPerFrame) added to
+            // ArenaTopologyMatches — without this, resizing a cap mid-match
+            // would pass as a hot-tweak even though the backing arrays it
+            // sized at construction can't grow.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.MaxProjectiles = c.Arena.MaxProjectiles + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_MaxPlayersBelowPlayerCount_Throws()
+        {
+            // Carryover-t14.md #1 (deferred from Task 4's review, M-4): a
+            // hot-tweak lowering MaxPlayers below the match's actual live
+            // player count must not silently succeed — ArenaTopologyMatches
+            // now compares MaxPlayers like any other topology field, so ANY
+            // change (not only a dedicated "< PlayerCount" special case)
+            // forces the restart path instead of leaving the world's player
+            // array longer than its own new cap.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c, playerCount: 3); // uses the full MaxPlayers(3) cap
+            var next = c;
+            next.Arena.MaxPlayers = 2; // below the match's actual 3 live players
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
     }
 }

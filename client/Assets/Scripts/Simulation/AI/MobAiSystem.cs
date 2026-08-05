@@ -260,9 +260,25 @@ namespace Ring.Simulation.AI
         /// Side is the sign of the cross product of the approach direction and the
         /// direction to the obstacle's centre; a dead-on approach (cross == 0)
         /// breaks the tie on the mob's Id parity so the choice stays deterministic
-        /// without RNG. Only obstacles are considered (matches
-        /// Targeting.HasLineOfFire) — the ring wall is handled by the physical
-        /// collide-and-slide in MoveWithCollisions, not by look-ahead steering.
+        /// without RNG. Interior walls (Stage 2 Task 14, spec 3.3) compete for
+        /// the SAME "nearest blocker" slot as obstacles below — a second loop
+        /// over WallCount with the identical `t &lt; bestT` idiom, circles
+        /// traversed first so an exact tie keeps the circle already recorded
+        /// (mirrors SweepArena's fixed circle-then-wall order). A blocking
+        /// wall is reduced to an equivalent circle at whichever END (WallA/
+        /// WallB) is nearer the mob, not the nearest point on the wall's
+        /// axis (task-14-context.md, coordinator decision): for a long side
+        /// wall, "nearest point on axis" collapses to a tiny circle sitting
+        /// right in front of the mob, whose shallow tangent barely deflects
+        /// it — the mob keeps grinding into the wall via the physical
+        /// collide-and-slide instead of actually detouring, exactly the
+        /// "rubs along the corridor side" failure spec 3.3 calls out.
+        /// Steering around the wall's actual end is what a detour physically
+        /// means; the choice is re-evaluated every tick, so once the mob
+        /// clears the end the wall stops blocking on its own. Only obstacles
+        /// and walls are considered (matches Targeting.HasLineOfFire) — the
+        /// ring wall is handled by the physical collide-and-slide in
+        /// MoveWithCollisions, not by look-ahead steering.
         /// `avoidMargin` (MobSimConfig.AvoidMargin — see its doc comment for the
         /// full rationale) pads the obstruction check beyond `mobRadius` so the
         /// mob doesn't hug the obstacle at the bare minimum clearance.
@@ -273,7 +289,8 @@ namespace Ring.Simulation.AI
             float2 aheadEnd = pos + dir * lookahead;
             float padR = mobRadius + avoidMargin;
 
-            int blockedIdx = -1;
+            int blockedCircleIdx = -1;
+            int blockedWallIdx = -1;
             float bestT = 1f;
             for (int o = 0; o < arena.ObstacleCount; o++)
             {
@@ -281,15 +298,41 @@ namespace Ring.Simulation.AI
                         arena.ObstacleRadius[o], out float t) && t < bestT)
                 {
                     bestT = t;
-                    blockedIdx = o;
+                    blockedCircleIdx = o;
+                    blockedWallIdx = -1;
                 }
             }
-            if (blockedIdx < 0) return dir;
+            for (int wIdx = 0; wIdx < arena.WallCount; wIdx++)
+            {
+                if (Geometry.SegmentStadium(pos, aheadEnd, padR, arena.WallA[wIdx], arena.WallB[wIdx],
+                        arena.WallHalfWidth[wIdx], out float t) && t < bestT)
+                {
+                    bestT = t;
+                    blockedWallIdx = wIdx;
+                    blockedCircleIdx = -1;
+                }
+            }
+            if (blockedCircleIdx < 0 && blockedWallIdx < 0) return dir;
 
-            float2 toCenter = arena.ObstaclePos[blockedIdx] - pos;
+            float2 center;
+            float baseRadius;
+            if (blockedWallIdx >= 0)
+            {
+                float2 wallA = arena.WallA[blockedWallIdx];
+                float2 wallB = arena.WallB[blockedWallIdx];
+                center = math.distance(pos, wallA) <= math.distance(pos, wallB) ? wallA : wallB;
+                baseRadius = arena.WallHalfWidth[blockedWallIdx];
+            }
+            else
+            {
+                center = arena.ObstaclePos[blockedCircleIdx];
+                baseRadius = arena.ObstacleRadius[blockedCircleIdx];
+            }
+
+            float2 toCenter = center - pos;
             float d = math.length(toCenter);
             float2 u = d > 1e-5f ? toCenter / d : new float2(-dir.y, dir.x);
-            float radius = arena.ObstacleRadius[blockedIdx] + padR;
+            float radius = baseRadius + padR;
             // Clamped to 1 when pos is already at/inside the padded circle (grazing,
             // 90-degree tangent) instead of NaN-ing out of range for asin.
             float ratio = d > 1e-5f ? math.clamp(radius / d, 0f, 1f) : 1f;

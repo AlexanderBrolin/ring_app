@@ -305,7 +305,8 @@ namespace Ring.Simulation.Core
             if (!ArenaTopologyMatches(in _config.Arena, in next.Arena))
             {
                 throw new System.ArgumentException("SimulationWorld.ApplyConfig: arena topology " +
-                    "changed (radius/obstacles) — restart the world instead of hot-tweaking it.");
+                    "changed (radius/obstacles/walls/player cap/entity caps) — restart the world " +
+                    "instead of hot-tweaking it.");
             }
 
             _config = next;
@@ -359,6 +360,37 @@ namespace Ring.Simulation.Core
                 if (!math.all(a.ObstaclePos[i] == b.ObstaclePos[i])) return false;
                 if (a.ObstacleRadius[i] != b.ObstacleRadius[i]) return false;
             }
+            // Stage 2 Task 14 (spec §3.3 + carryover-t14.md #2, from the Task 12
+            // review): interior walls are arena topology exactly like
+            // obstacles are — comparing only WallA/WallB and skipping
+            // WallHalfWidth would let a corridor-width tuning pass as a
+            // hot-tweak while Depenetrate (Task 12) keeps pushing bodies out
+            // to the OLD width, silently desyncing collision geometry from
+            // what ApplyConfig just accepted.
+            if (a.WallCount != b.WallCount) return false;
+            for (int i = 0; i < a.WallCount; i++)
+            {
+                if (!math.all(a.WallA[i] == b.WallA[i])) return false;
+                if (!math.all(a.WallB[i] == b.WallB[i])) return false;
+                if (a.WallHalfWidth[i] != b.WallHalfWidth[i]) return false;
+            }
+            // Stage 2 Task 14 (carryover-t14.md #1, deferred from Task 4's
+            // review, M-4): MaxPlayers must also match — otherwise a
+            // hot-tweak lowering it below the match's actual live player
+            // count would silently succeed, leaving the world's player array
+            // longer than its own new cap. Requiring an exact match (not
+            // just ">= the current player count", which ApplyConfig has no
+            // way to check without threading playerCount through here)
+            // forces ANY MaxPlayers change through a restart instead,
+            // closing the hole. PlayerSpawnRingFrac and the three per-match
+            // caps below are topology the same way Radius is: they size
+            // arrays / define spawn geometry at construction time, not
+            // something ApplyConfig reconciles mid-match.
+            if (a.MaxPlayers != b.MaxPlayers || a.PlayerSpawnRingFrac != b.PlayerSpawnRingFrac)
+                return false;
+            if (a.MaxMobs != b.MaxMobs || a.MaxProjectiles != b.MaxProjectiles
+                || a.MaxEventsPerFrame != b.MaxEventsPerFrame)
+                return false;
             return true;
         }
 

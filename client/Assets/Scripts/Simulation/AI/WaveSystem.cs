@@ -145,10 +145,13 @@ namespace Ring.Simulation.AI
             return false;
         }
 
-        /// Rejects on obstacle overlap, live-mob overlap (both against the
-        /// candidate's own archetype radius, the same CircleOverlap idiom used
-        /// elsewhere for attack range / projectile hits) and distance-to-player
-        /// below MinSpawnDistanceToPlayer.
+        /// Rejects on obstacle overlap, wall overlap (Stage 2 Task 14, spec
+        /// §3.3 — the same Geometry.OverlapsStadium the obstacle-clearance
+        /// check elsewhere already uses, no second overlap function),
+        /// live-mob overlap (both against the candidate's own archetype
+        /// radius, the same CircleOverlap idiom used elsewhere for attack
+        /// range / projectile hits) and distance-to-player below
+        /// MinSpawnDistanceToPlayer.
         static bool IsValidSpawn(SimulationWorld w, in ArenaSimConfig arena,
             in WaveSimConfig cfg, float2 pos, float mobRadius)
         {
@@ -170,6 +173,11 @@ namespace Ring.Simulation.AI
 
             for (int o = 0; o < arena.ObstacleCount; o++)
                 if (Geometry.CircleOverlap(pos, mobRadius, arena.ObstaclePos[o], arena.ObstacleRadius[o]))
+                    return false;
+
+            for (int wIdx = 0; wIdx < arena.WallCount; wIdx++)
+                if (Geometry.OverlapsStadium(pos, mobRadius, arena.WallA[wIdx], arena.WallB[wIdx],
+                        arena.WallHalfWidth[wIdx]))
                     return false;
 
             MobState[] mobs = w.Mobs;
