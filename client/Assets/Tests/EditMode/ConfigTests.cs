@@ -217,7 +217,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Validate_EdgeRequestMinTicksAboveRange_Throws()
         {
-            // app-zx8 (spec §6e решение "а"): [Range(0,15)] on HeroConfig is an
+            // app-zx8 (spec §6e, decision "a"): [Range(0,15)] on HeroConfig is an
             // Editor-only Inspector hint — a value reaching the builder from
             // code/JSON/test fixtures is not bounded by it at all, only by the
             // old ReqNonNegative(>= 0) check. Mirrors the upper-bound precedent

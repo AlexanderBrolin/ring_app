@@ -122,6 +122,45 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void LineOfFire_NegativePadClamped_PerObstacle_NotHoisted()
+        {
+            // Fix-round T13 tail (coordinator review): every existing negative-
+            // padR fixture above has exactly ONE obstacle, so a mutant that
+            // hoists the clamp out of the loop and computes it once (from
+            // either the first or the largest/smallest obstacle's own radius)
+            // is numerically indistinguishable from the correct per-obstacle
+            // clamp on any of them — the per-obstacle clamp is unwitnessed.
+            // TWO obstacles with DIFFERENT radii on the same ray kills every
+            // single-clamp variant: hoisting by the larger radius (0.5) still
+            // clamps to -0.45 (since -0.45 > -0.5), but applying THAT shared
+            // clamp to the smaller circle (R 0.2) gives r = -0.45 + 0.2 =
+            // -0.25, a phantom of radius 0.25 that swallows its 0.1 m offset
+            // from the ray and falsely blocks it. Hoisting by the smaller
+            // radius (0.2) instead clamps to -0.2, which applied to the
+            // LARGER circle (R 0.5) gives r = -0.2 + 0.5 = 0.3, again bigger
+            // than its own 0.2 m offset — also a false block. The correct
+            // per-obstacle clamp resolves both circles to r <= 0 (no phantom)
+            // and the ray is genuinely clear.
+            float2 circle0Pos = new float2(5f, 0.2f);
+            float circle0R = 0.5f;
+            float2 circle1Pos = new float2(7f, 0.1f);
+            float circle1R = 0.2f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 2,
+                ObstaclePos = new[] { circle0Pos, circle1Pos },
+                ObstacleRadius = new[] { circle0R, circle1R },
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(0f, 0f), new float2(10f, 0f),
+                -0.45f, arena));
+        }
+
+        [Test]
         public void LineOfFire_NegativePadClamped_Wall()
         {
             // Coordinator addition to the plan's circle-only clamp test above:
@@ -420,8 +459,8 @@ namespace Ring.Simulation.Tests
         public void Gunner_LongApproach_FiresAtMostOnceOnFirstWindow()
         {
             // F-1 regression: MobAiSystem.UpdateGunner decrements FireCooldown every
-            // tick with no floor clamp, unlike the player's WeaponSystem (WeaponSystem.
-            // cs:29, `p.FireCooldown = math.max(0f, p.FireCooldown);` while not firing).
+            // tick with no floor clamp, unlike the player's WeaponSystem.Update
+            // (`p.FireCooldown = math.max(0f, p.FireCooldown);` while not firing).
             // A gunner spending several seconds in Reposition (outside PreferredRange
             // +-RangeTolerance) racks up a negative "debt" on FireCooldown; the instant
             // it steps inside the tolerance band (LoS is unobstructed the whole way in

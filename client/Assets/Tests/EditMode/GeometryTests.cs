@@ -6,6 +6,29 @@ namespace Ring.Simulation.Tests
 {
     public class GeometryTests
     {
+        /// Shared fixture builder (fixwave Ф3 item 4, M-5): a single interior
+        /// wall with no obstacles is the ArenaSimConfig shape most of
+        /// SweepArena/Depenetrate's wall-only tests need — building it
+        /// inline duplicated the same ~8-field object literal across most of
+        /// them. The wall's own geometry (wallA/wallB/halfW) and the ring
+        /// radius stay literals IN THE CALLING TEST (convention app-n6g
+        /// C14, fixtures as literals in the test) — only the ArenaSimConfig
+        /// construction itself moves here; TestConfigs is untouched.
+        static ArenaSimConfig SingleWallArena(float2 wallA, float2 wallB, float halfW, float radius = 35f)
+        {
+            return new ArenaSimConfig
+            {
+                Radius = radius,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+        }
+
         [Test]
         public void SegmentCircle_FastSegment_HitsSmallCircle()
         {
@@ -759,17 +782,7 @@ namespace Ring.Simulation.Tests
             float2 p0 = new float2(-4f, 5f);
             float2 p1 = new float2(6f, 5f);
 
-            var arena = new ArenaSimConfig
-            {
-                Radius = 35f,
-                ObstacleCount = 0,
-                ObstaclePos = System.Array.Empty<float2>(),
-                ObstacleRadius = System.Array.Empty<float>(),
-                WallCount = 1,
-                WallA = new[] { wallA },
-                WallB = new[] { wallB },
-                WallHalfWidth = new[] { halfW },
-            };
+            var arena = SingleWallArena(wallA, wallB, halfW);
 
             bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
                 out float t, out float2 normal);
@@ -803,17 +816,7 @@ namespace Ring.Simulation.Tests
             float2 p0 = new float2(10f, 4f);
             float2 p1 = new float2(0f, 4f);
 
-            var arena = new ArenaSimConfig
-            {
-                Radius = 35f,
-                ObstacleCount = 0,
-                ObstaclePos = System.Array.Empty<float2>(),
-                ObstacleRadius = System.Array.Empty<float>(),
-                WallCount = 1,
-                WallA = new[] { wallA },
-                WallB = new[] { wallB },
-                WallHalfWidth = new[] { halfW },
-            };
+            var arena = SingleWallArena(wallA, wallB, halfW);
 
             bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
                 out float t, out float2 normal);
@@ -859,17 +862,7 @@ namespace Ring.Simulation.Tests
             float2 p0 = new float2(6f, 2f);
             float2 p1 = new float2(6f, 0f);
 
-            var arena = new ArenaSimConfig
-            {
-                Radius = 35f,
-                ObstacleCount = 0,
-                ObstaclePos = System.Array.Empty<float2>(),
-                ObstacleRadius = System.Array.Empty<float>(),
-                WallCount = 1,
-                WallA = new[] { a },
-                WallB = new[] { b },
-                WallHalfWidth = new[] { halfW },
-            };
+            var arena = SingleWallArena(a, b, halfW);
 
             bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
                 out float t, out float2 normal);
@@ -902,17 +895,7 @@ namespace Ring.Simulation.Tests
             float2 p1 = p0 + new float2(1f, 0f);
             float padR = 0.1f;
 
-            var arena = new ArenaSimConfig
-            {
-                Radius = 35f,
-                ObstacleCount = 0,
-                ObstaclePos = System.Array.Empty<float2>(),
-                ObstacleRadius = System.Array.Empty<float>(),
-                WallCount = 1,
-                WallA = new[] { wallA },
-                WallB = new[] { wallB },
-                WallHalfWidth = new[] { halfW },
-            };
+            var arena = SingleWallArena(wallA, wallB, halfW);
 
             bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
                 out float t, out float2 normal);
@@ -947,17 +930,7 @@ namespace Ring.Simulation.Tests
             float2 p0 = new float2(2f, 3.5f);
             float2 p1 = new float2(3f, 3.5f);
 
-            var arena = new ArenaSimConfig
-            {
-                Radius = 35f,
-                ObstacleCount = 0,
-                ObstaclePos = System.Array.Empty<float2>(),
-                ObstacleRadius = System.Array.Empty<float>(),
-                WallCount = 1,
-                WallA = new[] { wallA },
-                WallB = new[] { wallB },
-                WallHalfWidth = new[] { halfW },
-            };
+            var arena = SingleWallArena(wallA, wallB, halfW);
 
             Assert.IsTrue(Geometry.OverlapsStadium(p0, padR, wallA, wallB, halfW)); // fixture precondition
 
@@ -988,17 +961,7 @@ namespace Ring.Simulation.Tests
             float2 p0 = wallPoint; // starts exactly at the degenerate wall's point
             float2 p1 = wallPoint + new float2(3f, 0f);
 
-            var arena = new ArenaSimConfig
-            {
-                Radius = 35f,
-                ObstacleCount = 0,
-                ObstaclePos = System.Array.Empty<float2>(),
-                ObstacleRadius = System.Array.Empty<float>(),
-                WallCount = 1,
-                WallA = new[] { wallPoint },
-                WallB = new[] { wallPoint }, // degenerate: zero-length axis
-                WallHalfWidth = new[] { halfW },
-            };
+            var arena = SingleWallArena(wallPoint, wallPoint, halfW); // degenerate: zero-length axis
 
             bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
                 out float t, out float2 normal);
@@ -1099,17 +1062,8 @@ namespace Ring.Simulation.Tests
             float2 wallB = new float2(5f, 20f); // far away — never the winning candidate
             float wallHalfW = 5f;
 
-            var arena = new ArenaSimConfig
-            {
-                Radius = 2f, // ring: t = 2/10 = 0.2, same exact-integer chain as above
-                ObstacleCount = 0,
-                ObstaclePos = System.Array.Empty<float2>(),
-                ObstacleRadius = System.Array.Empty<float>(),
-                WallCount = 1,
-                WallA = new[] { wallA },
-                WallB = new[] { wallB },
-                WallHalfWidth = new[] { wallHalfW },
-            };
+            // ring: t = 2/10 = 0.2, same exact-integer chain as above
+            var arena = SingleWallArena(wallA, wallB, wallHalfW, radius: 2f);
 
             Geometry.SegmentStadium(p0, p1, padR, wallA, wallB, wallHalfW, out float tWallExpected);
             Geometry.SegmentRingWall(p0, p1, padR, arena.Radius, out float tRingExpected);
@@ -1200,17 +1154,7 @@ namespace Ring.Simulation.Tests
             float2 posStart = new float2(0.5f, 0f); // inside the band, clear of both caps
             float2 velStart = new float2(-3f, 2f);  // negative x drives further into the wall
 
-            var arena = new ArenaSimConfig
-            {
-                Radius = 35f, // far away — the ring never intervenes here
-                ObstacleCount = 0,
-                ObstaclePos = System.Array.Empty<float2>(),
-                ObstacleRadius = System.Array.Empty<float>(),
-                WallCount = 1,
-                WallA = new[] { a },
-                WallB = new[] { b },
-                WallHalfWidth = new[] { halfW },
-            };
+            var arena = SingleWallArena(a, b, halfW); // default Radius 35 — far away, the ring never intervenes here
 
             // Independent expectation via the already-pinned primitive
             // (Task 11), on a scratch copy — NOT re-deriving the geometry.
@@ -1351,28 +1295,29 @@ namespace Ring.Simulation.Tests
             // SINGLE Depenetrate iteration must apply both pushes in order
             // (walls, then the ring clamp) — spec §3.3's fixed order, mirrored
             // from SweepArena.
+            //
+            // Scoped re-review item 3 (fixwave Ф3): the wall is TILTED, not
+            // vertical. A vertical wall here makes its normal collinear with
+            // the ring's radial normal at the contact point, so the wall's
+            // own Slide zeroes out the ENTIRE velocity component the ring's
+            // Slide would otherwise act on — the ring branch's Slide(vel, wn)
+            // call becomes unwitnessed dead code as far as this test can
+            // tell (the position clamp still fires and is still checked, but
+            // the velocity half of the ring branch is not). The tilt keeps a
+            // nonzero, NEGATIVE projection onto the ring's normal alive after
+            // the wall's slide, so the ring's own Slide call is an observable
+            // part of this test's expectation too.
             float radius = 0.45f;
-            float2 wallA = new float2(34f, -2f);
-            float2 wallB = new float2(34f, 2f);
+            float2 wallA = new float2(33.5f, -2f);
+            float2 wallB = new float2(34.5f, 2f);
             float halfW = 1f;
-            float2 posStart = new float2(34.5f, 0f); // inside the wall band
-            // Fix-round 1 M-6: negative x so the wall's Slide is not a no-op
-            // (the previous velStart = (5,-3) had dot(vel, wallNormal) > 0,
-            // so the wall's Slide call did nothing observable — only the
-            // ring's Slide was actually exercised).
-            float2 velStart = new float2(-5f, -3f);
+            float2 posStart = new float2(34.2f, 0f); // inside the wall band
+            // Fix-round 1 M-6: negative dot with the wall's normal so the
+            // wall's Slide is not a no-op; the tilt above additionally keeps
+            // a negative dot with the ring's normal alive after that slide.
+            float2 velStart = new float2(-4f, 4f);
 
-            var arena = new ArenaSimConfig
-            {
-                Radius = 35f,
-                ObstacleCount = 0,
-                ObstaclePos = System.Array.Empty<float2>(),
-                ObstacleRadius = System.Array.Empty<float>(),
-                WallCount = 1,
-                WallA = new[] { wallA },
-                WallB = new[] { wallB },
-                WallHalfWidth = new[] { halfW },
-            };
+            var arena = SingleWallArena(wallA, wallB, halfW);
 
             // Independent expectation: chain the two already-pinned
             // primitives (Task 11's PushOutOfStadium, then ClampInsideRing)
@@ -1381,12 +1326,20 @@ namespace Ring.Simulation.Tests
             bool pushedWall = Geometry.PushOutOfStadium(ref posExpected, radius, wallA, wallB, halfW,
                 out float2 wallNormal);
             Assert.IsTrue(pushedWall);
-            float2 velExpected = Geometry.Slide(velStart, wallNormal);
+            float2 velAfterWallSlide = Geometry.Slide(velStart, wallNormal);
 
             bool pushedRing = Geometry.ClampInsideRing(ref posExpected, radius, arena.Radius,
                 out float2 ringNormal);
             Assert.IsTrue(pushedRing); // sanity: the wall-adjusted position really is outside the ring
-            velExpected = Geometry.Slide(velExpected, ringNormal);
+
+            // The witness for the ring branch's Slide call: this projection
+            // must be NEGATIVE (velocity still pointing further past the
+            // ring even after the wall's own slide), not merely nonzero — a
+            // non-negative projection leaves Slide a no-op whether or not it
+            // is actually called, which would make the assertion vacuous.
+            float ringProjection = math.dot(velAfterWallSlide, ringNormal);
+            Assert.Less(ringProjection, -1e-3f);
+            float2 velExpected = Geometry.Slide(velAfterWallSlide, ringNormal);
 
             float2 pos = posStart;
             float2 vel = velStart;
@@ -1399,7 +1352,7 @@ namespace Ring.Simulation.Tests
 
             // Fix-round 1 I-4: recomputed offline, the body remains INSIDE
             // the wall's band even after both pushes (distance to axis is
-            // ~0.549 against a threshold of halfW + radius = 1.45) — with
+            // well under the halfW + radius = 1.45 threshold) — with
             // `iterations: 1` (every production caller), the wall pushes out
             // and the ring pushes straight back in, so this configuration
             // never converges. That is a KNOWN limitation of iterations: 1,

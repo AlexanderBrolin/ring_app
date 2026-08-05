@@ -239,8 +239,8 @@ namespace Ring.Presentation
                     // Arena topology changed under hot-tweak — spec §3.9 forbids in-place
                     // migration for that case; the only safe recovery is a full restart.
                     Debug.Log("SimulationRunner: arena topology changed under hot-tweak " +
-                        "(ArenaConfig.Radius/Obstacles) — ApplyConfig rejected it, restarting " +
-                        "with the same seed instead.");
+                        "(radius/obstacles/walls/player cap/spawn ring/entity caps) — ApplyConfig " +
+                        "rejected it, restarting with the same seed instead.");
                     Restart(Seed);
                 }
             }

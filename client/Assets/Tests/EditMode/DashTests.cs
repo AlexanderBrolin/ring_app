@@ -24,10 +24,10 @@ namespace Ring.Simulation.Tests
         {
             var w = new SimulationWorld(1, TestConfigs.Open());
             w.Tick(DashRight);
-            for (int i = 0; i < 6; i++) w.Tick(HoldRight); // дэш кончился (0.15 c = 4.5 тика)
-            w.Tick(DashRight);                              // кулдаун 1.2 c ещё идёт
+            for (int i = 0; i < 6; i++) w.Tick(HoldRight); // dash ended (0.15 s = 4.5 ticks)
+            w.Tick(DashRight);                              // cooldown 1.2 s still running
             Assert.AreEqual(1, w.Stats.DashesUsed);
-            for (int i = 0; i < 40; i++) w.Tick(HoldRight); // кулдаун прошёл
+            for (int i = 0; i < 40; i++) w.Tick(HoldRight); // cooldown elapsed
             w.Tick(DashRight);
             Assert.AreEqual(2, w.Stats.DashesUsed);
         }
@@ -38,13 +38,13 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, TestConfigs.Open());
             w.Tick(DashRight);
             for (int i = 0; i < 40; i++) w.Tick(HoldRight);
-            // запрос за ~3 тика до конца кулдауна — буфер 0.15 c (4.5 тика) доносит его
+            // request ~3 ticks before cooldown ends — the 0.15 s (4.5-tick) buffer carries it through
             var w2 = new SimulationWorld(1, TestConfigs.Open());
-            w2.Tick(DashRight);                       // тик 1: дэш; кулдаун 1.2 c = 36 тиков
-            for (int i = 0; i < 32; i++) w2.Tick(HoldRight); // тики 2..33
-            w2.Tick(DashRight);                       // тик 34: кулдаун ещё жив — в буфер
-            Assert.AreEqual(1, w2.Stats.DashesUsed);  // немедленного дэша нет
-            for (int i = 0; i < 4; i++) w2.Tick(HoldRight); // кулдаун истекает — буфер срабатывает
+            w2.Tick(DashRight);                       // tick 1: dash; cooldown 1.2 s = 36 ticks
+            for (int i = 0; i < 32; i++) w2.Tick(HoldRight); // ticks 2..33
+            w2.Tick(DashRight);                       // tick 34: cooldown still active — goes into the buffer
+            Assert.AreEqual(1, w2.Stats.DashesUsed);  // no immediate dash
+            for (int i = 0; i < 4; i++) w2.Tick(HoldRight); // cooldown expires — the buffer fires
             Assert.AreEqual(2, w2.Stats.DashesUsed);
         }
 
@@ -62,7 +62,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, TestConfigs.Open());
             w.Tick(DashRight);
             Assert.Greater(w.Player.IframeTimer, 0f);
-            for (int i = 0; i < 7; i++) w.Tick(HoldRight); // 0.2 c = 6 тиков
+            for (int i = 0; i < 7; i++) w.Tick(HoldRight); // 0.2 s = 6 ticks
             Assert.AreEqual(0f, w.Player.IframeTimer);
         }
 
@@ -76,7 +76,7 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             cfg.Arena.ObstacleCount = 1;
             cfg.Arena.ObstaclePos = new[] { new float2(2f, 0f) };
-            cfg.Arena.ObstacleRadius = new[] { 0.6f }; // дэш-шаг 0.73 м > диаметра нет, но свип обязан
+            cfg.Arena.ObstacleRadius = new[] { 0.6f }; // dash step 0.73 m > the obstacle's diameter — only the sweep keeps this from tunneling
             var w = new SimulationWorld(1, cfg);
             // Stage 2 Task 10: this loop spams DashRequested every tick, so the
             // edge-request rate limit now drops two out of every three requests

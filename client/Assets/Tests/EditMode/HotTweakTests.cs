@@ -11,7 +11,7 @@ namespace Ring.Simulation.Tests
         public void ApplyConfig_ClampsHpDown_KeepsTimersInRange()
         {
             var w = new SimulationWorld(3, TestConfigs.Default());
-            w.Tick(new SimInput { DashRequested = true }); // активный кулдаун — П-12(а)
+            w.Tick(new SimInput { DashRequested = true }); // active cooldown — П-12(a)
             var next = TestConfigs.Default();
             next.Hero.MaxHp = 50f;
             w.ApplyConfig(next);

@@ -256,7 +256,7 @@ namespace Ring.Data
             // Task 8; consumed since Stage 2 Task 10, where the gate itself
             // landed (PlayerMovementSystem.Update's rate limit at the top of
             // the method).
-            // app-zx8 (spec §6e решение "а"): [Range(0,15)] on HeroConfig is an
+            // app-zx8 (spec §6e, decision "a"): [Range(0,15)] on HeroConfig is an
             // Editor-only Inspector hint, never enforced on a value that
             // reaches the builder from code/JSON/a test fixture — mirror the
             // upper bound here, same precedent as Arena.MaxPlayers (Task 4).
