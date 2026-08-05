@@ -216,8 +216,9 @@ namespace Ring.Simulation.AI
                 float2 aimDir = Targeting.AimWithLead(m.Pos, player.Pos, player.Vel,
                     cfg.ProjectileSpeed, cfg.LeadFactor);
                 // Height/VelZ (Task 4): flat trajectory for now — spawns at the
-                // gunner's muzzle height with zero vertical velocity.
-                w.SpawnProjectile(ProjectileOwner.Mob, m.Pos + aimDir * cfg.Radius,
+                // gunner's muzzle height with zero vertical velocity. ownerIndex
+                // (Stage 2 Task 7): a mob never owns a player slot — NoOwner.
+                w.SpawnProjectile(ProjectileOwner.Mob, ProjectileIds.NoOwner, m.Pos + aimDir * cfg.Radius,
                     aimDir * cfg.ProjectileSpeed, cfg.MuzzleHeight, 0f,
                     cfg.ProjectileDamage, cfg.ProjectileRadius,
                     cfg.ProjectileLifetime);

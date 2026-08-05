@@ -114,5 +114,64 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(foundMob);
             Assert.AreEqual(ProjectileOwner.Mob, mobShot.Owner);
         }
+
+        [Test]
+        public void PlayerEvents_CarryPlayerIndex()
+        {
+            // Stage 2 Task 7: SimEvent.PlayerIndex threads through
+            // SimulationWorld's production call sites — TickMovement
+            // (PlayerDashed/StaminaDenied here; PlayerSlideStarted/
+            // DashRicocheted share the exact same `playerIndex: (byte)i`
+            // argument at the same call site inside the same per-player loop,
+            // so this pins the pattern for all four "own-action" movement
+            // kinds), WeaponSystem -> SpawnProjectile (ProjectileFired), and
+            // DamagePlayer (PlayerDamaged/PlayerDied carry the VICTIM's index,
+            // spec §3.2 — same convention as EntityId for those two kinds).
+            // Player 1 (not player 0) acts, so a hardcoded-to-0 stub fails
+            // this the same way ProjectileFired_CarriesOwner_PlayerAndMob
+            // above pins Owner against a hardcoded-to-Player stub.
+            var cfg = TestConfigs.Open();
+
+            // PlayerDashed: player 1 dashes, player 0 stays idle.
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            var dashInputs = new SimInput[2];
+            dashInputs[1] = new SimInput { DashRequested = true, MoveDir = new float2(1f, 0f) };
+            w.TickAll(dashInputs);
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDashed, out SimEvent dashed));
+            Assert.AreEqual(1, dashed.PlayerIndex, "player 1 dashed — the event must carry THEIR index");
+
+            // ProjectileFired: player 1 fires (fresh FireCooldown — instant first shot,
+            // same "player's first shot is instant" fact ProjectileFired_CarriesOwner_
+            // PlayerAndMob above relies on).
+            var w2 = new SimulationWorld(1, cfg, playerCount: 2);
+            var fireInputs = new SimInput[2];
+            fireInputs[1] = new SimInput { FireHeld = true, AimPoint = new float2(10f, 0f) };
+            w2.TickAll(fireInputs);
+            Assert.IsTrue(TestEvents.TryFirstOf(w2, SimEventKind.ProjectileFired, out SimEvent fired));
+            Assert.AreEqual(1, fired.PlayerIndex, "player 1 fired — the event must carry THEIR index");
+
+            // StaminaDenied: player 1's Stamina forced below DashStaminaCost via the
+            // test seam — a fresh world so no earlier dash's cooldown interferes.
+            var w3 = new SimulationWorld(1, cfg, playerCount: 2);
+            PlayerState p1 = w3.PlayerAt(1);
+            p1.Stamina = 0f;
+            w3.SetPlayerForTest(1, p1);
+            var denyInputs = new SimInput[2];
+            denyInputs[1] = new SimInput { DashRequested = true, MoveDir = new float2(1f, 0f) };
+            w3.TickAll(denyInputs);
+            Assert.IsTrue(TestEvents.TryFirstOf(w3, SimEventKind.StaminaDenied, out SimEvent denied));
+            Assert.AreEqual(1, denied.PlayerIndex, "player 1's denial — the event must carry THEIR index");
+
+            // PlayerDamaged/PlayerDied carry the VICTIM's index — today that is
+            // always player 0 (DamagePlayer's local `victim` stays hardcoded until
+            // Task 17's PvP routing), so this pins today's byte-for-byte behaviour,
+            // not multi-victim routing.
+            var w4 = new SimulationWorld(1, cfg, playerCount: 2);
+            w4.KillPlayerForTest();
+            Assert.IsTrue(TestEvents.TryFirstOf(w4, SimEventKind.PlayerDamaged, out SimEvent damaged));
+            Assert.AreEqual(0, damaged.PlayerIndex);
+            Assert.IsTrue(TestEvents.TryFirstOf(w4, SimEventKind.PlayerDied, out SimEvent died));
+            Assert.AreEqual(0, died.PlayerIndex);
+        }
     }
 }

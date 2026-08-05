@@ -117,7 +117,12 @@ namespace Ring.Presentation
             MatchStats stats = _runner.Curr.Stats;
             WorldStats worldStats = _runner.Curr.WorldStats;
             float timeSeconds = stats.DeathTick * SimulationWorld.TickDt;
-            // Stage 2 Task 7/17: ShotsHit/Kills become per-shooter; revisit this ratio then
+            // Stage 2 Task 7: ShotsHit/Kills/HeadshotKills now route through the
+            // projectile's OwnerIndex (SimulationWorld.DamageMob) instead of a
+            // hardcoded player 0, so Curr.Stats (the LOCAL player's own
+            // MatchStats) reflects only shots THEY landed — this ratio is sound
+            // for PvE in multiplayer now. PvP kills (DamagePlayer crediting the
+            // attacker) still arrive in Task 17 and don't feed ShotsHit at all.
             float accuracy = stats.ShotsFired > 0 ? (float)stats.ShotsHit / stats.ShotsFired : 0f;
 
             var sb = new StringBuilder();

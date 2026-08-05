@@ -162,6 +162,64 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void MobProjectile_HasNoOwnerIndex()
+        {
+            // Stage 2 Task 7: a Mob-owned projectile never has a shooter —
+            // MobAiSystem's SpawnProjectile call passes ProjectileIds.NoOwner
+            // explicitly (task-7-context.md §2.2), so ProjectileState.OwnerIndex
+            // reads NoOwner, not a stale/hardcoded player index. Spawns through
+            // the real production path (MobAiSystem, a live Gunner) rather than
+            // SpawnProjectileForTest, mirroring EventTests.
+            // ProjectileFired_CarriesOwner_PlayerAndMob's own "pin the actual
+            // call site" rationale — and reuses that same test's proven Gunner
+            // fixture position (well inside PreferredRange+-RangeTolerance with
+            // clear LoS, fires on its first eligible tick).
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c);
+            w.SpawnMobForTest(MobType.Gunner, new float2(9f, 0f));
+            bool fired = false;
+            for (int i = 0; i < 60 && !fired; i++)
+            {
+                w.Tick(default);
+                fired = w.ProjectileCount > 0;
+            }
+            Assert.IsTrue(fired, "Gunner never fired within the tick budget");
+            Assert.AreEqual(ProjectileIds.NoOwner, w.GetProjectileForTest(0).OwnerIndex);
+        }
+
+        [Test]
+        public void SpawnProjectileForTest_OmittedOwnerIndex_DefaultsToSoloPlayer()
+        {
+            // Stage 2 Task 7 (task-7-context.md decision 3): omitting ownerIndex
+            // must default to 0 — Э1's dozens of existing SpawnProjectileForTest
+            // call sites model a solo player's own shot and assert its credit; a
+            // NoOwner default would silently rob them of it.
+            var w = new SimulationWorld(1, NoSpread());
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(1f, 0f), new float2(1f, 0f),
+                1f, 0f, 10f, 0.1f, 1f);
+            Assert.AreEqual(0, w.GetProjectileForTest(0).OwnerIndex);
+        }
+
+        [Test]
+        public void ProjectileOwner_CreditsShooterStats_NotAlwaysPlayerZero()
+        {
+            // Stage 2 Task 7 (carryover I-2 from the T5 review, carryover-t7.md):
+            // DamageMob used to hardcode Increment*(0) — a hit from ANY player's
+            // projectile always credited player 0's personal stats. Now it must
+            // route to the projectile's OWN OwnerIndex, so player 1's kill lands
+            // on player 1's stats, not player 0's — the exact "10 own shots + 40
+            // others' hits = 500% accuracy" bug the carryover describes.
+            var w = new SimulationWorld(1, NoSpread(), playerCount: 2);
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, 0f),
+                new float2(35f, 0f), 1f, 0f, 1000f, 0.6f, 1f, ownerIndex: 1); // player 1 fired it
+            var inputs = new SimInput[2];
+            for (int i = 0; i < 6; i++) w.TickAll(inputs);
+            Assert.AreEqual(1, w.StatsAt(1).Kills, "player 1 fired — the kill must land on their own stats");
+            Assert.AreEqual(0, w.StatsAt(0).Kills, "player 0 never fired — their stats must stay untouched");
+        }
+
+        [Test]
         public void Ttl_ExpiresWithEvent()
         {
             var c = NoSpread();

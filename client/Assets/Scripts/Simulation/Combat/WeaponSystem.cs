@@ -92,7 +92,9 @@ namespace Ring.Simulation.Combat
                 float horizSpeed = math.length(vel3.xy);
                 float2 spawnPos = p.Pos + dir2D * (cfg.MuzzleOffset + overshoot * horizSpeed);
                 float height = muzzleH + overshoot * vel3.z;
-                w.SpawnProjectile(ProjectileOwner.Player, spawnPos, vel3.xy, height, vel3.z,
+                // ownerIndex (Stage 2 Task 7): this firing player's own index —
+                // drives per-shooter ShotsHit/Kills credit (SimulationWorld.DamageMob).
+                w.SpawnProjectile(ProjectileOwner.Player, (byte)index, spawnPos, vel3.xy, height, vel3.z,
                     cfg.Damage, cfg.ProjectileRadius, cfg.ProjectileLifetime);
 
                 p.RecoilOffset = math.min(cfg.RecoilMaxRad, p.RecoilOffset + cfg.RecoilPerShotRad);

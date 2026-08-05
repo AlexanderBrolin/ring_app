@@ -77,5 +77,17 @@ namespace Ring.Simulation.Core
         /// the event does not carry. Zero for every kind that has no blow behind
         /// it; paired with `Zone` above and never read without it.
         public float2 HitDir;
+        /// Stage 2 Task 7: which player this event concerns. For the five
+        /// "own-action" kinds — ProjectileFired, PlayerDashed,
+        /// PlayerSlideStarted, DashRicocheted, StaminaDenied — it is the
+        /// ACTOR (SimulationWorld.TickMovement's own per-player loop index /
+        /// SpawnProjectile's ownerIndex). For PlayerDamaged/PlayerDied it is
+        /// the VICTIM instead (mirrors EntityId's convention for those two
+        /// kinds, spec §3.2). Unused (ProjectileIds.NoOwner) for every other
+        /// kind, same "unused for every other kind" contract as
+        /// `Amount`/`Owner`/`Zone` above. Not part of StateHash — events are
+        /// excluded from the hash entirely (spec §3.7, see this struct's own
+        /// doc comment).
+        public byte PlayerIndex;
     }
 }

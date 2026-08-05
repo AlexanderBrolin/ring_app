@@ -225,7 +225,9 @@ namespace Ring.Simulation.Core
                 if (moveResult.DashStarted)
                 {
                     _matchStats[i].DashesUsed++;
-                    Emit(SimEventKind.PlayerDashed, p.Pos, 0, default, 0f);
+                    // playerIndex (Stage 2 Task 7): the ACTOR — this player's own
+                    // loop index — same for every "own-action" Emit call below.
+                    Emit(SimEventKind.PlayerDashed, p.Pos, 0, default, 0f, playerIndex: (byte)i);
                 }
                 if (moveResult.DashDenied)
                 {
@@ -233,27 +235,27 @@ namespace Ring.Simulation.Core
                     // Stamina on a denied attempt, so the pre-tick value is
                     // exactly what's still sitting on p right now.
                     Emit(SimEventKind.StaminaDenied, p.Pos, 0, default,
-                        _config.Hero.DashStaminaCost - p.Stamina);
+                        _config.Hero.DashStaminaCost - p.Stamina, playerIndex: (byte)i);
                 }
                 if (moveResult.SlideStarted)
                 {
                     _matchStats[i].SlidesUsed++;
                     Emit(SimEventKind.PlayerSlideStarted, p.Pos, 0, default, 0f,
-                        hitDir: p.SlideDir);
+                        hitDir: p.SlideDir, playerIndex: (byte)i);
                 }
                 if (moveResult.SlideDenied)
                 {
                     // Same missing-cost contract as DashDenied above, against
                     // SlideStaminaCost (Task 10).
                     Emit(SimEventKind.StaminaDenied, p.Pos, 0, default,
-                        _config.Hero.SlideStaminaCost - p.Stamina);
+                        _config.Hero.SlideStaminaCost - p.Stamina, playerIndex: (byte)i);
                 }
                 if (moveResult.Ricocheted)
                 {
                     // Task 12: Pos is the contact point (not the player's
                     // post-slide position), HitDir the surface normal.
                     Emit(SimEventKind.DashRicocheted, moveResult.RicochetPos, 0, default, 0f,
-                        hitDir: moveResult.RicochetNormal);
+                        hitDir: moveResult.RicochetNormal, playerIndex: (byte)i);
                 }
             }
             else
@@ -344,10 +346,15 @@ namespace Ring.Simulation.Core
         /// blow-carrying kinds (ProjectileHit, MobDied, PlayerDamaged,
         /// PlayerDied); both are optional so the existing call sites that emit
         /// non-blow events keep passing five arguments and get the neutral
-        /// HitZone.None / zero direction.
+        /// HitZone.None / zero direction. `playerIndex` (Stage 2 Task 7) is
+        /// meaningful for the seven player-scoped kinds — see
+        /// SimEvent.PlayerIndex's own doc for the actor/victim split — and
+        /// defaults to ProjectileIds.NoOwner, same "unused for every other
+        /// kind" contract as `owner`/`zone`/`hitDir` above.
         internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType, float amount,
             ProjectileOwner owner = ProjectileOwner.Player,
-            HitZone zone = HitZone.None, float2 hitDir = default)
+            HitZone zone = HitZone.None, float2 hitDir = default,
+            byte playerIndex = ProjectileIds.NoOwner)
         {
             if (_eventCount < _events.Length)
             {
@@ -355,7 +362,7 @@ namespace Ring.Simulation.Core
                 {
                     Kind = kind, Tick = _tick, Pos = pos,
                     EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner,
-                    Zone = zone, HitDir = hitDir
+                    Zone = zone, HitDir = hitDir, PlayerIndex = playerIndex
                 };
             }
             else
@@ -412,7 +419,11 @@ namespace Ring.Simulation.Core
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
         /// once full, spawns are skipped and counted rather than growing the array,
         /// keeping the cap degradation allocation-free and deterministic.
-        internal int SpawnProjectile(ProjectileOwner owner, float2 pos, float2 vel,
+        /// `ownerIndex` (Stage 2 Task 7) is the shooter's own PlayerAt index for a
+        /// Player-owned shot, else ProjectileIds.NoOwner — required (no default):
+        /// both battle call sites (WeaponSystem, MobAiSystem) must say explicitly
+        /// who fired.
+        internal int SpawnProjectile(ProjectileOwner owner, byte ownerIndex, float2 pos, float2 vel,
             float height, float velZ, float damage, float radius, float ttl)
         {
             if (_projectileCount >= _projectiles.Length)
@@ -424,7 +435,7 @@ namespace Ring.Simulation.Core
             int id = _nextEntityId++;
             _projectiles[_projectileCount++] = new ProjectileState
             {
-                Id = id, Owner = owner, Pos = pos, PrevPos = pos, Vel = vel,
+                Id = id, Owner = owner, OwnerIndex = ownerIndex, Pos = pos, PrevPos = pos, Vel = vel,
                 Height = height, PrevHeight = height, VelZ = velZ,
                 Damage = damage, Radius = radius, Ttl = ttl
             };
@@ -437,8 +448,12 @@ namespace Ring.Simulation.Core
             // Owner (F-3 fix-round) lets Presentation tell a mob's shot from the
             // player's own — see SimEvent.Owner's doc. Events are excluded from
             // StateHash (spec §3.7), so neither field adds any new
-            // determinism/replay surface.
-            Emit(SimEventKind.ProjectileFired, pos, id, default, math.atan2(vel.y, vel.x), owner);
+            // determinism/replay surface. playerIndex (Stage 2 Task 7) mirrors
+            // ownerIndex exactly — NoOwner for a Mob-owned shot, the shooter's
+            // index otherwise — same "unused for every other kind" contract
+            // SimEvent.PlayerIndex's own doc describes.
+            Emit(SimEventKind.ProjectileFired, pos, id, default, math.atan2(vel.y, vel.x), owner,
+                playerIndex: ownerIndex);
             return id;
         }
 
@@ -458,21 +473,33 @@ namespace Ring.Simulation.Core
         /// connects afterwards still kills the mob without crediting the run's stats.
         /// `dmg` is the POST-multiplier amount (Task 6 — ProjectileSystem applies
         /// the hit zone's multiplier before calling in), `zone`/`dir` describe the
-        /// blow and are forwarded to MobDied for Presentation.
-        internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir)
+        /// blow and are forwarded to MobDied for Presentation. `ownerIndex` (Stage 2
+        /// Task 7, carryover I-2 from the T5 review) is the projectile's shooter
+        /// (ProjectileSystem passes proj.OwnerIndex) — ShotsHit/Kills/HeadshotKills
+        /// now credit THAT player instead of the former hardcoded player 0. Defaults
+        /// to 0 — test default: the solo player (TestWorlds.ClearFirstWave's
+        /// synthetic kills, which have no real projectile behind them, keep
+        /// crediting player 0 exactly as they did before this task). The
+        /// `ownerIndex != NoOwner` guard is required defense-in-depth: today
+        /// ProjectileSystem's gather phase only ever routes a Player-owned
+        /// projectile into this method (a Mob-owned one always hits the player
+        /// instead, via DamagePlayer), so ownerIndex is never actually NoOwner on
+        /// the production path — but crediting must not silently trust that
+        /// invariant forever, and an unguarded `_matchStats[NoOwner]` would also be
+        /// an out-of-range index on top of the wrong credit.
+        internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir, byte ownerIndex = 0)
         {
             _mobs[index].Hp -= dmg;
-            // Stage 2 Task 5: shooter index hardcoded to 0 — DamageMob doesn't
-            // know who actually fired the shot yet (OwnerIndex arrives in
-            // Stage 2 Task 7, PvP-aware routing in Task 17); this method's own
-            // signature is unchanged here, that's also Task 17's job.
-            IncrementShotsHit(0);
+            if (ownerIndex != ProjectileIds.NoOwner) IncrementShotsHit(ownerIndex);
             if (_mobs[index].Hp <= 0f)
             {
-                IncrementKills(0);
-                // Headshot kills count the KILLING blow's zone only: earlier
-                // headshots on the same mob are already reflected in Hp.
-                if (zone == HitZone.Head) IncrementHeadshotKills(0);
+                if (ownerIndex != ProjectileIds.NoOwner)
+                {
+                    IncrementKills(ownerIndex);
+                    // Headshot kills count the KILLING blow's zone only: earlier
+                    // headshots on the same mob are already reflected in Hp.
+                    if (zone == HitZone.Head) IncrementHeadshotKills(ownerIndex);
+                }
                 Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg,
                     zone: zone, hitDir: dir);
                 _mobs[index] = _mobs[--_mobCount];
@@ -481,8 +508,9 @@ namespace Ring.Simulation.Core
 
         /// Guarded stat increments (spec §3.12): a player's own stats freeze the
         /// tick THAT player dies, even for damage from projectiles already in
-        /// flight at that moment. Stage 2 Task 5: indexed by shooter — every
-        /// current call site (DamageMob above) passes 0, see its own comment.
+        /// flight at that moment. Stage 2 Task 5: indexed by shooter — Stage 2
+        /// Task 7: DamageMob above now passes the projectile's actual OwnerIndex
+        /// instead of a hardcoded 0, see its own comment.
         void IncrementShotsHit(int index) { if (_players[index].Alive) _matchStats[index].ShotsHit++; }
         void IncrementKills(int index) { if (_players[index].Alive) _matchStats[index].Kills++; }
         void IncrementHeadshotKills(int index) { if (_players[index].Alive) _matchStats[index].HeadshotKills++; }
@@ -508,7 +536,11 @@ namespace Ring.Simulation.Core
 
             p.Hp -= dmg;
             _matchStats[victim].DamageTaken += dmg;
-            Emit(SimEventKind.PlayerDamaged, pos, 0, default, dmg, zone: zone, hitDir: dir);
+            // EntityId/playerIndex (Stage 2 Task 7 decision 5): both carry the
+            // VICTIM's index, spec §3.2 — reuse the named `victim` above, not a
+            // new literal.
+            Emit(SimEventKind.PlayerDamaged, pos, victim, default, dmg, zone: zone, hitDir: dir,
+                playerIndex: (byte)victim);
 
             if (p.Hp <= 0f)
             {
@@ -536,7 +568,8 @@ namespace Ring.Simulation.Core
                 // Task 14: aim-settle progress clears the same way as the
                 // other movement timers above — a corpse doesn't keep aiming.
                 p.AimSettleTimer = 0f;
-                Emit(SimEventKind.PlayerDied, pos, 0, default, 0f, zone: zone, hitDir: dir);
+                Emit(SimEventKind.PlayerDied, pos, victim, default, 0f, zone: zone, hitDir: dir,
+                    playerIndex: (byte)victim);
             }
         }
 
@@ -581,10 +614,13 @@ namespace Ring.Simulation.Core
         internal int SpawnMobForTest(MobType type, float2 pos) => SpawnMob(type, pos);
 
         /// Test-only wrapper over SpawnProjectile (Task 16 Interfaces) — same spawn
-        /// path production code uses, named for test call-sites.
+        /// path production code uses, named for test call-sites. Stage 2 Task 7:
+        /// `ownerIndex` defaults to 0 — test default: the solo player (dozens of
+        /// Э1 call sites model a solo player's own shot and assert its credit;
+        /// a NoOwner default would silently rob them of it).
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
-            float height, float velZ, float damage, float radius, float ttl)
-            => SpawnProjectile(owner, pos, vel, height, velZ, damage, radius, ttl);
+            float height, float velZ, float damage, float radius, float ttl, byte ownerIndex = 0)
+            => SpawnProjectile(owner, ownerIndex, pos, vel, height, velZ, damage, radius, ttl);
 
         /// Test-only seam (Task 19 Interfaces): kills the player outright via the
         /// normal damage path (overkill amount) so MobAiSystem's "player dead"

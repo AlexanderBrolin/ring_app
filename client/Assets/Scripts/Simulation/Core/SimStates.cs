@@ -65,11 +65,30 @@ namespace Ring.Simulation.Core
 
     public enum ProjectileOwner : byte { Player = 0, Mob = 1 }
 
+    /// Stage 2 Task 7: sentinel for ProjectileState.OwnerIndex / SimEvent.PlayerIndex.
+    /// A real player index only ever ranges [0, Arena.MaxPlayers) — currently capped
+    /// at 3 (spec §3.15) — leaving byte.MaxValue free as an unambiguous "no player
+    /// owns this" value for a Mob-owned projectile or a non-player-scoped event.
+    public static class ProjectileIds
+    {
+        public const byte NoOwner = byte.MaxValue;
+    }
+
     /// Live state of a single projectile instance.
     public struct ProjectileState
     {
         public int Id;
         public ProjectileOwner Owner;
+        /// Stage 2 Task 7: which player fired this shot
+        /// (SimulationWorld.SpawnProjectile) — ProjectileIds.NoOwner for a
+        /// Mob-owned projectile, else the shooter's own PlayerAt index
+        /// (WeaponSystem's own `index`). Drives per-shooter
+        /// ShotsHit/Kills/HeadshotKills credit (SimulationWorld.DamageMob)
+        /// instead of the former hardcoded player 0. NOT yet part of
+        /// StateHash — enters it in Task 10 together with the canonical field
+        /// reorder and the sanctioned golden re-pin
+        /// (WorldLifecycleTests.PendingHashFields).
+        public byte OwnerIndex;
         public float2 Pos, PrevPos, Vel;
         public float Damage, Radius, Ttl;
 

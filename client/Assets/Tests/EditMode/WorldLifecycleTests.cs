@@ -6,6 +6,12 @@ namespace Ring.Simulation.Tests
 {
     public class WorldLifecycleTests
     {
+        // TEMPORARY (T7 -> T10): OwnerIndex enters the hash in T10 together with the
+        // canonical field order and the sanctioned golden re-pin. Until then the
+        // reflective sweep would assert on a field that is deliberately not hashed yet.
+        // T10 removes this set and proves the removal (see its Step 3b).
+        static readonly System.Collections.Generic.HashSet<string> PendingHashFields = new() { "OwnerIndex" };
+
         [Test]
         public void SaveRestore_ReplaysToSameHash()
         {
@@ -71,10 +77,10 @@ namespace Ring.Simulation.Tests
             // was internally inconsistent (components didn't sum to the stated
             // total) — recounted by actual typeof(X).GetFields() count, not
             // restated from memory: PlayerState 22 + MatchStats 8 + MobState 9 +
-            // ProjectileState 11 + WaveState 6 = 56. The loops below reflect over
-            // the live structs, so a new field is covered the moment it is
-            // declared; this tally is a receipt for the reader, not a bound the
-            // test enforces.
+            // ProjectileState 12 (Stage 2 Task 7 adds OwnerIndex) + WaveState 6 =
+            // 57. The loops below reflect over the live structs, so a new field is
+            // covered the moment it is declared; this tally is a receipt for the
+            // reader, not a bound the test enforces.
             foreach (var field in typeof(MobState).GetFields())
             {
                 w.RestoreState(save);
@@ -85,6 +91,8 @@ namespace Ring.Simulation.Tests
             }
             foreach (var field in typeof(ProjectileState).GetFields())
             {
+                // TEMPORARY (T7 -> T10): see PendingHashFields' doc comment above.
+                if (PendingHashFields.Contains(field.Name)) continue;
                 w.RestoreState(save);
                 object boxed = w.Projectiles[0];
                 field.SetValue(boxed, Bump(field.GetValue(boxed)));
@@ -107,6 +115,15 @@ namespace Ring.Simulation.Tests
             int i => i + 1,
             bool b => !b,
             float2 f2 => f2 + new float2(1f, 0f),
+            // Stage 2 Task 7: ProjectileState.OwnerIndex is the first byte
+            // field the sweep reflects over — permanent (not part of the
+            // temporary skip-list above), since a byte field is a legitimate
+            // struct member the hash sweep must be able to bump regardless of
+            // whether any ONE such field is currently in PendingHashFields.
+            // Wraps at byte.MaxValue like the other integral branches would
+            // via their own type's overflow, not a concern here since no
+            // fixture bumps OwnerIndex from 255.
+            byte b8 => (byte)(b8 + 1),
             // MobType/MobAiState/WavePhase (F-4 fix-round): step to the next
             // declared enum value, wrapping — every one of these enums has more
             // than one member, so the wrapped value is always different from the

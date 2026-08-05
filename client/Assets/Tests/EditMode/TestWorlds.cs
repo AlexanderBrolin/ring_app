@@ -99,11 +99,12 @@ namespace Ring.Simulation.Tests
         /// caller's own WavesCleared assertion then fails, this return value
         /// tells them whether the fixture ran out of budget (its own bug) or the
         /// wave genuinely never cleared (a product bug) — without it the failure
-        /// reads as a silent product regression either way. DamageMob's shooter
-        /// index is hardcoded to 0 (Stage 2 Task 5 stub, see its own doc) — every
-        /// kill this helper causes incidentally credits ShotsHit/Kills to player
-        /// 0's personal MatchStats, so a caller asserting on player 0's own
-        /// personal stats after calling this must account for that side effect.
+        /// reads as a silent product regression either way. DamageMob's
+        /// `ownerIndex` parameter is left at its default here (0 — the solo
+        /// player, Stage 2 Task 7, see its own doc) — every kill this helper
+        /// causes incidentally credits ShotsHit/Kills to player 0's personal
+        /// MatchStats, so a caller asserting on player 0's own personal stats
+        /// after calling this must account for that side effect.
         public static int ClearFirstWave(SimulationWorld world, int maxTicks = 300)
         {
             var inputs = new SimInput[world.PlayerCount];

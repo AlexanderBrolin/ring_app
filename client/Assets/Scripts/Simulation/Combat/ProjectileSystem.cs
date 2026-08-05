@@ -178,7 +178,9 @@ namespace Ring.Simulation.Combat
                         MobState mob = mobs[hitMobIndex];
                         w.Emit(SimEventKind.ProjectileHit, contact, mob.Id, mob.Type, dmg,
                             zone: hitZone, hitDir: hitDir);
-                        w.DamageMob(hitMobIndex, dmg, contact, hitZone, hitDir);
+                        // ownerIndex (Stage 2 Task 7): the projectile carries its
+                        // own shooter forward into the credit routing.
+                        w.DamageMob(hitMobIndex, dmg, contact, hitZone, hitDir, proj.OwnerIndex);
                         w.RemoveProjectileAt(i);
                         break;
                     }
