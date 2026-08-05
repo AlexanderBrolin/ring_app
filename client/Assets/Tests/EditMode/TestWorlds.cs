@@ -85,5 +85,25 @@ namespace Ring.Simulation.Tests
             }
             return ticks;
         }
+
+        /// Ticks `world` with idle input until its first wave has folded into
+        /// `WorldStats.WavesCleared` (Stage 2 Task 5) — every mob that spawns is
+        /// killed outright via the DamageMob seam (same swap-remove path a real
+        /// kill takes) the instant it appears, so the wave's own debt-then-
+        /// MobCount==0 clear check (WaveSystem.Update) fires without needing
+        /// weapon fire to land. `maxTicks` covers TestConfigs.Default()'s
+        /// FirstWaveDelay (75 ticks) plus spawn/clear settling with generous
+        /// headroom; it is a stall guard, not an expectation — callers assert on
+        /// WorldStats.WavesCleared itself.
+        public static void ClearFirstWave(SimulationWorld world, int maxTicks = 300)
+        {
+            var inputs = new SimInput[world.PlayerCount];
+            for (int t = 0; t < maxTicks && world.WorldStats.WavesCleared == 0; t++)
+            {
+                world.TickAll(inputs);
+                while (world.MobCount > 0)
+                    world.DamageMob(0, 1e9f, world.Mobs[0].Pos, HitZone.Body, default);
+            }
+        }
     }
 }

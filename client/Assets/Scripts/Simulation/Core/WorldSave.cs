@@ -18,6 +18,11 @@ namespace Ring.Simulation.Core
         public int ProjectileCount;
         public ProjectileState[] Projectiles;
         public WaveState Wave;
-        public MatchStats Stats;
+        /// Stage 2 Task 5: one MatchStats per player, same length/indexing
+        /// contract as Players/PlayerCount above.
+        public MatchStats[] Stats;
+        /// Stage 2 Task 5: match-wide counters, not per player — a single field
+        /// like Wave above, not an array.
+        public WorldStats WorldStats;
     }
 }

@@ -32,7 +32,11 @@ namespace Ring.Simulation.Core
         // Preallocated to _players.Length so TickAll never allocates on the
         // hot path.
         readonly SimInput[] _sanitizedInputs;
-        MatchStats _stats;
+        // Stage 2 Task 5: one MatchStats per player (personal counters), length
+        // fixed to playerCount like _players/_sanitizedInputs above; WorldStats
+        // is a single struct — counted once for the whole match, not per player.
+        readonly MatchStats[] _matchStats;
+        WorldStats _worldStats;
 
         // Entities appear in Phase 5/6 — arrays are preallocated to arena caps
         // now so the hot path never allocates once systems start filling them.
@@ -59,7 +63,15 @@ namespace Ring.Simulation.Core
         int _eventCount;
 
         public int CurrentTick => _tick;
-        public MatchStats Stats => _stats;
+        /// Synonym for StatsAt(0) (Stage 2 Task 5) — every solo call site that
+        /// predates Stage 2 Task 5 keeps compiling unchanged.
+        public MatchStats Stats => StatsAt(0);
+        /// Stage 2 Task 5 Interfaces: read-only access to one player's personal
+        /// match counters by index.
+        public MatchStats StatsAt(int index) => _matchStats[index];
+        /// Match counters that are counted once for the whole match, not per
+        /// player (Stage 2 Task 5) — WavesCleared, MobSpawnsSkipped, ProjectileSpawnsSkipped.
+        public WorldStats WorldStats => _worldStats;
         /// Synonym for PlayerAt(0) (Stage 2 Task 4) — every solo call site that
         /// predates Stage 2 Task 4 keeps compiling unchanged.
         public PlayerState Player => PlayerAt(0);
@@ -76,9 +88,10 @@ namespace Ring.Simulation.Core
         /// Cumulative count of events dropped because the per-frame buffer was full.
         public int DroppedEvents { get; private set; }
 
-        /// `playerCount` defaults to 1 so every pre-Task-4 call site (136
-        /// existing constructions) keeps compiling and behaving identically —
-        /// solo still spawns at the arena center (spec §3.2), not on the ring.
+        /// `playerCount` defaults to 1 so every call site that predates Stage 2
+        /// Task 4 (136 existing constructions) keeps compiling and behaving
+        /// identically — solo still spawns at the arena center (spec §3.2), not
+        /// on the ring.
         public SimulationWorld(long seed, in SimConfig config, int playerCount = 1)
         {
             if (playerCount < 1 || playerCount > config.Arena.MaxPlayers)
@@ -98,6 +111,11 @@ namespace Ring.Simulation.Core
             _config = config;
             _players = new PlayerState[playerCount];
             _sanitizedInputs = new SimInput[playerCount];
+            // Stage 2 Task 5: fresh zero-valued MatchStats per player — no
+            // explicit per-field init needed, same "struct array defaults are
+            // already correct" reasoning the constructor already relies on for
+            // _mobs/_projectiles below.
+            _matchStats = new MatchStats[playerCount];
             for (int i = 0; i < playerCount; i++)
             {
                 float2 pos = Geometry.SpawnPosFor(i, playerCount, in config.Arena);
@@ -169,7 +187,7 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < _players.Length; i++)
             {
                 if (_players[i].Alive)
-                    WeaponSystem.Update(this, ref _players[i], in _sanitizedInputs[i]);
+                    WeaponSystem.Update(this, ref _players[i], in _sanitizedInputs[i], i);
             }
             // Canonical tick order (spec Interfaces, Task 16/19/20): movement →
             // weapon → mobs (Phase 6) → mob separation → projectiles → (waves,
@@ -206,7 +224,7 @@ namespace Ring.Simulation.Core
                 MovementResult moveResult = PlayerMovementSystem.Update(ref p, in input, in _config);
                 if (moveResult.DashStarted)
                 {
-                    _stats.DashesUsed++;
+                    _matchStats[i].DashesUsed++;
                     Emit(SimEventKind.PlayerDashed, p.Pos, 0, default, 0f);
                 }
                 if (moveResult.DashDenied)
@@ -219,7 +237,7 @@ namespace Ring.Simulation.Core
                 }
                 if (moveResult.SlideStarted)
                 {
-                    _stats.SlidesUsed++;
+                    _matchStats[i].SlidesUsed++;
                     Emit(SimEventKind.PlayerSlideStarted, p.Pos, 0, default, 0f,
                         hitDir: p.SlideDir);
                 }
@@ -370,8 +388,15 @@ namespace Ring.Simulation.Core
         /// from SpreadRng so weapon fire never shifts wave spawn draws.
         internal ref Random WaveRng => ref _waveRng;
 
-        /// Combat systems' seam into per-match counters (ShotsFired, skip counts, ...).
-        internal ref MatchStats StatsRef => ref _stats;
+        /// Combat systems' seam into one player's personal counters (ShotsFired, ...)
+        /// (Stage 2 Task 5 — was a single-slot property, now indexed by shooter).
+        internal ref MatchStats StatsRef(int index) => ref _matchStats[index];
+
+        /// WaveSystem's (and future shared-resource systems') seam into the
+        /// match's world-scoped counters (WavesCleared, spawn-skip counts) —
+        /// Stage 2 Task 5, same ref-return pattern as StatsRef above, just
+        /// unindexed since there is exactly one WorldStats per match.
+        internal ref WorldStats WorldStatsRef => ref _worldStats;
 
         /// ProjectileSystem's seam into live projectile storage (Task 16 sweep resolution).
         internal ProjectileState[] Projectiles => _projectiles;
@@ -407,7 +432,8 @@ namespace Ring.Simulation.Core
         {
             if (_projectileCount >= _projectiles.Length)
             {
-                _stats.ProjectileSpawnsSkipped++;
+                // Stage 2 Task 5: shared arena resource, world-scoped counter.
+                _worldStats.ProjectileSpawnsSkipped++;
                 return -1;
             }
             int id = _nextEntityId++;
@@ -451,24 +477,30 @@ namespace Ring.Simulation.Core
         internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir)
         {
             _mobs[index].Hp -= dmg;
-            IncrementShotsHit();
+            // Stage 2 Task 5: shooter index hardcoded to 0 — DamageMob doesn't
+            // know who actually fired the shot yet (OwnerIndex arrives in
+            // Stage 2 Task 7, PvP-aware routing in Task 17); this method's own
+            // signature is unchanged here, that's also Task 17's job.
+            IncrementShotsHit(0);
             if (_mobs[index].Hp <= 0f)
             {
-                IncrementKills();
+                IncrementKills(0);
                 // Headshot kills count the KILLING blow's zone only: earlier
                 // headshots on the same mob are already reflected in Hp.
-                if (zone == HitZone.Head) IncrementHeadshotKills();
+                if (zone == HitZone.Head) IncrementHeadshotKills(0);
                 Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg,
                     zone: zone, hitDir: dir);
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
 
-        /// Guarded stat increments (spec §3.12): stats freeze the tick the player
-        /// dies, even for damage from projectiles already in flight at that moment.
-        void IncrementShotsHit() { if (_players[0].Alive) _stats.ShotsHit++; }
-        void IncrementKills() { if (_players[0].Alive) _stats.Kills++; }
-        void IncrementHeadshotKills() { if (_players[0].Alive) _stats.HeadshotKills++; }
+        /// Guarded stat increments (spec §3.12): a player's own stats freeze the
+        /// tick THAT player dies, even for damage from projectiles already in
+        /// flight at that moment. Stage 2 Task 5: indexed by shooter — every
+        /// current call site (DamageMob above) passes 0, see its own comment.
+        void IncrementShotsHit(int index) { if (_players[index].Alive) _matchStats[index].ShotsHit++; }
+        void IncrementKills(int index) { if (_players[index].Alive) _matchStats[index].Kills++; }
+        void IncrementHeadshotKills(int index) { if (_players[index].Alive) _matchStats[index].HeadshotKills++; }
 
         /// Applies projectile damage to the player (spec Interfaces, Task 16/23): a
         /// no-op once the player is already dead (spec §3.12 — stats stay frozen and
@@ -485,13 +517,15 @@ namespace Ring.Simulation.Core
             if (p.IframeTimer > 0f) return;
 
             p.Hp -= dmg;
-            _stats.DamageTaken += dmg;
+            // Stage 2 Task 5: DamagePlayer still hardcodes player 0 (see the ref
+            // above) — the victim's OWN personal stats, so index 0 is correct here.
+            _matchStats[0].DamageTaken += dmg;
             Emit(SimEventKind.PlayerDamaged, pos, 0, default, dmg, zone: zone, hitDir: dir);
 
             if (p.Hp <= 0f)
             {
                 p.Alive = false;
-                _stats.DeathTick = _tick;
+                _matchStats[0].DeathTick = _tick;
                 p.DashTimer = 0f;
                 // Task 12: DashSpeedCur has no meaning without an active dash
                 // (DashTimer == 0 already says "not dashing") — zeroed for the
@@ -531,7 +565,8 @@ namespace Ring.Simulation.Core
         {
             if (_mobCount >= _mobs.Length)
             {
-                _stats.MobSpawnsSkipped++;
+                // Stage 2 Task 5: shared arena resource, world-scoped counter.
+                _worldStats.MobSpawnsSkipped++;
                 return -1;
             }
             int id = _nextEntityId++;
@@ -607,7 +642,10 @@ namespace Ring.Simulation.Core
             target.ProjectileCount = _projectileCount;
             System.Array.Copy(_projectiles, target.Projectiles, _projectileCount);
             target.Wave = _wave;
-            target.Stats = _stats;
+            // Stage 2 Task 5: PlayerStats mirrors Players' array-copy pattern
+            // above; WorldStats is a single plain-struct assignment, same as Wave.
+            System.Array.Copy(_matchStats, target.PlayerStats, _matchStats.Length);
+            target.WorldStats = _worldStats;
         }
 
         /// Deep-copies the full canonical state (config excluded) for rollback/replay.
@@ -627,11 +665,14 @@ namespace Ring.Simulation.Core
                 ProjectileCount = _projectileCount,
                 Projectiles = new ProjectileState[_projectiles.Length],
                 Wave = _wave,
-                Stats = _stats
+                Stats = new MatchStats[_matchStats.Length],
+                WorldStats = _worldStats
             };
             System.Array.Copy(_players, save.Players, _players.Length);
             System.Array.Copy(_mobs, save.Mobs, _mobs.Length);
             System.Array.Copy(_projectiles, save.Projectiles, _projectiles.Length);
+            // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
+            System.Array.Copy(_matchStats, save.Stats, _matchStats.Length);
             return save;
         }
 
@@ -657,7 +698,9 @@ namespace Ring.Simulation.Core
             _projectileCount = save.ProjectileCount;
             System.Array.Copy(save.Projectiles, _projectiles, _projectiles.Length);
             _wave = save.Wave;
-            _stats = save.Stats;
+            // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
+            System.Array.Copy(save.Stats, _matchStats, _matchStats.Length);
+            _worldStats = save.WorldStats;
         }
 
         /// Test-only seam for EveryPlayerAndStatsFieldAffectsHash (spec §3.13 item 12).
@@ -666,7 +709,10 @@ namespace Ring.Simulation.Core
         /// Stage 2 Task 4: index counterpart, for multiplayer test fixtures —
         /// the single-arg overload above still targets player 0, unchanged.
         internal void SetPlayerForTest(int index, in PlayerState p) => _players[index] = p;
-        internal void SetStatsForTest(in MatchStats s) => _stats = s;
+        internal void SetStatsForTest(in MatchStats s) => _matchStats[0] = s;
+        /// Stage 2 Task 5: index counterpart, for multiplayer test fixtures —
+        /// the single-arg overload above still targets player 0, unchanged.
+        internal void SetStatsForTest(int index, in MatchStats s) => _matchStats[index] = s;
 
         /// F-4 fix-round: three more test-only seams, same contract as
         /// SetPlayerForTest/SetStatsForTest above — mutate a live slot directly
@@ -698,7 +744,10 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, _projectileCount);
             for (int i = 0; i < _projectileCount; i++) h = HashProjectile(h, in _projectiles[i]);
             h = HashWave(h, in _wave);
-            h = HashStats(h, in _stats);
+            // Stage 2 Task 5: hashes StatsAt(0) + WorldStats only — the full
+            // MatchStats[] enters the hash in Task 10's canonical reorder (spec
+            // §3.2 hash order: ... -> worldStats -> statsCount+stats[0..n)).
+            h = HashStats(h, in _matchStats[0], in _worldStats);
             return h;
         }
 
@@ -750,15 +799,16 @@ namespace Ring.Simulation.Core
             return h;
         }
 
-        static ulong HashStats(ulong h, in MatchStats s)
+        // temporary: world counters keep their T5 hash position until the T10 reorder
+        static ulong HashStats(ulong h, in MatchStats s, in WorldStats w)
         {
             h = StateHash64.Add(h, s.Kills); h = StateHash64.Add(h, s.HeadshotKills);
-            h = StateHash64.Add(h, s.WavesCleared);
+            h = StateHash64.Add(h, w.WavesCleared);
             h = StateHash64.Add(h, s.ShotsFired); h = StateHash64.Add(h, s.ShotsHit);
             h = StateHash64.Add(h, s.DashesUsed);
             h = StateHash64.Add(h, s.SlidesUsed);
-            h = StateHash64.Add(h, s.MobSpawnsSkipped);
-            h = StateHash64.Add(h, s.ProjectileSpawnsSkipped);
+            h = StateHash64.Add(h, w.MobSpawnsSkipped);
+            h = StateHash64.Add(h, w.ProjectileSpawnsSkipped);
             h = StateHash64.Add(h, s.DeathTick); h = StateHash64.Add(h, s.DamageTaken);
             return h;
         }

@@ -181,5 +181,89 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(next.Hero.MaxHp, w.PlayerAt(1).Hp, 1e-5f);
             Assert.AreEqual(next.Hero.MaxHp, w.PlayerAt(2).Hp, 1e-5f);
         }
+
+        // Stage 2 Task 5: MatchStats[] (personal) vs WorldStats (shared) — the
+        // three tests below prove the split actually behaves per-player/per-
+        // match rather than just compiling that way.
+
+        [Test]
+        public void PersonalStats_DoNotMix()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            var inputs = new SimInput[2];
+            inputs[1] = new SimInput { FireHeld = true, AimPoint = new float2(10f, 0f) };
+            // player 0 gets no input at all — stays idle the whole tick.
+            w.TickAll(inputs);
+
+            Assert.Greater(w.StatsAt(1).ShotsFired, 0,
+                "player 1 fired — it must show up on THEIR OWN personal stats");
+            Assert.AreEqual(0, w.StatsAt(0).ShotsFired,
+                "player 0 never fired — their personal ShotsFired must stay untouched");
+        }
+
+        [Test]
+        public void WorldStats_CountedOnce_NotPerPlayer()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Default(), playerCount: 3);
+            TestWorlds.ClearFirstWave(w);
+            Assert.AreEqual(1, w.WorldStats.WavesCleared,
+                "clearing one wave with three players in the match must bump the WORLD " +
+                "counter exactly once, not once per player");
+        }
+
+        [Test]
+        public void DeathOfOne_DoesNotFreezeOthersStats()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            w.KillPlayerForTest(); // player 0 dies before player 1 ever acts
+
+            var inputs = new SimInput[2];
+            inputs[1] = new SimInput { DashRequested = true };
+            w.TickAll(inputs);
+
+            Assert.AreEqual(0, w.StatsAt(0).DashesUsed, "player 0 is dead — no dash of theirs");
+            Assert.AreEqual(1, w.StatsAt(1).DashesUsed,
+                "player 0's death must not freeze player 1's own personal stats");
+        }
+
+        // Fix-round tail (owner-decided, carried into this task): three small
+        // gaps left over from Task 4's fix-round review.
+
+        [Test]
+        public void TickAll_SpanShorterThanPlayerCount_Throws()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
+            var shortInputs = new SimInput[2]; // one short of PlayerCount
+            Assert.Throws<System.ArgumentException>(() => w.TickAll(shortInputs));
+        }
+
+        [Test]
+        public void RestoreState_PlayerCountMismatch_Throws()
+        {
+            var w3 = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
+            var save3 = w3.SaveState();
+            var w2 = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            Assert.Throws<System.ArgumentException>(() => w2.RestoreState(save3));
+        }
+
+        [Test]
+        public void SanitizePerPlayer_NaNAimPoint_FallsBackToOwnPreviousAimPoint_NotPlayer0()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            var inputs = new SimInput[2];
+            // Tick 1: give each player a distinct, finite AimPoint so their
+            // OWN previous AimPoint differs going into tick 2.
+            inputs[0] = new SimInput { AimPoint = new float2(3f, 4f) };
+            inputs[1] = new SimInput { AimPoint = new float2(7f, 9f) };
+            w.TickAll(inputs);
+
+            // Tick 2: player 1's AimPoint goes non-finite — Sanitize must fall
+            // back to PLAYER 1's own previous AimPoint (index 1), not player 0's.
+            inputs[1] = new SimInput { AimPoint = new float2(float.NaN, float.NaN) };
+            w.TickAll(inputs);
+
+            Assert.AreEqual(7f, w.PlayerAt(1).AimPoint.x, 1e-5f);
+            Assert.AreEqual(9f, w.PlayerAt(1).AimPoint.y, 1e-5f);
+        }
     }
 }

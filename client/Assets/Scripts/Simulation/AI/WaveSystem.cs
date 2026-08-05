@@ -42,7 +42,9 @@ namespace Ring.Simulation.AI
 
                 if (wave.PendingChasers == 0 && wave.PendingGunners == 0 && w.MobCount == 0)
                 {
-                    w.StatsRef.WavesCleared++;
+                    // Stage 2 Task 5: world-scoped counter — counted once per
+                    // match regardless of player count, not per player.
+                    w.WorldStatsRef.WavesCleared++;
                     w.Emit(SimEventKind.WaveCleared, w.Player.Pos, wave.WaveIndex, default, 0f);
                     wave.Phase = WavePhase.Waiting;
                     wave.PhaseTimer = cfg.WavePause;

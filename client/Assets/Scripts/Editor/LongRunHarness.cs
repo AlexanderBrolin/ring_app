@@ -70,11 +70,15 @@ namespace Ring.Editor
                 if (i % LogInterval == 0)
                 {
                     world.CaptureSnapshot(snapshot);
+                    // Stage 2 Task 5: Kills is personal (world.Stats == StatsAt(0),
+                    // the harness's single bot); MobSpawnsSkipped/ProjectileSpawnsSkipped
+                    // moved to WorldStats (world-scoped, shared arena caps).
                     MatchStats stats = world.Stats;
+                    WorldStats worldStats = world.WorldStats;
                     long mem = GC.GetTotalMemory(false);
                     Debug.Log($"LongRunHarness,{i},{snapshot.MobCount},{snapshot.ProjectileCount}," +
                         $"{world.EventCount},{world.DroppedEvents}," +
-                        $"{stats.MobSpawnsSkipped},{stats.ProjectileSpawnsSkipped},{mem}," +
+                        $"{worldStats.MobSpawnsSkipped},{worldStats.ProjectileSpawnsSkipped},{mem}," +
                         $"{snapshot.Player.Alive},{snapshot.Player.Hp},{stats.Kills},{snapshot.Wave.WaveIndex}");
                 }
 

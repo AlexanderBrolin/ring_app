@@ -94,8 +94,10 @@ namespace Ring.Presentation
             GUILayout.Label($"Slides: {_runner.Curr.Stats.SlidesUsed}  Headshots: {_runner.Curr.Stats.HeadshotKills}");
 
             DrawIntCounter("DroppedEvents", _runner.World.DroppedEvents);
-            DrawIntCounter("MobSpawnsSkipped", _runner.Curr.Stats.MobSpawnsSkipped);
-            DrawIntCounter("ProjectileSpawnsSkipped", _runner.Curr.Stats.ProjectileSpawnsSkipped);
+            // Stage 2 Task 5: these two moved to WorldStats (world-scoped, not
+            // per-player) — Curr.Stats stays the local player's personal counters.
+            DrawIntCounter("MobSpawnsSkipped", _runner.Curr.WorldStats.MobSpawnsSkipped);
+            DrawIntCounter("ProjectileSpawnsSkipped", _runner.Curr.WorldStats.ProjectileSpawnsSkipped);
             DrawFloatCounter("DroppedTime", _runner.AccumulatorDroppedTime);
 
             GUILayout.Label($"Seed: {_runner.Seed}");

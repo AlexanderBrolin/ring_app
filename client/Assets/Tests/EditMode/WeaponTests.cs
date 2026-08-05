@@ -114,7 +114,7 @@ namespace Ring.Simulation.Tests
             {
                 var w2 = new SimulationWorld(1, c2);
                 for (int i = 0; i < 60; i++) w2.Tick(Fire);
-                Assert.Greater(w2.Stats.ProjectileSpawnsSkipped, 0);
+                Assert.Greater(w2.WorldStats.ProjectileSpawnsSkipped, 0);
                 return w2.StateHash();
             }
             Assert.AreEqual(Run(cfg), Run(cfg)); // cap degradation is deterministic

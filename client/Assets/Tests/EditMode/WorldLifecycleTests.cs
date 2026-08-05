@@ -70,7 +70,7 @@ namespace Ring.Simulation.Tests
             // from the two original passes to all five. Recounted after Task 4
             // (ProjectileState gained Height/PrevHeight/VelZ) and Task 6
             // (MatchStats gained HeadshotKills): 22/48 fields to all 48 —
-            // PlayerState 12 + MatchStats 10 + MobState 9 + ProjectileState 11 +
+            // PlayerState 12 + MatchStats 8 + MobState 9 + ProjectileState 11 +
             // WaveState 6. The loops below reflect over the live structs, so a
             // new field is covered the moment it is declared; this tally is a
             // receipt for the reader, not a bound the test enforces.

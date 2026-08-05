@@ -105,7 +105,7 @@ namespace Ring.Simulation.Tests
             var snap = new RenderSnapshot(c.Arena);
             w.CaptureSnapshot(snap);
             Assert.LessOrEqual(snap.MobCount, 2);
-            Assert.Greater(w.Stats.MobSpawnsSkipped, 0);
+            Assert.Greater(w.WorldStats.MobSpawnsSkipped, 0);
             static ulong Run(SimConfig cc)
             {
                 var ww = new SimulationWorld(11, cc);

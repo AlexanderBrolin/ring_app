@@ -111,14 +111,18 @@ namespace Ring.Presentation
         /// Русские подписи — словарь мира (ADR-003 §9) + Приложение П-6.
         string BuildMetricsText()
         {
+            // Stage 2 Task 5: personal counters off Curr.Stats (the local
+            // player's own MatchStats), WavesCleared off Curr.WorldStats (a
+            // match-wide counter, not something any one player earned).
             MatchStats stats = _runner.Curr.Stats;
+            WorldStats worldStats = _runner.Curr.WorldStats;
             float timeSeconds = stats.DeathTick * SimulationWorld.TickDt;
             float accuracy = stats.ShotsFired > 0 ? (float)stats.ShotsHit / stats.ShotsFired : 0f;
 
             var sb = new StringBuilder();
             sb.AppendLine("Заход");
             sb.AppendLine($"Утилизировано: {stats.Kills}");
-            sb.AppendLine($"Волн отражено: {stats.WavesCleared}");
+            sb.AppendLine($"Волн отражено: {worldStats.WavesCleared}");
             sb.AppendLine($"Время на объекте: {FormatTime(timeSeconds)}");
             sb.AppendLine($"Точность: {accuracy:P0}");
             sb.AppendLine($"Дэшей: {stats.DashesUsed}");

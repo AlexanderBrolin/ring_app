@@ -18,7 +18,10 @@ namespace Ring.Simulation.Combat
         /// Spread.HipRadians cone. Both draw from the weapon RNG stream only when
         /// their cone is actually open, so perfectly settled recoil-free aim spends
         /// no randomness at all.
-        public static void Update(SimulationWorld w, ref PlayerState p, in SimInput input)
+        /// `index` (Stage 2 Task 5) is the firing player's own index — ShotsFired
+        /// is a personal counter, so it must land on THAT player's own MatchStats
+        /// slot, not always player 0's.
+        public static void Update(SimulationWorld w, ref PlayerState p, in SimInput input, int index)
         {
             float dt = SimulationWorld.TickDt;
             var cfg = w.Config.Weapon;
@@ -45,7 +48,7 @@ namespace Ring.Simulation.Combat
 
             // Safety net against an infinite loop if FireInterval is misconfigured to 0.
             float interval = math.max(cfg.FireInterval, 1e-3f);
-            ref MatchStats stats = ref w.StatsRef;
+            ref MatchStats stats = ref w.StatsRef(index);
             while (p.FireCooldown <= 0f)
             {
                 float overshoot = math.min(-p.FireCooldown, dt);

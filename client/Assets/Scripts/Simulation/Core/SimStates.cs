@@ -89,15 +89,28 @@ namespace Ring.Simulation.Core
         public float PhaseTimer;
     }
 
-    /// Per-match counters surfaced to DevOverlay/telemetry.
+    /// Per-player match counters surfaced to DevOverlay/telemetry (Stage 2 Task 5:
+    /// split from the former single per-match MatchStats — WavesCleared/
+    /// MobSpawnsSkipped/ProjectileSpawnsSkipped moved out to WorldStats below,
+    /// since a cleared wave or a capped spawn is a shared arena outcome, not
+    /// something any one player earned).
     public struct MatchStats
     {
         /// HeadshotKills (Task 6) counts the subset of Kills whose killing blow
         /// landed in HitZone.Head — incremented only from SimulationWorld's
         /// Alive-guarded helper, exactly like Kills itself.
-        public int Kills, HeadshotKills, WavesCleared, ShotsFired, ShotsHit,
-            DashesUsed, SlidesUsed, MobSpawnsSkipped, ProjectileSpawnsSkipped, DeathTick;
+        public int Kills, HeadshotKills, ShotsFired, ShotsHit,
+            DashesUsed, SlidesUsed, DeathTick;
         public float DamageTaken;
         // caps are observed separately (spec §3.15): what got clamped is visible in DevOverlay
+    }
+
+    /// World-scoped match counters (Stage 2 Task 5) — counted once for the whole
+    /// match regardless of player count: a wave clears once no matter how many
+    /// players are alive to see it, and the mob/projectile caps are shared arena
+    /// resources, not per-player budgets.
+    public struct WorldStats
+    {
+        public int WavesCleared, MobSpawnsSkipped, ProjectileSpawnsSkipped;
     }
 }

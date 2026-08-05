@@ -351,8 +351,10 @@ namespace Ring.Presentation
         /// Stage 2 Task 4: `Player` moved from a plain field to
         /// `Players`/`PlayerCount` (plus the new `LocalPlayerIndex`) — all
         /// three copied explicitly here, same indexed-copy pattern as
-        /// `Mobs`/`Projectiles` below; `Stats` itself is unchanged (still a
-        /// single plain field in this task).
+        /// `Mobs`/`Projectiles` below. Stage 2 Task 5: `Stats` split the same
+        /// way — `PlayerStats` gets the indexed-copy treatment (bounded by
+        /// `PlayerCount`, same array every player-indexed field here uses),
+        /// `WorldStats` is a single plain-struct assignment, same as `Wave`.
         static void CopySnapshot(RenderSnapshot from, RenderSnapshot to)
         {
             to.Tick = from.Tick;
@@ -364,7 +366,8 @@ namespace Ring.Presentation
             to.ProjectileCount = from.ProjectileCount;
             for (int i = 0; i < from.ProjectileCount; i++) to.Projectiles[i] = from.Projectiles[i];
             to.Wave = from.Wave;
-            to.Stats = from.Stats;
+            for (int i = 0; i < from.PlayerCount; i++) to.PlayerStats[i] = from.PlayerStats[i];
+            to.WorldStats = from.WorldStats;
         }
 
         public void Restart(long seed)
