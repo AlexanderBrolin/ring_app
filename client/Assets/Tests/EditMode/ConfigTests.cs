@@ -214,6 +214,48 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("EdgeRequestMinTicks"));
         }
 
+        [Test]
+        public void Validate_EdgeRequestMinTicksAboveRange_Throws()
+        {
+            // app-zx8 (spec §6e решение "а"): [Range(0,15)] on HeroConfig is an
+            // Editor-only Inspector hint — a value reaching the builder from
+            // code/JSON/test fixtures is not bounded by it at all, only by the
+            // old ReqNonNegative(>= 0) check. Mirrors the upper-bound precedent
+            // set for Arena.MaxPlayers in Task 4.
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.EdgeRequestMinTicks = 16; // outside [0, 15]
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("EdgeRequestMinTicks"));
+        }
+
+        [Test]
+        public void Validate_EdgeRequestMinTicksEatsLinkWindow_Throws()
+        {
+            // app-zx8: a value inside the plain [0,15] range can still be tall
+            // enough in real time to swallow the dash<->slide link windows
+            // whole (task-zx8-brief.md: at the shipped .asset numbers,
+            // EdgeRequestMinTicks >= 8 eats the legal link entirely). The
+            // smallest tick count whose duration reaches the narrower window
+            // is computed from hero's own fixture fields plus
+            // SimulationWorld.TickDt — never a literal copied from the .asset.
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            float minLinkWindow = math.min(hero.LinkWindowSeconds, hero.PostDashSlideWindow);
+            hero.EdgeRequestMinTicks = (int)math.ceil(minLinkWindow / SimulationWorld.TickDt);
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("EdgeRequestMinTicks"));
+            Assert.That(ex.Message, Does.Contain("LinkWindowSeconds"));
+        }
+
+        [Test]
+        public void Validate_EdgeRequestMinTicksDefault_PassesRangeAndLinkCheck()
+        {
+            // app-zx8: the shipped default (3 ticks = 0.1s) must clear both the
+            // new upper-bound range check and the new cross-check against the
+            // link windows — this is the "still works" half of the side-quest.
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            Assert.DoesNotThrow(() => BuildWith(hero));
+        }
+
         static void AssertHeroEqual(HeroSimConfig e, HeroSimConfig a)
         {
             Assert.AreEqual(e.MaxSpeed, a.MaxSpeed, Eps);

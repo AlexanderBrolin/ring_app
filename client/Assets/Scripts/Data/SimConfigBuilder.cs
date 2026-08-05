@@ -238,7 +238,28 @@ namespace Ring.Data
             // Task 8; consumed since Stage 2 Task 10, where the gate itself
             // landed (PlayerMovementSystem.Update's rate limit at the top of
             // the method).
-            ReqNonNegative(errors, "Hero.EdgeRequestMinTicks", cfg.Hero.EdgeRequestMinTicks);
+            // app-zx8 (spec §6e решение "а"): [Range(0,15)] on HeroConfig is an
+            // Editor-only Inspector hint, never enforced on a value that
+            // reaches the builder from code/JSON/a test fixture — mirror the
+            // upper bound here, same precedent as Arena.MaxPlayers (Task 4).
+            ReqInRange(errors, "Hero.EdgeRequestMinTicks", cfg.Hero.EdgeRequestMinTicks, 0, 15);
+            // app-zx8: even a value inside [0,15] can be tall enough in real
+            // time to swallow the dash<->slide link windows whole — at the
+            // shipped .asset numbers (LinkWindowSeconds 0.25s = 7.5 ticks,
+            // PostDashSlideWindow 0.32s = 9.6 ticks) EdgeRequestMinTicks >= 8
+            // eats the legal link entirely, making the ADR-001 mechanic
+            // unreachable while still passing every check above. The error
+            // names both numbers (gate window in seconds, narrower of the two
+            // link windows) so an owner tuning the number knows which one to
+            // move.
+            float edgeGateWindowSeconds = cfg.Hero.EdgeRequestMinTicks * SimulationWorld.TickDt;
+            float minLinkWindowSeconds = math.min(cfg.Hero.LinkWindowSeconds, cfg.Hero.PostDashSlideWindow);
+            if (edgeGateWindowSeconds >= minLinkWindowSeconds)
+            {
+                errors.Add("Hero.EdgeRequestMinTicks * TickDt must be < min(Hero.LinkWindowSeconds, " +
+                    "Hero.PostDashSlideWindow) " +
+                    $"(got gate window={edgeGateWindowSeconds:F4}s, min link window={minLinkWindowSeconds:F4}s).");
+            }
 
             // Task 2: movement-driven spread widening while running/sliding.
             ReqAtLeast(errors, "Weapon.SpreadRunMult", cfg.Weapon.SpreadRunMult, 1f);
