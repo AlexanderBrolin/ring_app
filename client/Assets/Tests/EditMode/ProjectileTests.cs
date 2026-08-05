@@ -198,6 +198,17 @@ namespace Ring.Simulation.Tests
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(1f, 0f), new float2(1f, 0f),
                 1f, 0f, 10f, 0.1f, 1f);
             Assert.AreEqual(0, w.GetProjectileForTest(0).OwnerIndex);
+
+            // Fix-round 1 M-3: the assertion above is satisfied by BOTH a correct
+            // implementation AND a broken one that never forwards ownerIndex into
+            // SpawnProjectile at all (0 == default(byte) either way). This second
+            // pair — an EXPLICIT non-zero ownerIndex — only passes if the value
+            // actually threads through; together the two pin both the default and
+            // the forwarding.
+            var w2 = new SimulationWorld(1, NoSpread());
+            w2.SpawnProjectileForTest(ProjectileOwner.Player, new float2(1f, 0f), new float2(1f, 0f),
+                1f, 0f, 10f, 0.1f, 1f, ownerIndex: 1);
+            Assert.AreEqual(1, w2.GetProjectileForTest(0).OwnerIndex);
         }
 
         [Test]

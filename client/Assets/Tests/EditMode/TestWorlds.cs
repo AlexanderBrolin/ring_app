@@ -100,11 +100,12 @@ namespace Ring.Simulation.Tests
         /// tells them whether the fixture ran out of budget (its own bug) or the
         /// wave genuinely never cleared (a product bug) — without it the failure
         /// reads as a silent product regression either way. DamageMob's
-        /// `ownerIndex` parameter is left at its default here (0 — the solo
-        /// player, Stage 2 Task 7, see its own doc) — every kill this helper
-        /// causes incidentally credits ShotsHit/Kills to player 0's personal
-        /// MatchStats, so a caller asserting on player 0's own personal stats
-        /// after calling this must account for that side effect.
+        /// `ownerIndex` is REQUIRED (fix-round 1 I-1 — no default on a production
+        /// method) — passed explicitly as `0` below (test default: the solo
+        /// player, Stage 2 Task 7, see DamageMob's own doc) — every kill this
+        /// helper causes incidentally credits ShotsHit/Kills to player 0's
+        /// personal MatchStats, so a caller asserting on player 0's own personal
+        /// stats after calling this must account for that side effect.
         public static int ClearFirstWave(SimulationWorld world, int maxTicks = 300)
         {
             var inputs = new SimInput[world.PlayerCount];
@@ -113,7 +114,7 @@ namespace Ring.Simulation.Tests
             {
                 world.TickAll(inputs);
                 while (world.MobCount > 0)
-                    world.DamageMob(0, 1e9f, world.Mobs[0].Pos, HitZone.Body, default);
+                    world.DamageMob(0, 1e9f, world.Mobs[0].Pos, HitZone.Body, default, ownerIndex: 0);
             }
             return ticks;
         }

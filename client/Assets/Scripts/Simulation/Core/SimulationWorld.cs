@@ -476,18 +476,20 @@ namespace Ring.Simulation.Core
         /// blow and are forwarded to MobDied for Presentation. `ownerIndex` (Stage 2
         /// Task 7, carryover I-2 from the T5 review) is the projectile's shooter
         /// (ProjectileSystem passes proj.OwnerIndex) — ShotsHit/Kills/HeadshotKills
-        /// now credit THAT player instead of the former hardcoded player 0. Defaults
-        /// to 0 — test default: the solo player (TestWorlds.ClearFirstWave's
-        /// synthetic kills, which have no real projectile behind them, keep
-        /// crediting player 0 exactly as they did before this task). The
-        /// `ownerIndex != NoOwner` guard is required defense-in-depth: today
-        /// ProjectileSystem's gather phase only ever routes a Player-owned
-        /// projectile into this method (a Mob-owned one always hits the player
-        /// instead, via DamagePlayer), so ownerIndex is never actually NoOwner on
-        /// the production path — but crediting must not silently trust that
-        /// invariant forever, and an unguarded `_matchStats[NoOwner]` would also be
-        /// an out-of-range index on top of the wrong credit.
-        internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir, byte ownerIndex = 0)
+        /// now credit THAT player instead of the former hardcoded player 0.
+        /// Deliberately REQUIRED, no default (fix-round 1 I-1): a default here would
+        /// silently resurrect the exact "always player 0" hardcode this task exists
+        /// to remove, on a PRODUCTION method — the only non-production call site
+        /// (TestWorlds.ClearFirstWave) writes an explicit `0` (test default: the
+        /// solo player, same convention SpawnProjectileForTest's own default
+        /// documents). The `ownerIndex != NoOwner` guard is required
+        /// defense-in-depth: today ProjectileSystem's gather phase only ever routes
+        /// a Player-owned projectile into this method (a Mob-owned one always hits
+        /// the player instead, via DamagePlayer), so ownerIndex is never actually
+        /// NoOwner on the production path — but crediting must not silently trust
+        /// that invariant forever, and an unguarded `_matchStats[NoOwner]` would
+        /// also be an out-of-range index on top of the wrong credit.
+        internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir, byte ownerIndex)
         {
             _mobs[index].Hp -= dmg;
             if (ownerIndex != ProjectileIds.NoOwner) IncrementShotsHit(ownerIndex);
@@ -617,7 +619,16 @@ namespace Ring.Simulation.Core
         /// path production code uses, named for test call-sites. Stage 2 Task 7:
         /// `ownerIndex` defaults to 0 — test default: the solo player (dozens of
         /// Э1 call sites model a solo player's own shot and assert its credit;
-        /// a NoOwner default would silently rob them of it).
+        /// a NoOwner default would silently rob them of it). WARNING (fix-round 1
+        /// M-2): the default is unconditional — it does NOT infer NoOwner from
+        /// `owner == ProjectileOwner.Mob`. A caller spawning a Mob-owned test
+        /// projectile MUST pass `ownerIndex: ProjectileIds.NoOwner` explicitly
+        /// (see HitZoneTests.cs / ProjectileTests.cs for the existing pattern) —
+        /// omitting it silently leaves OwnerIndex at 0, violating the "Mob ⇒
+        /// NoOwner" invariant MobProjectile_HasNoOwnerIndex pins for the real
+        /// production path. Harmless today (OwnerIndex is outside StateHash until
+        /// Task 10), but becomes hash-significant then — checked at that task's
+        /// own gate, not this one.
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
             float height, float velZ, float damage, float radius, float ttl, byte ownerIndex = 0)
             => SpawnProjectile(owner, ownerIndex, pos, vel, height, velZ, damage, radius, ttl);

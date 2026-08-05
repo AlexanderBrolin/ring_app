@@ -91,12 +91,22 @@ namespace Ring.Simulation.Tests
             }
             foreach (var field in typeof(ProjectileState).GetFields())
             {
-                // TEMPORARY (T7 -> T10): see PendingHashFields' doc comment above.
-                if (PendingHashFields.Contains(field.Name)) continue;
                 w.RestoreState(save);
                 object boxed = w.Projectiles[0];
                 field.SetValue(boxed, Bump(field.GetValue(boxed)));
                 w.SetProjectileForTest(0, (ProjectileState)boxed);
+                if (PendingHashFields.Contains(field.Name))
+                {
+                    // TEMPORARY (T7 -> T10, fix-round 1 M-4): a POSITIVE assertion,
+                    // not a silent `continue` — proves the field is genuinely still
+                    // OUTSIDE the hash, not just unchecked. Catches the field being
+                    // hashed prematurely (before Task 10) right here, with the
+                    // field's own name in the failure message, instead of only as
+                    // an unrelated-looking golden-hash drift somewhere else.
+                    Assert.AreEqual(baseline, w.StateHash(),
+                        $"ProjectileState.{field.Name} ещё не должен входить в хеш до Т10");
+                    continue;
+                }
                 Assert.AreNotEqual(baseline, w.StateHash(), $"ProjectileState.{field.Name} не в хеше");
             }
             foreach (var field in typeof(WaveState).GetFields())
@@ -120,9 +130,10 @@ namespace Ring.Simulation.Tests
             // temporary skip-list above), since a byte field is a legitimate
             // struct member the hash sweep must be able to bump regardless of
             // whether any ONE such field is currently in PendingHashFields.
-            // Wraps at byte.MaxValue like the other integral branches would
-            // via their own type's overflow, not a concern here since no
-            // fixture bumps OwnerIndex from 255.
+            // Wraps at byte.MaxValue back to 0 — still different from the
+            // input on every value, (byte)(255 + 1) == 0 != 255 included —
+            // which is all callers need (they only check the value changed,
+            // never a specific new one).
             byte b8 => (byte)(b8 + 1),
             // MobType/MobAiState/WavePhase (F-4 fix-round): step to the next
             // declared enum value, wrapping — every one of these enums has more
