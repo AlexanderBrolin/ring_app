@@ -28,3 +28,5 @@ MonoBehaviour:
   MaxProjectiles: 256
   MaxEventsPerFrame: 256
   SpawnClearance: 1
+  MaxPlayers: 3
+  PlayerSpawnRingFrac: 0.8

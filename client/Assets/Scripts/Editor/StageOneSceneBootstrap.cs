@@ -387,6 +387,31 @@ namespace Ring.Editor
             gunnerChanged |= (gunnerCreated || !gunnerMarkerPresent) && ApplyGunnerZoneDefaults(gunner);
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
 
+            // Stage 2 Task 9 (owner decision F3a): call-gate scaffold for the
+            // one-time arena balance delivery Task 16 populates. Sample taken
+            // from ApplyGunnerZoneDefaults' BODY only (SetIfDifferent per
+            // field, see ApplyStageTwoBalance below), not its call-site gate —
+            // that gate is the EnsureAssetHasKey backfill marker
+            // (gunnerMarkerPresent above), which only proves "does this field
+            // EXIST", not "does it still hold the spec value". Copying it
+            // literally would have been wrong here: ArenaConfig's marker
+            // (PlayerSpawnRingFrac) is delivered by THIS SAME Apply() a few
+            // lines down, so gunnerMarkerPresent's equivalent for arena would
+            // already be true on the very run that needs to seed the Stage 2
+            // numbers, and Task 16's owner hand-tune at milestone B1 would get
+            // stomped back to spec defaults on every later R-APPLY. The real
+            // gate is instead "walls have not been delivered yet" — but
+            // ArenaConfig.Walls does not exist in Task 9 (Task 16 introduces
+            // it), so referencing it here would not compile. ApplyStageTwoBalance
+            // below is therefore an empty stub that always returns false,
+            // which makes stageTwoPending's value inert until Task 16 replaces
+            // this line with:
+            //   bool stageTwoPending = arena.Walls == null || arena.Walls.Length == 0;
+            bool arenaChanged = false;
+            bool stageTwoPending = true;
+            arenaChanged |= stageTwoPending && ApplyStageTwoBalance(arena, wave, gameFeel);
+            if (arenaChanged) EditorUtility.SetDirty(arena);
+
             // Task 27 review fix-round (extended by the milestone-4 DoD
             // iteration, generalized to five assets by Task 17): an already-
             // committed SO asset predates whichever feel/balance field most
@@ -409,16 +434,22 @@ namespace Ring.Editor
             // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
             // field's own doc for the fuller history; HeroConfig's marker is
-            // `LinkRefund` as of В1 fix-wave 3 (owner economy rework) — was
-            // `AimSettleSeconds` (Task 17) before that; WeaponConfig/
-            // MobConfig's marker fields are unchanged since Task 17, so any
-            // asset committed before that task predates them and self-heals
-            // on this Apply).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "LinkRefund");
+            // `EdgeRequestMinTicks` as of Stage 2 Task 8/9 (edge-request rate
+            // limiting) — was `LinkRefund` (В1 fix-wave 3, owner economy
+            // rework) before that, `AimSettleSeconds` (Task 17) before THAT;
+            // WeaponConfig/MobConfig's marker fields are unchanged since Task
+            // 17, so any asset committed before that task predates them and
+            // self-heals on this Apply; ArenaConfig joins the marker
+            // mechanism for the first time here, in Stage 2 Task 9, with
+            // `PlayerSpawnRingFrac` (Stage 2 Task 4) as its marker — no
+            // committed ArenaConfig.asset predates Stage 2 at all, so this is
+            // a one-time onboarding rather than a migration).
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "EdgeRequestMinTicks"); // Stage 2 Task 9
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "HeadHoverPulseAmp"); // В3 fix-wave 2
+            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "PlayerSpawnRingFrac"); // Stage 2 Task 9
 
             AssetDatabase.SaveAssets();
 
@@ -1556,6 +1587,21 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.HeadDamageMult, 1.7f);
             changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
             return changed;
+        }
+
+        /// Stage 2 Task 9 scaffold (owner decision F3a) — body populated by Task
+        /// 16 once ArenaConfig.Walls and the Stage 2 balance numbers exist.
+        /// Will mirror ApplyGunnerZoneDefaults exactly: SetIfDifferent per
+        /// field, so a post-delivery owner hand-tune at milestone B1 survives
+        /// every later R-APPLY. Called behind the Task 16 arena.Walls gate —
+        /// see the call site's doc, a few lines above this method's own call —
+        /// for why that gate cannot be the EnsureAssetHasKey backfill marker
+        /// this file uses everywhere else. Empty and always false until Task
+        /// 16 lands its balance numbers; wave/gameFeel are already accepted
+        /// so Task 16 does not need to touch this signature.
+        static bool ApplyStageTwoBalance(ArenaConfig arena, WaveConfig wave, GameFeelConfig gameFeel)
+        {
+            return false;
         }
 
         static bool SetIfDifferent(ref float field, float value)

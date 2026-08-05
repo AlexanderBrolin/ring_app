@@ -52,3 +52,4 @@ MonoBehaviour:
   AimSlideSpeedMult: 0.5
   AimSettleSeconds: 0.5
   LinkRefund: 10
+  EdgeRequestMinTicks: 3
