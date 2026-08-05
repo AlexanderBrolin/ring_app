@@ -449,7 +449,38 @@ namespace Ring.Simulation.Tests
             // 5%/tick each, so over 1000 ticks it repeatedly asks twice inside
             // one EdgeRequestMinTicks window, and the second ask is now dropped
             // before it can latch the (hashed) input buffer.
-            const ulong GoldenHash = 0xA39774BCF07D8014UL; // = 11788018904502992916
+            //
+            // Re-pinned by Stage 2 Task 16 (repin #14, the SECOND and LAST
+            // sanctioned golden shift of the stage-2 network phase — spec
+            // §3.4/§3.15). Everything that moves this hash, by code:
+            // (1) ARENA GEOMETRY. TestConfigs.DefaultArena() — which every
+            //     scripted run is built from — grew from Radius 35 / 5 circles
+            //     / 0 walls to Radius 65 / 8 circles / 6 walls. Radius feeds
+            //     SimInputSanitizer's AimPoint clamp, ClampInsideRing,
+            //     SweepArena's ring boundary and WaveSystem's spawn ring; the
+            //     three new circles and six walls are new blockers for
+            //     movement, dash ricochets, projectiles, LoS and mob steering.
+            //     The scripted player walks and shoots into all of them.
+            // (2) WORLD CAPS. MaxMobs 64 -> 96, MaxProjectiles 256 -> 384,
+            //     MaxEventsPerFrame 256 -> 512 and Wave.MaxMobsPerWave 24 -> 36:
+            //     the run now keeps mobs and rounds alive that the old caps
+            //     silently dropped (MobSpawnsSkipped/ProjectileSpawnsSkipped are
+            //     themselves hashed via WorldStats).
+            // (3) WAVE SCALE. WaveSystem.CountForTest replaces the inline
+            //     count formula. At playerCount 1 the scale factor is exactly
+            //     1, so this changes NOTHING for the solo golden by itself —
+            //     it is listed for completeness, and it is a real cause for the
+            //     multiplayer golden below.
+            // (4) statsCount LEFT THE HASH (owner decision Р114): the canonical
+            //     order is now ... -> worldStats -> stats[0..n), with the
+            //     duplicated _matchStats.Length step removed. One fewer Add
+            //     shifts every subsequent byte of the fold.
+            // Nothing else moved: the mob-projectile fixtures already carried
+            // ProjectileIds.NoOwner since Task 10 (carryover-t16 item 6 was
+            // already discharged there), no state field entered or left
+            // PlayerState/MobState/ProjectileState/MatchStats, and no system's
+            // per-tick order changed.
+            const ulong GoldenHash = 0x5BD8AC0DE1D0C454UL; // = 6618228828044051540
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
@@ -471,7 +502,19 @@ namespace Ring.Simulation.Tests
             // re-pin — it never held a nonzero value before): three players
             // spawned on the ring, each drawing its own scripted input, over the
             // full canonical hash order including both array halves.
-            const ulong MultiGoldenHash = 0x86B7254BF9FD2A9AUL; // = 9707268530067286682
+            //
+            // Re-pinned by Stage 2 Task 16 (first RE-pin of this constant —
+            // Task 10 only pinned it): every cause listed on the solo golden
+            // above applies here too, plus the one that is exclusive to this
+            // test — WAVE SCALE. Wave.PerPlayerCountFrac (0 before this task,
+            // 0.7 now) multiplies each wave by 1 + (playerCount - 1) * frac, so
+            // a three-player run's waves go from BaseCount 4 to round(4 * 2.4) =
+            // 10 mobs, and every later wave scales the same way up to the raised
+            // MaxMobsPerWave 36. That changes how much WaveRng the spawn search
+            // consumes, how many mobs live, shoot and die, and therefore the
+            // whole downstream trace. Spec §3.15 sanctions exactly one further
+            // shift of THIS constant, in Task 17 (owner decision Р113).
+            const ulong MultiGoldenHash = 0xD604E38F1647C0A8UL; // = 15421701227717050536
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
