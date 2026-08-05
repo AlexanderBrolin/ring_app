@@ -131,6 +131,17 @@ namespace Ring.Simulation.Core
         /// Task 11, spec §3.3). padR is NOT clamped here when negative:
         /// Targeting.HasLineOfFire (Task 13) owns that clamp on its side of
         /// the call, exactly like SegmentCircle above leaves it to its callers.
+        /// A contact found exactly AT t == 1 counts as a miss (best starts at
+        /// 1f and every candidate must beat it with a strict `&lt;`), matching
+        /// SweepArena's convention over this same geometry — whereas
+        /// SegmentCircle alone, asked the equivalent question directly at an
+        /// end cap, would report `true, t = 1`.
+        /// Fix-round 1 M-4: when halfW + padR &lt; 0, behaviour is UNDEFINED —
+        /// the end caps (candidates 2/3) work off `|R|` inside SegmentCircle's
+        /// own quadratic, while the flat side (candidate 4) works off the
+        /// signed `R`, so the two disagree about where the surface even is.
+        /// Clamping `padR` to at least `-halfW` is Targeting.HasLineOfFire's
+        /// job (Task 13), not this function's.
         public static bool SegmentStadium(float2 p0, float2 p1, float padR,
             float2 a, float2 b, float halfW, out float t)
         {
@@ -166,13 +177,26 @@ namespace Ring.Simulation.Core
 
             // Candidate 4: entry into the flat-side band, clipped to the
             // segment via ClosestPointOnSegment.
-            float2 dir = axis / math.sqrt(math.dot(axis, axis));
+            float2 dir = axis / math.length(axis);
             float2 n = new float2(-dir.y, dir.x);
             float d0 = math.dot(p0 - a, n);
             float d1 = math.dot(p1 - a, n);
+            // The |d1-d0| and tb<=1f checks below are defensive-only, not
+            // load-bearing: fix-round 1 review verified both branches are
+            // behaviourally equivalent to removing the check on every
+            // fixture tried (tb's own [0,1] lower bound and the s-interior
+            // check downstream already exclude the cases these would). Kept
+            // for robustness against inputs neither review nor the test
+            // suite has exercised, not because a specific case needs them.
             if (math.abs(d1 - d0) >= 1e-12f)
             {
                 float r = halfW + padR;
+                // d0 == 0f (path starts exactly ON the band's centreline) is
+                // safe even though math.sign(0f) == 0f makes target == 0:
+                // tb then resolves to 0 and contact == p0, whose projection
+                // is pinned to whichever end p0 sits nearest — s lands at a
+                // boundary, so the s-interior check below rejects it and the
+                // end-cap candidates (2/3) resolve the contact instead.
                 float target = r * math.sign(d0); // approach from p0's own side of the band
                 float tb = (target - d0) / (d1 - d0);
                 if (tb >= 0f && tb <= 1f)

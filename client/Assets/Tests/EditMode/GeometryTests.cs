@@ -246,6 +246,32 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void SegmentStadium_HitsFlatSide_FromOppositeSide()
+        {
+            // Fix-round 1 I-1: mirror of HitsFlatSide, approaching from +x
+            // instead of -x. All of the plan's flat-side fixtures happened to
+            // have d0 > 0 (p0 on the "positive" side of the band); a mutant
+            // that hard-codes `target = r` (dropping `* math.sign(d0)`)
+            // survives every one of them, because for those it IS the same
+            // side. This fixture starts on the opposite (negative-d0) side,
+            // so a sign-blind `target` would compute the wrong crossing.
+            float2 a = new float2(0f, -5f);
+            float2 b = new float2(0f, 5f);
+            float halfW = 0.5f;
+            float padR = 0f;
+            float2 p0 = new float2(3f, 0f);
+            float2 p1 = new float2(-3f, 0f);
+
+            bool hit = Geometry.SegmentStadium(p0, p1, padR, a, b, halfW, out float t);
+
+            Assert.IsTrue(hit);
+            // mirror of HitsFlatSide's expression: same segment length (6),
+            // same offset from centre (3) to the inflated band (halfW+padR)
+            float expected = (3f - (halfW + padR)) / 6f;
+            Assert.AreEqual(expected, t, 1e-4f);
+        }
+
+        [Test]
         public void SegmentStadium_HitsRoundedCap()
         {
             // approach aimed past the segment's end, offset to the side: the
@@ -268,11 +294,70 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void SegmentStadium_HitsRoundedCap_AtStartCap()
+        {
+            // Fix-round 1 I-2: mirror of HitsRoundedCap, aimed at the a-end
+            // instead of the b-end. The single existing rounded-cap test only
+            // ever exercises SegmentCircle(..., a, ...); a mutant that drops
+            // that candidate entirely leaves the stadium "open" at the a-end
+            // and nothing catches it.
+            float2 a = new float2(0f, 0f);
+            float2 b = new float2(4f, 0f);
+            float halfW = 1f;
+            float padR = 1.5f;
+            float2 p0 = new float2(-2f, 2f);
+            float2 p1 = new float2(-2f, 0f);
+
+            bool hit = Geometry.SegmentStadium(p0, p1, padR, a, b, halfW, out float t);
+
+            Assert.IsTrue(hit);
+            Assert.AreEqual(0.25f, t, 1e-4f);
+            float2 contact = math.lerp(p0, p1, t);
+            float r = halfW + padR;
+            Assert.AreEqual(r, math.length(contact - a), 1e-3f); // lands on the a-end cap
+        }
+
+        [Test]
+        public void SegmentStadium_NearestCandidateWins_StripOverEndCap()
+        {
+            // Fix-round 1 I-3 (closes the SegmentStadium half of the
+            // honestly-reported "min vs first candidate" gap from Task 11's
+            // original report): both the b-end cap (t ~= 0.3557) and the
+            // flat-side strip (t = 1/3) are live here, with the strip
+            // strictly nearer. Candidates are evaluated end-caps-then-strip,
+            // so a "first true candidate wins" mutant returns the b-end cap's
+            // later t instead of the strip's earlier one.
+            float2 a = new float2(0f, 0f);
+            float2 b = new float2(4f, 0f);
+            float halfW = 1f;
+            float padR = 0f;
+            float2 p0 = new float2(3.5f, 3f);
+            float2 p1 = new float2(3.5f, -3f);
+
+            bool hit = Geometry.SegmentStadium(p0, p1, padR, a, b, halfW, out float t);
+
+            Assert.IsTrue(hit);
+            // the strip's own crossing expression: offset (3) to the band
+            // (halfW+padR) over the segment's y-span (6) — the SAME shape as
+            // HitsFlatSide's expected, just for a different wall/path pair
+            float expected = (3f - (halfW + padR)) / 6f;
+            Assert.AreEqual(expected, t, 1e-4f);
+        }
+
+        [Test]
         public void SegmentStadium_MissesPastEnd()
         {
             // path travels straight past the segment's endpoint, well outside
             // the rounded cap's radius — must miss even though the infinite
             // strip extension (ignoring the endpoint clip) would have caught it.
+            //
+            // Fix-round 1 M-6: this test is green on Task 11's empty ("always
+            // false") RED stub too, so it is NOT a RED-discipline witness by
+            // itself (see the Task 11 RED log). Its actual value is killing
+            // the mutant that widens the strip's interior test from
+            // s ∈ (0,1) to the un-clipped s ∈ [0,1]: without that clip the
+            // strip candidate here fires at tb = 1/3 using the b-end's
+            // clamped s = 1, which this test catches via Assert.IsFalse.
             float2 a = new float2(0f, 0f);
             float2 b = new float2(4f, 0f);
             float halfW = 1f;
@@ -283,6 +368,61 @@ namespace Ring.Simulation.Tests
             bool hit = Geometry.SegmentStadium(p0, p1, padR, a, b, halfW, out float t);
 
             Assert.IsFalse(hit);
+        }
+
+        [Test]
+        public void SegmentStadium_MissesPastStart()
+        {
+            // Fix-round 1 M-1: mirror of MissesPastEnd, clipping at the a-end
+            // (s = 0) instead of the b-end (s = 1). MissesPastEnd alone only
+            // pins the upper clip (s < 1); a mutant that loosens the lower
+            // clip from `s > 0f` to `s >= 0f` survives it untouched, because
+            // that fixture's clamped s lands at 1, not 0. Here the strip's
+            // raw projection is negative, clamped to exactly s = 0, so only
+            // the strict `s > 0f` correctly defers this to the (missing)
+            // a-end cap and reports a miss.
+            float2 a = new float2(0f, 0f);
+            float2 b = new float2(4f, 0f);
+            float halfW = 1f;
+            float padR = 0f;
+            float2 p0 = new float2(-3f, 3f);
+            float2 p1 = new float2(-3f, -3f);
+
+            bool hit = Geometry.SegmentStadium(p0, p1, padR, a, b, halfW, out float t);
+
+            Assert.IsFalse(hit);
+        }
+
+        [Test]
+        public void SegmentStadium_DegenerateWall_BehavesAsCircle()
+        {
+            // Fix-round 1 I-5: |b - a| below the epsilon collapses the
+            // stadium to a circle at a (SegmentStadium's own documented
+            // fallback). Pins the documented contract as a regression check.
+            //
+            // Honesty note (falsifiability pass): deleting the early-return
+            // branch does NOT redden this test. With a == b the two end-cap
+            // candidates (SegmentCircle against a and against b) become the
+            // exact same call with the exact same result, so they silently
+            // reproduce the deleted branch's answer bit-for-bit — the branch
+            // is behaviourally redundant given the current dual-end-cap
+            // shape, not a silent-failure trap. Verified by running that
+            // exact mutation: full GeometryTests suite stayed green. Kept in
+            // production for clarity/intent and to avoid feeding NaN through
+            // the flat-side band math on every degenerate-wall call.
+            float2 a = new float2(2f, 3f);
+            float2 b = a; // zero-length axis
+            float halfW = 1f;
+            float padR = 0.2f;
+            float2 p0 = new float2(-3f, 3f);
+            float2 p1 = new float2(5f, 3f);
+
+            bool stadiumHit = Geometry.SegmentStadium(p0, p1, padR, a, b, halfW, out float tStadium);
+            bool circleHit = Geometry.SegmentCircle(p0, p1, padR, a, halfW, out float tCircle);
+
+            Assert.IsTrue(circleHit); // sanity: a genuine hit, not a vacuous false==false match
+            Assert.AreEqual(circleHit, stadiumHit);
+            Assert.AreEqual(tCircle, tStadium, 1e-6f);
         }
 
         [Test]
@@ -367,28 +507,89 @@ namespace Ring.Simulation.Tests
             float2 axisDir = math.normalize(b - a);
             Assert.AreEqual(0f, math.dot(normal, axisDir), 1e-4f); // normal is perpendicular to the wall's axis
             Assert.Greater(pos.x, 0f); // pushed further toward the side pos started on
+            // Fix-round 1 I-4: pin the actual separation distance (fixture
+            // expression), not just its sign/direction — otherwise mutants
+            // that push by the wrong amount (no Skin, half the radius, ...)
+            // survive on this test.
+            Assert.AreEqual(halfW + radius + Geometry.Skin, pos.x, 1e-4f);
+        }
+
+        [Test]
+        public void PushOutOfStadium_Clear_ReturnsFalseAndLeavesPos()
+        {
+            // Fix-round 1 I-4: a body already outside the stadium must be
+            // left untouched. Without this test, a mutant that always
+            // returns true (and always pushes) is caught by nothing — every
+            // other PushOutOfStadium test starts already-penetrating.
+            float2 a = new float2(0f, -5f);
+            float2 b = new float2(0f, 5f);
+            float halfW = 1f;
+            float radius = 0.3f;
+            float2 pos = new float2(10f, 0f); // far outside halfW + radius
+            float2 posBefore = pos;
+
+            bool pushed = Geometry.PushOutOfStadium(ref pos, radius, a, b, halfW, out float2 normal);
+
+            Assert.IsFalse(pushed);
+            Assert.AreEqual(posBefore, pos);
+            Assert.AreEqual(float2.zero, normal);
         }
 
         [Test]
         public void PushOutOfStadium_OnAxis_PushesPerpendicular()
         {
             // pos sits exactly on the wall's axis: delta = pos - closest is
-            // zero, so the coordinator's perpendicular fallback (not the bare
-            // circle's (1,0)) must apply — pushing along the axis would slide
-            // the body along the wall instead of clearing it.
+            // zero, so the coordinator's perpendicular fallback (not a fixed
+            // world direction) must apply — pushing along the axis would
+            // slide the body along the wall instead of clearing it.
+            //
+            // Fix-round 1 M-7: reformulated as a property (unit length,
+            // orthogonal to the wall's OWN axis, ends up outside the
+            // stadium) instead of pinning the exact vector. The wall's axis
+            // is deliberately diagonal (not aligned to either world axis):
+            // on an axis-aligned wall, +normal and -normal — and so a
+            // world-space (1,0) fallback, when the axis happens to be
+            // vertical — are equally "orthogonal to the axis" and equally
+            // "outside," so no property distinguishes the fallback from the
+            // wrong-signed perpendicular. A diagonal axis breaks that
+            // symmetry: a mutant that always falls back to (1,0) is no
+            // longer orthogonal to THIS wall's axis, so the orthogonality
+            // assertion alone catches it (verified below in the
+            // falsifiability pass).
             float2 a = new float2(0f, 0f);
-            float2 b = new float2(0f, 10f);
-            float halfW = 0.5f;
-            float radius = 0.2f;
-            float2 pos = new float2(0f, 5f); // on the axis, inside the wall
+            float2 b = new float2(6f, 8f); // length 10, direction (0.6, 0.8)
+            float halfW = 1f;
+            float radius = 0.5f;
+            float2 pos = new float2(3f, 4f); // exactly on the axis (s = 0.5)
 
             bool pushed = Geometry.PushOutOfStadium(ref pos, radius, a, b, halfW, out float2 normal);
 
             Assert.IsTrue(pushed);
-            float2 dir = math.normalize(b - a);
-            float2 expectedNormal = new float2(-dir.y, dir.x);
-            Assert.AreEqual(expectedNormal.x, normal.x, 1e-5f);
-            Assert.AreEqual(expectedNormal.y, normal.y, 1e-5f);
+            Assert.AreEqual(1f, math.length(normal), 1e-5f); // unit length
+            float2 axisDir = math.normalize(b - a);
+            Assert.AreEqual(0f, math.dot(normal, axisDir), 1e-5f); // orthogonal to the wall's own axis
+            Assert.IsFalse(Geometry.OverlapsStadium(pos, radius, a, b, halfW)); // pushed clear of the wall
+        }
+
+        [Test]
+        public void PushOutOfStadium_DegenerateWall_FallsBackToUnitX()
+        {
+            // Fix-round 1 I-5: a == b makes even the axis' own perpendicular
+            // undefined (no direction to derive), so the further fallback to
+            // (1,0) — matching PushOutOfCircle's degenerate-centre case —
+            // must apply. The existing OnAxis test exercises the
+            // perpendicular-fallback branch only; this is the other branch,
+            // reached solely by axisLen <= 1e-6.
+            float2 a = new float2(0f, 0f);
+            float2 b = a; // degenerate wall: zero-length axis
+            float halfW = 0.5f;
+            float radius = 0.2f;
+            float2 pos = new float2(0f, 0f); // exactly at the degenerate wall's point
+
+            bool pushed = Geometry.PushOutOfStadium(ref pos, radius, a, b, halfW, out float2 normal);
+
+            Assert.IsTrue(pushed);
+            Assert.AreEqual(new float2(1f, 0f), normal);
         }
     }
 }
