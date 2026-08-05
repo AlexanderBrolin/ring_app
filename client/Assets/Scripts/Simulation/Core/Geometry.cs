@@ -101,6 +101,102 @@ namespace Ring.Simulation.Core
             return true;
         }
 
+        /// The single home for point-to-segment projection (Stage 2 Task 11):
+        /// OverlapsStadium and PushOutOfStadium both route through this
+        /// instead of re-deriving the clamp math, so it lives in exactly one
+        /// place. `s` is always clamped into [0,1] — the parameter along the
+        /// segment of the closest point actually returned.
+        public static float2 ClosestPointOnSegment(float2 p, float2 a, float2 b, out float s)
+        {
+            float2 d = b - a;
+            float len2 = math.dot(d, d);
+            if (len2 < 1e-12f) { s = 0f; return a; } // degenerate segment = a point
+            s = math.clamp(math.dot(p - a, d) / len2, 0f, 1f);
+            return a + d * s;
+        }
+
+        /// Static stadium overlap — segment a→b inflated by halfW (Stage 2
+        /// Task 11). Used directly for spawn-clearance rejection, and as
+        /// SegmentStadium's "already inside at the start" branch, which also
+        /// makes a zero-length sweep (p0 == p1) behave correctly for free.
+        public static bool OverlapsStadium(float2 p, float radius, float2 a, float2 b, float halfW)
+        {
+            float2 closest = ClosestPointOnSegment(p, a, b, out _);
+            float r = radius + halfW;
+            return math.lengthsq(p - closest) < r * r;
+        }
+
+        /// Swept circle (segment p0→p1, inflated by padR) vs the stadium
+        /// a→b/halfW — first contact along the sweep, t ∈ [0,1] (Stage 2
+        /// Task 11, spec §3.3). padR is NOT clamped here when negative:
+        /// Targeting.HasLineOfFire (Task 13) owns that clamp on its side of
+        /// the call, exactly like SegmentCircle above leaves it to its callers.
+        public static bool SegmentStadium(float2 p0, float2 p1, float padR,
+            float2 a, float2 b, float halfW, out float t)
+        {
+            t = 0f;
+            float2 axis = b - a;
+
+            // Degenerate wall (zero-length axis): the stadium collapses to a
+            // circle of radius halfW centred on a — SegmentCircle already IS
+            // that shape, so delegate rather than duplicate it.
+            if (math.lengthsq(axis) < 1e-12f)
+                return SegmentCircle(p0, p1, padR, a, halfW, out t);
+
+            // Candidate 1: already inside at the start. Reusing
+            // OverlapsStadium here (rather than a bespoke check) also
+            // correctly resolves a degenerate sweep p0 == p1, since
+            // OverlapsStadium is a pure static test.
+            if (OverlapsStadium(p0, padR, a, b, halfW))
+            {
+                t = 0f;
+                return true;
+            }
+
+            bool hit = false;
+            float best = 1f;
+
+            // Candidates 2 & 3: the two rounded end caps, via the existing,
+            // golden-pinned SegmentCircle — the caps ARE circles of radius
+            // halfW, not re-derived here.
+            if (SegmentCircle(p0, p1, padR, a, halfW, out float tA) && tA < best)
+            { best = tA; hit = true; }
+            if (SegmentCircle(p0, p1, padR, b, halfW, out float tB) && tB < best)
+            { best = tB; hit = true; }
+
+            // Candidate 4: entry into the flat-side band, clipped to the
+            // segment via ClosestPointOnSegment.
+            float2 dir = axis / math.sqrt(math.dot(axis, axis));
+            float2 n = new float2(-dir.y, dir.x);
+            float d0 = math.dot(p0 - a, n);
+            float d1 = math.dot(p1 - a, n);
+            if (math.abs(d1 - d0) >= 1e-12f)
+            {
+                float r = halfW + padR;
+                float target = r * math.sign(d0); // approach from p0's own side of the band
+                float tb = (target - d0) / (d1 - d0);
+                if (tb >= 0f && tb <= 1f)
+                {
+                    float2 contact = math.lerp(p0, p1, tb);
+                    ClosestPointOnSegment(contact, a, b, out float s);
+                    // ClosestPointOnSegment always clamps s into [0,1], so a
+                    // contact whose RAW projection actually falls outside the
+                    // segment shows up here as s pinned exactly to 0 or 1.
+                    // Those pinned-to-endpoint cases are end-cap territory:
+                    // candidates 2/3 above are guaranteed to already catch
+                    // any such point, since its distance to that end is
+                    // <= R by construction (spec §3.3's completeness
+                    // argument) — so the flat side only claims the strictly
+                    // interior case, leaving the boundary to the caps.
+                    if (s > 0f && s < 1f && tb < best)
+                    { best = tb; hit = true; }
+                }
+            }
+
+            if (hit) t = best;
+            return hit;
+        }
+
         public static bool PushOutOfCircle(ref float2 pos, float radius,
             float2 c, float cR, out float2 normal)
         {
@@ -112,6 +208,42 @@ namespace Ring.Simulation.Core
             float dist = math.sqrt(distSq);
             normal = dist > 1e-6f ? delta / dist : new float2(1f, 0f);
             pos = c + normal * (r + Skin);
+            return true;
+        }
+
+        /// Mirrors PushOutOfCircle for the stadium shape (Stage 2 Task 11).
+        /// The degenerate-normal fallback differs from PushOutOfCircle's
+        /// plain (1,0): sitting exactly on the wall's axis is not
+        /// direction-agnostic the way sitting at a circle's centre is —
+        /// pushing along the axis would slide the body along the wall
+        /// instead of clearing it, and Depenetrate's next iteration would
+        /// find it still penetrating. The fallback is instead the axis' own
+        /// perpendicular, falling back further to (1,0) only when the wall
+        /// itself is degenerate (a == b), matching PushOutOfCircle in that
+        /// corner case.
+        public static bool PushOutOfStadium(ref float2 pos, float radius,
+            float2 a, float2 b, float halfW, out float2 normal)
+        {
+            normal = float2.zero;
+            float2 closest = ClosestPointOnSegment(pos, a, b, out _);
+            float2 delta = pos - closest;
+            float r = radius + halfW;
+            float distSq = math.lengthsq(delta);
+            if (distSq >= r * r) return false;
+            float dist = math.sqrt(distSq);
+            if (dist > 1e-6f)
+            {
+                normal = delta / dist;
+            }
+            else
+            {
+                float2 axis = b - a;
+                float axisLen = math.length(axis);
+                normal = axisLen > 1e-6f
+                    ? new float2(-axis.y, axis.x) / axisLen
+                    : new float2(1f, 0f);
+            }
+            pos = closest + normal * (r + Skin);
             return true;
         }
 

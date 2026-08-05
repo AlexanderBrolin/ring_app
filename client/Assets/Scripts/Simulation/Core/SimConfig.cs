@@ -123,6 +123,18 @@ namespace Ring.Simulation.Core
         /// the same formula, not a duplicated copy of the trigonometry.
         public int MaxPlayers;
         public float PlayerSpawnRingFrac;
+
+        /// Stage 2 Task 11 (spec §3.3): wall geometry. Each wall is a
+        /// "stadium" — segment WallA[i]→WallB[i] inflated by
+        /// WallHalfWidth[i] — reusing Geometry's circle-sweep math instead
+        /// of an OBB. Shape mirrors the ObstaclePos/ObstacleRadius pair.
+        /// WallCount is 0 and the arrays are null until Stage 2 Task 16
+        /// wires ArenaConfig.Walls[] through SimConfigBuilder; no loop over
+        /// WallCount dereferences them before then.
+        public int WallCount;
+        public float2[] WallA;
+        public float2[] WallB;
+        public float[] WallHalfWidth;
     }
 
     /// Full balance snapshot for one match — plain data, no ScriptableObjects.
