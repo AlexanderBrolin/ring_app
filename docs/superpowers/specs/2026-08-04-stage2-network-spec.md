@@ -1386,6 +1386,46 @@ hash-нейтральность вставки стен при нулевом и
   исполняет вовсе (`Reconcile_Current`, `:1304-1311`), поэтому (а) и (г)
   читаются только на клиент-онли процессе. Следствие для приборов: любая сетевая
   метрика подписывается ролью, с которой снята (Т48 — то же правило).
+- **Р110. Кодогенератор FishNet 4.7.2 ломается на `Unity.Mathematics`; обход —
+  наши сериализатор `float2` и компарер проводной структуры, он ПОСТОЯННЫЙ**
+  (§3.8, §3.9). Список исключаемых из генерации сборок
+  (`CodeGenerating/Processing/WriterProcessor.cs:82-86`) метит в
+  `Unity.Mathematics`, но написан с опечаткой `"Unity.Mathmatics"` — фильтр не
+  срабатывает никогда, и генератор разбирает `float2` как нашу структуру: два
+  поля плюс все публичные get/set-свойства, то есть свизлы `xy`, `yx` (оба типа
+  `float2`) и индексатор. Результат — три разные поломки, снятые
+  дизассемблированием `Library/ScriptAssemblies/Ring.Networking.dll`:
+  (1) сгенерированные writer и reader `float2` **зовут сами себя** на `xy`/`yx`
+  (тип регистрируется до заполнения тела, `WriterProcessor.cs:834-835`) —
+  безграничная рекурсия на первом же пакете; (2) компарер сравнивает свизлы через
+  `float2.op_Equality`, который возвращает `bool2`, а не `bool`
+  (`float2.gen.cs:449`), и ветвится по нему `brfalse` — неверифицируемый IL;
+  (3) индексатор эмитится без аргумента-индекса. Поломка (2) бьёт по любой
+  структуре, у которой просто ЕСТЬ поле `float2`: `FinishTypeReferenceCompare`
+  (`GeneralHelper.cs:1297-1336`) выбирает `op_Equality` для всякого поля,
+  реализующего `IEquatable` от себя. Это и был крэш спайка на первом тике —
+  `InvalidProgramException` в `Comparer___…SpikeReplicateData`, срывающий весь
+  конвейер тика (`OnPostTick` не исполняется, исходящих пакетов нет).
+  **Обход** — `client/Assets/Scripts/Networking/Protocol/MathCodegenSupport.cs`:
+  `MathSerializers.WriteFloat2`/`ReadFloat2` (штатные `Writefloat2`/`Readfloat2`
+  в пакете есть, но без `[DefaultWriter]`/`[DefaultReader]`, поэтому кодоген их
+  не находит — `WriterProcessor.cs:116-141`; тела переиспользуются) и
+  `WireComparers` с `[CustomComparer]` на саму проводную структуру. Компарер для
+  `float2` был бы мёртвым кодом: `FinishTypeReferenceCompare` таблицу компареров
+  не опрашивает вовсе, а таблицу сериализаторов кодоген опрашивает
+  (`WriterProcessor.cs:368-373`) — поэтому одного объявления `float2` хватает на
+  все структуры, включая `PlayerState`. **Граница сборки:** реестр живёт в
+  per-assembly `CodegenSession`, ILPP обходит только `session.Module.Types`
+  (`FishNetILPP.cs:171-220`), поэтому объявления обязаны лежать в
+  `Ring.Networking`; `Ring.Simulation` ILPP не обрабатывает вовсе (нет ссылки на
+  `FishNet.Runtime`, `FishNetILPP.cs:24-47`), так что `PlayerState` своего
+  объявления не требует. Компарер нужен **только** replicate-структуре —
+  у `CreateEqualityComparer` ровно один call-site и это параметр replicate
+  (`PredictionProcessor.cs:717-718`); reconcile компарера не получает, значит
+  полный `PlayerState` в `ReconcileData` (§3.9) закрывается одним сериализатором
+  `float2`. Обход **постоянный**: патчить пакет нельзя (`PackageCache`
+  восстанавливается по UPM-пину), файл не удаляется вместе со спайком в Т30,
+  а в Т34 в нём появляется компарер боевой `ReplicateData`.
 
 ## 7. DoD Этапа 2
 

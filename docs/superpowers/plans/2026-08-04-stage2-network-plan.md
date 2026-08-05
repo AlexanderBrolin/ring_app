@@ -242,6 +242,10 @@ headless-образ в Docker Hub, лаг-гейт механик и спайк 
   `client/Assets/Prefabs/SpikePlayer.prefab` (префаб обязан быть отдельным
   ассетом, иначе `PlayerSpawner` его не заспавнит), а FishNet-постпроцессор
   дописывает префаб в уже закоммиченный `DefaultPrefabObjects.asset`.
+  Фикс-волной Ф1 добавлен ещё и `.../Networking/Protocol/MathCodegenSupport.cs`
+  (+ `.meta`) — **единственный файл Т3, который НЕ временный**: обход поломки
+  кодогенерации FishNet на `Unity.Mathematics` (спека Р110), живёт до конца
+  проекта, в Т30 из него уходит только спайковый метод.
 - **Ввод спайка — скриптованный, а не ручной.** Проект Input-System-only, а
   ссылки `Ring.Networking` запинены спекой §3.1 четвёркой без `Unity.InputSystem`;
   тянуть его в постоянный asmdef ради временного спайка — расширение
@@ -1338,6 +1342,12 @@ Create `PredictionParityTests.cs` (+ `.meta`).
 - Modify `.../Simulation/Movement/PlayerMovementSystem.cs` — снять шов
   `PlayerMovementSpikeSeam` (его замещает `PlayerPrediction.Step` этого же
   таска, приходящий **с** тестом паритета — waiver Т3 закрывается здесь);
+- Modify **`.../Networking/Protocol/MathCodegenSupport.cs`** — снять из
+  `WireComparers` спайковый метод `CompareSpikeReplicateData` (он ссылается на
+  удаляемый тип). **Файл НЕ удалять**: это обход ограничения пакета, а не часть
+  спайка (спека Р110) — сериализатор `float2` в нём нужен постоянно, а компарер
+  боевой `ReplicateData` приходит в Т34. Между Т30 и Т34 класс `WireComparers`
+  временно пуст — это нормально;
 - Modify `client/Assets/Scripts/Editor/Editor.asmdef` — откатить ссылки
   `Ring.Networking` и `FishNet.Runtime`, добавленные в Т3, **если** к моменту
   Т30 их не требует другой editor-код (проверить грепом, не по памяти);
@@ -1511,12 +1521,23 @@ Modify `.../Networking/Server/MatchServer.cs` (или бутстрап — по 
 
 **Files:** Create `.../Networking/PlayerNetworkController.cs`,
 `.../Networking/Protocol/ReplicateData.cs`, `ReconcileData.cs` (+ `.meta`);
-Modify `PredictionParityTests.cs` (или новый `ReconcileCodecTests.cs` + `.meta`).
+Modify `.../Networking/Protocol/MathCodegenSupport.cs`,
+`PredictionParityTests.cs` (или новый `ReconcileCodecTests.cs` + `.meta`).
 
 **Interfaces:**
 - `ReplicateData : IReplicateData` — квантованный инпут (Т25) + тик;
   `ReconcileData : IReconcileData` — полный `PlayerState` + тик, берётся **из
   мира**.
+- **`[CustomComparer]` для `ReplicateData` — обязателен, если в ней остаётся хоть
+  одно поле `Unity.Mathematics`** (спека Р110): без него кодоген FishNet 4.7.2
+  выдаёт неверифицируемый IL и `InvalidProgramException` рушит конвейер тика на
+  первом же тике. Метод дописывается в `WireComparers` внутри
+  `Protocol/MathCodegenSupport.cs` (файл заведён фикс-волной Ф1 и **пережил Т30**)
+  на место снятого там спайкового; сравниваются публичные поля, приватный тик — нет.
+  Сериализатор `float2` в том же файле уже есть и покрывает `PlayerState` внутри
+  `ReconcileData`; своего компарера reconcile не требует — FishNet его не
+  генерирует. Если `ReplicateData` окажется полностью квантованной (шорты/байты),
+  компарер не нужен — проверить по факту, не по памяти.
 - **Ввод приходит извне, а не тянется из Presentation** (иначе цикл asmdef:
   `InputSampler` живёт в `Ring.Presentation`, а Presentation уже ссылается на
   `Ring.Networking`): контроллер публикует
@@ -2405,11 +2426,23 @@ FishNet 4.7.2. Правки кода — внутри `Spike/` (плюс `SpikeS
    дэша поднят над устойчивой каденцией Буста (2.8 с) и пинится бутстрапом.
 6. Удалён недостижимый код: разбор командной строки и режимы
    `Manual`/`ServerOnly`.
+7. **Обход поломки кодогенерации FishNet на `Unity.Mathematics`** (спека Р110) —
+   новый **постоянный** файл `.../Networking/Protocol/MathCodegenSupport.cs`:
+   пользовательские `WriteFloat2`/`ReadFloat2` (штатные writer/reader `float2`
+   пакет генерирует рекурсивными — они зовут сами себя на свизлах `xy`/`yx`)
+   и `[CustomComparer]` на проводную структуру (сгенерированный компарер
+   ветвится `brfalse` по `bool2` из `float2.op_Equality` — неверифицируемый IL,
+   `InvalidProgramException` на первом тике, капсула стоит и клиент не
+   подключается). Патчить пакет нельзя — `PackageCache` восстанавливается по
+   UPM-пину. Файл **не удаляется в Т30 вместе со спайком**: в Т30 из него
+   уходит только спайковый метод, в Т34 приходит компарер боевой
+   `ReplicateData` (обе правки внесены в списки Files соответствующих тасков).
 
 **Что изменилось в документах:** Р107 (односторонняя семантика симулятора → Т33
 делит RTT на два, шаг ручной проверки Т3 ставит `Latency 40`), Р108
 (`StateInterpolation` публичен на чтение → `RedundancyCount` можно показывать в
-Т48/В2), Р109 (роли наблюдений); полный список Files удаления спайка в Т30;
+Т48/В2), Р109 (роли наблюдений), Р110 (поломка кодогена на `Unity.Mathematics`,
+постоянный обход → Files Т30 и Т34); полный список Files удаления спайка в Т30;
 два принятых отклонения по `client/ProjectSettings/**` в ГЕЙТ-ОТКАТ; waiver на
 шов в `Ring.Simulation` в Т3; оговорка про редкость голодания при 5% потерь;
 поправка к телу коммита Т1 (выше); §7 заметки Т2 приведён в соответствие с Р102.
