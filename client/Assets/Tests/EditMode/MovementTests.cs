@@ -75,13 +75,18 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Wall_StopsAndSlides()
         {
+            // Stage 2 Task 16: the ring radius is a FIXTURE EXPRESSION now
+            // (convention app-n6g C14) — it used to be the literal 35, which the
+            // arena's 35 -> 65 growth silently invalidated.
+            SimConfig cfg = TestConfigs.Open();
+            float rim = cfg.Arena.Radius - cfg.Hero.Radius;
             var w = World();
             for (int i = 0; i < 400; i++) w.Tick(Move(1f, 0f)); // упереться в стену
             float2 atWall = w.Player.Pos;
-            Assert.AreEqual(35f - TestConfigs.Open().Hero.Radius, math.length(atWall), 0.05f);
+            Assert.AreEqual(rim, math.length(atWall), 0.05f);
             for (int i = 0; i < 30; i++) w.Tick(Move(1f, 1f)); // диагональ у стены → скользит
             Assert.Greater(w.Player.Pos.y, atWall.y + 0.5f);
-            Assert.LessOrEqual(math.length(w.Player.Pos), 35f - 0.44f);
+            Assert.LessOrEqual(math.length(w.Player.Pos), rim + 0.01f);
         }
 
         [Test]
@@ -104,9 +109,13 @@ namespace Ring.Simulation.Tests
         [Test]
         public void CornerWallPlusObstacle_NoStuckNoTunnel()
         {
+            // Stage 2 Task 16: the obstacle sits a fixed 2 m short of the rim
+            // (fixture expression, C14) instead of the old literal 33 that only
+            // meant "at the rim" while Arena.Radius was 35.
             var cfg = TestConfigs.Open();
+            float rim = cfg.Arena.Radius - cfg.Hero.Radius;
             cfg.Arena.ObstacleCount = 1;
-            cfg.Arena.ObstaclePos = new[] { new float2(33f, 0f) };
+            cfg.Arena.ObstaclePos = new[] { new float2(cfg.Arena.Radius - 2f, 0f) };
             cfg.Arena.ObstacleRadius = new[] { 1.5f };
             var w = new SimulationWorld(1, cfg);
             float2 start = w.Player.Pos;
@@ -114,7 +123,7 @@ namespace Ring.Simulation.Tests
             {
                 w.Tick(Move(1f, 0.05f));
                 Assert.IsTrue(math.all(math.isfinite(w.Player.Pos)));
-                Assert.LessOrEqual(math.length(w.Player.Pos), 35f - 0.44f);
+                Assert.LessOrEqual(math.length(w.Player.Pos), rim + 0.01f);
             }
             Assert.Greater(math.distance(w.Player.Pos, start), 10f,
                 "залип в углу стена+препятствие — не скользит");

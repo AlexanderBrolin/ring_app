@@ -115,6 +115,13 @@ namespace Ring.Simulation.Core
         public int BaseCount, CountGrowth, MaxMobsPerWave,
             MaxSpawnAttempts, FallbackSlots;
         public float GunnerShareBase, GunnerShareGrowth;
+
+        /// Stage 2 Task 16 (spec §3.4): per-extra-player wave scale. The raw
+        /// wave size is multiplied by (1 + (playerCount - 1) *
+        /// PerPlayerCountFrac) before the MaxMobsPerWave cap — see
+        /// Ring.Simulation.AI.WaveSystem.CountForTest, the single seam that
+        /// owns the formula. 0 keeps solo-sized waves at any player count.
+        public float PerPlayerCountFrac;
     }
 
     /// Arena geometry and per-match entity caps.

@@ -267,6 +267,214 @@ namespace Ring.Simulation.Tests
             Assert.DoesNotThrow(() => BuildWith(hero));
         }
 
+        // ------------------------------------------------------------------
+        // Stage 2 Task 16 (spec §3.4/§3.15): the shipped arena layout and the
+        // wall validation rules that guard a future tuning pass over it.
+        // ------------------------------------------------------------------
+
+        /// Every candidate spawn point for a full lobby, in ring order — the
+        /// same Geometry.SpawnPosFor the world itself uses, never a restated
+        /// copy of the trigonometry.
+        static float2[] SpawnPoints(in ArenaSimConfig arena)
+        {
+            var pts = new float2[arena.MaxPlayers];
+            for (int i = 0; i < arena.MaxPlayers; i++)
+                pts[i] = Geometry.SpawnPosFor(i, arena.MaxPlayers, in arena);
+            return pts;
+        }
+
+        /// How many of WaveSystem's fixed fallback ring slots a body of
+        /// `bodyRadius` could still occupy — mirrors WaveSystem.TryFindSpawnPos'
+        /// RNG-free grid and IsValidSpawn's geometry half (obstacles + walls),
+        /// which is exactly what "the wave spawn ring is not locked" means.
+        static int FreeRingSlots(in SimConfig cfg, float bodyRadius)
+        {
+            float ringRadius = cfg.Arena.Radius - cfg.Wave.SpawnRingInset;
+            int free = 0;
+            for (int i = 0; i < cfg.Wave.FallbackSlots; i++)
+            {
+                float angle = 2f * math.PI * i / cfg.Wave.FallbackSlots;
+                float2 p = ringRadius * new float2(math.cos(angle), math.sin(angle));
+                bool blocked = false;
+                for (int o = 0; o < cfg.Arena.ObstacleCount && !blocked; o++)
+                    blocked = Geometry.CircleOverlap(p, bodyRadius,
+                        cfg.Arena.ObstaclePos[o], cfg.Arena.ObstacleRadius[o]);
+                for (int wIdx = 0; wIdx < cfg.Arena.WallCount && !blocked; wIdx++)
+                    blocked = Geometry.OverlapsStadium(p, bodyRadius,
+                        cfg.Arena.WallA[wIdx], cfg.Arena.WallB[wIdx], cfg.Arena.WallHalfWidth[wIdx]);
+                if (!blocked) free++;
+            }
+            return free;
+        }
+
+        [Test]
+        public void Layout_SomeSpawnPairHasNoLineOfSight()
+        {
+            // Spec §3.4 requirement (a): at least one pair of spawn points must
+            // be unable to see each other from the very first tick, so a
+            // three-way match does not open with everyone in everyone's sights.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            float2[] pts = SpawnPoints(in cfg.Arena);
+            Assert.GreaterOrEqual(pts.Length, 2, "a full lobby needs at least two spawn points");
+
+            bool anyBlocked = false;
+            for (int i = 0; i < pts.Length && !anyBlocked; i++)
+                for (int j = i + 1; j < pts.Length && !anyBlocked; j++)
+                    anyBlocked = !Ring.Simulation.AI.Targeting.HasLineOfFire(pts[i], pts[j], 0f, in cfg.Arena);
+
+            Assert.IsTrue(anyBlocked,
+                "no pair of spawn points is out of line of sight — spec §3.4 (a) unmet");
+        }
+
+        [Test]
+        public void Layout_HasCorridorAtLeast20mLongWithSixMetreGap()
+        {
+            // Spec §3.4 requirement (b): a corridor is a PAIR of parallel walls
+            // — length >= 20 m, free passage >= 6 m between their inner faces.
+            const float MinCorridorLength = 20f;
+            const float MinCorridorGap = 6f;
+
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
+
+            bool found = false;
+            for (int i = 0; i < cfg.Arena.WallCount && !found; i++)
+            {
+                float2 axisI = cfg.Arena.WallB[i] - cfg.Arena.WallA[i];
+                float lenI = math.length(axisI);
+                if (lenI < 1e-4f) continue;
+                float2 dirI = axisI / lenI;
+
+                for (int j = i + 1; j < cfg.Arena.WallCount && !found; j++)
+                {
+                    float2 axisJ = cfg.Arena.WallB[j] - cfg.Arena.WallA[j];
+                    float lenJ = math.length(axisJ);
+                    if (lenJ < 1e-4f) continue;
+                    float2 dirJ = axisJ / lenJ;
+
+                    // Parallel (either orientation): zero 2D cross product.
+                    if (math.abs(dirI.x * dirJ.y - dirI.y * dirJ.x) > 1e-3f) continue;
+
+                    // Perpendicular distance between the two axes, minus what the
+                    // two half-widths eat = the free passage a body can walk down.
+                    float2 offset = cfg.Arena.WallA[j] - cfg.Arena.WallA[i];
+                    float separation = math.abs(offset.x * dirI.y - offset.y * dirI.x);
+                    float gap = separation - (cfg.Arena.WallHalfWidth[i] + cfg.Arena.WallHalfWidth[j]);
+
+                    if (math.min(lenI, lenJ) >= MinCorridorLength - Eps && gap >= MinCorridorGap - Eps)
+                        found = true;
+                }
+            }
+
+            Assert.IsTrue(found,
+                $"no pair of parallel walls forms a corridor >= {MinCorridorLength} m long with a " +
+                $">= {MinCorridorGap} m free passage — spec §3.4 (b) unmet");
+        }
+
+        [Test]
+        public void Layout_WaveSpawnRing_NotFullyBlocked()
+        {
+            // Spec §3.4 requirement (c). Meaningful only once the layout
+            // actually carries walls — an arena with none passes this trivially,
+            // so the wall count is asserted first.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            Assert.Greater(cfg.Arena.WallCount, 0,
+                "the shipped layout must carry interior walls for this requirement to mean anything");
+
+            float bodyRadius = math.max(cfg.Chaser.Radius, cfg.Gunner.Radius);
+            Assert.Greater(FreeRingSlots(in cfg, bodyRadius), 0,
+                "the wave spawn ring is fully blocked — no wave could ever spawn");
+        }
+
+        [Test]
+        public void Validate_WallZeroHalfWidth_Throws()
+        {
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            a.Walls = new[] { new ArenaConfig.Wall
+                { A = new Vector2(-5f, 0f), B = new Vector2(5f, 0f), HalfWidth = 0f } };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("HalfWidth"));
+        }
+
+        [Test]
+        public void Validate_WallZeroLength_Throws()
+        {
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            a.Walls = new[] { new ArenaConfig.Wall
+                { A = new Vector2(5f, 5f), B = new Vector2(5f, 5f), HalfWidth = 0.8f } };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("zero length"));
+        }
+
+        [Test]
+        public void Validate_WallTooCloseToArenaRim_Throws()
+        {
+            // carryover-t16 item 7c: "inside Radius - HalfWidth" is NOT enough.
+            // A wall whose end sits closer to the rim than a body's own diameter
+            // leaves a pocket where PushOutOfStadium and ClampInsideRing fight
+            // each other forever at iterations: 1 — a soft-lock. The rule the
+            // builder enforces is
+            //   max(|A|,|B|) + HalfWidth + Hero.Radius + Skin <= Radius - Hero.Radius,
+            // so this fixture places an end EXACTLY on the naive bound (which the
+            // old wording would accept) and expects a rejection.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            float halfWidth = 0.8f;
+            float rimEnd = a.Radius - halfWidth; // passes "inside Radius - HalfWidth", fails 7c
+            a.Walls = new[] { new ArenaConfig.Wall
+                { A = new Vector2(rimEnd - 10f, 0f), B = new Vector2(rimEnd, 0f), HalfWidth = halfWidth } };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("arena rim"));
+        }
+
+        [Test]
+        public void Validate_WallOverPlayerSpawn_Throws()
+        {
+            // Same contract the obstacle loop already has: every candidate spawn
+            // point (solo centre + every ring size up to MaxPlayers) must stay
+            // clear. This wall is laid straight through the arena centre.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            a.Walls = new[] { new ArenaConfig.Wall
+                { A = new Vector2(-5f, 0f), B = new Vector2(5f, 0f), HalfWidth = 0.8f } };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("spawn point"));
+        }
+
+        [Test]
+        public void Validate_WallsLockTheWholeWaveSpawnRing_Throws()
+        {
+            // A single wall thick enough to swallow the entire spawn ring: no
+            // wave could ever place a mob, and the director would spin on
+            // undischargeable debt for the whole match.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            a.Obstacles = System.Array.Empty<ArenaConfig.Obstacle>();
+            float ringRadius = a.Radius - wv.SpawnRingInset;
+            a.Walls = new[] { new ArenaConfig.Wall
+            {
+                A = new Vector2(0f, 0.5f),
+                B = new Vector2(0f, -0.5f),
+                HalfWidth = ringRadius + 5f
+            } };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("spawn ring"));
+        }
+
+        [Test]
+        public void Validate_PerPlayerCountFracNegative_Throws()
+        {
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            wv.PerPlayerCountFrac = -0.1f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("PerPlayerCountFrac"));
+        }
+
         static void AssertHeroEqual(HeroSimConfig e, HeroSimConfig a)
         {
             Assert.AreEqual(e.MaxSpeed, a.MaxSpeed, Eps);
@@ -383,6 +591,11 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.FallbackSlots, a.FallbackSlots);
             Assert.AreEqual(e.GunnerShareBase, a.GunnerShareBase, Eps);
             Assert.AreEqual(e.GunnerShareGrowth, a.GunnerShareGrowth, Eps);
+            // Stage 2 Task 16: same documented deviation from the brief's Files
+            // list as AssertArenaEqual's own Task 4 note below — without this the
+            // new field silently drops out of
+            // Build_DefaultAssets_MatchesTestConfigsBaseline's coverage.
+            Assert.AreEqual(e.PerPlayerCountFrac, a.PerPlayerCountFrac, Eps);
         }
 
         static void AssertArenaEqual(ArenaSimConfig e, ArenaSimConfig a)
@@ -403,6 +616,20 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual(e.ObstaclePos[i].x, a.ObstaclePos[i].x, Eps);
                 Assert.AreEqual(e.ObstaclePos[i].y, a.ObstaclePos[i].y, Eps);
                 Assert.AreEqual(e.ObstacleRadius[i], a.ObstacleRadius[i], Eps);
+            }
+            // Stage 2 Task 16 (carryover-t16 item 7a): the four wall fields land
+            // in ArenaSimConfig in Task 11 but only get FILLED by the builder
+            // here — until they are compared element-wise, exactly like the
+            // circles above, they stay outside
+            // Build_DefaultAssets_MatchesTestConfigsBaseline's coverage.
+            Assert.AreEqual(e.WallCount, a.WallCount);
+            for (int i = 0; i < e.WallCount; i++)
+            {
+                Assert.AreEqual(e.WallA[i].x, a.WallA[i].x, Eps);
+                Assert.AreEqual(e.WallA[i].y, a.WallA[i].y, Eps);
+                Assert.AreEqual(e.WallB[i].x, a.WallB[i].x, Eps);
+                Assert.AreEqual(e.WallB[i].y, a.WallB[i].y, Eps);
+                Assert.AreEqual(e.WallHalfWidth[i], a.WallHalfWidth[i], Eps);
             }
         }
     }

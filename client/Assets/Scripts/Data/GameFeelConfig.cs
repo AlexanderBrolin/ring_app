@@ -24,9 +24,16 @@ namespace Ring.Data
         [Range(0f, 1f)] public float PitchRange = 0.12f;
         [Range(0f, 2f)] public float TracerFadeSeconds = 0.4f;
         [Range(0f, 5f)] public float CasingPhysicsSeconds = 1.5f;
-        [Range(1, 4096)] public int MaxCasings = 1024;
-        [Range(1, 4096)] public int MaxDecals = 512;
-        [Range(1, 512)] public int MaxCorpses = 64;
+        // Stage 2 Task 16 (spec §3.4, Р17/Р92): persistent-prop FIFO limits
+        // rescaled for a 65 m arena with three players and MaxMobs 96 — at
+        // MaxCorpses 64 the first wave alone would already start evicting.
+        // These are the C# side of the two-sources discipline (§0): the same
+        // three numbers ship into GameFeelConfig.asset via
+        // StageOneSceneBootstrap.ApplyStageTwoBalance, so no new .asset-vs-C#
+        // divergence is created.
+        [Range(1, 4096)] public int MaxCasings = 3072;
+        [Range(1, 4096)] public int MaxDecals = 1536;
+        [Range(1, 512)] public int MaxCorpses = 128;
         [Range(1, 32)] public int VoicesPerSfx = 6;
         [Range(0f, 1f)] public float MinSfxInterval = 0.03f;
 

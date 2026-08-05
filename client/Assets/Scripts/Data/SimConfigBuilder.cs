@@ -91,7 +91,8 @@ namespace Ring.Data
                     MaxSpawnAttempts = wave.MaxSpawnAttempts,
                     FallbackSlots = wave.FallbackSlots,
                     GunnerShareBase = wave.GunnerShareBase,
-                    GunnerShareGrowth = wave.GunnerShareGrowth
+                    GunnerShareGrowth = wave.GunnerShareGrowth,
+                    PerPlayerCountFrac = wave.PerPlayerCountFrac
                 },
                 Arena = ToArenaSimConfig(arena)
             };
@@ -145,6 +146,19 @@ namespace Ring.Data
                 radius[i] = a.Obstacles[i].Radius;
             }
 
+            // Stage 2 Task 16 (spec §3.15): interior walls, same shape as the
+            // obstacle triple above — count plus three parallel arrays.
+            int wn = a.Walls?.Length ?? 0;
+            var wallA = new float2[wn];
+            var wallB = new float2[wn];
+            var wallHalfWidth = new float[wn];
+            for (int i = 0; i < wn; i++)
+            {
+                wallA[i] = new float2(a.Walls[i].A.x, a.Walls[i].A.y);
+                wallB[i] = new float2(a.Walls[i].B.x, a.Walls[i].B.y);
+                wallHalfWidth[i] = a.Walls[i].HalfWidth;
+            }
+
             return new ArenaSimConfig
             {
                 Radius = a.Radius,
@@ -155,7 +169,11 @@ namespace Ring.Data
                 MaxProjectiles = a.MaxProjectiles,
                 MaxEventsPerFrame = a.MaxEventsPerFrame,
                 MaxPlayers = a.MaxPlayers,
-                PlayerSpawnRingFrac = a.PlayerSpawnRingFrac
+                PlayerSpawnRingFrac = a.PlayerSpawnRingFrac,
+                WallCount = wn,
+                WallA = wallA,
+                WallB = wallB,
+                WallHalfWidth = wallHalfWidth
             };
         }
 
@@ -325,6 +343,13 @@ namespace Ring.Data
             ReqNonNegative(errors, "Wave.FallbackSlots", cfg.Wave.FallbackSlots);
             ReqNonNegative(errors, "Wave.GunnerShareBase", cfg.Wave.GunnerShareBase);
             ReqNonNegative(errors, "Wave.GunnerShareGrowth", cfg.Wave.GunnerShareGrowth);
+            // Stage 2 Task 16 (spec §3.4/§3.15): the per-extra-player wave
+            // scale. Spec's own rule is ">= 0"; the upper end mirrors
+            // WaveConfig's [Range(0f, 2f)] Inspector hint, which is never
+            // enforced on a value reaching the builder from code/JSON/a test
+            // fixture — same precedent as Arena.MaxPlayers (Task 4) and
+            // Hero.EdgeRequestMinTicks (app-zx8).
+            ReqInRange(errors, "Wave.PerPlayerCountFrac", cfg.Wave.PerPlayerCountFrac, 0f, 2f);
 
             ReqPositive(errors, "Arena.Radius", cfg.Arena.Radius);
             ReqPositive(errors, "Arena.MaxMobs", cfg.Arena.MaxMobs);
@@ -381,8 +406,122 @@ namespace Ring.Data
                 }
             }
 
+            ValidateWalls(errors, in cfg, spawnClearance);
+
             if (errors.Count > 0)
                 throw new ArgumentException("SimConfig validation failed:\n- " + string.Join("\n- ", errors));
+        }
+
+        /// Stage 2 Task 16 (spec §3.3/§3.15, carryover-t16 items 7b/7c): the
+        /// interior-wall rules. Before this task the builder carried NO wall
+        /// check at all, while Task 11/12 docstrings already referred to one.
+        ///
+        /// The "inside the arena" rule is deliberately STRONGER than spec §3.3's
+        /// original wording ("inside Radius - HalfWidth"). A wall whose end sits
+        /// that close to the rim leaves a pocket where the two depenetration
+        /// steps fight forever: PushOutOfStadium shoves a body outward, then
+        /// ClampInsideRing pulls it back in, and at `iterations: 1` (what all
+        /// four Depenetrate callers pass) the pair never converges; SweepArena
+        /// from such a position returns t == 0 on all three MoveWithCollisions
+        /// iterations, i.e. no tangential motion either — a soft-locked player or
+        /// mob. The working rule keeps a full body diameter of slack:
+        ///   max(|A|,|B|) + HalfWidth + Hero.Radius + Skin &lt;= Radius - Hero.Radius.
+        ///
+        /// Spawn coverage reuses Geometry.SpawnPosFor over the same candidate set
+        /// the obstacle loop walks (solo centre + every ring size up to
+        /// MaxPlayers), and the "spawn ring is not locked" rule mirrors
+        /// WaveSystem.TryFindSpawnPos' RNG-free FallbackSlots grid.
+        static void ValidateWalls(List<string> errors, in SimConfig cfg, float spawnClearance)
+        {
+            float rimLimit = cfg.Arena.Radius - cfg.Hero.Radius;
+            float spawnClearanceNeeded = cfg.Hero.Radius + spawnClearance;
+
+            for (int i = 0; i < cfg.Arena.WallCount; i++)
+            {
+                float2 a = cfg.Arena.WallA[i];
+                float2 b = cfg.Arena.WallB[i];
+                float halfWidth = cfg.Arena.WallHalfWidth[i];
+                string tag = $"Arena.Walls[{i}]";
+
+                ReqFinite(errors, $"{tag}.A.x", a.x);
+                ReqFinite(errors, $"{tag}.A.y", a.y);
+                ReqFinite(errors, $"{tag}.B.x", b.x);
+                ReqFinite(errors, $"{tag}.B.y", b.y);
+                ReqPositive(errors, $"{tag}.HalfWidth", halfWidth);
+
+                float length = math.length(b - a);
+                if (length <= 0f)
+                {
+                    errors.Add($"{tag} has zero length (A == B) — a wall must be a segment, " +
+                        $"not a point (A=({a.x:F3}, {a.y:F3})).");
+                }
+
+                float farEnd = math.max(math.length(a), math.length(b));
+                float reach = farEnd + halfWidth + cfg.Hero.Radius + Geometry.Skin;
+                if (reach > rimLimit)
+                {
+                    errors.Add($"{tag} sits too close to the arena rim " +
+                        $"(max(|A|,|B|)+HalfWidth+Hero.Radius+Skin={reach:F3} > " +
+                        $"Arena.Radius-Hero.Radius={rimLimit:F3}) — a body wedged between the " +
+                        "wall and the ring can neither be pushed out nor slide along it.");
+                }
+
+                CheckWallSpawnClearance(errors, tag, a, b, halfWidth, spawnClearanceNeeded,
+                    float2.zero, "solo center");
+                for (int n = 2; n <= cfg.Arena.MaxPlayers; n++)
+                {
+                    for (int s = 0; s < n; s++)
+                    {
+                        float2 spawnPos = Geometry.SpawnPosFor(s, n, in cfg.Arena);
+                        CheckWallSpawnClearance(errors, tag, a, b, halfWidth, spawnClearanceNeeded,
+                            spawnPos, $"ring {n}/point {s}");
+                    }
+                }
+            }
+
+            float ringRadius = cfg.Arena.Radius - cfg.Wave.SpawnRingInset;
+            int slots = cfg.Wave.FallbackSlots;
+            if (ringRadius <= 0f || slots <= 0) return;
+
+            float bodyRadius = math.max(cfg.Chaser.Radius, cfg.Gunner.Radius);
+            for (int i = 0; i < slots; i++)
+            {
+                float angle = 2f * math.PI * i / slots;
+                float2 candidate = ringRadius * new float2(math.cos(angle), math.sin(angle));
+                if (!RingSlotBlocked(in cfg.Arena, candidate, bodyRadius)) return; // a free slot exists
+            }
+
+            errors.Add("Arena geometry locks the whole wave spawn ring: none of the " +
+                $"{slots} fallback slots at radius {ringRadius:F3} can hold a mob of radius " +
+                $"{bodyRadius:F3} — no wave could ever spawn.");
+        }
+
+        /// One wall-vs-one-candidate-spawn-point check, factored out for the same
+        /// reason CheckSpawnClearance above is: the loop runs it once per
+        /// candidate point without repeating the message.
+        static void CheckWallSpawnClearance(List<string> errors, string tag, float2 a, float2 b,
+            float halfWidth, float clearanceNeeded, float2 spawnPos, string pointTag)
+        {
+            if (Geometry.OverlapsStadium(spawnPos, clearanceNeeded, a, b, halfWidth))
+            {
+                errors.Add($"{tag} covers the player spawn point ({pointTag}) " +
+                    $"(needs Hero.Radius+SpawnClearance={clearanceNeeded:F3} of clearance).");
+            }
+        }
+
+        /// Mirrors WaveSystem.IsValidSpawn's geometry half (circles then walls) —
+        /// the player-distance and live-mob halves depend on world state the
+        /// builder has none of.
+        static bool RingSlotBlocked(in ArenaSimConfig arena, float2 pos, float bodyRadius)
+        {
+            for (int o = 0; o < arena.ObstacleCount; o++)
+                if (Geometry.CircleOverlap(pos, bodyRadius, arena.ObstaclePos[o], arena.ObstacleRadius[o]))
+                    return true;
+            for (int w = 0; w < arena.WallCount; w++)
+                if (Geometry.OverlapsStadium(pos, bodyRadius, arena.WallA[w], arena.WallB[w],
+                        arena.WallHalfWidth[w]))
+                    return true;
+            return false;
         }
 
         /// Shared hit-zone body validated for Hero, Chaser and Gunner alike (PC5):

@@ -949,15 +949,21 @@ namespace Ring.Simulation.Core
         /// of the stage-2 network phase):
         /// tick → spreadRng → waveRng → nextEntityId → playerCount → players[0..n)
         /// → mobCount+mobs → projectileCount+projectiles → wave → worldStats
-        /// → statsCount+stats[0..n).
+        /// → stats[0..n).
         ///
-        /// Both counts are hashed before their arrays for the same reason
-        /// _mobCount/_projectileCount always were: a length is state in its own
-        /// right, and folding it in first makes two different-length worlds
-        /// distinguishable even when their common prefix matches. playerCount and
-        /// statsCount are equal by construction today (both are _players.Length);
-        /// they are still hashed separately because the two arrays are separate
-        /// state that a future desync must be able to tell apart.
+        /// playerCount, _mobCount and _projectileCount are each hashed before
+        /// their arrays for the same reason: a length is state in its own right,
+        /// and folding it in first makes two different-length worlds
+        /// distinguishable even when their common prefix matches.
+        ///
+        /// Stage 2 Task 16 (owner decision Р114, inside the sanctioned golden
+        /// re-pin #2): the separate `statsCount` step Task 10 introduced is
+        /// GONE. `_matchStats.Length` is `_players.Length` by construction and
+        /// forever — both arrays are `readonly`, both are sized from the one
+        /// constructor `playerCount`, and RestoreState validates both lengths
+        /// against it — so hashing it a second time added a constant with no
+        /// discriminating power. The stats array itself is still walked at its
+        /// own canonical position; only the duplicated length is dropped.
         public ulong StateHash()
         {
             ulong h = StateHash64.Begin();
@@ -976,7 +982,6 @@ namespace Ring.Simulation.Core
             // their own canonical position instead of riding interleaved inside
             // HashStats as Task 5 temporarily left them.
             h = HashWorldStats(h, in _worldStats);
-            h = StateHash64.Add(h, _matchStats.Length);
             for (int i = 0; i < _matchStats.Length; i++) h = HashStats(h, in _matchStats[i]);
             return h;
         }

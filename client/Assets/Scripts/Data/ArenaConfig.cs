@@ -14,8 +14,30 @@ namespace Ring.Data
             public float Radius;
         }
 
-        [Range(5f, 100f)] public float Radius = 35f;
+        /// Stage 2 Task 11/16 (spec §3.3/§3.15): an interior wall — the segment
+        /// A→B inflated by HalfWidth ("stadium"), mirroring ArenaSimConfig's
+        /// WallA/WallB/WallHalfWidth triple. Attribute-free like the Obstacle
+        /// struct right above it: both are authored as array elements, where a
+        /// [Range] hint buys nothing the builder's own validation doesn't.
+        [System.Serializable]
+        public struct Wall
+        {
+            public Vector2 A;
+            public Vector2 B;
+            public float HalfWidth;
+        }
 
+        // Stage 2 Task 16 (spec §3.4): 35 -> 65. At 35 the arena is 70 m across
+        // while a round covers ProjectileSpeed 52.5 x ProjectileLifetime 1.5 =
+        // 78.75 m (numbers from the .asset — spec §0), i.e. every shot crosses
+        // the whole map and no cover or visibility filter can ever matter.
+        [Range(5f, 100f)] public float Radius = 65f;
+
+        /// The first five circles are the Stage 1 layout, kept FIRST and in
+        /// order: SweepArena walks them by index and that order is part of the
+        /// state hash. Stage 2 Task 16 appends three more (spec §3.15, owner
+        /// decision F4a) — the Stage 1 five all sit within r ~ 15 of the centre,
+        /// so at Radius 65 the whole outer band would otherwise be bare.
         public Obstacle[] Obstacles =
         {
             new Obstacle { Pos = new Vector2(10f, 4f), Radius = 2.2f },
@@ -23,11 +45,30 @@ namespace Ring.Data
             new Obstacle { Pos = new Vector2(2f, -12f), Radius = 2.5f },
             new Obstacle { Pos = new Vector2(-13f, -6f), Radius = 2.0f },
             new Obstacle { Pos = new Vector2(14f, -9f), Radius = 1.6f },
+            new Obstacle { Pos = new Vector2(-40f, 8f), Radius = 3.0f },
+            new Obstacle { Pos = new Vector2(30f, 22f), Radius = 2.8f },
+            new Obstacle { Pos = new Vector2(-6f, -30f), Radius = 3.2f },
         };
 
-        [Range(1, 200)] public int MaxMobs = 64;
-        [Range(1, 1000)] public int MaxProjectiles = 256;
-        [Range(1, 1000)] public int MaxEventsPerFrame = 256;
+        /// Stage 2 Task 16 starting layout (spec §3.15 — owner tuning target at
+        /// milestone В1): two corridors (walls 1+2 and 3+4, axes 7.6 m apart
+        /// minus 2 x 0.8 m of half-width = exactly 6.0 m of free passage, 20 m
+        /// and 22 m long), one lone wall breaking line of sight between the P0
+        /// and P1 spawn points, and one diagonal for oblique dash ricochets.
+        public Wall[] Walls =
+        {
+            new Wall { A = new Vector2(-28f, 10f), B = new Vector2(-8f, 10f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(-28f, 17.6f), B = new Vector2(-8f, 17.6f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(12f, -6f), B = new Vector2(34f, -6f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(12f, -13.6f), B = new Vector2(34f, -13.6f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(2f, 24f), B = new Vector2(2f, 44f), HalfWidth = 0.6f },
+            new Wall { A = new Vector2(-34f, -20f), B = new Vector2(-16f, -34f), HalfWidth = 0.6f },
+        };
+
+        // Stage 2 Task 16 (spec §3.4, arithmetic): three players on a 65 m arena.
+        [Range(1, 200)] public int MaxMobs = 96;
+        [Range(1, 1000)] public int MaxProjectiles = 384;
+        [Range(1, 1000)] public int MaxEventsPerFrame = 512;
 
         /// Minimum clear distance an obstacle must keep from the player spawn point
         /// (arena center), on top of its own radius and the hero radius. Used only by

@@ -143,6 +143,13 @@ namespace Ring.Simulation.Tests
             // contact height stays pinned at muzzle height, and HitDir carries
             // the real SweepArena normal instead of the pre-Task 7 zero placeholder.
             var cfg = TestConfigs.Open();
+            // Stage 2 Task 16: the ring has to stay INSIDE one round's reach
+            // (ProjectileSpeed x ProjectileLifetime) or the shot simply expires
+            // in flight and never reports a wall block at all — at Arena.Radius
+            // 65 with the TestConfigs weapon (35 m/s x 1.5 s = 52.5 m) it does
+            // not. Half the reach is comfortably inside it; expressed off the
+            // weapon's own numbers, never as a literal.
+            cfg.Arena.Radius = 0.5f * cfg.Weapon.ProjectileSpeed * cfg.Weapon.ProjectileLifetime;
             var w = new SimulationWorld(1, cfg);
             TestWorlds.FireAimed3D(w, float2.zero, MuzzleH,
                 new float2(cfg.Arena.Radius, 0f), MuzzleH);

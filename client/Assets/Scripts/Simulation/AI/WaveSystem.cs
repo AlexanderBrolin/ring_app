@@ -69,11 +69,27 @@ namespace Ring.Simulation.AI
             wave.AliveCount = w.MobCount;
         }
 
+        /// Wave size for `waveIndex`, scaled by the number of players and
+        /// capped at MaxMobsPerWave (spec §3.4). Stage 2 Task 16 — the single
+        /// seam that owns the formula, so a test can exercise it without
+        /// running a whole world.
+        ///
+        /// `waveIndex` here is **0-BASED** (wave 0 is the first wave, worth
+        /// BaseCount at one player). The live WaveState.WaveIndex is 1-based —
+        /// StartWave below therefore passes `wave.WaveIndex - 1`.
+        internal static int CountForTest(in WaveSimConfig cfg, int waveIndex, int playerCount)
+        {
+            float scale = 1f + (playerCount - 1) * cfg.PerPlayerCountFrac;
+            int scaled = (int)math.round((cfg.BaseCount + cfg.CountGrowth * waveIndex) * scale);
+            // The cap bites AFTER the scale — MaxMobsPerWave is the arena's own
+            // ceiling, not a per-player one.
+            return math.min(scaled, cfg.MaxMobsPerWave);
+        }
+
         static void StartWave(SimulationWorld w, ref WaveState wave, in WaveSimConfig cfg, float2 eventPos)
         {
             wave.WaveIndex++;
-            int count = math.min(cfg.BaseCount + cfg.CountGrowth * (wave.WaveIndex - 1),
-                cfg.MaxMobsPerWave);
+            int count = CountForTest(in cfg, wave.WaveIndex - 1, w.PlayerCount);
             float gunnerShare = math.saturate(cfg.GunnerShareBase
                 + cfg.GunnerShareGrowth * (wave.WaveIndex - 1));
             int gunners = (int)math.round(count * gunnerShare);
