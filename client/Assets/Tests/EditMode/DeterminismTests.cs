@@ -170,13 +170,21 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Sanitizer_MatchesWorldBehaviour()
         {
-            // Stage 2 Task 6: SimInputSanitizer.Sanitize is a verbatim extraction
-            // of the world's own private Sanitize step, callable from outside
-            // the world (Task 30's client prediction seam). Compared
-            // directly against the world's behaviour on the SAME inputs, not
-            // against hand-written expected numbers (Task 6 context §3, decision
-            // 3) — otherwise this would just pin a second copy of the formula
-            // instead of proving the two are equivalent.
+            // Stage 2 Task 6 fix-round 1 (I-1, review): the world-vs-seam loop
+            // below is a WIRING check, not a formula check. After GREEN,
+            // w.SanitizeForTest(raw) resolves to SimulationWorld.Sanitize(raw, 0),
+            // which itself just calls SimInputSanitizer.Sanitize(raw,
+            // _players[0], _config) — `actual` below calls the exact same
+            // static function with the exact same arguments (w.Player ==
+            // _players[0], w.Config == _config), so every assertion in the loop
+            // is x == x for ANY seam body, including a broken one; it cannot
+            // catch a formula regression. What it still catches: the world
+            // silently failing to pass ITS OWN reference player/config into the
+            // seam (stale player index, stale config) — inputs 3-6 below read
+            // the reference player's Pos/AimPoint and would diverge if that
+            // wiring broke. Formula correctness is pinned separately, below,
+            // by property-based asserts that call the seam directly and never
+            // go through the world.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
             var p = w.Player;
@@ -186,25 +194,33 @@ namespace Ring.Simulation.Tests
 
             SimInput[] hostileInputs =
             {
-                // 1) non-finite MoveDir -> zero.
+                // 0) non-finite MoveDir -> zero.
                 new SimInput { MoveDir = new float2(float.NaN, float.PositiveInfinity),
                     AimPoint = new float2(2f, 2f), AimHeight = 1f },
-                // 2) over-length MoveDir (|v| = 5) -> normalized down to unit length.
+                // 1) over-length MoveDir (|v| = 5) -> normalized down to unit length.
                 new SimInput { MoveDir = new float2(3f, 4f),
                     AimPoint = new float2(2f, 2f), AimHeight = 1f },
-                // 3) sub-unit MoveDir (|v| = 0.5) -> partial stick deflection
+                // 2) sub-unit MoveDir (|v| = 0.5) -> partial stick deflection
                 //    preserved, NOT forced up to 1.0 (spec §3.8).
                 new SimInput { MoveDir = new float2(0.5f, 0f),
                     AimPoint = new float2(2f, 2f), AimHeight = 1f },
-                // 4) non-finite AimPoint -> falls back to the reference player's
+                // 3) non-finite AimPoint -> falls back to the reference player's
                 //    own AimPoint.
                 new SimInput { MoveDir = float2.zero,
                     AimPoint = new float2(float.NaN, float.NegativeInfinity), AimHeight = 1f },
-                // 5) AimPoint far outside Arena.Radius * 2 from the reference
-                //    player's Pos -> clamped into that radius, AND non-finite
+                // 4) AimPoint far outside Arena.Radius * 2 from the reference
+                //    player's Pos -> clamped onto that radius, AND non-finite
                 //    AimHeight -> muzzle height.
                 new SimInput { MoveDir = float2.zero,
                     AimPoint = new float2(1e9f, -1e9f), AimHeight = float.NaN },
+                // 5) AimHeight above the cap -> clamps down to Hero.MaxAimHeight
+                //    (upper bound of the unconditional clamp, fix-round 1 I-2).
+                new SimInput { MoveDir = float2.zero,
+                    AimPoint = float2.zero, AimHeight = cfg.Hero.MaxAimHeight + 5f },
+                // 6) AimHeight below zero -> clamps up to 0 (lower bound; not
+                //    exercised anywhere else in the repo before this fix-round).
+                new SimInput { MoveDir = float2.zero,
+                    AimPoint = float2.zero, AimHeight = -1f },
             };
 
             foreach (var raw in hostileInputs)
@@ -218,6 +234,48 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual(expected.AimPoint.y, actual.AimPoint.y, 1e-5f);
                 Assert.AreEqual(expected.AimHeight, actual.AimHeight, 1e-5f);
             }
+
+            // Property-based asserts (fix-round 1, I-1/I-2, review decision 2):
+            // pin the seam's actual sanitization BEHAVIOUR against its
+            // documented contract via fixture expressions (Global Constraints
+            // C14 — no literal restating a config number), calling the seam
+            // directly against the fixed reference player `p` and `cfg` —
+            // independent of the world, so a broken FORMULA (not just broken
+            // wiring) turns these red.
+            SimInput r0 = SimInputSanitizer.Sanitize(hostileInputs[0], p, cfg);
+            Assert.IsTrue(math.all(r0.MoveDir == float2.zero),
+                "non-finite MoveDir must sanitize to zero");
+
+            SimInput r1 = SimInputSanitizer.Sanitize(hostileInputs[1], p, cfg);
+            Assert.AreEqual(1f, math.length(r1.MoveDir), 1e-5f,
+                "over-length MoveDir (|v| = 5) must normalize down to unit length");
+            Assert.AreEqual(0f, r1.MoveDir.x * 4f - r1.MoveDir.y * 3f, 1e-4f,
+                "normalization must preserve the raw (3,4) heading (zero cross product)");
+
+            SimInput r2 = SimInputSanitizer.Sanitize(hostileInputs[2], p, cfg);
+            Assert.AreEqual(0.5f, math.length(r2.MoveDir), 1e-5f,
+                "sub-unit MoveDir (|v| = 0.5) must NOT be forced up to 1.0 " +
+                "(spec §3.8, analog stick partial deflection)");
+
+            SimInput r3 = SimInputSanitizer.Sanitize(hostileInputs[3], p, cfg);
+            Assert.AreEqual(p.AimPoint.x, r3.AimPoint.x, 1e-5f,
+                "non-finite AimPoint must fall back to the reference player's own AimPoint");
+            Assert.AreEqual(p.AimPoint.y, r3.AimPoint.y, 1e-5f);
+
+            SimInput r4 = SimInputSanitizer.Sanitize(hostileInputs[4], p, cfg);
+            float maxR = cfg.Arena.Radius * 2f; // fixture expression (C14) - the same formula the seam itself computes
+            Assert.AreEqual(maxR, math.length(r4.AimPoint - p.Pos), 1e-2f,
+                "out-of-radius AimPoint must land exactly on the clamp circle around the reference player's Pos");
+            Assert.AreEqual(cfg.Hero.MuzzleHeight, r4.AimHeight, 1e-5f,
+                "non-finite AimHeight must map to standing muzzle height");
+
+            SimInput r5 = SimInputSanitizer.Sanitize(hostileInputs[5], p, cfg);
+            Assert.AreEqual(cfg.Hero.MaxAimHeight, r5.AimHeight, 1e-5f,
+                "AimHeight above the cap must clamp down to Hero.MaxAimHeight");
+
+            SimInput r6 = SimInputSanitizer.Sanitize(hostileInputs[6], p, cfg);
+            Assert.AreEqual(0f, r6.AimHeight, 1e-5f,
+                "AimHeight below zero must clamp up to 0");
         }
 
         [Test]
