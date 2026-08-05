@@ -114,7 +114,7 @@ namespace Ring.Simulation.Tests
         // MultiPlayerWorldTests suite could not tell the real multiplayer
         // Sanitize/ApplyConfig/SaveState-RestoreState from a version that
         // silently still only handled player 0 — all 195 tests stayed green
-        // either way. Each was red/green-proven (task-4-report.md, "Фикс-раунд 1").
+        // either way. Each was red/green-proven (task-4-report.md, fix-round 1).
 
         [Test]
         public void SanitizePerPlayer_ClipsAroundOwnPosition_NotPlayer0()
@@ -328,7 +328,7 @@ namespace Ring.Simulation.Tests
         // Stage 2 Task 8: KillPlayerNoDamage — a player exits the match with no
         // damage dealt and no kill credited to anyone; DamagePlayer's own death
         // branch and this new no-damage path both now go through the single
-        // shared KillPlayer (task-8-context.md "Делает" #2/#3).
+        // shared KillPlayer (task-8-context.md, scope items 2/3).
 
         [Test]
         public void KillPlayerNoDamage_KillsWithoutDamageOrCredit()

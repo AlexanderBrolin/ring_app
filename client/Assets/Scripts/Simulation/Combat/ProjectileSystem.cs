@@ -63,6 +63,11 @@ namespace Ring.Simulation.Combat
                 }
                 else
                 {
+                    // Stage 2 Task 17: hardcoded to player 0 (w.Player) — safe
+                    // today because a mob-owned projectile's only possible
+                    // target IS player 0 (MVP is solo-only, no other player
+                    // exists to gather); Task 17 fans this out to every live
+                    // player per the PvP damage matrix (plan §Ф4).
                     PlayerState player = w.Player;
                     if (player.Alive
                         && Geometry.SegmentCircle(startPos, target, proj.Radius,
@@ -239,6 +244,11 @@ namespace Ring.Simulation.Combat
             else if (kind == HitPlayer)
             {
                 HeroSimConfig cfg = config.Hero;
+                // Stage 2 Task 17: both w.Player reads below are hardcoded to
+                // player 0 — safe today because the gather phase above can
+                // only ever pack player 0 as a HitPlayer candidate (MVP is
+                // solo-only; see that phase's own Task 17 note). Task 17
+                // switches both to w.PlayerAt(index) together.
                 targetPos = w.Player.Pos;
                 targetRadius = cfg.Radius;
                 legsTop = cfg.LegsTop; bodyTop = cfg.BodyTop; headTop = cfg.HeadTop;

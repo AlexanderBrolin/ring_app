@@ -1644,8 +1644,14 @@ namespace Ring.Editor
         /// Fix-round 1 tripwire (mandatory, review-requested): the moment
         /// Task 16 declares `ArenaConfig.Walls`, this stub throws instead of
         /// silently staying empty — Task 16 physically cannot land the field
-        /// without also filling this method and retiring the call site's
-        /// on-disk gate, by construction. No automated test guards this
+        /// without also filling this method's body, by construction. Owner
+        /// decision F3a: the call site's on-disk `stageTwoPending` gate (see
+        /// that call site's own doc, ~:419-422, and spec §3.15) is the gate's
+        /// PERMANENT form — it stays forever, distinguishing "never touched
+        /// disk" from "already balanced" on every future run, not just
+        /// through Task 16. Task 16 removes ONLY this tripwire (the
+        /// `if (typeof(ArenaConfig).GetField("Walls") != null) throw ...`
+        /// below), never the gate itself. No automated test guards this
         /// (Tests.EditMode's asmdef does not reference Ring.Editor); the
         /// throw is the guard.
         static bool ApplyStageTwoBalance(ArenaConfig arena, WaveConfig wave, GameFeelConfig gameFeel,
@@ -1653,7 +1659,10 @@ namespace Ring.Editor
         {
             if (typeof(ArenaConfig).GetField("Walls") != null)
                 throw new System.InvalidOperationException(
-                    "Stage 2 Task 16: ArenaConfig.Walls exists — fill ApplyStageTwoBalance and replace the call-site gate.");
+                    "Stage 2 Task 16: ArenaConfig.Walls exists — fill ApplyStageTwoBalance's " +
+                    "body and remove this tripwire. Leave the call site's on-disk " +
+                    "stageTwoPending gate alone — it is the gate's permanent form " +
+                    "(owner decision F3a), not something Task 16 replaces.");
 
             waveChanged = false;
             feelChanged = false;

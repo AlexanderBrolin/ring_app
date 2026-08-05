@@ -32,8 +32,10 @@ namespace Ring.Simulation.Combat
             p.FireCooldown -= dt;
             p.RecoilOffset = math.max(0f, p.RecoilOffset - cfg.RecoilRecoveryRadPerSec * dt);
 
-            // p.Alive is redundant today — SimulationWorld.Tick (Task 23) only calls
-            // this from its Alive branch — kept as defense-in-depth so the system
+            // p.Alive is redundant today — SimulationWorld.TickAll (Task 23) only
+            // calls this from its Alive branch (Tick(in SimInput) is just the
+            // solo-player overload that forwards into TickAll, and throws outright
+            // for a multiplayer world) — kept as defense-in-depth so the system
             // stays safe on a direct/future call site, not just its current caller.
             bool canFire = input.FireHeld && p.Alive
                 && (cfg.CanFireWhileDash || p.DashTimer <= 0f)

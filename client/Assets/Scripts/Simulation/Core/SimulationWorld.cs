@@ -55,6 +55,14 @@ namespace Ring.Simulation.Core
         // above it carries no state across ticks and is deliberately excluded
         // from SaveState/RestoreState and StateHash. Sized to MaxMobs + 3: one
         // slot per live mob plus barrier, player, and floor (Task 7).
+        // Stage 2 Task 17: the spec's eventual size is MaxMobs + MaxPlayers +
+        // 2 (one player slot per live player, not one total) — MaxMobs + 3
+        // stays correct until then because no candidate gather packs more
+        // than a single player today: a Player-owned projectile's candidates
+        // are barrier + up to MaxMobs mobs + floor, a Mob-owned one's are
+        // barrier + the one hardcoded player (w.Player) + floor. Task 17
+        // grows this array in step with fanning that gather out to every
+        // live player.
         readonly (float t, int kind, int index)[] _projCandidates;
         WaveState _wave;
         int _nextEntityId = 1;
@@ -435,7 +443,9 @@ namespace Ring.Simulation.Core
 
         /// ProjectileSystem's seam into its preallocated per-tick candidate
         /// scratch (Task 5) — sized to Arena.MaxMobs + 3, recomputed every
-        /// tick, never grown.
+        /// tick, never grown. Stage 2 Task 17 grows this to Arena.MaxMobs +
+        /// MaxPlayers + 2 per spec; safe at the current size until then —
+        /// see the field's own doc above for why.
         internal (float t, int kind, int index)[] ProjCandidates => _projCandidates;
 
         /// WaveSystem's seam into the wave director's live state (Task 22) — same
@@ -664,7 +674,7 @@ namespace Ring.Simulation.Core
         /// dealing damage — DamageMob/DamagePlayer never gate on the SHOOTER's
         /// Alive, only on crediting stats to it (see
         /// IncrementShotsHit/Kills/HeadshotKills above), so no new logic is
-        /// needed here for that (task-8-context.md "Делает" #3).
+        /// needed here for that (task-8-context.md, scope item 3).
         public void KillPlayerNoDamage(int index)
         {
             if (index < 0 || index >= _players.Length)

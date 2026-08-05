@@ -203,8 +203,15 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < presses; i++)
             {
                 w.Tick(Dash);
-                // Fixture expression (C14): the gap IS the configured window.
-                for (int gap = 0; gap < cfg.Hero.EdgeRequestMinTicks; gap++) w.Tick(Move);
+                // Fixture expression (C14): EdgeRequestMinTicks - 1 filler ticks
+                // after the request tick, so the FULL period between two
+                // requests (this tick plus the filler) is exactly
+                // EdgeRequestMinTicks — the tightest legal rhythm. A period of
+                // EdgeRequestMinTicks + 1 (looping the full window here) would
+                // still pass with the gate widened by one tick: the counter's
+                // own countdown supplies the missing tick of slack, so that
+                // period cannot tell a W-tick gate from a W+1-tick one.
+                for (int gap = 0; gap < cfg.Hero.EdgeRequestMinTicks - 1; gap++) w.Tick(Move);
             }
             Assert.AreEqual(presses, w.Stats.DashesUsed);
             Assert.AreEqual(0, w.RejectedEdgeRequestsForTest,

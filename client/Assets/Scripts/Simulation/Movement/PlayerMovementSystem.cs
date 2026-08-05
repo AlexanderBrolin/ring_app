@@ -276,7 +276,11 @@ namespace Ring.Simulation.Movement
                     // C1 (final review wave, app-n6g): the gate-failed path
                     // must still drive Vel from this tick's input — same
                     // "denied path still moves" contract as the dash
-                    // branch's own gate-fail else above (:153) — otherwise
+                    // branch's own insufficient-stamina else above (the
+                    // "else { ... result.DashDenied = true; ... }" branch,
+                    // named rather than by line number — the edge-request
+                    // gate this method gained since keeps pushing it down)
+                    // — otherwise
                     // the player coasts at frozen velocity for the whole
                     // SlideBufferWindow (~5 ticks at TickDt) every tick the
                     // buffer keeps retrying/decaying (C11 below), not just

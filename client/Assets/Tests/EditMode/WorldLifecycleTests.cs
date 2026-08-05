@@ -142,12 +142,13 @@ namespace Ring.Simulation.Tests
             bool b => !b,
             float2 f2 => f2 + new float2(1f, 0f),
             // Stage 2 Task 7: ProjectileState.OwnerIndex is the first byte
-            // field the sweep reflects over — permanent (not part of the
-            // temporary skip-list above), since a byte field is a legitimate
-            // struct member the hash sweep must be able to bump regardless of
-            // whether any ONE such field is currently in PendingHashFields.
-            // Wraps at byte.MaxValue back to 0 — still different from the
-            // input on every value, (byte)(255 + 1) == 0 != 255 included —
+            // field the sweep reflects over. The temporary PendingHashFields
+            // skip-list that once excluded it is gone (Stage 2 Task 10 — see
+            // the file header note above); a byte field is simply a
+            // legitimate struct member the hash sweep must be able to bump
+            // like any other. Wraps at byte.MaxValue back to 0 — still
+            // different from the input on every value, (byte)(255 + 1) == 0
+            // != 255 included —
             // which is all callers need (they only check the value changed,
             // never a specific new one).
             byte b8 => (byte)(b8 + 1),
