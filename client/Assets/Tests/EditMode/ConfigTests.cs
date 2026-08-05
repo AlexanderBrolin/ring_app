@@ -462,6 +462,34 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Validate_WallNearZeroLength_Throws()
+        {
+            // Fixwave Ф3 item 5: the OLD `length <= 0f` check let a wall this
+            // short (2e-7 m, comfortably above 0 but far below Geometry's own
+            // 1e-6 degenerate-axis threshold) pass validation, then silently
+            // behave like a circle/degenerate axis at runtime everywhere
+            // Geometry consumes it (SegmentStadium delegates to SegmentCircle;
+            // ClosestPointOnSegment collapses to `dir`). The fix mirrors
+            // Geometry's own `math.lengthsq(axis) < 1e-12f` cutoff exactly, so
+            // this fixture (length 2e-7, lengthsq 4e-14 < 1e-12) must now be
+            // rejected too.
+            //
+            // B.x is the literal 2e-7f, NOT `5f + 2e-7f`: float32's ULP at
+            // magnitude 5 is ~4.8e-7 — bigger than 2e-7 — so adding it to 5f
+            // would round straight back down to 5f (catastrophic
+            // cancellation), silently collapsing this fixture to the SAME
+            // exact-zero-length case Validate_WallZeroLength_Throws already
+            // covers and proving nothing extra. Anchoring B at 0 instead
+            // keeps the literal exact.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            a.Walls = new[] { new ArenaConfig.Wall
+                { A = new Vector2(0f, 5f), B = new Vector2(2e-7f, 5f), HalfWidth = 0.8f } };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("zero length"));
+        }
+
+        [Test]
         public void Validate_WallTooCloseToArenaRim_Throws()
         {
             // carryover-t16 item 7c: "inside Radius - HalfWidth" is NOT enough.

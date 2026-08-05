@@ -458,11 +458,23 @@ namespace Ring.Data
                 ReqFinite(errors, $"{tag}.B.y", b.y);
                 ReqPositive(errors, $"{tag}.HalfWidth", halfWidth);
 
-                float length = math.length(b - a);
-                if (length <= 0f)
+                // Fixwave Ф3 item 5: mirrors Geometry's OWN degenerate-axis
+                // threshold (ClosestPointOnSegment/SegmentStadium's
+                // `math.lengthsq(axis) < 1e-12f`) instead of a bare
+                // `length <= 0f`. A wall shorter than that (e.g. 1e-7 m) used
+                // to clear this check yet still trip Geometry's degenerate
+                // branch at runtime everywhere it consumes the wall:
+                // SegmentStadium/SweepArena fall back to treating it as a
+                // CIRCLE, while ClosestPointOnSegment (PushOutOfStadium,
+                // SteerAround's wall waypoint) collapses its projected axis
+                // to `dir` instead of the wall's own direction — a silent
+                // mismatch between "validated as a wall" and "behaves like
+                // one" this rule exists to reject outright.
+                if (math.lengthsq(b - a) < 1e-12f)
                 {
-                    errors.Add($"{tag} has zero length (A == B) — a wall must be a segment, " +
-                        $"not a point (A=({a.x:F3}, {a.y:F3})).");
+                    errors.Add($"{tag} has zero length (|A-B| below Geometry's own 1e-6 " +
+                        "degenerate-axis threshold) — a wall must be a real segment, not a " +
+                        $"point (A=({a.x:F3}, {a.y:F3})).");
                 }
 
                 float farEnd = math.max(math.length(a), math.length(b));
