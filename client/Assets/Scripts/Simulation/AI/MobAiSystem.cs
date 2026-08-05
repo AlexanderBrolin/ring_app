@@ -314,20 +314,78 @@ namespace Ring.Simulation.AI
             }
             if (blockedCircleIdx < 0 && blockedWallIdx < 0) return dir;
 
-            float2 center;
-            float baseRadius;
             if (blockedWallIdx >= 0)
             {
+                // Stage 2 Task 14, coordinator fix after the implementer's
+                // diagnosis. A wall is steered around by its SILHOUETTE, not by
+                // reducing it to one equivalent circle at a chosen end.
+                //
+                // Why the simpler forms fail. A circle IS the whole obstacle, so
+                // a tangent to it clears it. A wall's blocking body is its side;
+                // an end cap is only that body's edge, so the tangent to one cap
+                // can cut straight through the body — the mob then steers into
+                // the wall, the physical collide-and-slide cancels that velocity,
+                // and the next tick reproduces the same geometry: a stable dead
+                // stop (measured at 5.5e-17 parallelism to the flat face,
+                // reproduced from five independent geometries). Picking the cap
+                // by "whichever end is nearer" adds a second failure: for a wall
+                // straddling the mob's path the two ends are equidistant, the
+                // choice flips between them tick to tick, and the mob oscillates
+                // in place instead of committing to a detour.
+                //
+                // The fix therefore does not steer by a tangent at all. The mob
+                // heads for a WAYPOINT placed just outside one end of the wall —
+                // off the face on the mob's own side and past the cap along the
+                // axis. Being off the body, that heading always keeps an outward
+                // component, so the collide-and-slide can never cancel it whole
+                // and no dead stop is reachable; once the mob rounds the end the
+                // wall stops blocking and steering returns to the direct line.
+                // A tangent-based rule cannot give that guarantee here: a wall is
+                // routinely LONGER than AvoidLookahead, and local look-ahead has
+                // no notion of "which way is out" of a surface that extends past
+                // what it can see.
                 float2 wallA = arena.WallA[blockedWallIdx];
                 float2 wallB = arena.WallB[blockedWallIdx];
-                center = math.distance(pos, wallA) <= math.distance(pos, wallB) ? wallA : wallB;
-                baseRadius = arena.WallHalfWidth[blockedWallIdx];
+                float clearance = arena.WallHalfWidth[blockedWallIdx] + padR;
+
+                // Which end to round: the one giving the shorter total detour.
+                // An exact tie (the wall straddles the path symmetrically) breaks
+                // on Id parity — a constant per mob, so the choice is STABLE
+                // across ticks. Breaking such a tie on a float comparison instead
+                // is what makes a mob oscillate on the spot: at the symmetric
+                // point the winner flips every tick and no lateral progress is
+                // ever committed to.
+                float costA = math.distance(pos, wallA) + math.distance(wallA, targetPos);
+                float costB = math.distance(pos, wallB) + math.distance(wallB, targetPos);
+                bool roundA = costA < costB || (costA == costB && (id & 1) == 0);
+                float2 end = roundA ? wallA : wallB;
+                float2 farEnd = roundA ? wallB : wallA;
+
+                // Aim just OUTSIDE that end, offset off the wall's face on the
+                // mob's own side and past the cap along the axis. Steering at the
+                // end itself would aim at the cap's centre — into the wall.
+                float2 axis = math.normalizesafe(end - farEnd, dir);
+                float2 face = new float2(-axis.y, axis.x);
+                if (math.dot(pos - end, face) < 0f) face = -face;
+                float2 waypoint = end + axis * clearance + face * clearance;
+                float2 toWaypoint = waypoint - pos;
+                // Standing ON the rounding point has to keep producing a heading:
+                // normalizesafe would fall back to `dir`, which is the blocked
+                // straight line, and the mob would park there for good (observed:
+                // it stopped exactly one waypoint's distance short of the player).
+                // Past that point the detour continues along the axis, out beyond
+                // the cap, until the wall no longer blocks at all.
+                return math.lengthsq(toWaypoint) > clearance * clearance
+                    ? math.normalizesafe(toWaypoint, dir)
+                    : axis;
             }
-            else
-            {
-                center = arena.ObstaclePos[blockedCircleIdx];
-                baseRadius = arena.ObstacleRadius[blockedCircleIdx];
-            }
+
+            // Circle branch — untouched by Stage 2 Task 14 and bit-for-bit as it
+            // was before it: mob steering around obstacles is inside the golden
+            // hash, so this arithmetic may not be re-expressed, only extended
+            // alongside (the wall branch above returns before reaching here).
+            float2 center = arena.ObstaclePos[blockedCircleIdx];
+            float baseRadius = arena.ObstacleRadius[blockedCircleIdx];
 
             float2 toCenter = center - pos;
             float d = math.length(toCenter);
@@ -346,5 +404,6 @@ namespace Ring.Simulation.AI
                 : (id & 1) == 0 ? tangentPlus : tangentMinus;
             return math.normalizesafe(tangent, dir);
         }
+
     }
 }

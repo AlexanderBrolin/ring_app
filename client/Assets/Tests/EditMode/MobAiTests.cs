@@ -551,36 +551,26 @@ namespace Ring.Simulation.Tests
             // spec §3.3): SteerAround must treat WallCount the same way it
             // already treats ObstacleCount.
             //
-            // RED-discipline note (task report, urok 64): a wall straddling
-            // the direct mob->player line (like the obstacle version above)
-            // reliably parks the chaser against its own flat side forever —
-            // the equivalent-circle tangent, aimed at the chosen FAR end,
-            // converges to a heading exactly parallel to the near flat face
-            // at a specific point along it, and the physical collision then
-            // cancels the resulting velocity outright. This reproduced from
-            // every starting offset/approach angle tried (including this
-            // wall's own dimensions with the mob dead-on), so it reads as a
-            // structural property of the nearest-end approach for a wall
-            // thick/long enough to matter, not a fixture accident — see the
-            // task report for the full investigation. The wall below sits
-            // entirely to ONE side of the direct line instead, so only its
-            // nearer end ever competes for "nearest blocker" and the dead
-            // end above is never reached — but that also means THIS fixture
-            // is not itself a RED witness: the mob never gets close enough
-            // to the wall for a pre-Task-14 build to need any wall handling
-            // at all (confirmed against the pre-Task-14 revision — still
-            // reaches the player, unmodified). It stands as a basic
-            // sanity/no-crash check for a benign wall placement;
-            // Chaser_DoesNotRubAlongWall and
-            // SteerAround_PrefersNearestBlocker_AcrossKinds below are the
-            // tests that actually go RED against the wall-avoidance code.
+            // The wall STRADDLES the direct mob->player line, exactly like the
+            // circular obstacle in the mirrored test — that is the case the
+            // detour exists for, and the only one that can witness it. An
+            // earlier revision of this fixture placed the wall entirely to one
+            // side of that line, which made the test pass on pre-Task-14 code
+            // (a straight run never touches such a wall) and therefore proved
+            // nothing; it was moved back here together with the coordinator's
+            // fix to the tangent-side choice. Before that fix this fixture
+            // dead-stopped the chaser against the wall's flat face: the
+            // short-way tangent to the end cap cuts through the wall's body,
+            // the collide-and-slide cancels the resulting velocity, and the
+            // next tick reproduces the same geometry. The mutation that
+            // restores the old shorter-turn rule for walls reddens this test.
             var c = TestConfigs.Open();
             c.Arena.WallCount = 1;
-            c.Arena.WallA = new[] { new float2(7f, 3f) };
-            c.Arena.WallB = new[] { new float2(7f, 8f) };
-            c.Arena.WallHalfWidth = new[] { 2f };
+            c.Arena.WallA = new[] { new float2(7f, -3f) };
+            c.Arena.WallB = new[] { new float2(7f, 3f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
             var w = new SimulationWorld(1, c);
-            w.SpawnMobForTest(MobType.Chaser, new float2(14f, 0f)); // player at (0,0)
+            w.SpawnMobForTest(MobType.Chaser, new float2(14f, 0f)); // player at (0,0) behind the wall
             for (int i = 0; i < 300; i++) w.Tick(Idle);
             var snap = new RenderSnapshot(c.Arena);
             w.CaptureSnapshot(snap);
@@ -689,8 +679,29 @@ namespace Ring.Simulation.Tests
                 w.SpawnMobForTest(MobType.Chaser, mobStart);
                 w.Tick(Idle);
                 w.Tick(Idle);
-                Assert.Greater(w.Mobs[0].Vel.y, 0.3f,
+                float2 steerWithWall = w.Mobs[0].Vel;
+
+                // Same world with the wall removed: whatever the circle alone
+                // would have produced. "The nearer wall determined the steer"
+                // means the two differ materially — asserting a fixed sign
+                // instead is what the first revision of this test did, and the
+                // sign it demanded (upwards) was the pre-fix defect: this wall
+                // runs from y = -0.3 UP to y = 6, so upwards is straight through
+                // its body and the only way past it is below its lower end.
+                var noWall = TestConfigs.Open();
+                noWall.Arena.ObstacleCount = 1;
+                noWall.Arena.ObstaclePos = new[] { new float2(-7f, 1.4f) };
+                noWall.Arena.ObstacleRadius = new[] { 0.3f };
+                var w2 = new SimulationWorld(1, noWall);
+                w2.SpawnMobForTest(MobType.Chaser, mobStart);
+                w2.Tick(Idle);
+                w2.Tick(Idle);
+                float2 steerWithoutWall = w2.Mobs[0].Vel;
+
+                Assert.Greater(math.distance(steerWithWall, steerWithoutWall), 0.3f,
                     "the nearer WALL should have determined the steer, not the farther circle");
+                Assert.Less(steerWithWall.y, 0f,
+                    "the only way past this wall is below its lower end");
             }
         }
     }
