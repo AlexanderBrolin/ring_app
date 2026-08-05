@@ -344,6 +344,58 @@ namespace Ring.Simulation.Core
                     normal = math.normalizesafe(
                         math.lerp(p0, p1, to) - arena.ObstaclePos[o], new float2(1f, 0f));
                 }
+
+            // Stage 2 Task 12 (spec §3.3): interior walls, traversed AFTER
+            // circles and BEFORE the ring boundary below — a fixed order,
+            // pinned by SweepArena_TieBreak_CircleBeforeWall (strict
+            // `tWall < t` means circles win an exact tie, since they were
+            // already compared above).
+            for (int wIdx = 0; wIdx < arena.WallCount; wIdx++)
+                if (SegmentStadium(p0, p1, padR, arena.WallA[wIdx], arena.WallB[wIdx],
+                        arena.WallHalfWidth[wIdx], out float tWall) && tWall < t)
+                {
+                    t = tWall; hit = true;
+                    // SegmentStadium only reports t, not a normal, so rebuild
+                    // it the same way PushOutOfStadium already does (Task 11):
+                    // project the contact onto the wall's own segment and take
+                    // the direction away from that projection. One formula
+                    // covers both the flat side (projection lands in the
+                    // interior, delta ⊥ axis) and a rounded cap (projection
+                    // lands on an endpoint, delta is radial from that cap's
+                    // own centre).
+                    float2 contact = math.lerp(p0, p1, tWall);
+                    float2 closest = ClosestPointOnSegment(
+                        contact, arena.WallA[wIdx], arena.WallB[wIdx], out _);
+                    float2 delta = contact - closest;
+                    float distSq = math.lengthsq(delta);
+                    if (distSq > 1e-12f)
+                    {
+                        normal = delta / math.sqrt(distSq);
+                    }
+                    else
+                    {
+                        // On-axis fallback (carryover-t12.md #1): the naive
+                        // normalizesafe(delta, (1,0)) would point ALONG the
+                        // wall when the contact sits exactly on its axis (the
+                        // same failure PushOutOfStadium's own fallback guards
+                        // against in Task 11). Fall back to the axis' own
+                        // perpendicular, oriented toward p0's side, rather
+                        // than a fixed world direction.
+                        float2 axis = arena.WallB[wIdx] - arena.WallA[wIdx];
+                        float axisLen = math.length(axis);
+                        if (axisLen > 1e-6f)
+                        {
+                            float2 perp = new float2(-axis.y, axis.x) / axisLen;
+                            float side = math.dot(p0 - arena.WallA[wIdx], perp);
+                            normal = side >= 0f ? perp : -perp;
+                        }
+                        else
+                        {
+                            normal = new float2(1f, 0f);
+                        }
+                    }
+                }
+
             if (includeWall && SegmentRingWall(p0, p1, padR, arena.Radius, out float tw)
                 && tw < t)
             {
@@ -353,7 +405,7 @@ namespace Ring.Simulation.Core
             return hit;
         }
 
-        /// Iterative depenetration from obstacles and the wall; slides velocity.
+        /// Iterative depenetration from obstacles, walls, and the ring; slides velocity.
         public static void Depenetrate(ref float2 pos, ref float2 vel, float radius,
             in ArenaSimConfig arena, int iterations)
         {
@@ -364,6 +416,15 @@ namespace Ring.Simulation.Core
                     if (PushOutOfCircle(ref pos, radius, arena.ObstaclePos[o],
                             arena.ObstacleRadius[o], out float2 n))
                     { vel = Slide(vel, n); any = true; }
+
+                // Stage 2 Task 12 (spec §3.3): interior walls, after circles
+                // and before the ring clamp below — the same order as
+                // SweepArena above. Loop body mirrors the circle loop exactly.
+                for (int wIdx = 0; wIdx < arena.WallCount; wIdx++)
+                    if (PushOutOfStadium(ref pos, radius, arena.WallA[wIdx], arena.WallB[wIdx],
+                            arena.WallHalfWidth[wIdx], out float2 n))
+                    { vel = Slide(vel, n); any = true; }
+
                 if (ClampInsideRing(ref pos, radius, arena.Radius, out float2 wn))
                 { vel = Slide(vel, wn); any = true; }
                 if (!any) break;
