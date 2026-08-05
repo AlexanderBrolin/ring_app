@@ -94,6 +94,14 @@ namespace Ring.Simulation.Tests
             var c = TestConfigs.Default();
             c.Wave.FirstWaveDelay = 0.1f;
             c.Wave.MaxSpawnAttempts = 0; // fixed FallbackSlots grid only — no RNG luck
+            // Ask for more mobs than the grid has slots, so the search is forced
+            // to try EVERY slot, including the ones next to the alive player.
+            // Without this the wave is small enough to be seated entirely on the
+            // far side and the distance rule is never exercised at all —
+            // confirmed by mutation (deleting the rule left an earlier revision
+            // of this test green).
+            c.Wave.BaseCount = c.Wave.FallbackSlots;
+            c.Wave.MaxMobsPerWave = c.Wave.FallbackSlots * 2;
             float ringRadius = c.Arena.Radius - c.Wave.SpawnRingInset;
             // Half the spawn ring's radius: comfortably larger than the gap
             // between a player parked on the ring and the ring itself, so the
@@ -140,6 +148,11 @@ namespace Ring.Simulation.Tests
 
             Assert.IsTrue(anyNearDead,
                 "a DEAD player must not reserve any space: the ring next to it has to stay usable");
+            // The wave asked for every slot on the grid, so some of them MUST
+            // have been refused — otherwise the assertion above never had a
+            // chance to bite.
+            Assert.Less(snap.MobCount, c.Wave.FallbackSlots,
+                "no ring slot was refused at all — the distance rule was never exercised");
         }
 
         [Test]
