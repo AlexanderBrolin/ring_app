@@ -39,6 +39,17 @@ namespace Ring.Simulation.Core
     {
         public SimEventKind Kind;
         public int Tick;
+        /// World-space position this event concerns — per-Kind meaning varies
+        /// (e.g. the projectile's contact point for ProjectileHit, the mob's
+        /// own position for MobDied). PlayerDamaged/PlayerDied (Stage 2 Task 8
+        /// fix-round 1, I-1): normally the BLOW's own origin — the attacking
+        /// mob's or projectile's position `SimulationWorld.DamagePlayer` was
+        /// called with, NOT necessarily the victim's — so a paired
+        /// PlayerDamaged+PlayerDied from the same hit carry the SAME Pos.
+        /// PlayerDied is the one exception: it can also fire with no blow at
+        /// all (`KillPlayerNoDamage` — a player exiting the match), in which
+        /// case Pos is the victim's OWN last-known position instead, since
+        /// there is no blow to place.
         public float2 Pos;
         public int EntityId;
         public MobType MobType;
@@ -68,14 +79,19 @@ namespace Ring.Simulation.Core
         /// zone-specific feedback (headshot ping, leg stagger) without
         /// re-deriving any geometry. Same "unused for every other kind" contract
         /// as `Amount`/`Owner` above, and its unused value is the enum's zero
-        /// (`HitZone.None`).
+        /// (`HitZone.None`). Stage 2 Task 8 fix-round 1 (M-6): PlayerDied can
+        /// also fire with NO blow behind it at all (`KillPlayerNoDamage` — a
+        /// player exiting the match) — in that one case Zone reads its unused
+        /// `HitZone.None`, same as every kind that never carries a blow.
         public HitZone Zone;
         /// Task 6: unit impact direction in the sim plane — the projectile's
         /// direction of travel at contact, or attacker→victim for a melee
         /// strike. Drives directional feedback (blood spray, hit flash, knock
         /// reaction) that would otherwise need the attacker's position, which
         /// the event does not carry. Zero for every kind that has no blow behind
-        /// it; paired with `Zone` above and never read without it.
+        /// it; paired with `Zone` above and never read without it. Same
+        /// no-blow PlayerDied exception as `Zone` above (`KillPlayerNoDamage`) —
+        /// reads `float2.zero` there.
         public float2 HitDir;
         /// Stage 2 Task 7: which player this event concerns. For the five
         /// "own-action" kinds — ProjectileFired, PlayerDashed,

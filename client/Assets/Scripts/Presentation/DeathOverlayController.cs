@@ -16,8 +16,10 @@ namespace Ring.Presentation
     /// subscriber). Metrics are computed once when the panel is shown, straight
     /// off `SimulationRunner.Curr.Stats` — safe because match stats freeze the
     /// tick the player dies (spec §3.12: `DamagePlayer`/`DamageMob`'s guarded
-    /// increments, `WaveSystem.Update`'s own `!w.Player.Alive` early-return), so
-    /// nothing further mutates them while the panel stays up.
+    /// increments, `WaveSystem.Update`'s early return once no player is alive —
+    /// `Targeting.NearestAlivePlayer` since Stage 2 Task 8, same guarantee as
+    /// the old solo-only `!w.Player.Alive` check it replaced), so nothing
+    /// further mutates them while the panel stays up.
     ///
     /// `R`/`Shift+R` are a fixed dev-controller exception (Приложение П-6) to the
     /// project's "route input through InputActionAsset" rule (spec §3.8): direct

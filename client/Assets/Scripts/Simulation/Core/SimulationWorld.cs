@@ -550,7 +550,12 @@ namespace Ring.Simulation.Core
                 // PlayerDied) moved into KillPlayer — the single home both this
                 // damage-death path and the no-damage KillPlayerNoDamage path
                 // now share, instead of each keeping its own copy of the timer list.
-                KillPlayer(victim, zone, dir);
+                // Fix-round 1 I-1: `pos` (the blow's own origin — e.g. the
+                // killing mob's position for a contact strike, MobAiSystem's
+                // `w.DamagePlayer(cfg.ContactDamage, m.Pos, ...)`) is forwarded
+                // unchanged, so the paired PlayerDamaged/PlayerDied above and
+                // below carry the SAME Pos, exactly as before this task.
+                KillPlayer(victim, zone, dir, pos);
             }
         }
 
@@ -559,14 +564,18 @@ namespace Ring.Simulation.Core
         /// exactly one PlayerDied. Extracted verbatim (same fields, same order,
         /// same values) from DamagePlayer's former death branch above, so a
         /// damage-caused death is byte-for-byte unchanged; KillPlayerNoDamage
-        /// below is the second, no-damage caller. Pos is deliberately NOT a
-        /// parameter (unlike DamagePlayer's `pos`, the blow's origin) — a kill
-        /// with no blow (KillPlayerNoDamage) has none to give, so PlayerDied
-        /// here always reads the victim's OWN position instead; zone/dir are
-        /// the only two fields task-8-context.md's invariant pins as identical
-        /// to before, Pos is not among them, and events are excluded from
-        /// StateHash (spec §3.7) either way.
-        void KillPlayer(int index, HitZone zone, float2 dir)
+        /// below is the second, no-damage caller. `blowPos` (fix-round 1 I-1):
+        /// the two callers disagree on what this SHOULD be — DamagePlayer
+        /// forwards its own `pos` (the blow's origin, same value the paired
+        /// PlayerDamaged event above it already carries), while
+        /// KillPlayerNoDamage has no blow at all and passes the victim's own
+        /// position instead — so it is a required parameter here, not derived
+        /// from `p.Pos` internally (that would have silently dropped the
+        /// blow's origin for the damage-death path — the bug fix-round 1
+        /// caught: `PlayerDamaged` and `PlayerDied` from the SAME hit used to
+        /// carry the same Pos, and briefly didn't). See `SimEvent.Pos`'s own
+        /// doc for the reader-facing version of this contract.
+        void KillPlayer(int index, HitZone zone, float2 dir, float2 blowPos)
         {
             ref PlayerState p = ref _players[index];
             p.Alive = false;
@@ -593,7 +602,7 @@ namespace Ring.Simulation.Core
             // Task 14: aim-settle progress clears the same way as the
             // other movement timers above — a corpse doesn't keep aiming.
             p.AimSettleTimer = 0f;
-            Emit(SimEventKind.PlayerDied, p.Pos, index, default, 0f, zone: zone, hitDir: dir,
+            Emit(SimEventKind.PlayerDied, blowPos, index, default, 0f, zone: zone, hitDir: dir,
                 playerIndex: (byte)index);
         }
 
@@ -603,18 +612,35 @@ namespace Ring.Simulation.Core
         /// KillPlayer gets the neutral HitZone.None/zero direction (the same
         /// "unused for every other kind" contract Emit's own doc describes for
         /// non-blow event kinds) rather than a simulated hit like
-        /// KillPlayerForTest's overkill-damage seam below uses. Guarded the
-        /// same way DamagePlayer's own `if (!p.Alive) return;` is — an
+        /// KillPlayerForTest's overkill-damage seam below uses, and the
+        /// victim's OWN position as `blowPos` — there is no blow to place, so
+        /// the victim's last-known position is the only meaningful value
+        /// (fix-round 1 I-1 — see KillPlayer's own doc for why this is a
+        /// required parameter rather than an internal `p.Pos` read). Guarded
+        /// the same way DamagePlayer's own `if (!p.Alive) return;` is — an
         /// already-dead index is a no-op, not a second PlayerDied/DeathTick
-        /// overwrite. An already-in-flight projectile owned by this player
-        /// keeps flying and dealing damage — DamageMob/DamagePlayer never gate
-        /// on the SHOOTER's Alive, only on crediting stats to it (see
+        /// overwrite (fix-round 1 I-3). `index` itself is range-checked first
+        /// (fix-round 1 M-8) — this is a public method a future Networking
+        /// disconnect handler will call with an externally-sourced index, so
+        /// an out-of-range value must fail with a clear
+        /// ArgumentOutOfRangeException, not an opaque IndexOutOfRangeException
+        /// from deep inside `_players[index]` — same "checked before any
+        /// mutation" style the constructor's `playerCount` guard uses. An
+        /// already-in-flight projectile owned by this player keeps flying and
+        /// dealing damage — DamageMob/DamagePlayer never gate on the SHOOTER's
+        /// Alive, only on crediting stats to it (see
         /// IncrementShotsHit/Kills/HeadshotKills above), so no new logic is
         /// needed here for that (task-8-context.md "Делает" #3).
         public void KillPlayerNoDamage(int index)
         {
+            if (index < 0 || index >= _players.Length)
+            {
+                throw new System.ArgumentOutOfRangeException(nameof(index), index,
+                    $"SimulationWorld.KillPlayerNoDamage: index must be in [0, {_players.Length - 1}] " +
+                    "(PlayerCount).");
+            }
             if (!_players[index].Alive) return;
-            KillPlayer(index, HitZone.None, float2.zero);
+            KillPlayer(index, HitZone.None, float2.zero, _players[index].Pos);
         }
 
         /// Battle mob spawn (Task 22 Interfaces) — WaveSystem's sole entry point for
@@ -664,13 +690,17 @@ namespace Ring.Simulation.Core
         /// a NoOwner default would silently rob them of it). WARNING (fix-round 1
         /// M-2): the default is unconditional — it does NOT infer NoOwner from
         /// `owner == ProjectileOwner.Mob`. A caller spawning a Mob-owned test
-        /// projectile MUST pass `ownerIndex: ProjectileIds.NoOwner` explicitly
-        /// (see HitZoneTests.cs / ProjectileTests.cs for the existing pattern) —
+        /// projectile MUST pass `ownerIndex: ProjectileIds.NoOwner` explicitly —
         /// omitting it silently leaves OwnerIndex at 0, violating the "Mob ⇒
         /// NoOwner" invariant MobProjectile_HasNoOwnerIndex pins for the real
         /// production path. Harmless today (OwnerIndex is outside StateHash until
         /// Task 10), but becomes hash-significant then — checked at that task's
-        /// own gate, not this one.
+        /// own gate, not this one. (T7 fix-round re-review: the five existing
+        /// Mob-owned call sites in HitZoneTests.cs/ProjectileTests.cs all still
+        /// rely on the unconditional `0` default rather than passing NoOwner —
+        /// so this warning is a forward-looking contract for NEW call sites,
+        /// not a documented existing pattern; those five fixtures are Task 10's
+        /// to reconcile, not this one's.)
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
             float height, float velZ, float damage, float radius, float ttl, byte ownerIndex = 0)
             => SpawnProjectile(owner, ownerIndex, pos, vel, height, velZ, damage, radius, ttl);

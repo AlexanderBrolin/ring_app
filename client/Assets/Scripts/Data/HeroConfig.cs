@@ -40,8 +40,9 @@ namespace Ring.Data
         // is draining it.
         // В1 fix-wave 3 (owner economy rework, app-n6g): LinkedDashStaminaCost's
         // discounted-dash-in-window model is retired — dash/slide now always pay
-        // their own full price; LinkRefund (below, the class's new sync-marker
-        // field) is what makes chaining net-cheaper instead.
+        // their own full price; LinkRefund (below — was the class's sync-marker
+        // field until Stage 2 Task 8's EdgeRequestMinTicks superseded it, see
+        // LinkRefund's own doc) is what makes chaining net-cheaper instead.
         [Range(1f, 300f)] public float StaminaMax = 100f;
         [Range(0.1f, 300f)] public float DashStaminaCost = 40f;
         [Range(0.1f, 300f)] public float SlideStaminaCost = 30f;

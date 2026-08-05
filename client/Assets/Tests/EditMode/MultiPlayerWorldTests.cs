@@ -341,12 +341,40 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(w.PlayerAt(0).Alive, "the departed player must be dead");
             Assert.AreEqual(damageTakenBefore, w.StatsAt(0).DamageTaken, 1e-5f,
                 "a no-damage kill must not touch DamageTaken");
-            int died = 0;
-            for (int e = 0; e < w.EventCount; e++)
-                if (w.GetEvent(e).Kind == SimEventKind.PlayerDied) died++;
-            Assert.AreEqual(1, died, "exactly one PlayerDied must fire");
+            // M-7 (fix-round 1): reuse TestEvents.CountOf instead of a
+            // hand-rolled scan loop (Global Constraints — existing test
+            // helpers are reused, not re-implemented).
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.PlayerDied),
+                "exactly one PlayerDied must fire");
             Assert.AreEqual(0, w.StatsAt(1).Kills,
                 "there is no attacker — nobody is credited a kill for a departure");
+
+            // Fix-round 1 I-3: a repeat call on an already-dead index (real
+            // scenario — a disconnect handler and a later timeout cleanup both
+            // calling this for the same player) must be a no-op, not a second
+            // PlayerDied/DeathTick overwrite — same idempotency contract
+            // DeathTests.PlayerDied_EmittedOnce_DeathTickRecorded pins for the
+            // damage-death path.
+            int deathTickAfterFirstKill = w.StatsAt(0).DeathTick;
+            w.KillPlayerNoDamage(0);
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.PlayerDied),
+                "a repeat no-damage kill on an already-dead player must not emit a second PlayerDied");
+            Assert.AreEqual(deathTickAfterFirstKill, w.StatsAt(0).DeathTick,
+                "a repeat no-damage kill must not overwrite DeathTick");
+        }
+
+        [Test]
+        public void KillPlayerNoDamage_IndexOutOfRange_Throws()
+        {
+            // Fix-round 1 M-8: KillPlayerNoDamage is public — a future
+            // Networking disconnect handler calls it with an externally
+            // sourced index — so an out-of-range value must fail with a clear
+            // ArgumentOutOfRangeException, same style as the constructor's
+            // playerCount guard, not an opaque IndexOutOfRangeException from
+            // deep inside the player array.
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            Assert.Throws<System.ArgumentOutOfRangeException>(() => w.KillPlayerNoDamage(-1));
+            Assert.Throws<System.ArgumentOutOfRangeException>(() => w.KillPlayerNoDamage(2));
         }
 
         [Test]

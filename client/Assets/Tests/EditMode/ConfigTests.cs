@@ -198,6 +198,22 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("LinkRefund"));
         }
 
+        [Test]
+        public void Validate_EdgeRequestMinTicksNegative_Throws()
+        {
+            // Fix-round 1 I-2: EdgeRequestMinTicks is data-only (no gate yet,
+            // Stage 2 Task 10) but its >= 0 validation still needs its own
+            // falsifiable test — same convention every other [Range]-guarded
+            // field on this class gets (e.g.
+            // Validate_SwingLeadMaxMetersNegative_Throws below), so a
+            // validation-line regression doesn't silently let a negative
+            // value reach the future gate.
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.EdgeRequestMinTicks = -1;
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("EdgeRequestMinTicks"));
+        }
+
         static void AssertHeroEqual(HeroSimConfig e, HeroSimConfig a)
         {
             Assert.AreEqual(e.MaxSpeed, a.MaxSpeed, Eps);
