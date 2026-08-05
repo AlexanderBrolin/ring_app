@@ -58,6 +58,15 @@ namespace Ring.Simulation.Tests
         /// Task 10 (SlideTimer et al.), Task 11 (LinkWindowTimer), Task 12
         /// (DashSpeedCur), Task 14 (AimSettleTimer) — add a line here as part
         /// of that task's GREEN step, not as an afterthought.
+        ///
+        /// Stage 2 Task 10 widened the pass from float-only to float AND int
+        /// fields. Until then an int PlayerState field was skipped silently by
+        /// the `FieldType != typeof(float)` filter, so the task's two new
+        /// tick counters (DashRequestCooldownTicks / SlideRequestCooldownTicks
+        /// — the first int fields the struct ever had) would have slipped
+        /// through the "no map entry fails LOUDLY" guarantee entirely. Ceilings
+        /// stay a float map: every int ceiling in play is small and exactly
+        /// representable, and the comparison is the same "<= its new maximum".
         [Test]
         public void ApplyConfig_ReflectiveClampPass_EveryFloatFieldWithinNewMax()
         {
@@ -70,6 +79,7 @@ namespace Ring.Simulation.Tests
             next.Hero.DashBufferWindow = 0.05f;
             next.Hero.StaminaMax = 20f;
             next.Hero.StaminaRegenDelay = 0.2f;
+            next.Hero.EdgeRequestMinTicks = 2; // reduced from TestConfigs' 3 — the clamp must bite
             next.Weapon.FireInterval = 0.04f;
 
             var ceilingByField = new Dictionary<string, float>
@@ -94,14 +104,17 @@ namespace Ring.Simulation.Tests
                 ["LinkWindowTimer"] = next.Hero.LinkWindowSeconds,
                 // Task 14: aim-settle progress.
                 ["AimSettleTimer"] = next.Hero.AimSettleSeconds,
+                // Stage 2 Task 10: the two edge-request tick counters.
+                ["DashRequestCooldownTicks"] = next.Hero.EdgeRequestMinTicks,
+                ["SlideRequestCooldownTicks"] = next.Hero.EdgeRequestMinTicks,
             };
 
             var w = new SimulationWorld(5, cfg);
             object boxedPlayer = w.Player;
             foreach (var field in typeof(PlayerState).GetFields())
             {
-                if (field.FieldType != typeof(float)) continue;
-                field.SetValue(boxedPlayer, 1e6f);
+                if (field.FieldType == typeof(float)) field.SetValue(boxedPlayer, 1e6f);
+                else if (field.FieldType == typeof(int)) field.SetValue(boxedPlayer, 1_000_000);
             }
             w.SetPlayerForTest((PlayerState)boxedPlayer);
 
@@ -109,13 +122,15 @@ namespace Ring.Simulation.Tests
 
             foreach (var field in typeof(PlayerState).GetFields())
             {
-                if (field.FieldType != typeof(float)) continue;
+                float actual;
+                if (field.FieldType == typeof(float)) actual = (float)field.GetValue(w.Player);
+                else if (field.FieldType == typeof(int)) actual = (int)field.GetValue(w.Player);
+                else continue;
                 Assert.IsTrue(ceilingByField.TryGetValue(field.Name, out float ceiling),
-                    $"PlayerState.{field.Name} is a new float field with no clamp-pass " +
+                    $"PlayerState.{field.Name} is a new float/int field with no clamp-pass " +
                     "entry in ApplyConfig_ReflectiveClampPass_EveryFloatFieldWithinNewMax's " +
                     "ceilingByField map — add a line mapping it to its ApplyConfig ceiling, " +
                     "or to float.PositiveInfinity if ApplyConfig intentionally leaves it unclamped.");
-                float actual = (float)field.GetValue(w.Player);
                 Assert.LessOrEqual(actual, ceiling,
                     $"PlayerState.{field.Name} exceeded its ApplyConfig ceiling after hot-tweak");
             }

@@ -88,6 +88,18 @@ namespace Ring.Simulation.Core
         /// Cumulative count of events dropped because the per-frame buffer was full.
         public int DroppedEvents { get; private set; }
 
+        // Stage 2 Task 10: cumulative tally of edge requests (dash/slide, all
+        // players) that the rate limit in PlayerMovementSystem.Update dropped.
+        // DIAGNOSTICS ONLY, and deliberately so: it is excluded from StateHash,
+        // from WorldSave and from MatchStats, because a dropped request is
+        // something the world REFUSED to act on — folding it into any of those
+        // three would turn it into world state and make an anti-spam counter
+        // part of the replay/rollback contract. The shipped, network-facing
+        // counter arrives with NetStats in Stage 2 Task 23/28; this seam exists
+        // so EdgeRateLimitTests can observe the drops until then.
+        int _rejectedEdgeRequests;
+        internal int RejectedEdgeRequestsForTest => _rejectedEdgeRequests;
+
         /// `playerCount` defaults to 1 so every call site that predates Stage 2
         /// Task 4 (136 existing constructions) keeps compiling and behaving
         /// identically — solo still spawns at the arena center (spec §3.2), not
@@ -250,6 +262,12 @@ namespace Ring.Simulation.Core
                     Emit(SimEventKind.StaminaDenied, p.Pos, 0, default,
                         _config.Hero.SlideStaminaCost - p.Stamina, playerIndex: (byte)i);
                 }
+                // Stage 2 Task 10: a request the edge-request rate limit dropped
+                // is counted for diagnostics ONLY — no StaminaDenied, no
+                // MatchStats write, nothing that reaches game state (see
+                // _rejectedEdgeRequests' own comment for why).
+                if (moveResult.DashRejected) _rejectedEdgeRequests++;
+                if (moveResult.SlideRejected) _rejectedEdgeRequests++;
                 if (moveResult.Ricocheted)
                 {
                     // Task 12: Pos is the contact point (not the player's
@@ -308,6 +326,15 @@ namespace Ring.Simulation.Core
                 p.LinkWindowTimer = math.clamp(p.LinkWindowTimer, 0f, next.Hero.LinkWindowSeconds);
                 // Task 14: aim-settle progress, same clamp-to-new-ceiling contract.
                 p.AimSettleTimer = math.clamp(p.AimSettleTimer, 0f, next.Hero.AimSettleSeconds);
+                // Stage 2 Task 10: the two edge-request counters clamp into
+                // [0, the new EdgeRequestMinTicks] — same contract as the timers
+                // above, just counted in ticks instead of seconds. Without this,
+                // lowering EdgeRequestMinTicks mid-match would leave a player
+                // gated by the OLD, longer window until their counter drained.
+                p.DashRequestCooldownTicks =
+                    math.clamp(p.DashRequestCooldownTicks, 0, next.Hero.EdgeRequestMinTicks);
+                p.SlideRequestCooldownTicks =
+                    math.clamp(p.SlideRequestCooldownTicks, 0, next.Hero.EdgeRequestMinTicks);
                 _players[i] = p;
             }
         }
@@ -602,6 +629,13 @@ namespace Ring.Simulation.Core
             // Task 14: aim-settle progress clears the same way as the
             // other movement timers above — a corpse doesn't keep aiming.
             p.AimSettleTimer = 0f;
+            // Stage 2 Task 10: the edge-request counters clear too — a corpse
+            // receives no input (PlayerMovementSystem.UpdateDead never runs the
+            // gate), so a nonzero leftover would be stale state that nothing
+            // ever drains, and it is hashed. Same clean-corpse-read reason as
+            // every timer above.
+            p.DashRequestCooldownTicks = 0;
+            p.SlideRequestCooldownTicks = 0;
             Emit(SimEventKind.PlayerDied, blowPos, index, default, 0f, zone: zone, hitDir: dir,
                 playerIndex: (byte)index);
         }
@@ -693,14 +727,10 @@ namespace Ring.Simulation.Core
         /// projectile MUST pass `ownerIndex: ProjectileIds.NoOwner` explicitly —
         /// omitting it silently leaves OwnerIndex at 0, violating the "Mob ⇒
         /// NoOwner" invariant MobProjectile_HasNoOwnerIndex pins for the real
-        /// production path. Harmless today (OwnerIndex is outside StateHash until
-        /// Task 10), but becomes hash-significant then — checked at that task's
-        /// own gate, not this one. (T7 fix-round re-review: the five existing
-        /// Mob-owned call sites in HitZoneTests.cs/ProjectileTests.cs all still
-        /// rely on the unconditional `0` default rather than passing NoOwner —
-        /// so this warning is a forward-looking contract for NEW call sites,
-        /// not a documented existing pattern; those five fixtures are Task 10's
-        /// to reconcile, not this one's.)
+        /// production path. Stage 2 Task 10 made this load-bearing: OwnerIndex is
+        /// part of StateHash from that task on, and the five Mob-owned fixtures
+        /// that used to ride the `0` default (HitZoneTests.cs x2,
+        /// ProjectileTests.cs x3) now pass ProjectileIds.NoOwner explicitly.
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
             float height, float velZ, float damage, float radius, float ttl, byte ownerIndex = 0)
             => SpawnProjectile(owner, ownerIndex, pos, vel, height, velZ, damage, radius, ttl);
@@ -844,6 +874,10 @@ namespace Ring.Simulation.Core
         /// (RestoreState already handles the "reset to a saved snapshot" half) so
         /// EveryPlayerAndStatsFieldAffectsHash's per-field bump/assert pattern can
         /// be extended to MobState/ProjectileState/WaveState.
+        /// Stage 2 Task 10: WorldStats counterpart of SetWaveForTest below —
+        /// WorldStats is hashed at its own canonical position now, so the
+        /// reflective hash sweep needs a seam to bump it with.
+        internal void SetWorldStatsForTest(in WorldStats s) => _worldStats = s;
         internal void SetMobForTest(int index, in MobState m) => _mobs[index] = m;
         internal void SetProjectileForTest(int index, in ProjectileState p) => _projectiles[index] = p;
         internal void SetWaveForTest(in WaveState w) => _wave = w;
@@ -853,9 +887,20 @@ namespace Ring.Simulation.Core
         /// post-tick projectile state (e.g. Height/PrevHeight after VelZ integration).
         internal ProjectileState GetProjectileForTest(int index) => _projectiles[index];
 
-        /// Canonical order (spec §3.3; Task 3 — split rng into spreadRng/waveRng):
-        /// tick → spreadRng → waveRng → nextEntityId → player →
-        /// mobCount+mobs → projectileCount+projectiles → wave → stats.
+        /// Canonical order (spec §3.3; Task 3 — split rng into spreadRng/waveRng;
+        /// Stage 2 Task 10 — multiplayer reorder, the one sanctioned golden re-pin
+        /// of the stage-2 network phase):
+        /// tick → spreadRng → waveRng → nextEntityId → playerCount → players[0..n)
+        /// → mobCount+mobs → projectileCount+projectiles → wave → worldStats
+        /// → statsCount+stats[0..n).
+        ///
+        /// Both counts are hashed before their arrays for the same reason
+        /// _mobCount/_projectileCount always were: a length is state in its own
+        /// right, and folding it in first makes two different-length worlds
+        /// distinguishable even when their common prefix matches. playerCount and
+        /// statsCount are equal by construction today (both are _players.Length);
+        /// they are still hashed separately because the two arrays are separate
+        /// state that a future desync must be able to tell apart.
         public ulong StateHash()
         {
             ulong h = StateHash64.Begin();
@@ -863,16 +908,19 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, _spreadRng.state);
             h = StateHash64.Add(h, _waveRng.state);
             h = StateHash64.Add(h, _nextEntityId);
-            h = HashPlayer(h, in _players[0]);
+            h = StateHash64.Add(h, _players.Length);
+            for (int i = 0; i < _players.Length; i++) h = HashPlayer(h, in _players[i]);
             h = StateHash64.Add(h, _mobCount);
             for (int i = 0; i < _mobCount; i++) h = HashMob(h, in _mobs[i]);
             h = StateHash64.Add(h, _projectileCount);
             for (int i = 0; i < _projectileCount; i++) h = HashProjectile(h, in _projectiles[i]);
             h = HashWave(h, in _wave);
-            // Stage 2 Task 5: hashes StatsAt(0) + WorldStats only — the full
-            // MatchStats[] enters the hash in Task 10's canonical reorder (spec
-            // §3.2 hash order: ... -> worldStats -> statsCount+stats[0..n)).
-            h = HashStats(h, in _matchStats[0], in _worldStats);
+            // Stage 2 Task 10: the match-wide counters get their own hash step at
+            // their own canonical position instead of riding interleaved inside
+            // HashStats as Task 5 temporarily left them.
+            h = HashWorldStats(h, in _worldStats);
+            h = StateHash64.Add(h, _matchStats.Length);
+            for (int i = 0; i < _matchStats.Length; i++) h = HashStats(h, in _matchStats[i]);
             return h;
         }
 
@@ -892,6 +940,12 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.SlideDir); h = StateHash64.Add(h, p.SlideTimer);
             h = StateHash64.Add(h, p.SlideBufferTimer); h = StateHash64.Add(h, p.RunUpTimer);
             h = StateHash64.Add(h, p.PostDashSlideTimer); h = StateHash64.Add(h, p.LinkWindowTimer);
+            // Stage 2 Task 10: the two edge-request rate-limit counters — real
+            // per-player state that survives across ticks and decides whether the
+            // next request is honoured, so a replay/rollback that dropped them
+            // would diverge the moment a request lands.
+            h = StateHash64.Add(h, p.DashRequestCooldownTicks);
+            h = StateHash64.Add(h, p.SlideRequestCooldownTicks);
             return h;
         }
 
@@ -908,6 +962,13 @@ namespace Ring.Simulation.Core
         static ulong HashProjectile(ulong h, in ProjectileState p)
         {
             h = StateHash64.Add(h, p.Id); h = StateHash64.Add(h, (int)p.Owner);
+            // Stage 2 Task 10: OwnerIndex joins the hash right after Owner it
+            // qualifies (Stage 2 Task 7 introduced the field and deferred this
+            // step to the sanctioned re-pin). It decides who is credited with a
+            // hit/kill, so a replay that ignored it could credit a different
+            // player and still claim the same hash. Cast is explicit: byte has
+            // implicit conversions to several StateHash64.Add overloads at once.
+            h = StateHash64.Add(h, (int)p.OwnerIndex);
             h = StateHash64.Add(h, p.Pos); h = StateHash64.Add(h, p.PrevPos);
             h = StateHash64.Add(h, p.Vel); h = StateHash64.Add(h, p.Damage);
             h = StateHash64.Add(h, p.Radius); h = StateHash64.Add(h, p.Ttl);
@@ -924,17 +985,28 @@ namespace Ring.Simulation.Core
             return h;
         }
 
-        // temporary: world counters keep their T5 hash position until the T10 reorder
-        static ulong HashStats(ulong h, in MatchStats s, in WorldStats w)
+        /// Stage 2 Task 10: one player's PERSONAL counters only — the three
+        /// match-wide ones Task 5 had left interleaved here moved out to
+        /// HashWorldStats below, so this now hashes MatchStats' own fields in
+        /// their declaration order and nothing else.
+        static ulong HashStats(ulong h, in MatchStats s)
         {
             h = StateHash64.Add(h, s.Kills); h = StateHash64.Add(h, s.HeadshotKills);
-            h = StateHash64.Add(h, w.WavesCleared);
             h = StateHash64.Add(h, s.ShotsFired); h = StateHash64.Add(h, s.ShotsHit);
-            h = StateHash64.Add(h, s.DashesUsed);
-            h = StateHash64.Add(h, s.SlidesUsed);
+            h = StateHash64.Add(h, s.DashesUsed); h = StateHash64.Add(h, s.SlidesUsed);
+            h = StateHash64.Add(h, s.DeathTick); h = StateHash64.Add(h, s.DamageTaken);
+            return h;
+        }
+
+        /// Stage 2 Task 10: the match-wide counters, hashed once for the whole
+        /// world at their own canonical position (right after the wave, before
+        /// the per-player stats array) — mirroring the WorldStats/MatchStats
+        /// split Task 5 made in the state itself.
+        static ulong HashWorldStats(ulong h, in WorldStats w)
+        {
+            h = StateHash64.Add(h, w.WavesCleared);
             h = StateHash64.Add(h, w.MobSpawnsSkipped);
             h = StateHash64.Add(h, w.ProjectileSpawnsSkipped);
-            h = StateHash64.Add(h, s.DeathTick); h = StateHash64.Add(h, s.DamageTaken);
             return h;
         }
     }

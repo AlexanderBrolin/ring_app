@@ -41,6 +41,21 @@ namespace Ring.Simulation.Core
         /// Task 11).
         public float2 SlideDir;
         public float SlideTimer, SlideBufferTimer, RunUpTimer, PostDashSlideTimer, LinkWindowTimer;
+
+        /// Stage 2 Task 10: edge-request rate limit — one countdown PER KIND
+        /// (Р26; a single shared counter would cut the legal dash->slide link,
+        /// whose own windows Hero.PostDashSlideWindow / Hero.LinkWindowSeconds
+        /// are both shorter than a typical gate window). Each counts DOWN one
+        /// per tick in PlayerMovementSystem.Update and is re-armed to
+        /// Hero.EdgeRequestMinTicks whenever a request of that kind is ACCEPTED;
+        /// while it is above zero the next request of that kind is dropped —
+        /// dropped without latching the input buffer, which is the only thing
+        /// that makes the gate effective at all (see the gate's own comment).
+        /// Ticks, not seconds, because the limit is stated against the network
+        /// input rate, not against wall time. Zeroed on death alongside the
+        /// movement timers (SimulationWorld.KillPlayer) and clamped into
+        /// [0, EdgeRequestMinTicks] by ApplyConfig, like every timer above.
+        public int DashRequestCooldownTicks, SlideRequestCooldownTicks;
     }
 
     public enum MobType : byte { Chaser = 0, Gunner = 1 }
@@ -86,10 +101,10 @@ namespace Ring.Simulation.Core
         /// Mob-owned projectile, else the shooter's own PlayerAt index
         /// (WeaponSystem's own `index`). Drives per-shooter
         /// ShotsHit/Kills/HeadshotKills credit (SimulationWorld.DamageMob)
-        /// instead of the former hardcoded player 0. NOT yet part of
-        /// StateHash — enters it in Task 10 together with the canonical field
-        /// reorder and the sanctioned golden re-pin
-        /// (WorldLifecycleTests.PendingHashFields).
+        /// instead of the former hardcoded player 0. Part of StateHash since
+        /// Stage 2 Task 10 (which is where the canonical field reorder and the
+        /// sanctioned golden re-pin happened) — hashed right after Owner, the
+        /// field it qualifies.
         public byte OwnerIndex;
         public float2 Pos, PrevPos, Vel;
         public float Damage, Radius, Ttl;

@@ -32,9 +32,12 @@ namespace Ring.Simulation.Core
         /// Aim-down-sights movement/settle profile (Task 2).
         public float AimMoveSpeedFrac, AimSlideSpeedMult, AimSettleSeconds;
 
-        /// Stage 2 Task 8 (spec Interfaces): minimum tick gap between two edge
-        /// requests (Dash/Slide) from the same player. Data-only — no
-        /// consumer yet, the gate itself lands in Stage 2 Task 10.
+        /// Stage 2 Task 8 (spec Interfaces): minimum tick gap between two
+        /// ACCEPTED edge requests of the same kind (Dash/Slide) from the same
+        /// player. Consumed by the rate limit at the top of
+        /// PlayerMovementSystem.Update since Stage 2 Task 10, which also clamps
+        /// PlayerState's two counters against it in SimulationWorld.ApplyConfig.
+        /// 0 disables the limit (every request is accepted).
         public int EdgeRequestMinTicks;
     }
 

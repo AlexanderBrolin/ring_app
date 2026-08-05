@@ -93,15 +93,20 @@ namespace Ring.Simulation.Tests
             var c = TestConfigs.Open();
             var w = new SimulationWorld(1, c);
             // enemy projectile right in front of the player during the dash frame — i-frames are active
+            // Stage 2 Task 10 (carryover-t10.md item 2): explicit NoOwner — the
+            // seam's default 0 models a solo PLAYER's shot, and OwnerIndex is
+            // part of StateHash from this task on.
             w.SpawnProjectileForTest(ProjectileOwner.Mob,
-                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f);
+                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f,
+                ownerIndex: ProjectileIds.NoOwner);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true });
             w.Tick(default);
             Assert.AreEqual(c.Hero.MaxHp, w.Player.Hp); // i-frames absorbed it
             for (int i = 0; i < 10; i++) w.Tick(default); // dash and i-frames have expired
             // second projectile — from the player's CURRENT position (shifted after the dash)
             w.SpawnProjectileForTest(ProjectileOwner.Mob,
-                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f);
+                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f,
+                ownerIndex: ProjectileIds.NoOwner); // Stage 2 Task 10: see above
             for (int i = 0; i < 4; i++) w.Tick(default);
             Assert.Less(w.Player.Hp, c.Hero.MaxHp);
         }
@@ -144,7 +149,8 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
             // enemy projectile flies toward the player through two mobs — ignores the mobs
             w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(10f, 0f),
-                new float2(-30f, 0f), 1f, 0f, 5f, 0.15f, 2f);
+                new float2(-30f, 0f), 1f, 0f, 5f, 0.15f, 2f,
+                ownerIndex: ProjectileIds.NoOwner); // Stage 2 Task 10 (carryover-t10.md item 2)
             for (int i = 0; i < 12; i++) w.Tick(default);
             var snap = new RenderSnapshot(cfg.Arena);
             w.CaptureSnapshot(snap);

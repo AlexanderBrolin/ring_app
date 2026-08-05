@@ -85,13 +85,28 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             var dashDiagonal = new SimInput
                 { MoveDir = new float2(1f, 0.05f), DashRequested = true };
+            // Stage 2 Task 10: the loop spams DashRequested every tick, so the
+            // edge-request rate limit drops two of every three requests. The
+            // per-tick cap under test is unaffected (it is a property of
+            // MoveWithCollisions reporting only its FIRST contact, not of how
+            // often a dash is requested), and the run still reaches the corner
+            // and bounces — but "still bounces" is exactly the sort of premise a
+            // rate limit could quietly destroy, turning this into a test that
+            // passes by never ricocheting at all. So the total is accumulated
+            // and asserted non-zero below instead of being assumed.
+            int totalRicochets = 0;
             for (int i = 0; i < 200; i++)
             {
                 w.ClearEvents();
                 w.Tick(dashDiagonal);
-                Assert.LessOrEqual(TestEvents.CountOf(w, SimEventKind.DashRicocheted), 1,
+                int thisTick = TestEvents.CountOf(w, SimEventKind.DashRicocheted);
+                Assert.LessOrEqual(thisTick, 1,
                     "more than one DashRicocheted reported for a single tick");
+                totalRicochets += thisTick;
             }
+            Assert.Greater(totalRicochets, 0,
+                "the run must actually ricochet at least once — a rate limit that starved " +
+                "this fixture of dashes would leave the per-tick cap vacuously true");
         }
 
         [Test]

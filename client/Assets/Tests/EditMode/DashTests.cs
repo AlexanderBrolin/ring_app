@@ -78,12 +78,26 @@ namespace Ring.Simulation.Tests
             cfg.Arena.ObstaclePos = new[] { new float2(2f, 0f) };
             cfg.Arena.ObstacleRadius = new[] { 0.6f }; // дэш-шаг 0.73 м > диаметра нет, но свип обязан
             var w = new SimulationWorld(1, cfg);
+            // Stage 2 Task 10: this loop spams DashRequested every tick, so the
+            // edge-request rate limit now drops two out of every three requests
+            // (Hero.EdgeRequestMinTicks = 3). The invariant under test is
+            // unaffected — what drives the player into the obstacle is the
+            // ACTIVE dash (DashTimer/DashDir), not the per-tick request — and the
+            // number of dashes this run gets is unchanged too: it is bounded by
+            // Hero.DashCooldown (1.2 s = 36 ticks, far longer than these 10),
+            // not by the gate. Both facts are pinned below rather than left
+            // implicit, so a future gate change that silently starved this
+            // fixture of its one dash fails here instead of going unnoticed.
             for (int i = 0; i < 10; i++)
             {
                 w.Tick(DashRight);
                 Assert.IsFalse(Geometry.CircleOverlap(w.Player.Pos, cfg.Hero.Radius - 0.01f,
                     new float2(2f, 0f), 0.6f), "player tunneled into the obstacle");
             }
+            Assert.AreEqual(1, w.Stats.DashesUsed,
+                "the cooldown, not the rate limit, is what caps this run at a single dash");
+            Assert.Greater(w.RejectedEdgeRequestsForTest, 0,
+                "per-tick spam must actually be reaching the rate limit here");
         }
     }
 }

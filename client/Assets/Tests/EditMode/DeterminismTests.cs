@@ -72,6 +72,31 @@ namespace Ring.Simulation.Tests
             return world.StateHash();
         }
 
+        /// Stage 2 Task 10: the multiplayer counterpart of RunScripted above —
+        /// three players, each fed its OWN scripted input drawn from the same
+        /// local Random in increasing player order, so every player's stream is
+        /// independent of the others' while the whole run stays reproducible
+        /// from the one input seed. This is what pins the canonical hash order's
+        /// player/stats ARRAY halves (playerCount + players[0..n), statsCount +
+        /// stats[0..n)): the solo golden below can only ever exercise index 0.
+        /// `aimHeld` is one LOCAL flag per player (an array element passed by
+        /// ref) for the same no-static-leak reason RunScripted's own local has.
+        static ulong RunMultiScripted(uint inputSeed, int ticks, int playerCount)
+        {
+            SimConfig cfg = TestConfigs.Default();
+            var world = new SimulationWorld(42, cfg, playerCount);
+            var rng = new Random(inputSeed);
+            var aimHeld = new bool[playerCount];
+            var inputs = new SimInput[playerCount];
+            for (int i = 0; i < ticks; i++)
+            {
+                for (int p = 0; p < playerCount; p++)
+                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight);
+                world.TickAll(inputs);
+            }
+            return world.StateHash();
+        }
+
         [Test]
         public void SameSeed_SameHash_After1000Ticks()
         {
@@ -151,6 +176,18 @@ namespace Ring.Simulation.Tests
                 for (int i = 0; i < 50; i++) w.Tick(default); // zero moveDir
                 var p = w.Player;
                 Assert.IsTrue(math.all(math.isfinite(p.Pos)) && math.all(math.isfinite(p.Vel)));
+                // Stage 2 Task 10: the `nan` block above also holds
+                // DashRequested true for 50 straight ticks — request spam is
+                // hostile input in its own right, and this is the one existing
+                // scenario that already exercised it. The rate limit must be
+                // dropping most of it (Hero.EdgeRequestMinTicks = 3 keeps
+                // roughly one request in three), and the finiteness and
+                // determinism asserted around this line must hold WITH the gate
+                // in the loop, not merely without it. Asserted, not assumed, so
+                // that a gate accidentally disabled for hostile/NaN input turns
+                // this red instead of silently reverting the scenario.
+                Assert.Greater(w.RejectedEdgeRequestsForTest, 0,
+                    "50 ticks of held DashRequested must reach the edge-request rate limit");
                 return w.StateHash();
             }
             Assert.AreEqual(Run(), Run()); // two independent worlds, same hash
@@ -395,8 +432,58 @@ namespace Ring.Simulation.Tests
             // SlideRequested draw (~5%/tick) can land on a tick the stamina
             // gate fails, so the scripted run's Vel/Pos trace on those ticks
             // legitimately differs from repin #11's.
-            const ulong GoldenHash = 0x760AEB00D11301C4UL; // = 8505869234982814148
+            //
+            // Re-pinned by Stage 2 Task 10 (repin #13, the ONE sanctioned golden
+            // shift of the stage-2 network phase): the player array, WorldStats,
+            // ProjectileState.OwnerIndex, the two edge-request rate-limit
+            // counters and the edge-request gate itself all entered the hash.
+            // Four distinct causes, all legitimate: (1) the canonical order is
+            // now playerCount + players[0..n) ... worldStats + statsCount +
+            // stats[0..n), so the counts and the array shape are hashed where
+            // Task 5 hashed a single player and a single interleaved stats
+            // block; (2) HashProjectile folds in OwnerIndex, live on every shot
+            // the scripted run fires; (3) HashPlayer folds in
+            // DashRequestCooldownTicks/SlideRequestCooldownTicks, which move on
+            // every scripted dash/slide request; (4) the gate itself changes
+            // BEHAVIOUR — Scripted() rolls DashRequested and SlideRequested at
+            // 5%/tick each, so over 1000 ticks it repeatedly asks twice inside
+            // one EdgeRequestMinTicks window, and the second ask is now dropped
+            // before it can latch the (hashed) input buffer.
+            const ulong GoldenHash = 0xA39774BCF07D8014UL; // = 11788018904502992916
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
+        }
+
+        [Test]
+        public void MultiPlayerGoldenHash_ScriptedScenario()
+        {
+            // Stage 2 Task 10, FIRST pin of this constant (not a re-pin): the
+            // solo golden above walks exactly one player and one MatchStats
+            // slot, so it cannot see the array halves of the canonical hash
+            // order (playerCount + players[0..n), statsCount + stats[0..n)) —
+            // a HashPlayer/HashStats loop silently truncated back to index 0
+            // would leave it green. This pins a three-player run: world seed 42,
+            // scripted input from Random(123) drawn per player in increasing
+            // index order, 1000 ticks.
+            //
+            // Same first-run procedure the solo golden documents: with the
+            // constant at 0 this assert fails and NUnit prints the actual hash.
+            // Pinned in Stage 2 Task 10 (first pin of this constant, NOT a
+            // re-pin — it never held a nonzero value before): three players
+            // spawned on the ring, each drawing its own scripted input, over the
+            // full canonical hash order including both array halves.
+            const ulong MultiGoldenHash = 0x86B7254BF9FD2A9AUL; // = 9707268530067286682
+            Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
+        }
+
+        [Test]
+        public void MultiPlayerScriptedRun_SameSeed_SameHash()
+        {
+            // Companion to ScriptedRun_SameSeed_SameHash for the multiplayer
+            // generator: the pinned constant above is only meaningful if the run
+            // it pins is reproducible in the first place, and if a different
+            // input seed actually reaches a different world.
+            Assert.AreEqual(RunMultiScripted(123, Ticks, 3), RunMultiScripted(123, Ticks, 3));
+            Assert.AreNotEqual(RunMultiScripted(123, Ticks, 3), RunMultiScripted(43, Ticks, 3));
         }
 
         [Test]
