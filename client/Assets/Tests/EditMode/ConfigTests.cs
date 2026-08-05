@@ -222,10 +222,21 @@ namespace Ring.Simulation.Tests
             // code/JSON/test fixtures is not bounded by it at all, only by the
             // old ReqNonNegative(>= 0) check. Mirrors the upper-bound precedent
             // set for Arena.MaxPlayers in Task 4.
+            // Mutation-testing note (app-zx8 Step 6): at the shipped default
+            // link windows (~0.25-0.32s) every value above 15 ticks is already
+            // >= 0.5s, so it also trips the cross-check below — a test using
+            // default windows could never isolate this rule from that one
+            // (confirmed by mutation: dropping the range check alone left this
+            // test passing). Widening both link windows to their own
+            // [Range(0,1)] ceiling first pushes the cross-check threshold
+            // (~30 ticks) safely above 16, so only the range rule can fire.
             var hero = ScriptableObject.CreateInstance<HeroConfig>();
-            hero.EdgeRequestMinTicks = 16; // outside [0, 15]
+            hero.LinkWindowSeconds = 1f; // own [Range(0,1)] ceiling
+            hero.PostDashSlideWindow = 1f; // own [Range(0,1)] ceiling
+            hero.EdgeRequestMinTicks = 16; // outside [0, 15]; still well under either widened window
             var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
             Assert.That(ex.Message, Does.Contain("EdgeRequestMinTicks"));
+            Assert.That(ex.Message, Does.Not.Contain("LinkWindowSeconds")); // must be the range rule, not the cross-check
         }
 
         [Test]
