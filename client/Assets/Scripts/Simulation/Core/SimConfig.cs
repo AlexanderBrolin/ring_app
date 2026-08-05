@@ -107,6 +107,14 @@ namespace Ring.Simulation.Core
         public float2[] ObstaclePos;
         public float[] ObstacleRadius;
         public int MaxMobs, MaxProjectiles, MaxEventsPerFrame;
+
+        /// Task 4 (spec §3.2): per-match player cap and the multiplayer spawn-ring
+        /// radius fraction (ring radius = Radius * PlayerSpawnRingFrac). Read
+        /// by SimulationWorld's constructor guard/SpawnPosFor and by
+        /// SimConfigBuilder.Validate's spawn-clearance check — both reuse the
+        /// same formula, not a duplicated copy of the trigonometry.
+        public int MaxPlayers;
+        public float PlayerSpawnRingFrac;
     }
 
     /// Full balance snapshot for one match — plain data, no ScriptableObjects.

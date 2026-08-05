@@ -152,7 +152,9 @@ namespace Ring.Data
                 ObstacleRadius = radius,
                 MaxMobs = a.MaxMobs,
                 MaxProjectiles = a.MaxProjectiles,
-                MaxEventsPerFrame = a.MaxEventsPerFrame
+                MaxEventsPerFrame = a.MaxEventsPerFrame,
+                MaxPlayers = a.MaxPlayers,
+                PlayerSpawnRingFrac = a.PlayerSpawnRingFrac
             };
         }
 
@@ -299,6 +301,13 @@ namespace Ring.Data
             ReqPositive(errors, "Arena.MaxProjectiles", cfg.Arena.MaxProjectiles);
             ReqPositive(errors, "Arena.MaxEventsPerFrame", cfg.Arena.MaxEventsPerFrame);
             ReqPositive(errors, "Arena.SpawnClearance", spawnClearance);
+            // Task 4 (spec §3.2): must stay in lockstep with ArenaConfig's own
+            // [Range(...)] Inspector hints — those are never enforced outside
+            // the Editor UI, so the builder rejects an out-of-range value
+            // reaching it programmatically too (same I3 rationale as
+            // ValidateMob's SwingLeadFactor check below).
+            ReqInRange(errors, "Arena.MaxPlayers", cfg.Arena.MaxPlayers, 1, 3);
+            ReqInRange(errors, "Arena.PlayerSpawnRingFrac", cfg.Arena.PlayerSpawnRingFrac, 0.1f, 0.95f);
 
             for (int i = 0; i < cfg.Arena.ObstacleCount; i++)
             {
@@ -317,11 +326,19 @@ namespace Ring.Data
                         $"(|pos|+r={dist + r:F3} > Arena.Radius={cfg.Arena.Radius:F3}).");
                 }
 
+                // Task 4 (spec §3.2): the builder doesn't know the match's actual
+                // playerCount (it arrives later, from MatchConfig) — so it
+                // conservatively checks every potential spawn point: the solo
+                // spawn at the arena center, and every point on the
+                // MaxPlayers-point ring SimulationWorld.SpawnPosFor computes
+                // (same formula reused from the constructor, not duplicated —
+                // reuse > duplication).
                 float clearanceNeeded = r + cfg.Hero.Radius + spawnClearance;
-                if (dist <= clearanceNeeded)
+                CheckSpawnClearance(errors, tag, pos, clearanceNeeded, float2.zero, "solo center");
+                for (int s = 0; s < cfg.Arena.MaxPlayers; s++)
                 {
-                    errors.Add($"{tag} covers the player spawn point " +
-                        $"(|pos|={dist:F3} <= r+Hero.Radius+SpawnClearance={clearanceNeeded:F3}).");
+                    float2 spawnPos = SimulationWorld.SpawnPosFor(s, cfg.Arena.MaxPlayers, in cfg.Arena);
+                    CheckSpawnClearance(errors, tag, pos, clearanceNeeded, spawnPos, $"ring point {s}");
                 }
             }
 
@@ -412,6 +429,29 @@ namespace Ring.Data
         {
             if (value < 0)
                 errors.Add($"{name} must be >= 0 (got {value}).");
+        }
+
+        /// Task 4: a bounded integer field (e.g. Arena.MaxPlayers) — both ends
+        /// inclusive, matching the [Range(min, max)] Inspector hint it mirrors.
+        static void ReqInRange(List<string> errors, string name, int value, int min, int max)
+        {
+            if (value < min || value > max)
+                errors.Add($"{name} must be in [{min}, {max}] (got {value}).");
+        }
+
+        /// Task 4 (spec §3.2): one obstacle-vs-one-candidate-spawn-point check,
+        /// factored out so the loop above can run it once for the solo center
+        /// and once per point on the MaxPlayers-point ring without repeating
+        /// the distance/message logic.
+        static void CheckSpawnClearance(List<string> errors, string tag, float2 obstaclePos,
+            float clearanceNeeded, float2 spawnPos, string pointTag)
+        {
+            float dist = math.distance(obstaclePos, spawnPos);
+            if (dist <= clearanceNeeded)
+            {
+                errors.Add($"{tag} covers the player spawn point ({pointTag}) " +
+                    $"(dist={dist:F3} <= r+Hero.Radius+SpawnClearance={clearanceNeeded:F3}).");
+            }
         }
 
         /// Task 2: a stamina-cost field must be positive and not exceed the pool it

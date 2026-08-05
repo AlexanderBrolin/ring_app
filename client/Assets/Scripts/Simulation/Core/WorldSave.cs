@@ -11,7 +11,8 @@ namespace Ring.Simulation.Core
         public Random SpreadRng;
         public Random WaveRng;
         public int NextEntityId;
-        public PlayerState Player;
+        public PlayerState[] Players;
+        public int PlayerCount;
         public int MobCount;
         public MobState[] Mobs;
         public int ProjectileCount;

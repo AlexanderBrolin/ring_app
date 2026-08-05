@@ -317,6 +317,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.MaxMobs, a.MaxMobs);
             Assert.AreEqual(e.MaxProjectiles, a.MaxProjectiles);
             Assert.AreEqual(e.MaxEventsPerFrame, a.MaxEventsPerFrame);
+            // Task 4: documented deviation from the task-4 brief's Files list —
+            // ConfigTests.cs isn't listed there, but without this the two new
+            // fields silently drop out of Build_DefaultAssets_MatchesTestConfigsBaseline's
+            // coverage (see task-4-report.md).
+            Assert.AreEqual(e.MaxPlayers, a.MaxPlayers);
+            Assert.AreEqual(e.PlayerSpawnRingFrac, a.PlayerSpawnRingFrac, Eps);
             for (int i = 0; i < e.ObstacleCount; i++)
             {
                 Assert.AreEqual(e.ObstaclePos[i].x, a.ObstaclePos[i].x, Eps);

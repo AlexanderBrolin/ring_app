@@ -20,7 +20,16 @@ namespace Ring.Simulation.Core
         Random _spreadRng;
         Random _waveRng;
         SimConfig _config;
-        readonly PlayerState[] _players = new PlayerState[1];
+        // Task 4: length is the match's fixed playerCount (constructor param),
+        // not a cap — unlike _mobs/_projectiles below, the player count never
+        // grows/shrinks over a match's lifetime in the MVP (no mid-match join).
+        readonly PlayerState[] _players;
+        // Scratch buffer holding this tick's per-player sanitized input (Task
+        // 4) — the movement loop computes it once per player and the weapon
+        // loop below reuses the SAME sanitized value (not a re-sanitize),
+        // exactly like the old single-player Tick did. Preallocated to
+        // _players.Length so TickAll never allocates on the hot path.
+        readonly SimInput[] _sanitizedInputs;
         MatchStats _stats;
 
         // Entities appear in Phase 5/6 — arrays are preallocated to arena caps
@@ -49,16 +58,33 @@ namespace Ring.Simulation.Core
 
         public int CurrentTick => _tick;
         public MatchStats Stats => _stats;
-        public PlayerState Player => _players[0];
+        /// Synonym for PlayerAt(0) (Task 4) — every pre-Task-4 solo call site
+        /// keeps compiling unchanged.
+        public PlayerState Player => PlayerAt(0);
+        /// Number of players in this match (Task 4) — fixed for the world's
+        /// whole lifetime, set by the constructor's playerCount parameter.
+        public int PlayerCount => _players.Length;
         public SimConfig Config => _config;
+
+        /// Task 4 Interfaces: read-only access to one player's live state by index.
+        public PlayerState PlayerAt(int index) => _players[index];
 
         /// Events emitted since the last ClearEvents() call.
         public int EventCount => _eventCount;
         /// Cumulative count of events dropped because the per-frame buffer was full.
         public int DroppedEvents { get; private set; }
 
-        public SimulationWorld(long seed, in SimConfig config)
+        /// `playerCount` defaults to 1 so every pre-Task-4 call site (136
+        /// existing constructions) keeps compiling and behaving identically —
+        /// solo still spawns at the arena center (spec §3.2), not on the ring.
+        public SimulationWorld(long seed, in SimConfig config, int playerCount = 1)
         {
+            if (playerCount < 1 || playerCount > config.Arena.MaxPlayers)
+            {
+                throw new System.ArgumentOutOfRangeException(nameof(playerCount), playerCount,
+                    $"SimulationWorld: playerCount must be in [1, {config.Arena.MaxPlayers}] " +
+                    "(Arena.MaxPlayers).");
+            }
             uint folded = (uint)(seed ^ (seed >> 32));
             // Task 3: two independent streams, each derived from the same folded
             // seed XORed with a stream-specific constant so weapon spread and wave
@@ -68,8 +94,20 @@ namespace Ring.Simulation.Core
             _spreadRng = new Random(Fold(folded ^ 0xB5297A4Du));
             _waveRng = new Random(Fold(folded ^ 0x68E31DA4u));
             _config = config;
-            _players[0] = new PlayerState
-                { Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true };
+            _players = new PlayerState[playerCount];
+            _sanitizedInputs = new SimInput[playerCount];
+            for (int i = 0; i < playerCount; i++)
+            {
+                float2 pos = SpawnPosFor(i, playerCount, in config.Arena);
+                float2 vel = float2.zero; // fresh spawn, no inherited velocity
+                // Same depenetration seam PlayerMovementSystem/SeparationSystem
+                // use — a safety net for the (validated-clean, per
+                // SimConfigBuilder's spawn-clearance check) case where an
+                // obstacle still overlaps a spawn point.
+                Geometry.Depenetrate(ref pos, ref vel, config.Hero.Radius, in config.Arena, 1);
+                _players[i] = new PlayerState
+                    { Pos = pos, Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true };
+            }
             // Wave director starts idle, counting down to the first wave (Task 22
             // Interfaces) — WavePhase.Waiting is the enum's zero value, but
             // PhaseTimer must be set explicitly or the countdown would start
@@ -82,60 +120,60 @@ namespace Ring.Simulation.Core
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
         }
 
-        public void Tick(in SimInput rawInput)
+        /// Canonical multiplayer spawn-point formula (spec §3.2) — single source of
+        /// truth shared by the constructor above and
+        /// SimConfigBuilder.Validate's spawn-clearance check (reuse >
+        /// duplication). Solo (playerCount <= 1) spawns at the arena center,
+        /// unchanged from the pre-Task-4 single-player behaviour (189 existing
+        /// tests depend on it); otherwise index sits on a ring at
+        /// Radius * PlayerSpawnRingFrac, evenly spaced by angle, with no
+        /// seed-dependent rotation — spawn layout must stay reproducible
+        /// across replays regardless of match seed.
+        public static float2 SpawnPosFor(int index, int playerCount, in ArenaSimConfig arena)
         {
-            SimInput input = Sanitize(rawInput);
-            _tick++;
-            // Death semantics (spec §3.12, Task 23): once dead, input/dash/weapon
-            // are inert — the body just decelerates under friction and keeps
-            // resolving collisions, it never reacts to input again. AimPoint is
-            // part of that: it must stay pinned at its value at death, not keep
-            // tracking the raw (still-arriving) mouse input — it also feeds
-            // HashPlayer, so a live AimPoint would make the post-death state
-            // (and therefore the replay hash) depend on input the player can no
-            // longer act on.
-            if (_players[0].Alive)
+            if (playerCount <= 1) return float2.zero;
+            float angle = index * 2f * math.PI / playerCount;
+            float ringRadius = arena.Radius * arena.PlayerSpawnRingFrac;
+            return new float2(math.cos(angle), math.sin(angle)) * ringRadius;
+        }
+
+        /// Solo overload (Task 4) — throws for a multiplayer world (spec §3.2): the
+        /// pair `Tick(in SimInput)` + `Tick(ReadOnlySpan<SimInput>)` would make
+        /// every existing `w.Tick(default)` call ambiguous (CS0121), which is
+        /// why the canonical multi-player entry point is named TickAll instead.
+        public void Tick(in SimInput input)
+        {
+            if (_players.Length > 1)
             {
-                _players[0].AimPoint = input.AimPoint;
-                MovementResult moveResult = PlayerMovementSystem.Update(ref _players[0], in input, in _config);
-                if (moveResult.DashStarted)
-                {
-                    _stats.DashesUsed++;
-                    Emit(SimEventKind.PlayerDashed, _players[0].Pos, 0, default, 0f);
-                }
-                if (moveResult.DashDenied)
-                {
-                    // Missing cost (Task 9 Interfaces): Update() never touches
-                    // Stamina on a denied attempt, so the pre-tick value is
-                    // exactly what's still sitting on _players[0] right now.
-                    Emit(SimEventKind.StaminaDenied, _players[0].Pos, 0, default,
-                        _config.Hero.DashStaminaCost - _players[0].Stamina);
-                }
-                if (moveResult.SlideStarted)
-                {
-                    _stats.SlidesUsed++;
-                    Emit(SimEventKind.PlayerSlideStarted, _players[0].Pos, 0, default, 0f,
-                        hitDir: _players[0].SlideDir);
-                }
-                if (moveResult.SlideDenied)
-                {
-                    // Same missing-cost contract as DashDenied above, against
-                    // SlideStaminaCost (Task 10).
-                    Emit(SimEventKind.StaminaDenied, _players[0].Pos, 0, default,
-                        _config.Hero.SlideStaminaCost - _players[0].Stamina);
-                }
-                if (moveResult.Ricocheted)
-                {
-                    // Task 12: Pos is the contact point (not the player's
-                    // post-slide position), HitDir the surface normal.
-                    Emit(SimEventKind.DashRicocheted, moveResult.RicochetPos, 0, default, 0f,
-                        hitDir: moveResult.RicochetNormal);
-                }
-                WeaponSystem.Update(this, ref _players[0], in input);
+                throw new System.InvalidOperationException(
+                    "SimulationWorld.Tick(in SimInput) is the solo overload — call TickAll(ReadOnlySpan<SimInput>) " +
+                    $"instead (this world has {_players.Length} players).");
             }
-            else
+            System.Span<SimInput> single = stackalloc SimInput[1];
+            single[0] = input;
+            TickAll(single);
+        }
+
+        /// Canonical multi-player tick (Task 4 Interfaces). `inputs[i]` is
+        /// player i's raw input for this tick; the span must have at least
+        /// PlayerCount elements.
+        public void TickAll(System.ReadOnlySpan<SimInput> inputs)
+        {
+            _tick++;
+            // Canonical order (brief/context): movement of ALL players by
+            // increasing index, THEN weapon of ALL players — two separate
+            // loops, not interleaved per player. Player i's weapon phase must
+            // see every player's POST-movement position for this tick, not
+            // just its own (CanonicalTickOrder_MovementBeforeWeapon).
+            for (int i = 0; i < _players.Length; i++)
             {
-                PlayerMovementSystem.UpdateDead(ref _players[0], in _config);
+                _sanitizedInputs[i] = Sanitize(inputs[i], i);
+                TickMovement(i, in _sanitizedInputs[i]);
+            }
+            for (int i = 0; i < _players.Length; i++)
+            {
+                if (_players[i].Alive)
+                    WeaponSystem.Update(this, ref _players[i], in _sanitizedInputs[i]);
             }
             // Canonical tick order (spec Interfaces, Task 16/19/20): movement →
             // weapon → mobs (Phase 6) → mob separation → projectiles → (waves,
@@ -152,6 +190,64 @@ namespace Ring.Simulation.Core
             WaveSystem.Update(this);
         }
 
+        /// One player's movement sub-step of TickAll (Task 4 — split out of the
+        /// old single-player Tick body so the movement-all-players loop and the
+        /// weapon-all-players loop can share it without duplicating the
+        /// dash/slide/ricochet event bookkeeping). Death semantics (spec
+        /// §3.12, Task 23): once dead, input/dash/weapon are inert — the body
+        /// just decelerates under friction and keeps resolving collisions, it
+        /// never reacts to input again. AimPoint is part of that: it must stay
+        /// pinned at its value at death, not keep tracking the raw
+        /// (still-arriving) mouse input — it also feeds HashPlayer, so a live
+        /// AimPoint would make the post-death state (and therefore the replay
+        /// hash) depend on input the player can no longer act on.
+        void TickMovement(int i, in SimInput input)
+        {
+            ref PlayerState p = ref _players[i];
+            if (p.Alive)
+            {
+                p.AimPoint = input.AimPoint;
+                MovementResult moveResult = PlayerMovementSystem.Update(ref p, in input, in _config);
+                if (moveResult.DashStarted)
+                {
+                    _stats.DashesUsed++;
+                    Emit(SimEventKind.PlayerDashed, p.Pos, 0, default, 0f);
+                }
+                if (moveResult.DashDenied)
+                {
+                    // Missing cost (Task 9 Interfaces): Update() never touches
+                    // Stamina on a denied attempt, so the pre-tick value is
+                    // exactly what's still sitting on p right now.
+                    Emit(SimEventKind.StaminaDenied, p.Pos, 0, default,
+                        _config.Hero.DashStaminaCost - p.Stamina);
+                }
+                if (moveResult.SlideStarted)
+                {
+                    _stats.SlidesUsed++;
+                    Emit(SimEventKind.PlayerSlideStarted, p.Pos, 0, default, 0f,
+                        hitDir: p.SlideDir);
+                }
+                if (moveResult.SlideDenied)
+                {
+                    // Same missing-cost contract as DashDenied above, against
+                    // SlideStaminaCost (Task 10).
+                    Emit(SimEventKind.StaminaDenied, p.Pos, 0, default,
+                        _config.Hero.SlideStaminaCost - p.Stamina);
+                }
+                if (moveResult.Ricocheted)
+                {
+                    // Task 12: Pos is the contact point (not the player's
+                    // post-slide position), HitDir the surface normal.
+                    Emit(SimEventKind.DashRicocheted, moveResult.RicochetPos, 0, default, 0f,
+                        hitDir: moveResult.RicochetNormal);
+                }
+            }
+            else
+            {
+                PlayerMovementSystem.UpdateDead(ref p, in _config);
+            }
+        }
+
         /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
         /// the tick boundary (caller must only invoke this between ticks). Arena
         /// topology (radius, obstacle count/positions/radii) must stay identical —
@@ -159,6 +255,9 @@ namespace Ring.Simulation.Core
         /// here, so it throws instead; Presentation reacts by restarting the world.
         /// Migration: Hp clamps down to the new max, every player timer clamps into
         /// [0, its new max], wave-state (including WaveIndex) is left untouched.
+        /// Task 4: migrates every player in the match, not just player 0 — for
+        /// a solo world (_players.Length == 1) this is byte-for-byte the same
+        /// single migration as before.
         public void ApplyConfig(in SimConfig next)
         {
             if (!ArenaTopologyMatches(in _config.Arena, in next.Arena))
@@ -169,29 +268,32 @@ namespace Ring.Simulation.Core
 
             _config = next;
 
-            PlayerState p = _players[0];
-            p.Hp = math.min(p.Hp, next.Hero.MaxHp);
-            p.Stamina = math.clamp(p.Stamina, 0f, next.Hero.StaminaMax);
-            p.StaminaRegenDelayTimer = math.clamp(p.StaminaRegenDelayTimer, 0f, next.Hero.StaminaRegenDelay);
-            p.DashTimer = math.clamp(p.DashTimer, 0f, next.Hero.DashDuration);
-            p.DashCooldown = math.clamp(p.DashCooldown, 0f, next.Hero.DashCooldown);
-            // Task 12: a ricochet-decayed DashSpeedCur must not exceed the new
-            // config's DashSpeed ceiling — same clamp-to-new-ceiling contract
-            // as every other dash timer/value here.
-            p.DashSpeedCur = math.clamp(p.DashSpeedCur, 0f, next.Hero.DashSpeed);
-            p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
-            p.DashBufferTimer = math.clamp(p.DashBufferTimer, 0f, next.Hero.DashBufferWindow);
-            p.FireCooldown = math.clamp(p.FireCooldown, 0f, next.Weapon.FireInterval);
-            // Task 10: slide timers, same clamp-to-new-ceiling contract as the
-            // dash timers above.
-            p.SlideTimer = math.clamp(p.SlideTimer, 0f, next.Hero.SlideDuration);
-            p.SlideBufferTimer = math.clamp(p.SlideBufferTimer, 0f, next.Hero.SlideBufferWindow);
-            p.RunUpTimer = math.clamp(p.RunUpTimer, 0f, next.Hero.RunUpSeconds);
-            p.PostDashSlideTimer = math.clamp(p.PostDashSlideTimer, 0f, next.Hero.PostDashSlideWindow);
-            p.LinkWindowTimer = math.clamp(p.LinkWindowTimer, 0f, next.Hero.LinkWindowSeconds);
-            // Task 14: aim-settle progress, same clamp-to-new-ceiling contract.
-            p.AimSettleTimer = math.clamp(p.AimSettleTimer, 0f, next.Hero.AimSettleSeconds);
-            _players[0] = p;
+            for (int i = 0; i < _players.Length; i++)
+            {
+                PlayerState p = _players[i];
+                p.Hp = math.min(p.Hp, next.Hero.MaxHp);
+                p.Stamina = math.clamp(p.Stamina, 0f, next.Hero.StaminaMax);
+                p.StaminaRegenDelayTimer = math.clamp(p.StaminaRegenDelayTimer, 0f, next.Hero.StaminaRegenDelay);
+                p.DashTimer = math.clamp(p.DashTimer, 0f, next.Hero.DashDuration);
+                p.DashCooldown = math.clamp(p.DashCooldown, 0f, next.Hero.DashCooldown);
+                // Task 12: a ricochet-decayed DashSpeedCur must not exceed the new
+                // config's DashSpeed ceiling — same clamp-to-new-ceiling contract
+                // as every other dash timer/value here.
+                p.DashSpeedCur = math.clamp(p.DashSpeedCur, 0f, next.Hero.DashSpeed);
+                p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
+                p.DashBufferTimer = math.clamp(p.DashBufferTimer, 0f, next.Hero.DashBufferWindow);
+                p.FireCooldown = math.clamp(p.FireCooldown, 0f, next.Weapon.FireInterval);
+                // Task 10: slide timers, same clamp-to-new-ceiling contract as the
+                // dash timers above.
+                p.SlideTimer = math.clamp(p.SlideTimer, 0f, next.Hero.SlideDuration);
+                p.SlideBufferTimer = math.clamp(p.SlideBufferTimer, 0f, next.Hero.SlideBufferWindow);
+                p.RunUpTimer = math.clamp(p.RunUpTimer, 0f, next.Hero.RunUpSeconds);
+                p.PostDashSlideTimer = math.clamp(p.PostDashSlideTimer, 0f, next.Hero.PostDashSlideWindow);
+                p.LinkWindowTimer = math.clamp(p.LinkWindowTimer, 0f, next.Hero.LinkWindowSeconds);
+                // Task 14: aim-settle progress, same clamp-to-new-ceiling contract.
+                p.AimSettleTimer = math.clamp(p.AimSettleTimer, 0f, next.Hero.AimSettleSeconds);
+                _players[i] = p;
+            }
         }
 
         /// Unity.Mathematics.Random rejects seed 0 — remaps it to a fixed nonzero
@@ -209,17 +311,20 @@ namespace Ring.Simulation.Core
             return true;
         }
 
-        SimInput Sanitize(in SimInput raw)
+        /// Task 4: takes the sanitizing player's index — every reference point
+        /// below (AimPoint fallback, Pos-relative AimPoint clamp) must read
+        /// THAT player's own state, not always player 0's.
+        SimInput Sanitize(in SimInput raw, int index)
         {
             SimInput s = raw;
             if (!math.all(math.isfinite(s.MoveDir))) s.MoveDir = float2.zero;
             float lsq = math.lengthsq(s.MoveDir);
             if (lsq > 1f) s.MoveDir /= math.sqrt(lsq);
-            if (!math.all(math.isfinite(s.AimPoint))) s.AimPoint = _players[0].AimPoint;
-            float2 rel = s.AimPoint - _players[0].Pos;
+            if (!math.all(math.isfinite(s.AimPoint))) s.AimPoint = _players[index].AimPoint;
+            float2 rel = s.AimPoint - _players[index].Pos;
             float maxR = _config.Arena.Radius * 2f;
             if (math.lengthsq(rel) > maxR * maxR)
-                s.AimPoint = _players[0].Pos + math.normalizesafe(rel) * maxR;
+                s.AimPoint = _players[index].Pos + math.normalizesafe(rel) * maxR;
             // Task 8: non-finite AimHeight maps to standing muzzle height, then
             // the result is clamped into the arena-wide aim-ray height cap —
             // sanitized unconditionally so the field stays finite regardless of
@@ -474,8 +579,10 @@ namespace Ring.Simulation.Core
 
         /// Test-only seam (Task 8 Interfaces): exposes the private Sanitize step
         /// so tests can assert the AimHeight NaN-map/clamp behaviour directly,
-        /// without threading it through a full Tick().
-        internal SimInput SanitizeForTest(in SimInput raw) => Sanitize(raw);
+        /// without threading it through a full Tick(). Task 4: stays a thin,
+        /// single-argument call into index 0 — HostileInput_*/Sanitize_* tests
+        /// are not rewritten.
+        internal SimInput SanitizeForTest(in SimInput raw) => Sanitize(raw, 0);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// Dev-only mob placeholder spawn for Presentation milestone 2 (spec Interfaces).
@@ -492,7 +599,13 @@ namespace Ring.Simulation.Core
         public void CaptureSnapshot(RenderSnapshot target)
         {
             target.Tick = _tick;
-            target.Player = _players[0];
+            // Task 4: LocalPlayerIndex is intentionally left untouched here —
+            // SimulationWorld has no notion of "the local client's player",
+            // that's a Presentation/Networking concept (target allocates with
+            // it defaulted to 0, matching the pre-Task-4 solo assumption every
+            // Player-synonym read site still makes).
+            target.PlayerCount = _players.Length;
+            System.Array.Copy(_players, target.Players, _players.Length);
             target.MobCount = _mobCount;
             System.Array.Copy(_mobs, target.Mobs, _mobCount);
             target.ProjectileCount = _projectileCount;
@@ -511,7 +624,8 @@ namespace Ring.Simulation.Core
                 SpreadRng = _spreadRng,
                 WaveRng = _waveRng,
                 NextEntityId = _nextEntityId,
-                Player = _players[0],
+                PlayerCount = _players.Length,
+                Players = new PlayerState[_players.Length],
                 MobCount = _mobCount,
                 Mobs = new MobState[_mobs.Length],
                 ProjectileCount = _projectileCount,
@@ -519,6 +633,7 @@ namespace Ring.Simulation.Core
                 Wave = _wave,
                 Stats = _stats
             };
+            System.Array.Copy(_players, save.Players, _players.Length);
             System.Array.Copy(_mobs, save.Mobs, _mobs.Length);
             System.Array.Copy(_projectiles, save.Projectiles, _projectiles.Length);
             return save;
@@ -530,7 +645,7 @@ namespace Ring.Simulation.Core
             _spreadRng = save.SpreadRng;
             _waveRng = save.WaveRng;
             _nextEntityId = save.NextEntityId;
-            _players[0] = save.Player;
+            System.Array.Copy(save.Players, _players, _players.Length);
             _mobCount = save.MobCount;
             System.Array.Copy(save.Mobs, _mobs, _mobs.Length);
             _projectileCount = save.ProjectileCount;
@@ -542,6 +657,9 @@ namespace Ring.Simulation.Core
         /// Test-only seam for EveryPlayerAndStatsFieldAffectsHash (spec §3.13 item 12).
         /// Not a public API — no *ForTest wrapper ships in the battle surface.
         internal void SetPlayerForTest(in PlayerState p) => _players[0] = p;
+        /// Task 4: index counterpart, for multiplayer test fixtures — the
+        /// single-arg overload above still targets player 0, unchanged.
+        internal void SetPlayerForTest(int index, in PlayerState p) => _players[index] = p;
         internal void SetStatsForTest(in MatchStats s) => _stats = s;
 
         /// F-4 fix-round: three more test-only seams, same contract as
