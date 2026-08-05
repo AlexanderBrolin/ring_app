@@ -612,7 +612,15 @@ public void KillPlayerNoDamage(int index);              // зовёт KillPlayer
 // Call gate: NOT the backfill marker. Stage-2 balance is delivered ONCE, keyed on
 // "walls have not been delivered yet" — after T16 the owner tunes these numbers at
 // milestone B1, and no later R-APPLY may stomp that tuning back to the spec values.
-bool stageTwoPending = arena.Walls == null || arena.Walls.Length == 0;
+// Признак «стены не доставлены» меряется ПО ТЕКСТУ АССЕТА, а не по загруженному
+// объекту (поправка фазы Ф2, ревью Т9): отсутствующий в YAML ключ откатывается к
+// C#-инициализатору, а Walls[] обязан нести дефолты (иначе падает
+// Build_DefaultAssets_MatchesTestConfigsBaseline) — то есть arena.Walls.Length
+// в Т16 никогда не ноль, гейт не сработал бы ни разу, и Radius 35 -> 65 не доехал
+// бы при зелёных тестах. Тот же приём, что у соседнего gunnerMarkerPresent.
+// Снимок берётся ДО блока EnsureAssetHasKey/SaveAssets.
+bool stageTwoPending = !System.IO.File
+    .ReadAllText($"{DataDir}/ArenaConfig.asset").Contains("Walls:");
 arenaChanged |= stageTwoPending && ApplyStageTwoBalance(arena, wave, gameFeel);
 ```
 
@@ -873,6 +881,12 @@ public static bool PushOutOfStadium(ref float2 pos, float radius,
   `MaxDecals 512 → 1536`.
 - **Вызов `ApplyStageTwoBalance` — одноразовый по признаку «стены не доставлены»**,
   а не по маркеру (решение владельца F3a, обоснование и код гейта — в Т9).
+  **Каркас метода и call-site уже существуют** (заведены Т9) — Т16 наполняет тело
+  и снимает tripwire, а не пишет свой блок доставки заново. Признак меряется по
+  ТЕКСТУ ассета (`Contains("Walls:")`), а не по `arena.Walls.Length` — поправка
+  Ф2, обоснование в спеке §3.15. **Три флага dirty** (`arena`/`wave`/`gameFeel`):
+  четыре из восьми санкционированных чисел живут не в `ArenaConfig`, и одного
+  `SetDirty(arena)` для них недостаточно.
 - **Новые данные:** шесть стен по таблице спеки §3.15 **и три дополнительных
   круга-препятствия** (спека §3.4 — «к 5 кругам добавляются круги до 8»).
   **Аудит: в v2 раскладки кругов не существовало ни в спеке, ни в плане** — Step 4
