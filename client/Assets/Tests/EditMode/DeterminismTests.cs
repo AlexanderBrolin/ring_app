@@ -525,7 +525,7 @@ namespace Ring.Simulation.Tests
             // 10 mobs, and every later wave scales the same way up to the raised
             // MaxMobsPerWave 36. That changes how much WaveRng the spawn search
             // consumes, how many mobs live, shoot and die, and therefore the
-            // whole downstream trace. Spec §3.15 sanctions exactly one further
+            // whole downstream trace. Spec §6e sanctions exactly one further
             // shift of THIS constant, in Task 17 (owner decision Р113).
             const ulong MultiGoldenHash = 0xD604E38F1647C0A8UL; // = 15421701227717050536
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));

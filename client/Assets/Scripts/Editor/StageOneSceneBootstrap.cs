@@ -420,6 +420,16 @@ namespace Ring.Editor
             // the field, so this reads true unconditionally through Tasks
             // 9-15 and turns meaningful only once Task 16's own Apply first
             // writes the key — no further edit needed at that point.
+            //
+            // AND IT IS NOW CLOSED FOR GOOD (spec Р120, phase F3 review I-3):
+            // Task 16 committed "Walls:" into ArenaConfig.asset, so from here
+            // on the predicate is false in every clone and
+            // ApplyStageTwoBalance never runs again. New KEYS still arrive via
+            // the EnsureAssetHasKey marker mechanism below, but any future
+            // sanctioned edit of an EXISTING value on these three assets will
+            // NOT be delivered by this bootstrap and must be re-gated
+            // deliberately. Tasks 22/23/45 edit this file again — they must not
+            // assume this block still fires.
             bool stageTwoPending = !System.IO.File
                 .ReadAllText($"{DataDir}/ArenaConfig.asset")
                 .Contains("Walls:");
@@ -1635,7 +1645,9 @@ namespace Ring.Editor
         /// milestone В1 survives every later R-APPLY. Called behind the on-disk
         /// `stageTwoPending` gate above; see that call site's doc (fix-round 1,
         /// C-1) for why it reads ArenaConfig.asset's TEXT instead of the loaded
-        /// object, and why that gate is the gate's PERMANENT form which Task 16
+        /// object, and why that gate is the gate's PERMANENT form — and, since Task 16 committed the key, a
+        /// permanently CLOSED one (spec Р120): this method has already run its
+        /// one and only time which Task 16
         /// must not replace. Task 9's tripwire (a throw that fired the moment
         /// `ArenaConfig.Walls` was declared) has done its job and is gone.
         ///

@@ -26,7 +26,7 @@ namespace Ring.Simulation.Tests
             const float goldenAngleRad = 2.399963f; // even angular spread, no periodicity
             for (int i = 0; i < cap; i++)
             {
-                float radius = 4f + (i % 24) * 1.2f; // well inside Arena.Radius (35)
+                float radius = 4f + (i % 24) * 1.2f; // well inside Arena.Radius (65 since Stage 2 Task 16)
                 float angle = i * goldenAngleRad;
                 float2 pos = radius * new float2(math.cos(angle), math.sin(angle));
                 world.SpawnMobForTest((i & 1) == 0 ? MobType.Chaser : MobType.Gunner, pos);
