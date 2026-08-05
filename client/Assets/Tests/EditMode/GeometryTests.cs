@@ -400,16 +400,19 @@ namespace Ring.Simulation.Tests
             // stadium to a circle at a (SegmentStadium's own documented
             // fallback). Pins the documented contract as a regression check.
             //
-            // Honesty note (falsifiability pass): deleting the early-return
-            // branch does NOT redden this test. With a == b the two end-cap
-            // candidates (SegmentCircle against a and against b) become the
-            // exact same call with the exact same result, so they silently
-            // reproduce the deleted branch's answer bit-for-bit — the branch
-            // is behaviourally redundant given the current dual-end-cap
-            // shape, not a silent-failure trap. Verified by running that
-            // exact mutation: full GeometryTests suite stayed green. Kept in
-            // production for clarity/intent and to avoid feeding NaN through
-            // the flat-side band math on every degenerate-wall call.
+            // Falsifiability note (corrected in scoped re-review): deleting
+            // the early-return branch does NOT redden THIS fixture, because
+            // with a == b the two end-cap candidates become the same
+            // SegmentCircle call and reproduce the branch's answer — the
+            // flat-side candidate excludes itself, since a zero-length axis
+            // makes its direction NaN and every NaN comparison below is
+            // false. That is a property of this fixture, NOT of the branch:
+            // the two disagree whenever SegmentCircle reports a contact at
+            // exactly t == 1, which the candidate protocol rejects (best
+            // starts at 1f, strict `<`) and the delegating branch accepts.
+            // DegenerateWall_TangentAtSweepEnd below is that case and kills
+            // the mutation. The branch stays for that reason, not only for
+            // clarity.
             float2 a = new float2(2f, 3f);
             float2 b = a; // zero-length axis
             float halfW = 1f;
@@ -421,6 +424,40 @@ namespace Ring.Simulation.Tests
             bool circleHit = Geometry.SegmentCircle(p0, p1, padR, a, halfW, out float tCircle);
 
             Assert.IsTrue(circleHit); // sanity: a genuine hit, not a vacuous false==false match
+            Assert.AreEqual(circleHit, stadiumHit);
+            Assert.AreEqual(tCircle, tStadium, 1e-6f);
+        }
+
+        [Test]
+        public void SegmentStadium_DegenerateWall_TangentAtSweepEnd_MatchesCircle()
+        {
+            // Scoped re-review of fix-round 1: the case that actually
+            // separates the degenerate-wall branch from the candidate
+            // protocol. The sweep runs tangent to the cap and touches it at
+            // exactly t == 1 (integer arithmetic: disc = b*b - 4ac = 0), and
+            // the two paths disagree there by construction — the candidate
+            // protocol treats t == 1 as a miss (best starts at 1f, strict
+            // `<`), while the branch hands SegmentCircle's own verdict back
+            // unchanged, and SegmentCircle calls it a hit.
+            //
+            // Pinning the delegating behaviour, not "fixing" it: a
+            // degenerate wall is rejected by SimConfigBuilder validation, so
+            // this is a defensive path with no production caller, and
+            // SweepArena (Stage 2 Task 12) filters t == 1 on its own side
+            // anyway. What must not happen silently is the branch being
+            // deleted as "redundant" — this test is what makes that visible.
+            float2 a = new float2(0f, 0f);
+            float2 b = a; // zero-length axis
+            float halfW = 1f;
+            float padR = 0f;
+            float2 p0 = new float2(1f, -5f); // tangent line x = halfW
+            float2 p1 = new float2(1f, 0f);  // touches the cap exactly at the end of the sweep
+
+            bool stadiumHit = Geometry.SegmentStadium(p0, p1, padR, a, b, halfW, out float tStadium);
+            bool circleHit = Geometry.SegmentCircle(p0, p1, padR, a, halfW, out float tCircle);
+
+            Assert.IsTrue(circleHit);          // sanity: the tangent really is a contact
+            Assert.AreEqual(1f, tCircle, 1e-6f); // ... and it lands on the sweep's last instant
             Assert.AreEqual(circleHit, stadiumHit);
             Assert.AreEqual(tCircle, tStadium, 1e-6f);
         }
@@ -569,6 +606,18 @@ namespace Ring.Simulation.Tests
             float2 axisDir = math.normalize(b - a);
             Assert.AreEqual(0f, math.dot(normal, axisDir), 1e-5f); // orthogonal to the wall's own axis
             Assert.IsFalse(Geometry.OverlapsStadium(pos, radius, a, b, halfW)); // pushed clear of the wall
+            // Scoped re-review of fix-round 1: the property assertions above
+            // cannot tell the two perpendiculars apart — for a body sitting
+            // exactly ON the axis both sides are equally valid physically,
+            // and both clear the wall. Which one is chosen is nonetheless
+            // observable: once walls carry real data (Stage 2 Task 16) this
+            // fallback feeds Depenetrate and therefore the golden hash, so it
+            // has to stay DETERMINISTIC. Pinning the documented choice
+            // (+perpendicular) restores the mirror-mutant coverage that the
+            // property rewrite would otherwise have dropped.
+            float2 pinnedChoice = new float2(-axisDir.y, axisDir.x);
+            Assert.AreEqual(pinnedChoice.x, normal.x, 1e-5f);
+            Assert.AreEqual(pinnedChoice.y, normal.y, 1e-5f);
         }
 
         [Test]

@@ -136,6 +136,13 @@ namespace Ring.Simulation.Core
         /// SweepArena's convention over this same geometry — whereas
         /// SegmentCircle alone, asked the equivalent question directly at an
         /// end cap, would report `true, t = 1`.
+        /// The degenerate-wall branch below is the one exception: it returns
+        /// SegmentCircle's verdict verbatim and therefore inherits ITS
+        /// convention, reporting a tangent contact at t == 1 as a hit
+        /// (pinned by GeometryTests' DegenerateWall_TangentAtSweepEnd). That
+        /// path has no production caller — SimConfigBuilder rejects a
+        /// zero-length wall — and SweepArena filters t == 1 on its own side,
+        /// so the divergence is documented rather than smoothed over.
         /// Fix-round 1 M-4: when halfW + padR &lt; 0, behaviour is UNDEFINED —
         /// the end caps (candidates 2/3) work off `|R|` inside SegmentCircle's
         /// own quadratic, while the flat side (candidate 4) works off the
