@@ -388,29 +388,62 @@ namespace Ring.Editor
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
 
             // Stage 2 Task 9 (owner decision F3a): call-gate scaffold for the
-            // one-time arena balance delivery Task 16 populates. Sample taken
-            // from ApplyGunnerZoneDefaults' BODY only (SetIfDifferent per
-            // field, see ApplyStageTwoBalance below), not its call-site gate —
-            // that gate is the EnsureAssetHasKey backfill marker
+            // one-time Stage 2 balance delivery Task 16 populates. Sample
+            // taken from ApplyGunnerZoneDefaults' BODY only (SetIfDifferent
+            // per field, see ApplyStageTwoBalance below), not its call-site
+            // gate — that gate is the EnsureAssetHasKey backfill marker
             // (gunnerMarkerPresent above), which only proves "does this field
-            // EXIST", not "does it still hold the spec value". Copying it
-            // literally would have been wrong here: ArenaConfig's marker
-            // (PlayerSpawnRingFrac) is delivered by THIS SAME Apply() a few
-            // lines down, so gunnerMarkerPresent's equivalent for arena would
-            // already be true on the very run that needs to seed the Stage 2
-            // numbers, and Task 16's owner hand-tune at milestone B1 would get
-            // stomped back to spec defaults on every later R-APPLY. The real
-            // gate is instead "walls have not been delivered yet" — but
-            // ArenaConfig.Walls does not exist in Task 9 (Task 16 introduces
-            // it), so referencing it here would not compile. ApplyStageTwoBalance
-            // below is therefore an empty stub that always returns false,
-            // which makes stageTwoPending's value inert until Task 16 replaces
-            // this line with:
-            //   bool stageTwoPending = arena.Walls == null || arena.Walls.Length == 0;
+            // EXIST", not "does it still hold the spec value", and which for
+            // arena would already read true on this very Apply() (Arena's own
+            // marker, PlayerSpawnRingFrac, is delivered by this same run a
+            // few lines down) — copying it literally would gate on the wrong
+            // signal on the one run that matters.
+            //
+            // Fix-round 1 (Explore/opus review, C-1): the first draft of this
+            // gate read `arena.Walls == null || arena.Walls.Length == 0` on
+            // the LOADED ArenaConfig instance. That is wrong by construction:
+            // a missing YAML key silently falls back to the C# field
+            // initializer (documented above, at EnsureAssetHasKey's own call
+            // site) — so once Task 16 gives `Walls` a non-empty default array
+            // (it must, or Build_DefaultAssets_MatchesTestConfigsBaseline
+            // fails comparing CreateInstance defaults against
+            // TestConfigs.DefaultArena()), `arena.Walls` would read populated
+            // on EVERY run, including the very first one where the numbers
+            // have never touched disk — ApplyStageTwoBalance would never
+            // fire, and ArenaConfig.asset would silently keep pre-Stage-2
+            // numbers forever while EditMode stays green (tests read C#
+            // defaults, not the asset; the gap would only surface at a
+            // playtest). The fix — mirroring gunnerMarkerPresent exactly — is
+            // to measure the ON-DISK text instead, snapshotted here, BEFORE
+            // the EnsureAssetHasKey/SaveAssets block below can change it.
+            // "Walls:" cannot appear in ArenaConfig.asset before Task 16 adds
+            // the field, so this reads true unconditionally through Tasks
+            // 9-15 and turns meaningful only once Task 16's own Apply first
+            // writes the key — no further edit needed at that point.
+            bool stageTwoPending = !System.IO.File
+                .ReadAllText($"{DataDir}/ArenaConfig.asset")
+                .Contains("Walls:");
+
+            // Fix-round 1 (I-2): the eight Task 16 numbers do not all live on
+            // `arena` — MaxMobsPerWave belongs to WaveConfig and
+            // MaxCorpses/MaxCasings/MaxDecals to GameFeelConfig — so a single
+            // `arenaChanged`/`SetDirty(arena)` pair would silently drop
+            // whichever of those four numbers Task 16 changes. Three
+            // independent flags/SetDirty calls instead, fed by two `out`
+            // params from the shared call below.
             bool arenaChanged = false;
-            bool stageTwoPending = true;
-            arenaChanged |= stageTwoPending && ApplyStageTwoBalance(arena, wave, gameFeel);
+            bool waveChanged = false;
+            bool feelChanged = false;
+            if (stageTwoPending)
+            {
+                arenaChanged |= ApplyStageTwoBalance(arena, wave, gameFeel,
+                    out bool waveDelta, out bool feelDelta);
+                waveChanged |= waveDelta;
+                feelChanged |= feelDelta;
+            }
             if (arenaChanged) EditorUtility.SetDirty(arena);
+            if (waveChanged) EditorUtility.SetDirty(wave);
+            if (feelChanged) EditorUtility.SetDirty(gameFeel);
 
             // Task 27 review fix-round (extended by the milestone-4 DoD
             // iteration, generalized to five assets by Task 17): an already-
@@ -1589,18 +1622,41 @@ namespace Ring.Editor
             return changed;
         }
 
-        /// Stage 2 Task 9 scaffold (owner decision F3a) — body populated by Task
-        /// 16 once ArenaConfig.Walls and the Stage 2 balance numbers exist.
-        /// Will mirror ApplyGunnerZoneDefaults exactly: SetIfDifferent per
-        /// field, so a post-delivery owner hand-tune at milestone B1 survives
-        /// every later R-APPLY. Called behind the Task 16 arena.Walls gate —
-        /// see the call site's doc, a few lines above this method's own call —
-        /// for why that gate cannot be the EnsureAssetHasKey backfill marker
-        /// this file uses everywhere else. Empty and always false until Task
-        /// 16 lands its balance numbers; wave/gameFeel are already accepted
-        /// so Task 16 does not need to touch this signature.
-        static bool ApplyStageTwoBalance(ArenaConfig arena, WaveConfig wave, GameFeelConfig gameFeel)
+        /// Stage 2 Task 9 scaffold (owner decision F3a) — body populated by
+        /// Task 16 once the Stage 2 balance numbers exist. Will mirror
+        /// ApplyGunnerZoneDefaults: SetIfDifferent per field for the `ref
+        /// float` fields below, plus new `ref int`/array overloads Task 16
+        /// adds (five of the eight sanctioned numbers are ints, plus the
+        /// Walls array itself — the existing SetIfDifferent(ref float,
+        /// float) does not cover them), so a post-delivery owner hand-tune at
+        /// milestone B1 survives every later R-APPLY. Called behind the
+        /// on-disk `stageTwoPending` gate above — see that call site's doc
+        /// (fix-round 1, C-1) for why it reads ArenaConfig.asset's text
+        /// instead of the loaded object. `wave`/`gameFeel` are already
+        /// accepted, and the two `out` flags let the call site SetDirty all
+        /// three touched assets independently (fix-round 1, I-2: Task 16's
+        /// numbers span ArenaConfig, WaveConfig's MaxMobsPerWave and
+        /// GameFeelConfig's MaxCorpses/MaxCasings/MaxDecals — a single dirty
+        /// flag on `arena` alone would silently drop the other two assets'
+        /// changes), so Task 16 does not need to touch this signature, only
+        /// this method's body.
+        ///
+        /// Fix-round 1 tripwire (mandatory, review-requested): the moment
+        /// Task 16 declares `ArenaConfig.Walls`, this stub throws instead of
+        /// silently staying empty — Task 16 physically cannot land the field
+        /// without also filling this method and retiring the call site's
+        /// on-disk gate, by construction. No automated test guards this
+        /// (Tests.EditMode's asmdef does not reference Ring.Editor); the
+        /// throw is the guard.
+        static bool ApplyStageTwoBalance(ArenaConfig arena, WaveConfig wave, GameFeelConfig gameFeel,
+            out bool waveChanged, out bool feelChanged)
         {
+            if (typeof(ArenaConfig).GetField("Walls") != null)
+                throw new System.InvalidOperationException(
+                    "Stage 2 Task 16: ArenaConfig.Walls exists — fill ApplyStageTwoBalance and replace the call-site gate.");
+
+            waveChanged = false;
+            feelChanged = false;
             return false;
         }
 
