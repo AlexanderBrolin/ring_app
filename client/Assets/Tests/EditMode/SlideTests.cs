@@ -223,7 +223,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(cfg.Hero.SlideSpeed, math.length(w.Player.Vel), 0.05f);
 
             // Short hold, not 60 ticks: the run-up + slide + this decay leg
-            // together approach the Open() arena's wall (radius 35) closely
+            // together approach the Open() arena's wall (radius 65) closely
             // enough that a long hold here would hit it and slam Vel to 0,
             // masking the thing this test actually checks. (SlideSpeed -
             // MaxSpeed) / Accel is ~4.9 ticks to converge — 20 is ample margin.

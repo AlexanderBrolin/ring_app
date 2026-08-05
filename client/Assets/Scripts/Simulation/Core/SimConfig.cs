@@ -98,12 +98,16 @@ namespace Ring.Simulation.Core
         /// independent guarantee scaled by this same field — offset directly
         /// off a wall's face at a mob sitting in exact physical contact with
         /// it, the resulting waypoint clears that face by exactly
-        /// `AvoidMargin`. At `AvoidMargin == 0` that clearance vanishes (a
-        /// dead stop right against the flat face becomes reachable again),
-        /// which is why `SimConfigBuilder` validates this field with
-        /// `ReqNonNegative`, not `ReqPositive`: 0 is a legal value, it just
-        /// spends away this particular guarantee — a config choice, not a
-        /// validation bug.
+        /// `AvoidMargin`. At `AvoidMargin == 0` that guaranteed clearance
+        /// itself vanishes — NOT a dead stop against the flat face: the
+        /// waypoint's face offset collapses to zero, leaving a heading that
+        /// runs strictly TANGENTIAL to the wall (along its axis), and
+        /// `Geometry.Slide` only cancels the velocity component pointing
+        /// INTO a surface, so a purely tangential heading is untouched by it
+        /// — no dead stop arises. This is why `SimConfigBuilder` validates
+        /// this field with `ReqNonNegative`, not `ReqPositive`: 0 is a legal
+        /// value, it just spends away the clearance guarantee itself — a
+        /// config choice, not a validation bug.
         public float AvoidMargin;
     }
 
@@ -145,9 +149,11 @@ namespace Ring.Simulation.Core
         /// "stadium" — segment WallA[i]→WallB[i] inflated by
         /// WallHalfWidth[i] — reusing Geometry's circle-sweep math instead
         /// of an OBB. Shape mirrors the ObstaclePos/ObstacleRadius pair.
-        /// WallCount is 0 and the arrays are null until Stage 2 Task 16
-        /// wires ArenaConfig.Walls[] through SimConfigBuilder; no loop over
-        /// WallCount dereferences them before then.
+        /// Populated by SimConfigBuilder from ArenaConfig.Walls[] since
+        /// Stage 2 Task 16 (the shipped default arena now carries WallCount
+        /// 6). WallCount is 0 and the arrays EMPTY — never null, a real
+        /// Build() always allocates them, empty or not — for a config that
+        /// opts out of walls entirely (e.g. TestConfigs.Open()).
         public int WallCount;
         public float2[] WallA;
         public float2[] WallB;

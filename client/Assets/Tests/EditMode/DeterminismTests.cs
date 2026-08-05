@@ -467,18 +467,25 @@ namespace Ring.Simulation.Tests
             //     walls are new blockers for movement, dash ricochets,
             //     projectiles, LoS and mob steering. The scripted player walks
             //     and shoots into all of them.
-            // (2) WORLD CAPS. MaxMobs 64 -> 96, MaxProjectiles 256 -> 384 and
-            //     Wave.MaxMobsPerWave 24 -> 36 are CAPABLE of moving the hash:
-            //     a run that reaches them keeps mobs and rounds the old caps
-            //     silently dropped, and the drop counters themselves are hashed
-            //     via WorldStats. Whether this 1000-tick solo run actually
-            //     reaches any of them is not claimed here — it very likely does
-            //     not (waves of 4/6/8 mobs, ~12 live rounds), and the honest
-            //     statement is "capable", not "did" (Task 16 review, M-1).
-            //     MaxEventsPerFrame 256 -> 512 is NOT a channel at all: events
-            //     have been outside the hash since stage 1 and Emit drops
-            //     silently with no hashed counter — it was listed here in
-            //     error.
+            // (2) WORLD CAPS. MaxMobs 64 -> 96 and MaxProjectiles 256 -> 384
+            //     are CAPABLE of moving the hash: a run that reaches either
+            //     cap keeps mobs/rounds the old cap silently dropped, and the
+            //     drop counters themselves (MobSpawnsSkipped/
+            //     ProjectileSpawnsSkipped) are hashed via WorldStats.
+            //     Wave.MaxMobsPerWave 24 -> 36 is a DIFFERENT mechanism, not a
+            //     drop counter — WaveSystem.CountForTest clamps the wave's own
+            //     mob COUNT to it directly (`math.min(scaled, MaxMobsPerWave)`,
+            //     baked straight into WaveState before any mob spawns), so a
+            //     run whose scaled wave size would exceed the old 24 gets a
+            //     structurally different, larger wave composition under the
+            //     new 36 rather than any mobs being skipped/counted. Whether
+            //     this 1000-tick solo run actually reaches any of these three
+            //     caps is not claimed here — it very likely does not (waves of
+            //     4/6/8 mobs, ~12 live rounds), and the honest statement is
+            //     "capable", not "did" (Task 16 review, M-1). MaxEventsPerFrame
+            //     256 -> 512 is NOT a channel at all: events have been outside
+            //     the hash since stage 1 and Emit drops silently with no
+            //     hashed counter — it was listed here in error.
             // (3) WAVE SCALE. WaveSystem.CountForTest replaces the inline
             //     count formula. At playerCount 1 the scale factor is exactly
             //     1, so this changes NOTHING for the solo golden by itself —
@@ -522,8 +529,14 @@ namespace Ring.Simulation.Tests
             // test — WAVE SCALE. Wave.PerPlayerCountFrac (0 before this task,
             // 0.7 now) multiplies each wave by 1 + (playerCount - 1) * frac, so
             // a three-player run's waves go from BaseCount 4 to round(4 * 2.4) =
-            // 10 mobs, and every later wave scales the same way up to the raised
-            // MaxMobsPerWave 36. That changes how much WaveRng the spawn search
+            // 10 mobs, and every LATER wave's own scaled size grows the same
+            // way (same formula, later waves' own larger BaseCount+CountGrowth
+            // input) — capped at MaxMobsPerWave (36 now, up from 24) same as
+            // the solo golden's own WORLD CAPS note above, and whether this
+            // 1000-tick run's later waves actually reach that cap is likewise
+            // not claimed here, only that the scale factor is CAPABLE of
+            // pushing them into it sooner than the old cap would have. Either
+            // way the scale factor changes how much WaveRng the spawn search
             // consumes, how many mobs live, shoot and die, and therefore the
             // whole downstream trace. Spec §6e sanctions exactly one further
             // shift of THIS constant, in Task 17 (owner decision Р113).

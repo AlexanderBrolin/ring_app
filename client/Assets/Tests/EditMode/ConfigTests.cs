@@ -328,6 +328,38 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Layout_P0P1PairBlockedSpecificallyByWalls()
+        {
+            // Fixwave Ф3 item 4: Layout_SomeSpawnPairHasNoLineOfSight above
+            // passes even at Walls = {} — the circle obstacle at (-6,-30)
+            // r3.2 happens to block the P0-P2 pair on its own (perpendicular
+            // distance 3.019 m against its own 3.2 m radius, a scant 0.18 m
+            // margin), so spec §3.4 (a) was satisfied by pure coincidence,
+            // with no evidence the walls (spec §3.15's own comment: "one lone
+            // wall breaking line of sight between the P0 and P1 spawn
+            // points") contribute anything at all. This test pins the SPECIFIC
+            // pair the spec's wall comment names (P0-P1) and proves a WALL is
+            // what blocks it: blocked with the shipped walls in place, then
+            // visible again on the identical layout with Walls = {} (circles
+            // unchanged) — a circle alone cannot be the cause of THIS pair's
+            // block if removing every wall restores it.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            SimConfig cfgWithWalls = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            float2[] ptsWithWalls = SpawnPoints(in cfgWithWalls.Arena);
+            Assert.IsFalse(
+                Ring.Simulation.AI.Targeting.HasLineOfFire(ptsWithWalls[0], ptsWithWalls[1], 0f, in cfgWithWalls.Arena),
+                "P0-P1 must be blocked with the shipped walls in place");
+
+            a.Walls = System.Array.Empty<ArenaConfig.Wall>();
+            SimConfig cfgNoWalls = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            float2[] ptsNoWalls = SpawnPoints(in cfgNoWalls.Arena);
+            Assert.IsTrue(
+                Ring.Simulation.AI.Targeting.HasLineOfFire(ptsNoWalls[0], ptsNoWalls[1], 0f, in cfgNoWalls.Arena),
+                "removing every wall must restore P0-P1 visibility — the block must come from " +
+                "a wall, not a circle obstacle");
+        }
+
+        [Test]
         public void Layout_HasCorridorAtLeast20mLongWithSixMetreGap()
         {
             // Spec §3.4 requirement (b): a corridor is a PAIR of parallel walls
@@ -437,9 +469,13 @@ namespace Ring.Simulation.Tests
             // leaves a pocket where PushOutOfStadium and ClampInsideRing fight
             // each other forever at iterations: 1 — a soft-lock. The rule the
             // builder enforces is
-            //   max(|A|,|B|) + HalfWidth + Hero.Radius + Skin <= Radius - Hero.Radius,
-            // so this fixture places an end EXACTLY on the naive bound (which the
-            // old wording would accept) and expects a rejection.
+            //   max(|A|,|B|) + HalfWidth + bodyRadius + Skin <= Radius - bodyRadius,
+            //   where bodyRadius = max(Hero.Radius, Chaser.Radius, Gunner.Radius)
+            //   (Validate_WallRimRuleUsesLargestBody_NotJustHero below pins that
+            //   specifically), so this fixture places an end EXACTLY on the OLD
+            // naive bound (Radius - HalfWidth, no body-radius margin at all —
+            // what the pre-carryover-t16 wording would have accepted) and
+            // expects a rejection.
             var (h, w, c, g, wv, a) = MakeDefaults();
             float halfWidth = 0.8f;
             float rimEnd = a.Radius - halfWidth; // passes "inside Radius - HalfWidth", fails 7c
@@ -490,6 +526,34 @@ namespace Ring.Simulation.Tests
             var ex = Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a));
             Assert.That(ex.Message, Does.Contain("spawn point"));
+        }
+
+        [Test]
+        public void Validate_WallOverRingSpawnPoint_NotJustSoloCenter_Throws()
+        {
+            // Fixwave Ф3 item 2: Validate_WallOverPlayerSpawn_Throws above lays
+            // its wall through the ORIGIN, so it only ever exercises the
+            // "solo center" clearance check — a mutant that deletes the
+            // `for (int n = 2; n <= cfg.Arena.MaxPlayers; n++)` ring loop right
+            // below it in ValidateWalls stays green against every existing
+            // fixture. This wall sits far from the origin, straddling the P1
+            // spawn point of a full 3-player lobby (Geometry.SpawnPosFor(1, 3,
+            // ...) — the same formula the builder itself uses, not a restated
+            // literal), and leaves the solo center untouched, so only the ring
+            // loop can catch it.
+            var (h, w, c, g, wv, a) = MakeDefaults();
+            var arenaForSpawn = new ArenaSimConfig { Radius = a.Radius, PlayerSpawnRingFrac = a.PlayerSpawnRingFrac };
+            float2 spawnP1 = Geometry.SpawnPosFor(1, 3, in arenaForSpawn);
+
+            a.Walls = new[] { new ArenaConfig.Wall
+            {
+                A = new Vector2(spawnP1.x - 5f, spawnP1.y),
+                B = new Vector2(spawnP1.x + 5f, spawnP1.y),
+                HalfWidth = 0.8f
+            } };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+            Assert.That(ex.Message, Does.Contain("ring 3/point 1"));
         }
 
         [Test]

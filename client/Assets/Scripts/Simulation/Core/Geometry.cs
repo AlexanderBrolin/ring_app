@@ -235,10 +235,22 @@ namespace Ring.Simulation.Core
                 float r = halfW + padR;
                 // d0 == 0f (path starts exactly ON the band's centreline) is
                 // safe even though math.sign(0f) == 0f makes target == 0:
-                // tb then resolves to 0 and contact == p0, whose projection
-                // is pinned to whichever end p0 sits nearest — s lands at a
-                // boundary, so the s-interior check below rejects it and the
-                // end-cap candidates (2/3) resolve the contact instead.
+                // tb then resolves to 0 and contact == p0. When R > 0 (the
+                // usual case) candidate 1 above would already have caught p0
+                // sitting on the axis WITHIN the segment's own span (its
+                // distance to the segment is exactly 0 < r) and returned
+                // before reaching here, so d0 == 0 at this point means p0's
+                // projection falls OUTSIDE that span — p0's projection is
+                // pinned to whichever end it sits nearest, s lands at a
+                // boundary, and the s-interior check below rejects it,
+                // leaving the end-cap candidates (2/3) to resolve the
+                // contact instead. When R == 0 EXACTLY, though — the case
+                // Targeting.HasLineOfFire's own clamp produces when it pads a
+                // wall all the way down to r = halfW + wallPad = 0 — candidate
+                // 1's STRICT `<` never fires even at distance 0, so p0 CAN
+                // sit on-axis and INSIDE the segment's span here; s is then
+                // genuinely interior, and this candidate correctly resolves
+                // it as a t == 0 contact.
                 float target = r * math.sign(d0); // approach from p0's own side of the band
                 float tb = (target - d0) / (d1 - d0);
                 if (tb >= 0f && tb <= 1f)
@@ -298,9 +310,14 @@ namespace Ring.Simulation.Core
             // sideRef = pos: PushOutOfStadium has no separate sweep-start
             // point to offer the on-axis fallback's side test, so it hands
             // StadiumNormal the same point it's already pushing — which the
-            // on-axis case makes ~coincident with `closest` anyway, always
-            // landing side == 0 → +perp (fix-round 1 M-7's pinned choice,
-            // verified numerically unchanged by this refactor).
+            // on-axis case makes ~coincident with `closest` anyway, landing
+            // `side` AT OR EXTREMELY CLOSE TO zero (not necessarily exactly
+            // 0 in general — two independently-rounded divisions can leave a
+            // residue on the order of 1e-7 * |axis|), taking the `>= 0f`
+            // branch to +perp (fix-round 1 M-7's pinned choice, verified
+            // numerically unchanged by this refactor). Either sign is a
+            // correct outward perpendicular this close to the axis — the
+            // point is effectively ON it either way.
             normal = StadiumNormal(pos, closest, a, b, pos);
             pos = closest + normal * (r + Skin);
             return true;
@@ -400,11 +417,15 @@ namespace Ring.Simulation.Core
                     // the CONTACT sits exactly on the axis, which forces p0
                     // onto the axis too (the start-inside branch of
                     // SegmentStadium is the only way to reach t == 0 with a
-                    // zero delta) — so `side` is ALWAYS exactly 0.0f here in
-                    // practice (verified numerically), and either branch of
-                    // StadiumNormal's ternary is reachable only in the sense
-                    // of documenting the INTENDED orientation, not as a live
-                    // discriminator on today's callers.
+                    // zero delta) — so `side` sits AT OR EXTREMELY CLOSE TO
+                    // 0.0f here, not necessarily exactly zero in general
+                    // (two independently-rounded divisions can leave a
+                    // residue on the order of 1e-7 * |axis|). Either sign is
+                    // a CORRECT outward perpendicular this close to the axis
+                    // — the point is effectively on it either way — so which
+                    // branch of StadiumNormal's ternary fires is not a live
+                    // discriminator on today's callers, only documentation
+                    // of the intended orientation.
                     float2 contact = math.lerp(p0, p1, tWall);
                     float2 closest = ClosestPointOnSegment(
                         contact, arena.WallA[wIdx], arena.WallB[wIdx], out _);

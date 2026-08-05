@@ -10,10 +10,14 @@ namespace Ring.Simulation.Tests
     /// stadium wall primitive (Task 11/12) instead of the circle obstacles
     /// DashRicochetTests/SlideTests already cover. Adds NO production code:
     /// every fixture below builds its own wall via TestConfigs.Open() plus an
-    /// explicit WallCount/WallA/WallB/WallHalfWidth layout (TestConfigs itself
-    /// is untouched — real wall data lands there in Task 16). Because
-    /// Arena.WallCount is 0 in every existing golden-hash fixture, this file
-    /// cannot move either golden hash — it is pure additional coverage.
+    /// explicit WallCount/WallA/WallB/WallHalfWidth layout laid on top of it.
+    /// Task 16 has since landed TestConfigs.DefaultArena()'s own real wall
+    /// data (WallCount 6 — the golden-hash fixtures now carry walls too), but
+    /// that is TestConfigs.Default()/DefaultArena(), a different baseline from
+    /// the TestConfigs.Open() every fixture below actually starts from — Open()
+    /// still zeroes WallCount before each fixture lays its own layout on top,
+    /// so this file still cannot move either golden hash; it is pure
+    /// additional coverage over a baseline the golden scenarios don't use.
     public class WallGeometryTests
     {
         static SimInput Move(float x, float y) => new SimInput { MoveDir = new float2(x, y) };
@@ -208,11 +212,11 @@ namespace Ring.Simulation.Tests
             Assert.Less(w.Player.Pos.y, 1.5f,
                 "test setup: must still be constrained by the wall's flat side at this checkpoint");
 
-            // Capped well short of the arena's own outer ring (radius 35,
-            // TestConfigs.Open()'s default, reached at roughly this trajectory's
-            // 155th tick per diagnostic trace) — this test's job is the
-            // CORRIDOR wall's own seam (crossed by ~tick 24), not an incidental
-            // second collision against unrelated ring geometry.
+            // Capped well short of the arena's own outer ring (radius 65,
+            // TestConfigs.Open()'s default — reached only well past this
+            // test's own 100-tick budget) — this test's job is the CORRIDOR
+            // wall's own seam (crossed by ~tick 24), not an incidental second
+            // collision against unrelated ring geometry.
             const int ticks = 100;
             for (int i = 10; i < ticks; i++)
             {

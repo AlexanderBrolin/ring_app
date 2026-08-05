@@ -191,6 +191,58 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void LineOfFire_NegativePadClamped_PerWall_NotHoisted()
+        {
+            // Fixwave Ф3 item 1: mirrors LineOfFire_NegativePadClamped_
+            // PerObstacle_NotHoisted above (the same discipline that test
+            // pins for CIRCLES) but for the wall loop's own
+            // `wallPad = max(padR, -arena.WallHalfWidth[i])` clamp — every
+            // existing wall fixture in this file has exactly ONE wall, so a
+            // mutant that hoists the clamp out of the loop (computed once
+            // from either wall's own half-width) is numerically
+            // indistinguishable from the correct per-wall clamp on any of
+            // them.
+            //
+            // Two SHORT walls, each just a rounded end cap facing the ray —
+            // wall0's near end sits at (5, 0.2) with HalfWidth 0.5, wall1's at
+            // (7, 0.1) with HalfWidth 0.2 (the far end of each is placed well
+            // off to the side so only the near cap is in play). Since a
+            // wall's rounded end is resolved through the exact same
+            // Geometry.SegmentCircle call a circle obstacle uses, this
+            // reproduces LineOfFire_NegativePadClamped_PerObstacle_
+            // NotHoisted's own numbers (circle0Pos/circle0R, circle1Pos/
+            // circle1R) verbatim, just wrapped as walls: hoisting by the
+            // larger half-width (0.5) still clamps to -0.45 (since
+            // -0.45 > -0.5) but applied to wall1's cap (R 0.2) gives
+            // r = -0.45 + 0.2 = -0.25, a phantom of radius 0.25 that
+            // swallows wall1's 0.1 m offset from the ray and falsely blocks
+            // it; hoisting by the smaller half-width (0.2) clamps to -0.2,
+            // which applied to wall0's cap (R 0.5) gives r = -0.2 + 0.5 =
+            // 0.3, again bigger than its own 0.2 m offset — also a false
+            // block. The correct per-wall clamp resolves both caps to r <= 0
+            // (no phantom) and the ray is genuinely clear.
+            float2 wall0A = new float2(5f, 0.2f);
+            float2 wall0B = new float2(5f, 3.2f); // far end, well clear of the ray
+            float wall0HalfWidth = 0.5f;
+            float2 wall1A = new float2(7f, 0.1f);
+            float2 wall1B = new float2(7f, 3.1f); // far end, well clear of the ray
+            float wall1HalfWidth = 0.2f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 2,
+                WallA = new[] { wall0A, wall1A },
+                WallB = new[] { wall0B, wall1B },
+                WallHalfWidth = new[] { wall0HalfWidth, wall1HalfWidth },
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(0f, 0f), new float2(10f, 0f),
+                -0.45f, arena));
+        }
+
+        [Test]
         public void LineOfFire_BlockedByWallCap()
         {
             // Coordinator addition: the ray crosses well below the wall's
@@ -677,6 +729,155 @@ namespace Ring.Simulation.Tests
                 $"axial progress along the wall ({axialProgress:F2}) should track a " +
                 $"meaningful fraction of the total distance travelled ({pathLength:F2}) — " +
                 "a mob rubbing along the wall face instead of heading for its end would fail this");
+        }
+
+        [Test]
+        public void SteerAround_WallEndNearTie_BreaksOnIdParity_NotRawComparison()
+        {
+            // Fixwave Ф3 item 3(a): SteerAround's wall-end tie-break
+            // (fix-round T14, I-5) widens an EXACT `costA == costB`
+            // comparison to a Geometry.Skin-wide band, specifically so one
+            // ULP of rounding noise between costA/costB's two independent
+            // sqrt chains can't flip which end of the wall a mob commits to
+            // — and falls back to Id parity, not raw magnitude, inside that
+            // band. No existing fixture pins the band itself:
+            // Chaser_NavigatesAroundWall above is EXACTLY symmetric
+            // (costA == costB to the bit), so a mutant that disables the
+            // near-tie check (`math.abs(costA - costB) < Geometry.Skin` ->
+            // `< 0f`, i.e. never true, falling through to the raw
+            // `costA < costB`) still steers the same way there and the test
+            // stays green — the raw comparison is bit-identical to the
+            // parity answer when costA == costB exactly, so it can't tell
+            // the two rules apart. It also can't tell apart a mutated parity
+            // check (`(id & 1) == 0` -> `true`/`false`/`== 1`): a symmetric
+            // fixture mirrors regardless of which side either mutant picks.
+            //
+            // Fixture: a symmetric wall (WallA/WallB equidistant from the
+            // ray pos->target on the x axis) with the mob's own position
+            // nudged 1e-4 off that axis of symmetry. That nudge makes costA
+            // and costB differ by ~1.4e-4 — comfortably inside
+            // Geometry.Skin's 1e-3 band (the near-tie rule fires) and
+            // comfortably above float noise (a raw `costA < costB` gives a
+            // STABLE, non-flaky verdict — the same one for every mob at this
+            // position, regardless of Id). Two Chasers at the identical
+            // position/target, one even Id and one odd, are spawned close
+            // enough to the wall that its avoidance padding already overlaps
+            // them at spawn (Geometry.SegmentStadium's "already inside at
+            // the start" candidate), so the wall branch fires on the very
+            // first Chase-state tick, with no drift from ordinary pursuit
+            // motion to account for. Under the real near-tie rule the two
+            // mobs commit to OPPOSITE ends of the wall (evidenced by
+            // opposite-signed Vel.y after that tick); under the disabled-
+            // near-tie mutant, Id is never consulted and both commit to the
+            // SAME end (raw costA < costB, identical for both mobs) — so at
+            // least one of the two sign assertions below must fail.
+            //
+            // Both mobs share the exact same spawn point, so
+            // SeparationSystem (which runs every tick, right after
+            // MobAiSystem — spec Task 20) would otherwise push them apart on
+            // the very first tick along an ARBITRARY fallback direction
+            // (Geometry.normalizesafe's (1,0) default for a zero delta),
+            // biased by spawn ORDER rather than Id PARITY — a confound
+            // unrelated to the branch under test. Zeroing SeparationRadius
+            // switches that system off entirely (its own `threshold <= 0f`
+            // early-out) so the only thing that can move the two mobs apart
+            // is the wall-end tie-break this test targets.
+            var c = TestConfigs.Open();
+            c.Chaser.SeparationRadius = 0f;
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(2f, 2f) };
+            c.Arena.WallB = new[] { new float2(2f, -2f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
+
+            var w = new SimulationWorld(1, c);
+            var player = w.Player;
+            player.Pos = new float2(20f, 0f);
+            w.SetPlayerForTest(player);
+
+            const float eps = 1e-4f;
+            int firstId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, eps));
+            int secondId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, eps));
+            Assert.AreNotEqual(firstId % 2, secondId % 2,
+                "test setup: two consecutively-spawned mobs must have opposite Id parity");
+            int evenSlot = (firstId & 1) == 0 ? 0 : 1;
+            int oddSlot = 1 - evenSlot;
+
+            w.Tick(Idle); // Idle -> Chase (settles in, no steering yet)
+            w.Tick(Idle); // Chase: the wall already overlaps at spawn -> SteerAround fires
+
+            float velYEven = w.Mobs[evenSlot].Vel.y;
+            float velYOdd = w.Mobs[oddSlot].Vel.y;
+            Assert.Greater(velYEven, 0f, "even-Id mob must round the TOP end (WallA, y=2)");
+            Assert.Less(velYOdd, 0f, "odd-Id mob must round the BOTTOM end (WallB, y=-2)");
+        }
+
+        [Test]
+        public void SteerAround_WallFaceNearTie_BreaksOnIdParity_NotRawSign()
+        {
+            // Fixwave Ф3 item 3(b): SteerAround's SEPARATE near-tie band —
+            // which side of the wall's face to offset the waypoint on
+            // (`keepFace`, fix-round T14, I-2) — is a different branch from
+            // 3(a)'s wall-END tie-break above, and no existing fixture
+            // witnesses it either: every fixture in this file keeps the mob
+            // well off the wall's own axis line, where `|faceDot|` sits
+            // around unity or more (nowhere near Geometry.Skin), so the near-
+            // tie rule never fires and a mutant disabling it (`< Geometry.Skin`
+            // -> `< 0f`) or corrupting the parity check is unwitnessed.
+            //
+            // Fixture: an ASYMMETRIC wall (WallB nearer both the mob and the
+            // target than WallA, so costA/costB differ by ~0.8 — nowhere
+            // near Geometry.Skin, keeping THIS fixture's wall-end choice
+            // (roundA -> WallB, deterministic) uncoupled from 3(a)'s
+            // near-tie concern) with the mob positioned almost exactly ON
+            // the wall's own axis line extended past WallB (a 1e-4 nudge off
+            // it), which puts `faceDot` at that same ~1e-4 — inside
+            // Geometry.Skin, outside float noise. Under the real near-tie
+            // rule the even/odd mobs land on OPPOSITE sides of the wall's
+            // face (opposite-signed Vel.x after the steering tick); under a
+            // disabled-near-tie mutant, both resolve `keepFace` off the same
+            // raw (and here, tiny/borderline) sign, landing on the SAME
+            // side.
+            //
+            // Both mobs share the exact same spawn point, so SeparationSystem
+            // (spec Task 20, runs every tick right after MobAiSystem) would
+            // otherwise push them apart on the first tick along an ARBITRARY
+            // fallback direction biased by spawn ORDER, not Id PARITY — see
+            // SteerAround_WallEndNearTie_BreaksOnIdParity_NotRawComparison's
+            // own note above for the full reasoning. Zeroing SeparationRadius
+            // switches that confound off entirely.
+            var c = TestConfigs.Open();
+            c.Chaser.SeparationRadius = 0f;
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(2f, 7f) };
+            c.Arena.WallB = new[] { new float2(2f, 2f) };
+            c.Arena.WallHalfWidth = new[] { 2f };
+
+            var w = new SimulationWorld(1, c);
+            var player = w.Player;
+            player.Pos = new float2(20f, 20f);
+            w.SetPlayerForTest(player);
+
+            const float eps = 1e-4f;
+            int firstId = w.SpawnMobForTest(MobType.Chaser, new float2(2f + eps, 1f));
+            int secondId = w.SpawnMobForTest(MobType.Chaser, new float2(2f + eps, 1f));
+            Assert.AreNotEqual(firstId % 2, secondId % 2,
+                "test setup: two consecutively-spawned mobs must have opposite Id parity");
+            int evenSlot = (firstId & 1) == 0 ? 0 : 1;
+            int oddSlot = 1 - evenSlot;
+
+            w.Tick(Idle); // Idle -> Chase (settles in, no steering yet)
+            w.Tick(Idle); // Chase: the wall already overlaps at spawn -> SteerAround fires
+
+            float velXEven = w.Mobs[evenSlot].Vel.x;
+            float velXOdd = w.Mobs[oddSlot].Vel.x;
+            // Absolute signs, not just "opposite" (fixture geometry: end =
+            // WallB, axis points from WallB towards -y, so face starts as
+            // +x) — a merely-relative check would miss a mutant that swaps
+            // which parity keeps vs. flips the face (`(id & 1) == 0` ->
+            // `== 1`), since that still lands the two mobs on opposite
+            // sides, just the wrong ones.
+            Assert.Greater(velXEven, 0f, "even-Id mob must KEEP the face (not flip it)");
+            Assert.Less(velXOdd, 0f, "odd-Id mob must FLIP the face");
         }
 
         [Test]
