@@ -649,7 +649,7 @@ namespace Ring.Simulation.Tests
             // Straight sweep along +x; a circle and a wall both sit on the
             // path. Two arrangements (circle nearer / wall nearer) so a
             // mutant that only checks kind ordering, or only checks one kind,
-            // cannot survive on a single side (context: "обе стороны").
+            // cannot survive on a single side.
             float2 p0 = new float2(-10f, 0f);
             float2 p1 = new float2(10f, 0f);
             float padR = 0f;
@@ -687,8 +687,18 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(expectedNormalCircle.y, nCircleNear.y, 1e-4f);
 
             // Case 2: the wall is the nearer obstacle (mirrored distances).
-            float2 circlePosFar = new float2(8f, 0f);
-            float circleRadiusFar = 1f;
+            // Fix-round 1 M-3: the far circle's centre is deliberately OFF
+            // the sweep's y = 0 line (unlike Case 1, where centre and sweep
+            // share the line). On the line, the "radial from centre" and
+            // "wall's flat-side" normals are both purely horizontal, so the
+            // normal-based assertions below would pass even under a "walls
+            // never checked" mutant (only the t assertion would catch it,
+            // which the original comment here wrongly claimed the normal
+            // also did). Off the line, the far circle's radial normal has a
+            // nonzero y-component, so the normal assertions become a real,
+            // independent witness too.
+            float2 circlePosFar = new float2(8f, 3f);
+            float circleRadiusFar = 4f; // large enough to still reach the y = 0 sweep line
             float2 wallANear = new float2(2f, -5f);
             float2 wallBNear = new float2(2f, 5f);
             float wallHalfWNear = 1f;
@@ -713,9 +723,11 @@ namespace Ring.Simulation.Tests
                 out float tExpectedWall);
             Assert.AreEqual(tExpectedWall, tWallNear, 1e-5f);
             // the wall's own (vertical-axis) normal is purely horizontal —
-            // if the circle had won instead, the far circle's radial normal
-            // at this contact would not be (which is what actually catches a
-            // "walls never checked" mutant here)
+            // if walls were never checked and the far, off-axis circle won
+            // instead, its radial normal WOULD have a nonzero y-component
+            // (verified: circlePosFar sits off the sweep's y = 0 line), so
+            // this assertion is a real, independent witness of "walls
+            // checked" — not just the t assertion above.
             Assert.AreEqual(0f, nWallNear.y, 1e-4f);
             Assert.Less(nWallNear.x, 0f);
         }
@@ -723,16 +735,29 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SweepArena_WallNormal_PerpendicularToSide()
         {
-            // Flat-side contact: normal must be orthogonal to the wall's
-            // axis and point toward the side the body approaches from — the
-            // exact vector that MoveWithCollisions uses for
-            // `pos = hitPoint + n * Skin`.
-            float2 p0 = new float2(-5f, 0f);
-            float2 p1 = new float2(5f, 0f);
-            float padR = 0.2f;
-            float2 wallA = new float2(0f, -5f);
-            float2 wallB = new float2(0f, 5f);
-            float halfW = 0.5f;
+            // Fix-round 1 I-1: the axis MUST be diagonal, not axis-aligned.
+            // With an axis-aligned wall and a straight +x approach,
+            // "orthogonal to the axis" collapses to "horizontal" — which
+            // several WRONG formulas also satisfy by accident:
+            // -normalize(p1-p0) (direction of travel, not the surface),
+            // perp(axis) applied unconditionally (right answer here, wrong
+            // at a rounded cap — see AtCap below), all read as correct on an
+            // axis-aligned fixture. Mirrors Task 11 fix-round M-7's own
+            // lesson (PushOutOfStadium_OnAxis uses a diagonal axis for
+            // exactly this reason). The FULL normal vector is asserted, not
+            // just unit-length/orthogonality properties, each side derived
+            // independently via the already-pinned Task 11 primitive
+            // (ClosestPointOnSegment) rather than copying SweepArena's own
+            // formula text — a wrong formula in production (start point
+            // instead of contact, travel direction instead of surface) is
+            // then an outright numeric mismatch here, not just a weak
+            // property that a wrong formula might still happen to satisfy.
+            float2 wallA = new float2(0f, 0f);
+            float2 wallB = new float2(6f, 8f); // length 10, direction (0.6, 0.8)
+            float halfW = 1f;
+            float padR = 0f;
+            float2 p0 = new float2(-4f, 5f);
+            float2 p1 = new float2(6f, 5f);
 
             var arena = new ArenaSimConfig
             {
@@ -750,10 +775,116 @@ namespace Ring.Simulation.Tests
                 out float t, out float2 normal);
 
             Assert.IsTrue(hit);
-            float2 axisDir = math.normalize(wallB - wallA);
-            Assert.AreEqual(1f, math.length(normal), 1e-4f); // unit length
-            Assert.AreEqual(0f, math.dot(normal, axisDir), 1e-4f); // orthogonal to the axis
-            Assert.Less(normal.x, 0f); // p0 approaches from the -x side
+            Geometry.SegmentStadium(p0, p1, padR, wallA, wallB, halfW, out float tExpected);
+            Assert.AreEqual(tExpected, t, 1e-5f);
+
+            float2 contact = math.lerp(p0, p1, tExpected);
+            float2 closest = Geometry.ClosestPointOnSegment(contact, wallA, wallB, out float s);
+            Assert.Greater(s, 0f); Assert.Less(s, 1f); // sanity: flat side, not a rounded cap
+            float2 expectedNormal = math.normalize(contact - closest);
+
+            Assert.AreEqual(expectedNormal.x, normal.x, 1e-4f);
+            Assert.AreEqual(expectedNormal.y, normal.y, 1e-4f);
+        }
+
+        [Test]
+        public void SweepArena_WallNormal_PerpendicularToSide_FromOppositeSide()
+        {
+            // Fix-round 1 I-1: mirror of PerpendicularToSide above, approaching
+            // the SAME diagonal wall from the other side (direct analogue of
+            // Task 11's SegmentStadium_HitsFlatSide_FromOppositeSide). Pins
+            // the sign, not just the direction: a mutant that gets the side
+            // discriminator backwards would pass the main test's side but
+            // fail this one, or vice versa.
+            float2 wallA = new float2(0f, 0f);
+            float2 wallB = new float2(6f, 8f);
+            float halfW = 1f;
+            float padR = 0f;
+            float2 p0 = new float2(10f, 4f);
+            float2 p1 = new float2(0f, 4f);
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+
+            bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
+                out float t, out float2 normal);
+
+            Assert.IsTrue(hit);
+            Geometry.SegmentStadium(p0, p1, padR, wallA, wallB, halfW, out float tExpected);
+            Assert.AreEqual(tExpected, t, 1e-5f);
+
+            float2 contact = math.lerp(p0, p1, tExpected);
+            float2 closest = Geometry.ClosestPointOnSegment(contact, wallA, wallB, out float s);
+            Assert.Greater(s, 0f); Assert.Less(s, 1f);
+            float2 expectedNormal = math.normalize(contact - closest);
+
+            Assert.AreEqual(expectedNormal.x, normal.x, 1e-4f);
+            Assert.AreEqual(expectedNormal.y, normal.y, 1e-4f);
+
+            // This contact sits on the opposite side of the axis from
+            // PerpendicularToSide's (d0 there is positive, here negative —
+            // verified numerically), so a mutant with the side discriminator
+            // backwards would flip exactly one of the two tests' signs.
+            Assert.Greater(normal.x, 0f);
+        }
+
+        [Test]
+        public void SweepArena_WallNormal_AtCap()
+        {
+            // Fix-round 1 I-1: contact on a ROUNDED CAP, not the flat side —
+            // the docstring claims "one formula covers both the flat side
+            // and a rounded cap," but nothing exercised the cap half of that
+            // claim. This also kills the "perp(axis) unconditionally"
+            // mutant, which PerpendicularToSide (flat side) structurally
+            // cannot: for a flat-side hit the correct delta IS parallel to
+            // perp(axis), so that mutant is indistinguishable from correct
+            // there — only a cap contact (radial from the cap's OWN centre,
+            // generally NOT perpendicular to the axis) tells them apart.
+            // Fixture reused verbatim from Task 11's own
+            // SegmentStadium_HitsRoundedCap (reuse > duplication) — already
+            // pinned to land on cap b, not the flat side.
+            float2 a = new float2(0f, 0f);
+            float2 b = new float2(4f, 0f);
+            float halfW = 1f;
+            float padR = 1.5f;
+            float2 p0 = new float2(6f, 2f);
+            float2 p1 = new float2(6f, 0f);
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { a },
+                WallB = new[] { b },
+                WallHalfWidth = new[] { halfW },
+            };
+
+            bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
+                out float t, out float2 normal);
+
+            Assert.IsTrue(hit);
+            Geometry.SegmentStadium(p0, p1, padR, a, b, halfW, out float tExpected);
+            Assert.AreEqual(tExpected, t, 1e-5f);
+
+            float2 contact = math.lerp(p0, p1, tExpected);
+            float2 closest = Geometry.ClosestPointOnSegment(contact, a, b, out float s);
+            Assert.IsTrue(s <= 0f || s >= 1f); // sanity: this really is a cap contact
+            float2 expectedNormal = math.normalize(contact - closest); // radial from the cap's own centre
+
+            Assert.AreEqual(expectedNormal.x, normal.x, 1e-4f);
+            Assert.AreEqual(expectedNormal.y, normal.y, 1e-4f);
         }
 
         [Test]
@@ -794,6 +925,87 @@ namespace Ring.Simulation.Tests
             // orthogonality alone already rules out a fixed (1,0) fallback,
             // since (1,0) is not perpendicular to this diagonal axis
             Assert.AreNotEqual(new float2(1f, 0f), normal);
+        }
+
+        [Test]
+        public void SweepArena_StartInsideWallBand_OffAxis()
+        {
+            // Fix-round 1 M-8: the most common real "stuck in a wall" shape
+            // — start point already inside the band (t == 0, same
+            // start-inside branch as OnAxisFallback above) but NOT on the
+            // axis, so delta is a genuine nonzero vector and the REGULAR
+            // (non-fallback) branch must fire. Complements OnAxisFallback
+            // (delta == 0 at t == 0) and PerpendicularToSide (t > 0, reached
+            // mid-sweep) — this t == 0 / delta != 0 combination was
+            // untouched.
+            float2 wallA = new float2(0f, 0f);
+            float2 wallB = new float2(6f, 8f);
+            float halfW = 1f;
+            float padR = 0f;
+            // wallA + 0.4 * (wallB - wallA), offset 0.5 along the axis' own
+            // perpendicular — inside the band (0.5 < halfW + padR = 1), off-axis.
+            float2 p0 = new float2(2f, 3.5f);
+            float2 p1 = new float2(3f, 3.5f);
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+
+            Assert.IsTrue(Geometry.OverlapsStadium(p0, padR, wallA, wallB, halfW)); // fixture precondition
+
+            bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
+                out float t, out float2 normal);
+
+            Assert.IsTrue(hit);
+            Assert.AreEqual(0f, t);
+
+            float2 closest = Geometry.ClosestPointOnSegment(p0, wallA, wallB, out _);
+            float2 delta = p0 - closest;
+            Assert.Greater(math.length(delta), 1e-3f); // sanity: NOT the on-axis fallback case
+            float2 expectedNormal = math.normalize(delta);
+            Assert.AreEqual(expectedNormal.x, normal.x, 1e-4f);
+            Assert.AreEqual(expectedNormal.y, normal.y, 1e-4f);
+        }
+
+        [Test]
+        public void SweepArena_DegenerateWall_FallsBackToUnitX()
+        {
+            // Fix-round 1 M-8: the axisLen <= 1e-6 branch (wall collapsed to
+            // a single point) is untouched by every other SweepArena wall
+            // test — mirrors Task 11's own
+            // PushOutOfStadium_DegenerateWall_FallsBackToUnitX.
+            float2 wallPoint = new float2(5f, 5f);
+            float halfW = 1f;
+            float padR = 0f;
+            float2 p0 = wallPoint; // starts exactly at the degenerate wall's point
+            float2 p1 = wallPoint + new float2(3f, 0f);
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallPoint },
+                WallB = new[] { wallPoint }, // degenerate: zero-length axis
+                WallHalfWidth = new[] { halfW },
+            };
+
+            bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
+                out float t, out float2 normal);
+
+            Assert.IsTrue(hit);
+            Assert.AreEqual(0f, t);
+            Assert.AreEqual(new float2(1f, 0f), normal);
         }
 
         [Test]
@@ -857,6 +1069,125 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void SweepArena_TieBreak_WallBeforeRing()
+        {
+            // Fix-round 1 I-2: the SAME order pin as TieBreak_CircleBeforeWall
+            // above, for the OTHER unpinned boundary — walls vs the ring
+            // wall. `includeWall: true` (every production caller passes
+            // true; no existing test called SweepArena that way at all — a
+            // mutant moving the wall loop below the ring block survived
+            // every one of the 253 tests going into this fix-round).
+            //
+            // The tie is forced through the wall's ROUNDED CAP at wallA, not
+            // the flat side: the flat side needs `axis / |axis|` to find its
+            // offset band, and for a genuinely diagonal axis that
+            // normalization is NOT exact in float32 (verified: it broke an
+            // earlier version of this fixture by a couple of ULPs after
+            // round-tripping through the ring's own sqrt-based formula). A
+            // cap contact goes through SegmentCircle exactly like a bare
+            // circle does, with no axis normalization at all — so this
+            // reuses the SAME wallA/halfW/Radius literals as
+            // TieBreak_CircleBeforeWall's already-Unity-verified exact tie
+            // (0x3E4CCCCD both sides), just packaged as a wall's cap instead
+            // of a bare circle. wallB sits far off to the side so neither
+            // its own cap nor the flat side ever competes for the win.
+            float2 p0 = new float2(0f, 0f);
+            float2 p1 = new float2(10f, 0f);
+            float padR = 0f;
+
+            float2 wallA = new float2(5f, 4f); // same centre/radius as the circle above
+            float2 wallB = new float2(5f, 20f); // far away — never the winning candidate
+            float wallHalfW = 5f;
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 2f, // ring: t = 2/10 = 0.2, same exact-integer chain as above
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { wallHalfW },
+            };
+
+            Geometry.SegmentStadium(p0, p1, padR, wallA, wallB, wallHalfW, out float tWallExpected);
+            Geometry.SegmentRingWall(p0, p1, padR, arena.Radius, out float tRingExpected);
+            Assert.AreEqual(tWallExpected, tRingExpected); // fixture precondition: exact tie
+
+            // Sanity: the wall's winning candidate really is the cap at
+            // wallA (SegmentCircle), not the flat side or wallB's cap —
+            // otherwise the exact-tie precondition above would be fragile.
+            Geometry.SegmentCircle(p0, p1, padR, wallA, wallHalfW, out float tCapAExpected);
+            Assert.AreEqual(tCapAExpected, tWallExpected);
+
+            bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: true,
+                out float t, out float2 normal);
+
+            Assert.IsTrue(hit);
+            Assert.AreEqual(tWallExpected, t); // no tolerance — the tie itself is exact
+
+            // The winning normal must be the WALL's (spec §3.3: walls before
+            // the ring boundary) — observably different from the ring's
+            // radial normal at this contact, which is what distinguishes
+            // "wall won" from "ring won".
+            float2 contact = math.lerp(p0, p1, t);
+            float2 closest = Geometry.ClosestPointOnSegment(contact, wallA, wallB, out _);
+            float2 expectedNormal = math.normalize(contact - closest);
+            Assert.AreEqual(expectedNormal.x, normal.x, 1e-5f);
+            Assert.AreEqual(expectedNormal.y, normal.y, 1e-5f);
+        }
+
+        [Test]
+        public void SweepArena_MultipleWalls_NearestWins()
+        {
+            // Fix-round 1 I-3: WallCount > 1 — Task 16 lands six walls, and
+            // an indexing bug (constant index, `wIdx < 1`, an array desync
+            // between WallA/WallB/WallHalfWidth) would ship wrong-width
+            // corridors that only surface in a playtest, not a unit run.
+            // The nearer wall is deliberately at index 1, NOT 0, so a
+            // "only checks wall 0" mutant picks the wrong one.
+            float2 p0 = new float2(-10f, 0f);
+            float2 p1 = new float2(10f, 0f);
+            float padR = 0f;
+
+            float2 wall0A = new float2(9f, -3f);
+            float2 wall0B = new float2(9f, 3f);
+            float wall0HalfW = 1f; // index 0, farther
+
+            float2 wall1A = new float2(2f, -5f);
+            float2 wall1B = new float2(2f, 5f);
+            float wall1HalfW = 0.5f; // index 1, nearer — must win
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 2,
+                WallA = new[] { wall0A, wall1A },
+                WallB = new[] { wall0B, wall1B },
+                WallHalfWidth = new[] { wall0HalfW, wall1HalfW },
+            };
+
+            bool hit = Geometry.SweepArena(p0, p1, padR, arena, includeWall: false,
+                out float t, out float2 normal);
+
+            Assert.IsTrue(hit);
+            Geometry.SegmentStadium(p0, p1, padR, wall0A, wall0B, wall0HalfW, out float t0);
+            Geometry.SegmentStadium(p0, p1, padR, wall1A, wall1B, wall1HalfW, out float t1);
+            Assert.Less(t1, t0); // fixture precondition: wall 1 really is nearer
+            Assert.AreEqual(t1, t, 1e-5f);
+
+            float2 contact = math.lerp(p0, p1, t1);
+            float2 closest = Geometry.ClosestPointOnSegment(contact, wall1A, wall1B, out _);
+            float2 expectedNormal = math.normalize(contact - closest);
+            Assert.AreEqual(expectedNormal.x, normal.x, 1e-4f);
+            Assert.AreEqual(expectedNormal.y, normal.y, 1e-4f);
+        }
+
+        [Test]
         public void Depenetrate_PushesOutOfWall()
         {
             // Same wall fixture as PushOutOfStadium_NormalPerpendicularToSide
@@ -907,6 +1238,112 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Depenetrate_CircleAndWall_OrderMatters()
+        {
+            // Fix-round 1 I-2: the OTHER unpinned Depenetrate order — circles
+            // before walls. No existing fixture had a body overlapping BOTH
+            // a circle and a wall at once, so a "walls before circles"
+            // mutant survived every test. The two pushes are non-commutative
+            // (each push's landing spot re-enters the OTHER shape's band),
+            // so the two orders land on different final positions.
+            float radius = 0.3f;
+            float2 circleCenter = new float2(0f, 0f);
+            float circleRadius = 1f;
+            float2 wallA = new float2(1.5f, -5f);
+            float2 wallB = new float2(1.5f, 5f);
+            float halfW = 0.5f;
+            float2 posStart = new float2(0.9f, 0f); // inside both the circle's and the wall's band
+            float2 velStart = new float2(-2f, 1f);
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 1,
+                ObstaclePos = new[] { circleCenter },
+                ObstacleRadius = new[] { circleRadius },
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+
+            // Independent expectation: circle push, THEN wall push (spec
+            // §3.3's fixed order), chaining the already-pinned primitives on
+            // a scratch copy.
+            float2 posExpected = posStart;
+            bool pushedCircle = Geometry.PushOutOfCircle(ref posExpected, radius, circleCenter,
+                circleRadius, out float2 circleNormal);
+            Assert.IsTrue(pushedCircle);
+            float2 velExpected = Geometry.Slide(velStart, circleNormal);
+
+            bool pushedWall = Geometry.PushOutOfStadium(ref posExpected, radius, wallA, wallB, halfW,
+                out float2 wallNormal);
+            Assert.IsTrue(pushedWall); // sanity: the circle-adjusted position still overlaps the wall
+            velExpected = Geometry.Slide(velExpected, wallNormal);
+
+            float2 pos = posStart;
+            float2 vel = velStart;
+            Geometry.Depenetrate(ref pos, ref vel, radius, arena, 1);
+
+            Assert.AreEqual(posExpected.x, pos.x, 1e-4f);
+            Assert.AreEqual(posExpected.y, pos.y, 1e-4f);
+            Assert.AreEqual(velExpected.x, vel.x, 1e-4f);
+            Assert.AreEqual(velExpected.y, vel.y, 1e-4f);
+        }
+
+        [Test]
+        public void Depenetrate_MultipleWalls_OrderMatters()
+        {
+            // Fix-round 1 I-3: WallCount > 1 for Depenetrate too — pushes
+            // are non-commutative between two walls just like between a
+            // circle and a wall above, so a "wIdx < 1" mutant AND a
+            // reversed-traversal mutant both land on the same wrong position
+            // here (only wall 0's push applied), distinguishable from the
+            // correct sequential wall0-then-wall1 result.
+            float radius = 0.3f;
+            float2 wall0A = new float2(0f, -5f);
+            float2 wall0B = new float2(0f, 5f);
+            float wall0HalfW = 1f;
+            float2 wall1A = new float2(2.5f, -5f);
+            float2 wall1B = new float2(2.5f, 5f);
+            float wall1HalfW = 1f;
+            float2 posStart = new float2(1f, 0f); // inside wall0's band only, at first
+            float2 velStart = new float2(3f, -1f);
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 2,
+                WallA = new[] { wall0A, wall1A },
+                WallB = new[] { wall0B, wall1B },
+                WallHalfWidth = new[] { wall0HalfW, wall1HalfW },
+            };
+
+            float2 posExpected = posStart;
+            bool pushed0 = Geometry.PushOutOfStadium(ref posExpected, radius, wall0A, wall0B, wall0HalfW,
+                out float2 n0);
+            Assert.IsTrue(pushed0);
+            float2 velExpected = Geometry.Slide(velStart, n0);
+
+            bool pushed1 = Geometry.PushOutOfStadium(ref posExpected, radius, wall1A, wall1B, wall1HalfW,
+                out float2 n1);
+            Assert.IsTrue(pushed1); // sanity: wall0's push re-enters wall1's band
+            velExpected = Geometry.Slide(velExpected, n1);
+
+            float2 pos = posStart;
+            float2 vel = velStart;
+            Geometry.Depenetrate(ref pos, ref vel, radius, arena, 1);
+
+            Assert.AreEqual(posExpected.x, pos.x, 1e-4f);
+            Assert.AreEqual(posExpected.y, pos.y, 1e-4f);
+            Assert.AreEqual(velExpected.x, vel.x, 1e-4f);
+            Assert.AreEqual(velExpected.y, vel.y, 1e-4f);
+        }
+
+        [Test]
         public void Depenetrate_WallAndRing_BothApplied()
         {
             // Body inside a wall placed right at the arena's edge: after the
@@ -919,7 +1356,11 @@ namespace Ring.Simulation.Tests
             float2 wallB = new float2(34f, 2f);
             float halfW = 1f;
             float2 posStart = new float2(34.5f, 0f); // inside the wall band
-            float2 velStart = new float2(5f, -3f);
+            // Fix-round 1 M-6: negative x so the wall's Slide is not a no-op
+            // (the previous velStart = (5,-3) had dot(vel, wallNormal) > 0,
+            // so the wall's Slide call did nothing observable — only the
+            // ring's Slide was actually exercised).
+            float2 velStart = new float2(-5f, -3f);
 
             var arena = new ArenaSimConfig
             {
@@ -955,6 +1396,19 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(posExpected.y, pos.y, 1e-4f);
             Assert.AreEqual(velExpected.x, vel.x, 1e-4f);
             Assert.AreEqual(velExpected.y, vel.y, 1e-4f);
+
+            // Fix-round 1 I-4: recomputed offline, the body remains INSIDE
+            // the wall's band even after both pushes (distance to axis is
+            // ~0.549 against a threshold of halfW + radius = 1.45) — with
+            // `iterations: 1` (every production caller), the wall pushes out
+            // and the ring pushes straight back in, so this configuration
+            // never converges. That is a KNOWN limitation of iterations: 1,
+            // not a bug this task fixes: SimConfigBuilder's wall validation
+            // (Task 16) is responsible for rejecting a wall this close to the
+            // ring boundary. Asserted explicitly here rather than left
+            // silent in the fixture.
+            float2 closestAfter = Geometry.ClosestPointOnSegment(pos, wallA, wallB, out _);
+            Assert.Less(math.length(pos - closestAfter), halfW + radius);
         }
     }
 }

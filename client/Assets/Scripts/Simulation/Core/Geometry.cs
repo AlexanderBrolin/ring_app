@@ -330,8 +330,12 @@ namespace Ring.Simulation.Core
             return Rotate(nFrom, rad) * lenFrom;
         }
 
-        /// First contact along p0→p1 vs all obstacles (and optionally the wall).
-        /// Returns t ∈ [0,1] and the surface normal at the contact point.
+        /// First contact along p0→p1 vs all obstacles, interior walls, and
+        /// (optionally) the ring boundary. Returns t ∈ [0,1] and the surface
+        /// normal at the contact point. "Wall" means two different things
+        /// below (fix-round 1 M-2): the interior stadium walls (WallA/
+        /// WallB/WallHalfWidth, Stage 2 Task 12) are always consulted;
+        /// `includeWall` gates ONLY the arena's outer ring boundary.
         public static bool SweepArena(float2 p0, float2 p1, float padR,
             in ArenaSimConfig arena, bool includeWall, out float t, out float2 normal)
         {
@@ -387,6 +391,16 @@ namespace Ring.Simulation.Core
                         {
                             float2 perp = new float2(-axis.y, axis.x) / axisLen;
                             float side = math.dot(p0 - arena.WallA[wIdx], perp);
+                            // Fix-round 1 M-7: this branch only runs when the
+                            // CONTACT sits exactly on the axis (delta ~ 0
+                            // above), which forces p0 onto the axis too (the
+                            // start-inside branch of SegmentStadium is the
+                            // only way to reach t == 0 with a zero delta) —
+                            // so `side` is ALWAYS exactly 0.0f here in
+                            // practice (verified numerically), and either
+                            // branch of this ternary is reachable only in the
+                            // sense of documenting the INTENDED orientation,
+                            // not as a live discriminator on today's callers.
                             normal = side >= 0f ? perp : -perp;
                         }
                         else
