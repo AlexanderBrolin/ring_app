@@ -42,6 +42,31 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(Targeting.HasLineOfFire(new float2(-20f, -20f),
                 new float2(-25f, -20f), 0.15f, arena));
         }
+
+        [Test]
+        public void NearestAlivePlayer_ZeroAlive_ReturnsFalseAndMinusOne()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            w.KillPlayerNoDamage(0);
+            w.KillPlayerNoDamage(1); // nobody alive now
+            bool found = Targeting.NearestAlivePlayer(w, float2.zero, out int index);
+            Assert.IsFalse(found);
+            Assert.AreEqual(-1, index);
+        }
+
+        [Test]
+        public void NearestAlivePlayer_EqualDistance_TieBreaksOnSmallerIndex()
+        {
+            // Fresh multiplayer world: every player spawns on the ring at the
+            // SAME radius from the arena center
+            // (MultiPlayerWorldTests.SoloSpawnsAtOrigin_MultiplayerSpawnsOnRing),
+            // so querying from the center is an exact three-way tie — the
+            // smaller index must win (spec Р85), not spawn/array order coincidence.
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
+            bool found = Targeting.NearestAlivePlayer(w, float2.zero, out int index);
+            Assert.IsTrue(found);
+            Assert.AreEqual(0, index);
+        }
     }
 
     public class MobAiTests
@@ -313,6 +338,57 @@ namespace Ring.Simulation.Tests
             var snap = new RenderSnapshot(c.Arena);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(MobAiState.Idle, snap.Mobs[0].Ai);
+        }
+
+        [Test]
+        public void ZeroAlivePlayers_MobsGoIdle()
+        {
+            // Stage 2 Task 8: extends the existing solo PlayerDead_MobsGoIdle
+            // coverage above to the genuinely multiplayer case — EVERY player
+            // dead, not just the one solo player — proving MobAiSystem's Idle
+            // branch now reads NearestAlivePlayer's "nobody alive" result
+            // instead of the old solo-only w.Player.Alive.
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c, playerCount: 2);
+            w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f));
+            w.KillPlayerNoDamage(0);
+            w.KillPlayerNoDamage(1); // nobody alive now
+
+            var inputs = new SimInput[2];
+            for (int i = 0; i < 30; i++) w.TickAll(inputs);
+
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            Assert.AreEqual(MobAiState.Idle, snap.Mobs[0].Ai);
+        }
+
+        [Test]
+        public void Chaser_SwitchesTarget_WhenNearestPlayerDies()
+        {
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c, playerCount: 2);
+            // Player 0 sits close to the mob's spawn (east); player 1 sits far
+            // away in the OPPOSITE direction (west) — closing in on one vs the
+            // other is directionally distinguishable, not just "closer/farther
+            // along the same line".
+            var p0 = new PlayerState { Pos = new float2(5f, 0f), Hp = c.Hero.MaxHp, Alive = true };
+            var p1 = new PlayerState { Pos = new float2(-20f, 0f), Hp = c.Hero.MaxHp, Alive = true };
+            w.SetPlayerForTest(0, p0);
+            w.SetPlayerForTest(1, p1);
+            var mobStart = new float2(0f, 0f);
+            w.SpawnMobForTest(MobType.Chaser, mobStart);
+
+            var inputs = new SimInput[2];
+            for (int i = 0; i < 10; i++) w.TickAll(inputs); // mob closes on the NEARER player (0)
+            Assert.Less(math.distance(w.Mobs[0].Pos, p0.Pos), math.distance(mobStart, p0.Pos),
+                "mob should have closed in on player 0 — the nearer alive target");
+
+            w.KillPlayerNoDamage(0); // the nearer target leaves — player 1 is now the only alive one
+            float distToP1AtSwitch = math.distance(w.Mobs[0].Pos, p1.Pos);
+
+            for (int i = 0; i < 60; i++) w.TickAll(inputs);
+            Assert.Less(math.distance(w.Mobs[0].Pos, p1.Pos), distToP1AtSwitch,
+                "after the nearer player dies, the mob must retarget the remaining alive player");
         }
 
         [Test]

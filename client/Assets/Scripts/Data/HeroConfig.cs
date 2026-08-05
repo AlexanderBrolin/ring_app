@@ -76,8 +76,20 @@ namespace Ring.Data
         // PlayerMovementSystem.Update's two "linked" branches). Validated
         // strictly below min(DashStaminaCost, SlideStaminaCost) by
         // SimConfigBuilder — no perpetual motion, every linked move still nets
-        // a stamina drain.
-        [Range(0f, 40f)] public float LinkRefund = 10f; // sync-marker key — keep LAST
+        // a stamina drain. Was the sync-marker key until Stage 2 Task 8's
+        // EdgeRequestMinTicks field below superseded it.
+        [Range(0f, 40f)] public float LinkRefund = 10f;
+
+        // Stage 2 Task 8 (spec Interfaces): minimum tick gap the eventual
+        // edge-request gate (Stage 2 Task 10 — decision F1a moved the gate
+        // itself out of this task, see task-8-brief.md's header) will require
+        // between two DashRequested/SlideRequested edges from the same
+        // player. Declared here, data-only, no behaviour yet — SimConfig is
+        // not part of StateHash (SimConfigHash arrives in Task 23), so this
+        // field is hash-neutral by construction. LinkRefund above was the
+        // sync-marker key until this field superseded it — see its own doc
+        // for the historical chain before it.
+        [Range(0, 15)] public int EdgeRequestMinTicks = 3; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a

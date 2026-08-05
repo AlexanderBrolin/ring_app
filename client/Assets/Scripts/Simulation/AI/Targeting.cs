@@ -65,5 +65,31 @@ namespace Ring.Simulation.AI
                     return false;
             return true;
         }
+
+        /// Stage 2 Task 8 Interfaces: the alive player nearest to `from` — the
+        /// single shared seam MobAiSystem's per-mob target selection and
+        /// WaveSystem's early-exit/spawn-distance/event-position reads all
+        /// route through, replacing the old solo-only `w.Player`. Ties break
+        /// on the SMALLER index (deterministic, no RNG — spec Р85); `false` +
+        /// `index = -1` when nobody is alive. Plain loop over PlayerCount
+        /// (<= Arena.MaxPlayers, currently 3) — no LINQ, no allocation, safe
+        /// on the hot tick path.
+        public static bool NearestAlivePlayer(SimulationWorld w, float2 from, out int index)
+        {
+            index = -1;
+            float bestDistSq = float.MaxValue;
+            for (int i = 0; i < w.PlayerCount; i++)
+            {
+                PlayerState p = w.PlayerAt(i);
+                if (!p.Alive) continue;
+                float distSq = math.distancesq(from, p.Pos);
+                if (distSq < bestDistSq) // strict < — a later equal distance never displaces the smaller index
+                {
+                    bestDistSq = distSq;
+                    index = i;
+                }
+            }
+            return index >= 0;
+        }
     }
 }

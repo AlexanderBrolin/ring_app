@@ -240,6 +240,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.AimMoveSpeedFrac, a.AimMoveSpeedFrac, Eps);
             Assert.AreEqual(e.AimSlideSpeedMult, a.AimSlideSpeedMult, Eps);
             Assert.AreEqual(e.AimSettleSeconds, a.AimSettleSeconds, Eps);
+            // Stage 2 Task 8: documented deviation from the task-8 brief's Files
+            // list (ConfigTests.cs isn't listed there, same established
+            // discrepancy category as Task 4's AssertArenaEqual precedent right
+            // below in this file) — without this the new field silently drops
+            // out of Build_DefaultAssets_MatchesTestConfigsBaseline's coverage.
+            Assert.AreEqual(e.EdgeRequestMinTicks, a.EdgeRequestMinTicks);
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)

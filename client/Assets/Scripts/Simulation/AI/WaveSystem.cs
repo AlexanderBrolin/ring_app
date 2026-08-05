@@ -15,12 +15,21 @@ namespace Ring.Simulation.AI
     /// hang even when the ring is fully blocked (spec §3.13 item 5). Once all
     /// debt is gone and no mobs remain alive, the wave is cleared and the
     /// director goes back to Waiting for WavePause seconds. Does not tick at
-    /// all while the player is dead (full death semantics land in Task 23).
+    /// all while no player is alive (full death semantics landed in Task 23;
+    /// extended from "the one player" to "every player" in Stage 2 Task 8).
     internal static class WaveSystem
     {
         public static void Update(SimulationWorld w)
         {
-            if (!w.Player.Alive) return;
+            // Stage 2 Task 8: early exit + WaveStarted/WaveCleared event
+            // positions route through NearestAlivePlayer (from the arena
+            // center — WaveSystem has no per-mob "from" point the way
+            // MobAiSystem does) instead of the old solo-only
+            // w.Player.Alive/w.Player.Pos. For a solo world this is
+            // byte-for-byte the old "the one player, if alive" read. `false`
+            // (nobody alive) reuses the SAME early return WaveSystem already had.
+            if (!Targeting.NearestAlivePlayer(w, float2.zero, out int nearestIdx)) return;
+            float2 nearestPlayerPos = w.PlayerAt(nearestIdx).Pos;
 
             ref WaveState wave = ref w.WaveRef;
             WaveSimConfig cfg = w.Config.Wave;
@@ -28,7 +37,7 @@ namespace Ring.Simulation.AI
             if (wave.Phase == WavePhase.Waiting)
             {
                 wave.PhaseTimer -= SimulationWorld.TickDt;
-                if (wave.PhaseTimer <= 0f) StartWave(w, ref wave, in cfg);
+                if (wave.PhaseTimer <= 0f) StartWave(w, ref wave, in cfg, nearestPlayerPos);
             }
 
             // Deliberately re-reads wave.Phase rather than branching on the
@@ -45,7 +54,7 @@ namespace Ring.Simulation.AI
                     // Stage 2 Task 5: world-scoped counter — counted once per
                     // match regardless of player count, not per player.
                     w.WorldStatsRef.WavesCleared++;
-                    w.Emit(SimEventKind.WaveCleared, w.Player.Pos, wave.WaveIndex, default, 0f);
+                    w.Emit(SimEventKind.WaveCleared, nearestPlayerPos, wave.WaveIndex, default, 0f);
                     wave.Phase = WavePhase.Waiting;
                     wave.PhaseTimer = cfg.WavePause;
                 }
@@ -60,7 +69,7 @@ namespace Ring.Simulation.AI
             wave.AliveCount = w.MobCount;
         }
 
-        static void StartWave(SimulationWorld w, ref WaveState wave, in WaveSimConfig cfg)
+        static void StartWave(SimulationWorld w, ref WaveState wave, in WaveSimConfig cfg, float2 eventPos)
         {
             wave.WaveIndex++;
             int count = math.min(cfg.BaseCount + cfg.CountGrowth * (wave.WaveIndex - 1),
@@ -70,7 +79,10 @@ namespace Ring.Simulation.AI
             int gunners = (int)math.round(count * gunnerShare);
             wave.PendingGunners = gunners;
             wave.PendingChasers = count - gunners;
-            w.Emit(SimEventKind.WaveStarted, w.Player.Pos, wave.WaveIndex, default, 0f);
+            // eventPos (Stage 2 Task 8): the nearest-alive-player position
+            // Update already resolved above — see its own doc for why
+            // StartWave doesn't re-resolve it itself.
+            w.Emit(SimEventKind.WaveStarted, eventPos, wave.WaveIndex, default, 0f);
             wave.Phase = WavePhase.Active;
         }
 
@@ -140,7 +152,21 @@ namespace Ring.Simulation.AI
         static bool IsValidSpawn(SimulationWorld w, in ArenaSimConfig arena,
             in WaveSimConfig cfg, float2 pos, float mobRadius)
         {
-            if (math.distance(pos, w.Player.Pos) < cfg.MinSpawnDistanceToPlayer) return false;
+            // Stage 2 Task 8: distance-to-player check now respects EVERY
+            // alive player via NearestAlivePlayer(from the candidate spawn
+            // point) instead of the old solo-only w.Player.Pos — a candidate
+            // must clear MinSpawnDistanceToPlayer from whichever alive player
+            // is closest to IT specifically (not the Update-level "nearest to
+            // arena center" player — a candidate can be close to a player who
+            // isn't the one nearest the center, so this is recomputed per
+            // candidate, not threaded down from Update). `!NearestAlivePlayer`
+            // can't actually happen here (Update's own early exit above
+            // already returns before this is ever reached), but the
+            // short-circuit still reads correctly on its own terms: no alive
+            // player means no distance constraint to violate.
+            if (Targeting.NearestAlivePlayer(w, pos, out int nearestIdx)
+                && math.distance(pos, w.PlayerAt(nearestIdx).Pos) < cfg.MinSpawnDistanceToPlayer)
+                return false;
 
             for (int o = 0; o < arena.ObstacleCount; o++)
                 if (Geometry.CircleOverlap(pos, mobRadius, arena.ObstaclePos[o], arena.ObstacleRadius[o]))

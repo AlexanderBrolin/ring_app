@@ -14,8 +14,9 @@ namespace Ring.Simulation.Core
         /// mirrors off a wall/obstacle (PlayerMovementSystem), so consecutive
         /// ricochets compound instead of resetting. Only meaningful while
         /// DashTimer > 0 (mirrors DashDir's "heading, not a timer" role, but
-        /// unlike DashDir it IS zeroed on death — see DamagePlayer — because a
-        /// stale nonzero speed with no active dash reads as inconsistent).
+        /// unlike DashDir it IS zeroed on death — see SimulationWorld.KillPlayer
+        /// (Stage 2 Task 8) — because a stale nonzero speed with no active
+        /// dash reads as inconsistent).
         public float DashSpeedCur;
         public bool Alive;
 
@@ -23,8 +24,9 @@ namespace Ring.Simulation.Core
         /// Hero.AimSettleSeconds while input.AimHeld, decays at 2x that
         /// growth rate once released (PlayerMovementSystem.Update, same
         /// unconditional-every-tick contract as DashBufferTimer et al.).
-        /// Zeroed on death alongside the other movement timers (DamagePlayer);
-        /// clamped to [0, AimSettleSeconds] in ApplyConfig like the rest.
+        /// Zeroed on death alongside the other movement timers
+        /// (SimulationWorld.KillPlayer, Stage 2 Task 8); clamped to
+        /// [0, AimSettleSeconds] in ApplyConfig like the rest.
         public float AimSettleTimer;
 
         /// Slide state (Task 10, spec §3.3 v5): SlideDir is the travel heading

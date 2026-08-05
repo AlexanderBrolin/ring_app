@@ -324,5 +324,47 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(aim1.x, w.PlayerAt(1).AimPoint.x, 1e-5f);
             Assert.AreEqual(aim1.y, w.PlayerAt(1).AimPoint.y, 1e-5f);
         }
+
+        // Stage 2 Task 8: KillPlayerNoDamage — a player exits the match with no
+        // damage dealt and no kill credited to anyone; DamagePlayer's own death
+        // branch and this new no-damage path both now go through the single
+        // shared KillPlayer (task-8-context.md "Делает" #2/#3).
+
+        [Test]
+        public void KillPlayerNoDamage_KillsWithoutDamageOrCredit()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            float damageTakenBefore = w.StatsAt(0).DamageTaken;
+
+            w.KillPlayerNoDamage(0);
+
+            Assert.IsFalse(w.PlayerAt(0).Alive, "the departed player must be dead");
+            Assert.AreEqual(damageTakenBefore, w.StatsAt(0).DamageTaken, 1e-5f,
+                "a no-damage kill must not touch DamageTaken");
+            int died = 0;
+            for (int e = 0; e < w.EventCount; e++)
+                if (w.GetEvent(e).Kind == SimEventKind.PlayerDied) died++;
+            Assert.AreEqual(1, died, "exactly one PlayerDied must fire");
+            Assert.AreEqual(0, w.StatsAt(1).Kills,
+                "there is no attacker — nobody is credited a kill for a departure");
+        }
+
+        [Test]
+        public void KillPlayerNoDamage_DepartedPlayersInFlightProjectile_StillDamagesMob()
+        {
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(2, c, playerCount: 2);
+            w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(3f, 0f),
+                new float2(35f, 0f), 1f, 0f, 100f, 0.12f, 2f);
+
+            w.KillPlayerNoDamage(0); // the shooter leaves before the shot connects
+
+            var inputs = new SimInput[2];
+            for (int i = 0; i < 10; i++) w.TickAll(inputs); // projectile arrives and kills
+
+            Assert.AreEqual(0, w.MobCount,
+                "the departed player's already-flying shot must still land");
+        }
     }
 }

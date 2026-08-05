@@ -31,9 +31,14 @@ namespace Ring.Simulation.AI
             {
                 ref MobState m = ref mobs[i];
                 MobSimConfig cfg = w.MobConfigFor(m.Type);
-                PlayerState player = w.Player;
 
-                if (!player.Alive)
+                // Stage 2 Task 8: target selection now goes through
+                // NearestAlivePlayer (from THIS mob's own position) instead of
+                // the old solo-only w.Player — for a solo world (PlayerCount
+                // == 1) this reduces to exactly the same "the one player, if
+                // alive" read as before. `false` (nobody alive) reuses the
+                // SAME "go Idle" branch the old `!player.Alive` check used.
+                if (!Targeting.NearestAlivePlayer(w, m.Pos, out int targetIndex))
                 {
                     m.Ai = MobAiState.Idle;
                     m.StateTimer = 0f;
@@ -41,6 +46,7 @@ namespace Ring.Simulation.AI
                     ApplyMotion(ref m, in cfg, in arena, dt);
                     continue;
                 }
+                PlayerState player = w.PlayerAt(targetIndex);
 
                 if (m.Type == MobType.Chaser)
                     UpdateChaser(w, ref m, in cfg, in player, in arena, dt);

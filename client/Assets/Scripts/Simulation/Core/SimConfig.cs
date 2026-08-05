@@ -31,6 +31,11 @@ namespace Ring.Simulation.Core
 
         /// Aim-down-sights movement/settle profile (Task 2).
         public float AimMoveSpeedFrac, AimSlideSpeedMult, AimSettleSeconds;
+
+        /// Stage 2 Task 8 (spec Interfaces): minimum tick gap between two edge
+        /// requests (Dash/Slide) from the same player. Data-only — no
+        /// consumer yet, the gate itself lands in Stage 2 Task 10.
+        public int EdgeRequestMinTicks;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).

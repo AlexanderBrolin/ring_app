@@ -24,7 +24,10 @@ namespace Ring.Simulation.Tests
                     PostDashSlideWindow = 0.32f, SlideWallStopDot = 0.7f,
                     RicochetRetention = 0.8f,
                     AimMoveSpeedFrac = 0.8f, AimSlideSpeedMult = 0.5f,
-                    AimSettleSeconds = 0.5f },
+                    AimSettleSeconds = 0.5f,
+                    // Stage 2 Task 8: mirrors HeroConfig's C# default (two-sources-
+                    // of-numbers discipline — this is the test/code-default side).
+                    EdgeRequestMinTicks = 3 },
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
                     ProjectileRadius = 0.12f, ProjectileLifetime = 1.5f, Damage = 12f,
                     SpreadRad = 0.026f, RecoilPerShotRad = 0.006f,

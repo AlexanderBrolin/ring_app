@@ -546,33 +546,75 @@ namespace Ring.Simulation.Core
 
             if (p.Hp <= 0f)
             {
-                p.Alive = false;
-                _matchStats[victim].DeathTick = _tick;
-                p.DashTimer = 0f;
-                // Task 12: DashSpeedCur has no meaning without an active dash
-                // (DashTimer == 0 already says "not dashing") — zeroed for the
-                // same clean-corpse-read reason as DashTimer itself, unlike
-                // DashDir (a heading, deliberately left as-is below).
-                p.DashSpeedCur = 0f;
-                p.IframeTimer = 0f;
-                // Task 9: Stamina itself freezes for free (UpdateDead never
-                // touches it), but the regen-delay countdown is reset so a
-                // corpse's PlayerState reads clean, same as the dash timers above.
-                p.StaminaRegenDelayTimer = 0f;
-                // Task 10 (M11/QD9): every slide timer clears the same way —
-                // SlideDir is a heading, not a timer, so (like DashDir) it is
-                // deliberately left as-is.
-                p.SlideTimer = 0f;
-                p.SlideBufferTimer = 0f;
-                p.RunUpTimer = 0f;
-                p.PostDashSlideTimer = 0f;
-                p.LinkWindowTimer = 0f;
-                // Task 14: aim-settle progress clears the same way as the
-                // other movement timers above — a corpse doesn't keep aiming.
-                p.AimSettleTimer = 0f;
-                Emit(SimEventKind.PlayerDied, pos, victim, default, 0f, zone: zone, hitDir: dir,
-                    playerIndex: (byte)victim);
+                // Stage 2 Task 8: death bookkeeping (timers/Alive/DeathTick/
+                // PlayerDied) moved into KillPlayer — the single home both this
+                // damage-death path and the no-damage KillPlayerNoDamage path
+                // now share, instead of each keeping its own copy of the timer list.
+                KillPlayer(victim, zone, dir);
             }
+        }
+
+        /// Stage 2 Task 8: single home for player-death bookkeeping — zeroes
+        /// every death-relevant timer, sets Alive=false + DeathTick, and emits
+        /// exactly one PlayerDied. Extracted verbatim (same fields, same order,
+        /// same values) from DamagePlayer's former death branch above, so a
+        /// damage-caused death is byte-for-byte unchanged; KillPlayerNoDamage
+        /// below is the second, no-damage caller. Pos is deliberately NOT a
+        /// parameter (unlike DamagePlayer's `pos`, the blow's origin) — a kill
+        /// with no blow (KillPlayerNoDamage) has none to give, so PlayerDied
+        /// here always reads the victim's OWN position instead; zone/dir are
+        /// the only two fields task-8-context.md's invariant pins as identical
+        /// to before, Pos is not among them, and events are excluded from
+        /// StateHash (spec §3.7) either way.
+        void KillPlayer(int index, HitZone zone, float2 dir)
+        {
+            ref PlayerState p = ref _players[index];
+            p.Alive = false;
+            _matchStats[index].DeathTick = _tick;
+            p.DashTimer = 0f;
+            // Task 12: DashSpeedCur has no meaning without an active dash
+            // (DashTimer == 0 already says "not dashing") — zeroed for the
+            // same clean-corpse-read reason as DashTimer itself, unlike
+            // DashDir (a heading, deliberately left as-is below).
+            p.DashSpeedCur = 0f;
+            p.IframeTimer = 0f;
+            // Task 9: Stamina itself freezes for free (UpdateDead never
+            // touches it), but the regen-delay countdown is reset so a
+            // corpse's PlayerState reads clean, same as the dash timers above.
+            p.StaminaRegenDelayTimer = 0f;
+            // Task 10 (M11/QD9): every slide timer clears the same way —
+            // SlideDir is a heading, not a timer, so (like DashDir) it is
+            // deliberately left as-is.
+            p.SlideTimer = 0f;
+            p.SlideBufferTimer = 0f;
+            p.RunUpTimer = 0f;
+            p.PostDashSlideTimer = 0f;
+            p.LinkWindowTimer = 0f;
+            // Task 14: aim-settle progress clears the same way as the
+            // other movement timers above — a corpse doesn't keep aiming.
+            p.AimSettleTimer = 0f;
+            Emit(SimEventKind.PlayerDied, p.Pos, index, default, 0f, zone: zone, hitDir: dir,
+                playerIndex: (byte)index);
+        }
+
+        /// Stage 2 Task 8 Interfaces: exits a player from the match with no
+        /// damage and no credit to anyone — DamageTaken/Kills/etc. never move,
+        /// only KillPlayer's death bookkeeping runs. There is no blow, so
+        /// KillPlayer gets the neutral HitZone.None/zero direction (the same
+        /// "unused for every other kind" contract Emit's own doc describes for
+        /// non-blow event kinds) rather than a simulated hit like
+        /// KillPlayerForTest's overkill-damage seam below uses. Guarded the
+        /// same way DamagePlayer's own `if (!p.Alive) return;` is — an
+        /// already-dead index is a no-op, not a second PlayerDied/DeathTick
+        /// overwrite. An already-in-flight projectile owned by this player
+        /// keeps flying and dealing damage — DamageMob/DamagePlayer never gate
+        /// on the SHOOTER's Alive, only on crediting stats to it (see
+        /// IncrementShotsHit/Kills/HeadshotKills above), so no new logic is
+        /// needed here for that (task-8-context.md "Делает" #3).
+        public void KillPlayerNoDamage(int index)
+        {
+            if (!_players[index].Alive) return;
+            KillPlayer(index, HitZone.None, float2.zero);
         }
 
         /// Battle mob spawn (Task 22 Interfaces) — WaveSystem's sole entry point for

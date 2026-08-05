@@ -56,7 +56,8 @@ namespace Ring.Data
                     RicochetRetention = hero.RicochetRetention,
                     AimMoveSpeedFrac = hero.AimMoveSpeedFrac,
                     AimSlideSpeedMult = hero.AimSlideSpeedMult,
-                    AimSettleSeconds = hero.AimSettleSeconds
+                    AimSettleSeconds = hero.AimSettleSeconds,
+                    EdgeRequestMinTicks = hero.EdgeRequestMinTicks
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -230,6 +231,11 @@ namespace Ring.Data
             }
             ReqInRange(errors, "Hero.AimSlideSpeedMult", cfg.Hero.AimSlideSpeedMult, 0f, 1f, minExclusive: true);
             ReqPositive(errors, "Hero.AimSettleSeconds", cfg.Hero.AimSettleSeconds);
+
+            // Stage 2 Task 8 (spec Interfaces): data-only for now — the
+            // edge-request gate itself (and therefore any USE of this field)
+            // lands in Stage 2 Task 10.
+            ReqNonNegative(errors, "Hero.EdgeRequestMinTicks", cfg.Hero.EdgeRequestMinTicks);
 
             // Task 2: movement-driven spread widening while running/sliding.
             ReqAtLeast(errors, "Weapon.SpreadRunMult", cfg.Weapon.SpreadRunMult, 1f);
