@@ -549,17 +549,31 @@ namespace Ring.Simulation.Tests
             // Mirrors Chaser_BehindObstacle_SteersAroundNotStuck above,
             // substituting a wall for the circular obstacle (Stage 2 Task 14,
             // spec §3.3): SteerAround must treat WallCount the same way it
-            // already treats ObstacleCount. The wall sits entirely to ONE
-            // side of the direct mob->player line (not straddling it like
-            // the obstacle version above) — a wall centred dead-on the
-            // approach line pins the mob against its own flat side instead
-            // (RED found the equivalent-circle tangent, aimed at the FAR
-            // end, going exactly parallel to the near flat face at a
-            // specific offset — a genuine stable dead end of the
-            // nearest-end approach, reproducible from several starting
-            // offsets; see the task report). A wall offset like this one, so
-            // only its nearer end ever competes for "nearest blocker",
-            // avoids that dead end and exercises the intended detour.
+            // already treats ObstacleCount.
+            //
+            // RED-discipline note (task report, urok 64): a wall straddling
+            // the direct mob->player line (like the obstacle version above)
+            // reliably parks the chaser against its own flat side forever —
+            // the equivalent-circle tangent, aimed at the chosen FAR end,
+            // converges to a heading exactly parallel to the near flat face
+            // at a specific point along it, and the physical collision then
+            // cancels the resulting velocity outright. This reproduced from
+            // every starting offset/approach angle tried (including this
+            // wall's own dimensions with the mob dead-on), so it reads as a
+            // structural property of the nearest-end approach for a wall
+            // thick/long enough to matter, not a fixture accident — see the
+            // task report for the full investigation. The wall below sits
+            // entirely to ONE side of the direct line instead, so only its
+            // nearer end ever competes for "nearest blocker" and the dead
+            // end above is never reached — but that also means THIS fixture
+            // is not itself a RED witness: the mob never gets close enough
+            // to the wall for a pre-Task-14 build to need any wall handling
+            // at all (confirmed against the pre-Task-14 revision — still
+            // reaches the player, unmodified). It stands as a basic
+            // sanity/no-crash check for a benign wall placement;
+            // Chaser_DoesNotRubAlongWall and
+            // SteerAround_PrefersNearestBlocker_AcrossKinds below are the
+            // tests that actually go RED against the wall-avoidance code.
             var c = TestConfigs.Open();
             c.Arena.WallCount = 1;
             c.Arena.WallA = new[] { new float2(7f, 3f) };
