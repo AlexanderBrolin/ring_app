@@ -317,7 +317,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.MaxMobs, a.MaxMobs);
             Assert.AreEqual(e.MaxProjectiles, a.MaxProjectiles);
             Assert.AreEqual(e.MaxEventsPerFrame, a.MaxEventsPerFrame);
-            // Task 4: documented deviation from the task-4 brief's Files list —
+            // Stage 2 Task 4: documented deviation from the task-4 brief's Files list —
             // ConfigTests.cs isn't listed there, but without this the two new
             // fields silently drop out of Build_DefaultAssets_MatchesTestConfigsBaseline's
             // coverage (see task-4-report.md).

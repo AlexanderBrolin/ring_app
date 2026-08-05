@@ -348,10 +348,11 @@ namespace Ring.Presentation
         /// struct array, so plain assignment/indexed-copy IS the deep copy —
         /// nothing here reaches into `Ring.Simulation.Core` beyond reading its
         /// already-public fields (Simulation itself is untouched by this task).
-        /// Task 4: `Player` moved from a plain field to `Players`/`PlayerCount`
-        /// (plus the new `LocalPlayerIndex`) — all three copied explicitly here,
-        /// same indexed-copy pattern as `Mobs`/`Projectiles` below; `Stats`
-        /// itself is unchanged (still a single plain field in this task).
+        /// Stage 2 Task 4: `Player` moved from a plain field to
+        /// `Players`/`PlayerCount` (plus the new `LocalPlayerIndex`) — all
+        /// three copied explicitly here, same indexed-copy pattern as
+        /// `Mobs`/`Projectiles` below; `Stats` itself is unchanged (still a
+        /// single plain field in this task).
         static void CopySnapshot(RenderSnapshot from, RenderSnapshot to)
         {
             to.Tick = from.Tick;

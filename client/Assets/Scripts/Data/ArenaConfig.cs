@@ -35,10 +35,11 @@ namespace Ring.Data
         /// a plain Simulation-side struct.
         [Range(0.5f, 5f)] public float SpawnClearance = 1f;
 
-        // Task 4 (spec §3.2): per-match player cap and the multiplayer
+        // Stage 2 Task 4 (spec §3.2): per-match player cap and the multiplayer
         // spawn-ring radius fraction (ring radius = Radius * PlayerSpawnRingFrac).
-        // Delivery into SimConfig via the bootstrap marker mechanism is Task 9 —
-        // for now this is a plain SO field mirrored by TestConfigs.DefaultArena().
+        // Delivery into SimConfig via the bootstrap marker mechanism is
+        // Stage 2 Task 9 — for now this is a plain SO field mirrored by
+        // TestConfigs.DefaultArena().
         [Range(1, 3)] public int MaxPlayers = 3;
         [Range(0.1f, 0.95f)] public float PlayerSpawnRingFrac = 0.8f; // sync-marker key — keep LAST
 

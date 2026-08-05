@@ -4,8 +4,8 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.Tests
 {
-    /// Task 4: turns the single-player world into an N-player one — array of
-    /// players, canonical TickAll(inputs), and the multiplayer spawn ring.
+    /// Stage 2 Task 4: turns the single-player world into an N-player one —
+    /// array of players, canonical TickAll(inputs), and the multiplayer spawn ring.
     public class MultiPlayerWorldTests
     {
         [Test]
@@ -20,6 +20,11 @@ namespace Ring.Simulation.Tests
             Assert.Greater(w.PlayerAt(0).Pos.x, b0.x);
             Assert.Less(w.PlayerAt(1).Pos.x, b1.x);
             Assert.AreEqual(b2.x, w.PlayerAt(2).Pos.x, 1e-4f);
+            // Fix-round 1 M-7: player 2 gets no input at all, so BOTH axes
+            // must stay put — the original test only checked x, which
+            // wouldn't catch a bug that leaked y-motion (or another player's
+            // y) onto an untouched player.
+            Assert.AreEqual(b2.y, w.PlayerAt(2).Pos.y, 1e-4f);
         }
 
         [Test]
@@ -70,7 +75,7 @@ namespace Ring.Simulation.Tests
             // Canonical tick order (brief/context): movement of ALL players by
             // increasing index, THEN weapon of ALL players. Proven by event
             // order rather than a shared-target hit (player-vs-player damage
-            // doesn't exist until Task 17): player 1's PlayerDashed (movement
+            // doesn't exist until Stage 2 Task 17): player 1's PlayerDashed (movement
             // phase) must land in the event buffer strictly before player 0's
             // ProjectileFired (weapon phase) within the SAME tick. A naive
             // per-player interleave (move0, weapon0, move1, weapon1) would
@@ -102,6 +107,79 @@ namespace Ring.Simulation.Tests
                 () => new SimulationWorld(1, cfg, playerCount: 0));
             Assert.Throws<System.ArgumentOutOfRangeException>(
                 () => new SimulationWorld(1, cfg, playerCount: cfg.Arena.MaxPlayers + 1));
+        }
+
+        // Fix-round 1 (I-2): the three tests below exist specifically because
+        // a reviewer showed, by exhaustive revert, that the pre-fix-round-1
+        // MultiPlayerWorldTests suite could not tell the real multiplayer
+        // Sanitize/ApplyConfig/SaveState-RestoreState from a version that
+        // silently still only handled player 0 — all 195 tests stayed green
+        // either way. Each was red/green-proven (task-4-report.md, "Фикс-раунд 1").
+
+        [Test]
+        public void SanitizePerPlayer_ClipsAroundOwnPosition_NotPlayer0()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            // Ring spawn (playerCount > 1): PlayerAt(1).Pos != PlayerAt(0).Pos,
+            // so clipping around the wrong player's position is observable.
+            float2 p1Pos = w.PlayerAt(1).Pos;
+            var farAimPoint = new float2(1e6f, 0f);
+            var inputs = new SimInput[2];
+            inputs[1] = new SimInput { AimPoint = farAimPoint };
+            w.TickAll(inputs);
+
+            // Fixture expression (Global Constraints C14) — same clip radius
+            // Sanitize itself computes (Arena.Radius * 2), no literal.
+            float maxR = cfg.Arena.Radius * 2f;
+            float2 expected = p1Pos + math.normalizesafe(farAimPoint - p1Pos) * maxR;
+            Assert.AreEqual(expected.x, w.PlayerAt(1).AimPoint.x, 1e-2f);
+            Assert.AreEqual(expected.y, w.PlayerAt(1).AimPoint.y, 1e-2f);
+        }
+
+        [Test]
+        public void SaveState_RestoreState_RoundTripsAllPlayers()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
+            var p0 = new PlayerState { Pos = new float2(1f, 2f), Hp = 11f, Alive = true };
+            var p1 = new PlayerState { Pos = new float2(3f, 4f), Hp = 22f, Alive = true };
+            var p2 = new PlayerState { Pos = new float2(5f, 6f), Hp = 33f, Alive = true };
+            w.SetPlayerForTest(0, p0);
+            w.SetPlayerForTest(1, p1);
+            w.SetPlayerForTest(2, p2);
+            var save = w.SaveState();
+
+            // Mutate all three away from the saved snapshot so the restore is observable.
+            w.SetPlayerForTest(0, new PlayerState { Alive = true });
+            w.SetPlayerForTest(1, new PlayerState { Alive = true });
+            w.SetPlayerForTest(2, new PlayerState { Alive = true });
+
+            w.RestoreState(save);
+
+            Assert.AreEqual(p0.Pos, w.PlayerAt(0).Pos);
+            Assert.AreEqual(p0.Hp, w.PlayerAt(0).Hp, 1e-5f);
+            Assert.AreEqual(p1.Pos, w.PlayerAt(1).Pos);
+            Assert.AreEqual(p1.Hp, w.PlayerAt(1).Hp, 1e-5f);
+            Assert.AreEqual(p2.Pos, w.PlayerAt(2).Pos);
+            Assert.AreEqual(p2.Hp, w.PlayerAt(2).Hp, 1e-5f);
+        }
+
+        [Test]
+        public void ApplyConfig_ClampsHpForEveryPlayer_NotJustPlayer0()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            w.SetPlayerForTest(0, new PlayerState { Hp = cfg.Hero.MaxHp, Alive = true });
+            w.SetPlayerForTest(1, new PlayerState { Hp = cfg.Hero.MaxHp, Alive = true });
+            w.SetPlayerForTest(2, new PlayerState { Hp = cfg.Hero.MaxHp, Alive = true });
+
+            var next = cfg;
+            next.Hero.MaxHp = 1f; // far below the starting Hp — the clamp is unmistakable
+            w.ApplyConfig(next);
+
+            Assert.AreEqual(next.Hero.MaxHp, w.PlayerAt(0).Hp, 1e-5f);
+            Assert.AreEqual(next.Hero.MaxHp, w.PlayerAt(1).Hp, 1e-5f);
+            Assert.AreEqual(next.Hero.MaxHp, w.PlayerAt(2).Hp, 1e-5f);
         }
     }
 }

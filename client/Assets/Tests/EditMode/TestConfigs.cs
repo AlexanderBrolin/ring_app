@@ -73,8 +73,8 @@ namespace Ring.Simulation.Tests
                     new float2(2f, -12f), new float2(-13f, -6f), new float2(14f, -9f) },
                 ObstacleRadius = new[] { 2.2f, 1.8f, 2.5f, 2.0f, 1.6f },
                 MaxMobs = 64, MaxProjectiles = 256, MaxEventsPerFrame = 256,
-                // Task 4: same values as ArenaConfig's C# defaults (two-sources-
-                // of-numbers discipline — this is the test/code-default side).
+                // Stage 2 Task 4: same values as ArenaConfig's C# defaults
+                // (two-sources-of-numbers discipline — this is the test/code-default side).
                 MaxPlayers = 3, PlayerSpawnRingFrac = 0.8f
             };
         }

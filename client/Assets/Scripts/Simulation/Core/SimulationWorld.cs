@@ -20,15 +20,17 @@ namespace Ring.Simulation.Core
         Random _spreadRng;
         Random _waveRng;
         SimConfig _config;
-        // Task 4: length is the match's fixed playerCount (constructor param),
-        // not a cap — unlike _mobs/_projectiles below, the player count never
-        // grows/shrinks over a match's lifetime in the MVP (no mid-match join).
+        // Stage 2 Task 4: length is the match's fixed playerCount (constructor
+        // param), not a cap — unlike _mobs/_projectiles below, the player
+        // count never grows/shrinks over a match's lifetime in the MVP (no
+        // mid-match join).
         readonly PlayerState[] _players;
-        // Scratch buffer holding this tick's per-player sanitized input (Task
-        // 4) — the movement loop computes it once per player and the weapon
-        // loop below reuses the SAME sanitized value (not a re-sanitize),
-        // exactly like the old single-player Tick did. Preallocated to
-        // _players.Length so TickAll never allocates on the hot path.
+        // Scratch buffer holding this tick's per-player sanitized input
+        // (Stage 2 Task 4) — the movement loop computes it once per player
+        // and the weapon loop below reuses the SAME sanitized value (not a
+        // re-sanitize), exactly like the old single-player Tick did.
+        // Preallocated to _players.Length so TickAll never allocates on the
+        // hot path.
         readonly SimInput[] _sanitizedInputs;
         MatchStats _stats;
 
@@ -58,15 +60,15 @@ namespace Ring.Simulation.Core
 
         public int CurrentTick => _tick;
         public MatchStats Stats => _stats;
-        /// Synonym for PlayerAt(0) (Task 4) — every pre-Task-4 solo call site
-        /// keeps compiling unchanged.
+        /// Synonym for PlayerAt(0) (Stage 2 Task 4) — every solo call site that
+        /// predates Stage 2 Task 4 keeps compiling unchanged.
         public PlayerState Player => PlayerAt(0);
-        /// Number of players in this match (Task 4) — fixed for the world's
-        /// whole lifetime, set by the constructor's playerCount parameter.
+        /// Number of players in this match (Stage 2 Task 4) — fixed for the
+        /// world's whole lifetime, set by the constructor's playerCount parameter.
         public int PlayerCount => _players.Length;
         public SimConfig Config => _config;
 
-        /// Task 4 Interfaces: read-only access to one player's live state by index.
+        /// Stage 2 Task 4 Interfaces: read-only access to one player's live state by index.
         public PlayerState PlayerAt(int index) => _players[index];
 
         /// Events emitted since the last ClearEvents() call.
@@ -98,7 +100,7 @@ namespace Ring.Simulation.Core
             _sanitizedInputs = new SimInput[playerCount];
             for (int i = 0; i < playerCount; i++)
             {
-                float2 pos = SpawnPosFor(i, playerCount, in config.Arena);
+                float2 pos = Geometry.SpawnPosFor(i, playerCount, in config.Arena);
                 float2 vel = float2.zero; // fresh spawn, no inherited velocity
                 // Same depenetration seam PlayerMovementSystem/SeparationSystem
                 // use — a safety net for the (validated-clean, per
@@ -120,24 +122,7 @@ namespace Ring.Simulation.Core
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
         }
 
-        /// Canonical multiplayer spawn-point formula (spec §3.2) — single source of
-        /// truth shared by the constructor above and
-        /// SimConfigBuilder.Validate's spawn-clearance check (reuse >
-        /// duplication). Solo (playerCount <= 1) spawns at the arena center,
-        /// unchanged from the pre-Task-4 single-player behaviour (189 existing
-        /// tests depend on it); otherwise index sits on a ring at
-        /// Radius * PlayerSpawnRingFrac, evenly spaced by angle, with no
-        /// seed-dependent rotation — spawn layout must stay reproducible
-        /// across replays regardless of match seed.
-        public static float2 SpawnPosFor(int index, int playerCount, in ArenaSimConfig arena)
-        {
-            if (playerCount <= 1) return float2.zero;
-            float angle = index * 2f * math.PI / playerCount;
-            float ringRadius = arena.Radius * arena.PlayerSpawnRingFrac;
-            return new float2(math.cos(angle), math.sin(angle)) * ringRadius;
-        }
-
-        /// Solo overload (Task 4) — throws for a multiplayer world (spec §3.2): the
+        /// Solo overload (Stage 2 Task 4) — throws for a multiplayer world (spec §3.2): the
         /// pair `Tick(in SimInput)` + `Tick(ReadOnlySpan<SimInput>)` would make
         /// every existing `w.Tick(default)` call ambiguous (CS0121), which is
         /// why the canonical multi-player entry point is named TickAll instead.
@@ -154,11 +139,22 @@ namespace Ring.Simulation.Core
             TickAll(single);
         }
 
-        /// Canonical multi-player tick (Task 4 Interfaces). `inputs[i]` is
+        /// Canonical multi-player tick (Stage 2 Task 4 Interfaces). `inputs[i]` is
         /// player i's raw input for this tick; the span must have at least
         /// PlayerCount elements.
         public void TickAll(System.ReadOnlySpan<SimInput> inputs)
         {
+            // Fix-round 1 M-1: checked BEFORE any mutation (_tick++ included)
+            // — a short span throwing from the indexer mid-loop would leave
+            // the world half-ticked (some players moved, some not, tick
+            // counter already bumped). Symmetric with the constructor's
+            // playerCount guard above.
+            if (inputs.Length < _players.Length)
+            {
+                throw new System.ArgumentException(
+                    $"SimulationWorld.TickAll: inputs.Length ({inputs.Length}) must be >= " +
+                    $"PlayerCount ({_players.Length}).", nameof(inputs));
+            }
             _tick++;
             // Canonical order (brief/context): movement of ALL players by
             // increasing index, THEN weapon of ALL players — two separate
@@ -190,7 +186,7 @@ namespace Ring.Simulation.Core
             WaveSystem.Update(this);
         }
 
-        /// One player's movement sub-step of TickAll (Task 4 — split out of the
+        /// One player's movement sub-step of TickAll (Stage 2 Task 4 — split out of the
         /// old single-player Tick body so the movement-all-players loop and the
         /// weapon-all-players loop can share it without duplicating the
         /// dash/slide/ricochet event bookkeeping). Death semantics (spec
@@ -255,7 +251,7 @@ namespace Ring.Simulation.Core
         /// here, so it throws instead; Presentation reacts by restarting the world.
         /// Migration: Hp clamps down to the new max, every player timer clamps into
         /// [0, its new max], wave-state (including WaveIndex) is left untouched.
-        /// Task 4: migrates every player in the match, not just player 0 — for
+        /// Stage 2 Task 4: migrates every player in the match, not just player 0 — for
         /// a solo world (_players.Length == 1) this is byte-for-byte the same
         /// single migration as before.
         public void ApplyConfig(in SimConfig next)
@@ -311,7 +307,7 @@ namespace Ring.Simulation.Core
             return true;
         }
 
-        /// Task 4: takes the sanitizing player's index — every reference point
+        /// Stage 2 Task 4: takes the sanitizing player's index — every reference point
         /// below (AimPoint fallback, Pos-relative AimPoint clamp) must read
         /// THAT player's own state, not always player 0's.
         SimInput Sanitize(in SimInput raw, int index)
@@ -579,9 +575,9 @@ namespace Ring.Simulation.Core
 
         /// Test-only seam (Task 8 Interfaces): exposes the private Sanitize step
         /// so tests can assert the AimHeight NaN-map/clamp behaviour directly,
-        /// without threading it through a full Tick(). Task 4: stays a thin,
-        /// single-argument call into index 0 — HostileInput_*/Sanitize_* tests
-        /// are not rewritten.
+        /// without threading it through a full Tick(). Stage 2 Task 4: stays a
+        /// thin, single-argument call into index 0 — HostileInput_*/Sanitize_*
+        /// tests are not rewritten.
         internal SimInput SanitizeForTest(in SimInput raw) => Sanitize(raw, 0);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -599,11 +595,11 @@ namespace Ring.Simulation.Core
         public void CaptureSnapshot(RenderSnapshot target)
         {
             target.Tick = _tick;
-            // Task 4: LocalPlayerIndex is intentionally left untouched here —
-            // SimulationWorld has no notion of "the local client's player",
-            // that's a Presentation/Networking concept (target allocates with
-            // it defaulted to 0, matching the pre-Task-4 solo assumption every
-            // Player-synonym read site still makes).
+            // Stage 2 Task 4: LocalPlayerIndex is intentionally left untouched
+            // here — SimulationWorld has no notion of "the local client's
+            // player", that's a Presentation/Networking concept (target
+            // allocates with it defaulted to 0, matching the solo assumption
+            // every Player-synonym read site from before Stage 2 Task 4 still makes).
             target.PlayerCount = _players.Length;
             System.Array.Copy(_players, target.Players, _players.Length);
             target.MobCount = _mobCount;
@@ -641,6 +637,16 @@ namespace Ring.Simulation.Core
 
         public void RestoreState(WorldSave save)
         {
+            // Fix-round 1 M-2: without this, a PlayerCount mismatch surfaces
+            // as a bare ArgumentException out of Array.Copy below with no
+            // indication of why — PlayerCount now earns its keep as a real
+            // cross-check instead of just mirroring Players.Length.
+            if (save.PlayerCount != _players.Length)
+            {
+                throw new System.ArgumentException(
+                    $"SimulationWorld.RestoreState: save.PlayerCount ({save.PlayerCount}) must match " +
+                    $"this world's PlayerCount ({_players.Length}).", nameof(save));
+            }
             _tick = save.Tick;
             _spreadRng = save.SpreadRng;
             _waveRng = save.WaveRng;
@@ -657,8 +663,8 @@ namespace Ring.Simulation.Core
         /// Test-only seam for EveryPlayerAndStatsFieldAffectsHash (spec §3.13 item 12).
         /// Not a public API — no *ForTest wrapper ships in the battle surface.
         internal void SetPlayerForTest(in PlayerState p) => _players[0] = p;
-        /// Task 4: index counterpart, for multiplayer test fixtures — the
-        /// single-arg overload above still targets player 0, unchanged.
+        /// Stage 2 Task 4: index counterpart, for multiplayer test fixtures —
+        /// the single-arg overload above still targets player 0, unchanged.
         internal void SetPlayerForTest(int index, in PlayerState p) => _players[index] = p;
         internal void SetStatsForTest(in MatchStats s) => _stats = s;
 

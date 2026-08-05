@@ -206,5 +206,26 @@ namespace Ring.Simulation.Core
                 if (!any) break;
             }
         }
+
+        /// Canonical multiplayer spawn-point formula (Stage 2 Task 4, spec
+        /// §3.2, fix-round 1 M-8) — single source of truth shared by
+        /// SimulationWorld's constructor and SimConfigBuilder.Validate's
+        /// spawn-clearance check (reuse > duplication). Lives here rather
+        /// than on SimulationWorld because it is a pure formula with no
+        /// dependency on world state, and Ring.Data (the builder's home)
+        /// should not have to reach into the stateful world class just to
+        /// call a formula. Solo (playerCount <= 1) spawns at the arena
+        /// center, unchanged from the pre-Stage-2 single-player behaviour
+        /// (189 pre-Stage-2 tests depend on it); otherwise index sits on a
+        /// ring at Radius * PlayerSpawnRingFrac, evenly spaced by angle, with
+        /// no seed-dependent rotation — spawn layout must stay reproducible
+        /// across replays regardless of match seed.
+        public static float2 SpawnPosFor(int index, int playerCount, in ArenaSimConfig arena)
+        {
+            if (playerCount <= 1) return float2.zero;
+            float angle = index * 2f * math.PI / playerCount;
+            float ringRadius = arena.Radius * arena.PlayerSpawnRingFrac;
+            return new float2(math.cos(angle), math.sin(angle)) * ringRadius;
+        }
     }
 }
