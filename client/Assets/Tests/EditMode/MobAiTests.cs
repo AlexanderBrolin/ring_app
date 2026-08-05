@@ -44,6 +44,140 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void LineOfFire_BlockedByWall()
+        {
+            // Stage 2 Task 13 (spec §3.3): HasLineOfFire grows a wall loop
+            // mirroring the existing obstacle loop above. Vertical wall
+            // straddling the ray's crossing point on its flat side (not a cap).
+            float2 wallA = new float2(5f, -5f);
+            float2 wallB = new float2(5f, 5f);
+            float halfW = 1f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+            Assert.IsFalse(Targeting.HasLineOfFire(new float2(0f, 0f), new float2(10f, 0f),
+                0.15f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_ClearAlongWall()
+        {
+            // Same wall as LineOfFire_BlockedByWall, but the ray runs PARALLEL
+            // to its flat side, offset well clear of halfW + padR (3m vs
+            // 1.15m) — catches a "wall always blocks" mutant that
+            // LineOfFire_BlockedByWall alone would let survive.
+            float2 wallA = new float2(5f, -5f);
+            float2 wallB = new float2(5f, 5f);
+            float halfW = 1f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(2f, -5f), new float2(2f, 5f),
+                0.15f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_NegativePadClamped()
+        {
+            // Stage 2 Task 13 (context Р64): a target's own radius is passed
+            // as a NEGATIVE padR by upcoming visibility callers (Task 19/21).
+            // Geometry.SegmentCircle computes r = padR + cR and squares it, so
+            // an unclamped padR deeper than -cR flips the sign and turns this
+            // circle into a phantom of radius |r| = 0.25 (padR -0.45 + cR
+            // 0.2) — big enough to swallow the 0.1m offset below and falsely
+            // block the ray. Clamped to padR' = max(padR, -cR) = -0.2,
+            // r' = 0: the circle degenerates to its own centre point, which
+            // the ray — offset by 0.1, not colinear with it — genuinely misses.
+            float2 circlePos = new float2(5f, 0.1f);
+            float circleR = 0.2f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 1,
+                ObstaclePos = new[] { circlePos },
+                ObstacleRadius = new[] { circleR },
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(0f, 0f), new float2(10f, 0f),
+                -0.45f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_NegativePadClamped_Wall()
+        {
+            // Coordinator addition to the plan's circle-only clamp test above:
+            // without a SEPARATE clamp on the wall side, halfW would
+            // "inflate" by |padR| exactly like an unclamped circle radius,
+            // leaving half of Р64 uncovered. Same numbers as the circle case
+            // (halfW 0.2, padR -0.45): unclamped total pad = halfW + padR =
+            // -0.25 (phantom |r| = 0.25); clamped total pad = halfW +
+            // max(padR, -halfW) = 0 (degenerate axis). The ray runs parallel
+            // to the wall's axis, offset by 0.1 — inside the unclamped
+            // phantom, clear of the clamped (degenerate) one.
+            float2 wallA = new float2(0f, 0f);
+            float2 wallB = new float2(0f, 10f);
+            float halfW = 0.2f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(0.1f, 3f), new float2(0.1f, 7f),
+                -0.45f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_BlockedByWallCap()
+        {
+            // Coordinator addition: the ray crosses well below the wall's
+            // flat-side span [0,10] on the y axis, so only the rounded end
+            // cap at wallA can catch it — proves the caps participate in LoS
+            // the same way the flat side does (a "flat-side-only" mutant
+            // would miss this and read the wall as open there).
+            float2 wallA = new float2(0f, 0f);
+            float2 wallB = new float2(0f, 10f);
+            float halfW = 1f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+            Assert.IsFalse(Targeting.HasLineOfFire(new float2(-3f, -0.9f), new float2(3f, -0.9f),
+                0.15f, arena));
+        }
+
+        [Test]
         public void NearestAlivePlayer_ZeroAlive_ReturnsFalseAndMinusOne()
         {
             var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);

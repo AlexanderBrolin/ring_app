@@ -55,14 +55,41 @@ namespace Ring.Simulation.AI
             return pos + offset;
         }
 
-        /// Is the line of fire (segment from→to, projectile radius) clear of obstacles?
+        /// Is the line of fire (segment from→to, projectile radius) clear of
+        /// obstacles? Stage 2 Task 13 (spec §3.3): grows the original
+        /// obstacle-only loop with interior walls, in the same circles-then-
+        /// walls order Geometry.SweepArena uses — the outer ring boundary is
+        /// NOT consulted here (unchanged from before Task 13): physical
+        /// movement/depenetration keeps bodies inside it, not this gate.
+        /// `padR` may be NEGATIVE (a target's own radius — spec's upcoming
+        /// conservative-visibility callers, Task 19/21, context Р64).
+        /// Geometry.SegmentCircle/SegmentStadium compute `r = padR + <the
+        /// obstacle's own radius>` and square it, so an unclamped padR deeper
+        /// than that radius's negation flips the sign and turns a SMALLER
+        /// obstacle into a phantom of radius |r| — hiding a target behind
+        /// something too small to actually block it, the opposite of what a
+        /// conservative "hide less" pad is meant to do. Each obstacle
+        /// therefore clamps padR to at least its OWN radius's negation,
+        /// INSIDE the loop, per obstacle — not once for the whole call, which
+        /// would apply one shared minimum and leave every obstacle smaller
+        /// than the largest one still phantom-inflated.
         public static bool HasLineOfFire(float2 from, float2 to, float padR,
             in ArenaSimConfig arena)
         {
             for (int o = 0; o < arena.ObstacleCount; o++)
-                if (Geometry.SegmentCircle(from, to, padR,
+            {
+                float circlePad = math.max(padR, -arena.ObstacleRadius[o]);
+                if (Geometry.SegmentCircle(from, to, circlePad,
                         arena.ObstaclePos[o], arena.ObstacleRadius[o], out _))
                     return false;
+            }
+            for (int i = 0; i < arena.WallCount; i++)
+            {
+                float wallPad = math.max(padR, -arena.WallHalfWidth[i]);
+                if (Geometry.SegmentStadium(from, to, wallPad,
+                        arena.WallA[i], arena.WallB[i], arena.WallHalfWidth[i], out _))
+                    return false;
+            }
             return true;
         }
 
