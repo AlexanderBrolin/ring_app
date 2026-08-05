@@ -226,6 +226,52 @@ namespace Ring.Simulation.Tests
                 "player 0's death must not freeze player 1's own personal stats");
         }
 
+        // T5 fix-round 1 I-1: StateHash in T5 only hashes _matchStats[0], and no
+        // test read snapshot.PlayerStats — so a save/restore or CaptureSnapshot
+        // regression that quietly truncated the personal-stats array copy to one
+        // element would have left all 204 tests green. Both proven falsifiable
+        // below (temporary truncation, red observed, reverted — see task-5-report.md).
+
+        [Test]
+        public void SaveState_RestoreState_RoundTripsAllPlayersStats()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
+            var s0 = new MatchStats { Kills = 1, ShotsFired = 11 };
+            var s1 = new MatchStats { Kills = 2, ShotsFired = 22 };
+            var s2 = new MatchStats { Kills = 3, ShotsFired = 33 };
+            w.SetStatsForTest(0, s0);
+            w.SetStatsForTest(1, s1);
+            w.SetStatsForTest(2, s2);
+            var save = w.SaveState();
+
+            // Mutate all three away from the saved snapshot so the restore is observable.
+            w.SetStatsForTest(0, new MatchStats());
+            w.SetStatsForTest(1, new MatchStats());
+            w.SetStatsForTest(2, new MatchStats());
+
+            w.RestoreState(save);
+
+            Assert.AreEqual(s0.Kills, w.StatsAt(0).Kills);
+            Assert.AreEqual(s0.ShotsFired, w.StatsAt(0).ShotsFired);
+            Assert.AreEqual(s1.Kills, w.StatsAt(1).Kills);
+            Assert.AreEqual(s1.ShotsFired, w.StatsAt(1).ShotsFired);
+            Assert.AreEqual(s2.Kills, w.StatsAt(2).Kills);
+            Assert.AreEqual(s2.ShotsFired, w.StatsAt(2).ShotsFired);
+        }
+
+        [Test]
+        public void CaptureSnapshot_CopiesEveryPlayersStats()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            w.SetStatsForTest(1, new MatchStats { Kills = 7, ShotsFired = 9 });
+            var snap = new RenderSnapshot(cfg.Arena);
+            w.CaptureSnapshot(snap);
+
+            Assert.AreEqual(7, snap.PlayerStats[1].Kills);
+            Assert.AreEqual(9, snap.PlayerStats[1].ShotsFired);
+        }
+
         // Fix-round tail (owner-decided, carried into this task): three small
         // gaps left over from Task 4's fix-round review.
 
@@ -233,8 +279,16 @@ namespace Ring.Simulation.Tests
         public void TickAll_SpanShorterThanPlayerCount_Throws()
         {
             var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
+            float2 posBefore = w.PlayerAt(0).Pos;
             var shortInputs = new SimInput[2]; // one short of PlayerCount
             Assert.Throws<System.ArgumentException>(() => w.TickAll(shortInputs));
+            // T5 fix-round 1 I-3: the guard's whole point is refusing BEFORE any
+            // mutation — asserting only the exception type would not catch a
+            // regression that moved the check past _tick++/the movement loop.
+            Assert.AreEqual(0, w.CurrentTick,
+                "the guard must fire before any mutation, including _tick++");
+            Assert.AreEqual(posBefore, w.PlayerAt(0).Pos,
+                "no player should have moved either — the guard must fire before the movement loop");
         }
 
         [Test]
@@ -251,10 +305,15 @@ namespace Ring.Simulation.Tests
         {
             var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
             var inputs = new SimInput[2];
+            // T5 fix-round 1 M-5: named fixtures (Global Constraints C14) instead
+            // of three unrelated-looking literals — aim1 is both what tick 1
+            // sends AND what tick 2's assertion expects back.
+            var aim0 = new float2(3f, 4f);
+            var aim1 = new float2(7f, 9f);
             // Tick 1: give each player a distinct, finite AimPoint so their
             // OWN previous AimPoint differs going into tick 2.
-            inputs[0] = new SimInput { AimPoint = new float2(3f, 4f) };
-            inputs[1] = new SimInput { AimPoint = new float2(7f, 9f) };
+            inputs[0] = new SimInput { AimPoint = aim0 };
+            inputs[1] = new SimInput { AimPoint = aim1 };
             w.TickAll(inputs);
 
             // Tick 2: player 1's AimPoint goes non-finite — Sanitize must fall
@@ -262,8 +321,8 @@ namespace Ring.Simulation.Tests
             inputs[1] = new SimInput { AimPoint = new float2(float.NaN, float.NaN) };
             w.TickAll(inputs);
 
-            Assert.AreEqual(7f, w.PlayerAt(1).AimPoint.x, 1e-5f);
-            Assert.AreEqual(9f, w.PlayerAt(1).AimPoint.y, 1e-5f);
+            Assert.AreEqual(aim1.x, w.PlayerAt(1).AimPoint.x, 1e-5f);
+            Assert.AreEqual(aim1.y, w.PlayerAt(1).AimPoint.y, 1e-5f);
         }
     }
 }

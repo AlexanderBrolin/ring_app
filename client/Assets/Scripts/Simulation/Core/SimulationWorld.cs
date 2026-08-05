@@ -512,20 +512,23 @@ namespace Ring.Simulation.Core
         /// PlayerDied too (the death VFX wants the blow that ended the run).
         internal void DamagePlayer(float dmg, float2 pos, HitZone zone, float2 dir)
         {
-            ref PlayerState p = ref _players[0];
+            // T5 fix-round 1 M-3: single named source for "who" instead of two
+            // mechanically-unrelated-looking `0` literals (ref _players[0] here,
+            // _matchStats[0] below) — both act on the same victim by construction,
+            // this makes that fact explicit instead of implicit-by-coincidence.
+            int victim = 0; // real victim index arrives in Stage 2 Task 17 (PvP)
+            ref PlayerState p = ref _players[victim];
             if (!p.Alive) return;
             if (p.IframeTimer > 0f) return;
 
             p.Hp -= dmg;
-            // Stage 2 Task 5: DamagePlayer still hardcodes player 0 (see the ref
-            // above) — the victim's OWN personal stats, so index 0 is correct here.
-            _matchStats[0].DamageTaken += dmg;
+            _matchStats[victim].DamageTaken += dmg;
             Emit(SimEventKind.PlayerDamaged, pos, 0, default, dmg, zone: zone, hitDir: dir);
 
             if (p.Hp <= 0f)
             {
                 p.Alive = false;
-                _matchStats[0].DeathTick = _tick;
+                _matchStats[victim].DeathTick = _tick;
                 p.DashTimer = 0f;
                 // Task 12: DashSpeedCur has no meaning without an active dash
                 // (DashTimer == 0 already says "not dashing") — zeroed for the
@@ -687,6 +690,24 @@ namespace Ring.Simulation.Core
                 throw new System.ArgumentException(
                     $"SimulationWorld.RestoreState: save.PlayerCount ({save.PlayerCount}) must match " +
                     $"this world's PlayerCount ({_players.Length}).", nameof(save));
+            }
+            // T5 fix-round 1 M-2: PlayerCount matching doesn't guarantee the
+            // backing arrays themselves are the right length — a hand-built
+            // WorldSave (Networking, Stage 2 Task 7+) could get PlayerCount right
+            // and still hand in a short Players/Stats array, which would
+            // otherwise surface as a bare, unexplained exception straight out of
+            // Array.Copy below.
+            if (save.Players.Length != _players.Length)
+            {
+                throw new System.ArgumentException(
+                    $"SimulationWorld.RestoreState: save.Players.Length ({save.Players.Length}) must " +
+                    $"match this world's PlayerCount ({_players.Length}).", nameof(save));
+            }
+            if (save.Stats.Length != _matchStats.Length)
+            {
+                throw new System.ArgumentException(
+                    $"SimulationWorld.RestoreState: save.Stats.Length ({save.Stats.Length}) must " +
+                    $"match this world's PlayerCount ({_matchStats.Length}).", nameof(save));
             }
             _tick = save.Tick;
             _spreadRng = save.SpreadRng;

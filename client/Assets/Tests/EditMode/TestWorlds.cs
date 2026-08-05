@@ -94,16 +94,27 @@ namespace Ring.Simulation.Tests
         /// weapon fire to land. `maxTicks` covers TestConfigs.Default()'s
         /// FirstWaveDelay (75 ticks) plus spawn/clear settling with generous
         /// headroom; it is a stall guard, not an expectation — callers assert on
-        /// WorldStats.WavesCleared itself.
-        public static void ClearFirstWave(SimulationWorld world, int maxTicks = 300)
+        /// WorldStats.WavesCleared itself. Returns the number of ticks consumed,
+        /// same contract as RunUntilProjectilesDie above (T5 fix-round 1 M-4): if a
+        /// caller's own WavesCleared assertion then fails, this return value
+        /// tells them whether the fixture ran out of budget (its own bug) or the
+        /// wave genuinely never cleared (a product bug) — without it the failure
+        /// reads as a silent product regression either way. DamageMob's shooter
+        /// index is hardcoded to 0 (Stage 2 Task 5 stub, see its own doc) — every
+        /// kill this helper causes incidentally credits ShotsHit/Kills to player
+        /// 0's personal MatchStats, so a caller asserting on player 0's own
+        /// personal stats after calling this must account for that side effect.
+        public static int ClearFirstWave(SimulationWorld world, int maxTicks = 300)
         {
             var inputs = new SimInput[world.PlayerCount];
-            for (int t = 0; t < maxTicks && world.WorldStats.WavesCleared == 0; t++)
+            int ticks = 0;
+            for (; ticks < maxTicks && world.WorldStats.WavesCleared == 0; ticks++)
             {
                 world.TickAll(inputs);
                 while (world.MobCount > 0)
                     world.DamageMob(0, 1e9f, world.Mobs[0].Pos, HitZone.Body, default);
             }
+            return ticks;
         }
     }
 }

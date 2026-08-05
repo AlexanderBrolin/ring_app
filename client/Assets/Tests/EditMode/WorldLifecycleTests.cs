@@ -67,13 +67,14 @@ namespace Ring.Simulation.Tests
             // F-4 fix-round: the three passes the old comment here said were
             // deferred to Task 16/22 — SetMobForTest/SetProjectileForTest/
             // SetWaveForTest now exist (SimulationWorld.cs), completing coverage
-            // from the two original passes to all five. Recounted after Task 4
-            // (ProjectileState gained Height/PrevHeight/VelZ) and Task 6
-            // (MatchStats gained HeadshotKills): 22/48 fields to all 48 —
-            // PlayerState 12 + MatchStats 8 + MobState 9 + ProjectileState 11 +
-            // WaveState 6. The loops below reflect over the live structs, so a
-            // new field is covered the moment it is declared; this tally is a
-            // receipt for the reader, not a bound the test enforces.
+            // from two passes to all five. T5 fix-round 1 M-1: the tally below
+            // was internally inconsistent (components didn't sum to the stated
+            // total) — recounted by actual typeof(X).GetFields() count, not
+            // restated from memory: PlayerState 22 + MatchStats 8 + MobState 9 +
+            // ProjectileState 11 + WaveState 6 = 56. The loops below reflect over
+            // the live structs, so a new field is covered the moment it is
+            // declared; this tally is a receipt for the reader, not a bound the
+            // test enforces.
             foreach (var field in typeof(MobState).GetFields())
             {
                 w.RestoreState(save);

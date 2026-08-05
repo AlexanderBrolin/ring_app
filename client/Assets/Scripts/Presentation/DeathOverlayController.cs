@@ -117,6 +117,7 @@ namespace Ring.Presentation
             MatchStats stats = _runner.Curr.Stats;
             WorldStats worldStats = _runner.Curr.WorldStats;
             float timeSeconds = stats.DeathTick * SimulationWorld.TickDt;
+            // Stage 2 Task 7/17: ShotsHit/Kills become per-shooter; revisit this ratio then
             float accuracy = stats.ShotsFired > 0 ? (float)stats.ShotsHit / stats.ShotsFired : 0f;
 
             var sb = new StringBuilder();
