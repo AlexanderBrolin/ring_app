@@ -113,5 +113,38 @@ namespace Ring.Simulation.Visibility
             int remaining = prevLinger == 0 ? cfg.LingerTicks : prevLinger - 1;
             if (remaining > 0) result.Add(id, remaining);
         }
+
+        /// Audibility gate (Stage 2 Task 20, spec §3.5, Р21): plain distance
+        /// only — deliberately no LoS check at all. Sound is the diegetic
+        /// "open short-range aether" of ADR-003 §8 and travels through walls;
+        /// HearRadius is >= SightRadius by construction of the config (the
+        /// cross-field validation itself lands in Task 22, not here), so this
+        /// gate is always at least as permissive as Compute's own sight gate,
+        /// never narrower.
+        public static bool IsAudible(float2 observerPos, float2 sourcePos, in VisibilitySimConfig cfg)
+        {
+            return math.distance(observerPos, sourcePos) <= cfg.HearRadius;
+        }
+
+        /// Snaps the position of an event whose source is NOT visible onto a
+        /// coarse grid (Р21): exact coordinates of every shot through walls
+        /// are an ESP-grade leak. `grid <= 0` is a hard opt-out (identity) —
+        /// TestConfigs and any hand-built config that never sets
+        /// HearPositionGridMeters must not crash into a divide-by-zero
+        /// instead. When enabled, `round(pos / grid) * grid` is a pure,
+        /// deterministic function of `pos` and `grid` alone — no RNG, no
+        /// world/tick dependency — so the same true position always produces
+        /// the same coarse one, which is exactly what makes it idempotent
+        /// (re-quantizing an already-quantized position is a no-op) and
+        /// symmetric around the arena's centre (math.round forwards to
+        /// System.Math.Round(double), whose documented default,
+        /// MidpointRounding.ToEven, treats a midpoint the same distance
+        /// either side of zero identically).
+        public static float2 QuantizeAudiblePos(float2 pos, in VisibilitySimConfig cfg)
+        {
+            float grid = cfg.HearPositionGridMeters;
+            if (grid <= 0f) return pos;
+            return math.round(pos / grid) * grid;
+        }
     }
 }

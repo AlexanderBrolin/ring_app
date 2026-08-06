@@ -23,6 +23,15 @@ namespace Ring.Simulation.Tests
     /// hysteresis-reentry-from-linger semantics decision (item 6), and the
     /// Chaser-vs-Hero radius discrimination gap (M-3) — see each fixture's
     /// own doc for the specific mutation it exists to catch.
+    ///
+    /// Stage 2 Task 20 (spec §3.5, Р21) added the fixtures below Compute's
+    /// own: audibility (`IsAudible`, distance-only, LoS never consulted) and
+    /// coarse-position quantization for inaudible-of-sight sources
+    /// (`QuantizeAudiblePos`). `AudiblePos_ExactForVisible` from the plan's
+    /// list is NOT here — deliberately: `QuantizeAudiblePos` takes no
+    /// visibility flag, so "exact position for a visible source" is a rule
+    /// for Task 21's `EventRelevance.ShouldDeliver` caller, not this
+    /// function; carried over in carryover-t21.md.
     public class VisibilityTests
     {
         static int Capacity(in SimConfig cfg) => cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
@@ -660,6 +669,198 @@ namespace Ring.Simulation.Tests
             var result = new VisibilitySet(Capacity(cfg));
 
             Assert.DoesNotThrow(() => VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result));
+        }
+
+        // --- 17: Audible_BeyondHearRadius_False ---
+
+        [Test]
+        public void Audible_BeyondHearRadius_False()
+        {
+            var cfg = TestConfigs.Open();
+            var farPos = new float2(cfg.Visibility.HearRadius + 5f, 0f);
+            // Positive witness (Task 19 fix-round I-1 discipline): without
+            // it, a stub that always returns false satisfies the only
+            // assertion below just as well as a correct implementation.
+            var nearPos = new float2(5f, 0f);
+
+            Assert.IsFalse(VisibilitySystem.IsAudible(float2.zero, farPos, cfg.Visibility));
+            Assert.IsTrue(VisibilitySystem.IsAudible(float2.zero, nearPos, cfg.Visibility),
+                "witness: a clearly-close source must actually be reported audible");
+        }
+
+        // --- 18: Audible_AtHearRadiusBoundary_InclusiveExclusive ---
+
+        [Test]
+        public void Audible_AtHearRadiusBoundary_InclusiveExclusive()
+        {
+            // Pins the boundary exactly (Task 19 fix-round M-2 lesson): a
+            // mutant flipping the spec's `dist <= HearRadius` to `dist <
+            // HearRadius` survives every other fixture in this file, which
+            // never places a source exactly on the radius.
+            var cfg = TestConfigs.Open();
+            var atBoundary = new float2(cfg.Visibility.HearRadius, 0f);
+            const float epsilon = 1e-3f;
+            var pastBoundary = new float2(cfg.Visibility.HearRadius + epsilon, 0f);
+
+            Assert.IsTrue(VisibilitySystem.IsAudible(float2.zero, atBoundary, cfg.Visibility),
+                "exactly HearRadius must count as audible (inclusive boundary)");
+            Assert.IsFalse(VisibilitySystem.IsAudible(float2.zero, pastBoundary, cfg.Visibility),
+                "just past HearRadius must not be audible");
+        }
+
+        // --- 19: HearRadius_IgnoresLos_AndIsWider ---
+
+        [Test]
+        public void HearRadius_IgnoresLos_AndIsWider()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Arena.WallCount = 1;
+            // Same wall shape as BehindWall_NotVisible/LingerTicks_KeepVisibleAfterLosBreak.
+            cfg.Arena.WallA = new[] { new float2(5f, -5f) };
+            cfg.Arena.WallB = new[] { new float2(5f, 5f) };
+            cfg.Arena.WallHalfWidth = new[] { 1f };
+            var observerPos = float2.zero;
+            var sourcePos = new float2(10f, 0f); // dead ahead, well within HearRadius, through the wall
+
+            // test setup: prove LoS really is blocked here, or this fixture
+            // never exercises "audible despite blocked LoS" at all.
+            Assert.IsFalse(Targeting.HasLineOfFire(observerPos, sourcePos, -cfg.Chaser.Radius, cfg.Arena),
+                "test setup: the wall must actually block LoS for this to prove anything");
+
+            Assert.IsTrue(VisibilitySystem.IsAudible(observerPos, sourcePos, cfg.Visibility),
+                "Р21: sound must be heard through a wall — LoS never gates hearing");
+
+            // Hearing is also WIDER than sight: a point strictly between
+            // SightRadius and HearRadius, with clear LoS this time (open
+            // arena, no wall on THIS ray), is not seen but is heard.
+            var openCfg = TestConfigs.Open();
+            var openWorld = new SimulationWorld(1, openCfg);
+            float betweenDist = (openCfg.Visibility.SightRadius + openCfg.Visibility.HearRadius) * 0.5f;
+            Assert.Greater(betweenDist, openCfg.Visibility.SightRadius,
+                "test setup: fixture distance must sit past sight radius");
+            Assert.Less(betweenDist, openCfg.Visibility.HearRadius,
+                "test setup: fixture distance must sit within hear radius");
+            var farPos = new float2(betweenDist, 0f);
+            int mobId = openWorld.SpawnMobForTest(MobType.Chaser, farPos);
+
+            var previous = new VisibilitySet(Capacity(openCfg));
+            var result = new VisibilitySet(Capacity(openCfg));
+            VisibilitySystem.Compute(openWorld, 0, openCfg.Visibility, previous, result);
+            Assert.IsFalse(result.Contains(mobId), "test setup: betweenDist must exceed SightRadius, i.e. not visible");
+
+            Assert.IsTrue(VisibilitySystem.IsAudible(float2.zero, farPos, openCfg.Visibility),
+                "a point between SightRadius and HearRadius must be audible even though it is not visible");
+        }
+
+        // --- 20: AudiblePos_SnappedToGrid ---
+
+        [Test]
+        public void AudiblePos_SnappedToGrid()
+        {
+            var cfg = TestConfigs.Open();
+            float grid = cfg.Visibility.HearPositionGridMeters;
+            Assert.Greater(grid, 0f, "test setup: this fixture only makes sense with quantization enabled");
+
+            var pos = new float2(7f, -11f); // deliberately NOT already grid-aligned
+            float2 snapped = VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility);
+
+            // Property, not a hand-computed literal (spec discipline §0):
+            // dividing the result by the grid size must land within
+            // floating-point epsilon of SOME integer, whichever one that is.
+            const float epsilon = 1e-4f;
+            float xCells = snapped.x / grid;
+            float yCells = snapped.y / grid;
+            Assert.LessOrEqual(math.abs(xCells - math.round(xCells)), epsilon, "snapped X must land on a grid node");
+            Assert.LessOrEqual(math.abs(yCells - math.round(yCells)), epsilon, "snapped Y must land on a grid node");
+        }
+
+        // --- 21: AudiblePos_DifferentPositionsInSameCell_QuantizeToSameNode ---
+
+        [Test]
+        public void AudiblePos_DifferentPositionsInSameCell_QuantizeToSameNode()
+        {
+            var cfg = TestConfigs.Open();
+            float grid = cfg.Visibility.HearPositionGridMeters;
+            Assert.Greater(grid, 0f, "test setup: this fixture only makes sense with quantization enabled");
+
+            // An arbitrary, non-origin grid node and two DISTINCT source
+            // positions both strictly inside its cell (+/- 0.4 * grid,
+            // safely short of the +/- 0.5 * grid half-width that would tip
+            // into a neighbouring node) — spec Р21's whole point is that an
+            // observer who can only hear, not see, the source must not be
+            // able to tell these two apart from the coarse position alone.
+            float node = grid * 2f;
+            var posA = new float2(node - 0.4f * grid, 0f);
+            var posB = new float2(node + 0.4f * grid, 0f);
+            Assert.AreNotEqual(posA, posB, "test setup: the two source positions must actually differ");
+
+            float2 snappedA = VisibilitySystem.QuantizeAudiblePos(posA, cfg.Visibility);
+            float2 snappedB = VisibilitySystem.QuantizeAudiblePos(posB, cfg.Visibility);
+
+            Assert.AreEqual(snappedA, snappedB,
+                "two distinct positions inside the same grid cell must quantize to the exact same node — "
+                + "otherwise the coarse position still leaks which of the two it actually was");
+        }
+
+        // --- 22: AudiblePos_IdentityWhenGridDisabled ---
+
+        [Test]
+        public void AudiblePos_IdentityWhenGridDisabled()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Visibility.HearPositionGridMeters = 0f;
+            var pos = new float2(7.31f, -11.02f); // arbitrary, deliberately NOT grid-aligned
+
+            float2 result = VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility);
+
+            Assert.AreEqual(pos, result, "grid disabled (0) must return the exact, unquantized position");
+        }
+
+        // --- 23: AudiblePos_Idempotent ---
+
+        [Test]
+        public void AudiblePos_Idempotent()
+        {
+            var cfg = TestConfigs.Open();
+            var pos = new float2(7f, -11f); // arbitrary, not grid-aligned
+
+            float2 once = VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility);
+            Assert.AreNotEqual(pos, once,
+                "test setup: pos must not already sit on a grid node, or idempotency here is vacuous");
+
+            float2 twice = VisibilitySystem.QuantizeAudiblePos(once, cfg.Visibility);
+            Assert.AreEqual(once, twice, "quantizing an already-quantized position must not move it again");
+        }
+
+        // --- 24: AudiblePos_SymmetricAroundOrigin_ForNegativeCoordinates ---
+
+        [Test]
+        public void AudiblePos_SymmetricAroundOrigin_ForNegativeCoordinates()
+        {
+            var cfg = TestConfigs.Open();
+            float grid = cfg.Visibility.HearPositionGridMeters;
+            Assert.Greater(grid, 0f, "test setup: this fixture only makes sense with quantization enabled");
+
+            // A half-integer multiple of the grid (1.5 * grid): both 1.5 and
+            // grid (3) are exactly representable dyadic fractions, so the
+            // division below is an EXACT 1.5, landing precisely on the
+            // midpoint between two grid nodes. math.round(float) forwards to
+            // System.Math.Round(double) (Unity.Mathematics package source,
+            // math.cs:2618 — checked, not assumed), whose documented default
+            // is MidpointRounding.ToEven: round(1.5) = 2, round(-1.5) = -2 —
+            // symmetric around zero, exactly what an arena mirrored about
+            // its centre requires (spec Р21 concern: a biased rounding rule,
+            // e.g. floor(x + 0.5), would shift every negative-side source by
+            // up to one whole grid cell relative to its positive mirror).
+            float half = 1.5f * grid;
+            var pos = new float2(half, -half);
+            var mirrored = new float2(-half, half);
+
+            float2 q = VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility);
+            float2 qMirrored = VisibilitySystem.QuantizeAudiblePos(mirrored, cfg.Visibility);
+
+            Assert.AreEqual(-q.x, qMirrored.x, "mirroring the source across the origin must mirror the quantized X");
+            Assert.AreEqual(-q.y, qMirrored.y, "mirroring the source across the origin must mirror the quantized Y");
         }
     }
 }
