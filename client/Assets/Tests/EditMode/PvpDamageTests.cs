@@ -351,6 +351,76 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void BarrierOutranksPlayerOnAnExactTie()
+        {
+            // Canonical packing order (ProjectileSystem's gather): barrier
+            // first, then mobs, then players, then floor — and the min-scan
+            // breaks ties with a strict `<`, so the lowest-packed candidate wins
+            // an exact one. Task 17 had to slot the new per-player loop into the
+            // position the single hardcoded player candidate used to hold,
+            // BETWEEN the mobs and the floor, because packing it earlier would
+            // silently re-order those ties and with them the pinned scenarios.
+            // Nothing else pins that placement, so this does: a round spawned
+            // inside BOTH an obstacle and a player produces two candidates at
+            // t = 0 (Geometry.SegmentCircle's start-inside branch answers 0 for
+            // each), and the barrier has to win.
+            var c = Range();
+            const float obstacleX = 5f, obstacleRadius = 1.5f;
+            c.Arena.ObstacleCount = 1;
+            c.Arena.ObstaclePos = new[] { new float2(obstacleX, 0f) };
+            c.Arena.ObstacleRadius = new[] { obstacleRadius };
+
+            // Player 1 stands just clear of the obstacle (no overlap, so nothing
+            // depenetrates them off their mark), close enough that the two
+            // padded circles still share a sliver of the +X axis.
+            float playerX = obstacleX + obstacleRadius + c.Hero.Radius + 0.1f;
+            // Muzzle at the midpoint of that sliver — inside both.
+            float muzzleX = 0.5f * ((obstacleX + obstacleRadius + c.Weapon.ProjectileRadius)
+                + (playerX - c.Hero.Radius - c.Weapon.ProjectileRadius));
+
+            SimulationWorld Fire(bool withObstacle)
+            {
+                SimConfig cfg = c;
+                if (!withObstacle)
+                {
+                    cfg.Arena.ObstacleCount = 0;
+                    cfg.Arena.ObstaclePos = System.Array.Empty<float2>();
+                    cfg.Arena.ObstacleRadius = System.Array.Empty<float>();
+                }
+                var world = new SimulationWorld(1, cfg, playerCount: 2);
+                PlaceAt(world, 0, float2.zero);
+                PlaceAt(world, 1, new float2(playerX, 0f));
+                world.SpawnProjectileForTest(ProjectileOwner.Player, new float2(muzzleX, 0f),
+                    new float2(cfg.Weapon.ProjectileSpeed, 0f), BodyBand(cfg), 0f,
+                    cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime,
+                    ownerIndex: 0);
+                world.ClearEvents();
+                TickIdle(world);
+                return world;
+            }
+
+            Assert.Less(playerX - muzzleX, c.Hero.Radius + c.Weapon.ProjectileRadius,
+                "fixture premise: the muzzle sits inside player 1's padded circle (t = 0)");
+            Assert.Less(muzzleX - obstacleX, obstacleRadius + c.Weapon.ProjectileRadius,
+                "fixture premise: the muzzle sits inside the obstacle's padded circle (t = 0)");
+            Assert.Greater(playerX - obstacleX, obstacleRadius + c.Hero.Radius,
+                "fixture premise: player 1 does not overlap the obstacle and stays where placed");
+
+            SimulationWorld tie = Fire(withObstacle: true);
+            Assert.AreEqual(1, TestEvents.CountOf(tie, SimEventKind.ProjectileBlocked),
+                "the barrier is packed first, so it takes an exact tie");
+            Assert.AreEqual(c.Hero.MaxHp, tie.PlayerAt(1).Hp, 1e-4f);
+            Assert.AreEqual(0, TestEvents.CountOf(tie, SimEventKind.PlayerDamaged));
+
+            // Control: without the obstacle the very same round does reach
+            // player 1 — so the tie above was a real contest between two
+            // gathered candidates, not a player the gather had simply missed.
+            SimulationWorld noTie = Fire(withObstacle: false);
+            Assert.Less(noTie.PlayerAt(1).Hp, c.Hero.MaxHp,
+                "with nothing to outrank it, the player candidate resolves");
+        }
+
+        [Test]
         public void SaturatedWorld_CandidateScratchDoesNotOverflow()
         {
             // Upper bound on ONE round's candidate gather: barrier + every live
