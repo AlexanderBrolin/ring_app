@@ -45,6 +45,22 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, c, playerCount: 2);
             TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
             TestWorlds.RelocatePlayerForTest(w, 1, new float2(TargetX, 0f));
+
+            // Same depenetration discipline TestWorlds.TrioSaturated carries
+            // (Ф4 fix-wave): every expectation below is built from these two
+            // marks, so the fixture states outright that the bodies are ON
+            // them. Geometry.Depenetrate runs unconditionally every tick
+            // (PlayerMovementSystem) and pushes a body out of arena geometry —
+            // Range() inherits Open(), which has none (asserted), and bodies do
+            // not depenetrate against each other at all, so here the check is
+            // cheap where the trio's is load-bearing. One phase, one discipline.
+            Assert.AreEqual(0, c.Arena.ObstacleCount + c.Arena.WallCount,
+                "fixture premise: the duel arena carries no geometry to depenetrate against");
+            const float posTolerance = 1e-4f;
+            Assert.Less(math.distance(w.PlayerAt(0).Pos, float2.zero), posTolerance,
+                "fixture premise: the shooter stands exactly at the origin");
+            Assert.Less(math.distance(w.PlayerAt(1).Pos, new float2(TargetX, 0f)), posTolerance,
+                "fixture premise: the victim stands exactly TargetX downrange");
             return w;
         }
 
@@ -533,6 +549,88 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void LowerPlayerIndexWinsAnExactTie()
+        {
+            // Ф4 fix-wave. The three tests above pin players against the OTHER
+            // candidate kinds (barrier, mob, floor); this pins the order WITHIN
+            // the player loop, which nothing else did. ProjectileSystem gathers
+            // players by ascending index and the min-scan breaks ties with a
+            // strict `<`, so an exact tie goes to the LOWEST player index — the
+            // same rule ProjectileHeightTests.EqualT_TieBreaksLowerIndex pins
+            // for mobs, and the only one of the four still unwitnessed.
+            // Its consequences are macroscopic rather than cosmetic: reverse
+            // the loop and a different player takes the blow, which moves Hp,
+            // DamageTaken, credit, possibly a death — and with them the state
+            // hash the two goldens pin.
+            //
+            // The tie is EXACT by construction, same argument as
+            // MobOutranksPlayerOnAnExactTie: the two victims are mirrored
+            // across the firing line and share Hero.Radius by DEFINITION (one
+            // config field, both bodies — no fixture assignment needed as
+            // there), so Geometry.SegmentCircle solves a quadratic whose every
+            // coefficient is bit-identical for both (f.x and r are shared, f.y
+            // only enters squared, which erases the sign exactly). The loop
+            // below re-derives both roots off the very segment the tick is
+            // about to sweep and asserts equality with a ZERO delta.
+            var c = Range();
+            const float sweepRadius = 1f;
+            float halfGap = c.Hero.Radius + 0.2f;
+            Assert.Less(halfGap, sweepRadius + c.Hero.Radius,
+                "fixture premise: the round is fat enough to reach both victims at once");
+            Assert.Greater(2f * halfGap, 2f * c.Hero.Radius,
+                "fixture premise: the two victims do not overlap, so neither is nudged off "
+                + "its mirrored mark");
+
+            const float victimX = 5f;
+            var w = new SimulationWorld(1, c, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);                      // shooter, at the muzzle
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(victimX, halfGap));     // packed first
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(victimX, -halfGap));    // packed second
+            w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
+                new float2(c.Weapon.ProjectileSpeed, 0f), BodyBand(c), 0f,
+                c.Weapon.Damage, sweepRadius, c.Weapon.ProjectileLifetime, ownerIndex: 0);
+
+            var inputs = new SimInput[3];
+            bool tied = false;
+            for (int i = 0; i < 30 && w.ProjectileCount > 0; i++)
+            {
+                // The same segment ProjectileSystem is about to build for this
+                // tick (startPos + Vel * TickDt), so these are ITS roots. No
+                // body moves — the players get idle input and nothing pushes
+                // them — so reading the positions before the tick is exact too.
+                ProjectileState round = w.GetProjectileForTest(0);
+                float2 start = round.Pos;
+                float2 end = start + round.Vel * SimulationWorld.TickDt;
+                bool onLow = Geometry.SegmentCircle(start, end, round.Radius,
+                    w.PlayerAt(1).Pos, c.Hero.Radius, out float tLow);
+                bool onHigh = Geometry.SegmentCircle(start, end, round.Radius,
+                    w.PlayerAt(2).Pos, c.Hero.Radius, out float tHigh);
+                if (onLow || onHigh)
+                {
+                    Assert.IsTrue(onLow && onHigh,
+                        "fixture premise: both victims enter the sweep on the SAME tick");
+                    Assert.AreEqual(tLow, tHigh, 0f,
+                        "fixture premise: the tie must be EXACT — a merely approximate one "
+                        + "measures the quadratic, not the tie-break");
+                    tied = true;
+                }
+                w.TickAll(inputs);
+            }
+
+            Assert.IsTrue(tied, "the round never reached the two victims");
+            Assert.Less(w.PlayerAt(1).Hp, c.Hero.MaxHp,
+                "player 1 is gathered before player 2, so it takes the tie");
+            Assert.AreEqual(c.Hero.MaxHp, w.PlayerAt(2).Hp, 1e-4f,
+                "player 2 lost the tie and must be untouched");
+            Assert.AreEqual(c.Hero.MaxHp, w.PlayerAt(0).Hp, 1e-4f,
+                "the shooter is never gathered by its own round");
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.PlayerDamaged),
+                "single-target: exactly one victim, no piercing");
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent damaged));
+            Assert.AreEqual(1, damaged.PlayerIndex, "PlayerDamaged carries the winning victim's index");
+        }
+
+        [Test]
         public void SaturatedWorld_CandidateScratchDoesNotOverflow()
         {
             // Upper bound on ONE round's candidate gather: barrier + every live
@@ -555,6 +653,25 @@ namespace Ring.Simulation.Tests
             const float sweepRadius = 40f;  // SpawnMobsToCap tops out near 32 m from the origin
             const float plungeVelZ = -60f;  // tFloor = (Radius - Height) / (VelZ * TickDt) = 0.25
             const float launchHeight = sweepRadius + 0.5f;
+
+            // Ф4 fix-wave: the worst case this test exists to size the scratch
+            // against is 1 barrier + MaxMobs + 2 other players + 1 floor = 100
+            // candidates against 101 slots, so the mutation it must catch —
+            // scratch narrowed back to the pre-Task-17 MaxMobs + 3 = 99 — fails
+            // by a margin of exactly one candidate. Two mobs short of the full
+            // roster and that margin is gone: candCount drops to 98 and the
+            // too-small scratch passes for free. What keeps every mob in the
+            // sweep is the round starting at the origin (a mob nearer than
+            // sweepRadius is inside the start circle, which is
+            // Geometry.SegmentCircle's start-inside branch, t = 0) together
+            // with SpawnMobsToCap's own radius spread — and that spread lives
+            // in another file and can move without this one noticing. So it is
+            // asserted here, not merely narrated by the comment above.
+            for (int m = 0; m < w.MobCount; m++)
+                Assert.Less(math.length(w.Mobs[m].Pos), sweepRadius,
+                    "fixture premise: every mob must fall inside the sweep — otherwise the worst-case "
+                    + "candidate count is never actually reached and a too-small scratch passes for free");
+
             w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
                 new float2(c.Weapon.ProjectileSpeed, 0f), launchHeight, plungeVelZ,
                 c.Weapon.Damage, sweepRadius, c.Weapon.ProjectileLifetime, ownerIndex: 0);
