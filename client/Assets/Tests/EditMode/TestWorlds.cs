@@ -50,6 +50,93 @@ namespace Ring.Simulation.Tests
             }
         }
 
+        /// Stage 2 Task 18: three-player counterpart of Saturated above, built
+        /// to prove Task 17's own PvP paths (the candidate scratch widened to
+        /// MaxMobs + MaxPlayers + 2, ProjectileSystem's per-live-player gather
+        /// loop, TickAll's own per-player stepping) actually RUN under a GC
+        /// allocation measurement, not merely exist untested. Every mob slot
+        /// is filled (the same SpawnMobsToCap call Saturated and
+        /// PvpDamageTests' own trio fixture use) and all three players fire
+        /// continuously — but the three are relocated off the natural spawn
+        /// ring (Geometry.SpawnPosFor, radius Arena.Radius *
+        /// PlayerSpawnRingFrac = 52) via the SetPlayerForTest seam
+        /// PvpDamageTests established, out to a small huddle at radius ~58
+        /// that clears both the mob crowd (SpawnMobsToCap's own doc: radii
+        /// roughly 4…31) and every DefaultArena() obstacle/wall (all inside
+        /// radius ~44) with room to spare. Two reasons: firing along the
+        /// NATURAL ring's own player-to-player chord passes within
+        /// Arena.Radius * PlayerSpawnRingFrac * cos(60 deg) = 26 m of the
+        /// centre — squarely inside the mob crowd — so whether a round ever
+        /// clears it to reach another player would depend on the crowd's
+        /// exact layout rather than being a fixture guarantee; and moving
+        /// clear of the crowd also means no mob can close that gap during the
+        /// short warm-up below, so every hit landed while warming up is
+        /// unambiguously PvP, not incidental splash from a mob that wandered
+        /// into the huddle.
+        ///
+        /// Players 0 and 1 duel each other point-blank (3 m apart, each
+        /// aiming at the other's own static position — hip fire's per-shot
+        /// direction, WeaponSystem.Update's normalize(AimPoint - p.Pos), is
+        /// therefore exact and unchanging shot after shot). Player 2 fires
+        /// the long way instead, back toward the arena centre and into the
+        /// mob crowd — the same "long sustained shot" role Saturated's own
+        /// holdFire plays, so a live projectile is guaranteed at the end of
+        /// warm-up regardless of the duel's own volley timing (the shot needs
+        /// roughly (radius - 31) / Weapon.ProjectileSpeed seconds just to
+        /// REACH the crowd — see the radius arithmetic above — comfortably
+        /// longer than TrioWarmupTicks below, so every copy fired during
+        /// warm-up is still in flight when it ends) and the candidate scratch
+        /// also sees the HitMob branch, not only HitPlayer.
+        ///
+        /// Warm-up is intentionally SHORT (TrioWarmupTicks, not Saturated's
+        /// 100): at 3 m every duel round connects, and Weapon.Damage stacked
+        /// up every ~FireInterval seconds would kill a duelist in roughly
+        /// nine rounds — long before Saturated's own 100 ticks. Task 18's
+        /// whole point is a world where all three are still alive to be
+        /// measured, not a duel that finishes itself before the fixture does.
+        public static SimulationWorld TrioSaturated(out SimConfig config)
+        {
+            config = TestConfigs.Default();
+            var world = new SimulationWorld(1, config, playerCount: 3);
+
+            SpawnMobsToCap(world);
+
+            // Clear of the mob crowd (radii roughly 4…31, SpawnMobsToCap's own
+            // doc above) and every DefaultArena() obstacle/wall (all inside
+            // radius ~44), with room to spare before Arena.Radius (65).
+            const float huddleY = 58f;
+            var p0 = new float2(-1.5f, huddleY);
+            var p1 = new float2(1.5f, huddleY);
+            var p2 = new float2(0f, huddleY + 1.5f);
+            RelocatePlayerForTest(world, 0, p0);
+            RelocatePlayerForTest(world, 1, p1);
+            RelocatePlayerForTest(world, 2, p2);
+
+            var inputs = new SimInput[3];
+            inputs[0] = new SimInput { FireHeld = true, AimPoint = p1 };
+            inputs[1] = new SimInput { FireHeld = true, AimPoint = p0 };
+            inputs[2] = new SimInput { FireHeld = true, AimPoint = float2.zero };
+            for (int i = 0; i < TrioWarmupTicks; i++) world.TickAll(inputs);
+
+            return world;
+        }
+
+        /// See TrioSaturated's own doc above for why this is short rather than
+        /// mirroring Saturated's 100.
+        const int TrioWarmupTicks = 16;
+
+        /// Moves a player to an exact spot through the SetPlayerForTest seam
+        /// (PvpDamageTests.PlaceAt established the same move for its own duel
+        /// fixtures) — a multiplayer world otherwise spawns its players on the
+        /// ring (Geometry.SpawnPosFor), which is no use to a fixture that has
+        /// to state a firing line down to the metre.
+        static void RelocatePlayerForTest(SimulationWorld world, int index, float2 pos)
+        {
+            PlayerState p = world.PlayerAt(index);
+            p.Pos = pos;
+            world.SetPlayerForTest(index, p);
+        }
+
         /// Places a batch of mobs in one call (Task 6) — the tuple form keeps a
         /// multi-mob fixture readable as a single statement instead of a column
         /// of SpawnMobForTest calls. Slot order equals argument order, which the
