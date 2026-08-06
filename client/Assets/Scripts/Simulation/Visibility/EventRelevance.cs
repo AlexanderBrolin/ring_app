@@ -107,20 +107,38 @@ namespace Ring.Simulation.Visibility
 
         /// Decides whether `ev` reaches `observerIndex`, and — when it does —
         /// the position to deliver it with (spec §3.7, Р28; see this class's
-        /// own doc for the `observerSet` contract). `deliveredPos` is only
-        /// meaningful when this returns true; it is `default` (zero) on a
-        /// `false` return.
+        /// own doc for the `observerSet` contract — in particular, it MUST be
+        /// the set from the tick in which the event's subject still existed,
+        /// not necessarily the caller's own "current" tick). `deliveredPos`
+        /// is only meaningful when this returns true; it is `default` (zero)
+        /// on a `false` return, on every one of the three channels that can
+        /// refuse (Owner/Visible/Audible — All never refuses). A caller must
+        /// check `ChannelFor(ev.Kind)` for `None` BEFORE calling this method:
+        /// a None-channel kind makes this throw rather than silently
+        /// deciding anything (see the DeliveryChannel.None case below).
         public static bool ShouldDeliver(in SimEvent ev, int observerIndex, SimulationWorld w,
             VisibilitySet observerSet, in VisibilitySimConfig cfg, out float2 deliveredPos)
         {
             switch (ChannelFor(ev.Kind))
             {
                 case DeliveryChannel.Owner:
-                    // Private feedback (spec Р28: rebroadcasting it would leak
-                    // another player's Stamina economy) — exact position,
-                    // gated purely on identity, never on visibility.
-                    deliveredPos = ev.Pos;
-                    return observerIndex == ev.PlayerIndex;
+                {
+                    // Private feedback (spec Р28: rebroadcasting it would
+                    // leak another player's Stamina economy) — exact
+                    // position, gated purely on identity, never on
+                    // visibility. Task 21 fix-round 1 (I-1): `deliveredPos`
+                    // must still honour the `false`-return-means-`default`
+                    // contract documented above — assigning `ev.Pos`
+                    // unconditionally here (as the pre-fix-round code did)
+                    // would hand a caller that trusts the `out` value
+                    // without checking the `bool` (a plausible per-connection
+                    // assembler pattern, Task 28) another player's EXACT
+                    // position on every refusal, which is precisely the
+                    // private feedback this channel exists to keep private.
+                    bool isOwner = observerIndex == ev.PlayerIndex;
+                    deliveredPos = isOwner ? ev.Pos : default;
+                    return isOwner;
+                }
 
                 case DeliveryChannel.All:
                     // Spec Р28, verbatim: "без позиции" — today's WaveStarted/

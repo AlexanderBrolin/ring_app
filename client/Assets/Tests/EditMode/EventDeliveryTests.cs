@@ -28,7 +28,9 @@ namespace Ring.Simulation.Tests
     /// `LingerOf(id) == 0` — AudiblePos_ExactForVisible's own "half 1".
     public class EventDeliveryTests
     {
-        static int Capacity(in SimConfig cfg) => cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
+        // Task 21 fix-round 1 (M-2): Capacity moved to TestWorlds — see its
+        // own doc there — so this file and VisibilityTests share one
+        // definition instead of two byte-identical copies.
 
         // --- 1: StaminaDenied_OnlyToOwner ---
 
@@ -52,7 +54,7 @@ namespace Ring.Simulation.Tests
             // instead of a plain ownership check would pass the owner
             // assertion below by coincidence but fail the neighbour one, since
             // Visible/Audible never consult `observerIndex` at all.
-            var observerSet = new VisibilitySet(Capacity(cfg));
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
             observerSet.Add(VisibilityIds.ForPlayer(1));
 
             Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, w, observerSet, cfg.Visibility, out float2 ownerPos),
@@ -60,8 +62,19 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(ev.Pos, ownerPos,
                 "StaminaDenied is private feedback: the delivered position is the raw, EXACT one, never quantized");
 
-            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, observerSet, cfg.Visibility, out _),
+            // Task 21 fix-round 1 (I-1): named variable, not `out _` — pins
+            // the "deliveredPos is `default` on a `false` return" contract
+            // on the Owner channel's OWN refusal branch. Before the fix-round,
+            // ShouldDeliver assigned `deliveredPos = ev.Pos` unconditionally,
+            // BEFORE checking ownership, so this refusal handed back the
+            // neighbour's EXACT position through `out` even while returning
+            // `false` — a caller that trusts `out` without checking the
+            // `bool` first (a plausible per-connection assembler pattern,
+            // Task 28) would still leak it. `out _` could never catch that.
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
                 "a neighbour must not receive another player's StaminaDenied — it would leak Stamina economy");
+            Assert.AreEqual(float2.zero, refusedPos,
+                "a `false` return must carry `default` (zero), never the leaked owner's exact position");
         }
 
         // --- 2: WaveEvents_ToAllWithoutPosition ---
@@ -74,7 +87,7 @@ namespace Ring.Simulation.Tests
             // Empty for every observer: All-channel delivery must not consult
             // visibility at all — an implementation that (incorrectly) gated
             // on it would find nothing here and wrongly withhold delivery.
-            var emptySet = new VisibilitySet(Capacity(cfg));
+            var emptySet = new VisibilitySet(TestWorlds.Capacity(cfg));
 
             foreach (SimEventKind kind in new[] { SimEventKind.WaveStarted, SimEventKind.WaveCleared })
             {
@@ -113,7 +126,7 @@ namespace Ring.Simulation.Tests
             // victim's own synthetic id is absent — as if the victim died
             // behind a wall from every observer's point of view, itself
             // included (task-21-brief.md's own "мёртвый за стеной" phrasing).
-            var observerSet = new VisibilitySet(Capacity(cfg));
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
 
             Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, w, observerSet, cfg.Visibility, out float2 ownPos),
                 "a player's own death must reach them even when the ordinary visibility gate would refuse it");
@@ -136,8 +149,8 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
-            var setA = new VisibilitySet(Capacity(cfg));
-            var setB = new VisibilitySet(Capacity(cfg));
+            var setA = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var setB = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 0: visible
             Assert.IsTrue(setB.Contains(mobId), "test setup: must start visible");
 
@@ -176,6 +189,71 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(ev.Pos, deliveredPos);
         }
 
+        // --- 4b: MobDied_DeliveredViaPreviousTickSet_NotCurrentTick (Task 21 fix-round 1, I-4) ---
+
+        [Test]
+        public void MobDied_DeliveredViaPreviousTickSet_NotCurrentTick()
+        {
+            // I-4 / carryover-t21.md #1: SimulationWorld.DamageMob
+            // swap-removes a dead mob's slot in the SAME tick it dies
+            // (SimulationWorld.cs:595) — VisibilitySystem.Compute only ever
+            // iterates LIVE mobs (w.Mobs/w.MobCount), so a freshly
+            // recomputed CURRENT-tick set can never contain a corpse's id at
+            // all, no matter how visible it was a moment before it died. The
+            // caller (Task 28's SnapshotAssembler) is contractually required
+            // to pass the set from the tick BEFORE the death instead.
+            // MobDied_DeliveredInHysteresisBand above never actually kills
+            // its mob (it stays alive in w.Mobs for the whole test), so this
+            // contract was previously unfalsifiable: a future "optimization"
+            // that recomputed the set inside the caller instead of threading
+            // the previous tick's through would pass every existing test in
+            // this file yet break delivery for every MobDied, always. This
+            // test kills a real mob through the DamageMob seam (internal,
+            // visible to tests via InternalsVisibleTo) to make that trap
+            // observable.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
+
+            var setEmpty = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var setBeforeDeath = new VisibilitySet(TestWorlds.Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setEmpty, setBeforeDeath); // tick N: visible
+            Assert.IsTrue(setBeforeDeath.Contains(mobId), "test setup: must start visible");
+
+            // Kills the mob outright — Hp comfortably exceeded, one hit.
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, default, ownerIndex: 0);
+            Assert.AreEqual(0, w.MobCount, "test setup: the mob must actually be gone from the world");
+
+            // Tick N+1's own "current" set — computed AFTER the corpse's
+            // swap-remove, exactly as the real per-tick caller would.
+            var setAfterDeath = new VisibilitySet(TestWorlds.Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setBeforeDeath, setAfterDeath);
+            Assert.IsFalse(setAfterDeath.Contains(mobId),
+                "test setup: the corpse must be gone from the CURRENT-tick set entirely (not even lingering) — Compute never visits an id that no longer exists in the world");
+
+            var ev = new SimEvent
+            {
+                Kind = SimEventKind.MobDied,
+                EntityId = mobId,
+                MobType = MobType.Chaser,
+                PlayerIndex = 0, // ATTACKER — irrelevant to a mob-identity delivery decision
+                Pos = new float2(5f, 0f)
+            };
+
+            // Negative witness: the trap is real — the CURRENT tick's own
+            // set genuinely refuses delivery for a mob that was visible right
+            // up until the tick it died.
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, setAfterDeath, cfg.Visibility, out _),
+                "the CURRENT tick's set must not deliver — this is exactly the trap the previous-tick contract exists to avoid");
+
+            // Positive witness: the PREVIOUS tick's set (still holding the
+            // subject as visible-now, from before the death) delivers
+            // correctly.
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, setBeforeDeath, cfg.Visibility, out float2 deliveredPos),
+                "the PREVIOUS tick's set — from before the death — must deliver");
+            Assert.AreEqual(ev.Pos, deliveredPos);
+        }
+
         // --- 5: DashEvent_AudibleWithCoarsePos ---
 
         [Test]
@@ -188,7 +266,7 @@ namespace Ring.Simulation.Tests
             // explicitly so the HearRadius arithmetic below is exact instead
             // of incidentally close.
             TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
-            var observerSet = new VisibilitySet(Capacity(cfg)); // actor not visible to observer 0
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg)); // actor not visible to observer 0
 
             // Within HearRadius but not grid-aligned, so a raw-position mutant
             // is visibly distinguishable from a correctly-coarsened one.
@@ -208,8 +286,13 @@ namespace Ring.Simulation.Tests
             // delivered no matter what", it has its own outer range gate too.
             var farPos = new float2(cfg.Visibility.HearRadius + 5f, 0f);
             var evFar = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 1, Pos = farPos };
-            Assert.IsFalse(EventRelevance.ShouldDeliver(evFar, 0, w, observerSet, cfg.Visibility, out _),
+            // Task 21 fix-round 1 (I-1): named variable, not `out _` — pins
+            // the same "`deliveredPos` is `default` on `false`" contract on
+            // the Audible channel's OUTER-range refusal branch.
+            Assert.IsFalse(EventRelevance.ShouldDeliver(evFar, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
                 "an actor beyond even HearRadius must not have this event delivered at all");
+            Assert.AreEqual(float2.zero, refusedPos,
+                "a `false` return must carry `default` (zero), never a raw or coarsened position");
         }
 
         // --- 6: AudiblePos_ExactForVisible ---
@@ -246,14 +329,14 @@ namespace Ring.Simulation.Tests
             // still replicated with its exact position in the state block, so
             // coarsening its EVENTS' position too is both pointless and
             // inconsistent with the two channels).
-            var lingering = new VisibilitySet(Capacity(cfg));
+            var lingering = new VisibilitySet(TestWorlds.Capacity(cfg));
             lingering.Add(actorId, cfg.Visibility.LingerTicks);
             Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, lingering, cfg.Visibility, out float2 exactPos));
             Assert.AreEqual(pos, exactPos, "an actor merely LINGERING (Contains true, LingerOf > 0) must still get the EXACT position");
 
             // Half 2 — genuinely not tracked at all: same event, same
             // distance (well within HearRadius), but the actor is absent.
-            var untracked = new VisibilitySet(Capacity(cfg));
+            var untracked = new VisibilitySet(TestWorlds.Capacity(cfg));
             Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, untracked, cfg.Visibility, out float2 coarsePos));
             Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility), coarsePos,
                 "an actor absent from the visibility set entirely must get the COARSENED position, never the exact one");
@@ -288,7 +371,7 @@ namespace Ring.Simulation.Tests
             // Half 1: the MOB is visible, its KILLER is not — a subject-identity
             // bug using ev.PlayerIndex (the killer) instead of ev.EntityId (the
             // mob) would find the killer's id absent and wrongly REFUSE delivery.
-            var mobVisibleOnly = new VisibilitySet(Capacity(cfg));
+            var mobVisibleOnly = new VisibilitySet(TestWorlds.Capacity(cfg));
             mobVisibleOnly.Add(mobId);
             Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, mobVisibleOnly, cfg.Visibility, out float2 pos1),
                 "MobDied must be delivered by the MOB's own visibility, not its killer's");
@@ -297,10 +380,57 @@ namespace Ring.Simulation.Tests
             // Half 2 (the discriminating counterpart the brief demands): the
             // KILLER is visible, the MOB is not — the same bug would now find
             // the killer's id present and wrongly DELIVER.
-            var killerVisibleOnly = new VisibilitySet(Capacity(cfg));
+            var killerVisibleOnly = new VisibilitySet(TestWorlds.Capacity(cfg));
             killerVisibleOnly.Add(killerVisId);
             Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, killerVisibleOnly, cfg.Visibility, out _),
                 "the killer being visible must NOT be enough — the mob itself, identified by EntityId, is what must be checked");
+        }
+
+        // --- 7b: PlayerDamaged_UsesVictimSyntheticId_NotEntityId (Task 21 fix-round 1, I-3) ---
+
+        [Test]
+        public void PlayerDamaged_UsesVictimSyntheticId_NotEntityId()
+        {
+            // I-3: the Visible-channel subject for PlayerDamaged/PlayerDied
+            // must be VisibilityIds.ForPlayer(ev.PlayerIndex) (the VICTIM's
+            // SYNTHETIC id), never ev.EntityId (or the victim index read as a
+            // raw id) directly — SimulationWorld's own DamagePlayer really
+            // does emit PlayerDamaged with EntityId == victimIndex, a small
+            // non-negative number that lives in the MOB id space (every real
+            // mob id is >= 1, SimulationWorld.cs's own `_nextEntityId`
+            // counter). A subject-identity bug that consulted ev.EntityId
+            // instead of the synthetic id would silently collide with an
+            // observer's own "can I see mob #victimIndex" answer — exactly
+            // the class of leak VisibilityIds (Р20) exists to rule out.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            const byte victimIndex = 1;
+            var pos = new float2(6f, -2f);
+            var ev = new SimEvent
+            {
+                Kind = SimEventKind.PlayerDamaged,
+                PlayerIndex = victimIndex, // VICTIM convention (SimEvent.PlayerIndex's own doc)
+                EntityId = victimIndex,    // SimulationWorld really does set this to victimIndex
+                Pos = pos
+            };
+
+            // Half 1: the CORRECT subject id (the victim's SYNTHETIC player
+            // id) is in the set.
+            var correctSet = new VisibilitySet(TestWorlds.Capacity(cfg));
+            correctSet.Add(VisibilityIds.ForPlayer(victimIndex));
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, correctSet, cfg.Visibility, out float2 pos1),
+                "PlayerDamaged must be delivered by the victim's SYNTHETIC player id");
+            Assert.AreEqual(pos, pos1);
+
+            // Half 2 (the discriminating counterpart the fix-round demands):
+            // the SAME number, but present as a RAW/real id — the id a mob
+            // numbered victimIndex would occupy — instead of the synthetic
+            // one. A bug reading ev.EntityId directly would wrongly find this
+            // present too.
+            var wrongSet = new VisibilitySet(TestWorlds.Capacity(cfg));
+            wrongSet.Add(victimIndex);
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, wrongSet, cfg.Visibility, out _),
+                "the victim index present as a RAW id must NOT be enough — only the synthetic player id counts");
         }
 
         // --- 8: ProjectileKinds_ThrowAsDeferred ---
@@ -310,7 +440,7 @@ namespace Ring.Simulation.Tests
         {
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
-            var observerSet = new VisibilitySet(Capacity(cfg));
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
 
             var projectileKinds = new[]
             {
@@ -342,7 +472,7 @@ namespace Ring.Simulation.Tests
             const int visibleMobId = 1;
             const int invisibleMobId = 2;
 
-            var observerSet = new VisibilitySet(Capacity(cfg));
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
             observerSet.Add(visibleMobId); // positive witness: the OTHER mob really is visible
 
             // Within HearRadius, so an implementation that confused Visible
@@ -359,8 +489,13 @@ namespace Ring.Simulation.Tests
                 Kind = SimEventKind.MobSpawned, MobType = MobType.Chaser,
                 EntityId = invisibleMobId, Pos = audibleButInvisiblePos
             };
-            Assert.IsFalse(EventRelevance.ShouldDeliver(evInvisible, 0, w, observerSet, cfg.Visibility, out _),
+            // Task 21 fix-round 1 (I-1): named variable, not `out _` — pins
+            // the same "`deliveredPos` is `default` on `false`" contract on
+            // the Visible channel's own refusal branch.
+            Assert.IsFalse(EventRelevance.ShouldDeliver(evInvisible, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
                 "a Visible-channel event for an invisible subject must not be delivered, even when it is audible");
+            Assert.AreEqual(float2.zero, refusedPos,
+                "a `false` return must carry `default` (zero), never the invisible subject's position");
 
             var evVisible = new SimEvent
             {
@@ -424,12 +559,26 @@ namespace Ring.Simulation.Tests
             // special-case that away, and must resolve the observer's own
             // position the same plain way VisibilitySystem.Compute does
             // (w.PlayerAt, no Alive gate).
+            //
+            // Task 21 fix-round 1 (I-2): observe from index 1, not 0 — EVERY
+            // call site in this file that reaches `w.PlayerAt(observerIndex)`
+            // happened to pass observerIndex == 0 (lines noted by the
+            // review), so a mutant hardcoding `w.PlayerAt(0)` in place of
+            // `w.PlayerAt(observerIndex)` agreed with the correct code on
+            // every one of them and survived the whole run. Here the ACTOR is
+            // player 0 (left at its default two-player spawn-ring position,
+            // Geometry.SpawnPosFor — never relocated) and the DEAD OBSERVER
+            // is player 1 (relocated far away, then killed) — the opposite
+            // pairing of the original fixture. Observing from index 1 makes
+            // the hardcoded-0 mutant read player 0's own nearby spawn-ring
+            // position instead of player 1's relocated one, producing a
+            // distance far outside HearRadius and a WRONG refusal.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 2);
             var deadObserverPos = new float2(1000f, 1000f); // far from the origin — unmissable if ignored
-            TestWorlds.RelocatePlayerForTest(w, 0, deadObserverPos);
-            w.KillPlayerNoDamage(0);
-            Assert.IsFalse(w.PlayerAt(0).Alive, "test setup: observer must actually be dead");
+            TestWorlds.RelocatePlayerForTest(w, 1, deadObserverPos);
+            w.KillPlayerNoDamage(1);
+            Assert.IsFalse(w.PlayerAt(1).Alive, "test setup: observer must actually be dead");
 
             // Within HearRadius OF THE DEAD OBSERVER's own position, but
             // enormously far from the world origin — a mutant that (wrongly)
@@ -437,12 +586,12 @@ namespace Ring.Simulation.Tests
             // reading it would compute a distance in the thousands and wrongly
             // refuse delivery.
             var actorPos = deadObserverPos + new float2(5f, 0f);
-            var ev = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 1, Pos = actorPos };
-            var observerSet = new VisibilitySet(Capacity(cfg)); // actor not visible — audibility path only
+            var ev = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 0, Pos = actorPos };
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg)); // actor not visible — audibility path only
 
-            Assert.DoesNotThrow(() => EventRelevance.ShouldDeliver(ev, 0, w, observerSet, cfg.Visibility, out _),
+            Assert.DoesNotThrow(() => EventRelevance.ShouldDeliver(ev, 1, w, observerSet, cfg.Visibility, out _),
                 "a dead observer must not make ShouldDeliver throw");
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, observerSet, cfg.Visibility, out float2 pos),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, w, observerSet, cfg.Visibility, out float2 pos),
                 "a dead observer must still resolve its OWN position for the audibility gate, not silently fail closed");
             Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(actorPos, cfg.Visibility), pos);
         }

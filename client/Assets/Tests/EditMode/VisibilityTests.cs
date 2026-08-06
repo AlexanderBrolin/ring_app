@@ -50,7 +50,9 @@ namespace Ring.Simulation.Tests
     /// for the specific mutation it exists to catch.
     public class VisibilityTests
     {
-        static int Capacity(in SimConfig cfg) => cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
+        // Task 21 fix-round 1 (M-2): Capacity moved to TestWorlds — see its
+        // own doc there — so this file and EventDeliveryTests share one
+        // definition instead of two byte-identical copies.
 
         // --- 1: BeyondSightRadius_NotVisible ---
 
@@ -70,8 +72,8 @@ namespace Ring.Simulation.Tests
             // mobId out of it.
             int nearMobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
 
-            var previous = new VisibilitySet(Capacity(cfg));
-            var result = new VisibilitySet(Capacity(cfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             Assert.IsFalse(result.Contains(mobId));
@@ -100,8 +102,8 @@ namespace Ring.Simulation.Tests
             // actually populated `result`, not merely that it never added mobId.
             int nearMobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
 
-            var previous = new VisibilitySet(Capacity(cfg));
-            var result = new VisibilitySet(Capacity(cfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             Assert.IsFalse(result.Contains(mobId));
@@ -130,8 +132,8 @@ namespace Ring.Simulation.Tests
             // (straight up the y-axis; the wall only spans roughly x in [4,6]).
             int nearMobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
 
-            var previous = new VisibilitySet(Capacity(cfg));
-            var result = new VisibilitySet(Capacity(cfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             Assert.IsFalse(result.Contains(mobId));
@@ -179,8 +181,8 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(Targeting.HasLineOfFire(float2.zero, new float2(10f, 0f), 0f, cfg.Arena),
                 "test setup: strict centre-to-centre LoS must be blocked for this to be an edge-peek case");
 
-            var previous = new VisibilitySet(Capacity(cfg));
-            var result = new VisibilitySet(Capacity(cfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             Assert.IsTrue(result.Contains(mobId));
@@ -229,8 +231,8 @@ namespace Ring.Simulation.Tests
                 "test setup: padding by Hero.Radius instead must still be blocked, or this offset "
                 + "doesn't discriminate the two config fields at all");
 
-            var previous = new VisibilitySet(Capacity(cfg));
-            var result = new VisibilitySet(Capacity(cfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             Assert.IsTrue(result.Contains(mobId),
@@ -246,8 +248,8 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(cfg.Visibility.SightRadius - 1f, 0f));
 
-            var setA = new VisibilitySet(Capacity(cfg));
-            var setB = new VisibilitySet(Capacity(cfg));
+            var setA = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var setB = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 0: clearly inside SightRadius
             Assert.IsTrue(setB.Contains(mobId), "test setup: must start visible");
             Assert.AreEqual(0, setB.LingerOf(mobId));
@@ -312,8 +314,8 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
-            var setA = new VisibilitySet(Capacity(cfg));
-            var setB = new VisibilitySet(Capacity(cfg));
+            var setA = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var setB = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 0: visible
             Assert.IsTrue(setB.Contains(mobId), "test setup: must start visible");
 
@@ -369,8 +371,8 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
-            var setA = new VisibilitySet(Capacity(cfg));
-            var setB = new VisibilitySet(Capacity(cfg));
+            var setA = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var setB = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 0: visible
             Assert.IsTrue(setB.Contains(mobId), "test setup: must start visible");
             Assert.AreEqual(0, setB.LingerOf(mobId));
@@ -424,8 +426,8 @@ namespace Ring.Simulation.Tests
             // matter how it moves its mob.
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
 
-            var setA = new VisibilitySet(Capacity(cfg));
-            var setB = new VisibilitySet(Capacity(cfg));
+            var setA = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var setB = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 0: visible via the clear angle
             Assert.IsTrue(setB.Contains(mobId), "test setup: must start visible");
             Assert.AreEqual(0, setB.LingerOf(mobId));
@@ -486,8 +488,8 @@ namespace Ring.Simulation.Tests
             int mobCId = w.SpawnMobForTest(MobType.Chaser,
                 new float2(cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis * 0.5f, 0f)); // slot 2
 
-            var setA = new VisibilitySet(Capacity(cfg));
-            var setB = new VisibilitySet(Capacity(cfg));
+            var setA = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var setB = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 0
             Assert.IsTrue(setB.Contains(mobAId), "test setup: mobA must be visible before the swap");
             Assert.IsFalse(setB.Contains(mobCId), "test setup: mobC must not be visible before ever being seen");
@@ -560,8 +562,8 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(Targeting.HasLineOfFire(selfPos, selfPos, -cfg.Hero.Radius, cfg.Arena),
                 "test setup: the degenerate self-segment must read as blocked under the ordinary LoS gate");
 
-            var previous = new VisibilitySet(Capacity(cfg));
-            var result = new VisibilitySet(Capacity(cfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             int selfId = VisibilityIds.ForPlayer(0);
@@ -598,8 +600,8 @@ namespace Ring.Simulation.Tests
             TestWorlds.RelocatePlayerForTest(w, 1, new float2(10f, 0f));
             TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, -30f)); // out of the way, irrelevant here
 
-            var previous = new VisibilitySet(Capacity(cfg));
-            var result = new VisibilitySet(Capacity(cfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             int otherId = VisibilityIds.ForPlayer(1);
@@ -617,8 +619,8 @@ namespace Ring.Simulation.Tests
             TestWorlds.RelocatePlayerForTest(w, 1, new float2(10f, 0f));
             TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, -30f));
 
-            var previous = new VisibilitySet(Capacity(cfg));
-            var result = new VisibilitySet(Capacity(cfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             int otherId = VisibilityIds.ForPlayer(1);
@@ -665,7 +667,7 @@ namespace Ring.Simulation.Tests
             // silently disable hysteresis/linger instead of failing loudly.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
-            var set = new VisibilitySet(Capacity(cfg));
+            var set = new VisibilitySet(TestWorlds.Capacity(cfg));
 
             Assert.Throws<System.ArgumentException>(() =>
                 VisibilitySystem.Compute(w, 0, cfg.Visibility, set, set));
@@ -681,8 +683,8 @@ namespace Ring.Simulation.Tests
             // convention every other fixture in this file already uses.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
-            var previous = new VisibilitySet(Capacity(cfg));
-            var result = new VisibilitySet(Capacity(cfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
 
             Assert.DoesNotThrow(() => VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result));
         }
@@ -759,8 +761,8 @@ namespace Ring.Simulation.Tests
             var farPos = new float2(betweenDist, 0f);
             int mobId = openWorld.SpawnMobForTest(MobType.Chaser, farPos);
 
-            var previous = new VisibilitySet(Capacity(openCfg));
-            var result = new VisibilitySet(Capacity(openCfg));
+            var previous = new VisibilitySet(TestWorlds.Capacity(openCfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(openCfg));
             VisibilitySystem.Compute(openWorld, 0, openCfg.Visibility, previous, result);
             Assert.IsFalse(result.Contains(mobId), "test setup: betweenDist must exceed SightRadius, i.e. not visible");
 

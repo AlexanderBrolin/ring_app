@@ -11,6 +11,15 @@ namespace Ring.Simulation.Tests
     /// only new Task 29 tests consume this.
     public static class TestWorlds
     {
+        /// Capacity for a VisibilitySet sized to hold every live mob plus
+        /// every player VisibilitySystem.Compute can visit in a single call
+        /// (its own constructor doc). Task 21 fix-round 1 (M-2): lifted here
+        /// out of VisibilityTests and EventDeliveryTests, which each carried
+        /// a byte-identical private copy of this one-line helper — the
+        /// project's "existing test helpers are reused" rule applies to test
+        /// helpers duplicated across files, not only to production code.
+        public static int Capacity(in SimConfig cfg) => cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
+
         /// A world with every mob slot filled (via the SpawnMobForTest seam,
         /// half Chaser/half Gunner so both fire/movement/AI paths are live) and
         /// warmed up under sustained player fire for ~100 ticks, so its
