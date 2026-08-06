@@ -362,6 +362,15 @@ namespace Ring.Editor
             // ApplyGunnerDefaults/ApplyStageTwoBalance below, which backfill an
             // OLDER asset that predates a field.
             VisibilityConfig visibility = GetOrCreate<VisibilityConfig>("VisibilityConfig");
+            // Stage 2 Task 23 (spec §3.8/§3.15, Р52): NetConfig is NOT a
+            // SimConfigBuilder.Build() parameter (see its own class doc for
+            // why) and carries no scene reference below — until Task 33
+            // (DevLatencySetup) and Task 41 (ServerBootstrap) nothing in the
+            // scene consumes it, and a SimulationRunner field would wire a
+            // network concern into Presentation, which spec §3.12 does not
+            // provide for. This GetOrCreate call exists purely to deliver
+            // the asset to disk, exactly like every other balance SO here.
+            NetConfig net = GetOrCreate<NetConfig>("NetConfig");
             GameFeelConfig gameFeel = GetOrCreate<GameFeelConfig>("GameFeelConfig");
             CameraConfig camera = GetOrCreate<CameraConfig>("CameraConfig");
 
@@ -514,6 +523,14 @@ namespace Ring.Editor
             // above, not a migration of an older asset.
             EditorBootstrapUtils.EnsureAssetHasKey(visibility, $"{DataDir}/VisibilityConfig.asset",
                 "HearPositionGridMeters"); // Stage 2 Task 22
+            // NetConfig joins the marker mechanism for the first time here,
+            // in Stage 2 Task 23, with MatchMaxDurationSeconds (the class's
+            // own newest/last field) as its marker — brand-new asset on
+            // this run, so this call is a one-time onboarding exactly like
+            // ArenaConfig/WaveConfig/VisibilityConfig's own first-join
+            // comments above, not a migration of an older asset.
+            EditorBootstrapUtils.EnsureAssetHasKey(net, $"{DataDir}/NetConfig.asset",
+                "MatchMaxDurationSeconds"); // Stage 2 Task 23
 
             AssetDatabase.SaveAssets();
 
