@@ -1,0 +1,209 @@
+using Ring.Simulation.Core;
+using Unity.Mathematics;
+
+namespace Ring.Simulation.Visibility
+{
+    /// Which observers a SimEvent reaches (spec §3.7, Р28). One channel per
+    /// SimEventKind, fixed by ChannelFor below — see EventRelevance's own doc
+    /// for what each value means and, critically, what `None` does NOT mean.
+    public enum DeliveryChannel : byte { None = 0, Owner = 1, Visible = 2, Audible = 3, All = 4 }
+
+    /// Stage 2 Task 21 (spec §3.7, Р28): server-side event DELIVERY rules — for
+    /// a given SimEvent and observer, is it delivered at all, and with what
+    /// (possibly coarsened) position. Deliberately a PURE function of its
+    /// explicit arguments: unlike VisibilitySystem.Compute, this seam never
+    /// re-derives visibility from `w` and `cfg` itself — the caller's
+    /// `observerSet` is trusted as the single source of truth for "is the
+    /// subject visible" (task-21-brief.md rule 1 / Р132: `observerSet.Contains
+    /// (id)`, TOGETHER with linger — an entity merely lingering after a recent
+    /// LoS break counts as visible here exactly as it does everywhere else
+    /// VisibilitySet is read, never re-gated on `LingerOf(id) == 0`).
+    ///
+    /// `observerSet` is also the seam that carries the "read the PREVIOUS
+    /// tick's set for MobDied" contract (carryover-t21.md #1): SimulationWorld
+    /// swap-removes a dead mob's slot in the SAME tick it dies
+    /// (SimulationWorld.cs:595, `_mobs[index] = _mobs[--_mobCount]`), so a
+    /// freshly recomputed CURRENT-tick VisibilitySet would never contain the
+    /// corpse's id at all — this method itself does not care which tick's set
+    /// it is handed (it only ever calls `Contains`/`LingerOf`), but the CALLER
+    /// (Task 28's SnapshotAssembler) is contractually required to pass the set
+    /// from the tick in which the dying subject still existed, or every
+    /// MobDied would silently fail to deliver to anyone, ever.
+    public static class EventRelevance
+    {
+        /// Fixed per-kind routing table (spec §3.7, Р28). Every `SimEventKind`
+        /// is explicitly listed below; an unhandled value throws rather than
+        /// falling through a `default` case, so a future kind added to the
+        /// enum without a matching entry here fails LOUDLY the first time
+        /// anything calls this (ChannelFor_HandlesEveryKind pins exactly
+        /// that) instead of silently defaulting to some channel that happens
+        /// to compile — "урок 86: contract by assertion, not prose".
+        public static DeliveryChannel ChannelFor(SimEventKind kind)
+        {
+            switch (kind)
+            {
+                case SimEventKind.StaminaDenied:
+                    return DeliveryChannel.Owner;
+
+                case SimEventKind.PlayerDashed:
+                case SimEventKind.PlayerSlideStarted:
+                case SimEventKind.DashRicocheted:
+                    return DeliveryChannel.Audible;
+
+                case SimEventKind.MobSpawned:
+                case SimEventKind.MobDied:
+                case SimEventKind.PlayerDamaged:
+                case SimEventKind.PlayerDied:
+                    return DeliveryChannel.Visible;
+
+                case SimEventKind.WaveStarted:
+                case SimEventKind.WaveCleared:
+                    return DeliveryChannel.All;
+
+                // Projectile relevance needs the round's own trajectory
+                // (which observers it flew near), not anything this per-kind
+                // table can express — that lives in Task 28's
+                // SnapshotAssembler. `None` here means "decided elsewhere",
+                // never "nobody" — see ShouldDeliver's own guard below.
+                case SimEventKind.ProjectileFired:
+                case SimEventKind.ProjectileHit:
+                case SimEventKind.ProjectileBlocked:
+                case SimEventKind.ProjectileExpired:
+                    return DeliveryChannel.None;
+
+                default:
+                    throw new System.ArgumentException(
+                        $"EventRelevance.ChannelFor: unhandled SimEventKind {kind} — every kind must be " +
+                        "explicitly routed to a delivery channel (spec §3.7, Р28); a silently-returned " +
+                        "default would let a future kind fall through unnoticed.", nameof(kind));
+            }
+        }
+
+        /// The Visible-channel subject's identity in VisibilitySet's own id
+        /// space (Р20): a mob's REAL id for MobSpawned/MobDied (Р81's
+        /// "по видимости моба" — MobDied's ATTACKER-convention PlayerIndex is
+        /// deliberately never consulted here, see EventRelevance's own doc and
+        /// SimEvent.PlayerIndex's ATTACKER paragraph), or the VICTIM's
+        /// synthetic player id for PlayerDamaged/PlayerDied (SimEvent.PlayerIndex's
+        /// VICTIM convention). Never called for any other kind — ShouldDeliver's
+        /// own switch only reaches this from the Visible-channel branch.
+        static int VisibleSubjectId(in SimEvent ev)
+        {
+            switch (ev.Kind)
+            {
+                case SimEventKind.MobSpawned:
+                case SimEventKind.MobDied:
+                    return ev.EntityId;
+
+                case SimEventKind.PlayerDamaged:
+                case SimEventKind.PlayerDied:
+                    return VisibilityIds.ForPlayer(ev.PlayerIndex);
+
+                default:
+                    throw new System.ArgumentException(
+                        $"EventRelevance.VisibleSubjectId: {ev.Kind} has no Visible-channel subject.", nameof(ev));
+            }
+        }
+
+        /// Decides whether `ev` reaches `observerIndex`, and — when it does —
+        /// the position to deliver it with (spec §3.7, Р28; see this class's
+        /// own doc for the `observerSet` contract). `deliveredPos` is only
+        /// meaningful when this returns true; it is `default` (zero) on a
+        /// `false` return.
+        public static bool ShouldDeliver(in SimEvent ev, int observerIndex, SimulationWorld w,
+            VisibilitySet observerSet, in VisibilitySimConfig cfg, out float2 deliveredPos)
+        {
+            switch (ChannelFor(ev.Kind))
+            {
+                case DeliveryChannel.Owner:
+                    // Private feedback (spec Р28: rebroadcasting it would leak
+                    // another player's Stamina economy) — exact position,
+                    // gated purely on identity, never on visibility.
+                    deliveredPos = ev.Pos;
+                    return observerIndex == ev.PlayerIndex;
+
+                case DeliveryChannel.All:
+                    // Spec Р28, verbatim: "без позиции" — today's WaveStarted/
+                    // WaveCleared position comes from whichever player happens
+                    // to be nearest the arena centre (WaveSystem.Update) and
+                    // must never reach the wire, or every observer would learn
+                    // that player's location for free every wave.
+                    deliveredPos = float2.zero;
+                    return true;
+
+                case DeliveryChannel.Visible:
+                {
+                    // Own death is delivered to its own owner unconditionally
+                    // (spec Р28: "PlayerDied своего — всегда владельцу") — a
+                    // player killed from behind a wall by an attacker they
+                    // never saw still needs their own death screen. Scoped to
+                    // PlayerDied alone: PlayerDamaged/MobSpawned/MobDied all
+                    // go through the plain visibility gate below with no
+                    // owner carve-out.
+                    if (ev.Kind == SimEventKind.PlayerDied && observerIndex == ev.PlayerIndex)
+                    {
+                        deliveredPos = ev.Pos;
+                        return true;
+                    }
+                    if (observerSet.Contains(VisibleSubjectId(in ev)))
+                    {
+                        deliveredPos = ev.Pos;
+                        return true;
+                    }
+                    deliveredPos = default;
+                    return false;
+                }
+
+                case DeliveryChannel.Audible:
+                {
+                    // The ACTOR is always the subject for this channel's three
+                    // kinds (SimEvent.PlayerIndex's ACTOR convention) — even
+                    // for DashRicocheted, whose Pos is the wall CONTACT point,
+                    // not the actor's own position (SimEvents.cs's own doc):
+                    // the visibility check below is about the actor's body,
+                    // the position that follows is whatever `ev.Pos` actually
+                    // carries for this kind.
+                    int actorId = VisibilityIds.ForPlayer(ev.PlayerIndex);
+                    if (observerSet.Contains(actorId))
+                    {
+                        // Visible (Contains alone — Р132, see this class's own
+                        // doc): exact position, same replicated-state
+                        // reasoning that already covers a merely-lingering
+                        // entity.
+                        deliveredPos = ev.Pos;
+                        return true;
+                    }
+                    // Not visible: falls back to hearing, over the SAME
+                    // observer position VisibilitySystem.Compute itself reads
+                    // (a plain PlayerAt — no Alive gate, so a dead observer,
+                    // e.g. spectating, resolves exactly the same way, spec
+                    // rule Р70).
+                    float2 observerPos = w.PlayerAt(observerIndex).Pos;
+                    if (VisibilitySystem.IsAudible(observerPos, ev.Pos, in cfg))
+                    {
+                        deliveredPos = VisibilitySystem.QuantizeAudiblePos(ev.Pos, in cfg);
+                        return true;
+                    }
+                    deliveredPos = default;
+                    return false;
+                }
+
+                case DeliveryChannel.None:
+                    // Projectile relevance needs trajectory data this seam
+                    // does not have (Task 28's SnapshotAssembler owns it) — a
+                    // silent `false` here would be indistinguishable from a
+                    // correct "nobody nearby" answer and would make a future
+                    // caller that reaches this by oversight quietly drop every
+                    // projectile event instead of failing its own tests.
+                    throw new System.ArgumentException(
+                        $"EventRelevance.ShouldDeliver: {ev.Kind} delivery is decided elsewhere " +
+                        "(Task 28's SnapshotAssembler, by projectile trajectory relevance) — this seam " +
+                        "must not be called for a None-channel kind.", nameof(ev));
+
+                default:
+                    throw new System.ArgumentException(
+                        $"EventRelevance.ShouldDeliver: unhandled DeliveryChannel for {ev.Kind}.", nameof(ev));
+            }
+        }
+    }
+}
