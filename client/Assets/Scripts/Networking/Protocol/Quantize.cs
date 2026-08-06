@@ -36,9 +36,13 @@ namespace Ring.Networking.Protocol
     /// future change ever needs it pinned, that needs its own test.
     ///
     /// DEGENERATE PARAMETERS: `radius == 0` (and `max == 0`) make the
-    /// mapping meaningless — `(v + 0) / 0` is NaN, saturate lifts it to the
-    /// upper rail, and `PosBack` returns 0 for every code, so idempotency
-    /// cannot hold. Neither is reachable through the shipped data
+    /// mapping meaningless — the division by zero sends every input to a
+    /// rail (`v == 0` gives `0/0 = NaN`, which NaN-safe saturate lifts to
+    /// the UPPER rail; a negative `v` gives `-Infinity`, which saturates to
+    /// the LOWER one — measured, not assumed: `Pos(-5, 0) == 0`,
+    /// `Pos(0, 0) == Pos(5, 0) == 65535`), while `PosBack` returns 0 for
+    /// every code, so idempotency cannot hold. Neither is reachable through
+    /// the shipped data
     /// (`ArenaConfig.Radius` is `[Range(5, 100)]`, `HeroConfig.MaxAimHeight`
     /// is `[Range(1, 6)]`), so no guard is spent here — but a caller
     /// inventing its own scale must not pass zero. A negative `radius`

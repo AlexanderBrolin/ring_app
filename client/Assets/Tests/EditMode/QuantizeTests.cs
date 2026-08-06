@@ -22,22 +22,31 @@ namespace Ring.Simulation.Tests
         // Fix-round finding F1/F2: the first draft asserted `error <=
         // halfStep * 1.001f` and, separately, `halfStep <=
         // PlanMaxError` — a constant-vs-constant comparison that never
-        // touched the codec at all. So the plan's ACTUAL requirement
-        // (<=4mm / <=8mm / <=1.5deg / <=0.5%) was never tested, while the
-        // sharp half-step proxy was tested with a 0.1% slack THINNER than
-        // the float noise of the decode path itself: at radius 65 the
-        // measured worst case is 1.0014 mm against a half-step of 0.9918 mm
-        // (ratio 1.0096), so the test was green only by the accident of
-        // which grid points it sampled and of Mono's intermediate
-        // precision. Both asserts below now run against a MEASURED maximum:
-        // the plan bound is the contract, the half-step bound is the sharp
-        // proxy, and the noise term is explicit instead of a magic 0.1%.
+        // touched the codec at all, so the plan's ACTUAL requirement
+        // (<=4mm / <=8mm / <=1.5deg / <=0.5%) was never tested. Worse, the
+        // sharp half-step proxy carried a 0.1% slack thinner than the float
+        // noise of the decode path itself. Numbers, re-measured for this
+        // note in a strict float32 emulation rather than quoted from a
+        // review (fix-round 2 — the first version of this comment cited a
+        // figure the coordinator had not reproduced): on THIS test's own
+        // 1201-point grid the worst Aim error is 2.9907 mm against a
+        // half-step of 2.9755 mm (ratio 1.0051, at v = 78 m), i.e. already
+        // past the old slack; Pos happens to stay just under it on this
+        // grid (ratio 0.99998) but goes to 1.0077 on a two-million-point
+        // sweep. So the old test was green by the accident of which points
+        // it sampled and of Mono's intermediate precision, not by the
+        // codec's merit. Both asserts below now run against a MEASURED
+        // maximum: the plan bound is the contract, the half-step bound is
+        // the sharp proxy, and the noise term is explicit instead of a
+        // magic percentage.
         const float FloatEps = 1.1920929e-7f; // 2^-23, single-precision epsilon
 
         /// Worst-case float rounding the decode path can add on top of the
         /// ideal half-step: the decode multiplies by the full range, so the
-        /// error scales with it. Four eps is a deliberately generous bound
-        /// (measured overshoot at radius 65 is ~1 eps of 2*radius).
+        /// error scales with it. Four eps is a deliberately generous bound —
+        /// measured overshoot is 15 um for Aim and 8 um for Pos at radius
+        /// 65, against an allowance of 186 um and 62 um respectively, i.e.
+        /// an order of magnitude of headroom.
         static float FloatNoise(float range) => 4f * math.abs(range) * FloatEps;
 
         [Test]
@@ -116,7 +125,11 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Unit_RoundTrip_WithinTolerancePercentAcrossGrid()
         {
-            const float Max = 100f; // fixture: arbitrary one-sided max, no balance number holds this value
+            // 137 is deliberately a number no .asset holds — fix-round 2
+            // finding: the previous fixture, 100, is both HeroConfig.MaxHp
+            // and HeroConfig.StaminaMax, under a comment claiming no
+            // balance number held it. Same defect this round closed as F7.
+            const float Max = 137f;
             const int Samples = 1201;
             const float PlanMaxErrorFraction = 0.005f; // plan Task 24: Unit round-trip error <= 0.5%
             float halfStepFraction = 1f / 255f / 2f;
@@ -201,7 +214,7 @@ namespace Ring.Simulation.Tests
             // value no .asset holds — the point of a second max is only that
             // it differs from the first (урок 93: a parameter no fixture
             // varies is an untested parameter).
-            foreach (float max in new[] { 100f, 4.25f })
+            foreach (float max in new[] { 137f, 4.25f })
             {
                 for (int q = 0; q <= byte.MaxValue; q++)
                 {
@@ -382,7 +395,7 @@ namespace Ring.Simulation.Tests
             // domain-correct analogue of "symmetry around zero" is symmetry
             // around the domain's OWN centre, max/2: a probe point v and its
             // mirror (max - v) must decode back to values summing to max.
-            const float Max = 100f;
+            const float Max = 137f; // no .asset holds this value (fix-round 2)
             const float V = Max / 3f;
             float decodedLow = Quantize.UnitBack(Quantize.Unit(V, Max), Max);
             float decodedHigh = Quantize.UnitBack(Quantize.Unit(Max - V, Max), Max);
