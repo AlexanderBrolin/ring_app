@@ -50,8 +50,14 @@ headless-образ в Docker Hub, лаг-гейт механик и спайк 
   пересоздаётся; `UNITY="$HOME/Unity/Hub/Editor/6000.3.21f1/Editor/Unity"`;
   `SCRATCH=<scratchpad ТЕКУЩЕЙ сессии>` — задать на старте.
 - **Стартовые счётчики:** 189 EditMode-тестов, golden `0x760AEB00D11301C4UL`.
-  **Перепинов ровно два — Т10 и Т16.** Любой другой сдвиг golden — стоп и
-  разбор, а не перепин по дороге.
+  **Инвариант перепинов разнесён по двум константам** (поправка фазы Ф4, спека
+  Р124 — прежняя формулировка «перепинов ровно два» противоречила решению
+  владельца Р113):
+  - **соло-golden — ровно два перепина, Т10 и Т16.** Оба исполнены; любой
+    дальнейший его сдвиг — стоп и разбор, а не перепин по дороге;
+  - **мультиплеерный golden — ровно три пина: Т10** (первичный), **Т16**
+    (геометрия) и **Т17** (матрица поражения, санкция Р113). Все три исполнены,
+    санкция израсходована полностью; четвёртый сдвиг — стоп.
 - **Запретный список:** не менять `client/CLAUDE.md`, `.github/CODEOWNERS`,
   `.gitattributes`, контент паков вне `_Ring/`, `client/ProjectSettings/**`
   кроме того, что правят бутстрапы. **`client/Assets/Data/*.asset` руками не
@@ -938,9 +944,21 @@ push; jsonl-chore; bd note; `bd close` сабтаска Ф3.
 
 **Files:** Modify `.../Combat/ProjectileSystem.cs`, `.../Core/SimulationWorld.cs`,
 `client/Assets/Tests/EditMode/TestWorlds.cs`; Create `PvpDamageTests.cs` (+ `.meta`);
-Modify `ProjectileTests.cs`, `HitZoneTests.cs`,
-**`DeterminismTests.cs`** (третий пин МУЛЬТИПЛЕЕРНОГО golden — решение владельца
-Р113, спека §6e; без этого файла пин некуда положить).
+Modify **`DeterminismTests.cs`** (третий пин МУЛЬТИПЛЕЕРНОГО golden — решение
+владельца Р113, спека §6e; без этого файла пин некуда положить).
+
+**Фактический состав Files (зафиксировано по исполнении, фазовое ревью Ф4):**
+- `ProjectileTests.cs` и `HitZoneTests.cs` **правки не потребовали** — их фикстуры
+  соло-мира на матрицу поражения не смотрят, а покрытие матрицы целиком ушло в
+  новый `PvpDamageTests.cs` (спека §4 мандатит его отдельно). Строка «Modify
+  `ProjectileTests.cs`, `HitZoneTests.cs`» снята как невыполнимая по существу.
+- Дополнительно правятся, чего v3.1 не предусмотрела: `.../AI/MobAiSystem.cs`
+  (прокидка `targetIndex` в `UpdateChaser` — жертва контактного удара),
+  `.../Core/SimEvents.cs` (докстрока `PlayerIndex` под три конвенции — спека
+  Р125), `DeathTests.cs` и `EventTests.cs` (вызовы `DamagePlayer` ломаются сменой
+  сигнатуры; протухшие комментарии), а также **`Presentation/DeathOverlayController.cs`**
+  — **только комментарий**, ставший ложным после Т17 (зона клиентского трека,
+  отметить отдельной строкой в описании PR).
 
 **Interfaces:**
 
@@ -964,8 +982,16 @@ internal void DamagePlayer(int victimIndex, byte attackerIndex, float dmg,
 - **Аудит: место вставки игроков в скретч кандидатов.** Канонический порядок паковки
   сегодня — «0 = barrier → мобы по индексу → player → floor»
   (`ProjectileSystem.cs:38–43`, `:44–90`). Игроки допаковываются **в слот после
-  мобов**, на место нынешнего одиночного `player`, а не перед `HitBarrier` — иначе
-  порядок кандидатов, а с ним и исход соло-сценария, изменится.
+  мобов**, на место нынешнего одиночного `player`, а не перед `HitBarrier`.
+  **ПОПРАВКА ФАКТА (фаза Ф4, спека Р123):** прежнее обоснование — «иначе порядок
+  кандидатов, а с ним и исход соло-сценария, изменится» — **неверно и снято**.
+  Мутация, прогнанная дважды, показала, что перестановка игроков перед
+  `HitBarrier` не роняет ничего, включая оба golden. Реальный эффект порядка —
+  **разрешение точных `t`-ничьих**, которых 1000-тиковый соло-прогон не
+  наблюдает. Поэтому порядок обязан пиниться характеризационными тестами на
+  точное равенство `t`, а не считаться защищённым golden'ом: их четыре —
+  `BarrierOutranksPlayerOnAnExactTie`, `MobOutranksPlayerOnAnExactTie`,
+  `PlayerOutranksFloorOnAnExactTie`, `LowerPlayerIndexWinsAnExactTie`.
 - `AcceptCandidate` переводится с `w.Player` на `w.PlayerAt(index)` — обе строки
   (позиция цели и `SlideTimer` для срезанного профиля).
 - **Скретч:** `_projCandidates = new (float,int,int)[MaxMobs + MaxPlayers + 2]`
@@ -975,14 +1001,14 @@ internal void DamagePlayer(int victimIndex, byte attackerIndex, float dmg,
   с умолчанием** (иначе ломаются вызовы Э1); `SpawnMobsToCap` — не новый цикл, а
   выделенный из существующего `TestWorlds.Saturated`, который начинает звать его.
 
-- [ ] **Step 1 (RED):** `PvpDamageTests.cs` — `PlayerShot_DamagesOtherPlayer`
+- [x] **Step 1 (RED):** `PvpDamageTests.cs` — `PlayerShot_DamagesOtherPlayer`
   (Hp жертвы падает, `StatsAt(0).ShotsHit == 1`, `StatsAt(1).ShotsHit == 0`);
   `PlayerShot_DoesNotDamageOwner`; `HeadZoneOnPlayer_AppliesMultiplier`;
   `SlidingTarget_IsMissedByHorizontalShot`; `IframesAbsorbPvpDamage`;
   `KillCreditGoesToShooter`; **`SaturatedWorld_CandidateScratchDoesNotOverflow`**
   (`MaxMobs` мобов + 3 игрока, выстрел сквозь толпу — без исключения).
-- [ ] **Step 2:** заглушки → R-FILTER → FAIL. **Step 3 (GREEN)**.
-- [ ] **Step 4:** R-FILTER `PvpDamageTests`+`ProjectileTests`+`HitZoneTests`+
+- [x] **Step 2:** заглушки → R-FILTER → FAIL. **Step 3 (GREEN)**.
+- [x] **Step 4:** R-FILTER `PvpDamageTests`+`ProjectileTests`+`HitZoneTests`+
   `DeathTests` → PASS; R-TEST. **Соло-golden не меняется** (в соло-сценарии
   второго игрока нет — ветка мёртвая; поехал → СТОП, инвариант «перепинов соло
   ровно два» остаётся в силе). **Мультиплеерный golden ОБЯЗАН уехать** — это
@@ -990,28 +1016,39 @@ internal void DamagePlayer(int victimIndex, byte attackerIndex, float dmg,
   §6e): матрица поражения меняется (жертва по индексу, мобий снаряд против всех
   живых, снаряд игрока против чужих), и хеш, запиненный в Т10 на неполной
   матрице, обязан за ней последовать.
-- [ ] **Step 4a (третий пин, только мультиплеерный):** R-GOLDEN по
+- [x] **Step 4a (третий пин, только мультиплеерный):** R-GOLDEN по
   `MultiPlayerGoldenHash_ScriptedScenario` — взять фактическое значение из
   `But was:`, вписать hex, обновить десятичный дубль и **письменное обоснование
   в комментарии** («Т17 — матрица поражения: жертва по индексу, мобий снаряд
   против всех живых, снаряд игрока против чужих»). Соло-константу не трогать.
-- [ ] **Step 5:** R-COMMIT `feat(app-5nu): Т17 — снаряды игроков поражают игроков`.
+- [x] **Step 5:** R-COMMIT `feat(app-5nu): Т17 — снаряды игроков поражают игроков`.
 
 ### Task Т18: ноль аллокаций в мире на троих
 
-**Files:** Modify `AllocationTests.cs`, `TestWorlds.cs`.
+**Files:** Modify `AllocationTests.cs`, `TestWorlds.cs`,
+**`PvpDamageTests.cs`** (добавлено по исполнении: фикс-раунд свёл дубль
+`PlaceAt`/`RelocatePlayerForTest` к одному хелперу в `TestWorlds`, 21 call site
+переключён).
 
-- [ ] **Step 1:** `SaturatedTrio_TicksWithoutAllocations` — 1000 тиков,
+- [x] **Step 1:** `SaturatedTrio_TicksWithoutAllocations` — 1000 тиков,
   `MaxMobs` мобов, огонь всех троих, идиом `Is.Not.AllocatingGCMemory()`.
   **Исключение из RED-правила:** hardening-тест может пройти сразу — это
   нормально, он ловит будущие регрессии; пометить в bd note.
-- [ ] **Step 2:** при FAIL — найти источник (боксинг структур, `Span`-обёртки).
-- [ ] **Step 3:** R-TEST полный. **Step 4:** R-COMMIT
+- [x] **Step 2:** при FAIL — найти источник (боксинг структур, `Span`-обёртки).
+- [x] **Step 3:** R-TEST полный. **Step 4:** R-COMMIT
   `test(app-5nu): Т18 — ноль аллокаций в мире на троих`.
 
-**Гейт фазы Ф4:** R-TEST (≈ +8); **соло-golden не тронут, мультиплеерный
-перепинен ровно один раз (Т17, Р113) с письменным обоснованием**; push;
-jsonl-chore; bd note; `bd close` сабтаска Ф4.
+**Гейт фазы Ф4:** R-TEST — **фактически +16 (311 → 327)**, не «≈ +8»: оценка
+плана оказалась занижена, потому что часть требований он перечислил прозой, но
+забыл в списках Step 1. Разбивка сверх плановых: половина матрицы «мобий снаряд
+против всех живых» (§3.6), вторая строка `AcceptCandidate` (план требовал «обе
+строки»), тест контактного удара чейзера (перенос carryover п.1 требовал «плюс
+тест на это»), индекс атакующего в `ProjectileHit`/`MobDied` (перенос п.2),
+**четыре** характеризационных теста канонического порядка паковки (закрытие
+дыры, которую план считал закрытой — спека Р123), ассерт предпосылки теста
+переполнения скретча. **Соло-golden не тронут, мультиплеерный перепинен ровно
+один раз (Т17, Р113) с письменным обоснованием**; push; jsonl-chore; bd note;
+`bd close` сабтаска Ф4.
 
 ---
 
@@ -2263,7 +2300,7 @@ headless-контейнер, затухание по дистанции рабо
 | §3.14 симулятор, приборы, гейт | **Т33** (включение), Т48 (приборы), Т56 (гейт) |
 | §3.15 данные и валидации | Т4, Т8, Т9, Т16, Т19, Т22, Т23, Т41, Т45 |
 | §3.16 инструментарий | Т1, Т2, Т54 |
-| §4 тесты и golden | Т10, Т16 + тест-классы в каждом таске |
+| §4 тесты и golden | Т10, Т16, **Т17** (третий пин мультиплеерного, Р113) + тест-классы в каждом таске |
 | §5 вехи | Т49 (В1), Т53 (В2), Т56 (В3) |
 | §7 DoD | Т58, Т59 |
 | §9 амендменты | Т57 |
