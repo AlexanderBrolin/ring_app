@@ -27,7 +27,7 @@ namespace Ring.Simulation.Tests
         // MaxAimHeight is 3.8 (T24 fix-round finding F7 hit exactly this
         // trap with 3.8f). Two DIFFERENT non-default pairs, not one, so a
         // mutation hardcoding either real number fails on at least one of
-        // them (task-25-brief §3 item 9, урок 93) — see
+        // them (task-25-brief §3 item 9, lesson 93) — see
         // DifferentConfigs_ReadRadiusAndMaxAimHeightFromCfg_NotHardcoded.
         const float RadiusA = 40f;
         const float HeightA = 4.25f;
@@ -312,7 +312,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void DifferentConfigs_ReadRadiusAndMaxAimHeightFromCfg_NotHardcoded()
         {
-            // task-25-brief §3 item 9 (урок 93): a parameter no test varies
+            // task-25-brief §3 item 9 (lesson 93): a parameter no test varies
             // is untested. ConfigA/ConfigB use two DIFFERENT non-default
             // Radius/MaxAimHeight pairs, so a mutation hardcoding either
             // real number (e.g. "65 instead of cfg.Arena.Radius") fails on
@@ -354,8 +354,12 @@ namespace Ring.Simulation.Tests
             // symmetrically to one field's Encode AND Decode would still
             // round-trip correctly through Decode(Encode(...)), so no
             // round-trip test above can catch it (task-25-brief §4). Only a
-            // raw-byte comparison against a manually computed expectation
-            // can.
+            // raw-byte comparison can. Precision note (fix-round finding
+            // F8): the expectations below are computed by calling Quantize
+            // directly, NOT by hand — this test pins the LAYOUT (offsets,
+            // byte order, which Quantize method feeds which field), while
+            // Quantize's own numeric mapping is Task 24's business and is
+            // pinned by QuantizeTests.
             var input = new SimInput
             {
                 MoveDir = new float2(0.6f, 0.8f),
@@ -389,6 +393,160 @@ namespace Ring.Simulation.Tests
 
             for (int i = InputCodec.SizeBytes; i < dst.Length; i++)
                 Assert.AreEqual((byte)0xAA, dst[i], $"byte {i}: must be untouched beyond SizeBytes");
+        }
+
+        [Test]
+        public void SizeBytes_IsEightAndEveryByteIsWritten()
+        {
+            // Fix-round finding F2: the layout test above pinned "nothing is
+            // written PAST SizeBytes" but never "SizeBytes is 8" nor "every
+            // byte up to it IS written" — so the mutation `SizeBytes = 9`
+            // survived all fourteen tests (the tail loop starts AT SizeBytes,
+            // and the short-buffer tests pass SizeBytes-1, which stays short
+            // either way). That is exactly the number this task exists to
+            // correct: spec §3.8 rounds the payload up to "9 Б", and Task 34
+            // budgets uplink traffic from it, so a silent extra byte per tick
+            // per player would ride into the В2 measurement unnoticed.
+            Assert.AreEqual(8, InputCodec.SizeBytes,
+                "wire payload is 8 bytes; spec §3.8's '9 Б' is a round-up with margin, not the contract");
+
+            var input = new SimInput
+            {
+                MoveDir = new float2(0.6f, 0.8f),
+                AimPoint = new float2(37f, -91f),
+                AimHeight = 3.1f,
+                FireHeld = true
+            };
+            var dst = new byte[InputCodec.SizeBytes];
+            for (int i = 0; i < dst.Length; i++) dst[i] = 0xAA;
+            InputCodec.Encode(input, ConfigA, dst);
+
+            // Every byte of the declared payload must have been overwritten.
+            // The fixture above is chosen so that no field legitimately
+            // encodes to the 0xAA sentinel: byte 7 (flags) is 0b0000_0001
+            // and byte 6 (AimHeight at 3.1 of 4.25) is 186 — both checked
+            // explicitly so this premise cannot rot silently.
+            Assert.AreNotEqual((byte)0xAA, dst[7], "byte 7 (flags) was not written");
+            Assert.AreNotEqual((byte)0xAA, dst[6], "byte 6 (AimHeight) was not written");
+            for (int i = 0; i < InputCodec.SizeBytes; i++)
+                Assert.AreNotEqual((byte)0xAA, dst[i], $"byte {i} inside SizeBytes was left unwritten");
+        }
+
+        [Test]
+        public void FlagBits_EachOccupiesItsDocumentedPosition()
+        {
+            // Fix-round finding F1: the known vector of the layout test has
+            // FireHeld+SlideRequested set and the other two clear, so its
+            // flags byte is 0b0000_1001 — a PALINDROME to which DashRequested
+            // and AimHeld contribute nothing. Swapping bit1 with bit2 (or
+            // reversing all four) leaves that byte identical, and round-trip
+            // tests are blind to it because such a mutation is symmetric
+            // across Encode and Decode. Of the 1679 non-identity ways to
+            // place four flags across eight bits, 59 survived the whole
+            // suite. The doc comment on InputCodec is the only source of
+            // truth about these positions for Task 34's ReplicateData and for
+            // anyone reading a traffic dump, so each bit is pinned alone.
+            AssertSingleFlagByte(new SimInput { FireHeld = true }, 0b0000_0001, "FireHeld -> bit0");
+            AssertSingleFlagByte(new SimInput { DashRequested = true }, 0b0000_0010, "DashRequested -> bit1");
+            AssertSingleFlagByte(new SimInput { AimHeld = true }, 0b0000_0100, "AimHeld -> bit2");
+            AssertSingleFlagByte(new SimInput { SlideRequested = true }, 0b0000_1000, "SlideRequested -> bit3");
+            AssertSingleFlagByte(new SimInput(), 0b0000_0000, "no flags -> zero byte");
+        }
+
+        static void AssertSingleFlagByte(in SimInput input, byte expected, string what)
+        {
+            System.Span<byte> buf = stackalloc byte[InputCodec.SizeBytes];
+            InputCodec.Encode(input, ConfigA, buf);
+            Assert.AreEqual(expected, buf[7], $"flags byte for {what}");
+        }
+
+        [Test]
+        public void NonFiniteInput_ProducesLegalCodes_AndMoveDirMirrorsSanitize()
+        {
+            // Fix-round finding F4. A wire codec must turn ANY input into a
+            // legal code — that part held. What did not: MoveDir's non-finite
+            // reading was the OPPOSITE of SimInputSanitizer's. Quantize.Unit's
+            // NaN-safe saturate lifts NaN to the upper rail, so a glitching
+            // client used to decode to FULL SPEED, while the sanitizer maps a
+            // non-finite MoveDir to zero (stand still). After Task 34 the
+            // server never sees raw input, so that guard would have been dead
+            // code on the network path and the rule silently inverted.
+            var nan = new SimInput
+            {
+                MoveDir = new float2(float.NaN, 0f),
+                AimPoint = new float2(float.NaN, float.PositiveInfinity),
+                AimHeight = float.NaN
+            };
+            System.Span<byte> buf = stackalloc byte[InputCodec.SizeBytes];
+            Assert.DoesNotThrow(() =>
+            {
+                System.Span<byte> local = stackalloc byte[InputCodec.SizeBytes];
+                InputCodec.Encode(nan, ConfigA, local);
+            }, "non-finite input must never throw on the write path of a tick");
+
+            InputCodec.Encode(nan, ConfigA, buf);
+            Assert.AreEqual((byte)0, buf[1], "non-finite MoveDir must encode magnitude 0, mirroring SimInputSanitizer");
+
+            SimInput decoded = InputCodec.Decode(buf, ConfigA);
+            Assert.AreEqual(0f, math.length(decoded.MoveDir), 1e-6f,
+                "non-finite MoveDir must decode to a standstill, not to full speed");
+            Assert.IsTrue(math.all(math.isfinite(decoded.AimPoint)), "AimPoint must decode finite");
+            Assert.IsTrue(math.isfinite(decoded.AimHeight), "AimHeight must decode finite");
+
+            // AimPoint/AimHeight cannot mirror the sanitizer here (its
+            // fallbacks need the sending player's own state), so they
+            // saturate to a rail. Pinned as the documented, deliberate
+            // behaviour rather than left to chance.
+            Assert.AreEqual(3f * RadiusA, decoded.AimPoint.x, 3f * RadiusA / 65535f + 1e-3f,
+                "non-finite AimPoint.x saturates to the upper rail (+3*Radius)");
+            Assert.AreEqual(HeightA, decoded.AimHeight, HeightA / 255f + 1e-4f,
+                "non-finite AimHeight saturates to MaxAimHeight");
+        }
+
+        [Test]
+        public void SubDeadzoneMagnitude_ValueIsStable_EvenThoughBytesAreNot()
+        {
+            // Fix-round finding F3: the class doc used to claim byte-level
+            // idempotency without qualification. Below 1/510 the magnitude
+            // byte quantizes to 0, Decode returns a zero vector, and
+            // re-encoding that zero writes Quantize.Dir's zero-vector angle
+            // instead of the original heading — measured: (0, 0.001) writes
+            // angle 192 on the first pass and 128 on the second. What Р34
+            // actually needs is that the decoded VALUE be stable, and it is.
+            var tiny = new SimInput { MoveDir = new float2(0f, 0.001f) };
+
+            System.Span<byte> first = stackalloc byte[InputCodec.SizeBytes];
+            InputCodec.Encode(tiny, ConfigA, first);
+            Assert.AreEqual((byte)0, first[1], "fixture premise: this magnitude must quantize to code 0");
+
+            SimInput decoded1 = InputCodec.Decode(first, ConfigA);
+            System.Span<byte> second = stackalloc byte[InputCodec.SizeBytes];
+            InputCodec.Encode(decoded1, ConfigA, second);
+            SimInput decoded2 = InputCodec.Decode(second, ConfigA);
+
+            Assert.AreEqual(0f, math.length(decoded1.MoveDir), 1e-6f, "sub-deadzone input decodes to a standstill");
+            Assert.AreEqual(decoded1.MoveDir.x, decoded2.MoveDir.x, 0f, "decoded value must be stable across passes");
+            Assert.AreEqual(decoded1.MoveDir.y, decoded2.MoveDir.y, 0f, "decoded value must be stable across passes");
+        }
+
+        [Test]
+        public void EveryFieldOfSimInput_IsCarriedOnTheWire()
+        {
+            // Fix-round finding F5: Decode builds a fresh SimInput with an
+            // object initializer, so a field added in a later stage would
+            // come back as default and no test would notice. Same guard shape
+            // as SimConfigHashTests.SimConfig_CarriesExactlySevenSections —
+            // it does not prove a new field is carried, it forces whoever
+            // adds one to come here and decide.
+            string[] expected =
+            {
+                "MoveDir", "AimPoint", "FireHeld", "DashRequested",
+                "AimHeight", "AimHeld", "SlideRequested"
+            };
+            var actual = new System.Collections.Generic.List<string>();
+            foreach (System.Reflection.FieldInfo f in typeof(SimInput).GetFields()) actual.Add(f.Name);
+            CollectionAssert.AreEquivalent(expected, actual,
+                "SimInput gained or lost a field — InputCodec's layout and SizeBytes must be revisited");
         }
 
         // ---- 9. Buffers shorter than SizeBytes throw, never corrupt memory ----

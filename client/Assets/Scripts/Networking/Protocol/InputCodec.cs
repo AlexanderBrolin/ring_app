@@ -36,12 +36,31 @@ namespace Ring.Networking.Protocol
     /// whatever `Quantize.Dir(float2.zero)` happens to encode (structurally
     /// the same code as +X, per Quantize.cs's own doc) — nothing here ever
     /// reads that angle back as meaningful, because it is multiplied by the
-    /// decoded magnitude. Decode still returns EXACTLY `float2.zero` in
-    /// this case: `Quantize.UnitBack(0, 1f)` is exactly `0f`, and any
-    /// finite `float2` times exactly `0f` is exactly `(0f, 0f)` under IEEE
-    /// 754 — no special-case branch is needed, only the multiplication
+    /// decoded magnitude. Decode still returns a vector that COMPARES EQUAL
+    /// to `float2.zero`: `Quantize.UnitBack(0, 1f)` is exactly `0f`, and a
+    /// finite `float2` times exactly `0f` is a zero of the same sign as each
+    /// component (so `-0f` is possible, and `-0f == 0f` holds under IEEE
+    /// 754) — no special-case branch is needed, only the multiplication
     /// itself (pinned directly by InputCodecTests.
     /// MoveDir_Zero_DecodesToExactZero_NotUnitVectorTimesZero).
+    ///
+    /// BYTE-LEVEL IDEMPOTENCY IS NOT UNIVERSAL (fix-round finding F3). For
+    /// any input whose magnitude survives quantization the second pass
+    /// reproduces byte-identical wire data. It does NOT for a magnitude
+    /// below `1/510` (about 0.00196): there the magnitude byte
+    /// quantizes to 0, `Decode` returns a zero vector, and re-encoding that
+    /// zero yields `Quantize.Dir`'s zero-vector code instead of the original
+    /// heading — e.g. `(0, 0.001)` writes angle byte 192 on the first pass
+    /// and 128 on the second (measured, not assumed). The decoded VALUE is
+    /// stable across both passes (zero either way), which is the only thing
+    /// prediction parity (Р34) requires; a consumer that ever dedupes or
+    /// compares raw bytes — Task 34's redundant input resends are the
+    /// candidate — must know that the bytes themselves are not a canonical
+    /// form for sub-deadzone input.
+    ///
+    /// `Tick` IS NOT PART OF THIS PAYLOAD. Spec §3.8 lists it in the
+    /// `ReplicateData` format, but it travels through FishNet's own
+    /// `IReplicateData.GetTick`/`SetTick` (Task 34), outside `SizeBytes`.
     ///
     /// AIMPOINT IN ARENA-ABSOLUTE COORDINATES (decision, item 3). AimPoint
     /// is encoded with `Quantize.Aim` over `[-3*Radius, +3*Radius]` from the
@@ -80,8 +99,26 @@ namespace Ring.Networking.Protocol
                 throw new System.ArgumentException(
                     $"InputCodec.Encode: dst.Length ({dst.Length}) must be >= SizeBytes ({SizeBytes}).", nameof(dst));
 
-            float magnitude = math.length(input.MoveDir);
-            dst[0] = Quantize.Dir(input.MoveDir);
+            // NON-FINITE MoveDir MIRRORS Sanitize (fix-round finding F4).
+            // Without this line a NaN component would reach Quantize.Unit,
+            // whose NaN-safe saturate lifts it to the UPPER rail — magnitude
+            // code 255, i.e. a glitching client would decode to FULL SPEED
+            // in whatever direction Quantize.Dir happens to produce for NaN.
+            // SimInputSanitizer.cs:19 gives the same field the OPPOSITE
+            // meaning (`float2.zero` — stand still), and after Task 34 the
+            // server never sees a raw input again, so leaving the codec's
+            // reading in place would silently invert that rule on the
+            // network path only. AimPoint's and AimHeight's own non-finite
+            // fallbacks (SimInputSanitizer.cs:22, :31) CANNOT be mirrored
+            // here: they resolve to the sending player's own state
+            // (reference.AimPoint, cfg.Hero.MuzzleHeight), which this codec
+            // has no access to — those two still saturate to a rail, which
+            // is legal input either way and is pinned by
+            // InputCodecTests.NonFiniteInput_ProducesLegalCodes.
+            float2 move = math.all(math.isfinite(input.MoveDir)) ? input.MoveDir : float2.zero;
+
+            float magnitude = math.length(move);
+            dst[0] = Quantize.Dir(move);
             dst[1] = Quantize.Unit(magnitude, 1f);
 
             WriteU16(dst, 2, Quantize.Aim(input.AimPoint.x, cfg.Arena.Radius));
