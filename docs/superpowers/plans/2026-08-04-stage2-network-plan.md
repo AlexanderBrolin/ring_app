@@ -1925,7 +1925,24 @@ Modify `Presentation.asmdef` (+`Ring.Networking`); Modify **восемь** чи�
 
 **Files:** Create `.../Presentation/NetworkSimBackend.cs` (+ `.meta`),
 `.../Networking/Protocol/PlayerFlags.cs` (+ `.meta`),
-`client/Assets/Tests/EditMode/PlayerFlagsTests.cs` (+ `.meta`).
+`client/Assets/Tests/EditMode/PlayerFlagsTests.cs` (+ `.meta`);
+Modify **`.../Simulation/Combat/ProjectileSystem.cs`** и затронутые тесты —
+закрытие `app-dsh` (решение владельца Р128, вариант «а»).
+
+**`app-dsh` — обязательная часть Т44 (спека Р128).** Ветка `case HitPlayer`
+снимает снаряд **без единого `Emit`**, тогда как `HitBarrier`/`HitFloor` эмитят
+`ProjectileBlocked`, а `HitMob` — `ProjectileHit`. Это расходится со спекой §3.12
+(«снятие снаряда идёт через существующие `ProjectileBlocked`/`ProjectileExpired`»)
+и с таблицей Р28. Следствий два: стрелок не отличает своё PvP-попадание от
+чужого (единственное событие — `PlayerDamaged` с индексом **жертвы**), и
+клиентский призрак-трассер (Т35) не получает события конца, поэтому гаснет по
+`GhostConfirmTicks` вместо мгновенного снятия; при поглощении i-frames снаряд
+игрока исчезает **вообще без событий** (путь пришпилен зелёным
+`PvpDamageTests.IframesAbsorbPvpDamage`). Правка **хеш-нейтральна** (события вне
+`StateHash` с Э1), пина не требует. Т44 обязан определить контракт события для
+жертвы-игрока: сегодня `ProjectileHit` несёт `EntityId` = id моба и `MobType`.
+Потребители, которых заденет расширение: тесты через `TestEvents.TryFirstOf(
+ProjectileHit)` и маршрутизация `ProjectileHit` в хит-VFX по `MobType`.
 
 **Interfaces:**
 - Бэкенд собирает `RenderSnapshot` полностью: `Players`/`Mobs`/`Wave`/
