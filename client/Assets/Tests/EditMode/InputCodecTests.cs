@@ -31,13 +31,20 @@ namespace Ring.Simulation.Tests
         // DifferentConfigs_ReadRadiusAndMaxAimHeightFromCfg_NotHardcoded.
         const float RadiusA = 40f;
         const float HeightA = 4.25f;
+        // MuzzleHeight fixture: the sanitizer's non-finite AimHeight
+        // fallback (SimInputSanitizer.cs:31). Checked by grep against every
+        // client/Assets/Data/*.asset — 1.37 appears in none of them. (The
+        // first draft used 1.35, which is HeroConfig.asset BodyTop — the
+        // third fixture in a row this trap has caught, so the value is now checked
+        // by command, not by eye.)
+        const float MuzzleA = 1.37f;
         const float RadiusB = 15f;
         const float HeightB = 2f;
 
         static readonly SimConfig ConfigA = new SimConfig
         {
             Arena = new ArenaSimConfig { Radius = RadiusA },
-            Hero = new HeroSimConfig { MaxAimHeight = HeightA }
+            Hero = new HeroSimConfig { MaxAimHeight = HeightA, MuzzleHeight = MuzzleA }
         };
 
         static readonly SimConfig ConfigB = new SimConfig
@@ -493,14 +500,19 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(math.all(math.isfinite(decoded.AimPoint)), "AimPoint must decode finite");
             Assert.IsTrue(math.isfinite(decoded.AimHeight), "AimHeight must decode finite");
 
-            // AimPoint/AimHeight cannot mirror the sanitizer here (its
-            // fallbacks need the sending player's own state), so they
-            // saturate to a rail. Pinned as the documented, deliberate
-            // behaviour rather than left to chance.
+            // AimHeight mirrors the sanitizer too (fix-round 2): its
+            // fallback is cfg.Hero.MuzzleHeight, a plain balance number this
+            // codec already has — the first version of this test wrongly
+            // pinned the rail, repeating a false claim from the production
+            // comment. AimPoint is the only field that genuinely cannot be
+            // mirrored (its fallback is the player's own AimPoint), so it
+            // still saturates, pinned here as deliberate.
             Assert.AreEqual(3f * RadiusA, decoded.AimPoint.x, 3f * RadiusA / 65535f + 1e-3f,
-                "non-finite AimPoint.x saturates to the upper rail (+3*Radius)");
-            Assert.AreEqual(HeightA, decoded.AimHeight, HeightA / 255f + 1e-4f,
-                "non-finite AimHeight saturates to MaxAimHeight");
+                "non-finite AimPoint.x saturates to the upper rail (+3*Radius) — its fallback needs player state");
+            Assert.AreEqual(MuzzleA, decoded.AimHeight, HeightA / 255f + 1e-4f,
+                "non-finite AimHeight must decode to MuzzleHeight, mirroring SimInputSanitizer.cs:31");
+            Assert.AreNotEqual(HeightA, decoded.AimHeight,
+                "non-finite AimHeight must NOT saturate to MaxAimHeight (a fully raised aim)");
         }
 
         [Test]
@@ -518,12 +530,30 @@ namespace Ring.Simulation.Tests
             System.Span<byte> first = stackalloc byte[InputCodec.SizeBytes];
             InputCodec.Encode(tiny, ConfigA, first);
             Assert.AreEqual((byte)0, first[1], "fixture premise: this magnitude must quantize to code 0");
+            // Stub-defeating (fix-round 2): without these two the whole test
+            // passed on a constant stub writing zero bytes and decoding to
+            // default — every remaining assertion is about zeros. They also
+            // pin the very numbers the class doc quotes, so the doc cannot
+            // drift away from the code unnoticed.
+            Assert.AreEqual((byte)192, first[0],
+                "angle byte of (0, 0.001) is +90 degrees -> code 192 on the FIRST pass");
 
             SimInput decoded1 = InputCodec.Decode(first, ConfigA);
             System.Span<byte> second = stackalloc byte[InputCodec.SizeBytes];
             InputCodec.Encode(decoded1, ConfigA, second);
             SimInput decoded2 = InputCodec.Decode(second, ConfigA);
 
+            // NOT pinned to a literal: re-encoding a zero vector runs
+            // atan2 on the SIGNED zeros produced by `DirBack(192) * 0`, and
+            // the sign of the x component follows math.cos's rounding at
+            // pi/2 (Mono returns a small NEGATIVE cosine, giving code 0; a
+            // library rounding the other way would give 128). Pinning the
+            // literal would turn a precision detail into a false invariant —
+            // the same trap Task 24 avoided for Dir(NaN). What IS invariant,
+            // and what the class doc actually claims, is that the byte
+            // CHANGES while the decoded value does not.
+            Assert.AreNotEqual(first[0], second[0],
+                "re-encoding the decoded zero must write Dir's zero-vector code, not the original heading");
             Assert.AreEqual(0f, math.length(decoded1.MoveDir), 1e-6f, "sub-deadzone input decodes to a standstill");
             Assert.AreEqual(decoded1.MoveDir.x, decoded2.MoveDir.x, 0f, "decoded value must be stable across passes");
             Assert.AreEqual(decoded1.MoveDir.y, decoded2.MoveDir.y, 0f, "decoded value must be stable across passes");

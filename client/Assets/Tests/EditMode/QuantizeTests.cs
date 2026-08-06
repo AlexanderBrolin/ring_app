@@ -212,7 +212,7 @@ namespace Ring.Simulation.Tests
             // which is exactly HeroConfig.MaxAimHeight's shipped value, under
             // a comment claiming it was not a balance number. Replaced with a
             // value no .asset holds — the point of a second max is only that
-            // it differs from the first (урок 93: a parameter no fixture
+            // it differs from the first (lesson 93: a parameter no fixture
             // varies is an untested parameter).
             foreach (float max in new[] { 137f, 4.25f })
             {

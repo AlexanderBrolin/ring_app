@@ -16,7 +16,9 @@ namespace Ring.Networking.Protocol
     ///   [1]    MoveDir magnitude — Quantize.Unit(length, 1f) (byte)
     ///   [2..3] AimPoint.x        — Quantize.Aim (u16, little-endian)
     ///   [4..5] AimPoint.y        — Quantize.Aim (u16, little-endian)
-    ///   [6]    AimHeight         — Quantize.Unit(h, cfg.Hero.MaxAimHeight) (byte)
+    ///   [6]    AimHeight         — Quantize.Unit(h, cfg.Hero.MaxAimHeight) (byte);
+    ///                              non-finite h falls back to cfg.Hero.MuzzleHeight
+    ///                              first, mirroring SimInputSanitizer (see below)
     ///   [7]    flags             — bit0 FireHeld, bit1 DashRequested,
     ///                              bit2 AimHeld, bit3 SlideRequested
     /// Total 8 bytes. Spec §3.8 states "9 Б" for this payload — a round-up
@@ -51,7 +53,11 @@ namespace Ring.Networking.Protocol
     /// quantizes to 0, `Decode` returns a zero vector, and re-encoding that
     /// zero yields `Quantize.Dir`'s zero-vector code instead of the original
     /// heading — e.g. `(0, 0.001)` writes angle byte 192 on the first pass
-    /// and 128 on the second (measured, not assumed). The decoded VALUE is
+    /// and a different one on the second (0 under Mono; measured, and NOT
+    /// pinned to a literal by the test: re-encoding a zero vector runs
+    /// `atan2` on SIGNED zeros, whose signs follow `math.cos`'s rounding at
+    /// pi/2, so the exact replacement code is a precision detail rather than
+    /// a contract — what is invariant is only that it changes). The decoded VALUE is
     /// stable across both passes (zero either way), which is the only thing
     /// prediction parity (Р34) requires; a consumer that ever dedupes or
     /// compares raw bytes — Task 34's redundant input resends are the
@@ -99,23 +105,36 @@ namespace Ring.Networking.Protocol
                 throw new System.ArgumentException(
                     $"InputCodec.Encode: dst.Length ({dst.Length}) must be >= SizeBytes ({SizeBytes}).", nameof(dst));
 
-            // NON-FINITE MoveDir MIRRORS Sanitize (fix-round finding F4).
-            // Without this line a NaN component would reach Quantize.Unit,
-            // whose NaN-safe saturate lifts it to the UPPER rail — magnitude
-            // code 255, i.e. a glitching client would decode to FULL SPEED
-            // in whatever direction Quantize.Dir happens to produce for NaN.
-            // SimInputSanitizer.cs:19 gives the same field the OPPOSITE
-            // meaning (`float2.zero` — stand still), and after Task 34 the
-            // server never sees a raw input again, so leaving the codec's
-            // reading in place would silently invert that rule on the
-            // network path only. AimPoint's and AimHeight's own non-finite
-            // fallbacks (SimInputSanitizer.cs:22, :31) CANNOT be mirrored
-            // here: they resolve to the sending player's own state
-            // (reference.AimPoint, cfg.Hero.MuzzleHeight), which this codec
-            // has no access to — those two still saturate to a rail, which
-            // is legal input either way and is pinned by
-            // InputCodecTests.NonFiniteInput_ProducesLegalCodes.
+            // NON-FINITE INPUT MIRRORS Sanitize WHEREVER IT CAN (fix-round
+            // findings F4 and, for AimHeight, fix-round 2's own correction).
+            // Left alone, a NaN reaches Quantize, whose NaN-safe saturate
+            // lifts it to the UPPER rail: magnitude 255 (a glitching client
+            // decoding to FULL SPEED) and AimHeight at MaxAimHeight (a fully
+            // raised aim). SimInputSanitizer gives both fields the OPPOSITE
+            // reading — `float2.zero`, i.e. stand still (:19), and
+            // `cfg.Hero.MuzzleHeight`, i.e. the standing muzzle line (:31) —
+            // and after Task 34 the server never sees a raw input again, so
+            // leaving the codec's reading in place would silently invert
+            // those rules on the network path only.
+            //
+            // AimPoint is the one field that genuinely CANNOT be mirrored:
+            // its fallback (SimInputSanitizer.cs:22) is `reference.AimPoint`,
+            // the sending player's own state, which this codec does not have.
+            // It still saturates to a rail — legal input either way, and
+            // pinned as deliberate by InputCodecTests.NonFiniteInput_*. (The
+            // first version of this comment claimed AimHeight was in the same
+            // boat; that was false — `MuzzleHeight` is a plain balance number
+            // on the `cfg` this method already takes, and it is read two
+            // lines below. Caught by the scoped re-review.)
+            //
+            // Side effect worth naming (fix-round 2): with NaN stopped here,
+            // it never reaches `Quantize.Dir`'s `(int)math.round(NaN)`, whose
+            // result C# leaves unspecified and which therefore differed
+            // between Mono and IL2CPP. Non-finite input now encodes
+            // identically on every platform — a determinism guarantee (CR 2),
+            // not just a semantic fix.
             float2 move = math.all(math.isfinite(input.MoveDir)) ? input.MoveDir : float2.zero;
+            float aimHeight = math.isfinite(input.AimHeight) ? input.AimHeight : cfg.Hero.MuzzleHeight;
 
             float magnitude = math.length(move);
             dst[0] = Quantize.Dir(move);
@@ -124,7 +143,7 @@ namespace Ring.Networking.Protocol
             WriteU16(dst, 2, Quantize.Aim(input.AimPoint.x, cfg.Arena.Radius));
             WriteU16(dst, 4, Quantize.Aim(input.AimPoint.y, cfg.Arena.Radius));
 
-            dst[6] = Quantize.Unit(input.AimHeight, cfg.Hero.MaxAimHeight);
+            dst[6] = Quantize.Unit(aimHeight, cfg.Hero.MaxAimHeight);
 
             byte flags = 0;
             if (input.FireHeld) flags |= 1 << FireHeldBit;
