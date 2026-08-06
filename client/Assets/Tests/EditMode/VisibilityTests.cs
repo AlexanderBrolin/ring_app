@@ -48,6 +48,19 @@ namespace Ring.Simulation.Tests
     /// (M-2); and grid-relative (not raw-metre) position fixtures in the two
     /// quantization tests that used them (M-3). See each fixture's own doc
     /// for the specific mutation it exists to catch.
+    ///
+    /// Phase Ф5 fix-wave (two phase reviews) appended fixtures 28-32. The
+    /// critical one is `Compute_UsesObserverIndex_NotPlayerZero`: every one of
+    /// the 32 `VisibilitySystem.Compute(` call sites in the repository passed
+    /// observer 0, so BOTH of Compute's own reads of `observerIndex` could be
+    /// replaced by the literal 0 and the whole 378-test run stayed green —
+    /// in production that is CRITICAL RULE 4 broken outright (every observer
+    /// would be handed player 0's fog of war, and player 0 would be visible to
+    /// everyone through walls at any range). The other four close mutations
+    /// the earlier rounds left standing: the target's own ARCHETYPE radius
+    /// (28), `VisibilityIds.ForPlayer`'s formula (30), the negative half of
+    /// `QuantizeAudiblePos`'s `grid <= 0` opt-out (31), and §3.5's "a dead
+    /// player's body is seen by the ordinary rules" (32).
     public class VisibilityTests
     {
         // Task 21 fix-round 1 (M-2): Capacity moved to TestWorlds — see its
@@ -528,6 +541,25 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, setA.Count,
                 "only the observer and the still-visible survivor mobA belong in tick 1's result");
             Assert.IsTrue(setA.Contains(mobAId), "mobA itself must remain visible after the swap");
+            // Phase Ф5 fix-wave (minor): mobBId was captured and never used.
+            // Spend it on the other half of the swap — the corpse itself.
+            // Compute only ever walks LIVE mobs (w.Mobs/w.MobCount), so the
+            // mob that died this tick is not merely absent from `result`, it
+            // was never visited at all: no linger, no grace, gone at once.
+            // (This is exactly the trap EventDeliveryTests'
+            // MobDied_DeliveredViaPreviousTickSet_NotCurrentTick exists to
+            // make survivable on the delivery side.)
+            //
+            // Stated plainly, since this file's other assertions are chosen to
+            // be falsifiable: this one is a CONSEQUENCE assertion, not a pin.
+            // No small edit to Compute can put a corpse back into the set —
+            // the mob is gone from w.Mobs before Compute ever runs — so no
+            // mutation reddens it. It documents a fact the delivery seam
+            // depends on, and it spends a variable that would otherwise be
+            // dead; it is not claimed to catch anything.
+            Assert.IsFalse(setA.Contains(mobBId),
+                "the mob that died this tick must be gone from the set outright — Compute never visits a corpse, "
+                + "so it cannot even enter the linger grace period");
         }
 
         // --- 11: OwnPlayer_AlwaysVisibleToSelf ---
@@ -640,7 +672,7 @@ namespace Ring.Simulation.Tests
             // fixture in this file running a solo world, nothing ever put a
             // live mob and VisibilityIds.ForPlayer(i) for i > 0 side by side
             // to actually check it. Pinned by assertion, not prose (spec
-            // discipline, "урок 86").
+            // discipline, "Урок 86").
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 3);
             w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
@@ -1016,6 +1048,279 @@ namespace Ring.Simulation.Tests
                 + "not UP to a full grid cell under AwayFromZero — this also kills a `return pos` identity "
                 + "stub, which would report the half-grid offset itself instead of either rounded value");
             Assert.AreEqual(0f, quantized.y);
+        }
+
+        // --- 28: Compute_UsesObserverIndex_NotPlayerZero (Phase Ф5 fix-wave, C-1) ---
+
+        [Test]
+        public void Compute_UsesObserverIndex_NotPlayerZero()
+        {
+            // C-1, the phase's central seam left unpinned by three rounds of
+            // review: EVERY `VisibilitySystem.Compute(` call site in the whole
+            // repository — 32 of them, this file, EventDeliveryTests and
+            // AllocationTests together — passed observerIndex == 0. Both of
+            // Compute's own uses of the parameter could therefore be replaced
+            // by the literal 0 and nothing anywhere went red:
+            //   `float2 observerPos = w.PlayerAt(observerIndex).Pos;` -> PlayerAt(0)
+            //   `if (i == observerIndex)`                             -> if (i == 0)
+            // In production that is CRITICAL RULE 4 (fog of war is the
+            // server's alone) violated in both directions at once: every
+            // observer would receive the set computed from PLAYER 0's vantage
+            // point, and player 0 would be unconditionally present in
+            // everyone's set — visible through walls at any range.
+            //
+            // The fixture is built so the two observers' sets are DISJOINT
+            // except for nothing at all: the players stand further apart than
+            // SightRadius + ExitHysteresis (so no player ever sees another)
+            // and each of the two mobs is inside one observer's SightRadius and
+            // outside the other's widened radius. Composition (Count) is
+            // asserted alongside membership, because the `i == 0` mutant's
+            // damage shows up as an EXTRA id rather than a missing one.
+            var cfg = TestConfigs.Open(); // no obstacles/walls: LoS never gates anything here
+            float sightPlusHysteresis = cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis;
+            float separation = sightPlusHysteresis + 10f;
+
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            var pos0 = float2.zero;
+            var pos1 = new float2(0f, separation);
+            var pos2 = new float2(0f, -separation);
+            TestWorlds.RelocatePlayerForTest(w, 0, pos0);
+            TestWorlds.RelocatePlayerForTest(w, 1, pos1);
+            TestWorlds.RelocatePlayerForTest(w, 2, pos2);
+
+            var mobBeside1Pos = pos1 + new float2(5f, 0f);
+            var mobBeside0Pos = pos0 + new float2(5f, 0f);
+            int mobBeside1 = w.SpawnMobForTest(MobType.Chaser, mobBeside1Pos);
+            int mobBeside0 = w.SpawnMobForTest(MobType.Chaser, mobBeside0Pos);
+
+            // test setup: the geometry really does separate the two vantage
+            // points, or a hardcoded-observer mutant could agree with the
+            // correct code by coincidence.
+            Assert.Greater(math.distance(pos0, pos1), sightPlusHysteresis,
+                "test setup: the two observers must be too far apart to see each other at all");
+            Assert.Greater(math.distance(pos1, pos2), sightPlusHysteresis,
+                "test setup: player 2 must be invisible to observer 1 as well");
+            Assert.LessOrEqual(math.distance(pos1, mobBeside1Pos), cfg.Visibility.SightRadius,
+                "test setup: mobBeside1 must be plainly visible to observer 1");
+            Assert.Greater(math.distance(pos0, mobBeside1Pos), sightPlusHysteresis,
+                "test setup: mobBeside1 must be outside player 0's WIDENED radius too");
+            Assert.LessOrEqual(math.distance(pos0, mobBeside0Pos), cfg.Visibility.SightRadius,
+                "test setup: mobBeside0 must be plainly visible to observer 0");
+            Assert.Greater(math.distance(pos1, mobBeside0Pos), sightPlusHysteresis,
+                "test setup: mobBeside0 must be outside observer 1's widened radius");
+
+            var previousOne = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var fromOne = new VisibilitySet(TestWorlds.Capacity(cfg));
+            VisibilitySystem.Compute(w, 1, cfg.Visibility, previousOne, fromOne);
+
+            int id0 = VisibilityIds.ForPlayer(0), id1 = VisibilityIds.ForPlayer(1), id2 = VisibilityIds.ForPlayer(2);
+            Assert.IsTrue(fromOne.Contains(id1), "observer 1 must be visible to ITSELF, not merely player 0 to player 0");
+            Assert.AreEqual(0, fromOne.LingerOf(id1), "the observer's own body reads as visible NOW");
+            Assert.IsTrue(fromOne.Contains(mobBeside1),
+                "the mob standing next to OBSERVER 1 must be in observer 1's own set — a PlayerAt(0) vantage point "
+                + "would place it far outside SightRadius and drop it");
+            Assert.IsFalse(fromOne.Contains(mobBeside0),
+                "the mob standing next to PLAYER 0 must NOT be in observer 1's set — it is only visible from "
+                + "player 0's vantage point, which is exactly what must not be reused here");
+            Assert.IsFalse(fromOne.Contains(id0),
+                "player 0 must go through the ordinary distance gate like anyone else: being index 0 is not a "
+                + "free pass into every observer's set (spec §3.5 grants that only to the observer ITSELF)");
+            Assert.IsFalse(fromOne.Contains(id2), "player 2 is out of range of observer 1 as well");
+            Assert.AreEqual(2, fromOne.Count,
+                "observer 1's set is exactly {itself, the mob beside it} — no third id, however it got there");
+
+            // Counterpart from the other vantage point: the two sets must
+            // genuinely DIFFER, which is the property the whole fixture rests
+            // on. (Computed second and asserted in full, so this half is a
+            // witness rather than a mirror of the same call.)
+            var previousZero = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var fromZero = new VisibilitySet(TestWorlds.Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, previousZero, fromZero);
+
+            Assert.IsTrue(fromZero.Contains(id0), "observer 0 must be visible to itself");
+            Assert.IsTrue(fromZero.Contains(mobBeside0), "the mob beside observer 0 must be in observer 0's set");
+            Assert.IsFalse(fromZero.Contains(mobBeside1), "the mob beside player 1 must not be");
+            Assert.IsFalse(fromZero.Contains(id1), "player 1 is beyond observer 0's widened radius");
+            Assert.AreEqual(2, fromZero.Count, "observer 0's set is exactly {itself, the mob beside it}");
+        }
+
+        // --- 29: EdgePeek_UsesTargetArchetypeRadius_NotChaserRadius (Phase Ф5 fix-wave, I-5) ---
+
+        [Test]
+        public void EdgePeek_UsesTargetArchetypeRadius_NotChaserRadius()
+        {
+            // I-5: EdgePeek_UsesTargetTypeRadius_NotHeroRadius above only
+            // discriminates the MOB config from the HERO config. It cannot see
+            // the OTHER half of `w.MobConfigFor(m.Type).Radius` — the `m.Type`
+            // lookup itself: every fixture in this file spawns Chasers only,
+            // and TestConfigs.Default() gives Chaser and Gunner the SAME
+            // radius, so `MobConfigFor(MobType.Chaser)` hardcoded in place of
+            // `MobConfigFor(m.Type)` is numerically invisible everywhere.
+            //
+            // Both halves of that premise are fixed here: the target is a
+            // GUNNER, and the two archetypes' radii are deliberately pulled
+            // apart IN THE FIXTURE (the shipped balance may legitimately keep
+            // them equal — that is a balance choice, not a contract this test
+            // is entitled to depend on).
+            var cfg = TestConfigs.Open();
+            float chaserRadius = cfg.Chaser.Radius;
+            cfg.Gunner.Radius = chaserRadius * 2f;
+            float gunnerRadius = cfg.Gunner.Radius;
+            Assert.Greater(gunnerRadius, chaserRadius,
+                "test setup: this fixture only discriminates the archetype lookup if the two radii actually differ");
+
+            cfg.Arena.ObstacleCount = 1;
+            float obstacleRadius = gunnerRadius + 0.1f;
+            // Midpoint of the two clamp-free blocking thresholds
+            // (obstacleRadius - gunnerRadius and obstacleRadius - chaserRadius):
+            // strictly inside the band where the two radii disagree about
+            // whether the ray is blocked. Same construction as fixture 5,
+            // with Chaser.Radius playing the role Hero.Radius plays there.
+            float offset = obstacleRadius - (gunnerRadius + chaserRadius) * 0.5f;
+            cfg.Arena.ObstaclePos = new[] { new float2(5f, offset) };
+            cfg.Arena.ObstacleRadius = new[] { obstacleRadius };
+
+            var w = new SimulationWorld(1, cfg);
+            var targetPos = new float2(10f, 0f);
+            int mobId = w.SpawnMobForTest(MobType.Gunner, targetPos);
+            Assert.AreEqual(MobType.Gunner, w.Mobs[0].Type,
+                "test setup: the target really must be the OTHER archetype, or nothing here is discriminating");
+
+            // test setup: pin both ends of the discriminating window through
+            // the same Targeting.HasLineOfFire seam Compute itself calls.
+            Assert.IsTrue(Targeting.HasLineOfFire(float2.zero, targetPos, -gunnerRadius, cfg.Arena),
+                "test setup: padding by the GUNNER's own radius must clear this obstacle");
+            Assert.IsFalse(Targeting.HasLineOfFire(float2.zero, targetPos, -chaserRadius, cfg.Arena),
+                "test setup: padding by Chaser.Radius instead must still be blocked, or this offset does not "
+                + "discriminate the archetype lookup at all");
+
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
+
+            Assert.IsTrue(result.Contains(mobId),
+                "the LoS pad must come from the TARGET's own archetype (MobConfigFor(m.Type)), not from a "
+                + "hardcoded Chaser — a Gunner peeking past this obstacle's edge is visible, a Chaser would not be");
+        }
+
+        // --- 30: PlayerIds_AreNegative_Distinct_AndNeverZero (Phase Ф5 fix-wave, item 9) ---
+
+        [Test]
+        public void PlayerIds_AreNegative_Distinct_AndNeverZero()
+        {
+            // VisibilityIds.ForPlayer is used on BOTH sides of every other
+            // assertion in this file and in EventDeliveryTests (the fixture
+            // computes the expected id with it, the production code computes
+            // the stored id with it), so its FORMULA cancels out everywhere
+            // and nothing pinned it: `-(index + 1)` could become `-index` and
+            // the whole run stayed green. Pin the three properties
+            // VisibilitySet's own doc claims for this id space instead.
+            var cfg = TestConfigs.Open();
+
+            // (1) Never zero. Zero is not a mob id either (SimulationWorld's
+            // own _nextEntityId starts at 1) — but it is also not free: it is
+            // the value SimEvent.EntityId carries for every kind with no
+            // subject at all, so a player mapped onto it would answer
+            // "visible" to those by accident.
+            Assert.AreNotEqual(0, VisibilityIds.ForPlayer(0),
+                "player 0 must not map onto id 0 — that is the `no subject` value SimEvent.EntityId defaults to");
+
+            for (int i = 0; i < cfg.Arena.MaxPlayers; i++)
+            {
+                // (2) Strictly negative — the whole basis of the "disjoint
+                // from the >= 1 real entity id space" claim
+                // PlayerIds_DoNotOverlapMobIds checks from the other side.
+                Assert.Less(VisibilityIds.ForPlayer(i), 0,
+                    $"player {i}'s synthetic id must be strictly negative");
+
+                // (3) Pairwise distinct — a constant-returning implementation
+                // would satisfy both properties above and merge every player
+                // into one id.
+                for (int j = i + 1; j < cfg.Arena.MaxPlayers; j++)
+                {
+                    Assert.AreNotEqual(VisibilityIds.ForPlayer(i), VisibilityIds.ForPlayer(j),
+                        $"players {i} and {j} must not share a synthetic id");
+                }
+            }
+        }
+
+        // --- 31: AudiblePos_IdentityWhenGridNegative (Phase Ф5 fix-wave, item 9) ---
+
+        [Test]
+        public void AudiblePos_IdentityWhenGridNegative()
+        {
+            // QuantizeAudiblePos opts out on `grid <= 0f`, but
+            // AudiblePos_IdentityWhenGridDisabled only ever probes the `== 0`
+            // half, so narrowing the guard to `grid == 0f` survived the whole
+            // run. SimConfigBuilder does reject a negative grid — but it is
+            // the ONLY thing that does, and every hand-built
+            // VisibilitySimConfig (TestConfigs, a fixture, a future JSON
+            // match-config) reaches this function without passing through it,
+            // which is exactly why the guard is written defensively. A
+            // negative grid must behave like a disabled one, never like a
+            // mirrored one.
+            var cfg = TestConfigs.Open();
+            float enabledGrid = cfg.Visibility.HearPositionGridMeters;
+            Assert.Greater(enabledGrid, 0f, "test setup: the default grid must be enabled for the witness below");
+
+            // Grid-relative, not raw metres (same discipline as fixtures 20/23).
+            var pos = new float2(enabledGrid * 2.4f, -enabledGrid * 3.7f);
+            cfg.Visibility.HearPositionGridMeters = -enabledGrid;
+
+            Assert.AreEqual(pos, VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility),
+                "a NEGATIVE grid must opt out exactly like a zero one — `grid <= 0`, not `grid == 0`");
+
+            // Witness (M-1 discipline): the same position with a legal grid
+            // must actually move, so this cannot be satisfied by an
+            // always-identity stub.
+            cfg.Visibility.HearPositionGridMeters = enabledGrid;
+            Assert.AreNotEqual(pos, VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility),
+                "witness: with the grid re-enabled the same position must quantize away from itself");
+        }
+
+        // --- 32: DeadPlayer_BodyStaysVisible (Phase Ф5 fix-wave, item 9) ---
+
+        [Test]
+        public void DeadPlayer_BodyStaysVisible()
+        {
+            // Spec §3.5 keeps a dead player's BODY in the visibility set by
+            // the ordinary rules — there is no Alive gate in Compute's player
+            // loop, and there must not be one: a corpse that vanished from
+            // every observer's set the tick it died would pop out of the
+            // world instead of lying where it fell. Nothing pinned that:
+            // inserting `if (!w.PlayerAt(i).Alive) continue;` into the player
+            // loop broke no test at all, because every multiplayer fixture in
+            // this file keeps all three players alive.
+            var cfg = TestConfigs.Open();
+            float sightPlusHysteresis = cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis;
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+
+            var observerPos = float2.zero;
+            var corpsePos = new float2(cfg.Visibility.SightRadius * 0.5f, 0f); // comfortably inside, clear LoS (open arena)
+            var awayPos = new float2(0f, -(sightPlusHysteresis + 10f));
+            TestWorlds.RelocatePlayerForTest(w, 0, observerPos);
+            TestWorlds.RelocatePlayerForTest(w, 1, corpsePos);
+            TestWorlds.RelocatePlayerForTest(w, 2, awayPos);
+
+            w.KillPlayerNoDamage(1);
+            Assert.IsFalse(w.PlayerAt(1).Alive, "test setup: player 1 must actually be dead");
+            Assert.AreEqual(corpsePos, w.PlayerAt(1).Pos,
+                "test setup: death must leave the body where it fell (KillPlayer zeroes timers, not position)");
+            Assert.IsTrue(w.PlayerAt(0).Alive, "test setup: the observer itself must still be alive");
+
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
+
+            int corpseId = VisibilityIds.ForPlayer(1);
+            Assert.IsTrue(result.Contains(corpseId),
+                "spec §3.5: a dead player's body is seen by the ORDINARY rules — death is not its own visibility gate");
+            Assert.AreEqual(0, result.LingerOf(corpseId),
+                "the body reads as visible NOW, not as an entity fading out through the linger grace period");
+            Assert.IsFalse(result.Contains(VisibilityIds.ForPlayer(2)),
+                "test setup: the third player must stay out of range, so Count below means what it says");
+            Assert.AreEqual(2, result.Count,
+                "exactly the observer and the corpse — a corpse neither disappears nor duplicates");
         }
     }
 }

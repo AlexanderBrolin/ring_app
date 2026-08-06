@@ -6,9 +6,14 @@ namespace Ring.Simulation.Visibility
 {
     /// Server-side visibility filter core (spec §3.5, Р18-Р21): per-observer
     /// set of entities currently visible or still lingering after a recent
-    /// LoS/range break. Pure function of world state + config — no `new`
-    /// anywhere below, so a Compute() call allocates nothing beyond what its
-    /// two VisibilitySet arguments already own (Task 19 report).
+    /// LoS/range break. Pure function of world state + config, with NOT ONE
+    /// ALLOCATION ON THE SUCCESS PATH, so a Compute() call allocates nothing
+    /// beyond what its two VisibilitySet arguments already own
+    /// (VisibilitySystem_Compute_DoesNotAllocateGC pins that by measurement).
+    /// Deliberately stated that way rather than as "no `new` anywhere below":
+    /// the aliasing guard added in Task 19's fix-round does construct an
+    /// ArgumentException — on the failure path that ends the call, where an
+    /// allocation costs nothing anyone measures.
     public static class VisibilitySystem
     {
         /// Computes `observerIndex`'s per-tick visibility set (spec §3.5,
@@ -36,10 +41,23 @@ namespace Ring.Simulation.Visibility
                     "of throwing.", nameof(result));
             }
             result.Clear();
-            // Hoisted out of the per-entity loop below (same discipline as
+            // Hoisted out of the per-entity loops below (same discipline as
             // MobAiSystem.Update's own `ArenaSimConfig arena = w.Config.Arena;`)
-            // so a per-tick Compute() call copies these two structs out of
-            // SimConfig exactly once, not once per player/mob visited.
+            // so those loops read two locals instead of going back to
+            // SimulationWorld.Config once per player/mob visited.
+            //
+            // What this is NOT (Ф5 phase review, I-7 — the earlier wording
+            // claimed it): it is not "the config is copied exactly once".
+            // SimulationWorld.Config is a BY-VALUE property, so each of the
+            // two reads below copies the WHOLE SimConfig, and the mob loop's
+            // own w.MobConfigFor copies a MobSimConfig per mob on top of that
+            // (as does `MobState m = mobs[i]`). None of that allocates — every
+            // one is a struct copy, which is why
+            // VisibilitySystem_Compute_DoesNotAllocateGC is green for the
+            // right reason — but the copies are real. A
+            // ref-readonly accessor would remove them; it touches
+            // SimulationWorld's public API and is therefore a Task 28
+            // candidate (carryover-t28.md §8г), not this phase's work.
             ArenaSimConfig arena = w.Config.Arena;
             float heroRadius = w.Config.Hero.Radius;
             float2 observerPos = w.PlayerAt(observerIndex).Pos;
@@ -116,11 +134,24 @@ namespace Ring.Simulation.Visibility
 
         /// Audibility gate (Stage 2 Task 20, spec §3.5, Р21): plain distance
         /// only — deliberately no LoS check at all. Sound is the diegetic
-        /// "open short-range aether" of ADR-003 §8 and travels through walls;
-        /// HearRadius is >= SightRadius by construction of the config (the
-        /// cross-field validation itself lands in Task 22, not here), so this
-        /// gate is always at least as permissive as Compute's own sight gate,
-        /// never narrower.
+        /// "open short-range aether" of ADR-003 §8 and travels through walls.
+        ///
+        /// This is a SELF-CONTAINED gate: it assumes NOTHING about Compute's
+        /// own sight gate and must not be read as "always at least as
+        /// permissive as sight, never narrower" (Ф5 phase review, I-3 — the
+        /// earlier wording claimed exactly that, on a guarantee quoted only
+        /// half-way; Урок 88). Both halves of the old claim are false:
+        /// (1) Task 22's cross-check requires only HearRadius >= SightRadius,
+        ///     while Compute widens an ALREADY-TRACKED entity's own budget to
+        ///     SightRadius + ExitHysteresis — so a config of Sight 45 /
+        ///     ExitHysteresis 20 / Hear 45 passes validation and still leaves
+        ///     hearing strictly NARROWER than sight for anything tracked;
+        /// (2) "by construction of the config" does not hold at all for a
+        ///     hand-built VisibilitySimConfig, which is what actually reaches
+        ///     this method most of the time: SimConfigBuilder is the only
+        ///     place that cross-check lives, and TestConfigs/fixtures/JSON
+        ///     never pass through it (VisibilityTests really does call this
+        ///     with HearRadius = 0.5 * SightRadius).
         public static bool IsAudible(float2 observerPos, float2 sourcePos, in VisibilitySimConfig cfg)
         {
             return math.distance(observerPos, sourcePos) <= cfg.HearRadius;

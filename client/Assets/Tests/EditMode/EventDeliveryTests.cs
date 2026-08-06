@@ -26,6 +26,15 @@ namespace Ring.Simulation.Tests
     /// coarse position decision for an Audible-channel event is
     /// `Contains(id)`, INCLUDING a merely-lingering entity, not
     /// `LingerOf(id) == 0` — AudiblePos_ExactForVisible's own "half 1".
+    ///
+    /// Phase Ф5 fix-wave (two phase reviews) added fixture 4c
+    /// (MobSpawned_RequiresCurrentTickSet — the mirror image of 4b, and the
+    /// reason the "which tick's set" contract is PER-KIND rather than one
+    /// blanket rule) and pulled `EntityId` apart from `PlayerIndex` in the two
+    /// PlayerDied/PlayerDamaged fixtures: while the two fields carried the
+    /// same value, ShouldDeliver could read either one and every assertion
+    /// here still passed, so the VICTIM-by-PlayerIndex convention was prose,
+    /// not contract.
     public class EventDeliveryTests
     {
         // Task 21 fix-round 1 (M-2): Capacity moved to TestWorlds — see its
@@ -92,9 +101,9 @@ namespace Ring.Simulation.Tests
             foreach (SimEventKind kind in new[] { SimEventKind.WaveStarted, SimEventKind.WaveCleared })
             {
                 // Nonzero and off-centre, mirroring WaveSystem's own
-                // "nearest-alive-player" event position (spec Р28: "сегодня
-                // позиция берётся у нулевого игрока" — delivering it would
-                // leak that player's location to everyone).
+                // "nearest-alive-player" event position (spec Р28 notes that
+                // today this position is simply taken from a player — so
+                // delivering it would leak that player's location to everyone).
                 var ev = new SimEvent { Kind = kind, Pos = new float2(9.5f, -3.25f), EntityId = 4 };
 
                 for (int observerIndex = 0; observerIndex < w.PlayerCount; observerIndex++)
@@ -114,22 +123,34 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 3);
 
+            const byte victimIndex = 1;
+            // Phase Ф5 fix-wave (item 9): EntityId is deliberately pulled
+            // APART from PlayerIndex here. SimulationWorld emits these two
+            // fields with the SAME value for PlayerDied (KillPlayer passes the
+            // victim index to both), and while they agreed in this fixture the
+            // owner carve-out below could read either one and still pass:
+            // `observerIndex == ev.PlayerIndex` -> `== ev.EntityId` survived
+            // the whole run. Diverging them costs the fixture nothing (nothing
+            // in ShouldDeliver reads EntityId for this kind, which is exactly
+            // the claim under test) and makes the VICTIM-by-PlayerIndex
+            // convention observable for the first time.
             var ev = new SimEvent
             {
                 Kind = SimEventKind.PlayerDied,
-                PlayerIndex = 1, // VICTIM convention (SimEvent.PlayerIndex's own doc)
-                EntityId = 1,
+                PlayerIndex = victimIndex, // VICTIM convention (SimEvent.PlayerIndex's own doc)
+                EntityId = victimIndex + 1,
                 Pos = new float2(-4f, 21f)
             };
 
             // The gate an ordinary Visible-channel event would apply: the
             // victim's own synthetic id is absent — as if the victim died
             // behind a wall from every observer's point of view, itself
-            // included (task-21-brief.md's own "мёртвый за стеной" phrasing).
+            // included (task-21-brief.md's own "dead behind a wall" phrasing).
             var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
 
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, w, observerSet, cfg.Visibility, out float2 ownPos),
-                "a player's own death must reach them even when the ordinary visibility gate would refuse it");
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, victimIndex, w, observerSet, cfg.Visibility, out float2 ownPos),
+                "a player's own death must reach them even when the ordinary visibility gate would refuse it — "
+                + "the owner carve-out is keyed on PlayerIndex (the VICTIM), never on EntityId");
             Assert.AreEqual(ev.Pos, ownPos);
 
             // Negative counterpart (Task 19/20 discipline: no negative assert
@@ -251,6 +272,68 @@ namespace Ring.Simulation.Tests
             // correctly.
             Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, setBeforeDeath, cfg.Visibility, out float2 deliveredPos),
                 "the PREVIOUS tick's set — from before the death — must deliver");
+            Assert.AreEqual(ev.Pos, deliveredPos);
+        }
+
+        // --- 4c: MobSpawned_RequiresCurrentTickSet (Phase Ф5 fix-wave, I-9) ---
+
+        [Test]
+        public void MobSpawned_RequiresCurrentTickSet()
+        {
+            // I-9, the exact mirror image of 4b above, and the reason the
+            // "which tick's set" contract is PER-KIND rather than one blanket
+            // rule (Р140, carryover-t28.md §8б): MobSpawned rides the SAME
+            // Visible channel as MobDied, but its subject did not EXIST in the
+            // previous tick, so the previous tick's set refuses it as
+            // categorically as the current tick's set refuses a corpse.
+            //
+            // Until this fixture, only the MobDied half was pinned. A caller
+            // that read the contract as "MobDied needs the previous tick, so
+            // pass the previous tick everywhere" — the natural
+            // over-generalization of 4b — would have broken every MobSpawned
+            // delivery, always, with the whole suite green. Both arms are
+            // asserted here for the same reason 4b asserts both of its own.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+
+            // Tick N: the world has no mobs at all yet.
+            var setEmpty = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var setBeforeSpawn = new VisibilitySet(TestWorlds.Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setEmpty, setBeforeSpawn);
+
+            // Tick N+1: the mob spawns, plainly inside SightRadius with clear
+            // LoS (open arena) — it is visible from the very first tick of its
+            // existence, and invisible in every set computed before it.
+            var spawnPos = new float2(5f, 0f);
+            int mobId = w.SpawnMobForTest(MobType.Chaser, spawnPos);
+            Assert.IsFalse(setBeforeSpawn.Contains(mobId),
+                "test setup: the PREVIOUS tick's set cannot contain a mob that did not exist yet");
+
+            var setAfterSpawn = new VisibilitySet(TestWorlds.Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setBeforeSpawn, setAfterSpawn);
+            Assert.IsTrue(setAfterSpawn.Contains(mobId),
+                "test setup: the CURRENT tick's set must see the freshly spawned mob");
+
+            var ev = new SimEvent
+            {
+                Kind = SimEventKind.MobSpawned,
+                EntityId = mobId,
+                MobType = MobType.Chaser,
+                Pos = spawnPos
+            };
+
+            // Negative arm: the trap is real — reusing MobDied's own
+            // previous-tick set here refuses delivery to everyone.
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, setBeforeSpawn, cfg.Visibility, out float2 refusedPos),
+                "the PREVIOUS tick's set must NOT deliver a MobSpawned — this is exactly the mirror trap of 4b, "
+                + "and the reason the caller picks the tick per KIND");
+            Assert.AreEqual(float2.zero, refusedPos,
+                "a `false` return must carry `default` (zero), same contract as every other refusing branch");
+
+            // Positive arm: the CURRENT tick's set — the one this kind's
+            // subject actually lives in — delivers.
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, setAfterSpawn, cfg.Visibility, out float2 deliveredPos),
+                "the CURRENT tick's set must deliver a MobSpawned for a mob the observer can see");
             Assert.AreEqual(ev.Pos, deliveredPos);
         }
 
@@ -405,12 +488,23 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 2);
             const byte victimIndex = 1;
+            // Phase Ф5 fix-wave (item 9): EntityId is deliberately pulled
+            // APART from PlayerIndex. SimulationWorld does emit both with the
+            // victim's index for this kind, and while this fixture agreed with
+            // it, VisibleSubjectId could read EITHER field and still pass —
+            // `VisibilityIds.ForPlayer(ev.PlayerIndex)` -> `ForPlayer(ev.EntityId)`
+            // survived the whole run. Diverging them here is what makes the
+            // VICTIM-by-PlayerIndex convention observable at all; the
+            // production pairing is unaffected, since nothing in ShouldDeliver
+            // reads EntityId for a PlayerDamaged/PlayerDied — which is exactly
+            // the property under test.
+            const int foreignEntityId = victimIndex + 1;
             var pos = new float2(6f, -2f);
             var ev = new SimEvent
             {
                 Kind = SimEventKind.PlayerDamaged,
-                PlayerIndex = victimIndex, // VICTIM convention (SimEvent.PlayerIndex's own doc)
-                EntityId = victimIndex,    // SimulationWorld really does set this to victimIndex
+                PlayerIndex = victimIndex,     // VICTIM convention (SimEvent.PlayerIndex's own doc)
+                EntityId = foreignEntityId,    // deliberately NOT the victim index — see above
                 Pos = pos
             };
 
@@ -419,18 +513,26 @@ namespace Ring.Simulation.Tests
             var correctSet = new VisibilitySet(TestWorlds.Capacity(cfg));
             correctSet.Add(VisibilityIds.ForPlayer(victimIndex));
             Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, correctSet, cfg.Visibility, out float2 pos1),
-                "PlayerDamaged must be delivered by the victim's SYNTHETIC player id");
+                "PlayerDamaged must be delivered by the victim's SYNTHETIC player id, derived from PlayerIndex");
             Assert.AreEqual(pos, pos1);
 
             // Half 2 (the discriminating counterpart the fix-round demands):
-            // the SAME number, but present as a RAW/real id — the id a mob
-            // numbered victimIndex would occupy — instead of the synthetic
-            // one. A bug reading ev.EntityId directly would wrongly find this
-            // present too.
+            // every OTHER id the two fields could plausibly be turned into is
+            // present at once, and none of them may deliver —
+            //   * the victim index as a RAW/real id (the id a mob numbered
+            //     victimIndex would occupy): kills `return ev.PlayerIndex`;
+            //   * EntityId as a RAW id: kills `return ev.EntityId`, which is
+            //     what the pre-fix-round code shape would have been;
+            //   * EntityId run through the SYNTHETIC mapping: kills
+            //     `VisibilityIds.ForPlayer(ev.EntityId)`, the mutation the two
+            //     fields' former equality hid completely.
             var wrongSet = new VisibilitySet(TestWorlds.Capacity(cfg));
             wrongSet.Add(victimIndex);
+            wrongSet.Add(foreignEntityId);
+            wrongSet.Add(VisibilityIds.ForPlayer(foreignEntityId));
             Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, wrongSet, cfg.Visibility, out _),
-                "the victim index present as a RAW id must NOT be enough — only the synthetic player id counts");
+                "neither field read the wrong way may deliver — only ForPlayer(PlayerIndex), the victim's "
+                + "synthetic player id, counts as this event's subject");
         }
 
         // --- 8: ProjectileKinds_ThrowAsDeferred ---
@@ -478,8 +580,9 @@ namespace Ring.Simulation.Tests
             // Within HearRadius, so an implementation that confused Visible
             // with Audible (delivering anyway, coarsened, because it's in
             // earshot) would wrongly pass this — Visible is strictly
-            // stricter than Audible by spec Р28's own wording ("не видим →
-            // не доставляем вовсе").
+            // stricter than Audible by spec Р28's own wording: a subject the
+            // observer cannot see is not delivered AT ALL, not delivered
+            // coarsely.
             var audibleButInvisiblePos = new float2(cfg.Visibility.HearRadius - 1f, 0f);
             Assert.IsTrue(VisibilitySystem.IsAudible(float2.zero, audibleButInvisiblePos, cfg.Visibility),
                 "test setup: this position must actually be within earshot, or the fixture proves nothing about Visible-vs-Audible strictness");
@@ -520,7 +623,7 @@ namespace Ring.Simulation.Tests
             // Visible). Comparing against this independent oracle catches a
             // WRONG channel for an EXISTING kind, while the ContainsKey guard
             // below still means a FUTURE kind with no entry HERE fails
-            // loudly — the "урок 86: contract by assertion, not prose"
+            // loudly — the "Урок 86: contract by assertion, not prose"
             // discipline task-21-brief.md calls out by name.
             var expected = new Dictionary<SimEventKind, DeliveryChannel>
             {

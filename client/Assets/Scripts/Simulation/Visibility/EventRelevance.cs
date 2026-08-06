@@ -19,16 +19,14 @@ namespace Ring.Simulation.Visibility
     /// LoS break counts as visible here exactly as it does everywhere else
     /// VisibilitySet is read, never re-gated on `LingerOf(id) == 0`).
     ///
-    /// `observerSet` is also the seam that carries the "read the PREVIOUS
-    /// tick's set for MobDied" contract (carryover-t21.md #1): SimulationWorld
-    /// swap-removes a dead mob's slot in the SAME tick it dies
-    /// (SimulationWorld.cs:595, `_mobs[index] = _mobs[--_mobCount]`), so a
-    /// freshly recomputed CURRENT-tick VisibilitySet would never contain the
-    /// corpse's id at all — this method itself does not care which tick's set
-    /// it is handed (it only ever calls `Contains`/`LingerOf`), but the CALLER
-    /// (Task 28's SnapshotAssembler) is contractually required to pass the set
-    /// from the tick in which the dying subject still existed, or every
-    /// MobDied would silently fail to deliver to anyone, ever.
+    /// `observerSet` is also the seam that carries the "which tick's set"
+    /// contract (carryover-t21.md #1, carryover-t28.md §8б) — which is
+    /// PER-KIND, not one rule for the whole channel; see ShouldDeliver's own
+    /// doc for the table and for why a single blanket rule is wrong in one
+    /// direction or the other. This method itself does not care which tick's
+    /// set it is handed (it only ever calls `Contains`/`LingerOf`); the CALLER
+    /// (Task 28's SnapshotAssembler) owns the choice, and getting it wrong
+    /// fails silently — every event of that kind simply stops reaching anyone.
     public static class EventRelevance
     {
         /// Fixed per-kind routing table (spec §3.7, Р28). Every `SimEventKind`
@@ -37,7 +35,7 @@ namespace Ring.Simulation.Visibility
         /// enum without a matching entry here fails LOUDLY the first time
         /// anything calls this (ChannelFor_HandlesEveryKind pins exactly
         /// that) instead of silently defaulting to some channel that happens
-        /// to compile — "урок 86: contract by assertion, not prose".
+        /// to compile — "Урок 86: contract by assertion, not prose".
         public static DeliveryChannel ChannelFor(SimEventKind kind)
         {
             switch (kind)
@@ -80,9 +78,10 @@ namespace Ring.Simulation.Visibility
         }
 
         /// The Visible-channel subject's identity in VisibilitySet's own id
-        /// space (Р20): a mob's REAL id for MobSpawned/MobDied (Р81's
-        /// "по видимости моба" — MobDied's ATTACKER-convention PlayerIndex is
-        /// deliberately never consulted here, see EventRelevance's own doc and
+        /// space (Р20): a mob's REAL id for MobSpawned/MobDied (Р81 routes
+        /// these two by the MOB's OWN visibility — MobDied's
+        /// ATTACKER-convention PlayerIndex is deliberately never consulted
+        /// here, see EventRelevance's own doc and
         /// SimEvent.PlayerIndex's ATTACKER paragraph), or the VICTIM's
         /// synthetic player id for PlayerDamaged/PlayerDied (SimEvent.PlayerIndex's
         /// VICTIM convention). Never called for any other kind — ShouldDeliver's
@@ -106,10 +105,28 @@ namespace Ring.Simulation.Visibility
         }
 
         /// Decides whether `ev` reaches `observerIndex`, and — when it does —
-        /// the position to deliver it with (spec §3.7, Р28; see this class's
-        /// own doc for the `observerSet` contract — in particular, it MUST be
-        /// the set from the tick in which the event's subject still existed,
-        /// not necessarily the caller's own "current" tick). `deliveredPos`
+        /// the position to deliver it with (spec §3.7, Р28).
+        ///
+        /// `observerSet` must be the set from the tick in which the event's
+        /// SUBJECT actually exists, and which tick that is depends ON THE KIND
+        /// (Р140, carryover-t28.md §8б):
+        ///   * MobDied — the PREVIOUS tick's set. SimulationWorld swap-removes
+        ///     the corpse's slot in the SAME tick it dies (SimulationWorld.cs,
+        ///     `_mobs[index] = _mobs[--_mobCount]`) and Compute only ever
+        ///     visits live mobs, so a freshly recomputed CURRENT-tick set can
+        ///     never hold the corpse's id
+        ///     (MobDied_DeliveredViaPreviousTickSet_NotCurrentTick).
+        ///   * MobSpawned, and every other kind — the CURRENT tick's set. A
+        ///     mob that spawned THIS tick did not exist in the previous one,
+        ///     so the previous tick's set refuses it just as categorically
+        ///     (MobSpawned_RequiresCurrentTickSet).
+        /// A single blanket rule is therefore wrong in one direction or the
+        /// other — "always previous" silently drops every MobSpawned, "always
+        /// current" silently drops every MobDied — which is why the choice is
+        /// spelled out here and pinned by those two symmetric tests instead of
+        /// being left to the caller's instinct. This method never inspects a
+        /// tick number itself: it only calls Contains/LingerOf on whatever set
+        /// it is handed. `deliveredPos`
         /// is only meaningful when this returns true; it is `default` (zero)
         /// on a `false` return, on every one of the three channels that can
         /// refuse (Owner/Visible/Audible — All never refuses). A caller must
@@ -141,18 +158,20 @@ namespace Ring.Simulation.Visibility
                 }
 
                 case DeliveryChannel.All:
-                    // Spec Р28, verbatim: "без позиции" — today's WaveStarted/
-                    // WaveCleared position comes from whichever player happens
-                    // to be nearest the arena centre (WaveSystem.Update) and
-                    // must never reach the wire, or every observer would learn
-                    // that player's location for free every wave.
+                    // Spec Р28 requires this channel to carry NO position at
+                    // all — today's WaveStarted/WaveCleared position comes from
+                    // whichever player happens to be nearest the arena centre
+                    // (WaveSystem.Update) and must never reach the wire, or
+                    // every observer would learn that player's location for
+                    // free every wave.
                     deliveredPos = float2.zero;
                     return true;
 
                 case DeliveryChannel.Visible:
                 {
                     // Own death is delivered to its own owner unconditionally
-                    // (spec Р28: "PlayerDied своего — всегда владельцу") — a
+                    // (spec Р28: a player's OWN PlayerDied always reaches
+                    // them, whatever the visibility gate says) — a
                     // player killed from behind a wall by an attacker they
                     // never saw still needs their own death screen. Scoped to
                     // PlayerDied alone: PlayerDamaged/MobSpawned/MobDied all

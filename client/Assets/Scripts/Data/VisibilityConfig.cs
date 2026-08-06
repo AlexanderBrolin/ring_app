@@ -5,10 +5,14 @@ namespace Ring.Data
     /// Server-side visibility filter balance numbers (Stage 2 Task 19, spec
     /// §3.5): sight/hearing radii, exit hysteresis, linger grace period, and
     /// the audible-position quantization grid. Field defaults mirror
-    /// Ring.Simulation.Tests.TestConfigs.Default().Visibility. Wiring this SO
-    /// into SimConfigBuilder (the seventh Build() parameter), its validation
-    /// and the shipped .asset are Task 22's scope, not this one's — see
-    /// task-19-brief.md's own documented deviation for why.
+    /// Ring.Simulation.Tests.TestConfigs.Default().Visibility. Task 22 wired
+    /// this SO into SimConfigBuilder (the seventh Build() parameter), added
+    /// the per-field validation there and shipped the .asset — one task later
+    /// than the fields themselves, see task-19-brief.md's own documented
+    /// deviation for why the split was necessary. The [Range] bands below are
+    /// Inspector hints only; the builder mirrors them with real checks
+    /// (SimConfigBuilder's own Р115 note), and ConfigTests pins both ends of
+    /// every band from the attributes themselves.
     [CreateAssetMenu(menuName = "Ring/Visibility Config", fileName = "VisibilityConfig")]
     public sealed class VisibilityConfig : ScriptableObject
     {

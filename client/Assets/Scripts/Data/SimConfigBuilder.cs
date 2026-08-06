@@ -426,7 +426,7 @@ namespace Ring.Data
             // reaching the builder from code/JSON/a test fixture).
             // NetConfig's LingerTicks >= InterpBufferTicks + 2 cross-check is
             // NOT here — NetConfig is not part of SimConfig (Р72); it lands in
-            // Т41's NetInvariants instead.
+            // Task 41's NetInvariants instead.
             ReqInRange(errors, "Visibility.SightRadius", cfg.Visibility.SightRadius, 0f, 150f,
                 minExclusive: true);
             if (cfg.Visibility.HearRadius < cfg.Visibility.SightRadius)

@@ -160,9 +160,9 @@ namespace Ring.Simulation.Tests
         [Test]
         public void VisibilitySystem_Compute_DoesNotAllocateGC()
         {
-            // Stage 2 Task 19 fix-round 1 (I-4): spec §4's "Расширяются"
-            // section requires an AllocationTests entry for
-            // VisibilitySystem, and no task in the plan (Т19-Т22) was ever
+            // Stage 2 Task 19 fix-round 1 (I-4): the spec's own §4 list of
+            // files this phase EXTENDS requires an AllocationTests entry for
+            // VisibilitySystem, and no task in the plan (Tasks 19-22) was ever
             // assigned to write it — Compute's own "zero allocations after
             // the constructor" claim (VisibilitySystem.cs's own doc) lived
             // as prose only until this test.
@@ -183,7 +183,11 @@ namespace Ring.Simulation.Tests
                 "fixture premise: every mob slot must be filled for this measurement "
                 + "to exercise the FULL per-tick mob-evaluation loop, not a near-empty world");
 
-            int capacity = config.Arena.MaxMobs + config.Arena.MaxPlayers;
+            // Phase Ф5 fix-wave (minor): the shared TestWorlds.Capacity seam,
+            // not a hand-rolled second copy of the same sum — it is the one
+            // place the "MaxMobs + MaxPlayers covers every entity a single
+            // Compute call can visit" rule lives.
+            int capacity = TestWorlds.Capacity(config);
             var setA = new VisibilitySet(capacity);
             var setB = new VisibilitySet(capacity);
             // Warm-up call OUTSIDE the measured window (same discipline as
@@ -204,12 +208,112 @@ namespace Ring.Simulation.Tests
                 }
             }, Is.Not.AllocatingGCMemory());
 
-            // Fixture-liveness check AFTER the measured window (urok 87): the
+            // Fixture-liveness check AFTER the measured window (Урок 87): the
             // saturated world must still be fully loaded at the end, not
             // merely at the start.
             Assert.AreEqual(config.Arena.MaxMobs, w.MobCount,
                 "fixture premise: the saturated world must still be fully loaded at "
                 + "the end of the measured window too");
+        }
+
+        [Test]
+        public void EventRelevance_ShouldDeliver_DoesNotAllocateGC()
+        {
+            // Phase Ф5 fix-wave (I-6): AllocationTests did not mention
+            // EventRelevance at all, even though ShouldDeliver runs on a
+            // DENSER path than Compute — once per event PER OBSERVER, against
+            // Compute's once per observer per tick. Built on the same shape as
+            // VisibilitySystem_Compute_DoesNotAllocateGC above: a saturated
+            // world, sets warmed by a real Compute call outside the measured
+            // window, then a plain loop of calls inside it.
+            //
+            // All four channels that can actually decide something are
+            // exercised (Owner, Visible, Audible, All). The four projectile
+            // kinds are deliberately NOT called: their channel is
+            // DeliveryChannel.None and ShouldDeliver THROWS on them by design
+            // (Task 28 owns projectile relevance), so calling them here would
+            // measure exception construction rather than the delivery path.
+            var config = TestConfigs.Default();
+            var w = new SimulationWorld(1, config, playerCount: 3);
+            TestWorlds.SpawnMobsToCap(w);
+            Assert.AreEqual(config.Arena.MaxMobs, w.MobCount,
+                "fixture premise: every mob slot must be filled, so the VisibilitySet the calls below "
+                + "scan is a realistically long one rather than a near-empty array");
+            // Observer 0 into the middle of the crowd (SpawnMobsToCap spreads
+            // mobs over radii ~4…31 around the origin) — the natural
+            // three-player spawn ring sits at radius 52, from where very
+            // little is visible at all.
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            var setA = new VisibilitySet(TestWorlds.Capacity(config));
+            var setB = new VisibilitySet(TestWorlds.Capacity(config));
+            VisibilitySystem.Compute(w, 0, config.Visibility, setA, setB);
+
+            // A subject the observer genuinely sees, taken from the set itself
+            // rather than assumed: DefaultArena()'s obstacles and walls decide
+            // which of the 96 mobs clear LoS, and this measurement has no
+            // business restating that geometry.
+            int visibleMobId = 0;
+            float2 visibleMobPos = float2.zero;
+            for (int i = 0; i < w.MobCount && visibleMobId == 0; i++)
+            {
+                if (!setB.Contains(w.Mobs[i].Id)) continue;
+                visibleMobId = w.Mobs[i].Id;
+                visibleMobPos = w.Mobs[i].Pos;
+            }
+            Assert.Greater(visibleMobId, 0,
+                "fixture premise: at least one mob must be visible to observer 0, or the Visible-channel "
+                + "calls below would all take the refusal branch instead of the delivery one");
+
+            // The actor of the Audible-channel event is player 1, left on its
+            // own spawn-ring position and therefore NOT in observer 0's set —
+            // so that event resolves through the hearing gate and the
+            // quantizer, the longest path in the method.
+            Assert.IsFalse(setB.Contains(VisibilityIds.ForPlayer(1)),
+                "fixture premise: the audible event's actor must be invisible to observer 0, or its call "
+                + "would short-circuit on the visible branch and never reach IsAudible/QuantizeAudiblePos");
+            var audiblePos = new float2(config.Visibility.HearRadius - 1f, 0.7f);
+
+            var events = new[]
+            {
+                new SimEvent { Kind = SimEventKind.StaminaDenied, PlayerIndex = 0, Pos = new float2(1.3f, -2.7f) },
+                new SimEvent { Kind = SimEventKind.MobSpawned, MobType = MobType.Chaser,
+                    EntityId = visibleMobId, Pos = visibleMobPos },
+                new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 1, Pos = audiblePos },
+                new SimEvent { Kind = SimEventKind.WaveStarted, Pos = new float2(4f, 4f) }
+            };
+
+            // Fixture premise, one per channel: every event below really is
+            // DELIVERED to observer 0, i.e. the measured loop walks the full
+            // decision path of each channel rather than bailing out early.
+            for (int e = 0; e < events.Length; e++)
+            {
+                Assert.IsTrue(EventRelevance.ShouldDeliver(events[e], 0, w, setB, config.Visibility, out _),
+                    $"fixture premise: {events[e].Kind} must actually be delivered to observer 0");
+            }
+            Assert.IsTrue(EventRelevance.ShouldDeliver(events[2], 0, w, setB, config.Visibility, out float2 heardPos));
+            Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(audiblePos, config.Visibility), heardPos,
+                "fixture premise: the audible event must come back COARSENED, proving it took the hearing "
+                + "path and not the visible one");
+
+            Assert.That(() =>
+            {
+                for (int i = 0; i < 1000; i++)
+                {
+                    for (int e = 0; e < events.Length; e++)
+                    {
+                        for (int observerIndex = 0; observerIndex < w.PlayerCount; observerIndex++)
+                            EventRelevance.ShouldDeliver(events[e], observerIndex, w, setB, config.Visibility, out _);
+                    }
+                }
+            }, Is.Not.AllocatingGCMemory());
+
+            // Fixture-liveness check AFTER the measured window (Урок 87), same
+            // discipline as the two measurements above: nothing in the loop
+            // may have emptied the set it was scanning.
+            Assert.IsTrue(setB.Contains(visibleMobId),
+                "fixture premise: the visibility set must still hold its subject at the end of the "
+                + "measured window too");
         }
     }
 }

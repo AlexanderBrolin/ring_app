@@ -117,9 +117,16 @@ namespace Ring.Simulation.Tests
             AssertWaveEqual(expected.Wave, cfg.Wave);
             AssertArenaEqual(expected.Arena, cfg.Arena);
             // Stage 2 Task 22 (carryover-t22 §2): without this the five
-            // VisibilityConfig.asset numbers vs C# defaults are pinned by NO
-            // test at all — same documented-deviation category as
-            // AssertArenaEqual's own Task 4 note below.
+            // VisibilityConfig C# DEFAULTS vs TestConfigs' own baseline are
+            // pinned by no test at all — same documented-deviation category as
+            // AssertArenaEqual's own Task 4 note below. Phase Ф5 fix-wave
+            // (I-4): "C# defaults", not "the .asset" — MakeDefaults above
+            // builds every SO with ScriptableObject.CreateInstance, which
+            // takes the class's own field initializers and never loads a file
+            // from disk. The shipped .asset staying in step with those
+            // defaults is a different invariant, checked at phase level, and
+            // deliberately not a unit test (spec §0/Р56 keeps the two number
+            // sources apart on purpose).
             AssertVisibilityEqual(expected.Visibility, cfg.Visibility);
 
             // The chaser/gunner archetypes must land in the matching SimConfig slot,
@@ -667,8 +674,16 @@ namespace Ring.Simulation.Tests
             vis.HearRadius = vis.SightRadius - 1f;
             var ex = Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
-            Assert.That(ex.Message, Does.Contain("Visibility.HearRadius"));
-            Assert.That(ex.Message, Does.Contain("Visibility.SightRadius"));
+            // Phase Ф5 fix-wave (I-2): the two separate Does.Contain checks
+            // this used to make were satisfied by the WRONG error just as
+            // well as by the right one — "Visibility.SightRadius" appears in
+            // that field's own range message too, and "Visibility.HearRadius"
+            // in HearRadius's. Assert the cross-check's own distinctive
+            // sentence instead, so only the rule under test can satisfy it.
+            Assert.That(ex.Message,
+                Does.Contain("Visibility.HearRadius must be >= Visibility.SightRadius"),
+                "the CROSS-CHECK must be what fires here — not either field's own range message, "
+                + "which would mention the same two names and prove nothing");
         }
 
         [Test]
@@ -745,6 +760,185 @@ namespace Ring.Simulation.Tests
             var ex = Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.LingerTicks"));
+        }
+
+        // ------------------------------------------------------------------
+        // Phase Ф5 fix-wave (I-1/I-2): the POSITIVE side of the same five
+        // bands. Ten negatives above prove the builder rejects what is out of
+        // range; not one of them proved it ACCEPTS what is in range, and the
+        // gap was not academic — every one of these mutations survived the
+        // whole 378-test run:
+        //   * `minExclusive: true` added to HearPositionGridMeters, making
+        //     `grid == 0` — a DOCUMENTED hard opt-out of quantization
+        //     (VisibilitySystem.QuantizeAudiblePos) — unconfigurable;
+        //   * the same for ExitHysteresis (hysteresis could no longer be
+        //     switched off) and LingerTicks (nor the linger grace period);
+        //   * ANY ceiling pulled inward — 150 -> 149, 200 -> 150, 20 -> 10,
+        //     10 -> 5, 30 -> 10 — silently outlawing values the Inspector's
+        //     own slider still offers;
+        //   * the cross-check relaxed from `<` to `<=`, which would start
+        //     rejecting the perfectly legal HearRadius == SightRadius.
+        //
+        // The invariant these pin, stated once: EVERY value VisibilityConfig's
+        // own [Range] slider can produce must survive the builder. Expected
+        // bounds are therefore read OFF THE ATTRIBUTES (VisibilityRange
+        // below), never restated as literals — the builder's ceilings exist
+        // precisely to mirror those attributes (SimConfigBuilder's own Р115
+        // note), so a copied literal would stop mirroring them the moment the
+        // slider moved and would go on passing against the stale number.
+        // ------------------------------------------------------------------
+
+        /// The [Range] band VisibilityConfig itself declares for `fieldName`,
+        /// read from the attribute rather than restated. `UnityEngine.` is
+        /// spelled out because NUnit.Framework has a RangeAttribute of its own
+        /// and this file uses both namespaces.
+        static (float Min, float Max) VisibilityRange(string fieldName)
+        {
+            System.Reflection.FieldInfo field = typeof(VisibilityConfig).GetField(fieldName);
+            Assert.IsNotNull(field, $"test setup: VisibilityConfig has no public field {fieldName}");
+            object[] attrs = field.GetCustomAttributes(typeof(UnityEngine.RangeAttribute), false);
+            Assert.AreEqual(1, attrs.Length,
+                $"test setup: {fieldName} must carry exactly one [Range] for this fixture to read its band from");
+            var range = (UnityEngine.RangeAttribute)attrs[0];
+            Assert.Less(range.min, range.max, $"test setup: {fieldName}'s [Range] must be a non-degenerate band");
+            return (range.min, range.max);
+        }
+
+        [Test]
+        public void Validate_VisibilitySightRadiusAtRangeFloor_DoesNotThrow()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            float floor = VisibilityRange(nameof(VisibilityConfig.SightRadius)).Min;
+            vis.SightRadius = floor; // HearRadius keeps its default, comfortably above this
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(floor, cfg.Visibility.SightRadius, Eps);
+        }
+
+        [Test]
+        public void Validate_VisibilitySightRadiusAtRangeCeiling_DoesNotThrow()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            float ceiling = VisibilityRange(nameof(VisibilityConfig.SightRadius)).Max;
+            vis.SightRadius = ceiling;
+            // HearRadius is raised to its OWN ceiling alongside, exactly as the
+            // matching negative test does, so the cross-check stays quiet and
+            // this fixture isolates the SightRadius ceiling.
+            vis.HearRadius = VisibilityRange(nameof(VisibilityConfig.HearRadius)).Max;
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(ceiling, cfg.Visibility.SightRadius, Eps);
+        }
+
+        [Test]
+        public void Validate_VisibilityHearRadiusAtRangeFloor_DoesNotThrow()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            float floor = VisibilityRange(nameof(VisibilityConfig.HearRadius)).Min;
+            vis.HearRadius = floor;
+            // SightRadius must come down with it or the cross-check fires for
+            // an unrelated reason. Its own [Range] floor is the lowest legal
+            // place to put it, which is exactly where the cross-check needs it.
+            vis.SightRadius = VisibilityRange(nameof(VisibilityConfig.SightRadius)).Min;
+            Assert.LessOrEqual(vis.SightRadius, vis.HearRadius,
+                "test setup: the two [Range] floors must leave the HearRadius >= SightRadius rule satisfiable");
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(floor, cfg.Visibility.HearRadius, Eps);
+        }
+
+        [Test]
+        public void Validate_VisibilityHearRadiusAtRangeCeiling_DoesNotThrow()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            float ceiling = VisibilityRange(nameof(VisibilityConfig.HearRadius)).Max;
+            vis.HearRadius = ceiling; // default SightRadius stays far below — cross-check quiet
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(ceiling, cfg.Visibility.HearRadius, Eps);
+        }
+
+        [Test]
+        public void Validate_VisibilityExitHysteresisAtRangeFloor_DoesNotThrow()
+        {
+            // Zero is a legitimate setting, not an accident: it turns exit
+            // hysteresis off, leaving VisibilitySystem's tracked-entity budget
+            // at the plain SightRadius.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            float floor = VisibilityRange(nameof(VisibilityConfig.ExitHysteresis)).Min;
+            vis.ExitHysteresis = floor;
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(floor, cfg.Visibility.ExitHysteresis, Eps);
+        }
+
+        [Test]
+        public void Validate_VisibilityExitHysteresisAtRangeCeiling_DoesNotThrow()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            float ceiling = VisibilityRange(nameof(VisibilityConfig.ExitHysteresis)).Max;
+            vis.ExitHysteresis = ceiling;
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(ceiling, cfg.Visibility.ExitHysteresis, Eps);
+        }
+
+        [Test]
+        public void Validate_VisibilityHearPositionGridMetersAtRangeFloor_DoesNotThrow()
+        {
+            // Zero is the DOCUMENTED hard opt-out of position quantization
+            // (VisibilitySystem.QuantizeAudiblePos returns the exact position
+            // for `grid <= 0`), so an exclusive floor here would make a
+            // supported configuration impossible to express.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            float floor = VisibilityRange(nameof(VisibilityConfig.HearPositionGridMeters)).Min;
+            vis.HearPositionGridMeters = floor;
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(floor, cfg.Visibility.HearPositionGridMeters, Eps);
+        }
+
+        [Test]
+        public void Validate_VisibilityHearPositionGridMetersAtRangeCeiling_DoesNotThrow()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            float ceiling = VisibilityRange(nameof(VisibilityConfig.HearPositionGridMeters)).Max;
+            vis.HearPositionGridMeters = ceiling;
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(ceiling, cfg.Visibility.HearPositionGridMeters, Eps);
+        }
+
+        [Test]
+        public void Validate_VisibilityLingerTicksAtRangeFloor_DoesNotThrow()
+        {
+            // Zero disables the linger grace period outright — again a
+            // setting, not an accident.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var floor = (int)VisibilityRange(nameof(VisibilityConfig.LingerTicks)).Min;
+            vis.LingerTicks = floor;
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(floor, cfg.Visibility.LingerTicks);
+        }
+
+        [Test]
+        public void Validate_VisibilityLingerTicksAtRangeCeiling_DoesNotThrow()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var ceiling = (int)VisibilityRange(nameof(VisibilityConfig.LingerTicks)).Max;
+            vis.LingerTicks = ceiling;
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(ceiling, cfg.Visibility.LingerTicks);
+        }
+
+        [Test]
+        public void Validate_VisibilityHearRadiusEqualsSightRadius_DoesNotThrow()
+        {
+            // The cross-check is `HearRadius < SightRadius` — EQUAL is legal
+            // (hearing exactly as far as sight, no more). The only fixture
+            // that ever set the two equal was
+            // Validate_VisibilitySightRadiusAboveRange_Throws, which expects a
+            // throw from the CEILING, so relaxing the cross-check to `<=`
+            // broke nothing. Done at the DEFAULT SightRadius, deliberately
+            // away from any [Range] end, so this test isolates the cross-check
+            // and nothing else.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.HearRadius = vis.SightRadius;
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(cfg.Visibility.SightRadius, cfg.Visibility.HearRadius, Eps,
+                "HearRadius == SightRadius is a legal config and must reach SimConfig unchanged");
         }
 
         static void AssertHeroEqual(HeroSimConfig e, HeroSimConfig a)
@@ -908,7 +1102,10 @@ namespace Ring.Simulation.Tests
         /// Stage 2 Task 22 (carryover-t22 §2): mirrors AssertArenaEqual's own
         /// role for the newest SimConfig section — without this method,
         /// Build_DefaultAssets_MatchesTestConfigsBaseline cannot compare
-        /// VisibilityConfig.asset's five numbers against the C# baseline at all.
+        /// VisibilityConfig's five C# defaults against the TestConfigs
+        /// baseline at all. Phase Ф5 fix-wave (I-4): C# defaults, NOT the
+        /// shipped .asset — nothing in this file ever loads an asset from
+        /// disk (see MakeDefaults).
         static void AssertVisibilityEqual(VisibilitySimConfig e, VisibilitySimConfig a)
         {
             Assert.AreEqual(e.SightRadius, a.SightRadius, Eps);
