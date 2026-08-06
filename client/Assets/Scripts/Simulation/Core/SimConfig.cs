@@ -160,6 +160,23 @@ namespace Ring.Simulation.Core
         public float[] WallHalfWidth;
     }
 
+    /// Server-side visibility filter numbers (Stage 2 Task 19, spec §3.5,
+    /// Р18-Р21): sight/hearing radii, exit hysteresis, linger grace period and
+    /// the audible-position quantization grid (the latter two fields —
+    /// HearRadius and HearPositionGridMeters — are read only from Stage 2
+    /// Task 20 on, once IsAudible/QuantizeAudiblePos land, but ship together
+    /// with the rest of the config here since VisibilityConfig's own SO
+    /// carries them as one balance sheet). NOT part of StateHash: a
+    /// per-observer fog-of-war filter is a network-facing concern, not world
+    /// state — see VisibilitySet's own doc for where the per-connection
+    /// result actually lives.
+    public struct VisibilitySimConfig
+    {
+        public float SightRadius, HearRadius, ExitHysteresis;
+        public int LingerTicks;
+        public float HearPositionGridMeters;
+    }
+
     /// Full balance snapshot for one match — plain data, no ScriptableObjects.
     public struct SimConfig
     {
@@ -168,5 +185,6 @@ namespace Ring.Simulation.Core
         public MobSimConfig Chaser, Gunner;
         public WaveSimConfig Wave;
         public ArenaSimConfig Arena;
+        public VisibilitySimConfig Visibility;
     }
 }

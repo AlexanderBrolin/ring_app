@@ -66,7 +66,11 @@ namespace Ring.Simulation.Tests
                     // Stage 2 Task 16: mirrors WaveConfig's C# default
                     // (two-sources-of-numbers discipline — test/code-default side).
                     PerPlayerCountFrac = 0.7f },
-                Arena = DefaultArena()
+                Arena = DefaultArena(),
+                // Stage 2 Task 19: mirrors VisibilityConfig's C# defaults
+                // (two-sources-of-numbers discipline — test/code-default side).
+                Visibility = new VisibilitySimConfig { SightRadius = 45f, HearRadius = 60f,
+                    ExitHysteresis = 3f, LingerTicks = 5, HearPositionGridMeters = 3f }
             };
         }
 
