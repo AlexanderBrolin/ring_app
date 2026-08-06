@@ -39,6 +39,9 @@ namespace Ring.Simulation.Tests
         static SimulationWorld Duel(out SimConfig c)
         {
             c = Range();
+            Assert.Less(TargetX, c.Weapon.ProjectileSpeed * SimulationWorld.TickDt,
+                "fixture premise: the victim stands within one tick of projectile travel, so "
+                + "every duel fixture lands its round on the very next tick");
             var w = new SimulationWorld(1, c, playerCount: 2);
             PlaceAt(w, 0, float2.zero);
             PlaceAt(w, 1, new float2(TargetX, 0f));
@@ -418,6 +421,126 @@ namespace Ring.Simulation.Tests
             SimulationWorld noTie = Fire(withObstacle: false);
             Assert.Less(noTie.PlayerAt(1).Hp, c.Hero.MaxHp,
                 "with nothing to outrank it, the player candidate resolves");
+        }
+
+        [Test]
+        public void MobOutranksPlayerOnAnExactTie()
+        {
+            // Second of the three packing-order pairs (see
+            // BarrierOutranksPlayerOnAnExactTie for the first): mobs are packed
+            // BEFORE players, so a mob wins an exact tie against one. Mirror of
+            // ProjectileHeightTests.EqualT_TieBreaksLowerIndex, with its second
+            // chaser replaced by a player — that fixture pins mob-vs-mob and is
+            // blind to this pair.
+            //
+            // The tie is EXACT by construction, not by luck: the two bodies are
+            // mirrored across the firing line and given the same radius, so
+            // Geometry.SegmentCircle solves a quadratic whose every coefficient
+            // is bit-identical for both (f.x and r are shared, and f.y only
+            // enters squared, which erases the sign exactly). The loop below
+            // re-derives both roots off the very segment the tick is about to
+            // sweep and asserts equality with a ZERO delta.
+            var c = Range();
+            c.Chaser.Radius = c.Hero.Radius; // the shared radius that makes the tie exact
+            float halfGap = c.Chaser.AttackRange;
+            const float sweepRadius = 1f;
+            Assert.Less(halfGap, sweepRadius + c.Hero.Radius,
+                "fixture premise: the round is fat enough to reach both bodies at once");
+            Assert.Greater(2f * halfGap, c.Chaser.AttackRange,
+                "fixture premise: the two bodies are far enough apart that the chaser never "
+                + "telegraphs a strike of its own into this measurement");
+
+            var w = new SimulationWorld(1, c, playerCount: 2);
+            PlaceAt(w, 0, float2.zero);                   // shooter, at the muzzle
+            PlaceAt(w, 1, new float2(5f, -halfGap));      // player candidate
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(5f, halfGap)));
+            w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
+                new float2(c.Weapon.ProjectileSpeed, 0f), BodyBand(c), 0f,
+                c.Chaser.MaxHp * 10f, sweepRadius, c.Weapon.ProjectileLifetime, ownerIndex: 0);
+
+            var inputs = new SimInput[2];
+            bool tied = false;
+            for (int i = 0; i < 30 && w.ProjectileCount > 0; i++)
+            {
+                // The same segment ProjectileSystem is about to build for this
+                // tick (startPos + Vel * TickDt), so these are ITS roots, not an
+                // approximation of them. Neither body moves — Range() zeroes the
+                // chaser's speed and the players get idle input — so reading the
+                // positions before the tick is exact too.
+                ProjectileState round = w.GetProjectileForTest(0);
+                float2 start = round.Pos;
+                float2 end = start + round.Vel * SimulationWorld.TickDt;
+                bool onMob = Geometry.SegmentCircle(start, end, round.Radius,
+                    w.Mobs[0].Pos, c.Chaser.Radius, out float tMob);
+                bool onPlayer = Geometry.SegmentCircle(start, end, round.Radius,
+                    w.PlayerAt(1).Pos, c.Hero.Radius, out float tPlayer);
+                if (onMob || onPlayer)
+                {
+                    Assert.IsTrue(onMob && onPlayer,
+                        "fixture premise: both bodies enter the sweep on the SAME tick");
+                    Assert.AreEqual(tMob, tPlayer, 0f,
+                        "fixture premise: the tie must be EXACT — a merely approximate one "
+                        + "measures the quadratic, not the tie-break");
+                    tied = true;
+                }
+                w.TickAll(inputs);
+            }
+
+            Assert.IsTrue(tied, "the round never reached the two bodies");
+            Assert.AreEqual(0, w.MobCount, "the mob is packed first, so it takes the tie");
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.MobDied, out _));
+            Assert.AreEqual(c.Hero.MaxHp, w.PlayerAt(1).Hp, 1e-4f,
+                "the player lost the tie and must be untouched");
+            Assert.AreEqual(0, TestEvents.CountOf(w, SimEventKind.PlayerDamaged));
+        }
+
+        [Test]
+        public void PlayerOutranksFloorOnAnExactTie()
+        {
+            // Third packing-order pair: players are packed BEFORE the floor, so a
+            // player wins an exact tie against it.
+            //
+            // Both candidates are pinned to exactly zero, which is the only tie
+            // between these two that is exact rather than lucky — they come from
+            // different formulas, so no shared quadratic makes their roots agree
+            // bit for bit. The round spawns INSIDE the victim's padded circle, so
+            // Geometry.SegmentCircle takes its start-inside branch and reports a
+            // literal 0; and its launch height equals its own radius, so
+            // ProjectileSystem's tFloor = (Radius - Height) / (VelZ * TickDt) has
+            // an exactly-zero numerator. (IEEE signed zeroes compare equal, and
+            // the min-scan's strict `<` therefore keeps whichever was packed
+            // first — which is the whole point of this test.)
+            var c = Range();
+            var w = new SimulationWorld(1, c, playerCount: 2);
+            PlaceAt(w, 0, new float2(0f, 20f)); // shooter, well off the muzzle
+            var victimPos = new float2(5f, 0f);
+            PlaceAt(w, 1, victimPos);
+
+            float sweepRadius = c.Weapon.ProjectileRadius;
+            float launchHeight = sweepRadius; // exactly-zero tFloor numerator
+            const float plungeVelZ = -60f;    // descending, so the floor candidate is gathered
+            w.SpawnProjectileForTest(ProjectileOwner.Player, victimPos,
+                new float2(c.Weapon.ProjectileSpeed, 0f), launchHeight, plungeVelZ,
+                c.Weapon.Damage, sweepRadius, c.Weapon.ProjectileLifetime, ownerIndex: 0);
+
+            ProjectileState round = w.GetProjectileForTest(0);
+            float2 end = round.Pos + round.Vel * SimulationWorld.TickDt;
+            Assert.IsTrue(Geometry.SegmentCircle(round.Pos, end, round.Radius, victimPos,
+                c.Hero.Radius, out float tPlayer));
+            float tFloor = (round.Radius - round.Height) / (round.VelZ * SimulationWorld.TickDt);
+            Assert.AreEqual(tPlayer, tFloor, 0f,
+                "fixture premise: the two candidates tie EXACTLY");
+            Assert.GreaterOrEqual(tFloor, 0f, "fixture premise: the floor candidate is gathered");
+            Assert.LessOrEqual(tFloor, 1f, "fixture premise: the floor crossing falls in this step");
+
+            w.ClearEvents();
+            TickIdle(w);
+
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.PlayerDamaged),
+                "the player is packed before the floor, so the player takes the tie");
+            Assert.Less(w.PlayerAt(1).Hp, c.Hero.MaxHp);
+            Assert.AreEqual(0, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked),
+                "the floor lost the tie — no ProjectileBlocked may fire");
         }
 
         [Test]

@@ -188,10 +188,11 @@ namespace Ring.Simulation.Tests
             // the VICTIM convention PlayerDamaged/PlayerDied use above. Player 1
             // fires, so a hardcoded-to-0 stub fails this the same way
             // PlayerEvents_CarryPlayerIndex above pins its own kinds.
-            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
             w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, 0f),
-                new float2(35f, 0f), 1f, 0f, 1000f, 0.6f, 1f, ownerIndex: 1);
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), 1f, 0f, 1000f, 0.6f, 1f, ownerIndex: 1);
 
             var inputs = new SimInput[2];
             w.ClearEvents();

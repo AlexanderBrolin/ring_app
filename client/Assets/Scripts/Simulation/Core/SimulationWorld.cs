@@ -567,9 +567,10 @@ namespace Ring.Simulation.Core
         /// solo player, same convention SpawnProjectileForTest's own default
         /// documents). The `ownerIndex != NoOwner` guard is required
         /// defense-in-depth: today ProjectileSystem's gather phase only ever routes
-        /// a Player-owned projectile into this method (a Mob-owned one always hits
-        /// the player instead, via DamagePlayer), so ownerIndex is never actually
-        /// NoOwner on the production path — but crediting must not silently trust
+        /// a Player-owned projectile into this method (a Mob-owned round is only
+        /// ever eligible against players, via DamagePlayer — it may of course
+        /// reach none of them and hit nothing at all), so ownerIndex is never
+        /// actually NoOwner on the production path — but crediting must not silently trust
         /// that invariant forever, and an unguarded `_matchStats[NoOwner]` would
         /// also be an out-of-range index on top of the wrong credit.
         /// Stage 2 Task 17 (carryover-t17.md item 2): `ownerIndex` also rides out
@@ -646,7 +647,15 @@ namespace Ring.Simulation.Core
             // PlayerDamaged, so counting it as a landed hit would inflate the
             // shooter's accuracy against blows the world refused to apply.
             // Placement mirrors DamageMob above, where the increment likewise
-            // sits next to the Hp write that actually happened.
+            // sits next to the Hp write that actually happened — but the
+            // resulting RULE is deliberately not the same on both sides, and the
+            // symmetry is one of position only. Unlike a mob, a player can refuse
+            // the blow (i-frames, or being dead already), so PvE counts every
+            // geometric contact while PvP counts only the applied ones: one
+            // ShotsHit counter, two observable definitions of "landed". That is
+            // the intended reading of accuracy — damage dealt, not rounds that
+            // merely arrived — not an oversight to be "fixed" by hoisting this
+            // line above the guards.
             if (attackerIndex != ProjectileIds.NoOwner) IncrementShotsHit(attackerIndex);
             _matchStats[victimIndex].DamageTaken += dmg;
             // EntityId/playerIndex (Stage 2 Task 7 decision 5): both carry the
