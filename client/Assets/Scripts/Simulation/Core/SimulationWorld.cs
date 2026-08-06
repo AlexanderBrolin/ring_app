@@ -569,7 +569,8 @@ namespace Ring.Simulation.Core
         /// defense-in-depth: today ProjectileSystem's gather phase only ever routes
         /// a Player-owned projectile into this method (a Mob-owned round is only
         /// ever eligible against players, via DamagePlayer — it may of course
-        /// reach none of them and hit nothing at all), so ownerIndex is never
+        /// reach none of them and hit no player at all, ending instead on a
+        /// barrier, the floor or its own expiry), so ownerIndex is never
         /// actually NoOwner on the production path — but crediting must not silently trust
         /// that invariant forever, and an unguarded `_matchStats[NoOwner]` would
         /// also be an out-of-range index on top of the wrong credit.
@@ -646,6 +647,15 @@ namespace Ring.Simulation.Core
             // posthumous round dealt no damage, moved no Hp and emitted no
             // PlayerDamaged, so counting it as a landed hit would inflate the
             // shooter's accuracy against blows the world refused to apply.
+            // Only the i-frame half of that is reachable from production today
+            // (and both of its directions are pinned by
+            // PvpDamageTests.IframesAbsorbPvpDamage); the posthumous half is
+            // defence-in-depth: both production callers re-check Alive right
+            // before calling in — ProjectileSystem's gather phase gates on
+            // player.Alive once per projectile, and MobAiSystem re-runs
+            // Targeting.NearestAlivePlayer once per mob per tick — and nothing
+            // can kill the victim in between, since each round (and each fist)
+            // resolves fully before the next one is looked at.
             // Placement mirrors DamageMob above, where the increment likewise
             // sits next to the Hp write that actually happened — but the
             // resulting RULE is deliberately not the same on both sides, and the

@@ -65,7 +65,7 @@ namespace Ring.Simulation.Combat
                     }
                 }
 
-                // Player targets (Stage 2 Task 17, spec §Ф4): BOTH owners reach
+                // Player targets (Stage 2 Task 17, spec §3.6): BOTH owners reach
                 // this loop — a mob's round is eligible against every live
                 // player, a player's round against every live player but its own
                 // shooter. The owner skip is what makes self-damage impossible;

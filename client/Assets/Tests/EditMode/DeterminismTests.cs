@@ -568,7 +568,9 @@ namespace Ring.Simulation.Tests
             // Nothing else moved: the candidate scratch is excluded from
             // SaveState/StateHash, SimEvent.PlayerIndex on ProjectileHit/MobDied
             // is an EVENT field and events are outside the hash entirely (spec
-            // §3.7), and no state field entered or left
+            // §3.2, the SimEvent.PlayerIndex bullet, which is where that norm
+            // is stated — §3.7 is the networking section and says nothing about
+            // the hash at all), and no state field entered or left
             // PlayerState/MobState/ProjectileState/MatchStats.
             const ulong MultiGoldenHash = 0x136FA6114112E44FUL; // = 1400520602171925583
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));

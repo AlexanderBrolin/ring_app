@@ -106,37 +106,49 @@ namespace Ring.Simulation.Tests
             // cost nothing against the allocation budget above.
             //
             // Deliberately NOT a ShotsHit-growth witness (fix-round 1 review
-            // trap): once the mob crowd eventually reaches the huddle (~156
-            // measured ticks in, at Chaser.MaxSpeed closing the ~27 m gap) a
-            // chaser could stand ON the 3 m duel line (the 2.1 m gap between
-            // the duelists' own padded bodies is wider than a chaser's 1 m
-            // diameter) and win the min-t scan for a round meant for the other
-            // duelist — ShotsHit growth past that point no longer proves PvP by
-            // itself, it might be DamageMob crediting the same counter. The
-            // fixture's own numbers show this actually happens here: Hp0 and
-            // Hp1 end the window ~949 apart despite a duel that is symmetric
-            // by construction — the difference is incoming mob damage, not a
-            // measurement artifact.
+            // trap): once the mob crowd eventually reaches the huddle (at
+            // Chaser.MaxSpeed closing the ~27 m gap) a chaser could stand ON
+            // the 3 m duel line (the 2.1 m gap between the duelists' own padded
+            // bodies is wider than a chaser's 1 m diameter) and win the min-t
+            // scan for a round meant for the other duelist — ShotsHit growth
+            // past that point no longer proves PvP by itself, it might be
+            // DamageMob crediting the same counter.
             //
-            // Fix-round 2 (I-1b): what the Alive gate below DOES guarantee for
-            // the whole window is narrower than "the HitPlayer branch resolves
-            // every cycle" — that overclaimed which candidate the min-t scan
-            // picks, which the gate has no say over once a mob can physically
-            // stand on the line. What IS guaranteed, straight from the gate
-            // (ProjectileSystem.Update: `if (player.Alive && ...) candidates[
-            // candCount++] = ...`): both duelists stay Alive the whole window
-            // (asserted below), their FireHeld input never lapses (the SAME
-            // inputs array is fed every one of the measuredTicks iterations
-            // above), and WeaponSystem.Update spawns a new Player-owned round
-            // roughly every Weapon.FireInterval regardless of whether the
-            // previous one already resolved — so every one of those rounds'
-            // gather phase packs BOTH duelists as real HitPlayer candidates
-            // (the widened MaxMobs + MaxPlayers + 2 scratch genuinely
-            // populated, not merely sized) and the min-t scan runs its
-            // rejection loop over that full set, every cycle, for the whole
-            // window. That is what this allocation measurement needs exercised
-            // — the gather and scan, not which candidate happens to win a
-            // given tick — and it is exactly what the gate proves.
+            // Fix-round 3 (Ф4 fix-wave, I-1b): what the Alive gate below buys
+            // this measurement is exactly two claims, both readable straight
+            // off ProjectileSystem.Update, and both true for the WHOLE window
+            // rather than only its first tick.
+            // (1) The gather's player loop is UNCONDITIONAL. `for (int pi = 0;
+            //     pi < playerCount; pi++)` runs over all three players for
+            //     every live projectile on every tick; the owner skip and the
+            //     `player.Alive && Geometry.SegmentCircle(...)` gate decide
+            //     only what lands in the scratch, never whether the loop runs.
+            //     That loop, plus the min-scan over whatever it packed, IS the
+            //     code under measurement — and neither has a counterpart in
+            //     Tick_DoesNotAllocateGC above, whose single player is removed
+            //     outright by the owner skip.
+            // (2) The loop keeps being fed for the whole window. Both duelists
+            //     stay Alive across it (asserted below) and their FireHeld
+            //     input never lapses (the SAME inputs array is fed every one of
+            //     the measuredTicks iterations above), so WeaponSystem.Update
+            //     keeps spawning a fresh Player-owned round roughly every
+            //     Weapon.FireInterval — of the order of measuredTicks * TickDt
+            //     / Weapon.FireInterval rounds per duelist (~280 at the current
+            //     balance) — each of which runs (1) again. That the HitPlayer
+            //     branch genuinely resolves here, rather than rounds merely
+            //     flying, is pinned by the pvpShotsHit witness above.
+            // Deliberately NOT claimed, because none of it follows from the
+            // code: that a round packs BOTH duelists (a round never gathers its
+            // own owner, so ONE other duelist is the most any of theirs can
+            // ever reach); that a player candidate is packed on every tick (the
+            // muzzle sits Weapon.MuzzleOffset ahead of the shooter and the far
+            // duelist's padded circle starts ~1.8 m beyond it, against a step
+            // of Weapon.ProjectileSpeed * TickDt ~ 1.17 m — so the victim first
+            // enters the sweep on the round's SECOND tick, and player 2 at 1.5 m
+            // off the duel line is never gathered by it at all); or which
+            // candidate the min-scan picks. How FULL the scratch actually gets
+            // is a different question with a test of its own —
+            // PvpDamageTests.SaturatedWorld_CandidateScratchDoesNotOverflow.
             for (int i = 0; i < w.PlayerCount; i++)
                 Assert.IsTrue(w.PlayerAt(i).Alive,
                     $"player {i} must survive the FULL measured window, not just its first tick");
