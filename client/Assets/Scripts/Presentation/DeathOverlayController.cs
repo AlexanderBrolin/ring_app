@@ -123,8 +123,11 @@ namespace Ring.Presentation
             // projectile's OwnerIndex (SimulationWorld.DamageMob) instead of a
             // hardcoded player 0, so Curr.Stats (the LOCAL player's own
             // MatchStats) reflects only shots THEY landed — this ratio is sound
-            // for PvE in multiplayer now. PvP kills (DamagePlayer crediting the
-            // attacker) still arrive in Task 17 and don't feed ShotsHit at all.
+            // for PvE in multiplayer now. Stage 2 Task 17 extended the same
+            // routing to PvP (SimulationWorld.DamagePlayer takes the attacker's
+            // index): a round landed on another PLAYER counts toward ShotsHit
+            // and, on the killing blow, Kills/HeadshotKills, so this ratio now
+            // covers both halves of the match rather than PvE alone.
             float accuracy = stats.ShotsFired > 0 ? (float)stats.ShotsHit / stats.ShotsFired : 0f;
 
             var sb = new StringBuilder();

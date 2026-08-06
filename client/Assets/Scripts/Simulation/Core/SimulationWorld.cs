@@ -53,16 +53,15 @@ namespace Ring.Simulation.Core
         // (Task 5) — preallocated here so the hot path never allocates; every
         // slot is overwritten before being read each tick, so like _sepForces
         // above it carries no state across ticks and is deliberately excluded
-        // from SaveState/RestoreState and StateHash. Sized to MaxMobs + 3: one
-        // slot per live mob plus barrier, player, and floor (Task 7).
-        // Stage 2 Task 17: the spec's eventual size is MaxMobs + MaxPlayers +
-        // 2 (one player slot per live player, not one total) — MaxMobs + 3
-        // stays correct until then because no candidate gather packs more
-        // than a single player today: a Player-owned projectile's candidates
-        // are barrier + up to MaxMobs mobs + floor, a Mob-owned one's are
-        // barrier + the one hardcoded player (w.Player) + floor. Task 17
-        // grows this array in step with fanning that gather out to every
-        // live player.
+        // from SaveState/RestoreState and StateHash. Stage 2 Task 17: sized to
+        // MaxMobs + MaxPlayers + 2, the exact worst case now that the gather
+        // fans out over every live player instead of packing a single one —
+        // one slot per live mob, one per live player, plus barrier and floor.
+        // Neither owner can reach that bound on its own (a Player-owned round
+        // skips its own shooter, a Mob-owned one gathers no mobs at all), so
+        // the array carries one slot of slack rather than being tight; sizing
+        // it to the union keeps the bound obvious instead of depending on
+        // which branch of the damage matrix a given round took.
         readonly (float t, int kind, int index)[] _projCandidates;
         WaveState _wave;
         int _nextEntityId = 1;
@@ -156,7 +155,8 @@ namespace Ring.Simulation.Core
             _mobs = new MobState[config.Arena.MaxMobs];
             _sepForces = new float2[config.Arena.MaxMobs];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
-            _projCandidates = new (float t, int kind, int index)[config.Arena.MaxMobs + 3];
+            _projCandidates = new (float t, int kind, int index)[
+                config.Arena.MaxMobs + config.Arena.MaxPlayers + 2];
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
         }
 
@@ -489,10 +489,9 @@ namespace Ring.Simulation.Core
         internal float2[] SepForces => _sepForces;
 
         /// ProjectileSystem's seam into its preallocated per-tick candidate
-        /// scratch (Task 5) — sized to Arena.MaxMobs + 3, recomputed every
-        /// tick, never grown. Stage 2 Task 17 grows this to Arena.MaxMobs +
-        /// MaxPlayers + 2 per spec; safe at the current size until then —
-        /// see the field's own doc above for why.
+        /// scratch (Task 5) — sized to Arena.MaxMobs + Arena.MaxPlayers + 2
+        /// since Stage 2 Task 17, recomputed every tick, never grown. See the
+        /// field's own doc above for where that bound comes from.
         internal (float t, int kind, int index)[] ProjCandidates => _projCandidates;
 
         /// WaveSystem's seam into the wave director's live state (Task 22) — same
@@ -573,6 +572,9 @@ namespace Ring.Simulation.Core
         /// NoOwner on the production path — but crediting must not silently trust
         /// that invariant forever, and an unguarded `_matchStats[NoOwner]` would
         /// also be an out-of-range index on top of the wrong credit.
+        /// Stage 2 Task 17 (carryover-t17.md item 2): `ownerIndex` also rides out
+        /// on the MobDied event as SimEvent.PlayerIndex — see that field's own
+        /// doc for the actor/attacker/victim split it belongs to.
         internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir, byte ownerIndex)
         {
             _mobs[index].Hp -= dmg;
@@ -587,7 +589,7 @@ namespace Ring.Simulation.Core
                     if (zone == HitZone.Head) IncrementHeadshotKills(ownerIndex);
                 }
                 Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg,
-                    zone: zone, hitDir: dir);
+                    zone: zone, hitDir: dir, playerIndex: ownerIndex);
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
@@ -596,12 +598,15 @@ namespace Ring.Simulation.Core
         /// tick THAT player dies, even for damage from projectiles already in
         /// flight at that moment. Stage 2 Task 5: indexed by shooter — Stage 2
         /// Task 7: DamageMob above now passes the projectile's actual OwnerIndex
-        /// instead of a hardcoded 0, see its own comment.
+        /// instead of a hardcoded 0, see its own comment. Stage 2 Task 17:
+        /// DamagePlayer below is the second caller — a round that lands on
+        /// another PLAYER credits its shooter exactly the same way one that
+        /// lands on a mob does.
         void IncrementShotsHit(int index) { if (_players[index].Alive) _matchStats[index].ShotsHit++; }
         void IncrementKills(int index) { if (_players[index].Alive) _matchStats[index].Kills++; }
         void IncrementHeadshotKills(int index) { if (_players[index].Alive) _matchStats[index].HeadshotKills++; }
 
-        /// Applies projectile damage to the player (spec Interfaces, Task 16/23): a
+        /// Applies damage to one player (spec Interfaces, Task 16/23): a
         /// no-op once the player is already dead (spec §3.12 — stats stay frozen and
         /// no further PlayerDamaged/PlayerDied events fire); otherwise active dash
         /// i-frames absorb the hit with no event, else Hp drops and, once it reaches
@@ -609,37 +614,72 @@ namespace Ring.Simulation.Core
         /// `dmg` is the POST-multiplier amount, same contract as DamageMob above;
         /// `zone`/`dir` ride along on PlayerDamaged and, on the killing blow, on
         /// PlayerDied too (the death VFX wants the blow that ended the run).
-        internal void DamagePlayer(float dmg, float2 pos, HitZone zone, float2 dir)
+        ///
+        /// Stage 2 Task 17 replaced this method's two hardcoded zeroes with real
+        /// parameters:
+        /// `victimIndex` is WHO was hit — ProjectileSystem passes the player the
+        /// gather phase actually found on the round's path, MobAiSystem passes the
+        /// target its own FSM selected (carryover-t17.md item 1: mobs have chosen
+        /// the nearest live player since Task 8 while the strike still paid out to
+        /// player 0).
+        /// `attackerIndex` is WHO landed it — the projectile's OwnerIndex, or
+        /// ProjectileIds.NoOwner for a blow no player owns (a mob's round, a
+        /// chaser's fist, the KillPlayerForTest seam). Credit is gated on that
+        /// sentinel for exactly the reason DamageMob's own `ownerIndex` guard
+        /// documents, and here the gate is load-bearing rather than
+        /// defence-in-depth: mob-owned blows on a player are the COMMON case, so
+        /// an unguarded increment would both credit a nonexistent shooter and
+        /// index `_players[NoOwner]` out of range.
+        /// Self-damage is impossible by construction — ProjectileSystem's gather
+        /// skips a Player-owned round's own owner — so the two indices are never
+        /// equal on the production path.
+        internal void DamagePlayer(int victimIndex, byte attackerIndex, float dmg,
+            float2 pos, HitZone zone, float2 dir)
         {
-            // T5 fix-round 1 M-3: single named source for "who" instead of two
-            // mechanically-unrelated-looking `0` literals (ref _players[0] here,
-            // _matchStats[0] below) — both act on the same victim by construction,
-            // this makes that fact explicit instead of implicit-by-coincidence.
-            int victim = 0; // real victim index arrives in Stage 2 Task 17 (PvP)
-            ref PlayerState p = ref _players[victim];
+            ref PlayerState p = ref _players[victimIndex];
             if (!p.Alive) return;
             if (p.IframeTimer > 0f) return;
 
             p.Hp -= dmg;
-            _matchStats[victim].DamageTaken += dmg;
+            // Credit sits AFTER both guards on purpose: an absorbed or
+            // posthumous round dealt no damage, moved no Hp and emitted no
+            // PlayerDamaged, so counting it as a landed hit would inflate the
+            // shooter's accuracy against blows the world refused to apply.
+            // Placement mirrors DamageMob above, where the increment likewise
+            // sits next to the Hp write that actually happened.
+            if (attackerIndex != ProjectileIds.NoOwner) IncrementShotsHit(attackerIndex);
+            _matchStats[victimIndex].DamageTaken += dmg;
             // EntityId/playerIndex (Stage 2 Task 7 decision 5): both carry the
-            // VICTIM's index, spec §3.2 — reuse the named `victim` above, not a
-            // new literal.
-            Emit(SimEventKind.PlayerDamaged, pos, victim, default, dmg, zone: zone, hitDir: dir,
-                playerIndex: (byte)victim);
+            // VICTIM's index, spec §3.2 — the attacker is deliberately NOT what
+            // these two report (SimEvent has one player slot, and for a
+            // PlayerDamaged/PlayerDied pair the victim is the convention).
+            Emit(SimEventKind.PlayerDamaged, pos, victimIndex, default, dmg, zone: zone, hitDir: dir,
+                playerIndex: (byte)victimIndex);
 
             if (p.Hp <= 0f)
             {
+                // Kill credit lives HERE, at the caller of KillPlayer, exactly as
+                // it lives inside DamageMob rather than inside the mob's own
+                // removal — KillPlayer is shared with the no-damage
+                // KillPlayerNoDamage path, which by definition credits nobody.
+                if (attackerIndex != ProjectileIds.NoOwner)
+                {
+                    IncrementKills(attackerIndex);
+                    // Same "killing blow's zone only" rule as DamageMob: earlier
+                    // headshots on this victim are already reflected in Hp.
+                    if (zone == HitZone.Head) IncrementHeadshotKills(attackerIndex);
+                }
                 // Stage 2 Task 8: death bookkeeping (timers/Alive/DeathTick/
                 // PlayerDied) moved into KillPlayer — the single home both this
                 // damage-death path and the no-damage KillPlayerNoDamage path
                 // now share, instead of each keeping its own copy of the timer list.
                 // Fix-round 1 I-1: `pos` (the blow's own origin — e.g. the
                 // killing mob's position for a contact strike, MobAiSystem's
-                // `w.DamagePlayer(cfg.ContactDamage, m.Pos, ...)`) is forwarded
-                // unchanged, so the paired PlayerDamaged/PlayerDied above and
-                // below carry the SAME Pos, exactly as before this task.
-                KillPlayer(victim, zone, dir, pos);
+                // `w.DamagePlayer(targetIndex, NoOwner, cfg.ContactDamage,
+                // m.Pos, ...)`) is forwarded unchanged, so the paired
+                // PlayerDamaged/PlayerDied above and below carry the SAME Pos,
+                // exactly as before this task.
+                KillPlayer(victimIndex, zone, dir, pos);
             }
         }
 
@@ -797,9 +837,14 @@ namespace Ring.Simulation.Core
         /// branch (all mobs → Idle) can be exercised deterministically. Reports a
         /// Body hit from +X (Task 6 signature ripple): the seam models "something
         /// killed the player", and Body/no-multiplier is the neutral choice — no
-        /// caller of this seam asserts on the zone.
+        /// caller of this seam asserts on the zone. Stage 2 Task 17 signature
+        /// ripple: the victim is player 0 (this seam is the solo "something
+        /// killed you" shorthand — a fixture that needs another victim states it
+        /// through DamagePlayer directly) and the attacker is
+        /// ProjectileIds.NoOwner, because "something" is nobody: crediting a kill
+        /// here would invent a killer none of this seam's callers asked for.
         internal void KillPlayerForTest()
-            => DamagePlayer(_config.Hero.MaxHp + 1f, _players[0].Pos,
+            => DamagePlayer(0, ProjectileIds.NoOwner, _config.Hero.MaxHp + 1f, _players[0].Pos,
                 HitZone.Body, new float2(1f, 0f));
 
         /// Test-only seam (Task 8 Interfaces): exposes the private Sanitize step

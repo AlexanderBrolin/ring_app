@@ -93,17 +93,27 @@ namespace Ring.Simulation.Core
         /// no-blow PlayerDied exception as `Zone` above (`KillPlayerNoDamage`) —
         /// reads `float2.zero` there.
         public float2 HitDir;
-        /// Stage 2 Task 7: which player this event concerns. For the five
-        /// "own-action" kinds — ProjectileFired, PlayerDashed,
-        /// PlayerSlideStarted, DashRicocheted, StaminaDenied — it is the
-        /// ACTOR (SimulationWorld.TickMovement's own per-player loop index /
-        /// SpawnProjectile's ownerIndex). For PlayerDamaged/PlayerDied it is
-        /// the VICTIM instead (mirrors EntityId's convention for those two
-        /// kinds, spec §3.2). Unused (ProjectileIds.NoOwner) for every other
-        /// kind, same "unused for every other kind" contract as
-        /// `Amount`/`Owner`/`Zone` above. Not part of StateHash — events are
-        /// excluded from the hash entirely (spec §3.7, see this struct's own
-        /// doc comment).
+        /// Stage 2 Task 7: which player this event concerns, under three
+        /// conventions picked per kind.
+        /// ACTOR — the five "own-action" kinds ProjectileFired, PlayerDashed,
+        /// PlayerSlideStarted, DashRicocheted, StaminaDenied
+        /// (SimulationWorld.TickMovement's own per-player loop index /
+        /// SpawnProjectile's ownerIndex).
+        /// VICTIM — PlayerDamaged/PlayerDied (mirrors EntityId's convention for
+        /// those two kinds, spec §3.2); the attacker is deliberately not
+        /// reported, there is only one player slot on the struct and for a
+        /// damage/death pair the victim is the one Presentation places the
+        /// feedback on.
+        /// ATTACKER — ProjectileHit/MobDied, added by Stage 2 Task 17
+        /// (carryover-t17.md item 2): the SHOOTER behind the blow, i.e. the
+        /// projectile's OwnerIndex (ProjectileIds.NoOwner for a mob's round).
+        /// Without it Presentation cannot tell "my hit" from another player's
+        /// when placing a hitmarker in a multiplayer match — the victim of those
+        /// two kinds is a mob, already identified by EntityId/MobType.
+        /// Unused (ProjectileIds.NoOwner) for every other kind, same "unused for
+        /// every other kind" contract as `Amount`/`Owner`/`Zone` above. Not part
+        /// of StateHash — events are excluded from the hash entirely (spec §3.7,
+        /// see this struct's own doc comment).
         public byte PlayerIndex;
     }
 }

@@ -162,16 +162,46 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w3, SimEventKind.StaminaDenied, out SimEvent denied));
             Assert.AreEqual(1, denied.PlayerIndex, "player 1's denial — the event must carry THEIR index");
 
-            // PlayerDamaged/PlayerDied carry the VICTIM's index — today that is
-            // always player 0 (DamagePlayer's local `victim` stays hardcoded until
-            // Task 17's PvP routing), so this pins today's byte-for-byte behaviour,
-            // not multi-victim routing.
+            // PlayerDamaged/PlayerDied carry the VICTIM's index. Stage 2 Task 17
+            // made that index real (DamagePlayer takes it as a parameter now
+            // instead of pinning a local `victim` to 0); KillPlayerForTest is
+            // the "something killed the solo player" seam, so its victim is
+            // player 0 and this keeps pinning that seam's own behaviour.
+            // Multi-victim routing is pinned by PvpDamageTests instead.
             var w4 = new SimulationWorld(1, cfg, playerCount: 2);
             w4.KillPlayerForTest();
             Assert.IsTrue(TestEvents.TryFirstOf(w4, SimEventKind.PlayerDamaged, out SimEvent damaged));
             Assert.AreEqual(0, damaged.PlayerIndex);
             Assert.IsTrue(TestEvents.TryFirstOf(w4, SimEventKind.PlayerDied, out SimEvent died));
             Assert.AreEqual(0, died.PlayerIndex);
+        }
+
+        [Test]
+        public void MobBlowEvents_CarryShooterIndex()
+        {
+            // Stage 2 Task 17 (carryover-t17.md item 2, a forward observation
+            // from the Task 7 review): ProjectileHit and MobDied used to leave
+            // PlayerIndex at ProjectileIds.NoOwner, so in a multiplayer match
+            // Presentation could not tell "my hit" from someone else's when
+            // placing a hitmarker. Both now carry the SHOOTER — the projectile's
+            // own OwnerIndex — which is the ATTACKER convention, the mirror of
+            // the VICTIM convention PlayerDamaged/PlayerDied use above. Player 1
+            // fires, so a hardcoded-to-0 stub fails this the same way
+            // PlayerEvents_CarryPlayerIndex above pins its own kinds.
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, 0f),
+                new float2(35f, 0f), 1f, 0f, 1000f, 0.6f, 1f, ownerIndex: 1);
+
+            var inputs = new SimInput[2];
+            w.ClearEvents();
+            for (int i = 0; i < 6 && w.MobCount > 0; i++) w.TickAll(inputs);
+
+            Assert.AreEqual(0, w.MobCount, "the overkill round must have killed the mob");
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent hit));
+            Assert.AreEqual(1, hit.PlayerIndex, "ProjectileHit carries the shooter's index");
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.MobDied, out SimEvent died));
+            Assert.AreEqual(1, died.PlayerIndex, "MobDied carries the killing round's shooter");
         }
     }
 }

@@ -48,15 +48,25 @@ namespace Ring.Simulation.AI
                 }
                 PlayerState player = w.PlayerAt(targetIndex);
 
+                // Stage 2 Task 17 (carryover-t17.md item 1, from the Task 8
+                // review): the chaser's contact strike needs the target's INDEX,
+                // not just its state — before this task the strike paid out to
+                // player 0 regardless of whom the FSM had chosen, so a chaser
+                // standing on player 1 hit someone across the arena. UpdateGunner
+                // deliberately does NOT take the index: its shot is a projectile,
+                // and a projectile's victim is decided by geometry in
+                // ProjectileSystem (it can legitimately hit a player who walked
+                // into the line of fire), so an index parameter there would be
+                // carried and never read.
                 if (m.Type == MobType.Chaser)
-                    UpdateChaser(w, ref m, in cfg, in player, in arena, dt);
+                    UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt);
                 else
                     UpdateGunner(w, ref m, in cfg, in player, in arena, dt);
             }
         }
 
         static void UpdateChaser(SimulationWorld w, ref MobState m, in MobSimConfig cfg,
-            in PlayerState player, in ArenaSimConfig arena, float dt)
+            in PlayerState player, int targetIndex, in ArenaSimConfig arena, float dt)
         {
             switch (m.Ai)
             {
@@ -140,7 +150,13 @@ namespace Ring.Simulation.AI
                             // knock-reaction axis Presentation needs; the same
                             // pre-motion `player` snapshot the overlap check
                             // above uses, so both read one consistent frame.
-                            w.DamagePlayer(cfg.ContactDamage, m.Pos, HitZone.Body,
+                            // Stage 2 Task 17: the victim is `targetIndex` — the
+                            // very player this FSM selected and re-validated the
+                            // overlap against — and the attacker is
+                            // ProjectileIds.NoOwner, since a mob owns no player
+                            // slot and no player earns credit for its kill.
+                            w.DamagePlayer(targetIndex, ProjectileIds.NoOwner, cfg.ContactDamage,
+                                m.Pos, HitZone.Body,
                                 math.normalizesafe(player.Pos - m.Pos, new float2(1f, 0f)));
                         }
                         m.Ai = MobAiState.Recover;

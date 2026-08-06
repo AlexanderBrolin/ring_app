@@ -22,7 +22,24 @@ namespace Ring.Simulation.Tests
             config = TestConfigs.Default();
             var world = new SimulationWorld(1, config);
 
-            int cap = config.Arena.MaxMobs;
+            SpawnMobsToCap(world);
+
+            var holdFire = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f) };
+            for (int i = 0; i < 100; i++) world.Tick(holdFire);
+
+            return world;
+        }
+
+        /// Fills every mob slot of `world` (half Chaser / half Gunner, spread on
+        /// a golden-angle spiral so no two sit on the same ray). Stage 2 Task 17:
+        /// lifted verbatim out of Saturated above — which now calls it — so the
+        /// PvP candidate-scratch fixture can build the same crowd without
+        /// inheriting Saturated's 100-tick warm-up under sustained fire. Reads
+        /// the cap off the world's OWN config, so the two call sites can never
+        /// disagree about how many "every slot" is.
+        public static void SpawnMobsToCap(SimulationWorld world)
+        {
+            int cap = world.Config.Arena.MaxMobs;
             const float goldenAngleRad = 2.399963f; // even angular spread, no periodicity
             for (int i = 0; i < cap; i++)
             {
@@ -31,11 +48,6 @@ namespace Ring.Simulation.Tests
                 float2 pos = radius * new float2(math.cos(angle), math.sin(angle));
                 world.SpawnMobForTest((i & 1) == 0 ? MobType.Chaser : MobType.Gunner, pos);
             }
-
-            var holdFire = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f) };
-            for (int i = 0; i < 100; i++) world.Tick(holdFire);
-
-            return world;
         }
 
         /// Places a batch of mobs in one call (Task 6) — the tuple form keeps a
@@ -55,9 +67,13 @@ namespace Ring.Simulation.Tests
         /// distance d is exactly muzzleH + d·(targetH − muzzleH)/|targetXY −
         /// origin| — the straight line a height-gating fixture reasons about.
         /// Weapon damage/radius/lifetime come from the world's own config, so a
-        /// caller only ever states geometry.
+        /// caller only ever states geometry. `ownerIndex` (Stage 2 Task 17) says
+        /// which player fired — a TRAILING parameter defaulting to 0 (the solo
+        /// player, same test default SpawnProjectileForTest's own `ownerIndex`
+        /// documents), so every Э1 call site keeps compiling and behaving
+        /// identically while the PvP fixtures can state a real shooter.
         public static int FireAimed3D(SimulationWorld world, float2 origin, float muzzleH,
-            float2 targetXY, float targetH)
+            float2 targetXY, float targetH, byte ownerIndex = 0)
         {
             WeaponSimConfig weapon = world.Config.Weapon;
             float2 flat = targetXY - origin;
@@ -67,7 +83,7 @@ namespace Ring.Simulation.Tests
             float velZ = len > 1e-6f ? dz / len * weapon.ProjectileSpeed : 0f;
             return world.SpawnProjectileForTest(ProjectileOwner.Player, origin,
                 dir * weapon.ProjectileSpeed, muzzleH, velZ,
-                weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime);
+                weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime, ownerIndex);
         }
 
         /// Ticks with idle input until no projectile is left in flight (or the

@@ -5,10 +5,13 @@ namespace Ring.Simulation.Combat
 {
     /// Advances every live projectile by one tick (spec §3.5/§3.6): swept-circle
     /// collision against the ring wall, obstacles, and eligible targets under the
-    /// damage matrix (Player-owned projectiles hit mobs; Mob-owned projectiles hit
-    /// the player, gated only on Alive — the i-frame check happens inside
-    /// SimulationWorld.DamagePlayer, not here). A projectile is single-target: it
-    /// is consumed on its first contact, no piercing.
+    /// damage matrix. Stage 2 Task 17 completed that matrix: a Player-owned round
+    /// hits mobs AND every live player except its own owner (no self-damage by
+    /// construction — the owner is never gathered), a Mob-owned round hits every
+    /// live player and no mobs. Player targets are gated only on Alive here — the
+    /// i-frame check happens inside SimulationWorld.DamagePlayer, not here. A
+    /// projectile is single-target: it is consumed on its first contact, no
+    /// piercing.
     internal static class ProjectileSystem
     {
         const int HitNone = 0, HitBarrier = 1, HitMob = 2, HitPlayer = 3, HitFloor = 4;
@@ -37,10 +40,10 @@ namespace Ring.Simulation.Combat
 
                 // Gather phase (Task 5 refactor): pack every actual geometry
                 // hit into the scratch in canonical slot order — 0 = barrier,
-                // then mobs by index, then player, then floor (Task 7) — so
-                // the packed array's index order doubles as the tie-break
-                // order below, matching Task 1's original streaming-min
-                // bit-for-bit.
+                // then mobs by index, then players by index, then floor (Task
+                // 7) — so the packed array's index order doubles as the
+                // tie-break order below, matching Task 1's original
+                // streaming-min bit-for-bit.
                 int candCount = 0;
                 if (Geometry.SweepArena(startPos, target, proj.Radius, in arena, true,
                         out float tArena, out float2 arenaNormal))
@@ -61,19 +64,28 @@ namespace Ring.Simulation.Combat
                         }
                     }
                 }
-                else
+
+                // Player targets (Stage 2 Task 17, spec §Ф4): BOTH owners reach
+                // this loop — a mob's round is eligible against every live
+                // player, a player's round against every live player but its own
+                // shooter. The owner skip is what makes self-damage impossible;
+                // it is a gather-phase rule rather than a check further down so
+                // the owner never occupies a candidate slot at all. The loop
+                // deliberately sits AFTER the mob loop and BEFORE the floor: it
+                // occupies the slot the single hardcoded player candidate used
+                // to, so the canonical packing order — and with it every t-tie
+                // this scan resolves — is unchanged for a world that has only
+                // one player.
+                int playerCount = w.PlayerCount;
+                for (int pi = 0; pi < playerCount; pi++)
                 {
-                    // Stage 2 Task 17: hardcoded to player 0 (w.Player) — safe
-                    // today because a mob-owned projectile's only possible
-                    // target IS player 0 (MVP is solo-only, no other player
-                    // exists to gather); Task 17 fans this out to every live
-                    // player per the PvP damage matrix (plan §Ф4).
-                    PlayerState player = w.Player;
+                    if (proj.Owner == ProjectileOwner.Player && pi == proj.OwnerIndex) continue;
+                    PlayerState player = w.PlayerAt(pi);
                     if (player.Alive
                         && Geometry.SegmentCircle(startPos, target, proj.Radius,
                             player.Pos, heroRadius, out float tp))
                     {
-                        candidates[candCount++] = (tp, HitPlayer, -1);
+                        candidates[candCount++] = (tp, HitPlayer, pi);
                     }
                 }
 
@@ -106,7 +118,12 @@ namespace Ring.Simulation.Combat
                 // candCount by one, so the loop runs at most candCount times.
                 float bestT = 1f;
                 int hitKind = HitNone;
-                int hitMobIndex = -1;
+                // Stage 2 Task 17: the winning candidate's own index, which is a
+                // MOB index for HitMob and a PLAYER index for HitPlayer (-1 for
+                // the index-less barrier/floor kinds) — named for the target it
+                // identifies rather than for one of the two kinds, now that
+                // HitPlayer carries a real index of its own.
+                int hitTargetIndex = -1;
                 HitZone hitZone = HitZone.None;
                 float hitMult = 1f;
                 while (candCount > 0)
@@ -125,17 +142,17 @@ namespace Ring.Simulation.Combat
                     {
                         // Same "no hit" fallback as the rejection branch below —
                         // both exits must leave the pair consistent, even though
-                        // the HitNone path never reads hitMobIndex.
+                        // the HitNone path never reads hitTargetIndex.
                         hitKind = HitNone;
-                        hitMobIndex = -1;
+                        hitTargetIndex = -1;
                         break;
                     }
 
                     hitKind = candidates[bestSlot].kind;
-                    hitMobIndex = candidates[bestSlot].index;
+                    hitTargetIndex = candidates[bestSlot].index;
 
                     if (AcceptCandidate(w, in config, in proj, startPos, target,
-                            hitKind, hitMobIndex, out hitZone, out hitMult))
+                            hitKind, hitTargetIndex, out hitZone, out hitMult))
                     {
                         break;
                     }
@@ -144,7 +161,7 @@ namespace Ring.Simulation.Combat
                     // scan that exhausts every candidate leaves the projectile
                     // flying instead of resolving the last one it looked at.
                     hitKind = HitNone;
-                    hitMobIndex = -1;
+                    hitTargetIndex = -1;
                     candidates[bestSlot] = candidates[--candCount];
                 }
 
@@ -180,12 +197,15 @@ namespace Ring.Simulation.Combat
                         // damage actually dealt, so Presentation never has to
                         // re-derive it from a base value it cannot see.
                         float dmg = proj.Damage * hitMult;
-                        MobState mob = mobs[hitMobIndex];
+                        MobState mob = mobs[hitTargetIndex];
+                        // playerIndex (Stage 2 Task 17, carryover-t17.md item 2):
+                        // the SHOOTER, so Presentation can tell its own hitmarker
+                        // from another player's in a multiplayer match.
                         w.Emit(SimEventKind.ProjectileHit, contact, mob.Id, mob.Type, dmg,
-                            zone: hitZone, hitDir: hitDir);
+                            zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex);
                         // ownerIndex (Stage 2 Task 7): the projectile carries its
                         // own shooter forward into the credit routing.
-                        w.DamageMob(hitMobIndex, dmg, contact, hitZone, hitDir, proj.OwnerIndex);
+                        w.DamageMob(hitTargetIndex, dmg, contact, hitZone, hitDir, proj.OwnerIndex);
                         w.RemoveProjectileAt(i);
                         break;
                     }
@@ -193,7 +213,12 @@ namespace Ring.Simulation.Combat
                     {
                         float2 contact = math.lerp(startPos, target, bestT);
                         float2 hitDir = math.normalizesafe(proj.Vel, new float2(1f, 0f));
-                        w.DamagePlayer(proj.Damage * hitMult, contact, hitZone, hitDir);
+                        // Stage 2 Task 17: victim = the player this scan actually
+                        // resolved onto, attacker = the round's own shooter
+                        // (ProjectileIds.NoOwner for a mob's round, which credits
+                        // nobody — see DamagePlayer's own doc).
+                        w.DamagePlayer(hitTargetIndex, proj.OwnerIndex, proj.Damage * hitMult,
+                            contact, hitZone, hitDir);
                         w.RemoveProjectileAt(i);
                         break;
                     }
@@ -221,8 +246,12 @@ namespace Ring.Simulation.Combat
         /// the target — hence Geometry.SegmentCircleInterval rather than the
         /// gather phase's entry-only SegmentCircle. The zone itself is read at
         /// the ENTRY height: that is where the round first touches the body.
+        ///
+        /// `targetIndex` (Stage 2 Task 17: was `mobIndex`) is the winning
+        /// candidate's own index — a mob index under HitMob, a player index under
+        /// HitPlayer, unused for the index-less barrier/floor kinds.
         static bool AcceptCandidate(SimulationWorld w, in SimConfig config, in ProjectileState proj,
-            float2 p0, float2 p1, int kind, int mobIndex, out HitZone zone, out float mult)
+            float2 p0, float2 p1, int kind, int targetIndex, out HitZone zone, out float mult)
         {
             zone = HitZone.None;
             mult = 1f;
@@ -231,7 +260,7 @@ namespace Ring.Simulation.Combat
             float targetRadius, legsTop, bodyTop, headTop, overlapTop, legsMult, bodyMult, headMult;
             if (kind == HitMob)
             {
-                MobState mob = w.Mobs[mobIndex];
+                MobState mob = w.Mobs[targetIndex];
                 MobSimConfig cfg = w.MobConfigFor(mob.Type);
                 targetPos = mob.Pos;
                 targetRadius = cfg.Radius;
@@ -244,12 +273,13 @@ namespace Ring.Simulation.Combat
             else if (kind == HitPlayer)
             {
                 HeroSimConfig cfg = config.Hero;
-                // Stage 2 Task 17: both w.Player reads below are hardcoded to
-                // player 0 — safe today because the gather phase above can
-                // only ever pack player 0 as a HitPlayer candidate (MVP is
-                // solo-only; see that phase's own Task 17 note). Task 17
-                // switches both to w.PlayerAt(index) together.
-                targetPos = w.Player.Pos;
+                // Stage 2 Task 17: read ONCE off the player the gather phase
+                // actually picked (was a pair of w.Player reads, i.e. always
+                // player 0 — see this method's `targetIndex` note). Position and
+                // slide profile must come from the SAME player, and one copy of
+                // the struct is also one fewer indexer call on the hot path.
+                PlayerState target = w.PlayerAt(targetIndex);
+                targetPos = target.Pos;
                 targetRadius = cfg.Radius;
                 legsTop = cfg.LegsTop; bodyTop = cfg.BodyTop; headTop = cfg.HeadTop;
                 // Task 11: mid-slide, the hero presents a lower profile — the
@@ -261,7 +291,7 @@ namespace Ring.Simulation.Combat
                 // connect while sliding resolves to whatever zone its entry
                 // height actually falls in (Legs, or low Body, since
                 // SlideProfileTop sits below BodyTop).
-                overlapTop = w.Player.SlideTimer > 0f ? cfg.SlideProfileTop : headTop;
+                overlapTop = target.SlideTimer > 0f ? cfg.SlideProfileTop : headTop;
                 legsMult = cfg.LegsDamageMult;
                 bodyMult = cfg.BodyDamageMult;
                 headMult = cfg.HeadDamageMult;

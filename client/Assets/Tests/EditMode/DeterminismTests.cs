@@ -540,7 +540,37 @@ namespace Ring.Simulation.Tests
             // consumes, how many mobs live, shoot and die, and therefore the
             // whole downstream trace. Spec §6e sanctions exactly one further
             // shift of THIS constant, in Task 17 (owner decision Р113).
-            const ulong MultiGoldenHash = 0xD604E38F1647C0A8UL; // = 15421701227717050536
+            //
+            // Re-pinned by Stage 2 Task 17 (second and LAST re-pin of this
+            // constant — the sanctioned shift spec §6e reserved above, owner
+            // decision Р113 variant (a); it is limited to THIS constant, the
+            // solo golden's own "two re-pins, then stop" invariant is untouched
+            // and it did NOT move here). Cause: Task 17 completes the damage
+            // matrix, and all three of its halves are live in a three-player
+            // run while none of them exists in a solo one.
+            // (1) VICTIM BY INDEX. A chaser's contact strike now lands on the
+            //     player its own FSM selected (Targeting.NearestAlivePlayer,
+            //     since Task 8) instead of always on player 0 — so Hp,
+            //     DamageTaken, death and every downstream consequence move to a
+            //     different player than the pre-Task-17 run recorded. Solo has
+            //     one player, so the chosen target is player 0 either way.
+            // (2) MOB ROUNDS AGAINST EVERY LIVE PLAYER. ProjectileSystem's
+            //     gather packed exactly one player candidate (player 0); it now
+            //     packs one per live player, so a gunner's round finally stops
+            //     on whoever is actually standing in it. Solo gathers the same
+            //     single candidate as before, bit for bit.
+            // (3) PLAYER ROUNDS AGAINST OTHER PLAYERS. Player-owned rounds gather
+            //     live players other than their own owner — a whole class of
+            //     hits, deaths and ShotsHit/Kills/HeadshotKills credit that did
+            //     not exist in this run before. Solo has no other player, so the
+            //     branch is dead there (the owner is the only player and is
+            //     skipped), which is exactly why the solo golden stands.
+            // Nothing else moved: the candidate scratch is excluded from
+            // SaveState/StateHash, SimEvent.PlayerIndex on ProjectileHit/MobDied
+            // is an EVENT field and events are outside the hash entirely (spec
+            // §3.7), and no state field entered or left
+            // PlayerState/MobState/ProjectileState/MatchStats.
+            const ulong MultiGoldenHash = 0x136FA6114112E44FUL; // = 1400520602171925583
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
