@@ -48,6 +48,27 @@ namespace Ring.Networking.Protocol
     /// WHY ITS OWN LITTLE-ENDIAN PRIMITIVES: see SnapshotWriter's doc — the
     /// same reasoning, and the same "a third consumer is the threshold for a
     /// shared helper" rule.
+    /// KNOWN FORMAT LIMIT — END OF DATA IS NOT DISTINGUISHABLE FROM A CUT
+    /// ON A BLOCK BOUNDARY (fix-round finding F8). The frame carries no
+    /// block COUNT, so a datagram cut exactly at a block boundary parses as
+    /// a complete, shorter snapshot: `Failed` and `Truncated` both stay
+    /// false and the missing blocks simply never arrive. Inside a block the
+    /// cut IS caught; only the boundary case is silent. That is a deliberate
+    /// trade — a count field would have to be back-patched after the last
+    /// block, and a wrong count is a worse failure mode than a short read —
+    /// but it means the RECEIVER (Task 32) must not treat "no failure" as
+    /// "nothing missing": it has to check that the kinds it requires are
+    /// actually present, and count their absence itself.
+    ///
+    /// FLAG SEMANTICS, PRECISELY (findings F9, F10). `Truncated` means "a
+    /// field or payload ran past the end of the buffer" and covers BOTH an
+    /// honestly short datagram AND a block header that declares a length it
+    /// does not have — the second is a hostile input, not a lossy network,
+    /// and a consumer that folds both into one "packet loss" counter will
+    /// not see an attack (Task 28/32 may want to split them). `Failed`
+    /// without either `Truncated` or `VersionMismatch` means a CALLER
+    /// sequencing error (a block read before the header, or a second header
+    /// read) — not bad bytes, a bug in the calling code.
     public ref struct SnapshotReader
     {
         readonly System.ReadOnlySpan<byte> _src;

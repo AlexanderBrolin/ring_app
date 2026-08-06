@@ -27,9 +27,15 @@ namespace Ring.Simulation.Tests
     // kinds, payload bytes, payload lengths) was checked by grep against
     // client/Assets/Data/*.asset and appears in none of them — the trap that
     // caught three fixtures earlier in this phase (3.8 = MaxAimHeight,
-    // 100 = MaxHp, 1.35 = BodyTop). Note that 19, 22 and 14 DO occur in
-    // ArenaConfig.asset, which is why the truncation boundaries below are
-    // computed from SnapshotWriter's own constants instead of written out.
+    // 100 = MaxHp, 1.35 = BodyTop). FACT CORRECTION (fix-round, re-grepped
+    // per value rather than restated): 22 and 14 are real balance numbers —
+    // GameFeelConfig.ShakeFrequency 22, SlideDustBurstCount 14 and
+    // MobGunnerConfig.ProjectileSpeed 14 — while 19 occurs in NO .asset as a
+    // value at all, and none of the three lives in ArenaConfig.asset as the
+    // earlier note claimed. The truncation boundaries below (8, 14, 21) are
+    // computed from SnapshotWriter's own constants regardless, which is the
+    // right shape for a different reason: they are structural, so writing
+    // them out would freeze a layout the constants already own.
     // Structural numbers (byte offsets, buffer padding, sentinel tails) are
     // not fixtures: they are dictated by the wire layout or are pure test
     // scaffolding, and colliding with a balance number carries no meaning
@@ -137,7 +143,10 @@ namespace Ring.Simulation.Tests
             var writer = new SnapshotWriter(buffer);
             writer.WriteHeader(Epoch, Tick, Flags);
 
-            Assert.AreEqual(ProtocolVersion.Current, buffer[0], "byte 0: protocol version");
+            // Literal 1, not ProtocolVersion.Current: comparing the writer
+            // against the very constant it wrote would pass under a version
+            // bump that silently broke every peer.
+            Assert.AreEqual((byte)1, buffer[0], "byte 0: protocol version");
             Assert.AreEqual((byte)0x34, buffer[1], "byte 1: epoch low byte (little-endian)");
             Assert.AreEqual((byte)0x12, buffer[2], "byte 2: epoch high byte (little-endian)");
             Assert.AreEqual((byte)0xEF, buffer[3], "byte 3: tick byte 0 (little-endian)");
@@ -481,6 +490,51 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(twice.TryReadHeader(out _, out _, out _),
                 "a second header read is a sequencing error, not a rewind");
             Assert.IsTrue(twice.Failed);
+            // Fix-round finding F7: without these two the test passed with
+            // the guard REMOVED — the second call would have parsed the
+            // first block's kind byte as a version, mismatched, and refused
+            // for the wrong reason. Both assertions below distinguish "I
+            // refuse because you called me out of order" from "I refuse
+            // because the bytes are wrong", and the accident that saved the
+            // old test (block kind != 1) is a fixture detail Task 27 is free
+            // to break when it assigns real kind values.
+            Assert.IsFalse(twice.VersionMismatch,
+                "a sequencing refusal must not masquerade as a version mismatch");
+            Assert.IsFalse(twice.Truncated,
+                "a sequencing refusal must not masquerade as truncation");
+        }
+
+        [Test]
+        public void Reader_AfterMalformedLength_DoesNotResumeOnAttackerChosenBytes()
+        {
+            // Fix-round finding F6: removing the sticky `if (_failed)` guard
+            // from TryReadBlock survived the whole suite, because the only
+            // failure fixture left nothing parseable behind the cut. This is
+            // the case that matters — a hostile client, which is exactly who
+            // Р82 is about: an unknown block DECLARES a length far past the
+            // end of the frame, and a well-formed known block follows it. A
+            // reader that forgets it already failed hands the attacker the
+            // block of their choosing after the refusal.
+            var frame = new System.Collections.Generic.List<byte>();
+            frame.Add(ProtocolVersion.Current);
+            frame.Add(0x34); frame.Add(0x12);                    // epoch, LE
+            frame.Add(0xEF); frame.Add(0xBE); frame.Add(0xAD); frame.Add(0xDE); // tick, LE
+            frame.Add(0);                                        // flags
+            frame.Add(UnknownKind);
+            frame.Add(0xFF); frame.Add(0xFF);                    // payloadBytes: a lie
+            frame.Add(KindA);
+            frame.Add(0x03); frame.Add(0x00);                    // a well-formed follower
+            frame.AddRange(PayloadA);
+
+            var reader = new SnapshotReader(frame.ToArray());
+            Assert.IsTrue(reader.TryReadHeader(out _, out _, out _), "the header itself is intact");
+            Assert.IsFalse(reader.TryReadBlock(KnownAB, out _, out _),
+                "a declared length past the end of the frame must be refused");
+            Assert.IsTrue(reader.Failed);
+
+            Assert.IsFalse(reader.TryReadBlock(KnownAB, out byte kind, out _),
+                "the attacker's chosen block must NOT be delivered after a refusal");
+            Assert.AreEqual((byte)0, kind, "a refused read hands back no kind");
         }
 
         // ---- 9. The write side throws — and never writes partially ----

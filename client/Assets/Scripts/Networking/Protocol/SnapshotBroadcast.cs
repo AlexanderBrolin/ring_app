@@ -12,17 +12,20 @@ namespace Ring.Networking.Protocol
     /// Broadcast.cs:118 and its overloads, ClientManager.Broadcast.cs:105 —
     /// Task 2's API notes §1). `IBroadcast` itself is an empty marker
     /// (Runtime/Broadcast/IBroadcast.cs:6), so declaring this a class
-    /// compiles perfectly well and fails only at the generic call site in
-    /// Task 34. SnapshotCodecTests.SnapshotBroadcast_IsAStructImplementing-
+    /// compiles perfectly well and fails only at the generic call site,
+    /// which is Task 36 (MatchServer's per-connection send) for the server
+    /// and Task 32 for the client's registration — NOT Task 34, which owns
+    /// prediction's ReplicateData/ReconcileData and never touches this type. SnapshotCodecTests.SnapshotBroadcast_IsAStructImplementing-
     /// IBroadcast moves that failure back here.
     ///
     /// `ArraySegment<byte>`, NEVER `byte[]`. Both are serialized by FishNet
     /// out of the box, but `byte[]` deserializes into a FRESH array on every
     /// message — thirty allocations per second per client. `ArraySegment
     /// <byte>` has `[DefaultWriter]`/`[DefaultReader]` pairs (Writer.cs:550,
-    /// Reader.cs:618) that copy into, and slice straight out of, the
-    /// transport's own pooled buffer: no allocation on either side (Task 2
-    /// notes §2). The sending side (Task 28) keeps one preallocated buffer
+    /// Reader.cs:618) that copy into, and slice straight out of, FishNet's
+    /// own serializer buffers — `Writer._buffer` (Writer.cs:275-281) and
+    /// `Reader._buffer` (Reader.cs:359), not the transport's (fix-round
+    /// precision): no allocation on either side (Task 2 notes §2). The sending side (Task 28) keeps one preallocated buffer
     /// per connection and hands out `new ArraySegment<byte>(buffer, 0,
     /// writer.BytesWritten)`.
     ///

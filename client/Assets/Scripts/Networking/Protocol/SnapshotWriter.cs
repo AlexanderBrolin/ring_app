@@ -32,8 +32,17 @@ namespace Ring.Networking.Protocol
     /// length makes the skip pure arithmetic, independent of semantics. Where
     /// a kind does have a record count, that count is the FIRST FIELD INSIDE
     /// its payload (Task 27), not part of this header. The price is one extra
-    /// byte per block — 5 bytes at the five blocks of spec §3.8, inside its
-    /// own "header ~14 B" line item.
+    /// byte per block. FACT CORRECTION (fix-round, re-measured rather than
+    /// quoted from the brief, which got this wrong): the real format overhead
+    /// is `HeaderBytes + 3 * blocks` = 8 + 15 = 23 B at the five blocks of
+    /// spec §3.8, NOT "inside" that section's 14 B line item — it exceeds it
+    /// by 9. The spec's 14 allowed only 6 B for all tags and counts, which is
+    /// not enough for five one-byte tags either, so that line was never
+    /// realizable in ANY encoding, including the plan's own kind+count. The
+    /// consequence that matters is the worst case: 1043 - 14 + 23 = 1052 B
+    /// against a `SnapshotMaxBytes` cap of 1000, so Task 28's truncation
+    /// branch stays reachable and must be budgeted from THIS number, not from
+    /// the spec's. The spec line goes to the Task 57 amendments.
     ///
     /// `flags` IS RESERVED AND NO BIT IS ASSIGNED. It is written and read
     /// verbatim so the field exists on the wire from version 1 onward, but
@@ -47,8 +56,15 @@ namespace Ring.Networking.Protocol
     /// `SnapshotMaxBytes` (Р101), so a silent partial frame would be a
     /// corrupted snapshot nobody noticed. A short or malformed INPUT, by
     /// contrast, is ordinary traffic (loss, MTU, a hostile client), which is
-    /// why SnapshotReader reports rather than throws (Р82). Exactly the
-    /// asymmetry InputCodec established in Task 25.
+    /// why SnapshotReader reports rather than throws (Р82). This asymmetry
+    /// is INTRODUCED HERE, not inherited: `InputCodec` (Task 25) throws on
+    /// BOTH sides (InputCodec.cs:104 and :158), which is right for it — its
+    /// input is a fixed layout handed over by FishNet's codegen, not a
+    /// datagram off the wire. (The brief claimed InputCodec as the precedent;
+    /// it is not, and that was checked only in review.) Once Task 34 puts
+    /// InputCodec on the receive path, its Decode-side throw becomes an
+    /// untrusted-input throw and has to be revisited — tracked as its own bd
+    /// issue rather than fixed from here, that task being closed.
     ///
     /// NOTHING IS WRITTEN UNTIL EVERYTHING FITS. Both write methods check
     /// the remaining room before touching a single byte, so a rejected call
@@ -66,10 +82,14 @@ namespace Ring.Networking.Protocol
     /// they are NOT reused here — nor is InputCodec edited to share them,
     /// that task being closed. The contracts genuinely differ: InputCodec
     /// serializes a FIXED, fully known 8-byte layout and validates the length
-    /// once on entry, so its primitives need no per-operation check; this
-    /// class writes a VARIABLE-LENGTH stream where every operation must first
-    /// establish that the room exists. Two small primitives with different
-    /// preconditions are not duplication of a single one. The threshold at
+    /// once on entry. PRECISION (fix-round): that difference is real only on
+    /// the READ side, where `TryReadU8/U16/U32` check the remainder on every
+    /// call. This writer's own `WriteU16`/`WriteU32` check nothing either —
+    /// `Reserve` validates once per public method, exactly InputCodec's
+    /// pattern, and the two bodies are byte-identical apart from the buffer
+    /// being a field instead of a parameter. So the honest reason they are
+    /// not shared is not a difference of contract but the rule against
+    /// editing a closed task. The threshold at
     /// which they should be lifted into a shared helper is a THIRD consumer:
     /// with two, a shared helper would have to satisfy both contracts and
     /// would end up being the weaker of them.
@@ -81,12 +101,22 @@ namespace Ring.Networking.Protocol
         /// A block payload is described by a u16, so this is the hard
         /// ceiling on one block — far above `SnapshotMaxBytes` (1000 by
         /// default, Р101), which is the ceiling that actually binds in
-        /// production. Kept public because Task 27's per-kind caps are
-        /// budgeted against it.
+        /// production, roughly 65x lower. Public so the guard below can be
+        /// tested, NOT as a budgeting reference: Task 27 must budget against
+        /// the frame cap minus this frame's other blocks, never against this
+        /// constant, whose rejection branch is unreachable in production.
         public const int MaxBlockPayloadBytes = 65535;
 
         readonly System.Span<byte> _dst;
         int _pos;
+
+        /// Room left, in bytes. Task 28's truncation branch has to decide
+        /// "does the next block still fit" on every entity, and the only
+        /// alternative to this accessor is catching the writer's own
+        /// exception as control flow — which would make an ordinary,
+        /// expected outcome (the frame is full, drop the far entities) look
+        /// like the caller bug the throw is meant to signal.
+        public int FreeBytes => _dst.Length - _pos;
 
         public SnapshotWriter(System.Span<byte> destination)
         {
