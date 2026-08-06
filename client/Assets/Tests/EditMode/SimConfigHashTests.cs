@@ -20,18 +20,27 @@ namespace Ring.Simulation.Tests
             // deeper (section -> field, and for Arena, section -> array
             // field -> element), so the sweep runs once per SECTION rather
             // than over one flat type.
+            // Each call also asserts WHICH array-typed fields it skipped:
+            // the sweep cannot bump an array in place, so it hands them to
+            // the element-wise helpers below — and a sixth array field
+            // added to a section later would otherwise be skipped SILENTLY
+            // by both, hashed by nothing and caught by nothing (fix-round
+            // finding of the coordinator; the seven-section guard below
+            // only watches the top level).
             AssertSectionAffectsHash("Hero");
             AssertSectionAffectsHash("Weapon");
             AssertSectionAffectsHash("Chaser");
             AssertSectionAffectsHash("Gunner");
             AssertSectionAffectsHash("Wave");
-            AssertSectionAffectsHash("Arena"); // scalar fields only — arrays below
+            AssertSectionAffectsHash("Arena", // scalar fields only — arrays below
+                "ObstaclePos", "ObstacleRadius", "WallA", "WallB", "WallHalfWidth");
             AssertSectionAffectsHash("Visibility");
 
             // Arena's five array fields: every element (both float2
             // components where relevant) AND the length itself (appending
-            // an element) — Р-decision: hashing "up to the count" would
-            // leave a genuinely longer array's tail invisible.
+            // an element) — coordinator decision, task-23-brief §2.3:
+            // hashing "up to the count" would leave a genuinely longer
+            // array's tail invisible.
             AssertFloat2ArrayFieldAffectsHash("Arena", "ObstaclePos");
             AssertFloatArrayFieldAffectsHash("Arena", "ObstacleRadius");
             AssertFloat2ArrayFieldAffectsHash("Arena", "WallA");
@@ -45,7 +54,7 @@ namespace Ring.Simulation.Tests
             // task-23-brief §5: the naive form of this test (just the
             // AreEqual below) was confirmed GREEN against the constant
             // Compute=>0UL RED-stage stub — 0 trivially equals 0 — despite
-            // the stub being wrong (Т23 report's mutation table). The
+            // the stub being wrong (Task 23 report's mutation table). The
             // second assertion strengthens it before Step 2 (GREEN) starts.
             var a = TestConfigs.Default();
             var b = TestConfigs.Default(); // independently built — see ArrayContentsNotIdentity below
@@ -77,16 +86,33 @@ namespace Ring.Simulation.Tests
         [Test]
         public void NullArray_DoesNotThrow_AndDiffersFromEmpty()
         {
-            var withNull = TestConfigs.Default();
-            withNull.Arena.ObstaclePos = null;
+            // BOTH array helpers get a leg. Fix-round finding I-6: the first
+            // draft nulled ObstaclePos only, which exercises HashFloat2Array
+            // alone — the identical `a == null` guard in HashFloatArray was
+            // covered by nothing, and deleting it survived the whole suite.
+            // default(ArenaSimConfig) carries all five arrays null, and this
+            // class's own doc promises hand-built fixtures never reach the
+            // builder, so the branch is reachable by design, not in theory.
+            var nullFloat2 = TestConfigs.Default();
+            nullFloat2.Arena.ObstaclePos = null;
+            var emptyFloat2 = TestConfigs.Default();
+            emptyFloat2.Arena.ObstaclePos = Array.Empty<float2>();
+            AssertNullDiffersFromEmpty(nullFloat2, emptyFloat2, "ObstaclePos (HashFloat2Array)");
+
+            var nullFloat = TestConfigs.Default();
+            nullFloat.Arena.ObstacleRadius = null;
+            var emptyFloat = TestConfigs.Default();
+            emptyFloat.Arena.ObstacleRadius = Array.Empty<float>();
+            AssertNullDiffersFromEmpty(nullFloat, emptyFloat, "ObstacleRadius (HashFloatArray)");
+        }
+
+        static void AssertNullDiffersFromEmpty(SimConfig withNull, SimConfig withEmpty, string path)
+        {
             ulong nullHash = 0UL;
-            Assert.DoesNotThrow(() => nullHash = SimConfigHash.Compute(in withNull));
-
-            var withEmpty = TestConfigs.Default();
-            withEmpty.Arena.ObstaclePos = Array.Empty<float2>();
-            ulong emptyHash = SimConfigHash.Compute(in withEmpty);
-
-            Assert.AreNotEqual(nullHash, emptyHash);
+            Assert.DoesNotThrow(() => nullHash = SimConfigHash.Compute(in withNull),
+                $"{path}: null-массив бросил вместо маркера длины");
+            Assert.AreNotEqual(nullHash, SimConfigHash.Compute(in withEmpty),
+                $"{path}: null и пустой массив дали один хеш");
         }
 
         [Test]
@@ -114,6 +140,17 @@ namespace Ring.Simulation.Tests
             var netFieldNames = new HashSet<string>();
             foreach (FieldInfo f in typeof(NetStats).GetFields()) netFieldNames.Add(f.Name);
 
+            // Fix-round finding I-5: without these two the sweep below is
+            // VACUOUS — `public sealed class NetStats { }` passed it, so the
+            // ten counters were pinned by nothing at all, and the
+            // class-vs-struct decision (NetStats.cs's own doc: a struct
+            // silently drops increments applied to copies, the exact defect
+            // class phase Ф5 hit four times) was pinned only by a comment.
+            Assert.IsFalse(typeof(NetStats).IsValueType,
+                "NetStats обязан быть классом: структура молча теряла бы инкременты на копиях");
+            Assert.AreEqual(10, netFieldNames.Count,
+                "ожидались десять сетевых счётчиков — состав NetStats изменился");
+
             foreach (FieldInfo f in typeof(MatchStats).GetFields())
                 Assert.IsFalse(netFieldNames.Contains(f.Name),
                     $"NetStats.{f.Name} совпадает по имени с MatchStats.{f.Name}");
@@ -124,15 +161,22 @@ namespace Ring.Simulation.Tests
 
         // ---- reflection sweep helpers (WorldLifecycleTests-style — see flagman doc) ----
 
-        static void AssertSectionAffectsHash(string sectionName)
+        static void AssertSectionAffectsHash(string sectionName, params string[] expectedArrayFields)
         {
             var baselineCfg = TestConfigs.Default();
             ulong baseline = SimConfigHash.Compute(in baselineCfg);
-            FieldInfo sectionField = typeof(SimConfig).GetField(sectionName);
+            FieldInfo sectionField = Section(sectionName);
+            var skippedArrayFields = new List<string>();
             foreach (FieldInfo field in sectionField.FieldType.GetFields())
             {
                 if (field.FieldType == typeof(float2[]) || field.FieldType == typeof(float[]))
-                    continue; // array fields (Arena only) — checked element-by-element separately
+                {
+                    // Handed to AssertFloat*ArrayFieldAffectsHash — and
+                    // recorded, so the caller's expected list proves it was
+                    // handed over rather than lost.
+                    skippedArrayFields.Add(field.Name);
+                    continue;
+                }
 
                 object cfg = TestConfigs.Default();
                 object section = sectionField.GetValue(cfg);
@@ -142,13 +186,26 @@ namespace Ring.Simulation.Tests
                 Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
                     $"{sectionName}.{field.Name} не в хеше");
             }
+
+            CollectionAssert.AreEquivalent(expectedArrayFields, skippedArrayFields,
+                $"{sectionName}: набор массивных полей изменился — новое поле не проверяется " +
+                "ни этим свипом, ни поэлементными хелперами, то есть не пинится ничем");
+        }
+
+        /// Fails loudly with the section's name instead of a bare NRE deeper
+        /// in the helper if SimConfig's field is ever renamed.
+        static FieldInfo Section(string sectionName)
+        {
+            FieldInfo field = typeof(SimConfig).GetField(sectionName);
+            Assert.IsNotNull(field, $"SimConfig.{sectionName} не существует");
+            return field;
         }
 
         static void AssertFloat2ArrayFieldAffectsHash(string sectionName, string fieldName)
         {
             var baselineCfg = TestConfigs.Default();
             ulong baseline = SimConfigHash.Compute(in baselineCfg);
-            FieldInfo sectionField = typeof(SimConfig).GetField(sectionName);
+            FieldInfo sectionField = Section(sectionName);
             FieldInfo arrayField = sectionField.FieldType.GetField(fieldName);
 
             object probeCfg = TestConfigs.Default();
@@ -193,7 +250,7 @@ namespace Ring.Simulation.Tests
         {
             var baselineCfg = TestConfigs.Default();
             ulong baseline = SimConfigHash.Compute(in baselineCfg);
-            FieldInfo sectionField = typeof(SimConfig).GetField(sectionName);
+            FieldInfo sectionField = Section(sectionName);
             FieldInfo arrayField = sectionField.FieldType.GetField(fieldName);
 
             object probeCfg = TestConfigs.Default();

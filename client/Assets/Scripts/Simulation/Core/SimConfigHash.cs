@@ -3,7 +3,7 @@ using Unity.Mathematics;
 namespace Ring.Simulation.Core
 {
     /// Balance-parity hash for the network handshake (Stage 2 Task 23, spec
-    /// §3.8, Р52/Р139): FNV-1a 64 over EVERY balance number of SimConfig, in
+    /// §3.8, Р52): FNV-1a 64 over EVERY balance number of SimConfig, in
     /// declaration order — used by Task 39 to detect a client/server
     /// balance mismatch before a match starts. Distinct from StateHash64's
     /// own use in SimulationWorld.StateHash(): that hash covers per-tick

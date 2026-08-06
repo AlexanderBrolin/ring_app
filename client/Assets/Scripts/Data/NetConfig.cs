@@ -13,23 +13,35 @@ namespace Ring.Data
     /// balance changed. Tasks 24-29 read these fields as their own
     /// defaults, which is why this class ships first in phase Ф6.
     ///
-    /// LatencySimRttMs/LatencySimLossPercent are stored ONE-DIRECTIONAL at
-    /// the transport but ROUND-TRIP/per-direction here: FishNet's own
-    /// LatencySimulator tooltip talks about the host doubling loss, but
-    /// that doubling is a transport-side concern, not something this class
-    /// reflects. This class stores the RTT and the per-direction loss
-    /// percentage exactly as the owner tunes them; halving the RTT into the
-    /// transport's one-way setting is Task 33's job (Р107), not this
-    /// class's.
+    /// LatencySimRttMs stores the ROUND-TRIP time; the transport's own knob
+    /// is ONE-WAY. FishNet's LatencySimulator applies its _latency once per
+    /// direction (LatencySimulator.cs:245-248/:286, called from
+    /// TransportManager.cs:697 "to client" and :772 "to server"), so
+    /// RTT = 2 x Latency and Task 33 must hand the transport HALF of this
+    /// field (Р107). The tooltip on that field claiming "when acting as
+    /// host this value will be doubled" (LatencySimulator.cs:84) is FALSE —
+    /// no code path multiplies it, and _simulateHost is a boolean "simulate
+    /// clientHost at all" switch, not a multiplier (Task 2 note §8). Loss is
+    /// one-way for the same reason: LatencySimLossPercent is the
+    /// PER-DIRECTION percentage the owner tunes, and 5% here compounds to
+    /// 1 - 0.95^2 = 9.75% round-trip.
     ///
     /// SnapshotMaxBytes defaults to 1000, below the 1282-byte Inspector
-    /// ceiling (Tugboat.GetMTU() 1350 minus a 68-byte header allowance,
-    /// Р101). The gap is deliberate: FishNet silently upgrades an oversized
+    /// ceiling. Those are two different transport numbers and must not be
+    /// conflated (Р101, Task 2 note §3): Tugboat.GetMTU() returns
+    /// 1282 = MAXIMUM_UDP_MTU (1350) - NetConstants.MaxUdpHeaderSize (68)
+    /// for every channel, while the socket's own size check runs against
+    /// the raw 1350. Task 41's NetInvariants asks the transport via
+    /// GetMTU() at run time rather than trusting either literal. The gap
+    /// below our cap is deliberate: FishNet silently upgrades an oversized
     /// Unreliable send to Reliable instead of dropping the packet, which
     /// would quietly break the "state travels unreliably" model this
-    /// project relies on. The cap enforced here is OURS, not the
-    /// transport's, so Task 28's snapshot truncation has real headroom to
-    /// operate in before that silent channel upgrade could ever trigger.
+    /// project relies on. And the cap is OURS, not the transport's, which
+    /// is exactly why Task 28's truncation branch is REACHABLE and testable
+    /// at all: the spec's worst-case payload is ~1043 B (§3.8), over this
+    /// 1000-byte cap but well under 1282, so truncation triggers on our
+    /// own budget long before the transport could ever silently switch
+    /// channels.
     ///
     /// [Range] attributes below are Inspector hints only. The real
     /// cross-config checks (e.g. GhostConfirmTicks > InterpBufferTicks) live
@@ -43,17 +55,28 @@ namespace Ring.Data
         // tick rate, not a separate simulation clock.
         [Range(1, 240)] public int TickRate = 30;
 
-        // Integer literal by design (Р76), not derived at runtime via
-        // ceil(0.1f / (1f / 30f)) — that float division rounds a hair over
-        // 3, so ceil pushes it to 4, a classic float-precision trap. > 0
-        // requires NetInvariants (Task 41) to hold.
+        // Stored as an integer literal by design (Р76) instead of being
+        // derived from a float expression at run time. FACT CORRECTION
+        // (Stage 2 Task 23 fix-round): Р76, spec §3.7 and the plan all
+        // justify this with "ceil(0.1f / (1f / 30f)) yields 4 in float" —
+        // that arithmetic is wrong. 0.1f / (1f / 30f) rounds to exactly
+        // 3.0f (the exact quotient is 3 - 1.12e-7, inside half a ULP of 3),
+        // so ceil gives 3, not 4; the 4 only appears for the DIFFERENT
+        // expression 0.1f * 30 evaluated in double (3.0000000447). The
+        // decision itself is unaffected — an interpolation window is a tick
+        // count the owner tunes, not a quantity to re-derive at run time.
+        // > 0 is required by NetInvariants (Task 41).
         [Range(1, 10)] public int InterpBufferTicks = 3;
 
-        // One second of staleness tolerance at 30 Hz before a ghost is
-        // considered stalled.
+        // Ticks an entity may go without a fresh snapshot before it freezes
+        // and then fades (spec §3.9, Р39/Р77 — consumed by StalePolicy,
+        // Task 37). Default 3 = 100 ms at 30 Hz; the Range ceiling of 30 is
+        // one full second.
         [Range(1, 30)] public int InterpMaxStaleTicks = 3;
 
-        // Two seconds of render-clock drift at 30 Hz before a hard snap.
+        // Render-clock drift tolerated before a hard snap instead of a slew
+        // (spec §3.9, Р57 — consumed by RenderClock, Task 31). Default 10 =
+        // 333 ms at 30 Hz; the Range ceiling of 60 is two seconds.
         [Range(1, 60)] public int RenderClockSnapTicks = 10;
 
         // Ticks an event stays redundantly re-sent before being dropped.
