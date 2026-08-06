@@ -36,9 +36,13 @@ namespace Ring.Networking.Protocol
     /// quoted from the brief, which got this wrong): the real format overhead
     /// is `HeaderBytes + 3 * blocks` = 8 + 15 = 23 B at the five blocks of
     /// spec §3.8, NOT "inside" that section's 14 B line item — it exceeds it
-    /// by 9. The spec's 14 allowed only 6 B for all tags and counts, which is
-    /// not enough for five one-byte tags either, so that line was never
-    /// realizable in ANY encoding, including the plan's own kind+count. The
+    /// by 9. The spec's 14 left 6 B for all tags and counts of five blocks:
+    /// enough for five bare 1-byte tags with a byte to spare, but not for
+    /// tags PLUS any per-block count or length — the plan's own kind+count
+    /// needs 10 B, this format needs 15. So that line was never realizable
+    /// in any encoding that can actually delimit blocks (precision fixed in
+    /// a later round: the first wording claimed five tags alone did not
+    /// fit, which is arithmetically false). The
     /// consequence that matters is the worst case: 1043 - 14 + 23 = 1052 B
     /// against a `SnapshotMaxBytes` cap of 1000, so Task 28's truncation
     /// branch stays reachable and must be budgeted from THIS number, not from

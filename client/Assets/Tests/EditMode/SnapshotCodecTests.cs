@@ -27,15 +27,24 @@ namespace Ring.Simulation.Tests
     // kinds, payload bytes, payload lengths) was checked by grep against
     // client/Assets/Data/*.asset and appears in none of them — the trap that
     // caught three fixtures earlier in this phase (3.8 = MaxAimHeight,
-    // 100 = MaxHp, 1.35 = BodyTop). FACT CORRECTION (fix-round, re-grepped
-    // per value rather than restated): 22 and 14 are real balance numbers —
-    // GameFeelConfig.ShakeFrequency 22, SlideDustBurstCount 14 and
-    // MobGunnerConfig.ProjectileSpeed 14 — while 19 occurs in NO .asset as a
-    // value at all, and none of the three lives in ArenaConfig.asset as the
-    // earlier note claimed. The truncation boundaries below (8, 14, 21) are
-    // computed from SnapshotWriter's own constants regardless, which is the
-    // right shape for a different reason: they are structural, so writing
-    // them out would freeze a layout the constants already own.
+    // 100 = MaxHp, 1.35 = BodyTop). VERIFIED STATEMENT, third attempt — the
+    // history is the lesson. The first note said "19, 22 and 14 all occur in
+    // ArenaConfig.asset"; a fix-round "corrected" it to "none of the three
+    // lives in ArenaConfig", which was WORSE: that grep matched only
+    // `key: value` at end of line and could not see inline values, and
+    // ArenaConfig.asset does hold 14 and 22 as obstacle coordinates
+    // (`- Pos: {x: 14, y: -9}` :25 and `{x: 30, y: 22}` :29). Re-checked with
+    // a token-boundary grep across every .asset: 14 also lives in
+    // MobGunnerConfig.ProjectileSpeed and GameFeelConfig.SlideDustBurstCount,
+    // 22 also in GameFeelConfig.ShakeFrequency, and 19 appears nowhere as a
+    // value. Only the claim about 19 was ever wrong. Moral, and the reason
+    // this paragraph is long: a universal negative ("appears in none of
+    // them") is only as good as the pattern that searched for it — state
+    // where you looked, not just what you concluded. The truncation
+    // boundaries below (8, 14, 21) come from SnapshotWriter's constants
+    // anyway, which is right for a structural reason, not this one: they are
+    // dictated by the layout, so spelling them out would freeze a number the
+    // constants already own.
     // Structural numbers (byte offsets, buffer padding, sentinel tails) are
     // not fixtures: they are dictated by the wire layout or are pure test
     // scaffolding, and colliding with a balance number carries no meaning
@@ -115,6 +124,12 @@ namespace Ring.Simulation.Tests
             var buffer = Filled(SnapshotWriter.HeaderBytes);
             var writer = new SnapshotWriter(buffer);
             writer.WriteHeader(Epoch, Tick, Flags);
+            // Fix-round 2 finding F-D: FreeBytes shipped with no test, so a
+            // mutation of its formula would have gone unnoticed — in a round
+            // whose whole point was closing mutation gaps. Task 28 asks this
+            // on every entity to decide whether the next block still fits.
+            Assert.AreEqual(buffer.Length - SnapshotWriter.HeaderBytes, writer.FreeBytes,
+                "FreeBytes must report the room left after the header");
             Assert.AreEqual(SnapshotWriter.HeaderBytes, writer.BytesWritten,
                 "a header-only snapshot occupies exactly HeaderBytes");
 
@@ -311,7 +326,9 @@ namespace Ring.Simulation.Tests
             // WELL-FORMED frame, not a truncated one — those three lengths
             // must be reported clean. Every other length must be reported
             // truncated. Computed from the writer's own constants because
-            // the literals 14 and 22 collide with ArenaConfig.asset.
+            // they are structural, not fixture, numbers — see the fixture
+            // note at the top of this file for why "14 and 22 collide with
+            // ArenaConfig" is true but is NOT the reason.
             int boundary0 = SnapshotWriter.HeaderBytes;
             int boundary1 = boundary0 + SnapshotWriter.BlockHeaderBytes + PayloadA.Length;
             int boundary2 = boundary1 + SnapshotWriter.BlockHeaderBytes + PayloadB.Length;
@@ -485,10 +502,21 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(reader.TryReadHeader(out _, out _, out _),
                 "and the poisoned cursor refuses the header too");
 
-            var twice = new SnapshotReader(frame);
+            // Fix-round 2 finding F-C: the fixture below is built so the
+            // first block's kind byte EQUALS ProtocolVersion.Current. With
+            // the re-read guard removed, the second TryReadHeader therefore
+            // parses a phantom but perfectly VALID header out of the block
+            // stream and returns true — so this assertion fails directly on
+            // the mutation, instead of passing because the refusal happened
+            // to come from a version mismatch. Earlier versions of this test
+            // depended on that accident, which Task 27 is free to break the
+            // moment it assigns a kind equal to 1.
+            byte[] phantom = BuildFrameWhoseFirstBlockKindIs(ProtocolVersion.Current);
+            var twice = new SnapshotReader(phantom);
             Assert.IsTrue(twice.TryReadHeader(out _, out _, out _));
             Assert.IsFalse(twice.TryReadHeader(out _, out _, out _),
-                "a second header read is a sequencing error, not a rewind");
+                "a second header read is a sequencing error, not a rewind — "
+                + "even when the bytes at the cursor would parse as a valid header");
             Assert.IsTrue(twice.Failed);
             // Fix-round finding F7: without these two the test passed with
             // the guard REMOVED — the second call would have parsed the
@@ -535,6 +563,26 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(reader.TryReadBlock(KnownAB, out byte kind, out _),
                 "the attacker's chosen block must NOT be delivered after a refusal");
             Assert.AreEqual((byte)0, kind, "a refused read hands back no kind");
+        }
+
+        /// A frame whose FIRST BLOCK's kind byte is chosen by the caller —
+        /// used to make a phantom re-read of the header parse cleanly (F-C).
+        static byte[] BuildFrameWhoseFirstBlockKindIs(byte kind)
+        {
+            var f = new System.Collections.Generic.List<byte>();
+            f.Add(ProtocolVersion.Current);
+            f.Add(0x34); f.Add(0x12);                                       // epoch, LE
+            f.Add(0xEF); f.Add(0xBE); f.Add(0xAD); f.Add(0xDE);             // tick, LE
+            f.Add(0);                                                       // flags
+            f.Add(kind);
+            f.Add((byte)PayloadA.Length); f.Add(0);                         // payloadBytes, LE
+            f.AddRange(PayloadA);
+            // Enough bytes follow the block header for a phantom 8-byte
+            // header to be read in full, so the mutation cannot be caught by
+            // truncation instead of by the guard.
+            f.AddRange(PayloadB);
+            f.AddRange(PayloadB);
+            return f.ToArray();
         }
 
         // ---- 9. The write side throws — and never writes partially ----
@@ -693,7 +741,9 @@ namespace Ring.Simulation.Tests
             // IBroadcast` (Task 2 notes §1, Runtime/Broadcast/IBroadcast.cs).
             // Turning this into a class compiles fine on its own — the
             // interface is a marker with no members — and only breaks at the
-            // Broadcast<T> call site in Task 34. Pinned here so the break
+            // Broadcast<T> call site — Task 36 (server send) and Task 32
+            // (client receive), NOT Task 34, which owns prediction only.
+            // Pinned here so the break
             // lands in Task 26's own suite instead.
             Assert.IsTrue(typeof(SnapshotBroadcast).IsValueType,
                 "SnapshotBroadcast must be a struct — FishNet's Broadcast<T> is constrained to structs");
