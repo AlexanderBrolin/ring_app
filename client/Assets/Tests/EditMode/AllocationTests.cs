@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Ring.Simulation.Core;
+using Ring.Simulation.Visibility;
 using Unity.Mathematics;
 // AllocatingGCMemory is an extension method (UnityEngine.TestTools.Constraints) —
 // a fully-qualified call site doesn't compile (CS1061), so both usings below
@@ -154,6 +155,61 @@ namespace Ring.Simulation.Tests
                     $"player {i} must survive the FULL measured window, not just its first tick");
             Assert.Greater(w.ProjectileCount, 0,
                 "a live projectile must still be in flight at the end of the measured window too");
+        }
+
+        [Test]
+        public void VisibilitySystem_Compute_DoesNotAllocateGC()
+        {
+            // Stage 2 Task 19 fix-round 1 (I-4): spec §4's "Расширяются"
+            // section requires an AllocationTests entry for
+            // VisibilitySystem, and no task in the plan (Т19-Т22) was ever
+            // assigned to write it — Compute's own "zero allocations after
+            // the constructor" claim (VisibilitySystem.cs's own doc) lived
+            // as prose only until this test.
+            //
+            // Unlike Tick_DoesNotAllocateGC/SaturatedTrio above, Compute
+            // only READS player/mob positions — it never fires a shot or
+            // resolves damage — so no combat warm-up is needed here. The mob
+            // crowd is spawned directly via the shared SpawnMobsToCap seam
+            // instead of TestWorlds.Saturated's own sustained-fire warm-up:
+            // nothing below ever calls Tick(), so nothing can kill a mob out
+            // from under the measurement the way Saturated's own 100-tick
+            // hold-fire warm-up does (a handful of the 96 routinely die to
+            // player fire before Saturated even returns).
+            var config = TestConfigs.Default();
+            var w = new SimulationWorld(1, config);
+            TestWorlds.SpawnMobsToCap(w);
+            Assert.AreEqual(config.Arena.MaxMobs, w.MobCount,
+                "fixture premise: every mob slot must be filled for this measurement "
+                + "to exercise the FULL per-tick mob-evaluation loop, not a near-empty world");
+
+            int capacity = config.Arena.MaxMobs + config.Arena.MaxPlayers;
+            var setA = new VisibilitySet(capacity);
+            var setB = new VisibilitySet(capacity);
+            // Warm-up call OUTSIDE the measured window (same discipline as
+            // Tick_DoesNotAllocateGC above): the very first Compute() call
+            // populates setB with real hysteresis/linger state off an empty
+            // setA, so the ping-pong loop below always measures against a
+            // buffer that already carries a realistic tracked-entity
+            // population, not a permanently-empty `previous`.
+            VisibilitySystem.Compute(w, 0, config.Visibility, setA, setB);
+
+            VisibilitySet prev = setB, cur = setA;
+            Assert.That(() =>
+            {
+                for (int i = 0; i < 1000; i++)
+                {
+                    VisibilitySystem.Compute(w, 0, config.Visibility, prev, cur);
+                    (prev, cur) = (cur, prev);
+                }
+            }, Is.Not.AllocatingGCMemory());
+
+            // Fixture-liveness check AFTER the measured window (urok 87): the
+            // saturated world must still be fully loaded at the end, not
+            // merely at the start.
+            Assert.AreEqual(config.Arena.MaxMobs, w.MobCount,
+                "fixture premise: the saturated world must still be fully loaded at "
+                + "the end of the measured window too");
         }
     }
 }

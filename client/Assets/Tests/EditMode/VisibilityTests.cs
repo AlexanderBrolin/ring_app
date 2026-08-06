@@ -12,6 +12,17 @@ namespace Ring.Simulation.Tests
     /// MobAiTests' LineOfFire_* fixtures) so the visibility numbers under test
     /// (cfg.Visibility.*) are never entangled with DefaultArena()'s own
     /// obstacle/wall geometry.
+    ///
+    /// Fix-round 1 (coordinator review) added eight fixtures beyond the
+    /// original eight: positive witnesses for the empty-Compute-body mutant
+    /// (I-1), the first multiplayer fixtures in the file (I-2 — every
+    /// original fixture ran PlayerCount == 1, so the other-player branch and
+    /// VisibilityIds' own disjoint-id-space claim were both untested), the
+    /// Compute aliasing guard (I-3), a genuine LoS-break linger fixture
+    /// alongside the pre-existing range-break one (I-5), the
+    /// hysteresis-reentry-from-linger semantics decision (item 6), and the
+    /// Chaser-vs-Hero radius discrimination gap (M-3) — see each fixture's
+    /// own doc for the specific mutation it exists to catch.
     public class VisibilityTests
     {
         static int Capacity(in SimConfig cfg) => cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
@@ -26,12 +37,21 @@ namespace Ring.Simulation.Tests
             // Open arena: no obstacles/walls, so LoS is never the reason this
             // mob is hidden — only the plain distance gate is exercised.
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(cfg.Visibility.SightRadius + 1f, 0f));
+            // Fix-round 1 (I-1): a second, clearly-visible mob — without it,
+            // an empty Compute() body satisfies this test's only assertion
+            // (mobId is never IN an empty set either) just as well as a
+            // correct implementation. This witness proves Compute actually
+            // ran and actually populated `result`, not merely that it left
+            // mobId out of it.
+            int nearMobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
 
             var previous = new VisibilitySet(Capacity(cfg));
             var result = new VisibilitySet(Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             Assert.IsFalse(result.Contains(mobId));
+            Assert.IsTrue(result.Contains(nearMobId),
+                "witness: a clearly-visible mob must actually be reported visible");
         }
 
         // --- 2: BehindObstacle_NotVisible ---
@@ -50,12 +70,18 @@ namespace Ring.Simulation.Tests
 
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f)); // dead ahead, well within SightRadius
+            // Fix-round 1 (I-1): witness mob well clear of the obstacle's own
+            // ray (straight up the y-axis, nowhere near x=5) — proves Compute
+            // actually populated `result`, not merely that it never added mobId.
+            int nearMobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
 
             var previous = new VisibilitySet(Capacity(cfg));
             var result = new VisibilitySet(Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             Assert.IsFalse(result.Contains(mobId));
+            Assert.IsTrue(result.Contains(nearMobId),
+                "witness: a mob clear of the obstacle must actually be reported visible");
         }
 
         // --- 3: BehindWall_NotVisible ---
@@ -75,12 +101,17 @@ namespace Ring.Simulation.Tests
 
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f));
+            // Fix-round 1 (I-1): witness mob clear of the wall's stadium
+            // (straight up the y-axis; the wall only spans roughly x in [4,6]).
+            int nearMobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
 
             var previous = new VisibilitySet(Capacity(cfg));
             var result = new VisibilitySet(Capacity(cfg));
             VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
 
             Assert.IsFalse(result.Contains(mobId));
+            Assert.IsTrue(result.Contains(nearMobId),
+                "witness: a mob clear of the wall must actually be reported visible");
         }
 
         // --- 4: EdgePeek_IsVisible_ConservativeLos ---
@@ -98,9 +129,14 @@ namespace Ring.Simulation.Tests
             // (-mobRadius) shrinks the blocking radius to
             // (obstacleRadius - mobRadius), and the same offset clears it —
             // exactly the "corpus peeks past the edge, only the centre is
-            // hidden" case spec Р18 describes (mirrors
-            // MobAiTests.LineOfFire_NegativePadClamped's own numbers, scaled
-            // to a mob's actual radius instead of Hero.Radius).
+            // hidden" case spec Р18 describes. Fix-round 1 (M-4): this is
+            // the SAME fixture shape as MobAiTests.LineOfFire_NegativePadClamped
+            // (a circle straddling the ray by less than its own radius) but
+            // NOT the same branch — that test's obstacle is small enough for
+            // HasLineOfFire's per-obstacle pad clamp (Targeting.cs) to
+            // actually engage; this one (obstacleRadius 0.6 vs mobRadius 0.5)
+            // never reaches the clamp at all and exercises the plain,
+            // unclamped conservative-pad arithmetic instead.
             float obstacleRadius = mobRadius + 0.1f; // 0.6
             float offset = obstacleRadius - 0.05f;   // 0.55: inside 0.6 (strict-blocked), outside 0.1 (conservative-clear)
             cfg.Arena.ObstaclePos = new[] { new float2(5f, offset) };
@@ -126,7 +162,57 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, result.LingerOf(mobId));
         }
 
-        // --- 5: Hysteresis_KeepsVisibleUntilExitRadius ---
+        // --- 5: EdgePeek_UsesTargetTypeRadius_NotHeroRadius ---
+
+        [Test]
+        public void EdgePeek_UsesTargetTypeRadius_NotHeroRadius()
+        {
+            var cfg = TestConfigs.Open();
+            float mobRadius = cfg.Chaser.Radius;  // 0.5
+            float heroRadius = cfg.Hero.Radius;   // 0.45
+            // Fix-round 1 (M-3): EdgePeek_IsVisible_ConservativeLos's own
+            // 0.55 m offset cannot tell these two fields apart — Chaser.Radius
+            // and Gunner.Radius are both 0.5 in this config, so a mutant
+            // swapping `w.MobConfigFor(m.Type).Radius` for `w.Config.Hero.Radius`
+            // (VisibilitySystem.cs:45) is numerically invisible to every
+            // other fixture in this file.
+            Assert.Greater(mobRadius, heroRadius,
+                "test setup: this fixture only discriminates the two config "
+                + "fields if the mob really is bigger than the hero");
+
+            cfg.Arena.ObstacleCount = 1;
+            float obstacleRadius = mobRadius + 0.1f; // 0.6, same shape as EdgePeek_IsVisible_ConservativeLos
+            // Midpoint of the two clamp-free blocking thresholds
+            // (obstacleRadius - mobRadius = 0.1 and obstacleRadius - heroRadius
+            // = 0.15): strictly inside the 0.05 m band where the two radii
+            // disagree about whether the ray is blocked.
+            float offset = obstacleRadius - (mobRadius + heroRadius) * 0.5f;
+            cfg.Arena.ObstaclePos = new[] { new float2(5f, offset) };
+            cfg.Arena.ObstacleRadius = new[] { obstacleRadius };
+
+            var w = new SimulationWorld(1, cfg);
+            int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f));
+
+            // test setup: pin BOTH ends of the discriminating window directly
+            // through Targeting.HasLineOfFire — the same seam Compute itself
+            // calls — so this offset is proven to sit in the disagreement
+            // band, not merely happen to produce the right answer for the
+            // wrong reason.
+            Assert.IsTrue(Targeting.HasLineOfFire(float2.zero, new float2(10f, 0f), -mobRadius, cfg.Arena),
+                "test setup: padding by the MOB's own radius must clear this obstacle");
+            Assert.IsFalse(Targeting.HasLineOfFire(float2.zero, new float2(10f, 0f), -heroRadius, cfg.Arena),
+                "test setup: padding by Hero.Radius instead must still be blocked, or this offset "
+                + "doesn't discriminate the two config fields at all");
+
+            var previous = new VisibilitySet(Capacity(cfg));
+            var result = new VisibilitySet(Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
+
+            Assert.IsTrue(result.Contains(mobId),
+                "a Chaser's own radius (0.5), not Hero.Radius (0.45), must be the pad Compute uses for its LoS gate");
+        }
+
+        // --- 6: Hysteresis_KeepsVisibleUntilExitRadius ---
 
         [Test]
         public void Hysteresis_KeepsVisibleUntilExitRadius()
@@ -162,12 +248,97 @@ namespace Ring.Simulation.Tests
             // LingerOf, which this assertion catches and Contains() alone would not.
             Assert.AreEqual(0, setA.LingerOf(mobId),
                 "still WITHIN the hysteresis band counts as visible now, not lingering");
+
+            // Fix-round 1 (M-2): the step above (hysteresisDist, roughly
+            // midway through the (1.5, 4.0) m gap between SightRadius and
+            // SightRadius + ExitHysteresis) never touches the boundary
+            // itself — a mutant flipping `dist <= radius` to `dist < radius`
+            // (VisibilitySystem.cs) survives every assertion so far. Move
+            // EXACTLY onto the widened radius: `<=` must still count this as
+            // visible now.
+            MobState mBoundary = w.Mobs[0];
+            mBoundary.Pos = new float2(cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis, 0f);
+            w.SetMobForTest(0, mBoundary);
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 2: exactly on the widened radius
+            Assert.IsTrue(setB.Contains(mobId), "exactly SightRadius + ExitHysteresis must still count as visible now");
+            Assert.AreEqual(0, setB.LingerOf(mobId),
+                "exactly SightRadius + ExitHysteresis must read as visible NOW (inclusive boundary), not lingering");
+
+            // One step past the boundary: no longer visible now, but — since
+            // it WAS tracked as visible last tick — freshly enters the linger
+            // grace period rather than being dropped outright.
+            const float epsilon = 1e-3f;
+            MobState mBeyond = w.Mobs[0];
+            mBeyond.Pos = new float2(cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis + epsilon, 0f);
+            w.SetMobForTest(0, mBeyond);
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setB, setA); // tick 3: just past it
+            Assert.IsTrue(setA.Contains(mobId),
+                "just past the widened radius must still be tracked, via linger, not dropped outright");
+            Assert.AreEqual(cfg.Visibility.LingerTicks, setA.LingerOf(mobId),
+                "just past the widened radius must read as freshly LINGERING, not visible now");
         }
 
-        // --- 6: LingerTicks_KeepVisibleAfterLosBreak ---
+        // --- 7: HysteresisBand_ReenteredFromLinger_ReadsAsVisibleNow ---
 
         [Test]
-        public void LingerTicks_KeepVisibleAfterLosBreak()
+        public void HysteresisBand_ReenteredFromLinger_ReadsAsVisibleNow()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
+
+            var setA = new VisibilitySet(Capacity(cfg));
+            var setB = new VisibilitySet(Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 0: visible
+            Assert.IsTrue(setB.Contains(mobId), "test setup: must start visible");
+
+            // Move fully out of range: the NEXT tick starts the linger countdown.
+            float farDist = cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis + 1f;
+            MobState m = w.Mobs[0];
+            m.Pos = new float2(farDist, 0f);
+            w.SetMobForTest(0, m);
+
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setB, setA); // tick 1: linger begins
+            Assert.IsTrue(setA.Contains(mobId), "test setup: must be lingering, not yet dropped");
+            Assert.AreEqual(cfg.Visibility.LingerTicks, setA.LingerOf(mobId),
+                "test setup: must be at the FIRST linger tick, still mid-grace-period");
+
+            // Fix-round 1 (item 6, coordinator's decision: keep the plan's
+            // literal `previous.Contains(id)` semantics for `wasTracked`,
+            // spec Р18): move BACK into the hysteresis band — past the PLAIN
+            // SightRadius but still within SightRadius + ExitHysteresis —
+            // while the entity is still only LINGERING (LingerOf > 0), not
+            // fully visible. `wasTracked` reads true for a lingering entity
+            // exactly the same as for a visible one (VisibilitySystem.cs),
+            // so the WIDENED radius applies here too, and this distance
+            // clears it — the entity must read as visible NOW (LingerOf 0),
+            // not as continuing to linger. A stricter reading of the spec's
+            // words ("if it WAS VISIBLE") — only reactivating a lingering
+            // entity once it clears the PLAIN SightRadius — would leave it
+            // still counting down instead; none of the original eight
+            // Task 19 tests told the two apart.
+            float hysteresisDist = cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis * 0.5f;
+            m = w.Mobs[0];
+            m.Pos = new float2(hysteresisDist, 0f);
+            w.SetMobForTest(0, m);
+
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 2: back inside the widened band
+            Assert.IsTrue(setB.Contains(mobId), "must be visible again once back within the hysteresis band");
+            Assert.AreEqual(0, setB.LingerOf(mobId),
+                "re-entering the WIDENED (hysteresis) radius while lingering must read as visible NOW, not still lingering");
+        }
+
+        // --- 8: LingerTicks_KeepVisibleAfterRangeLoss ---
+
+        // Fix-round 1 (I-5): renamed from LingerTicks_KeepVisibleAfterLosBreak
+        // — TestConfigs.Open() carries no obstacles/walls at all, so this
+        // fixture's break is a pure RANGE loss; LoS can never be the reason
+        // here. The LingerTicks_KeepVisibleAfterLosBreak name now belongs to
+        // the wall-based fixture below, the first one in this file to
+        // actually break the LoS operand of Compute's
+        // `dist <= radius && HasLineOfFire(...)` gate.
+        [Test]
+        public void LingerTicks_KeepVisibleAfterRangeLoss()
         {
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
@@ -203,7 +374,67 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(cur.Contains(mobId), "linger must expire after exactly LingerTicks ticks");
         }
 
-        // --- 7: SwapRemove_DoesNotTransferState ---
+        // --- 9: LingerTicks_KeepVisibleAfterLosBreak ---
+
+        [Test]
+        public void LingerTicks_KeepVisibleAfterLosBreak()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Arena.WallCount = 1;
+            // Same wall shape as BehindWall_NotVisible: blocks anything
+            // crossing x=5 within roughly y in [-6,6] but leaves the y-axis
+            // itself clear.
+            cfg.Arena.WallA = new[] { new float2(5f, -5f) };
+            cfg.Arena.WallB = new[] { new float2(5f, 5f) };
+            cfg.Arena.WallHalfWidth = new[] { 1f };
+
+            var w = new SimulationWorld(1, cfg);
+            // Fix-round 1 (I-5): starts at the SAME distance from the
+            // observer (10 m) it will end at after the move below — only the
+            // ANGLE changes, from clear (straight up the y-axis, nowhere
+            // near the wall) to blocked (dead ahead, straight through the
+            // wall's own stadium). Isolates a pure LoS break from a range
+            // break, which LingerTicks_KeepVisibleAfterRangeLoss
+            // (TestConfigs.Open(), no geometry at all) cannot exercise no
+            // matter how it moves its mob.
+            int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
+
+            var setA = new VisibilitySet(Capacity(cfg));
+            var setB = new VisibilitySet(Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, setA, setB); // tick 0: visible via the clear angle
+            Assert.IsTrue(setB.Contains(mobId), "test setup: must start visible");
+            Assert.AreEqual(0, setB.LingerOf(mobId));
+
+            // test setup: the blocked angle really must read as blocked, or
+            // this fixture never leaves the visible state to linger from.
+            Assert.IsFalse(Targeting.HasLineOfFire(float2.zero, new float2(10f, 0f), -cfg.Chaser.Radius, cfg.Arena),
+                "test setup: the blocked angle must actually read as blocked");
+
+            // Rotate onto the blocked angle — same 10 m distance from the observer.
+            MobState m = w.Mobs[0];
+            m.Pos = new float2(10f, 0f);
+            w.SetMobForTest(0, m);
+
+            // The interface always passes TWO DISTINCT VisibilitySet
+            // instances (previous, result) — ping-pong setA/setB below to
+            // match real per-tick usage instead of reusing one buffer for
+            // both roles.
+            VisibilitySet prev = setB, cur = setA;
+            for (int expectedLinger = cfg.Visibility.LingerTicks; expectedLinger >= 1; expectedLinger--)
+            {
+                VisibilitySystem.Compute(w, 0, cfg.Visibility, prev, cur);
+                Assert.IsTrue(cur.Contains(mobId), $"must still linger at counter {expectedLinger}");
+                Assert.AreEqual(expectedLinger, cur.LingerOf(mobId));
+                (prev, cur) = (cur, prev);
+            }
+
+            // The grace period (exactly LingerTicks ticks, spec Р19) is now
+            // spent — one more invisible tick must drop the entity entirely.
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, prev, cur);
+            Assert.IsFalse(cur.Contains(mobId), "linger must expire after exactly LingerTicks ticks, LoS break or not");
+        }
+
+        // --- 10: SwapRemove_DoesNotTransferState ---
 
         [Test]
         public void SwapRemove_DoesNotTransferState()
@@ -248,9 +479,31 @@ namespace Ring.Simulation.Tests
 
             Assert.IsFalse(setA.Contains(mobCId),
                 "the survivor that moved into the dead mob's slot must not inherit that slot's PREVIOUS visibility state");
+
+            // Fix-round 1 (C-1): pin the whole COMPOSITION of the result, not
+            // just mobCId's absence. Under the exact defect this test's name
+            // promises to catch (VisibilitySystem.cs's mob loop keyed by the
+            // slot index `i` instead of `m.Id`), slot 0 (mobA) gets evaluated
+            // under id 0 instead of its real id 1 — a fresh, never-tracked
+            // key, so it reports visible-by-plain-distance same as always —
+            // and slot 1 (mobC, moved there by the swap) gets evaluated
+            // under id 1, which happens to be mobA's REAL id and IS present
+            // in `previous` (visible last tick) — so mobC wrongly inherits
+            // wasTracked=true off mobA's old entry and, since mobC's own
+            // distance sits in the hysteresis dead zone, comes out visible
+            // too. `Contains(mobCId)` above stays false either way (nothing
+            // is ever written under mobC's REAL id 3) and cannot tell the
+            // two runs apart. The SIZE can: the mutant makes THREE Add calls
+            // this tick (self, slot 0 under key 0, slot 1 under key 1)
+            // instead of the correct TWO (self, mobA under its real id 1) —
+            // Count 3 instead of 2, independent of which specific keys the
+            // mutant happens to collide on.
+            Assert.AreEqual(2, setA.Count,
+                "only the observer and the still-visible survivor mobA belong in tick 1's result");
+            Assert.IsTrue(setA.Contains(mobAId), "mobA itself must remain visible after the swap");
         }
 
-        // --- 8: OwnPlayer_AlwaysVisibleToSelf ---
+        // --- 11: OwnPlayer_AlwaysVisibleToSelf ---
 
         [Test]
         public void OwnPlayer_AlwaysVisibleToSelf()
@@ -290,6 +543,123 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(result.Contains(selfId),
                 "own player must always be visible to self, bypassing the LoS gate entirely");
             Assert.AreEqual(0, result.LingerOf(selfId));
+            // Fix-round 1 (M-1): this world has no mobs and only one player —
+            // the observer itself must be the ONLY entry, closing the "extra
+            // id sneaks in" mutation for this fixture the way item 1's Count
+            // assertion already does for SwapRemove_DoesNotTransferState.
+            Assert.AreEqual(1, result.Count, "only the observer itself should be visible in this empty-otherwise world");
+        }
+
+        // --- 12: OtherPlayer_BehindObstacle_NotVisible ---
+
+        [Test]
+        public void OtherPlayer_BehindObstacle_NotVisible()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Arena.ObstacleCount = 1;
+            // Same shape as BehindObstacle_NotVisible, radius well past
+            // Hero.Radius (0.45) so this stays blocked even after the
+            // conservative pad.
+            cfg.Arena.ObstaclePos = new[] { new float2(5f, 0f) };
+            cfg.Arena.ObstacleRadius = new[] { 2f };
+
+            // Fix-round 1 (I-2): all eight original Task 19 fixtures build a
+            // solo world (PlayerCount == 1), so VisibilitySystem.cs's
+            // `i != observerIndex` branch — the ENTIRE other-player
+            // evaluation — never once ran. A three-player world is the
+            // minimum that can exercise it at all.
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(0f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(10f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, -30f)); // out of the way, irrelevant here
+
+            var previous = new VisibilitySet(Capacity(cfg));
+            var result = new VisibilitySet(Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
+
+            int otherId = VisibilityIds.ForPlayer(1);
+            Assert.IsFalse(result.Contains(otherId), "another player fully behind an obstacle must not be visible");
+        }
+
+        // --- 13: OtherPlayer_ClearLineOfSight_IsVisible ---
+
+        [Test]
+        public void OtherPlayer_ClearLineOfSight_IsVisible()
+        {
+            var cfg = TestConfigs.Open(); // no obstacles/walls
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(0f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(10f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, -30f));
+
+            var previous = new VisibilitySet(Capacity(cfg));
+            var result = new VisibilitySet(Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
+
+            int otherId = VisibilityIds.ForPlayer(1);
+            Assert.IsTrue(result.Contains(otherId), "another player with clear LoS within SightRadius must be visible");
+            Assert.AreEqual(0, result.LingerOf(otherId));
+        }
+
+        // --- 14: PlayerIds_DoNotOverlapMobIds ---
+
+        [Test]
+        public void PlayerIds_DoNotOverlapMobIds()
+        {
+            // Fix-round 1 (I-2): VisibilitySet.cs's own doc claims the
+            // synthetic player id space (VisibilityIds.ForPlayer, negative
+            // integers) and the real entity id space (MobState.Id, positive
+            // integers starting at 1) never overlap — but with every
+            // fixture in this file running a solo world, nothing ever put a
+            // live mob and VisibilityIds.ForPlayer(i) for i > 0 side by side
+            // to actually check it. Pinned by assertion, not prose (spec
+            // discipline, "урок 86").
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            w.SpawnMobForTest(MobType.Chaser, new float2(7f, 0f));
+
+            for (int i = 0; i < w.PlayerCount; i++)
+            {
+                int playerId = VisibilityIds.ForPlayer(i);
+                for (int j = 0; j < w.MobCount; j++)
+                    Assert.AreNotEqual(playerId, w.Mobs[j].Id,
+                        $"player {i}'s synthetic id ({playerId}) must not collide with mob id {w.Mobs[j].Id}");
+            }
+        }
+
+        // --- 15: Compute_ThrowsOnAliasedBuffers ---
+
+        [Test]
+        public void Compute_ThrowsOnAliasedBuffers()
+        {
+            // Fix-round 1 (I-3): pins the guard VisibilitySystem.Compute now
+            // raises — result.Clear() runs before previous is ever read, so
+            // passing the SAME VisibilitySet for both would otherwise
+            // silently disable hysteresis/linger instead of failing loudly.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var set = new VisibilitySet(Capacity(cfg));
+
+            Assert.Throws<System.ArgumentException>(() =>
+                VisibilitySystem.Compute(w, 0, cfg.Visibility, set, set));
+        }
+
+        // --- 16: Compute_AcceptsDistinctBuffers ---
+
+        [Test]
+        public void Compute_AcceptsDistinctBuffers()
+        {
+            // Negative counterpart to Compute_ThrowsOnAliasedBuffers above —
+            // the guard must not misfire on the ordinary, correct calling
+            // convention every other fixture in this file already uses.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var previous = new VisibilitySet(Capacity(cfg));
+            var result = new VisibilitySet(Capacity(cfg));
+
+            Assert.DoesNotThrow(() => VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result));
         }
     }
 }

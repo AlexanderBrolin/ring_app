@@ -11,9 +11,30 @@ namespace Ring.Simulation.Visibility
     /// two VisibilitySet arguments already own (Task 19 report).
     public static class VisibilitySystem
     {
+        /// Computes `observerIndex`'s per-tick visibility set (spec §3.5,
+        /// Р18-Р21) into `result`, reading `previous` (last tick's own
+        /// result) for hysteresis/linger continuity. `previous` and `result`
+        /// MUST be two DISTINCT VisibilitySet instances — the real per-tick
+        /// caller ping-pongs a pair of buffers, today's `result` becoming
+        /// tomorrow's `previous` (see e.g. VisibilityTests' own ping-pong
+        /// fixtures). `result.Clear()` below runs FIRST, before `previous`
+        /// is ever read, so aliasing the two would silently turn every
+        /// hysteresis/linger decision into "compare an already-emptied set
+        /// to itself" — no exception, no crash, just a permanently-empty
+        /// linger/hysteresis window (Fix-round 1, I-3) — which is exactly
+        /// why this is a guard rather than a documented caller obligation
+        /// alone.
         public static void Compute(SimulationWorld w, int observerIndex,
             in VisibilitySimConfig cfg, VisibilitySet previous, VisibilitySet result)
         {
+            if (ReferenceEquals(previous, result))
+            {
+                throw new System.ArgumentException(
+                    "VisibilitySystem.Compute: previous and result must be two DISTINCT " +
+                    "VisibilitySet instances — result.Clear() runs before previous is ever " +
+                    "read, so aliasing the two silently disables hysteresis/linger instead " +
+                    "of throwing.", nameof(result));
+            }
             result.Clear();
             // Hoisted out of the per-entity loop below (same discipline as
             // MobAiSystem.Update's own `ArenaSimConfig arena = w.Config.Arena;`)
