@@ -26,10 +26,23 @@ namespace Ring.Networking.Protocol
     ///
     /// `math.round` is `MidpointRounding.ToEven` (Р134, `math.cs:2618` ->
     /// `System.Math.Round(double)`): a half-integer input rounds to its
-    /// EVEN neighbour. ToEven is an odd function, so this rounding is exact
-    /// and symmetric around zero — no cell around the origin is wider than
-    /// its neighbours, which is what the `Pos`/`PosBack` symmetry test
-    /// (QuantizeTests) actually pins down.
+    /// EVEN neighbour. ToEven is an odd function, so the mapping stays
+    /// symmetric around zero and no cell around the origin is wider than
+    /// its neighbours. Fix-round honesty note (F4): the QuantizeTests
+    /// symmetry test does NOT distinguish ToEven from half-up — the whole
+    /// suite stays green under either, because no test value lands on
+    /// `k + 0.5` with an even `k`. ToEven is a documented FACT about the
+    /// library this code sits on, not an invariant these tests pin; if a
+    /// future change ever needs it pinned, that needs its own test.
+    ///
+    /// DEGENERATE PARAMETERS: `radius == 0` (and `max == 0`) make the
+    /// mapping meaningless — `(v + 0) / 0` is NaN, saturate lifts it to the
+    /// upper rail, and `PosBack` returns 0 for every code, so idempotency
+    /// cannot hold. Neither is reachable through the shipped data
+    /// (`ArenaConfig.Radius` is `[Range(5, 100)]`, `HeroConfig.MaxAimHeight`
+    /// is `[Range(1, 6)]`), so no guard is spent here — but a caller
+    /// inventing its own scale must not pass zero. A negative `radius`
+    /// merely mirrors the axis and stays idempotent.
     ///
     /// `Unity.Mathematics`' scalar `min`/`max` (and therefore `clamp`/
     /// `saturate`) are NaN-SAFE: `min(x,y)`/`max(x,y)` return the NON-NaN
@@ -84,15 +97,17 @@ namespace Ring.Networking.Protocol
         /// the wire `MoveDir` is angle + magnitude (Task 25), and at
         /// magnitude 0 nothing ever reads the angle back.
         ///
-        /// `atan2`'s range is `(-pi, +pi]`, so the raw code before wrapping
-        /// spans `(0, 256]` inclusive of `256` itself (angle exactly `+pi`,
-        /// e.g. `Dir(new float2(-1f, 0f))`) — one MORE value than a byte
-        /// holds. The cast through `int` before the explicit `& 0xFF` mask
-        /// folds that 257th value (`256`) onto `0`, which is exactly the
-        /// code the OTHER side of the same seam (`angle` just above `-pi`)
-        /// already produces: `+pi` and `-pi` are the same direction, and
-        /// without this fold they would decode to two different codes for
-        /// it. A raw `(byte)` cast straight from the rounded FLOAT (instead
+        /// `atan2`'s range is `[-pi, +pi]` — BOTH rails are attainable:
+        /// `+pi` from `Dir(new float2(-1f, 0f))` and `-pi` from
+        /// `Dir(new float2(-1f, -0f))`, because a negative-zero `y` selects
+        /// the lower branch (fix-round F3: the first draft claimed the range
+        /// was half-open `(-pi, +pi]`, which is false). So the raw code
+        /// before wrapping spans `[0, 256]` — 257 values, one MORE than a
+        /// byte holds. The cast through `int` before the explicit `& 0xFF`
+        /// mask folds the top value (`256`) onto `0`, which is exactly the
+        /// code the other rail already produces: `+pi` and `-pi` are the
+        /// same direction, and without this fold they would encode to two
+        /// different codes for it. A raw `(byte)` cast straight from the rounded FLOAT (instead
         /// of `(byte)((int)... & 0xFF)`) does not reliably reproduce this:
         /// C# only defines integer-to-byte narrowing as truncation, not a
         /// float-to-byte cast of an out-of-range value.
