@@ -1,3 +1,4 @@
+using NUnit.Framework;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -59,20 +60,20 @@ namespace Ring.Simulation.Tests
         /// PvpDamageTests' own trio fixture use) and all three players fire
         /// continuously — but the three are relocated off the natural spawn
         /// ring (Geometry.SpawnPosFor, radius Arena.Radius *
-        /// PlayerSpawnRingFrac = 52) via the SetPlayerForTest seam
-        /// PvpDamageTests established, out to a small huddle at radius ~58
-        /// that clears both the mob crowd (SpawnMobsToCap's own doc: radii
-        /// roughly 4…31) and every DefaultArena() obstacle/wall (all inside
-        /// radius ~44) with room to spare. Two reasons: firing along the
-        /// NATURAL ring's own player-to-player chord passes within
-        /// Arena.Radius * PlayerSpawnRingFrac * cos(60 deg) = 26 m of the
-        /// centre — squarely inside the mob crowd — so whether a round ever
-        /// clears it to reach another player would depend on the crowd's
-        /// exact layout rather than being a fixture guarantee; and moving
-        /// clear of the crowd also means no mob can close that gap during the
-        /// short warm-up below, so every hit landed while warming up is
-        /// unambiguously PvP, not incidental splash from a mob that wandered
-        /// into the huddle.
+        /// PlayerSpawnRingFrac = 52) via the shared RelocatePlayerForTest seam
+        /// below, out to a small huddle at radius (Arena.Radius *
+        /// PlayerSpawnRingFrac + 6) — 58 on TestConfigs.Default() — clear of
+        /// both the mob crowd (SpawnMobsToCap's own doc: radii roughly 4…31)
+        /// and every DefaultArena() obstacle/wall (all inside radius ~44) with
+        /// room to spare. Two reasons: firing along the NATURAL ring's own
+        /// player-to-player chord passes within Arena.Radius *
+        /// PlayerSpawnRingFrac * cos(60 deg) = 26 m of the centre — squarely
+        /// inside the mob crowd — so whether a round ever clears it to reach
+        /// another player would depend on the crowd's exact layout rather than
+        /// being a fixture guarantee; and moving clear of the crowd also means
+        /// no mob can close that gap during the short warm-up below, so every
+        /// hit landed while warming up is unambiguously PvP, not incidental
+        /// splash from a mob that wandered into the huddle.
         ///
         /// Players 0 and 1 duel each other point-blank (3 m apart, each
         /// aiming at the other's own static position — hip fire's per-shot
@@ -88,13 +89,34 @@ namespace Ring.Simulation.Tests
         /// warm-up is still in flight when it ends) and the candidate scratch
         /// also sees the HitMob branch, not only HitPlayer.
         ///
-        /// Warm-up is intentionally SHORT (TrioWarmupTicks, not Saturated's
-        /// 100): at 3 m every duel round connects, and Weapon.Damage stacked
-        /// up every ~FireInterval seconds would kill a duelist in roughly
-        /// nine rounds — long before Saturated's own 100 ticks. Task 18's
-        /// whole point is a world where all three are still alive to be
-        /// measured, not a duel that finishes itself before the fixture does.
-        public static SimulationWorld TrioSaturated(out SimConfig config)
+        /// Warm-up itself stays SHORT (TrioWarmupTicks, not Saturated's 100):
+        /// at 3 m every duel round connects, so a long warm-up would just burn
+        /// through the Hp budget below before the caller even starts
+        /// measuring. That budget is the fix-round 1 addition (Task 18
+        /// review, I-1): a duelist that entered the MEASURED loop at plain
+        /// Hero.MaxHp died around tick 14 of it (Weapon.Damage landing every
+        /// ~FireInterval seconds at point-blank range comfortably outpaces
+        /// MaxHp) — after which the PvP branch this fixture exists to
+        /// exercise goes cold for the rest of the window, because the
+        /// gather's own `player.Alive` gate (ProjectileSystem.Update) stops
+        /// packing either corpse as a candidate. A short warm-up alone only
+        /// moved that death INTO the measurement; it never prevented it.
+        /// `measuredTicks` is therefore the CALLER's own upcoming loop length,
+        /// and Hp is set (through the same SetPlayerForTest seam
+        /// RelocatePlayerForTest below wraps) to a budget covering the WHOLE
+        /// window — warm-up plus measurement — at a deliberately over-stated
+        /// combined damage rate: the duel's own worst-case zone multiplier
+        /// (Hero.HeadDamageMult) applied to Weapon.Damage / Weapon.FireInterval,
+        /// PLUS every single one of Arena.MaxMobs dealing Chaser.ContactDamage
+        /// every Chaser.AttackCooldown at once. That second term is physically
+        /// impossible on its own terms (the crowd cannot even reach the huddle
+        /// until the mob-to-huddle gap closes, let alone all 96 land a contact
+        /// hit in the same cooldown window) — which is exactly the point: the
+        /// bound only has to be safe, not tight, and a safe-but-huge Hp costs
+        /// this fixture nothing (SetPlayerForTest bypasses Hero.MaxHp's own
+        /// clamp entirely — ApplyConfig is the only place that clamp is
+        /// enforced, and this fixture never calls it).
+        public static SimulationWorld TrioSaturated(out SimConfig config, int measuredTicks)
         {
             config = TestConfigs.Default();
             var world = new SimulationWorld(1, config, playerCount: 3);
@@ -103,20 +125,49 @@ namespace Ring.Simulation.Tests
 
             // Clear of the mob crowd (radii roughly 4…31, SpawnMobsToCap's own
             // doc above) and every DefaultArena() obstacle/wall (all inside
-            // radius ~44), with room to spare before Arena.Radius (65).
-            const float huddleY = 58f;
-            var p0 = new float2(-1.5f, huddleY);
-            var p1 = new float2(1.5f, huddleY);
-            var p2 = new float2(0f, huddleY + 1.5f);
-            RelocatePlayerForTest(world, 0, p0);
-            RelocatePlayerForTest(world, 1, p1);
-            RelocatePlayerForTest(world, 2, p2);
+            // radius ~44) — tied to the SAME config fields the natural ring
+            // itself reads (Arena.Radius, Arena.PlayerSpawnRingFrac), not a
+            // bare literal (Task 18 fix-round 1, M-3), so a future
+            // arena-layout tuning pass that moves the ring moves this huddle
+            // right along with it instead of leaving it silently stranded.
+            float huddleRadius = config.Arena.Radius * config.Arena.PlayerSpawnRingFrac + 6f;
+            var p0 = new float2(-1.5f, huddleRadius);
+            var p1 = new float2(1.5f, huddleRadius);
+            var p2 = new float2(0f, huddleRadius + 1.5f);
+
+            // Fix-round 1 (I-1): Hp budget covers TrioWarmupTicks below PLUS
+            // the caller's own measuredTicks, at the deliberately over-stated
+            // rate this method's own doc derives — see there for why each
+            // term is safe rather than tight.
+            float totalSeconds = (TrioWarmupTicks + measuredTicks) * SimulationWorld.TickDt;
+            float duelDps = config.Hero.HeadDamageMult * config.Weapon.Damage / config.Weapon.FireInterval;
+            float mobDps = config.Arena.MaxMobs * config.Chaser.ContactDamage / config.Chaser.AttackCooldown;
+            float hpBudget = totalSeconds * (duelDps + mobDps);
+
+            RelocatePlayerForTest(world, 0, p0, hpBudget);
+            RelocatePlayerForTest(world, 1, p1, hpBudget);
+            RelocatePlayerForTest(world, 2, p2, hpBudget);
 
             var inputs = new SimInput[3];
             inputs[0] = new SimInput { FireHeld = true, AimPoint = p1 };
             inputs[1] = new SimInput { FireHeld = true, AimPoint = p0 };
             inputs[2] = new SimInput { FireHeld = true, AimPoint = float2.zero };
             for (int i = 0; i < TrioWarmupTicks; i++) world.TickAll(inputs);
+
+            // Fix-round 1 (M-3): prove Geometry.Depenetrate — run
+            // unconditionally every tick by PlayerMovementSystem — actually
+            // left the huddle where it was placed instead of nudging it. The
+            // radius arithmetic this whole fixture leans on (the 26 m chord,
+            // the 27 m mob-to-huddle gap, etc., all documented above) is only
+            // true of the positions assigned above, not of wherever
+            // depenetration might have silently pushed them since.
+            const float posTolerance = 1e-3f;
+            Assert.Less(math.distance(world.PlayerAt(0).Pos, p0), posTolerance,
+                "fixture premise: depenetration must not have moved player 0");
+            Assert.Less(math.distance(world.PlayerAt(1).Pos, p1), posTolerance,
+                "fixture premise: depenetration must not have moved player 1");
+            Assert.Less(math.distance(world.PlayerAt(2).Pos, p2), posTolerance,
+                "fixture premise: depenetration must not have moved player 2");
 
             return world;
         }
@@ -125,15 +176,25 @@ namespace Ring.Simulation.Tests
         /// mirroring Saturated's 100.
         const int TrioWarmupTicks = 16;
 
-        /// Moves a player to an exact spot through the SetPlayerForTest seam
-        /// (PvpDamageTests.PlaceAt established the same move for its own duel
-        /// fixtures) — a multiplayer world otherwise spawns its players on the
-        /// ring (Geometry.SpawnPosFor), which is no use to a fixture that has
-        /// to state a firing line down to the metre.
-        static void RelocatePlayerForTest(SimulationWorld world, int index, float2 pos)
+        /// Moves a player to an exact spot through the SetPlayerForTest seam —
+        /// a multiplayer world otherwise spawns its players on the ring
+        /// (Geometry.SpawnPosFor), which is no use to a fixture that has to
+        /// state a firing line down to the metre. Stage 2 Task 17
+        /// (PvpDamageTests) established this exact move under the name
+        /// `PlaceAt`; Task 18 fix-round 1 (M-1) lifted it here — its only home
+        /// now — so the two test files stop carrying byte-identical copies of
+        /// the same three lines and docstring.
+        /// `hp` (Task 18 fix-round 1, I-1) is a TRAILING optional override —
+        /// NaN (the default) leaves Hp untouched, so every PvpDamageTests call
+        /// site keeps compiling and behaving exactly as `PlaceAt` did; only
+        /// TrioSaturated passes a real value, to budget survivable Hp for its
+        /// whole measured window.
+        public static void RelocatePlayerForTest(SimulationWorld world, int index, float2 pos,
+            float hp = float.NaN)
         {
             PlayerState p = world.PlayerAt(index);
             p.Pos = pos;
+            if (!float.IsNaN(hp)) p.Hp = hp;
             world.SetPlayerForTest(index, p);
         }
 

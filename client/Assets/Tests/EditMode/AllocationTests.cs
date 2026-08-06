@@ -44,7 +44,13 @@ namespace Ring.Simulation.Tests
             // that only a playerCount > 1 world ever enters, and TickAll itself
             // steps a per-player input array Tick(in SimInput) never touches.
             // This is the first allocation measurement to tick that world at all.
-            var w = TestWorlds.TrioSaturated(out SimConfig config);
+            //
+            // measuredTicks is threaded into TrioSaturated (fix-round 1, I-1) so
+            // its own Hp budget is derived from the SAME loop length used below,
+            // not a constant living in a different file that could silently
+            // drift out of sync with it.
+            const int measuredTicks = 1000;
+            var w = TestWorlds.TrioSaturated(out SimConfig config, measuredTicks);
 
             // Same fixture-sanity discipline as Tick_DoesNotAllocateGC above:
             // prove the world is actually loaded before measuring it, not an
@@ -55,19 +61,26 @@ namespace Ring.Simulation.Tests
             Assert.Greater(w.ProjectileCount, 0,
                 "fixture premise: warm-up must leave live projectiles in flight, not "
                 + "just spawn and resolve them before the measurement below starts");
+            // Fix-round 1 (M-4): ProjectileCount alone is satisfied by the duel's
+            // own rounds — it does not prove player 2 (the one aiming into the
+            // mob crowd) ever actually fired. ShotsFired does, cheaply.
+            Assert.Greater(w.StatsAt(2).ShotsFired, 0,
+                "fixture premise: player 2 must actually have fired during warm-up, "
+                + "not merely be permitted to");
             for (int i = 0; i < w.PlayerCount; i++)
                 Assert.IsTrue(w.PlayerAt(i).Alive, $"fixture premise: player {i} must "
-                    + "survive warm-up to be measured — see TrioSaturated's own doc on "
-                    + "why warm-up is short");
+                    + "survive warm-up to be measured");
 
             // The PvP branch Task 17 added (a Player-owned round gathering every
             // OTHER live player, ProjectileSystem.Update) must have actually
-            // resolved during warm-up, not merely been reachable in principle —
-            // TrioSaturated's point-blank duel is the ONLY source of damage this
-            // fixture can produce in TrioWarmupTicks (no mob can close the gap to
-            // the huddle that fast, see the fixture's own doc), so any ShotsHit
-            // at all here is unambiguously a player-on-player hit, not incidental
-            // mob damage.
+            // resolved during warm-up, not merely been reachable in principle.
+            // Fix-round 1 (M-2): the reason this is unambiguous is NOT "a mob's
+            // damage can't credit ShotsHit" (true, but beside the point here) —
+            // it's that players 0 and 1's own rounds are consumed against EACH
+            // OTHER at 3 m and never travel far enough within TrioWarmupTicks to
+            // reach the mob crowd ~27 m away (see TrioSaturated's own doc), so
+            // the only thing their rounds can ever hit during warm-up is each
+            // other.
             int pvpShotsHit = w.StatsAt(0).ShotsHit + w.StatsAt(1).ShotsHit;
             Assert.Greater(pvpShotsHit, 0,
                 "fixture premise: the point-blank duel must have landed at least "
@@ -84,8 +97,35 @@ namespace Ring.Simulation.Tests
             inputs[2] = new SimInput { FireHeld = true, AimPoint = float2.zero };
             Assert.That(() =>
             {
-                for (int i = 0; i < 1000; i++) w.TickAll(inputs);
+                for (int i = 0; i < measuredTicks; i++) w.TickAll(inputs);
             }, Is.Not.AllocatingGCMemory());
+
+            // Fix-round 1 (I-1b): fixture-sanity doesn't stop at the FIRST tick
+            // of the measured window — prove the world was still loaded on the
+            // LAST one too. These sit safely after the measured lambda, so they
+            // cost nothing against the allocation budget above.
+            //
+            // Deliberately NOT a ShotsHit-growth witness (fix-round 1 review
+            // trap): once the mob crowd eventually reaches the huddle (~156
+            // measured ticks in, at Chaser.MaxSpeed closing the ~27 m gap) a
+            // chaser could stand ON the 3 m duel line and take a round meant for
+            // the other duelist — ShotsHit growth past that point no longer
+            // proves PvP by itself, it might be DamageMob crediting the same
+            // counter. Continuity of the PvP branch across the WHOLE window
+            // instead rests on construction, not a counter: both duelists are
+            // asserted Alive below (their FireHeld input never lapses — the
+            // SAME inputs array is fed every one of the measuredTicks
+            // iterations above), and WeaponSystem.Update spawns a new
+            // Player-owned round roughly every Weapon.FireInterval regardless of
+            // whether the previous one already resolved — so
+            // ProjectileSystem.Update's per-live-player gather loop keeps
+            // re-entering the HitPlayer branch throughout the window by
+            // construction, not by the luck of a particular tick's timing.
+            for (int i = 0; i < w.PlayerCount; i++)
+                Assert.IsTrue(w.PlayerAt(i).Alive,
+                    $"player {i} must survive the FULL measured window, not just its first tick");
+            Assert.Greater(w.ProjectileCount, 0,
+                "a live projectile must still be in flight at the end of the measured window too");
         }
     }
 }

@@ -43,20 +43,9 @@ namespace Ring.Simulation.Tests
                 "fixture premise: the victim stands within one tick of projectile travel, so "
                 + "every duel fixture lands its round on the very next tick");
             var w = new SimulationWorld(1, c, playerCount: 2);
-            PlaceAt(w, 0, float2.zero);
-            PlaceAt(w, 1, new float2(TargetX, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(TargetX, 0f));
             return w;
-        }
-
-        /// Moves a player to an exact spot through the SetPlayerForTest seam: a
-        /// multiplayer world spawns its players on the ring
-        /// (Geometry.SpawnPosFor — 52 m out on TestConfigs' arena), which is no
-        /// use to a fixture that has to state a firing line down to the metre.
-        static void PlaceAt(SimulationWorld w, int index, float2 pos)
-        {
-            PlayerState p = w.PlayerAt(index);
-            p.Pos = pos;
-            w.SetPlayerForTest(index, p);
         }
 
         /// Forces a player mid-slide (QA1 seam, same as HitZoneTests) — no need
@@ -115,8 +104,8 @@ namespace Ring.Simulation.Tests
         {
             c = Range();
             var w = new SimulationWorld(1, c, playerCount: 2);
-            PlaceAt(w, 0, float2.zero);
-            PlaceAt(w, 1, new float2(0f, 20f)); // well clear of the firing line
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, 20f)); // well clear of the firing line
             TestWorlds.FireAimed3D(w, new float2(-2f, 0f), BodyBand(c), float2.zero, BodyBand(c),
                 ownerIndex);
             w.ClearEvents();
@@ -229,8 +218,8 @@ namespace Ring.Simulation.Tests
         {
             var c = Range();
             var w = new SimulationWorld(1, c, playerCount: 2);
-            PlaceAt(w, 0, float2.zero);          // victim — the pre-Task-17 hardcoded index
-            PlaceAt(w, 1, new float2(0f, 20f));  // shooter, well clear of its own firing line
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);          // victim — the pre-Task-17 hardcoded index
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, 20f));  // shooter, well clear of its own firing line
 
             // Overkill on the head band: the hit, the kill and the headshot kill
             // must all land on player 1's counters and none of them on the
@@ -259,8 +248,8 @@ namespace Ring.Simulation.Tests
         {
             var c = Range();
             var w = new SimulationWorld(1, c, playerCount: 2);
-            PlaceAt(w, 0, float2.zero);
-            PlaceAt(w, 1, new float2(5f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(5f, 0f));
 
             // A mob-owned round flying -X from beyond player 1 must stop on the
             // first live player it reaches. Before Task 17 the gather packed
@@ -294,8 +283,8 @@ namespace Ring.Simulation.Tests
             // 40 m away. The victim index closes that loop.
             var c = Range();
             var w = new SimulationWorld(1, c, playerCount: 2);
-            PlaceAt(w, 0, new float2(-30f, 0f)); // far away — the old hardcoded victim
-            PlaceAt(w, 1, new float2(10f, 0f));  // the chaser's actual nearest target
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(-30f, 0f)); // far away — the old hardcoded victim
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(10f, 0f));  // the chaser's actual nearest target
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(10f + 0.9f, 0f)));
             Assert.Less(0.9f, c.Chaser.AttackRange, "fixture premise: the chaser starts in range");
 
@@ -330,8 +319,8 @@ namespace Ring.Simulation.Tests
             // at 1.5 m downrange (Legs).
             var c = Range();
             var w = new SimulationWorld(1, c, playerCount: 2);
-            PlaceAt(w, 0, float2.zero);
-            PlaceAt(w, 1, new float2(1.5f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(1.5f, 0f));
 
             const float launchHeight = 2f;  // clears the crown at t = 0
             const float plungeVelZ = -60f;  // drops the full launch height across this one step
@@ -391,8 +380,8 @@ namespace Ring.Simulation.Tests
                     cfg.Arena.ObstacleRadius = System.Array.Empty<float>();
                 }
                 var world = new SimulationWorld(1, cfg, playerCount: 2);
-                PlaceAt(world, 0, float2.zero);
-                PlaceAt(world, 1, new float2(playerX, 0f));
+                TestWorlds.RelocatePlayerForTest(world, 0, float2.zero);
+                TestWorlds.RelocatePlayerForTest(world, 1, new float2(playerX, 0f));
                 world.SpawnProjectileForTest(ProjectileOwner.Player, new float2(muzzleX, 0f),
                     new float2(cfg.Weapon.ProjectileSpeed, 0f), BodyBand(cfg), 0f,
                     cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime,
@@ -451,8 +440,8 @@ namespace Ring.Simulation.Tests
                 + "telegraphs a strike of its own into this measurement");
 
             var w = new SimulationWorld(1, c, playerCount: 2);
-            PlaceAt(w, 0, float2.zero);                   // shooter, at the muzzle
-            PlaceAt(w, 1, new float2(5f, -halfGap));      // player candidate
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);                   // shooter, at the muzzle
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(5f, -halfGap));      // player candidate
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(5f, halfGap)));
             w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
                 new float2(c.Weapon.ProjectileSpeed, 0f), BodyBand(c), 0f,
@@ -512,9 +501,9 @@ namespace Ring.Simulation.Tests
             // first — which is the whole point of this test.)
             var c = Range();
             var w = new SimulationWorld(1, c, playerCount: 2);
-            PlaceAt(w, 0, new float2(0f, 20f)); // shooter, well off the muzzle
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(0f, 20f)); // shooter, well off the muzzle
             var victimPos = new float2(5f, 0f);
-            PlaceAt(w, 1, victimPos);
+            TestWorlds.RelocatePlayerForTest(w, 1, victimPos);
 
             float sweepRadius = c.Weapon.ProjectileRadius;
             float launchHeight = sweepRadius; // exactly-zero tFloor numerator
@@ -559,9 +548,9 @@ namespace Ring.Simulation.Tests
             TestWorlds.SpawnMobsToCap(w);
             Assert.AreEqual(c.Arena.MaxMobs, w.MobCount, "fixture premise: every mob slot is filled");
             Assert.AreEqual(3, w.PlayerCount);
-            PlaceAt(w, 0, float2.zero);             // shooter
-            PlaceAt(w, 1, new float2(TargetX, 0f)); // victim of the aimed round below
-            PlaceAt(w, 2, new float2(0f, TargetX)); // bystander, still inside the wide sweep
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);             // shooter
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(TargetX, 0f)); // victim of the aimed round below
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, TargetX)); // bystander, still inside the wide sweep
 
             const float sweepRadius = 40f;  // SpawnMobsToCap tops out near 32 m from the origin
             const float plungeVelZ = -60f;  // tFloor = (Radius - Height) / (VelZ * TickDt) = 0.25
