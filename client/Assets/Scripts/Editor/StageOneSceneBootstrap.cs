@@ -355,6 +355,13 @@ namespace Ring.Editor
 
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
+            // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter — a
+            // brand-new asset, so its C# defaults ARE the shipped numbers
+            // (VisibilityConfig.cs's own doc: they mirror
+            // TestConfigs.Default().Visibility exactly), unlike
+            // ApplyGunnerDefaults/ApplyStageTwoBalance below, which backfill an
+            // OLDER asset that predates a field.
+            VisibilityConfig visibility = GetOrCreate<VisibilityConfig>("VisibilityConfig");
             GameFeelConfig gameFeel = GetOrCreate<GameFeelConfig>("GameFeelConfig");
             CameraConfig camera = GetOrCreate<CameraConfig>("CameraConfig");
 
@@ -499,6 +506,14 @@ namespace Ring.Editor
             // are exactly what this mechanism is for (ApplyStageTwoBalance above
             // only rewrites values that already exist on disk).
             EditorBootstrapUtils.EnsureAssetHasKey(wave, $"{DataDir}/WaveConfig.asset", "PerPlayerCountFrac"); // Stage 2 Task 16
+            // VisibilityConfig joins the marker mechanism for the first time
+            // here, in Stage 2 Task 22, with HearPositionGridMeters (the
+            // class's own newest/last field) as its marker — the asset is
+            // brand new on this run, so this call is a one-time onboarding
+            // exactly like ArenaConfig/WaveConfig's own first-join comments
+            // above, not a migration of an older asset.
+            EditorBootstrapUtils.EnsureAssetHasKey(visibility, $"{DataDir}/VisibilityConfig.asset",
+                "HearPositionGridMeters"); // Stage 2 Task 22
 
             AssetDatabase.SaveAssets();
 
@@ -573,6 +588,7 @@ namespace Ring.Editor
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_gunner", gunner);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_wave", wave);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_arena", arena);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_visibility", visibility);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_gameFeel", gameFeel);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_camera", camera);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_actionsAsset", actionsAsset);

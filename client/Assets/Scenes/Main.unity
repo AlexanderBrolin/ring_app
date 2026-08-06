@@ -8888,6 +8888,7 @@ MonoBehaviour:
   _gunner: {fileID: 11400000, guid: bb96df988d6c9f219935727d09346d2f, type: 2}
   _wave: {fileID: 11400000, guid: f70885052f0dd008f913f7c35ecee849, type: 2}
   _arena: {fileID: 11400000, guid: 867e8c92b82842b1e997ed0f876471d0, type: 2}
+  _visibility: {fileID: 11400000, guid: d762a04f487c5bba39991b86e506805b, type: 2}
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
   _camera: {fileID: 11400000, guid: f3f7f6fc78bca54ecacc769001bac619, type: 2}
   _actionsAsset: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}

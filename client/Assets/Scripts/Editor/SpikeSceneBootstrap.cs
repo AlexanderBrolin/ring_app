@@ -77,6 +77,9 @@ namespace Ring.Editor
             MobConfig gunner = Load<MobConfig>("MobGunnerConfig");
             WaveConfig wave = Load<WaveConfig>("WaveConfig");
             ArenaConfig arena = Load<ArenaConfig>("ArenaConfig");
+            // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter —
+            // wired like the six above (coordinator decision, task-22-brief.md).
+            VisibilityConfig visibility = Load<VisibilityConfig>("VisibilityConfig");
 
             NetworkObject playerPrefab = GetOrCreatePlayerPrefab();
             var spawnablePrefabs =
@@ -130,6 +133,7 @@ namespace Ring.Editor
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_gunner", gunner);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_wave", wave);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_arena", arena);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_visibility", visibility);
             // Pinned like the tick rate above, and for the same reason: it is a
             // parameter of the measurement (it has to clear the Boost economy's
             // sustainable cadence — see SpikeBootstrap.DefaultDashPeriodSeconds),

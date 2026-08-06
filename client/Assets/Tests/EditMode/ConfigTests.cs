@@ -10,7 +10,7 @@ namespace Ring.Simulation.Tests
     {
         const float Eps = 1e-5f;
 
-        static (HeroConfig, WeaponConfig, MobConfig, MobConfig, WaveConfig, ArenaConfig) MakeDefaults()
+        static (HeroConfig, WeaponConfig, MobConfig, MobConfig, WaveConfig, ArenaConfig, VisibilityConfig) MakeDefaults()
         {
             var hero = ScriptableObject.CreateInstance<HeroConfig>();
             var weapon = ScriptableObject.CreateInstance<WeaponConfig>();
@@ -18,22 +18,24 @@ namespace Ring.Simulation.Tests
             var gunner = ScriptableObject.CreateInstance<MobConfig>();
             var wave = ScriptableObject.CreateInstance<WaveConfig>();
             var arena = ScriptableObject.CreateInstance<ArenaConfig>();
-            return (hero, weapon, chaser, gunner, wave, arena);
+            // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter.
+            var visibility = ScriptableObject.CreateInstance<VisibilityConfig>();
+            return (hero, weapon, chaser, gunner, wave, arena, visibility);
         }
 
         /// Builds a SimConfig from a caller-supplied hero and default everything else —
         /// for zone-validation tests (Task 1) that only need to vary Hero fields.
         static SimConfig BuildWith(HeroConfig hero)
         {
-            var (_, w, c, g, wv, a) = MakeDefaults();
-            return SimConfigBuilder.Build(hero, w, c, g, wv, a);
+            var (_, w, c, g, wv, a, vis) = MakeDefaults();
+            return SimConfigBuilder.Build(hero, w, c, g, wv, a, vis);
         }
 
         [Test]
         public void Build_DefaultAssets_ProducesValidConfig()
         {
-            var (h, w, c, g, wv, a) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
             Assert.Greater(cfg.Hero.MaxSpeed, 0f);
             Assert.AreEqual(a.Obstacles.Length, cfg.Arena.ObstacleCount);
         }
@@ -41,30 +43,30 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Build_ObstacleOutsideArena_Throws()
         {
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.Obstacles = new[] { new ArenaConfig.Obstacle
                 { Pos = new Vector2(100f, 0f), Radius = 2f } };
             Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
         }
 
         [Test]
         public void Build_NegativeSpeed_Throws()
         {
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             h.MaxSpeed = -1f;
             Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
         }
 
         [Test]
         public void Build_ObstacleOverSpawnPoint_Throws()
         {
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.Obstacles = new[] { new ArenaConfig.Obstacle
                 { Pos = Vector2.zero, Radius = 2f } };
             Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
         }
 
         // P-4.5: the SO defaults are the single source of truth for starting balance —
@@ -74,7 +76,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Build_DefaultAssets_MatchesTestConfigsBaseline()
         {
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             var expected = TestConfigs.Default();
 
             g.MaxSpeed = expected.Gunner.MaxSpeed;
@@ -106,7 +108,7 @@ namespace Ring.Simulation.Tests
             g.HeadDamageMult = expected.Gunner.HeadDamageMult;
             g.MuzzleHeight = expected.Gunner.MuzzleHeight;
 
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
 
             AssertHeroEqual(expected.Hero, cfg.Hero);
             AssertWeaponEqual(expected.Weapon, cfg.Weapon);
@@ -114,6 +116,11 @@ namespace Ring.Simulation.Tests
             AssertMobEqual(expected.Gunner, cfg.Gunner);
             AssertWaveEqual(expected.Wave, cfg.Wave);
             AssertArenaEqual(expected.Arena, cfg.Arena);
+            // Stage 2 Task 22 (carryover-t22 §2): without this the five
+            // VisibilityConfig.asset numbers vs C# defaults are pinned by NO
+            // test at all — same documented-deviation category as
+            // AssertArenaEqual's own Task 4 note below.
+            AssertVisibilityEqual(expected.Visibility, cfg.Visibility);
 
             // The chaser/gunner archetypes must land in the matching SimConfig slot,
             // not get swapped by the builder's mapping.
@@ -169,10 +176,10 @@ namespace Ring.Simulation.Tests
             // 2f)] Inspector hint — never enforced outside the Editor UI, so
             // SimConfigBuilder must reject it too) but ValidateMob never
             // checked it.
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             c.SwingLeadFactor = 2.5f; // outside [0, 2]
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("SwingLeadFactor"));
         }
 
@@ -181,10 +188,10 @@ namespace Ring.Simulation.Tests
         {
             // I3 (final review wave, app-n6g): SwingLeadMaxMeters must stay
             // non-negative per archetype — ValidateMob never checked it.
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             c.SwingLeadMaxMeters = -1f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("SwingLeadMaxMeters"));
         }
 
@@ -313,8 +320,8 @@ namespace Ring.Simulation.Tests
             // Spec §3.4 requirement (a): at least one pair of spawn points must
             // be unable to see each other from the very first tick, so a
             // three-way match does not open with everyone in everyone's sights.
-            var (h, w, c, g, wv, a) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
             float2[] pts = SpawnPoints(in cfg.Arena);
             Assert.GreaterOrEqual(pts.Length, 2, "a full lobby needs at least two spawn points");
 
@@ -343,15 +350,15 @@ namespace Ring.Simulation.Tests
             // visible again on the identical layout with Walls = {} (circles
             // unchanged) — a circle alone cannot be the cause of THIS pair's
             // block if removing every wall restores it.
-            var (h, w, c, g, wv, a) = MakeDefaults();
-            SimConfig cfgWithWalls = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfgWithWalls = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
             float2[] ptsWithWalls = SpawnPoints(in cfgWithWalls.Arena);
             Assert.IsFalse(
                 Ring.Simulation.AI.Targeting.HasLineOfFire(ptsWithWalls[0], ptsWithWalls[1], 0f, in cfgWithWalls.Arena),
                 "P0-P1 must be blocked with the shipped walls in place");
 
             a.Walls = System.Array.Empty<ArenaConfig.Wall>();
-            SimConfig cfgNoWalls = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            SimConfig cfgNoWalls = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
             float2[] ptsNoWalls = SpawnPoints(in cfgNoWalls.Arena);
             Assert.IsTrue(
                 Ring.Simulation.AI.Targeting.HasLineOfFire(ptsNoWalls[0], ptsNoWalls[1], 0f, in cfgNoWalls.Arena),
@@ -370,8 +377,8 @@ namespace Ring.Simulation.Tests
             const float MinCorridorLength = 20f;
             const float MinCorridorGap = 6f;
 
-            var (h, w, c, g, wv, a) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
 
             bool found = false;
             for (int i = 0; i < cfg.Arena.WallCount && !found; i++)
@@ -429,8 +436,8 @@ namespace Ring.Simulation.Tests
             // Spec §3.4 requirement (c). Meaningful only once the layout
             // actually carries walls — an arena with none passes this trivially,
             // so the wall count is asserted first.
-            var (h, w, c, g, wv, a) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a);
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
             Assert.Greater(cfg.Arena.WallCount, 0,
                 "the shipped layout must carry interior walls for this requirement to mean anything");
 
@@ -442,22 +449,22 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Validate_WallZeroHalfWidth_Throws()
         {
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(-5f, 0f), B = new Vector2(5f, 0f), HalfWidth = 0f } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("HalfWidth"));
         }
 
         [Test]
         public void Validate_WallZeroLength_Throws()
         {
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(5f, 5f), B = new Vector2(5f, 5f), HalfWidth = 0.8f } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("zero length"));
         }
 
@@ -481,11 +488,11 @@ namespace Ring.Simulation.Tests
             // exact-zero-length case Validate_WallZeroLength_Throws already
             // covers and proving nothing extra. Anchoring B at 0 instead
             // keeps the literal exact.
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(0f, 5f), B = new Vector2(2e-7f, 5f), HalfWidth = 0.8f } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("zero length"));
         }
 
@@ -504,13 +511,13 @@ namespace Ring.Simulation.Tests
             // naive bound (Radius - HalfWidth, no body-radius margin at all —
             // what the pre-carryover-t16 wording would have accepted) and
             // expects a rejection.
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             float halfWidth = 0.8f;
             float rimEnd = a.Radius - halfWidth; // passes "inside Radius - HalfWidth", fails 7c
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(rimEnd - 10f, 0f), B = new Vector2(rimEnd, 0f), HalfWidth = halfWidth } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("arena rim"));
         }
 
@@ -525,7 +532,7 @@ namespace Ring.Simulation.Tests
             // wall end inside that band: it clears the hero-sized rule and fails the
             // mob-sized one, so it must be rejected. Expressed as fixture arithmetic
             // — no literal reproduces the builder's formula.
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             float halfWidth = 0.8f;
             float heroBound = a.Radius - h.Radius - halfWidth - h.Radius;   // hero-sized rule
             float mobRadius = math.max(c.Radius, g.Radius);
@@ -538,7 +545,7 @@ namespace Ring.Simulation.Tests
                 { A = new Vector2(farEnd - 10f, 0f), B = new Vector2(farEnd, 0f), HalfWidth = halfWidth } };
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("arena rim"));
         }
 
@@ -548,11 +555,11 @@ namespace Ring.Simulation.Tests
             // Same contract the obstacle loop already has: every candidate spawn
             // point (solo centre + every ring size up to MaxPlayers) must stay
             // clear. This wall is laid straight through the arena centre.
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(-5f, 0f), B = new Vector2(5f, 0f), HalfWidth = 0.8f } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("spawn point"));
         }
 
@@ -569,7 +576,7 @@ namespace Ring.Simulation.Tests
             // ...) — the same formula the builder itself uses, not a restated
             // literal), and leaves the solo center untouched, so only the ring
             // loop can catch it.
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             var arenaForSpawn = new ArenaSimConfig { Radius = a.Radius, PlayerSpawnRingFrac = a.PlayerSpawnRingFrac };
             float2 spawnP1 = Geometry.SpawnPosFor(1, 3, in arenaForSpawn);
 
@@ -580,7 +587,7 @@ namespace Ring.Simulation.Tests
                 HalfWidth = 0.8f
             } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ring 3/point 1"));
         }
 
@@ -590,7 +597,7 @@ namespace Ring.Simulation.Tests
             // A single wall thick enough to swallow the entire spawn ring: no
             // wave could ever place a mob, and the director would spin on
             // undischargeable debt for the whole match.
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.Obstacles = System.Array.Empty<ArenaConfig.Obstacle>();
             float ringRadius = a.Radius - wv.SpawnRingInset;
             a.Walls = new[] { new ArenaConfig.Wall
@@ -600,18 +607,144 @@ namespace Ring.Simulation.Tests
                 HalfWidth = ringRadius + 5f
             } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("spawn ring"));
         }
 
         [Test]
         public void Validate_PerPlayerCountFracNegative_Throws()
         {
-            var (h, w, c, g, wv, a) = MakeDefaults();
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
             wv.PerPlayerCountFrac = -0.1f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a));
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("PerPlayerCountFrac"));
+        }
+
+        // ------------------------------------------------------------------
+        // Stage 2 Task 22 (spec §3.15/Р72; carryover-t22 §1): visibility
+        // filter invariants. Each [Range]-bounded field gets two tests, one
+        // per side of ReqInRange's `!minOk || value > max` — same convention
+        // Validate_EdgeRequestMinTicksNegative_Throws /
+        // Validate_EdgeRequestMinTicksAboveRange_Throws set for the floor and
+        // ceiling of a single ReqInRange call. Where a fixture would
+        // coincidentally also trip the HearRadius >= SightRadius cross-check,
+        // the other field is pinned just far enough to keep that check quiet
+        // (noted per-test below) so each test isolates exactly one branch.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void Validate_VisibilitySightRadiusZero_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.SightRadius = 0f; // floor is exclusive: > 0, not >= 0
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.SightRadius"));
+        }
+
+        [Test]
+        public void Validate_VisibilitySightRadiusAboveRange_Throws()
+        {
+            // Mirrors VisibilityConfig's own [Range(5f, 150f)] ceiling — never
+            // enforced outside the Editor UI (Р115 precedent). HearRadius is
+            // raised alongside SightRadius so HearRadius >= SightRadius stays
+            // satisfied and only the ceiling branch fires.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.SightRadius = 151f;
+            vis.HearRadius = vis.SightRadius;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.SightRadius"));
+        }
+
+        [Test]
+        public void Validate_VisibilityHearRadiusBelowSightRadius_Throws()
+        {
+            // Otherwise a source would count as heard before it counts as seen
+            // — carryover-t22 §1's own rationale for the rule.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.HearRadius = vis.SightRadius - 1f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.HearRadius"));
+            Assert.That(ex.Message, Does.Contain("Visibility.SightRadius"));
+        }
+
+        [Test]
+        public void Validate_VisibilityHearRadiusAboveRange_Throws()
+        {
+            // Mirrors VisibilityConfig's own [Range(5f, 200f)] ceiling. Default
+            // SightRadius (45) stays well under 201, so the cross-check above
+            // stays quiet and only the ceiling branch fires.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.HearRadius = 201f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.HearRadius"));
+        }
+
+        [Test]
+        public void Validate_VisibilityExitHysteresisNegative_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.ExitHysteresis = -1f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.ExitHysteresis"));
+        }
+
+        [Test]
+        public void Validate_VisibilityExitHysteresisAboveRange_Throws()
+        {
+            // Mirrors VisibilityConfig's own [Range(0f, 20f)] ceiling.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.ExitHysteresis = 21f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.ExitHysteresis"));
+        }
+
+        [Test]
+        public void Validate_VisibilityHearPositionGridMetersNegative_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.HearPositionGridMeters = -1f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.HearPositionGridMeters"));
+        }
+
+        [Test]
+        public void Validate_VisibilityHearPositionGridMetersAboveRange_Throws()
+        {
+            // Mirrors VisibilityConfig's own [Range(0f, 10f)] ceiling.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.HearPositionGridMeters = 11f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.HearPositionGridMeters"));
+        }
+
+        [Test]
+        public void Validate_VisibilityLingerTicksNegative_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.LingerTicks = -1;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.LingerTicks"));
+        }
+
+        [Test]
+        public void Validate_VisibilityLingerTicksAboveRange_Throws()
+        {
+            // Mirrors VisibilityConfig's own [Range(0, 30)] ceiling.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            vis.LingerTicks = 31;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Visibility.LingerTicks"));
         }
 
         static void AssertHeroEqual(HeroSimConfig e, HeroSimConfig a)
@@ -770,6 +903,19 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual(e.WallB[i].y, a.WallB[i].y, Eps);
                 Assert.AreEqual(e.WallHalfWidth[i], a.WallHalfWidth[i], Eps);
             }
+        }
+
+        /// Stage 2 Task 22 (carryover-t22 §2): mirrors AssertArenaEqual's own
+        /// role for the newest SimConfig section — without this method,
+        /// Build_DefaultAssets_MatchesTestConfigsBaseline cannot compare
+        /// VisibilityConfig.asset's five numbers against the C# baseline at all.
+        static void AssertVisibilityEqual(VisibilitySimConfig e, VisibilitySimConfig a)
+        {
+            Assert.AreEqual(e.SightRadius, a.SightRadius, Eps);
+            Assert.AreEqual(e.HearRadius, a.HearRadius, Eps);
+            Assert.AreEqual(e.ExitHysteresis, a.ExitHysteresis, Eps);
+            Assert.AreEqual(e.LingerTicks, a.LingerTicks);
+            Assert.AreEqual(e.HearPositionGridMeters, a.HearPositionGridMeters, Eps);
         }
     }
 }

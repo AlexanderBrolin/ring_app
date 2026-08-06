@@ -69,6 +69,12 @@ namespace Ring.Networking.Spike
         [SerializeField] MobConfig _gunner;
         [SerializeField] WaveConfig _wave;
         [SerializeField] ArenaConfig _arena;
+        // Stage 2 Task 22 (coordinator decision, task-22-brief.md): seventh
+        // SimConfigBuilder.Build() parameter, wired like the six above — the
+        // spike is deleted whole in Task 30, but it has to compile and pass
+        // Build()'s validation for every task in between, so it cannot pass
+        // null here.
+        [SerializeField] VisibilityConfig _visibility;
 
         [Header("Scripted input")]
         // Angular rate of the path below, radians per second of tick time.
@@ -95,7 +101,7 @@ namespace Ring.Networking.Spike
         void Awake()
         {
             if (_hero == null || _weapon == null || _chaser == null
-                || _gunner == null || _wave == null || _arena == null)
+                || _gunner == null || _wave == null || _arena == null || _visibility == null)
             {
                 Debug.LogError("SpikeBootstrap: balance assets are unwired — " +
                     "run Ring/Bootstrap/Net Spike Scene.");
@@ -105,7 +111,7 @@ namespace Ring.Networking.Spike
             // Reuses the one converter/validator the whole project uses — the spike
             // predicts with the REAL numbers, otherwise its correction figures
             // would describe a hero that does not exist.
-            _sharedConfig = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena);
+            _sharedConfig = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
             _sharedConfigReady = true;
         }
 

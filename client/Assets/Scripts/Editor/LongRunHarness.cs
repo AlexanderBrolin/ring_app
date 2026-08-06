@@ -123,7 +123,8 @@ namespace Ring.Editor
             MobConfig gunner = Load<MobConfig>("MobGunnerConfig");
             WaveConfig wave = Load<WaveConfig>("WaveConfig");
             ArenaConfig arena = Load<ArenaConfig>("ArenaConfig");
-            SimConfig cfg = SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena);
+            VisibilityConfig visibility = Load<VisibilityConfig>("VisibilityConfig");
+            SimConfig cfg = SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena, visibility);
             cfg.Hero.MaxHp = 1e9f;
             return cfg;
         }

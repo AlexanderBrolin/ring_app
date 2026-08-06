@@ -48,6 +48,8 @@ namespace Ring.Presentation
         [SerializeField] MobConfig _gunner;
         [SerializeField] WaveConfig _wave;
         [SerializeField] ArenaConfig _arena;
+        // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter.
+        [SerializeField] VisibilityConfig _visibility;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] CameraConfig _camera;
         [SerializeField] InputActionAsset _actionsAsset;
@@ -228,7 +230,7 @@ namespace Ring.Presentation
             if (_pendingApplyConfig)
             {
                 _pendingApplyConfig = false;
-                SimConfig next = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena);
+                SimConfig next = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
                 try
                 {
                     _world.ApplyConfig(next);
@@ -373,7 +375,7 @@ namespace Ring.Presentation
         public void Restart(long seed)
         {
             Seed = seed;
-            SimConfig cfg = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena);
+            SimConfig cfg = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
             _world = new SimulationWorld(seed, cfg);
             Prev = new RenderSnapshot(cfg.Arena);
             Curr = new RenderSnapshot(cfg.Arena);

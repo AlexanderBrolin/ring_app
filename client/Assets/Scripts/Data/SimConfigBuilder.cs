@@ -11,7 +11,7 @@ namespace Ring.Data
     public static class SimConfigBuilder
     {
         public static SimConfig Build(HeroConfig hero, WeaponConfig weapon, MobConfig chaser,
-            MobConfig gunner, WaveConfig wave, ArenaConfig arena)
+            MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility)
         {
             var cfg = new SimConfig
             {
@@ -94,7 +94,17 @@ namespace Ring.Data
                     GunnerShareGrowth = wave.GunnerShareGrowth,
                     PerPlayerCountFrac = wave.PerPlayerCountFrac
                 },
-                Arena = ToArenaSimConfig(arena)
+                Arena = ToArenaSimConfig(arena),
+                // Stage 2 Task 22 (spec §3.15): seventh Build() parameter —
+                // field names mirror VisibilitySimConfig one to one.
+                Visibility = new VisibilitySimConfig
+                {
+                    SightRadius = visibility.SightRadius,
+                    HearRadius = visibility.HearRadius,
+                    ExitHysteresis = visibility.ExitHysteresis,
+                    LingerTicks = visibility.LingerTicks,
+                    HearPositionGridMeters = visibility.HearPositionGridMeters
+                }
             };
 
             Validate(in cfg, arena.SpawnClearance);
@@ -407,6 +417,29 @@ namespace Ring.Data
             }
 
             ValidateWalls(errors, in cfg, spawnClearance);
+
+            // Stage 2 Task 22 (spec §3.15/Р72; carryover-t22 §1): server-side
+            // visibility filter invariants. Upper bounds mirror
+            // VisibilityConfig's own [Range] Inspector hints via ReqInRange —
+            // same Р115 precedent as Hero.EdgeRequestMinTicks/Arena.MaxPlayers
+            // above ([Range] is an Editor-only hint, never enforced on a value
+            // reaching the builder from code/JSON/a test fixture).
+            // NetConfig's LingerTicks >= InterpBufferTicks + 2 cross-check is
+            // NOT here — NetConfig is not part of SimConfig (Р72); it lands in
+            // Т41's NetInvariants instead.
+            ReqInRange(errors, "Visibility.SightRadius", cfg.Visibility.SightRadius, 0f, 150f,
+                minExclusive: true);
+            if (cfg.Visibility.HearRadius < cfg.Visibility.SightRadius)
+            {
+                errors.Add("Visibility.HearRadius must be >= Visibility.SightRadius " +
+                    $"(got HearRadius={cfg.Visibility.HearRadius:F3}, " +
+                    $"SightRadius={cfg.Visibility.SightRadius:F3}).");
+            }
+            ReqInRange(errors, "Visibility.HearRadius", cfg.Visibility.HearRadius, 0f, 200f);
+            ReqInRange(errors, "Visibility.ExitHysteresis", cfg.Visibility.ExitHysteresis, 0f, 20f);
+            ReqInRange(errors, "Visibility.HearPositionGridMeters",
+                cfg.Visibility.HearPositionGridMeters, 0f, 10f);
+            ReqInRange(errors, "Visibility.LingerTicks", cfg.Visibility.LingerTicks, 0, 30);
 
             if (errors.Count > 0)
                 throw new ArgumentException("SimConfig validation failed:\n- " + string.Join("\n- ", errors));
