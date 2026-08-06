@@ -32,6 +32,22 @@ namespace Ring.Simulation.Tests
     /// visibility flag, so "exact position for a visible source" is a rule
     /// for Task 21's `EventRelevance.ShouldDeliver` caller, not this
     /// function; carried over in carryover-t21.md.
+    ///
+    /// Task 20 fix-round 1 (coordinator review) closed six findings, all
+    /// within this class (production code was judged correct as-is): a
+    /// non-origin-observer fixture for `IsAudible` (C-1 — every original
+    /// call passed the observer at float2.zero, so a mutant reading only
+    /// `sourcePos`'s own distance from the origin survived); two fixtures
+    /// that vary `cfg.Visibility.HearRadius`/`HearPositionGridMeters` away
+    /// from their defaults instead of only ever exercising the default (I-1);
+    /// an exact-half-grid probe that actually discriminates
+    /// `MidpointRounding.ToEven` from `AwayFromZero` instead of only pinning
+    /// oddness (I-2); a positive witness added to
+    /// `AudiblePos_IdentityWhenGridDisabled` (M-1); a negative,
+    /// out-of-HearRadius assertion added to `HearRadius_IgnoresLos_AndIsWider`
+    /// (M-2); and grid-relative (not raw-metre) position fixtures in the two
+    /// quantization tests that used them (M-3). See each fixture's own doc
+    /// for the specific mutation it exists to catch.
     public class VisibilityTests
     {
         static int Capacity(in SimConfig cfg) => cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
@@ -750,6 +766,18 @@ namespace Ring.Simulation.Tests
 
             Assert.IsTrue(VisibilitySystem.IsAudible(float2.zero, farPos, openCfg.Visibility),
                 "a point between SightRadius and HearRadius must be audible even though it is not visible");
+
+            // Fix-round 1 (M-2): every assertion above is Assert.IsTrue — a
+            // mutant collapsing IsAudible's body to `return true;` survives
+            // every one of them. Reuse the SAME wall/ray, far enough out to
+            // clear HearRadius, to prove hearing has its OWN range gate too,
+            // not just LoS-independence.
+            var farBehindWall = new float2(cfg.Visibility.HearRadius + 5f, 0f);
+            Assert.IsFalse(Targeting.HasLineOfFire(observerPos, farBehindWall, -cfg.Chaser.Radius, cfg.Arena),
+                "test setup: the far point must still sit behind the same wall, or this isn't exercising "
+                + "hearing's own range gate independently of the earlier through-wall probe");
+            Assert.IsFalse(VisibilitySystem.IsAudible(observerPos, farBehindWall, cfg.Visibility),
+                "beyond HearRadius must not be audible even behind the same wall — hearing ignores LoS, not range");
         }
 
         // --- 20: AudiblePos_SnappedToGrid ---
@@ -758,10 +786,24 @@ namespace Ring.Simulation.Tests
         public void AudiblePos_SnappedToGrid()
         {
             var cfg = TestConfigs.Open();
-            float grid = cfg.Visibility.HearPositionGridMeters;
-            Assert.Greater(grid, 0f, "test setup: this fixture only makes sense with quantization enabled");
+            float defaultGrid = cfg.Visibility.HearPositionGridMeters;
+            Assert.Greater(defaultGrid, 0f, "test setup: this fixture only makes sense with quantization enabled");
 
-            var pos = new float2(7f, -11f); // deliberately NOT already grid-aligned
+            // Fix-round 1 (I-1a): running this fixture at the DEFAULT grid
+            // alone lets a mutant hardcode VisibilitySystem.cs's `grid` local
+            // to the literal 3f instead of reading
+            // cfg.Visibility.HearPositionGridMeters — every quantization
+            // fixture in this file used to run at that same default (3 m),
+            // so the mutant was numerically invisible. Doubling it here
+            // forces the implementation to actually read the field.
+            cfg.Visibility.HearPositionGridMeters = defaultGrid * 2f;
+            float grid = cfg.Visibility.HearPositionGridMeters;
+
+            // Fix-round 1 (M-3): expressed from `grid` itself (2.4/-3.7 grid
+            // multiples), not raw metres — "not already grid-aligned" is a
+            // property of the construction, not a coincidence that only
+            // holds at today's default of 3 m.
+            var pos = new float2(grid * 2.4f, -grid * 3.7f);
             float2 snapped = VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility);
 
             // Property, not a hand-computed literal (spec discipline §0):
@@ -808,12 +850,25 @@ namespace Ring.Simulation.Tests
         public void AudiblePos_IdentityWhenGridDisabled()
         {
             var cfg = TestConfigs.Open();
+            float enabledGrid = cfg.Visibility.HearPositionGridMeters; // captured before disabling, reused below
             cfg.Visibility.HearPositionGridMeters = 0f;
             var pos = new float2(7.31f, -11.02f); // arbitrary, deliberately NOT grid-aligned
 
             float2 result = VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility);
 
             Assert.AreEqual(pos, result, "grid disabled (0) must return the exact, unquantized position");
+
+            // Fix-round 1 (M-1): without this, `QuantizeAudiblePos => pos` (a
+            // total identity stub that ignores the grid argument entirely)
+            // also satisfies the assertion above — this test could not tell
+            // "identity because the grid is disabled" apart from "identity
+            // always". The SAME position with the grid RE-ENABLED must
+            // actually move.
+            cfg.Visibility.HearPositionGridMeters = enabledGrid;
+            float2 withGridEnabled = VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility);
+            Assert.AreNotEqual(pos, withGridEnabled,
+                "the same position with the grid RE-ENABLED must actually change, or this test cannot tell "
+                + "apart identity-because-disabled from an always-identity stub");
         }
 
         // --- 23: AudiblePos_Idempotent ---
@@ -822,7 +877,12 @@ namespace Ring.Simulation.Tests
         public void AudiblePos_Idempotent()
         {
             var cfg = TestConfigs.Open();
-            var pos = new float2(7f, -11f); // arbitrary, not grid-aligned
+            float grid = cfg.Visibility.HearPositionGridMeters;
+            // Fix-round 1 (M-3): expressed from `grid` itself (1.3/-4.6 grid
+            // multiples), not raw metres — "not grid-aligned" is a property
+            // of the construction, not a coincidence that only holds at
+            // today's default grid of 3 m.
+            var pos = new float2(grid * 1.3f, -grid * 4.6f);
 
             float2 once = VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility);
             Assert.AreNotEqual(pos, once,
@@ -861,6 +921,99 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(-q.x, qMirrored.x, "mirroring the source across the origin must mirror the quantized X");
             Assert.AreEqual(-q.y, qMirrored.y, "mirroring the source across the origin must mirror the quantized Y");
+        }
+
+        // --- 25: Audible_UsesObserverPosition_NotOrigin (Fix-round 1, C-1) ---
+
+        [Test]
+        public void Audible_UsesObserverPosition_NotOrigin()
+        {
+            // Fix-round 1 (C-1): every one of Task 20's original six
+            // IsAudible calls placed the OBSERVER at float2.zero, so a
+            // mutant substituting math.length(sourcePos) for
+            // math.distance(observerPos, sourcePos) — i.e. silently ignoring
+            // the first argument — survived the entire 352-test run
+            // (coordinator's grep, confirmed). Two probes below, sharing one
+            // non-origin observer, falsify the mutant from each side.
+            var cfg = TestConfigs.Open();
+            var observerPos = new float2(2f * cfg.Visibility.HearRadius, 0f);
+
+            // True distance (observer to world origin) is 2*HearRadius, past
+            // HearRadius — NOT audible. The length(sourcePos)-only mutant
+            // would instead see |origin| == 0 <= HearRadius and wrongly
+            // report audible.
+            Assert.IsFalse(VisibilitySystem.IsAudible(observerPos, float2.zero, cfg.Visibility),
+                "a source at the world origin must not be audible to an observer whose TRUE distance from it "
+                + "exceeds HearRadius, even though the origin's own distance from the world's centre is zero");
+
+            // True distance (observer to itself) is zero — well within
+            // HearRadius — AUDIBLE. The same mutant would instead see
+            // |observerPos| == 2*HearRadius > HearRadius and wrongly report
+            // NOT audible.
+            Assert.IsTrue(VisibilitySystem.IsAudible(observerPos, observerPos, cfg.Visibility),
+                "a source collocated with a non-origin observer must be audible, even though the source's own "
+                + "distance from the world origin exceeds HearRadius");
+        }
+
+        // --- 26: Audible_UsesConfiguredHearRadius_NotDefault (Fix-round 1, I-1b) ---
+
+        [Test]
+        public void Audible_UsesConfiguredHearRadius_NotDefault()
+        {
+            // Fix-round 1 (I-1b): every audibility fixture in this file ran
+            // at the DEFAULT HearRadius (60 m) — a mutant hardcoding
+            // VisibilitySystem.cs's `<= cfg.HearRadius` comparison to the
+            // literal 60f instead of reading the field survives every one of
+            // them. Narrowing it here forces the implementation to actually
+            // read cfg.HearRadius.
+            var cfg = TestConfigs.Open();
+            float defaultRadius = cfg.Visibility.HearRadius;
+            cfg.Visibility.HearRadius = defaultRadius * 0.5f;
+            float radius = cfg.Visibility.HearRadius;
+
+            var justInside = new float2(radius - 1f, 0f);
+            var justOutside = new float2(radius + 1f, 0f);
+            // test setup: the outside probe must still read as audible under
+            // the OLD default radius, or a hardcoded-60f mutant would happen
+            // to agree with the narrowed one and this fixture would prove
+            // nothing.
+            Assert.Less(justOutside.x, defaultRadius,
+                "test setup: this fixture only discriminates the mutant if the outside probe would still "
+                + "read as audible under the OLD default HearRadius");
+
+            Assert.IsTrue(VisibilitySystem.IsAudible(float2.zero, justInside, cfg.Visibility),
+                "just within the CONFIGURED (narrowed) HearRadius must be audible");
+            Assert.IsFalse(VisibilitySystem.IsAudible(float2.zero, justOutside, cfg.Visibility),
+                "just beyond the CONFIGURED (narrowed) HearRadius must not be audible, even though it is "
+                + "still within the OLD default HearRadius");
+        }
+
+        // --- 27: AudiblePos_ExactHalfGrid_RoundsToEven_NotAwayFromZero (Fix-round 1, I-2) ---
+
+        [Test]
+        public void AudiblePos_ExactHalfGrid_RoundsToEven_NotAwayFromZero()
+        {
+            // Fix-round 1 (I-2):
+            // AudiblePos_SymmetricAroundOrigin_ForNegativeCoordinates only
+            // pins ODDNESS (f(-x) == -f(x)), which the identity function,
+            // math.trunc, AND MidpointRounding.AwayFromZero all satisfy
+            // equally — despite that test's own comment naming ToEven, it
+            // never tells ToEven apart from AwayFromZero. An exact half-grid
+            // input is the one point where the two roundings actually
+            // disagree: round(0.5) = 0 under ToEven (0 is the nearest EVEN
+            // integer) but 1 under AwayFromZero.
+            var cfg = TestConfigs.Open();
+            float grid = cfg.Visibility.HearPositionGridMeters;
+            Assert.Greater(grid, 0f, "test setup: this fixture only makes sense with quantization enabled");
+
+            var halfGrid = new float2(0.5f * grid, 0f);
+            float2 quantized = VisibilitySystem.QuantizeAudiblePos(halfGrid, cfg.Visibility);
+
+            Assert.AreEqual(0f, quantized.x,
+                "an exact half-grid offset must round DOWN to 0 under ToEven (0 is the nearest even integer), "
+                + "not UP to a full grid cell under AwayFromZero — this also kills a `return pos` identity "
+                + "stub, which would report the half-grid offset itself instead of either rounded value");
+            Assert.AreEqual(0f, quantized.y);
         }
     }
 }
