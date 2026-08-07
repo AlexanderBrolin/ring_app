@@ -795,11 +795,14 @@ namespace Ring.Simulation.Tests
         // payload bytes) was checked with the token-boundary grep the brief
         // specifies:
         //   grep -nP "(?<![\d.])<N>(?![\d.])" client/Assets/Data/*.asset
-        // RESULT, STATED AS WHAT WAS SEARCHED (fix-round M4). Pattern
-        // `(?<![\d.])N(?![\d.])` over all ten `client/Assets/Data/*.asset`,
-        // for each of the 30 numbers this region uses as DATA — 52, 118, 47,
-        // 33, 11, 23, 37, 41, 19, 67, 29, 733, 61234, 26, 48, 27, 30.5, 14.5,
-        // 9001, 71, 191, 53, 31337, 4113, 200, 250, 65543, 87, 126, 145.
+        // RESULT, STATED AS WHAT WAS SEARCHED (fix-round M4, list completed in
+        // fix-round 2). Pattern `(?<![\d.])N(?![\d.])` over all ten
+        // `client/Assets/Data/*.asset`, for each of the 32 numbers this region
+        // uses as DATA — 52, 118, 47, 33, 11, 23, 37, 41, 19, 67, 29, 733,
+        // 61234, 26, 48, 27, 30.5, 14.5, 9001, 71, 191, 53, 31337, 4113, 200,
+        // 250, 65543, 87, 126, 145, and the two event KIND bytes 210 (0xD2)
+        // and 211 (0xD3), which the first version of this list omitted even
+        // though the brief names "kinds" as data (both checked, both clean).
         // Exactly two produce a hit, 19 and 23, and both are the pattern
         // landing inside a GUID hex string on an `m_Script: {..., guid: ...}`
         // line (ArenaConfig.asset:12 and NetConfig.asset:12) — the same false
@@ -968,6 +971,39 @@ namespace Ring.Simulation.Tests
             float cross = a.x * b.y - a.y * b.x;
             float dot = a.x * b.x + a.y * b.y;
             return math.abs(math.degrees(math.atan2(cross, dot)));
+        }
+
+        /// Asserts a DECODED heading, and does it in two parts because the
+        /// angular check alone has a blind spot big enough to drive the very
+        /// regression it is meant to catch through (fix-round 2, found by the
+        /// scoped re-review of fix-round 1).
+        ///
+        /// `AngularDifferenceDegrees(float2.zero, anything)` is EXACTLY ZERO:
+        /// both `cross` and `dot` vanish, and `atan2(0, 0)` is 0 by
+        /// convention — a fact this repo already documents in Quantize.cs's
+        /// own doc for `Dir(float2.zero)`. So the single most likely decoder
+        /// regression, "the field is simply never written and keeps the
+        /// struct's default", passes an angular assertion against EVERY
+        /// expected direction. Fix-round 1 added exactly such an assertion to
+        /// close a coverage hole and, for that mutation, closed nothing; the
+        /// mutation it did verify (a constant +X) has non-zero cross/dot and
+        /// therefore looked like proof.
+        ///
+        /// The magnitude check is what actually pins it: `Quantize.DirBack`
+        /// returns `(cos, sin)` of the cell angle, whose length is 1 to float
+        /// precision, and no unwritten field can be unit-length. It is also
+        /// platform-safe in the way a literal component would not be (lesson
+        /// of Task 24/25: the exact bytes of a cosine near an axis are a
+        /// precision detail, the length is not).
+        static void AssertDecodedHeading(float2 actual, float2 expected, string what)
+        {
+            Assert.That(math.length(actual), Is.EqualTo(1f).Within(1e-4f),
+                $"{what}: a decoded heading is a unit vector — this is the assertion that "
+                + "fails when the field is never written, which the angular check below "
+                + "cannot see (atan2(0,0) == 0 against any direction)");
+            Assert.That(AngularDifferenceDegrees(actual, expected),
+                Is.LessThanOrEqualTo(HalfStepDirDegrees + DirNoiseDegrees),
+                $"{what}: decoded heading must come back within half a Dir step");
         }
 
         // ---- T27.1/2. Structural: enum and record-size constants ----
@@ -1229,13 +1265,11 @@ namespace Ring.Simulation.Tests
             // there was not even a round-trip to be blind. Symptom it would
             // have shipped: every mob on every client faces one fixed
             // direction regardless of what the server sent.
-            Assert.That(AngularDifferenceDegrees(mobDest[0].Dir, MobM1.Dir),
-                Is.LessThanOrEqualTo(HalfStepDirDegrees + DirNoiseDegrees),
-                "mob 1: decoded heading must come back within half a Dir step");
-            Assert.That(AngularDifferenceDegrees(mobDest[1].Dir, MobM2.Dir),
-                Is.LessThanOrEqualTo(HalfStepDirDegrees + DirNoiseDegrees),
-                "mob 2: a SECOND heading, different from mob 1's — a constant "
-                + "decoded direction cannot satisfy both");
+            AssertDecodedHeading(mobDest[0].Dir, MobM1.Dir, "mob 1");
+            // A SECOND heading, opposite to mob 1's, so no constant satisfies
+            // both; and AssertDecodedHeading's magnitude half also refuses the
+            // unwritten-field case, which the angular half cannot see.
+            AssertDecodedHeading(mobDest[1].Dir, MobM2.Dir, "mob 2");
 
             Assert.IsTrue(reader.TryReadBlock(AllBlockKinds, out byte kind4, out System.ReadOnlySpan<byte> payload4));
             Assert.AreEqual((byte)SnapshotBlockKind.Wave, kind4, "canonical order: Wave fourth");
@@ -1285,15 +1319,13 @@ namespace Ring.Simulation.Tests
             Assert.That(playerDest[0].Pos.x, Is.EqualTo(PlayerP1.Pos.x).Within(HalfStepPosMeters + PosNoiseMeters));
             Assert.That(playerDest[0].Pos.y, Is.EqualTo(PlayerP1.Pos.y).Within(HalfStepPosMeters + PosNoiseMeters));
             Assert.That(playerDest[0].Hp, Is.EqualTo(PlayerP1.Hp).Within(HalfStepHeroHp + HpNoise));
-            Assert.That(AngularDifferenceDegrees(playerDest[0].Dir, PlayerP1.Dir),
-                Is.LessThanOrEqualTo(HalfStepDirDegrees + DirNoiseDegrees));
+            AssertDecodedHeading(playerDest[0].Dir, PlayerP1.Dir, "player 1");
             // The SECOND player too: with only record 0 checked, every decoded
             // field of every record after the first was unverified.
             Assert.That(playerDest[1].Pos.x, Is.EqualTo(PlayerP2.Pos.x).Within(HalfStepPosMeters + PosNoiseMeters));
             Assert.That(playerDest[1].Pos.y, Is.EqualTo(PlayerP2.Pos.y).Within(HalfStepPosMeters + PosNoiseMeters));
             Assert.That(playerDest[1].Hp, Is.EqualTo(PlayerP2.Hp).Within(HalfStepHeroHp + HpNoise));
-            Assert.That(AngularDifferenceDegrees(playerDest[1].Dir, PlayerP2.Dir),
-                Is.LessThanOrEqualTo(HalfStepDirDegrees + DirNoiseDegrees));
+            AssertDecodedHeading(playerDest[1].Dir, PlayerP2.Dir, "player 2");
 
             reader.TryReadBlock(AllBlockKinds, out _, out _); // liveness, not under test here
             reader.TryReadBlock(AllBlockKinds, out _, out System.ReadOnlySpan<byte> mobsPayload);
@@ -1440,6 +1472,49 @@ namespace Ring.Simulation.Tests
                 Assert.IsFalse(okW, $"Wave length {len} must be refused");
                 Assert.AreEqual(SnapshotBlockError.MalformedLength, errW, $"Wave length {len}");
             }
+        }
+
+        [Test]
+        public void EventsBlock_PayloadLongerThanTheOffsetField_IsRefused_NoException()
+        {
+            // Fix-round 2 (scoped re-review finding): the `payload.Length >
+            // ushort.MaxValue` guard added by fix-round 1 had no test, so
+            // both "use >= instead of >" and "report the wrong error" were
+            // free mutations. The guard exists because `EventRecord.
+            // PayloadOffset` is a ushort: past 65535 an offset wraps and
+            // points a consumer at the wrong bytes, which is exactly the
+            // silent corruption Р82 rules out. Unreachable through
+            // SnapshotReader (its block lengths are u16 by construction) —
+            // this method is public and its doc invites direct calls.
+            var tooLong = new byte[ushort.MaxValue + 1];
+            var destination = new SnapshotBlocks.EventRecord[4];
+            bool ok = true;
+            SnapshotBlockError error = SnapshotBlockError.None;
+            int count = -1;
+            Assert.DoesNotThrow(
+                () => ok = SnapshotBlocks.TryReadEventsBlock(tooLong, SnapCfg, destination, out count, out error),
+                "an over-long payload is refused, not thrown on (Р82)");
+            Assert.IsFalse(ok);
+            Assert.AreEqual(SnapshotBlockError.MalformedLength, error);
+            Assert.AreEqual(0, count);
+
+            // Exactly 65535 is the largest ADDRESSABLE payload and must be
+            // accepted, so the guard is `>` and not `>=`. Its records are all
+            // zero bytes: kind 0, seq 0, tickDelta 0, pos 0, payloadBytes 0 —
+            // 7281 well-formed 9-byte headers and 6 bytes left over, which is
+            // shorter than a header and therefore MalformedLength. Both facts
+            // are asserted: the guard let it through, and the walk then
+            // failed for its own, different reason.
+            var largest = new byte[ushort.MaxValue];
+            var bigDestination = new SnapshotBlocks.EventRecord[ushort.MaxValue / SnapshotBlocks.EventHeaderBytes + 1];
+            SnapshotBlockError largestError = SnapshotBlockError.None;
+            int largestCount = -1;
+            Assert.DoesNotThrow(
+                () => SnapshotBlocks.TryReadEventsBlock(largest, SnapCfg, bigDestination, out largestCount, out largestError));
+            Assert.AreEqual(SnapshotBlockError.MalformedLength, largestError,
+                "65535 is addressable, so it passes the length guard and fails only on its trailing partial record");
+            Assert.AreEqual(ushort.MaxValue / SnapshotBlocks.EventHeaderBytes, largestCount,
+                "every whole record before the trailing remainder was decoded");
         }
 
         [Test]

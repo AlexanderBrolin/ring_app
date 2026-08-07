@@ -559,7 +559,12 @@ namespace Ring.Networking.Protocol
         /// The payload length is not a legal shape for this block kind: not
         /// a multiple of its fixed record size (Players/Mobs), not equal to
         /// its fixed size (Liveness/Wave), or too short for the next Events
-        /// record's 9-byte header to fit at all.
+        /// record's 9-byte header to fit at all. Since fix-round 1 it also
+        /// covers the opposite end — an Events payload LONGER than 65535 B,
+        /// which no `EventRecord.PayloadOffset` could address (that guard is
+        /// unreachable through SnapshotReader, whose block lengths are u16,
+        /// and exists for direct callers). "Length is not a legal shape",
+        /// then, in both directions, not merely "too short".
         MalformedLength,
 
         /// The block declares more records than the caller's destination
