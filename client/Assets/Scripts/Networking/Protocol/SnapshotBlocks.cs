@@ -8,7 +8,7 @@ namespace Ring.Networking.Protocol
     /// (Task 26) — players, liveness, mobs, wave and events. Task 26 gave the
     /// frame; this file gives the frame's content. Task 27 does not decide
     /// WHO is in a snapshot (Task 28's filter/budget) nor WHAT event kinds
-    /// exist (Task 28's catalogue, since it owns the producer) — only how a
+    /// exist (Task 28's catalog, since it owns the producer) — only how a
     /// record of each kind is laid out on the wire.
     ///
     /// WHY THE READ SIDE LIVES HERE AND THE WRITE SIDE LIVES ON
@@ -93,6 +93,42 @@ namespace Ring.Networking.Protocol
         /// phase(1) + waveIndex(2) + aliveCount(1) = 4.
         public const int WaveBlockPayloadBytes = 4;
 
+        /// Highest legal wire value of `MobType` / `MobAiState` / `WavePhase`
+        /// (fix-round I1). The wire carries these as raw bits, so a hostile
+        /// or corrupted byte can name a value the enum does not define —
+        /// `(MobType)15` casts perfectly happily in C#. Every decoder below
+        /// refuses such a record (`SnapshotBlockError.MalformedContent`)
+        /// instead of handing the consumer an undefined enumerator: Task 32
+        /// and Tasks 43-45 index prefab/animator tables by these very
+        /// values, so a pass-through would turn one bad byte into an
+        /// IndexOutOfRange on the client's render path — refusing bad input
+        /// is what Р82 asks for, and "never throws" was only half of it.
+        ///
+        /// THESE THREE CONSTANTS ARE THE TRIPWIRE for the enums growing. They
+        /// are pinned literally by SnapshotCodecTests.
+        /// EnumDomainBounds_MatchTheSimulationEnums, which also counts the
+        /// enumerators — so adding a MobAiState in Stage 3 fails there, in a
+        /// test that says in words that the wire domain moved, rather than
+        /// silently making legal traffic unparseable. A wire domain change is
+        /// also a ProtocolVersion bump (see ProtocolVersion's own doc).
+        public const byte MaxMobTypeValue = (byte)MobType.Gunner;
+        public const byte MaxMobAiStateValue = (byte)MobAiState.Fire;
+        public const byte MaxWavePhaseValue = (byte)WavePhase.Active;
+
+        /// The `MaxHp` a mob record's HP byte is quantized against — Chaser
+        /// and Gunner do NOT share a cap, so the record's own type decides
+        /// (task-27-brief §2.7). One home for the rule, called by both sides
+        /// (fix-round M1): it was written out twice, and a third `MobType` in
+        /// Stage 3 would have needed both edits with neither a compile error
+        /// nor a red test to demand the second — the new type would simply
+        /// have decoded against the Gunner's cap.
+        ///
+        /// The two-way branch is safe because both call sites reject anything
+        /// above `MaxMobTypeValue` first, and that constant is pinned by the
+        /// test named above.
+        public static float MaxHpFor(MobType type, in SimConfig cfg)
+            => type == MobType.Chaser ? cfg.Chaser.MaxHp : cfg.Gunner.MaxHp;
+
         /// Decoded Players record (task-27-brief §2.2, §2.4). `Pos`/`Dir`/
         /// `Hp` are the DECODED values (Quantize's *Back methods), not wire
         /// codes — a caller compares them against simulation state directly.
@@ -107,12 +143,20 @@ namespace Ring.Networking.Protocol
 
         /// Decoded Mobs record (task-27-brief §2.2, §2.7, §2.8).
         ///
-        /// `Id` IS A LOSSY u16 CODE, WIDENED TO int (task-27-brief §2.8):
-        /// the wire only ever carries `(ushort)(sourceId & 0xFFFF)`, so this
-        /// field never holds a value outside [0, 65535] regardless of how
-        /// large the original `MobState.Id` was, and the ORIGINAL id can
-        /// never be recovered from it — two source ids 65536 apart produce
-        /// the identical code (pinned by
+        /// `Id` IS A LOSSY u16 CODE ON THE WIRE, AND THE FIELD MEANS
+        /// DIFFERENT THINGS ON EACH SIDE (task-27-brief §2.8; fix-round I5 —
+        /// the first wording claimed this field "never holds a value outside
+        /// [0, 65535]", which is false for half of its own contract and is
+        /// exactly the kind of universal negative this track keeps paying
+        /// for). `MobRecord` is shared by both sides, so:
+        ///   * ON WRITE it carries the FULL `MobState.Id`, an `int` — which
+        ///     is why SnapshotWriter.WriteMobsBlock narrows it with
+        ///     `(ushort)(r.Id & 0xFFFF)`, and why this file's own test feeds
+        ///     it `Id = 65543`;
+        ///   * ON READ it carries the decoded u16 code, so a record produced
+        ///     by the decoder below is always in [0, 65535].
+        /// The ORIGINAL id can never be recovered from the code — two source
+        /// ids 65536 apart produce the identical one (pinned by
         /// SnapshotCodecTests.MobId_U16Truncation_PinnedLiterals_AndCollisionAcrossTheWraparound).
         /// That collision needs an entity to outlive 65536 spawns of its
         /// kind, which the current caps (MaxMobs 96 + MaxProjectiles 384,
@@ -201,6 +245,23 @@ namespace Ring.Networking.Protocol
                 return false;
             }
 
+            // CONTENT VALIDATION IS ITS OWN PASS, BEFORE A SINGLE RECORD IS
+            // WRITTEN (fix-round I1), so this method's "the whole block is
+            // rejected, nothing is written into `destination`" contract stays
+            // literally true rather than nearly true. The slot index is a raw
+            // wire byte and can name a slot this match does not have; both
+            // peers agree on MaxPlayers by construction (it is part of
+            // SimConfig, hence of the SimConfigHash compared in the handshake,
+            // Task 39), so an index at or above it is hostile or stale, never
+            // legitimate — and letting it through would hand Task 32/45 an
+            // out-of-range index into their per-slot view pools.
+            for (int i = 0; i < recordCount; i++)
+                if (payload[i * PlayerRecordBytes] >= cfg.Arena.MaxPlayers)
+                {
+                    error = SnapshotBlockError.MalformedContent;
+                    return false;
+                }
+
             for (int i = 0; i < recordCount; i++)
             {
                 int off = i * PlayerRecordBytes;
@@ -273,6 +334,22 @@ namespace Ring.Networking.Protocol
                 return false;
             }
 
+            // Content validation as its own pass, before anything is written
+            // (fix-round I1) — same reasoning as TryReadPlayersBlock. A
+            // hostile `typeAndAi` nibble casts to an undefined enumerator
+            // without complaint in C#: `(MobType)15` and `(MobAiState)7` are
+            // legal casts and illegal values, and Tasks 43-45 index their
+            // prefab/animator tables by exactly these.
+            for (int i = 0; i < recordCount; i++)
+            {
+                byte packed = payload[i * MobRecordBytes + 2];
+                if ((packed >> 4) > MaxMobTypeValue || (packed & 0x0F) > MaxMobAiStateValue)
+                {
+                    error = SnapshotBlockError.MalformedContent;
+                    return false;
+                }
+            }
+
             for (int i = 0; i < recordCount; i++)
             {
                 int off = i * MobRecordBytes;
@@ -284,7 +361,7 @@ namespace Ring.Networking.Protocol
                 ushort yCode = ReadU16(payload, off + 5);
                 byte dirCode = payload[off + 7];
                 byte hpCode = payload[off + 8];
-                float maxHp = type == MobType.Chaser ? cfg.Chaser.MaxHp : cfg.Gunner.MaxHp;
+                float maxHp = MaxHpFor(type, cfg);
                 destination[i] = new MobRecord
                 {
                     Id = idCode,
@@ -321,6 +398,15 @@ namespace Ring.Networking.Protocol
                 return false;
             }
 
+            // Fix-round I1: `WavePhase` has two enumerators, the wire byte has
+            // 256 values. Refuse the block rather than hand a consumer a
+            // `(WavePhase)200` that no `switch` accounts for.
+            if (payload[0] > MaxWavePhaseValue)
+            {
+                error = SnapshotBlockError.MalformedContent;
+                return false;
+            }
+
             phase = (WavePhase)payload[0];
             waveIndex = ReadU16(payload, 1);
             aliveCount = payload[3];
@@ -344,6 +430,21 @@ namespace Ring.Networking.Protocol
             out SnapshotBlockError error)
         {
             count = 0;
+
+            // Fix-round M3: `EventRecord.PayloadOffset` is a `ushort`, so an
+            // offset in a payload longer than 65535 B would wrap silently and
+            // point the consumer at the wrong bytes. Through
+            // SnapshotReader.TryReadBlock this is unreachable — a block's own
+            // length field is a u16 — but this method is public and its doc
+            // invites direct calls, so the precondition is enforced rather
+            // than assumed. A silent wrap inside a decoder of untrusted bytes
+            // is precisely what Р82 exists to rule out.
+            if (payload.Length > ushort.MaxValue)
+            {
+                error = SnapshotBlockError.MalformedLength;
+                return false;
+            }
+
             int pos = 0;
             while (pos < payload.Length)
             {
@@ -465,10 +566,28 @@ namespace Ring.Networking.Protocol
         /// buffer holds. The record count comes from the SENDER's declared
         /// length, so this is hostile/stale input, not a caller bug — see
         /// the class doc's Р82 note.
+        ///
+        /// WHAT `destination` HOLDS AFTERWARDS DIFFERS BY BLOCK (fix-round
+        /// M2). Players and Mobs know their count up front, so they refuse
+        /// before writing anything and report `count` 0. Events cannot —
+        /// its records vary in size, so the overflow is only discovered
+        /// while walking, and the records decoded before it REMAIN in
+        /// `destination` with `count` naming how many. Read `count` in both
+        /// cases; never assume the refusal means the buffer is untouched.
         DestinationTooSmall,
 
         /// An Events record's own `payloadBytes` claims more bytes than
         /// remain in the block.
         EventPayloadOverrun,
+
+        /// A field's VALUE is outside its declared domain even though the
+        /// block's shape is legal (fix-round I1): a `MobType`/`MobAiState`
+        /// nibble or a `WavePhase` byte naming an enumerator that does not
+        /// exist, or a Players record whose slot index is not below
+        /// `cfg.Arena.MaxPlayers`. Shape-legal, content-illegal — the one
+        /// hostile case the block's own length can never catch, and the one
+        /// that reaches furthest downstream if it is let through (Task 32 and
+        /// Tasks 43-45 index tables by exactly these values).
+        MalformedContent,
     }
 }

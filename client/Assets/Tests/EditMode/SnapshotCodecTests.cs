@@ -795,31 +795,79 @@ namespace Ring.Simulation.Tests
         // payload bytes) was checked with the token-boundary grep the brief
         // specifies:
         //   grep -nP "(?<![\d.])<N>(?![\d.])" client/Assets/Data/*.asset
-        // A handful of small integers DO turn up elsewhere in those files
-        // (e.g. "3", "6", "8" appear as unrelated tuning numbers in several
-        // configs) — searched and accepted, not filtered out by eye: they
-        // are single-digit counters (tickDelta, aliveCount) for which no
-        // collision-free choice exists across ten balance files, and none of
-        // them equals the SAME-DOMAIN balance number a mutation could
-        // plausibly confuse them with. Some grep hits are pure noise from
-        // the pattern matching inside a GUID hex string (e.g. "19" and "23"
-        // inside `m_Script: {..., guid: ...}` lines) — not a real value
-        // collision, the same class of false positive this file's Task 26
-        // header note already documents for "14 and 22." Structural numbers
-        // (byte offsets, record sizes, sentinel tails) are not fixtures,
-        // same rule as the rest of this file.
+        // RESULT, STATED AS WHAT WAS SEARCHED (fix-round M4). Pattern
+        // `(?<![\d.])N(?![\d.])` over all ten `client/Assets/Data/*.asset`,
+        // for each of the 30 numbers this region uses as DATA — 52, 118, 47,
+        // 33, 11, 23, 37, 41, 19, 67, 29, 733, 61234, 26, 48, 27, 30.5, 14.5,
+        // 9001, 71, 191, 53, 31337, 4113, 200, 250, 65543, 87, 126, 145.
+        // Exactly two produce a hit, 19 and 23, and both are the pattern
+        // landing inside a GUID hex string on an `m_Script: {..., guid: ...}`
+        // line (ArenaConfig.asset:12 and NetConfig.asset:12) — the same false
+        // positive this file's Task 26 header note documents for "14 and 22."
+        // No fixture matches a VALUE.
+        //
+        // TWO FIXTURES WERE CHANGED TO GET THERE, and saying so is the point
+        // of this note. The fix-round's own first draft asserted the sentence
+        // above without running it, and the run then found `5` (proposed for
+        // SnapMaxPlayers) living in VisibilityConfig.LingerTicks,
+        // GameFeelConfig.HeadHoverPulseHz and NetConfig.LatencySimLossPercent,
+        // and `0x5A` = 90 (an event payload byte) living in HeroConfig.Accel.
+        // They became 11 and 0x57. The earlier draft of this note had also
+        // excused imagined collisions as unavoidable "single-digit counters
+        // (tickDelta, aliveCount)" — untrue of this file, whose tickDelta is
+        // 191 and 53 and whose aliveCount is 71. Both mistakes are the same
+        // one: a claim about a search, written without the search. Structural
+        // numbers (byte offsets, record sizes, sentinel tails) are not
+        // fixtures, same rule as the rest of this file.
         const float SnapRadius = 52f;
         const float SnapHeroMaxHp = 118f;
         const float SnapChaserMaxHp = 47f;
         const float SnapGunnerMaxHp = 33f;
 
+        /// The Players decoder refuses a slot index at or above
+        /// `cfg.Arena.MaxPlayers` (fix-round I1). This fixture is
+        /// DELIBERATELY NOT the shipped 3: with 3, the mutation "hardcode
+        /// `index >= 3` instead of reading cfg" would be indistinguishable
+        /// from the real implementation and would survive the whole suite.
+        /// At 11, index 10 must be ACCEPTED and index 11 REFUSED, which no
+        /// hardcoded 3 can satisfy — the test below exercises both ends.
+        /// (11 rather than 5: 5 is a live value in three balance assets, see
+        /// the fixture note above.)
+        const int SnapMaxPlayers = 11;
+
         static readonly SimConfig SnapCfg = new SimConfig
         {
-            Arena = new ArenaSimConfig { Radius = SnapRadius },
+            Arena = new ArenaSimConfig { Radius = SnapRadius, MaxPlayers = SnapMaxPlayers },
             Hero = new HeroSimConfig { MaxHp = SnapHeroMaxHp },
             Chaser = new MobSimConfig { MaxHp = SnapChaserMaxHp },
             Gunner = new MobSimConfig { MaxHp = SnapGunnerMaxHp },
         };
+
+        // HALF A QUANTIZATION STEP, DERIVED HERE FROM THE WIRE WIDTHS and
+        // never from Quantize (task-27-brief §3 item 9) — asserting against
+        // Quantize's own half-step would compare two constants and prove
+        // nothing, the exact defect Task 24 F1/F2 named. `Pos` spans
+        // [-r, +r] over 65536 codes, so its step is 2r/65535 and half of that
+        // is r/65535; `Unit` spans [0, max] over 256 codes; `Dir` spans 360
+        // degrees over 256 codes.
+        const float HalfStepPosMeters = SnapRadius / 65535f;          // 7.93e-4 m
+        const float HalfStepHeroHp = SnapHeroMaxHp / 255f / 2f;       // 0.231
+        const float HalfStepChaserHp = SnapChaserMaxHp / 255f / 2f;   // 0.092
+        const float HalfStepDirDegrees = 360f / 256f / 2f;            // 0.703 deg
+
+        // Slack for float32 noise on the decode path, and NOTHING MORE
+        // (fix-round M7). The first version added 1e-3 m to the position
+        // tolerance — larger than the 7.93e-4 half-step itself, so the
+        // assertion actually admitted 2.26 half-steps and stopped being the
+        // "within half a step" claim it is named for. float32 eps at |v| = 52
+        // is about 6.2e-6, so 5e-5 is eight times the worst plausible noise
+        // and six per cent of the half-step: comfortably loose against
+        // rounding, comfortably tight against a real defect. (Task 24's
+        // opposite mistake — slack THINNER than float noise — is why this
+        // number is reasoned about rather than guessed.)
+        const float PosNoiseMeters = 5e-5f;
+        const float HpNoise = 1e-3f;
+        const float DirNoiseDegrees = 0.05f;
 
         // Player fixtures. Wire codes (computed independently, see each
         // test's inline comments): P1 pos (23,-37) -> posX 47261 (0x9D,0xB8),
@@ -864,11 +912,11 @@ namespace Ring.Simulation.Tests
         const byte LivenessFixtureMask = 0b101;
 
         // Event fixtures — synthetic kinds/payloads, per task-27-brief §2.5
-        // Task 27 draws no catalogue. E1 pos (17,-49) -> posX 43480
+        // Task 27 draws no catalog. E1 pos (17,-49) -> posX 43480
         // (0xD8,0xA9), posY 1890 (0x62,0x07). E2 pos (-33,26) -> posX 11973
         // (0xC5,0x2E), posY 49151 (0xFF,0xBF), zero payload — the "0 B"
         // boundary from task-27-brief §3 item 7.
-        static readonly byte[] EventPayloadPool = { 0x5A, 0x7E, 0x91 };
+        static readonly byte[] EventPayloadPool = { 0x57, 0x7E, 0x91 };
         static readonly SnapshotBlocks.EventRecord EventE1 = new SnapshotBlocks.EventRecord
         {
             Kind = 0xD2, Seq = 31337, TickDelta = 191, Pos = new float2(17f, -49f),
@@ -1009,15 +1057,22 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual((byte)0, buffer[b + 2], "block byte 2: payloadBytes high");
             Assert.AreEqual((byte)0b101, buffer[b + SnapshotWriter.BlockHeaderBytes], "mask byte, literal 0b101");
 
-            Assert.IsTrue((LivenessFixtureMask & (1 << 0)) != 0, "player 0 alive");
-            Assert.IsFalse((LivenessFixtureMask & (1 << 1)) != 0, "player 1 dead");
-            Assert.IsTrue((LivenessFixtureMask & (1 << 2)) != 0, "player 2 alive");
-
             Assert.IsTrue(SnapshotBlocks.TryReadLivenessBlock(
                 new System.ReadOnlySpan<byte>(buffer, b + SnapshotWriter.BlockHeaderBytes, 1),
                 out byte decodedMask, out SnapshotBlockError error));
             Assert.AreEqual(LivenessFixtureMask, decodedMask);
             Assert.AreEqual(SnapshotBlockError.None, error);
+
+            // Fix-round I4: these three ran against the CONSTANT
+            // `LivenessFixtureMask` and touched no production code at all —
+            // `(0b101 & 1) != 0` is a fact about the literal, true on an
+            // empty implementation and on any other. No mutation could redden
+            // them, so they were pure decoration over the real assertions
+            // above. Re-pointed at `decodedMask`, they now ride the full
+            // write-then-decode path, and bit i still means player i.
+            Assert.IsTrue((decodedMask & (1 << 0)) != 0, "player 0 alive");
+            Assert.IsFalse((decodedMask & (1 << 1)) != 0, "player 1 dead");
+            Assert.IsTrue((decodedMask & (1 << 2)) != 0, "player 2 alive");
         }
 
         [Test]
@@ -1107,7 +1162,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual((byte)0x62, buffer[r0 + 6], "record 1 byte 6: posY low");
             Assert.AreEqual((byte)0x07, buffer[r0 + 7], "record 1 byte 7: posY high");
             Assert.AreEqual((byte)3, buffer[r0 + 8], "record 1 byte 8: payloadBytes");
-            Assert.AreEqual((byte)0x5A, buffer[r0 + 9], "record 1 payload byte 0");
+            Assert.AreEqual((byte)0x57, buffer[r0 + 9], "record 1 payload byte 0");
             Assert.AreEqual((byte)0x7E, buffer[r0 + 10], "record 1 payload byte 1");
             Assert.AreEqual((byte)0x91, buffer[r0 + 11], "record 1 payload byte 2");
 
@@ -1166,6 +1221,21 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(MobM2.Id, mobDest[1].Id);
             Assert.AreEqual(MobM2.Type, mobDest[1].Type);
             Assert.AreEqual(MobM2.Ai, mobDest[1].Ai);
+            // Fix-round C1: the DECODED mob heading was asserted by nothing
+            // at all — not here, not in the precision test, not anywhere —
+            // so `Dir = float2.zero` (or reading the typeAndAi byte as the
+            // direction code) survived all 41 tests. The writer's half was
+            // pinned by Mobs_ByteLayout_*; the reader's half was not, and
+            // there was not even a round-trip to be blind. Symptom it would
+            // have shipped: every mob on every client faces one fixed
+            // direction regardless of what the server sent.
+            Assert.That(AngularDifferenceDegrees(mobDest[0].Dir, MobM1.Dir),
+                Is.LessThanOrEqualTo(HalfStepDirDegrees + DirNoiseDegrees),
+                "mob 1: decoded heading must come back within half a Dir step");
+            Assert.That(AngularDifferenceDegrees(mobDest[1].Dir, MobM2.Dir),
+                Is.LessThanOrEqualTo(HalfStepDirDegrees + DirNoiseDegrees),
+                "mob 2: a SECOND heading, different from mob 1's — a constant "
+                + "decoded direction cannot satisfy both");
 
             Assert.IsTrue(reader.TryReadBlock(AllBlockKinds, out byte kind4, out System.ReadOnlySpan<byte> payload4));
             Assert.AreEqual((byte)SnapshotBlockKind.Wave, kind4, "canonical order: Wave fourth");
@@ -1187,6 +1257,8 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(EventE1.PayloadLength, eventDest[0].PayloadLength);
             AssertPayloadEquals(EventPayloadPool, payload5.Slice(eventDest[0].PayloadOffset, eventDest[0].PayloadLength), "event 1 payload");
             Assert.AreEqual(EventE2.Kind, eventDest[1].Kind);
+            Assert.AreEqual(EventE2.Seq, eventDest[1].Seq);
+            Assert.AreEqual(EventE2.TickDelta, eventDest[1].TickDelta);
             Assert.AreEqual(EventE2.PayloadLength, eventDest[1].PayloadLength);
 
             Assert.IsFalse(reader.TryReadBlock(AllBlockKinds, out _, out _), "the stream is exhausted after five blocks");
@@ -1200,15 +1272,9 @@ namespace Ring.Simulation.Tests
         [Test]
         public void QuantizedFields_RoundTrip_WithinHalfStep_ToleranceComputedInTest()
         {
-            // Tolerances computed HERE, independently of Quantize
-            // (task-27-brief §3 item 9) — comparing against Quantize's own
-            // half-step would compare two constants against each other and
-            // prove nothing (the exact defect Task 24 F1/F2 named).
-            float halfStepPos = SnapRadius / 65535f;
-            float halfStepHeroHp = SnapHeroMaxHp / 255f / 2f;
-            float halfStepChaserHp = SnapChaserMaxHp / 255f / 2f;
-            float halfStepDirDeg = 360f / 256f / 2f;
-
+            // Tolerances are the file-level HalfStep* constants, derived from
+            // the wire widths rather than from Quantize (see their doc) and
+            // widened only by measured float noise (fix-round M7).
             byte[] frame = BuildCanonicalFiveBlockFrame();
             var reader = new SnapshotReader(frame);
             reader.TryReadHeader(out _, out _, out _);
@@ -1216,19 +1282,44 @@ namespace Ring.Simulation.Tests
             reader.TryReadBlock(AllBlockKinds, out _, out System.ReadOnlySpan<byte> playersPayload);
             var playerDest = new SnapshotBlocks.PlayerRecord[4];
             SnapshotBlocks.TryReadPlayersBlock(playersPayload, SnapCfg, playerDest, out _, out _);
-            Assert.That(playerDest[0].Pos.x, Is.EqualTo(PlayerP1.Pos.x).Within(halfStepPos + 1e-3f));
-            Assert.That(playerDest[0].Pos.y, Is.EqualTo(PlayerP1.Pos.y).Within(halfStepPos + 1e-3f));
-            Assert.That(playerDest[0].Hp, Is.EqualTo(PlayerP1.Hp).Within(halfStepHeroHp + 1e-3f));
-            float dirErrDeg = AngularDifferenceDegrees(playerDest[0].Dir, PlayerP1.Dir);
-            Assert.That(dirErrDeg, Is.LessThanOrEqualTo(halfStepDirDeg + 0.05f));
+            Assert.That(playerDest[0].Pos.x, Is.EqualTo(PlayerP1.Pos.x).Within(HalfStepPosMeters + PosNoiseMeters));
+            Assert.That(playerDest[0].Pos.y, Is.EqualTo(PlayerP1.Pos.y).Within(HalfStepPosMeters + PosNoiseMeters));
+            Assert.That(playerDest[0].Hp, Is.EqualTo(PlayerP1.Hp).Within(HalfStepHeroHp + HpNoise));
+            Assert.That(AngularDifferenceDegrees(playerDest[0].Dir, PlayerP1.Dir),
+                Is.LessThanOrEqualTo(HalfStepDirDegrees + DirNoiseDegrees));
+            // The SECOND player too: with only record 0 checked, every decoded
+            // field of every record after the first was unverified.
+            Assert.That(playerDest[1].Pos.x, Is.EqualTo(PlayerP2.Pos.x).Within(HalfStepPosMeters + PosNoiseMeters));
+            Assert.That(playerDest[1].Pos.y, Is.EqualTo(PlayerP2.Pos.y).Within(HalfStepPosMeters + PosNoiseMeters));
+            Assert.That(playerDest[1].Hp, Is.EqualTo(PlayerP2.Hp).Within(HalfStepHeroHp + HpNoise));
+            Assert.That(AngularDifferenceDegrees(playerDest[1].Dir, PlayerP2.Dir),
+                Is.LessThanOrEqualTo(HalfStepDirDegrees + DirNoiseDegrees));
 
             reader.TryReadBlock(AllBlockKinds, out _, out _); // liveness, not under test here
             reader.TryReadBlock(AllBlockKinds, out _, out System.ReadOnlySpan<byte> mobsPayload);
             var mobDest = new SnapshotBlocks.MobRecord[4];
             SnapshotBlocks.TryReadMobsBlock(mobsPayload, SnapCfg, mobDest, out _, out _);
-            Assert.That(mobDest[0].Pos.x, Is.EqualTo(MobM1.Pos.x).Within(halfStepPos + 1e-3f));
-            Assert.That(mobDest[0].Pos.y, Is.EqualTo(MobM1.Pos.y).Within(halfStepPos + 1e-3f));
-            Assert.That(mobDest[0].Hp, Is.EqualTo(MobM1.Hp).Within(halfStepChaserHp + 1e-3f));
+            Assert.That(mobDest[0].Pos.x, Is.EqualTo(MobM1.Pos.x).Within(HalfStepPosMeters + PosNoiseMeters));
+            Assert.That(mobDest[0].Pos.y, Is.EqualTo(MobM1.Pos.y).Within(HalfStepPosMeters + PosNoiseMeters));
+            Assert.That(mobDest[0].Hp, Is.EqualTo(MobM1.Hp).Within(HalfStepChaserHp + HpNoise));
+            Assert.That(mobDest[1].Pos.x, Is.EqualTo(MobM2.Pos.x).Within(HalfStepPosMeters + PosNoiseMeters));
+            Assert.That(mobDest[1].Pos.y, Is.EqualTo(MobM2.Pos.y).Within(HalfStepPosMeters + PosNoiseMeters));
+
+            // Fix-round C2: the decoded EVENT position was asserted nowhere,
+            // so `Pos = float2.zero`, a swap of the x/y read offsets, and the
+            // `Aim`-instead-of-`Pos` mutation §2.2 of the brief explicitly
+            // required to redden all survived the reader's half of the codec
+            // (the writer's half was pinned by Events_ByteLayout_*).
+            reader.TryReadBlock(AllBlockKinds, out _, out _); // wave
+            reader.TryReadBlock(AllBlockKinds, out _, out System.ReadOnlySpan<byte> eventsPayload);
+            var eventDest = new SnapshotBlocks.EventRecord[4];
+            SnapshotBlocks.TryReadEventsBlock(eventsPayload, SnapCfg, eventDest, out _, out _);
+            Assert.That(eventDest[0].Pos.x, Is.EqualTo(EventE1.Pos.x).Within(HalfStepPosMeters + PosNoiseMeters));
+            Assert.That(eventDest[0].Pos.y, Is.EqualTo(EventE1.Pos.y).Within(HalfStepPosMeters + PosNoiseMeters));
+            // E1 and E2 differ in BOTH axes and in sign, so neither a constant
+            // nor an x/y swap can satisfy both records.
+            Assert.That(eventDest[1].Pos.x, Is.EqualTo(EventE2.Pos.x).Within(HalfStepPosMeters + PosNoiseMeters));
+            Assert.That(eventDest[1].Pos.y, Is.EqualTo(EventE2.Pos.y).Within(HalfStepPosMeters + PosNoiseMeters));
         }
 
         // ---- T27.10. Empty blocks ----
@@ -1349,6 +1440,188 @@ namespace Ring.Simulation.Tests
                 Assert.IsFalse(okW, $"Wave length {len} must be refused");
                 Assert.AreEqual(SnapshotBlockError.MalformedLength, errW, $"Wave length {len}");
             }
+        }
+
+        [Test]
+        public void EnumDomainBounds_MatchTheSimulationEnums()
+        {
+            // Fix-round I1. These three constants are what every decoder
+            // validates against, so they are pinned twice over: literally,
+            // and against the enum's own member count. The count half is the
+            // tripwire — adding a MobAiState in Stage 3 reddens THIS test,
+            // which says in words that the wire domain moved and needs a
+            // ProtocolVersion bump, instead of silently making legal Stage 3
+            // traffic unparseable by a decoder nobody thought to update.
+            Assert.AreEqual((byte)1, SnapshotBlocks.MaxMobTypeValue, "MobType tops out at Gunner");
+            Assert.AreEqual((byte)5, SnapshotBlocks.MaxMobAiStateValue, "MobAiState tops out at Fire");
+            Assert.AreEqual((byte)1, SnapshotBlocks.MaxWavePhaseValue, "WavePhase tops out at Active");
+
+            Assert.AreEqual(2, System.Enum.GetValues(typeof(MobType)).Length,
+                "MobType gained or lost a member — the wire domain moved");
+            Assert.AreEqual(6, System.Enum.GetValues(typeof(MobAiState)).Length,
+                "MobAiState gained or lost a member — the wire domain moved");
+            Assert.AreEqual(2, System.Enum.GetValues(typeof(WavePhase)).Length,
+                "WavePhase gained or lost a member — the wire domain moved");
+        }
+
+        [Test]
+        public void MalformedContent_MobTypeOrAiOutsideItsDomain_Rejected_NoException()
+        {
+            // Fix-round I1. `(MobType)15` and `(MobAiState)7` are legal casts
+            // and illegal values; before this the decoder returned true and
+            // handed them straight to a consumer that indexes prefab and
+            // animator tables by exactly these. One hostile byte, one
+            // IndexOutOfRange on the client's render path.
+            void AssertPackedByteRefused(byte packed, string what)
+            {
+                var block = new byte[SnapshotBlocks.MobRecordBytes];
+                block[2] = packed;
+                var destination = new SnapshotBlocks.MobRecord[4];
+                bool ok = true;
+                SnapshotBlockError error = SnapshotBlockError.None;
+                int count = -1;
+                Assert.DoesNotThrow(
+                    () => ok = SnapshotBlocks.TryReadMobsBlock(block, SnapCfg, destination, out count, out error),
+                    $"{what}: hostile content is ordinary input, never an exception (Р82)");
+                Assert.IsFalse(ok, what);
+                Assert.AreEqual(SnapshotBlockError.MalformedContent, error, what);
+                Assert.AreEqual(0, count, $"{what}: the whole block is rejected, no record is yielded");
+            }
+
+            AssertPackedByteRefused(0x20, "type nibble 2, one past Gunner");
+            AssertPackedByteRefused(0xF0, "type nibble 15");
+            AssertPackedByteRefused(0x06, "ai nibble 6, one past Fire");
+            AssertPackedByteRefused(0x0F, "ai nibble 15");
+            AssertPackedByteRefused(0xF7, "both nibbles out of domain");
+
+            // ...and the highest LEGAL packing still decodes, so the guard
+            // rejects the domain rather than everything above some smaller
+            // number it happened to be written with.
+            var legal = new byte[SnapshotBlocks.MobRecordBytes];
+            legal[2] = (byte)((SnapshotBlocks.MaxMobTypeValue << 4) | SnapshotBlocks.MaxMobAiStateValue);
+            var dest = new SnapshotBlocks.MobRecord[1];
+            Assert.IsTrue(SnapshotBlocks.TryReadMobsBlock(legal, SnapCfg, dest, out int okCount, out SnapshotBlockError okErr),
+                "Gunner/Fire is the top of both domains and must be accepted");
+            Assert.AreEqual(1, okCount);
+            Assert.AreEqual(SnapshotBlockError.None, okErr);
+            Assert.AreEqual(MobType.Gunner, dest[0].Type);
+            Assert.AreEqual(MobAiState.Fire, dest[0].Ai);
+        }
+
+        [Test]
+        public void MalformedContent_WavePhaseOutsideItsDomain_Rejected_NoException()
+        {
+            foreach (byte phaseByte in new byte[] { 2, 200, 255 })
+            {
+                var block = new byte[SnapshotBlocks.WaveBlockPayloadBytes];
+                block[0] = phaseByte;
+                bool ok = true;
+                SnapshotBlockError error = SnapshotBlockError.None;
+                Assert.DoesNotThrow(
+                    () => ok = SnapshotBlocks.TryReadWaveBlock(block, out _, out _, out _, out error),
+                    $"phase byte {phaseByte}: must not throw (Р82)");
+                Assert.IsFalse(ok, $"phase byte {phaseByte} names no WavePhase");
+                Assert.AreEqual(SnapshotBlockError.MalformedContent, error, $"phase byte {phaseByte}");
+            }
+
+            var legalBlock = new byte[SnapshotBlocks.WaveBlockPayloadBytes];
+            legalBlock[0] = SnapshotBlocks.MaxWavePhaseValue;
+            Assert.IsTrue(SnapshotBlocks.TryReadWaveBlock(legalBlock, out WavePhase phase, out _, out _, out _),
+                "the top of the domain must still be accepted");
+            Assert.AreEqual(WavePhase.Active, phase);
+        }
+
+        [Test]
+        public void MalformedContent_PlayerIndexAtOrAboveMaxPlayers_Rejected_AndBelowAccepted()
+        {
+            // Fix-round I1, and the reason SnapMaxPlayers is 11 rather than
+            // the shipped 3: index 10 must pass and index 11 must not, which
+            // a hardcoded bound cannot do. The refusal must also reject the
+            // WHOLE block — the second record here is perfectly well formed.
+            void AssertIndexRefused(byte index)
+            {
+                var records = new[]
+                {
+                    new SnapshotBlocks.PlayerRecord
+                    {
+                        Index = index, Pos = float2.zero, Dir = new float2(1f, 0f),
+                        Hp = 0f, Flags = PlayerWireFlags.Alive,
+                    },
+                    PlayerP1,
+                };
+                var buffer = new byte[SnapshotWriter.HeaderBytes + SnapshotWriter.PlayersBlockBytes(2)];
+                var writer = new SnapshotWriter(buffer);
+                writer.WriteHeader(Epoch, Tick, Flags);
+                writer.WritePlayersBlock(records, SnapCfg);
+
+                var destination = new SnapshotBlocks.PlayerRecord[4];
+                bool ok = true;
+                SnapshotBlockError error = SnapshotBlockError.None;
+                int count = -1;
+                Assert.DoesNotThrow(() =>
+                {
+                    var reader = new SnapshotReader(buffer);
+                    reader.TryReadHeader(out _, out _, out _);
+                    reader.TryReadBlock(AllBlockKinds, out _, out System.ReadOnlySpan<byte> payload);
+                    ok = SnapshotBlocks.TryReadPlayersBlock(payload, SnapCfg, destination, out count, out error);
+                }, $"index {index}: hostile content must not throw (Р82)");
+                Assert.IsFalse(ok, $"index {index} is at or above MaxPlayers {SnapMaxPlayers}");
+                Assert.AreEqual(SnapshotBlockError.MalformedContent, error, $"index {index}");
+                Assert.AreEqual(0, count, $"index {index}: the whole block is rejected, well-formed records included");
+            }
+
+            AssertIndexRefused((byte)SnapMaxPlayers);
+            AssertIndexRefused(200);
+            AssertIndexRefused(byte.MaxValue);
+
+            // The slot one below the cap is legitimate and must survive.
+            var highest = new SnapshotBlocks.PlayerRecord
+            {
+                Index = (byte)(SnapMaxPlayers - 1), Pos = float2.zero, Dir = new float2(1f, 0f),
+                Hp = 0f, Flags = PlayerWireFlags.Alive,
+            };
+            var okBuffer = new byte[SnapshotWriter.HeaderBytes + SnapshotWriter.PlayersBlockBytes(1)];
+            var okWriter = new SnapshotWriter(okBuffer);
+            okWriter.WriteHeader(Epoch, Tick, Flags);
+            okWriter.WritePlayersBlock(new[] { highest }, SnapCfg);
+            var okDest = new SnapshotBlocks.PlayerRecord[1];
+            var okReader = new SnapshotReader(okBuffer);
+            okReader.TryReadHeader(out _, out _, out _);
+            okReader.TryReadBlock(AllBlockKinds, out _, out System.ReadOnlySpan<byte> okPayload);
+            Assert.IsTrue(SnapshotBlocks.TryReadPlayersBlock(okPayload, SnapCfg, okDest, out int okCount, out SnapshotBlockError okErr),
+                "the highest legal slot index must be accepted");
+            Assert.AreEqual(1, okCount);
+            Assert.AreEqual(SnapshotBlockError.None, okErr);
+            Assert.AreEqual((byte)(SnapMaxPlayers - 1), okDest[0].Index);
+        }
+
+        [Test]
+        public void Writer_MobTypeOrAiOutsideItsDomain_Throws()
+        {
+            // The write side's mirror of the read side's refusal (fix-round
+            // M6/I1): a nibble cannot carry a value above 15, and masking one
+            // would put a DIFFERENT, perfectly legal-looking mob type on the
+            // wire. That is a caller bug, so it throws — the same asymmetry
+            // Task 26 introduced and this file keeps.
+            var buffer = new byte[SnapshotWriter.HeaderBytes + SnapshotWriter.MobsBlockBytes(1)];
+
+            Assert.Throws<System.ArgumentException>(() =>
+            {
+                var writer = new SnapshotWriter(buffer);
+                writer.WriteHeader(Epoch, Tick, Flags);
+                writer.WriteMobsBlock(
+                    new[] { new SnapshotBlocks.MobRecord { Id = 1, Type = (MobType)9, Ai = MobAiState.Idle, Dir = new float2(1f, 0f) } },
+                    SnapCfg);
+            }, "a MobType outside its domain cannot be packed into a nibble");
+
+            Assert.Throws<System.ArgumentException>(() =>
+            {
+                var writer = new SnapshotWriter(buffer);
+                writer.WriteHeader(Epoch, Tick, Flags);
+                writer.WriteMobsBlock(
+                    new[] { new SnapshotBlocks.MobRecord { Id = 1, Type = MobType.Chaser, Ai = (MobAiState)12, Dir = new float2(1f, 0f) } },
+                    SnapCfg);
+            }, "a MobAiState outside its domain cannot be packed into a nibble");
         }
 
         [Test]

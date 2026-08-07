@@ -45,10 +45,42 @@ namespace Ring.Networking.Protocol
     /// in any encoding that can actually delimit blocks (precision fixed in
     /// a later round: the first wording claimed five tags alone did not
     /// fit, which is arithmetically false). The
-    /// consequence that matters is the worst case: 1043 - 14 + 23 = 1052 B
-    /// against a `SnapshotMaxBytes` cap of 1000, so Task 28's truncation
-    /// branch stays reachable and must be budgeted from THIS number, not from
-    /// the spec's. The spec line goes to the Task 57 amendments.
+    /// consequence that matters is the worst case, and the live figure for it
+    /// is the one right below, not the 1052 B this paragraph used to end on.
+    /// The spec line goes to the Task 57 amendments.
+    ///
+    /// WORST-CASE FRAME SIZE — TASK 28'S BUDGET INPUT, 1116 B. Recomputed in
+    /// Task 27 from the five calculators below, not quoted: Task 27 is the
+    /// first place where a real event RECORD exists, so every earlier figure
+    /// predates the thing being measured. Spec §3.8 said 1043 B (header 14 B,
+    /// event ~9 B); Task 26 corrected the format overhead and got 1052 B while
+    /// leaving the spec's event estimate untouched. Neither was dishonest —
+    /// both were computed before the record they depend on existed. At the
+    /// shipped caps (`MaxPlayers` 3, so 2 OTHER players; `MaxMobs` 96; a
+    /// 16-event `SnapshotEventBudget` at an assumed 4 B of payload each):
+    ///
+    ///   HeaderBytes                                    8
+    ///   PlayersBlockBytes(2)                          19
+    ///   LivenessBlockBytes()                           4
+    ///   MobsBlockBytes(96)                           867
+    ///   WaveBlockBytes()                               7
+    ///   EventsBlockBytes(16, 16*4)                   211
+    ///   -----------------------------------------------
+    ///   total                                       1116
+    ///
+    /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 116 B OVER the cap,
+    /// so Task 28's truncation branch is not an edge case but the ordinary
+    /// shape of a full frame. Mobs alone is 867 B; with the 8 B header that
+    /// leaves 125 B for everything else, of which Players+Liveness+Wave take
+    /// 30 B — about 95 B for events, roughly SEVEN records at 13 B each, not
+    /// the sixteen the raw `SnapshotEventBudget` config field suggests.
+    ///
+    /// THE 4 B/EVENT PAYLOAD IS AN ASSUMPTION, NOT A MEASUREMENT — the event
+    /// catalog is Task 28's (Task 27 leaves the payload opaque), so a
+    /// different payload size changes the seven. RECOMPUTE FROM THE
+    /// CALCULATORS, DO NOT RE-QUOTE THIS COMMENT: the mistake this paragraph
+    /// exists to correct is exactly the one it will itself commit the moment
+    /// anything below changes.
     ///
     /// `flags` IS RESERVED AND NO BIT IS ASSIGNED. It is written and read
     /// verbatim so the field exists on the wire from version 1 onward, but
@@ -72,10 +104,12 @@ namespace Ring.Networking.Protocol
     /// untrusted-input throw and has to be revisited — tracked as its own bd
     /// issue rather than fixed from here, that task being closed.
     ///
-    /// NOTHING IS WRITTEN UNTIL EVERYTHING FITS. Both write methods check
-    /// the remaining room before touching a single byte, so a rejected call
-    /// leaves the buffer bit-for-bit as it was and the caller may keep and
-    /// send the shorter valid frame it had already built.
+    /// NOTHING IS WRITTEN UNTIL EVERYTHING FITS. Every write method — the
+    /// two of Task 26 and the five block methods of Task 27 — validates its
+    /// arguments and then reserves the room it needs before touching a single
+    /// byte, so a rejected call leaves the buffer bit-for-bit as it was and
+    /// the caller may keep and send the shorter valid frame it had already
+    /// built.
     ///
     /// ZERO ALLOCATIONS. A `ref struct` over a caller-supplied `Span<byte>`:
     /// no buffer of its own, no pooling, nothing on the heap. Task 28 keeps
@@ -108,9 +142,11 @@ namespace Ring.Networking.Protocol
         /// ceiling on one block — far above `SnapshotMaxBytes` (1000 by
         /// default, Р101), which is the ceiling that actually binds in
         /// production, roughly 65x lower. Public so the guard below can be
-        /// tested, NOT as a budgeting reference: Task 27 must budget against
-        /// the frame cap minus this frame's other blocks, never against this
-        /// constant, whose rejection branch is unreachable in production.
+        /// tested, NOT as a budgeting reference: the frame's budget owner —
+        /// Task 28, not Task 27, which turned out to write blocks and budget
+        /// nothing — must budget against the frame cap minus this frame's
+        /// other blocks, never against this constant, whose rejection branch
+        /// is unreachable in production.
         public const int MaxBlockPayloadBytes = 65535;
 
         readonly System.Span<byte> _dst;
@@ -165,12 +201,6 @@ namespace Ring.Networking.Protocol
             _pos += BlockHeaderBytes + payload.Length;
         }
 
-        /// Throws unless `bytes` more bytes fit — BEFORE anything is written,
-        /// so a rejected call leaves the buffer untouched. `InvalidOperation-
-        /// Exception` rather than `ArgumentException`: what is at fault is
-        /// the writer's remaining room, not any argument of the call that
-        /// discovers it (`WriteBlock`'s oversized-payload check above IS an
-        /// argument fault, and throws accordingly).
         // ---- Stage 2 Task 27: the five state blocks (spec §3.8, §3.12
         // Р68, task-27-brief §2.2-§2.15). Each method appends ONE tagged
         // block built from caller-owned records, quantizing through
@@ -249,14 +279,31 @@ namespace Ring.Networking.Protocol
             for (int i = 0; i < records.Length; i++)
             {
                 SnapshotBlocks.MobRecord r = records[i];
+
+                // Both halves of the packed byte are checked, not just
+                // masked (fix-round M6). A `MobType`/`MobAiState` outside its
+                // declared domain cannot survive a nibble: masking would ship
+                // a DIFFERENT mob type on the wire and the receiver would
+                // decode it as a legal one. That is a caller bug, so it
+                // throws, exactly like the record-count check above — the
+                // read side's mirror of this check refuses instead (Р82), see
+                // SnapshotBlocks.TryReadMobsBlock.
+                if ((byte)r.Type > SnapshotBlocks.MaxMobTypeValue
+                    || (byte)r.Ai > SnapshotBlocks.MaxMobAiStateValue)
+                    throw new System.ArgumentException(
+                        $"SnapshotWriter.WriteMobsBlock: record {i} carries Type={(byte)r.Type}/"
+                        + $"Ai={(byte)r.Ai}, outside the declared domains "
+                        + $"(<= {SnapshotBlocks.MaxMobTypeValue} / <= {SnapshotBlocks.MaxMobAiStateValue}); "
+                        + "the packed byte has one nibble each and cannot carry them.",
+                        nameof(records));
+
                 WriteU16(cursor, (ushort)(r.Id & 0xFFFF));
-                byte typeAndAi = (byte)((((byte)r.Type) << 4) | ((byte)r.Ai & 0x0F));
+                byte typeAndAi = (byte)(((((byte)r.Type) & 0x0F) << 4) | ((byte)r.Ai & 0x0F));
                 _dst[cursor + 2] = typeAndAi;
                 WriteU16(cursor + 3, Quantize.Pos(r.Pos.x, cfg.Arena.Radius));
                 WriteU16(cursor + 5, Quantize.Pos(r.Pos.y, cfg.Arena.Radius));
                 _dst[cursor + 7] = Quantize.Dir(r.Dir);
-                float maxHp = r.Type == MobType.Chaser ? cfg.Chaser.MaxHp : cfg.Gunner.MaxHp;
-                _dst[cursor + 8] = Quantize.Unit(r.Hp, maxHp);
+                _dst[cursor + 8] = Quantize.Unit(r.Hp, SnapshotBlocks.MaxHpFor(r.Type, cfg));
                 cursor += SnapshotBlocks.MobRecordBytes;
             }
             _pos += BlockHeaderBytes + payloadBytes;
@@ -360,37 +407,13 @@ namespace Ring.Networking.Protocol
         public static int EventsBlockBytes(int eventCount, int totalPayloadBytes)
             => BlockHeaderBytes + eventCount * SnapshotBlocks.EventHeaderBytes + totalPayloadBytes;
 
-        /// TASK 28's BUDGET INPUT (task-27-brief §2.13): Task 27 is the
-        /// first place a real event RECORD exists, so the frame's worst-case
-        /// size is recomputed here from these five calculators rather than
-        /// quoted from the spec or from Task 26's own estimate — both
-        /// predate this file. At the shipped caps (MaxPlayers 3, so 2 OTHER
-        /// players; MaxMobs 96; a 16-event `SnapshotEventBudget` at an
-        /// assumed 4 B of payload each):
-        ///
-        ///   HeaderBytes                                    8
-        ///   PlayersBlockBytes(2)                           19
-        ///   LivenessBlockBytes()                            4
-        ///   MobsBlockBytes(96)                            867
-        ///   WaveBlockBytes()                                7
-        ///   EventsBlockBytes(16, 16*4)                    211
-        ///   -------------------------------------------------
-        ///   total                                        1116
-        ///
-        /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 116 B OVER
-        /// the cap. Task 28's truncation branch is therefore not an edge
-        /// case: a full-cap frame (Mobs alone is 867 B, +8 B header = 875 B)
-        /// leaves only 125 B for Players+Liveness+Wave+Events, of which the
-        /// first three take 30 B, leaving *=95 B for events* — about 7
-        /// records at 13 B each (9 B header + 4 B payload), not the 16 the
-        /// raw `SnapshotEventBudget` config field suggests. The 4 B/event
-        /// payload assumption is Task 26/28's own estimate, not this file's
-        /// — a different payload size changes the 7, and Task 28 must
-        /// recompute it from the calculators above rather than re-quote this
-        /// comment (the mistake this very paragraph exists to correct: the
-        /// spec's 1043 B and Task 26's 1052 B both predate a real event
-        /// record and were wrong for the same reason this one will be wrong
-        /// once something here changes).
+        /// Throws unless `bytes` more bytes fit — BEFORE anything is written,
+        /// so a rejected call leaves the buffer untouched. `InvalidOperation-
+        /// Exception` rather than `ArgumentException`: what is at fault is
+        /// the writer's remaining room, not any argument of the call that
+        /// discovers it (`WriteBlock`'s oversized-payload check, and every
+        /// Task 27 block method's own record-count/pool check, ARE argument
+        /// faults and throw accordingly).
         void Reserve(int bytes)
         {
             int free = _dst.Length - _pos;
