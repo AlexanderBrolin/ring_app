@@ -98,10 +98,23 @@ namespace Ring.Networking.Server
     /// twice (pinned by SnapshotAssemblerTests.
     /// TwoConnectionsInTheSameState_ProduceByteIdenticalFrames).
     ///
-    /// WHAT IS DELIBERATELY NOT HERE. Redundant re-sending and dedup are Task
-    /// 29 — this class carries what did not fit into the NEXT frame (Р61) but
-    /// never repeats what it already delivered. The FishNet wiring is Task 36,
-    /// the receiving end Task 32.
+    /// EVERY FRAME ALSO REPEATS WHAT THE LAST FEW DELIVERED (Stage 2 Task 29,
+    /// Р58). Events ride the UNRELIABLE payload of a snapshot (Р27), so at the
+    /// mandatory 5% loss every twentieth death would simply never be shown.
+    /// Each connection therefore keeps a HISTORY of the records it has shipped
+    /// and re-sends them for `NetConfig.EventRedundancyTicks - 1` further
+    /// frames — blind redundancy, since an unreliable channel carries no ack.
+    /// Three properties of that history are load-bearing and are argued where
+    /// they live: the records are FROZEN copies rather than re-routings
+    /// (`SelectResends`), they enter the history when they SHIP rather than
+    /// when they are queued (`RecordDelivered`), and they spend the same budget
+    /// and the same bytes as fresh events, after them (`WriteFrame` step 4).
+    /// The client half of the deal — one handling per `(epoch, tick, seq)` — is
+    /// `Ring.Networking.Client.EventDedup`.
+    ///
+    /// WHAT IS DELIBERATELY NOT HERE. State is never repeated: every frame
+    /// carries the whole of it already, by construction. The FishNet wiring is
+    /// Task 36, the receiving end Task 32.
     ///
     /// ZERO ALLOCATIONS IN STEADY STATE. Every buffer is built in the
     /// constructor and sized from the caps; nothing below is `new`d per tick or
@@ -115,15 +128,29 @@ namespace Ring.Networking.Server
         /// backwards: rank first (Р61), then the OLDER tick, then the lower
         /// `seq`. Deterministic on every axis, so two servers replaying the
         /// same match drop the same events.
+        ///
+        /// ONE HOME, TWO CALLERS (Stage 2 Task 29). The resend history is
+        /// ordered by exactly the same key as the carry queue — a death is
+        /// repeated before a cosmetic is, for the same reason it is sent before
+        /// one — so the rule is spelled out once and the two record types hand
+        /// it their three fields.
         static bool IsBetter(in Queued a, in Queued b)
+            => IsBetterKey(a.Priority, a.Tick, a.Seq, b.Priority, b.Tick, b.Seq);
+
+        static bool IsBetter(in Sent a, in Sent b)
+            => IsBetterKey(a.Priority, a.Tick, a.Seq, b.Priority, b.Tick, b.Seq);
+
+        static bool IsBetterKey(byte priorityA, int tickA, ushort seqA,
+            byte priorityB, int tickB, ushort seqB)
         {
-            if (a.Priority != b.Priority) return a.Priority < b.Priority;
-            if (a.Tick != b.Tick) return a.Tick < b.Tick;
-            return a.Seq < b.Seq;
+            if (priorityA != priorityB) return priorityA < priorityB;
+            if (tickA != tickB) return tickA < tickB;
+            return seqA < seqB;
         }
 
         readonly int _maxBytes;
         readonly int _eventBudget;
+        readonly int _redundancyTicks;
         readonly int _projectileSubscriptionTicks;
 
         readonly RenderSnapshot _capture;
@@ -150,6 +177,7 @@ namespace Ring.Networking.Server
 
             _maxBytes = net.SnapshotMaxBytes;
             _eventBudget = net.SnapshotEventBudget;
+            _redundancyTicks = net.EventRedundancyTicks;
 
             // app-dsh PATCH (task-28-brief §2.6). A round absorbed by a
             // player's i-frames emits NOTHING today — ProjectileSystem's
@@ -191,7 +219,7 @@ namespace Ring.Networking.Server
 
             _connections = new Connection[connectionCount];
             for (int i = 0; i < connectionCount; i++) _connections[i] = new Connection(in cfg, _maxBytes,
-                wireCapacity, _eventBudget);
+                wireCapacity, _eventBudget, _redundancyTicks);
         }
 
         /// The frame buffer of `connection` — Task 36 wraps `BuildFor`'s return
@@ -955,8 +983,20 @@ namespace Ring.Networking.Server
                 c.MobScratch[written++] = MobRecordOf(c.CandidateSlots[i]);
             }
 
-            // 4. Events into what is left, by rank.
-            int eventCount = SelectEvents(c, room, out int payloadBytes);
+            // 4. Events into what is left, by rank — FRESH ones first, then the
+            // redundant resends of what already shipped (Р58), both inside the
+            // one budget and the one byte remainder (Р61). The order is the
+            // decision: a fresh event has been transmitted zero times and has
+            // zero probability of having arrived, while any resend is already
+            // past 95% after a single 5%-loss hop.
+            int payloadBytes = 0;
+            int freshCount = SelectEvents(c, ref room, 0, ref payloadBytes);
+            int eventCount = SelectResends(c, ref room, freshCount, ref payloadBytes);
+
+            // 5. And only NOW does this frame's own delivery enter the history:
+            // an event must not be repeated in the very frame that first
+            // carries it (task-29-brief §2.2/§2.6б).
+            RecordDelivered(c, freshCount);
 
             var writer = new SnapshotWriter(c.Buffer);
             writer.WriteHeader(epoch, (uint)_tick, flags);
@@ -1002,9 +1042,12 @@ namespace Ring.Networking.Server
         /// (rank, then older tick, then lower seq) and STOPS at the first
         /// record that does not fit: skipping past it to pack a smaller, less
         /// important one would deliver a dash ahead of a death.
-        int SelectEvents(Connection c, int room, out int payloadBytes)
+        /// `count`/`payloadBytes` are threaded in and out rather than started at
+        /// zero, so this and `SelectResends` have the SAME shape and the order
+        /// they run in is one line in `WriteFrame` — the line that decides that
+        /// a fresh event outranks any resend (Stage 2 Task 29).
+        int SelectEvents(Connection c, ref int room, int count, ref int payloadBytes)
         {
-            payloadBytes = 0;
             for (int i = 0; i < c.QueueCount; i++) c.QueueTaken[i] = false;
 
             // Anything older than the tick-delta byte can describe leaves here
@@ -1019,7 +1062,6 @@ namespace Ring.Networking.Server
                 DropSubscriptionOf(c, in c.Queue[i]);
             }
 
-            int count = 0;
             while (count < _eventBudget)
             {
                 int best = -1;
@@ -1072,6 +1114,162 @@ namespace Ring.Networking.Server
                 destination++;
             }
             c.QueueCount = destination;
+        }
+
+        // ---- redundancy: the delivered-record history (Stage 2 Task 29) ----
+
+        /// Appends resends of already-delivered records to the frame, after the
+        /// fresh selection and inside what it left of the budget and the bytes
+        /// (Р58 + Р61). Returns the new total record count.
+        ///
+        /// A RESEND IS A FROZEN COPY, NOT A RE-ROUTING (task-29-brief §2.1).
+        /// Nothing here consults visibility, subscriptions or the latch, and it
+        /// could not sensibly do so: a delivery verdict belongs to the state of
+        /// the connection ON THE TICK IT WAS MADE — the ping-pong visibility
+        /// pair keeps two sets and no history, the subscriptions have since
+        /// closed, and `ResolveAudiblePos` would answer with the FRESH cell of a
+        /// source that has moved, which is precisely the stream of independent
+        /// roundings the app-vk1 latch exists to prevent. Re-running the routing
+        /// would also hand a record to a connection that never passed
+        /// `ShouldDeliver` at all — CRITICAL RULE 4, through the back door. So
+        /// the record's bytes are copied when it ships and never recomputed;
+        /// `tickDelta` is its one live field.
+        ///
+        /// A RESEND THAT DOES NOT FIT IS NOT COUNTED ANYWHERE, deliberately. It
+        /// stays in the history and tries again next frame, and what was lost
+        /// is a DEGREE OF REDUNDANCY on something already delivered — not an
+        /// event, which is what `NetStats.DroppedEvents` means on the fresh
+        /// path. A counter shared between the two would make an ordinary busy
+        /// frame look like packet loss.
+        int SelectResends(Connection c, ref int room, int count, ref int payloadBytes)
+        {
+            // 0 disables redundancy and 1 means "sent exactly once" — the same
+            // statement twice, and both are legal NetConfig settings.
+            if (_redundancyTicks < 2 || c.HistoryCount == 0) return count;
+
+            for (int i = 0; i < c.HistoryCount; i++) c.HistoryEmitted[i] = false;
+
+            int maxAge = _redundancyTicks - 1;
+            while (count < _eventBudget)
+            {
+                int best = -1;
+                for (int i = 0; i < c.HistoryCount; i++)
+                {
+                    if (c.HistoryEmitted[i]) continue;
+                    // Age 0 is this frame's own delivery, or another frame built
+                    // for the same tick; either way an event is never repeated
+                    // inside the tick that carried it.
+                    int age = _tick - c.History[i].DeliveredTick;
+                    if (age < 1 || age > maxAge) continue;
+                    if (_tick - c.History[i].Tick > byte.MaxValue) continue;
+                    if (best < 0 || IsBetter(in c.History[i], in c.History[best])) best = i;
+                }
+                if (best < 0) break;
+
+                // Stops at the first record that does not fit, exactly as
+                // SelectEvents does: packing a smaller, less important resend
+                // past a bigger, more important one would repeat a dash ahead
+                // of a death.
+                int need = SnapshotBlocks.EventHeaderBytes + c.History[best].PayloadLength;
+                if (need > room) break;
+
+                c.EventScratch[count] = new SnapshotBlocks.EventRecord
+                {
+                    Kind = c.History[best].Kind,
+                    Seq = c.History[best].Seq,
+                    TickDelta = (byte)(_tick - c.History[best].Tick),
+                    Pos = c.History[best].Pos,
+                    PayloadOffset = (ushort)payloadBytes,
+                    PayloadLength = c.History[best].PayloadLength,
+                };
+                System.Array.Copy(c.HistoryPayload, best * SnapshotEvents.MaxPayloadBytes,
+                    c.EventPayloadScratch, payloadBytes, c.History[best].PayloadLength);
+                payloadBytes += c.History[best].PayloadLength;
+                room -= need;
+                c.HistoryEmitted[best] = true;
+                count++;
+            }
+
+            PruneHistory(c);
+            return count;
+        }
+
+        /// Drops every record that has nothing left to give, in one forward
+        /// pass. Two reasons, and they are NOT the same reason:
+        ///   * `age >= maxAge` — the record has just been offered its last
+        ///     resend, so keeping it would only cost a slot. Pruning HERE rather
+        ///     than at the start of the next frame is what makes the history's
+        ///     capacity of `(EventRedundancyTicks - 1) * SnapshotEventBudget`
+        ///     exact rather than one cohort short;
+        ///   * the tick delta has outgrown its one byte. `(byte)300` would place
+        ///     the record 44 ticks in the client's FUTURE. Unlike the identical
+        ///     guard on the fresh path this does NOT increment `DroppedEvents`:
+        ///     there a meaning that had never been delivered was lost, here only
+        ///     the redundancy of something the client already has.
+        /// A frame that carried no events at all (a truncated one, Task 28)
+        /// prunes exactly the same way — age decides, not what shipped.
+        void PruneHistory(Connection c)
+        {
+            int maxAge = _redundancyTicks - 1;
+            int destination = 0;
+            for (int source = 0; source < c.HistoryCount; source++)
+            {
+                if (_tick - c.History[source].DeliveredTick >= maxAge) continue;
+                if (_tick - c.History[source].Tick > byte.MaxValue) continue;
+                if (destination != source)
+                {
+                    c.History[destination] = c.History[source];
+                    System.Array.Copy(c.HistoryPayload, source * SnapshotEvents.MaxPayloadBytes,
+                        c.HistoryPayload, destination * SnapshotEvents.MaxPayloadBytes,
+                        SnapshotEvents.MaxPayloadBytes);
+                }
+                destination++;
+            }
+            c.HistoryCount = destination;
+        }
+
+        /// Freezes this frame's FRESH records into the history — the resends of
+        /// the next `EventRedundancyTicks - 1` frames are copies of exactly
+        /// these bytes. Called after `SelectResends`, never before.
+        ///
+        /// Only the fresh half is recorded: a resend is already in the history,
+        /// and a record evicted from the carry queue for age was never delivered
+        /// and has nothing to repeat.
+        void RecordDelivered(Connection c, int freshCount)
+        {
+            if (_redundancyTicks < 2) return;
+            for (int i = 0; i < freshCount; i++)
+                if (!TryRecordDelivered(c, in c.EventScratch[i])) break;
+        }
+
+        /// False when the history is full. Unreachable by construction — a frame
+        /// delivers at most `SnapshotEventBudget` fresh records and the history
+        /// is sized for `EventRedundancyTicks - 1` frames of them, with the
+        /// prune above keeping that exact — but the guard is honest rather than
+        /// asserted, and it REPORTS instead of returning void: the caller stops
+        /// on the first refusal, because a full history refuses the rest too and
+        /// walking them would be a loop that pretends to do something. Never
+        /// throws: a delivery path is not the place to fail on a bookkeeping
+        /// bound, and the honest degradation is one less degree of redundancy.
+        bool TryRecordDelivered(Connection c, in SnapshotBlocks.EventRecord r)
+        {
+            if (c.HistoryCount >= c.History.Length) return false;
+
+            int slot = c.HistoryCount;
+            c.History[slot] = new Sent
+            {
+                Kind = r.Kind,
+                Priority = SnapshotEvents.PriorityOf((SnapshotEventKind)r.Kind),
+                Seq = r.Seq,
+                Tick = _tick - r.TickDelta,
+                Pos = r.Pos,
+                PayloadLength = r.PayloadLength,
+                DeliveredTick = _tick,
+            };
+            System.Array.Copy(c.EventPayloadScratch, r.PayloadOffset,
+                c.HistoryPayload, slot * SnapshotEvents.MaxPayloadBytes, r.PayloadLength);
+            c.HistoryCount++;
+            return true;
         }
 
         /// Producer half of the flag mapping Task 45 reads back (Р68,
@@ -1154,6 +1352,34 @@ namespace Ring.Networking.Server
             public int RoundId;
         }
 
+        /// One record AS IT WAS DELIVERED, kept so the next few frames can send
+        /// it again (Stage 2 Task 29). Every field but `DeliveredTick` is a
+        /// frozen copy of what went on the wire — the resend re-derives nothing.
+        ///
+        /// `Tick` is the tick the event HAPPENED on, not the frame it shipped
+        /// in; the two differ whenever the carry queue deferred it, and the
+        /// first is what the client's dedup key is built from. `Pos` is the
+        /// position this connection was given — exact, coarsened or latched, as
+        /// the routing decided ONCE.
+        ///
+        /// NO `RoundId` HERE, ON PURPOSE. Every side effect a record can have —
+        /// opening a subscription, closing one, moving the audible latch —
+        /// happened when it was first routed; a resend is bytes. Carrying the
+        /// round id would put the raw material for a side effect within reach of
+        /// a path that must never have one.
+        struct Sent
+        {
+            public byte Kind;
+            public byte Priority;
+            public ushort Seq;
+            public int Tick;
+            public float2 Pos;
+            public byte PayloadLength;
+            /// The tick of the FRAME this record first rode in. Its age against
+            /// the current tick is the whole redundancy horizon.
+            public int DeliveredTick;
+        }
+
         /// Everything that belongs to ONE connection: the visibility pair, the
         /// spawn subscriptions, the audible latch, the carry queue and the
         /// scratch the frame is built through. All of it is allocated once.
@@ -1179,6 +1405,14 @@ namespace Ring.Networking.Server
             public readonly bool[] QueueTaken;
             public int QueueCount;
 
+            public readonly Sent[] History;
+            public readonly byte[] HistoryPayload;
+            /// Scratch marking which history entries already went into THIS
+            /// frame — never a removal flag, unlike the carry queue's own
+            /// `QueueTaken`: a resent record stays until its age retires it.
+            public readonly bool[] HistoryEmitted;
+            public int HistoryCount;
+
             public readonly SnapshotBlocks.PlayerRecord[] PlayerScratch;
             public readonly SnapshotBlocks.MobRecord[] MobScratch;
             public readonly SnapshotBlocks.EventRecord[] EventScratch;
@@ -1188,7 +1422,8 @@ namespace Ring.Networking.Server
             public readonly bool[] CandidateDropped;
             public int CandidateCount;
 
-            public Connection(in SimConfig cfg, int maxBytes, int queueCapacity, int eventBudget)
+            public Connection(in SimConfig cfg, int maxBytes, int queueCapacity, int eventBudget,
+                int redundancyTicks)
             {
                 // Same capacity the visibility fixtures use: every live mob
                 // plus every player a single Compute call can visit.
@@ -1208,6 +1443,17 @@ namespace Ring.Networking.Server
                 Queue = new Queued[queueCapacity];
                 QueuePayload = new byte[queueCapacity * SnapshotEvents.MaxPayloadBytes];
                 QueueTaken = new bool[queueCapacity];
+
+                // A frame delivers at most `eventBudget` fresh records, and each
+                // survives `redundancyTicks - 1` further frames — so that
+                // product is the exact ceiling, and `math.max(1, ...)` keeps the
+                // arrays legal at the degenerate settings 0 and 1, where nothing
+                // is ever recorded (same shape as SubIds above).
+                int historyCapacity = math.max(1,
+                    math.max(0, redundancyTicks - 1) * math.max(1, eventBudget));
+                History = new Sent[historyCapacity];
+                HistoryPayload = new byte[historyCapacity * SnapshotEvents.MaxPayloadBytes];
+                HistoryEmitted = new bool[historyCapacity];
 
                 PlayerScratch = new SnapshotBlocks.PlayerRecord[math.max(1, cfg.Arena.MaxPlayers)];
                 MobScratch = new SnapshotBlocks.MobRecord[math.max(1, cfg.Arena.MaxMobs)];

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using FishNet.Broadcast;
 using NUnit.Framework;
 using Ring.Data;
+using Ring.Networking.Client;
 using Ring.Networking.Protocol;
 using Ring.Networking.Server;
 using Ring.Simulation.Core;
@@ -2877,10 +2878,432 @@ namespace Ring.Simulation.Tests
             w.ClearEvents();
             asm.BeginTick(w);
             AssembledFrame f2 = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, Epoch), cfg);
-            Assert.AreEqual(2, f2.EventCount);
+            // TASK 29 AMENDED THE COUNT, NOT THE CLAIM. The two deferred
+            // cosmetics still arrive here, exactly as Task 28 asserted; the
+            // third record is the RESEND of the death this frame's budget has
+            // room for (Р58 — fresh first, then resends by rank, all inside the
+            // one budget). Expecting two would now be asserting the ABSENCE of
+            // redundancy.
+            Assert.AreEqual(3, f2.EventCount,
+                "the two deferred cosmetics, plus one resend in the budget's remaining slot");
             Assert.AreEqual(1, f2.CountOf(SnapshotEventKind.PlayerDashed));
             Assert.AreEqual(1, f2.CountOf(SnapshotEventKind.PlayerSlideStarted));
             Assert.AreEqual((byte)1, f2.Events[0].TickDelta, "carried from exactly one tick back");
+            Assert.AreEqual((byte)SnapshotEventKind.PlayerDied, f2.Events[2].Kind,
+                "and the resend is the best-ranked one, written after every fresh record");
+        }
+
+        // ================= Stage 2 Task 29 — redundancy and dedup ===========
+        //
+        // The plan's three scenarios run the WHOLE pipe: SnapshotAssembler ->
+        // BufferFor -> SnapshotReader/TryReadEventsBlock -> EventDedup. The
+        // EventDedup unit tests below them poke the client half directly, where
+        // a scenario would need a whole match to reach one branch.
+
+        const ushort OtherEpoch = 0x5678;   // 22136 — both bytes differ from Epoch's
+
+        static SnapshotBlocks.EventRecord DedupRecord(ushort seq, byte tickDelta)
+            => new SnapshotBlocks.EventRecord
+            {
+                Kind = (byte)SnapshotEventKind.PlayerDied,
+                Seq = seq,
+                TickDelta = tickDelta,
+                PayloadLength = (byte)SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDied),
+            };
+
+        // ---- T29.C1. The plan's loss scenario ----
+
+        [Test]
+        public void LostSnapshot_EventsRecoveredByRedundancy()
+        {
+            // Р58's whole reason to exist. Events ride the UNRELIABLE payload of
+            // a snapshot (Р27), and at the mandatory 5% loss every twentieth
+            // death would otherwise vanish for good. Here every SECOND datagram
+            // is lost — a far harsher rail than 5%, and one that N = 4 still
+            // covers with three transmissions to spare — and the client must end
+            // up having handled each event EXACTLY once: not zero (the loss got
+            // through) and not twice (the dedup did not).
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            Assert.AreEqual(4, net.EventRedundancyTicks, "fixture premise: the shipped default");
+            var asm = new SnapshotAssembler(cfg, net, connectionCount: 1);
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            const int emittingTicks = 6;
+            const int totalTicks = 10;
+            var idle = new SimInput[2];
+            var handled = new Dictionary<(uint Tick, ushort Seq), int>();
+            var handledAtDelta = new Dictionary<(uint Tick, ushort Seq), byte>();
+            int recordsOffered = 0;
+
+            for (int t = 0; t < totalTicks; t++)
+            {
+                w.ClearEvents();
+                if (t < emittingTicks)
+                    w.Emit(SimEventKind.PlayerDashed, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+                asm.BeginTick(w);
+                int bytes = asm.BuildFor(0, 0, 0, Epoch);
+
+                // The odd frames never leave the wire. Nothing is decoded for
+                // them at all — that is what a lost datagram is.
+                if ((t & 1) == 0)
+                {
+                    AssembledFrame f = AssembledFrame.Decode(asm.BufferFor(0), bytes, cfg);
+                    for (int i = 0; i < f.EventCount; i++)
+                    {
+                        recordsOffered++;
+                        var key = (f.Tick - f.Events[i].TickDelta, f.Events[i].Seq);
+                        if (!dedup.TryAcceptEvent(f.Epoch, f.Tick, in f.Events[i])) continue;
+                        handled[key] = handled.TryGetValue(key, out int n) ? n + 1 : 1;
+                        handledAtDelta[key] = f.Events[i].TickDelta;
+                    }
+                }
+                w.TickAll(idle);
+            }
+
+            Assert.AreEqual(emittingTicks, handled.Count,
+                "every emitted event must have reached the client despite half the datagrams being lost");
+            foreach (KeyValuePair<(uint Tick, ushort Seq), int> pair in handled)
+                Assert.AreEqual(1, pair.Value,
+                    $"event (tick {pair.Key.Tick}, seq {pair.Key.Seq}) must be handled exactly once — "
+                    + "a second pass would play a death animation twice");
+            Assert.Greater(recordsOffered, handled.Count,
+                "witness: duplicates really were OFFERED, or the dedup was never exercised at all");
+
+            // And the half of the events that were recovered rather than merely
+            // received: their first transmission went into a frame that never
+            // arrived, so the copy the client handled is a RESEND.
+            int recovered = 0;
+            foreach (KeyValuePair<(uint Tick, ushort Seq), byte> pair in handledAtDelta)
+            {
+                if ((pair.Key.Tick & 1) == 0) continue;
+                Assert.Greater(pair.Value, (byte)0,
+                    $"the event of tick {pair.Key.Tick} was first sent in a LOST frame, so the copy the "
+                    + "client saw must carry a nonzero tick delta — this is redundancy doing the work");
+                recovered++;
+            }
+            Assert.AreEqual(emittingTicks / 2, recovered,
+                "ticks 1, 3 and 5 emitted into frames that never arrived — three genuine recoveries");
+        }
+
+        // ---- T29.C2. The plan's reordering scenario ----
+
+        [Test]
+        public void ReorderedSnapshot_StateDropped_EventsKept()
+        {
+            // Р31's refinement (spec §3.7): the anti-stale rule is about STATE,
+            // not about events. A reordered datagram must not apply its stale
+            // world, but its events have never been seen and must be handled —
+            // otherwise a packet that merely overtook another would swallow a
+            // death outright.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            net.SnapshotEventBudget = 1;   // so the newer frame carries only its OWN event
+            var asm = new SnapshotAssembler(cfg, net, connectionCount: 1);
+            var idle = new SimInput[2];
+
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDashed, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+            asm.BeginTick(w);
+            AssembledFrame older = AssembledFrame.Decode(asm.BufferFor(0),
+                asm.BuildFor(0, 0, 0, Epoch), cfg);
+
+            w.TickAll(idle);
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerSlideStarted, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+            asm.BeginTick(w);
+            AssembledFrame newer = AssembledFrame.Decode(asm.BufferFor(0),
+                asm.BuildFor(0, 0, 0, Epoch), cfg);
+
+            Assert.AreEqual(1, older.EventCount, "fixture premise: one event per frame");
+            Assert.AreEqual(1, newer.EventCount,
+                "fixture premise: the budget of one leaves no room for the older event's resend, so the "
+                + "reordering below really does deliver something the client has never seen");
+            Assert.Greater(newer.Tick, older.Tick, "fixture premise: two different ticks");
+
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            // The NEWER datagram overtakes the older one.
+            Assert.IsTrue(dedup.TryAcceptState(newer.Epoch, newer.Tick), "the newer state applies");
+            Assert.IsTrue(dedup.TryAcceptEvent(newer.Epoch, newer.Tick, in newer.Events[0]));
+
+            Assert.IsFalse(dedup.TryAcceptState(older.Epoch, older.Tick),
+                "the overtaken frame's STATE is stale and must not be applied over the newer one (Р31)");
+            Assert.IsTrue(dedup.TryAcceptEvent(older.Epoch, older.Tick, in older.Events[0]),
+                "but its event has never been seen and must still be handled — dropping it with the "
+                + "state is exactly the hole the Р31 refinement closes");
+        }
+
+        // ---- T29.C3. The plan's replay scenario ----
+
+        [Test]
+        public void Dedup_DoesNotReplayEvents()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            var asm = new SnapshotAssembler(cfg, net, connectionCount: 1);
+
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                zone: HitZone.Body, playerIndex: 1);
+            w.Emit(SimEventKind.PlayerDashed, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+            asm.BeginTick(w);
+            AssembledFrame f = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, Epoch), cfg);
+            Assert.AreEqual(2, f.EventCount, "fixture premise: two distinct events in one frame");
+            Assert.AreNotEqual(f.Events[0].Seq, f.Events[1].Seq,
+                "fixture premise: two events, two seq values — one number for both would make the "
+                + "second assertion below pass for the wrong reason");
+
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            Assert.IsTrue(dedup.TryAcceptState(f.Epoch, f.Tick));
+            for (int i = 0; i < f.EventCount; i++)
+                Assert.IsTrue(dedup.TryAcceptEvent(f.Epoch, f.Tick, in f.Events[i]),
+                    $"first pass: event {i} has never been seen");
+
+            // The identical datagram arrives a second time — a duplicated packet
+            // on the wire, or the same resend read twice.
+            Assert.IsFalse(dedup.TryAcceptState(f.Epoch, f.Tick),
+                "the same tick's state is not applied twice (the gate is `<=`, not `<`)");
+            for (int i = 0; i < f.EventCount; i++)
+                Assert.IsFalse(dedup.TryAcceptEvent(f.Epoch, f.Tick, in f.Events[i]),
+                    $"second pass: event {i} must not be handled again");
+        }
+
+        // ---- T29.C4. The key is built from the ORIGINAL tick ----
+
+        [Test]
+        public void Dedup_KeyIsBuiltFromTheOriginalTick_NotTheFrameTick()
+        {
+            // task-29-brief §2.5. A resend rides a LATER frame with a LARGER
+            // tick delta, and the pair those two produce — `header.Tick -
+            // record.TickDelta` — is invariant across every copy. Keying on the
+            // frame's own tick would give each copy its own key, and every
+            // resend would be handled as a new event: redundancy would double
+            // every death instead of insuring it.
+            var cfg = TestConfigs.Open();
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            const uint frame = 1000;
+            SnapshotBlocks.EventRecord first = DedupRecord(seq: 7, tickDelta: 2);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, frame, in first),
+                "first sight of the event that happened on tick 998");
+
+            SnapshotBlocks.EventRecord resend = DedupRecord(seq: 7, tickDelta: 3);
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, frame + 1, in resend),
+                "one frame later, one delta larger — the SAME event (tick 998, seq 7), and keying on "
+                + "the frame tick instead would have called it a new one");
+
+            SnapshotBlocks.EventRecord other = DedupRecord(seq: 7, tickDelta: 2);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, frame + 1, in other),
+                "witness: the same seq from a DIFFERENT origin tick (999) is a different event — "
+                + "seq is unique per tick, not per match");
+        }
+
+        // ---- T29.C5. One epoch, and Reset clears everything ----
+
+        [Test]
+        public void Dedup_ForeignEpoch_RefusesBoth_AndResetClearsEverything()
+        {
+            // task-29-brief §2.5. Exactly ONE epoch is tracked, and the owner
+            // (Task 32) names it over the Reliable lifecycle channel (Р60). A
+            // stray datagram from another epoch must neither apply its state nor
+            // have its events handled — and, above all, must not switch the
+            // tracked epoch itself, which would let one wandering packet erase
+            // the dedup state of the match in progress.
+            var cfg = TestConfigs.Open();
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            Assert.IsTrue(dedup.TryAcceptState(Epoch, 10));
+            Assert.IsFalse(dedup.TryAcceptState(OtherEpoch, 20), "a foreign epoch's state is refused");
+            Assert.IsTrue(dedup.TryAcceptState(Epoch, 11),
+                "witness: the tracked epoch is still the one Reset named — the stray packet did not "
+                + "take the match over");
+
+            SnapshotBlocks.EventRecord record = DedupRecord(seq: 3, tickDelta: 0);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 500, in record));
+            Assert.IsFalse(dedup.TryAcceptEvent(OtherEpoch, 500, in record),
+                "a foreign epoch's events are refused too — an id in one match means nothing in another");
+
+            // A restart (Р60): the owner names the new epoch and everything the
+            // old one taught is forgotten.
+            dedup.Reset(OtherEpoch);
+            Assert.IsTrue(dedup.TryAcceptEvent(OtherEpoch, 500, in record),
+                "after Reset the very same key is unseen again — a new match replays its own history");
+            Assert.IsTrue(dedup.TryAcceptState(OtherEpoch, 0),
+                "and state applies from tick zero again, because a restarted match starts at zero");
+            Assert.IsFalse(dedup.TryAcceptState(Epoch, 999),
+                "while the epoch that was tracked a moment ago is now the foreign one");
+        }
+
+        // ---- T29.C6. The anti-stale gate's boundary is `<=` ----
+
+        [Test]
+        public void Dedup_StateGate_IsLessOrEqual_NotStrictlyLess()
+        {
+            // Spec §3.7: "a snapshot with Tick <= _lastAppliedTick of the SAME
+            // epoch does not apply its state". The boundary case is the one that
+            // matters: a duplicated datagram carries the tick that was just
+            // applied, and `<` would re-apply the whole world from it.
+            var cfg = TestConfigs.Open();
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            Assert.IsTrue(dedup.TryAcceptState(Epoch, 5), "the first frame applies");
+            Assert.IsFalse(dedup.TryAcceptState(Epoch, 5),
+                "the SAME tick again does not — this is the `<=` in the rule, and `<` would let a "
+                + "duplicated packet re-apply it");
+            Assert.IsFalse(dedup.TryAcceptState(Epoch, 4), "and an older one certainly does not");
+            Assert.IsTrue(dedup.TryAcceptState(Epoch, 6), "witness: a newer one still does");
+        }
+
+        // ---- T29.C7. A hostile seq is refused, never thrown ----
+
+        [Test]
+        public void Dedup_HostileSeqAtOrAboveCapacity_IsRefusedWithoutThrowing()
+        {
+            // Р82: the wire is untrusted. `seq` is a raw u16 and the server's own
+            // hard cap is 2 * MaxEventsPerFrame, so anything at or above that is
+            // hostile or from another build. It must be REFUSED — never an
+            // IndexOutOfRange out of a bitmask indexed by an attacker's number,
+            // and never a "handle it anyway" either.
+            var cfg = TestConfigs.Open();
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            Assert.AreEqual(2 * cfg.Arena.MaxEventsPerFrame, dedup.SeqCapacity,
+                "the client's per-tick seq capacity is the server's own hard cap — one wire event per "
+                + "SimEvent plus the ProjectileFired split (SnapshotAssembler's own doc)");
+
+            SnapshotBlocks.EventRecord justOver = DedupRecord((ushort)dedup.SeqCapacity, 0);
+            bool atCapacity = true;
+            Assert.DoesNotThrow(() => atCapacity = dedup.TryAcceptEvent(Epoch, 100, in justOver),
+                "a hostile seq must not throw — Р82 is 'do not throw' AND 'do not hand back rubbish'");
+            Assert.IsFalse(atCapacity, "and it must be refused, not handled");
+
+            bool maxed = true;
+            SnapshotBlocks.EventRecord huge = DedupRecord(ushort.MaxValue, 0);
+            Assert.DoesNotThrow(() => maxed = dedup.TryAcceptEvent(Epoch, 100, in huge));
+            Assert.IsFalse(maxed);
+
+            // Nothing was corrupted on the way past: an ordinary record still
+            // works, and still deduplicates.
+            SnapshotBlocks.EventRecord legal = DedupRecord(seq: 3, tickDelta: 0);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 100, in legal),
+                "witness: the refusals above left the structure usable");
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, 100, in legal),
+                "and still deduplicating");
+        }
+
+        // ---- T29.C8. The tick window ----
+
+        [Test]
+        public void Dedup_KeyOlderThanTheWindow_IsRefused_AndABigTickJumpLeavesNoStaleMasks()
+        {
+            // task-29-brief §2.5. The memory is a ring of per-tick seq masks, so
+            // it has a horizon — and both of its edges have to behave.
+            //
+            // FALLING OUT OF THE WINDOW is a CONSERVATIVE refusal ("assume
+            // seen"): a frame that old has been in flight for more than eight
+            // seconds and Task 32/37's interpolation discards it anyway
+            // (InterpMaxStaleTicks 3), so a false refusal costs nothing while a
+            // false acceptance would replay a death.
+            //
+            // A BIG JUMP FORWARD must leave no dirty mask behind: a ring slot
+            // reused by a much newer tick that still carried the old tick's bits
+            // would silently swallow real events (урок 110 — this is the second
+            // invariant, and the one a naive implementation fails).
+            var cfg = TestConfigs.Open();
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            const uint newest = 100000;
+            SnapshotBlocks.EventRecord newestRecord = DedupRecord(seq: 1, tickDelta: 0);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, newest, in newestRecord));
+
+            SnapshotBlocks.EventRecord justInside = DedupRecord(seq: 1, tickDelta: 0);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, newest - (EventDedup.WindowTicks - 1), in justInside),
+                "one tick inside the window is still remembered, so it is answered on its own merits");
+
+            SnapshotBlocks.EventRecord justOutside = DedupRecord(seq: 2, tickDelta: 0);
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, newest - EventDedup.WindowTicks, in justOutside),
+                "exactly one tick further back is outside the window, and an unknown answer is "
+                + "conservatively 'already seen'");
+
+            // The ring, wrapped: the same slot, a whole window later.
+            var fresh = new EventDedup(cfg);
+            fresh.Reset(Epoch);
+            const uint baseTick = 1000;
+            SnapshotBlocks.EventRecord marker = DedupRecord(seq: 5, tickDelta: 0);
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick, in marker));
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 10, in marker),
+                "a different tick, so a different mask");
+            SnapshotBlocks.EventRecord walker = DedupRecord(seq: 9, tickDelta: 0);
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 100, in walker));
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 200, in walker));
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 10 + EventDedup.WindowTicks, in marker),
+                "the slot that held tick 1010's mask has come round again — a ring that did not wipe "
+                + "it as the window advanced would call this brand-new event a duplicate and eat it");
+            Assert.IsFalse(fresh.TryAcceptEvent(Epoch, baseTick + 10 + EventDedup.WindowTicks, in marker),
+                "witness: the slot is working — the second copy of THAT event is refused");
+        }
+
+        // ---- T29.C9. The client half allocates nothing either ----
+
+        [Test]
+        public void Dedup_DoesNotAllocateGCMemory()
+        {
+            var cfg = TestConfigs.Open();
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            // Stub-defeating premise before anything is measured (Task 26
+            // finding F-D): a class that answers a constant allocates nothing
+            // either, so the measurement only means something once the thing
+            // being measured is shown to work.
+            SnapshotBlocks.EventRecord warm = DedupRecord(seq: 1, tickDelta: 0);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 500, in warm));
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, 500, in warm),
+                "fixture premise: the dedup really is deduplicating");
+            Assert.IsTrue(dedup.TryAcceptState(Epoch, 500));
+            Assert.IsFalse(dedup.TryAcceptState(Epoch, 500), "fixture premise: the gate really gates");
+
+            Assert.That(() =>
+            {
+                for (int i = 0; i < 200; i++)
+                {
+                    uint frameTick = 600u + (uint)i;
+                    dedup.TryAcceptState(Epoch, frameTick);
+                    for (ushort s = 0; s < 8; s++)
+                    {
+                        var record = new SnapshotBlocks.EventRecord
+                        {
+                            Kind = (byte)SnapshotEventKind.PlayerDied,
+                            Seq = s,
+                            TickDelta = (byte)(i & 3),
+                            PayloadLength = 2,
+                        };
+                        dedup.TryAcceptEvent(Epoch, frameTick, in record);
+                    }
+                }
+            }, Is.Not.AllocatingGCMemory());
         }
     }
 }

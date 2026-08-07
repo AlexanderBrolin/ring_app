@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NUnit.Framework;
 using Ring.Data;
 using Ring.Networking.Protocol;
@@ -844,7 +845,16 @@ namespace Ring.Simulation.Tests
             w.ClearEvents();
             w.Emit(SimEventKind.ProjectileFired, new float2(1f, 0f), abandonedId, default, 0f,
                 ProjectileOwner.Player, playerIndex: 1);
-            Assert.AreEqual(1, Build(asm, w, cfg, 0, 0, 0).CountOf(SnapshotEventKind.ProjectileSpawned),
+            // TASK 29 AMENDED THE IDENTIFICATION, NOT THE CLAIM. This frame now
+            // also carries the REDUNDANT resend of the first round's spawn
+            // (Р58), so the record is picked out by its own round id instead of
+            // by counting the kind — which is what the assertion always meant.
+            AssembledFrame secondSpawn = Build(asm, w, cfg, 0, 0, 0);
+            int abandonedSpawns = 0;
+            for (int i = 0; i < secondSpawn.EventCount; i++)
+                if ((SnapshotEventKind)secondSpawn.Events[i].Kind == SnapshotEventKind.ProjectileSpawned
+                    && secondSpawn.Payloads[i].Id == abandonedId) abandonedSpawns++;
+            Assert.AreEqual(1, abandonedSpawns,
                 "test setup: the second spawn must be delivered too");
 
             for (int i = 0; i < maxLifeTicks + cfg.Arena.MaxPlayers + 30; i++) { w.TickAll(idle); w.ClearEvents(); }
@@ -948,6 +958,25 @@ namespace Ring.Simulation.Tests
             var asm = new SnapshotAssembler(cfg, Net(eventBudget: 1), connectionCount: 1);
             var idle = new SimInput[2];
 
+            // TASK 29 AMENDED THE ACCOUNTING, NOT THE CLAIM. Once every frame
+            // repeats the last few ticks' events (Р58), counting death RECORDS
+            // says nothing — a frame can carry one fresh death and a resend of
+            // another. What "a death was delivered" means is a distinct
+            // (original tick, seq), which is Task 29's own dedup key, and it is
+            // collected from EVERY frame this fixture builds rather than from
+            // the drain loop alone: a resend of a death delivered before the
+            // loop lands inside it. The arithmetic below is unchanged — seven
+            // deaths in, seven distinct deaths out, five of them before the
+            // loop.
+            var deathsDelivered = new HashSet<(uint Tick, ushort Seq)>();
+
+            void CollectDeaths(AssembledFrame frame)
+            {
+                for (int e = 0; e < frame.EventCount; e++)
+                    if ((SnapshotEventKind)frame.Events[e].Kind == SnapshotEventKind.PlayerDied)
+                        deathsDelivered.Add((frame.Tick - frame.Events[e].TickDelta, frame.Events[e].Seq));
+            }
+
             // Three ticks of two deaths each against a budget of one leave the
             // queue holding three rank-0 records...
             for (int i = 0; i < 3; i++)
@@ -958,7 +987,7 @@ namespace Ring.Simulation.Tests
                     zone: HitZone.Body, playerIndex: 1);
                 w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
                     zone: HitZone.Body, playerIndex: 1);
-                Build(asm, w, cfg, 0, 0, 0);
+                CollectDeaths(Build(asm, w, cfg, 0, 0, 0));
             }
             Assert.AreEqual(0, asm.StatsFor(0).DroppedEvents,
                 "fixture premise: nothing may have been dropped before the shot fires");
@@ -976,7 +1005,7 @@ namespace Ring.Simulation.Tests
                 zone: HitZone.Body, playerIndex: 1);
             w.Emit(SimEventKind.ProjectileFired, new float2(6f, 0f), roundId, default, 0f,
                 ProjectileOwner.Player, playerIndex: 1);
-            Build(asm, w, cfg, 0, 0, 0);
+            CollectDeaths(Build(asm, w, cfg, 0, 0, 0));
             Assert.AreEqual(2, asm.StatsFor(0).DroppedEvents,
                 "the refused spawn AND its still-attempted ShotHeard must both be counted — "
                 + "one drop would mean the dead flag still mutes the sound half");
@@ -988,18 +1017,19 @@ namespace Ring.Simulation.Tests
             w.ClearEvents();
             w.Emit(SimEventKind.ProjectileBlocked, new float2(5.3f, 1.15f), roundId, default, 0.73f,
                 hitDir: new float2(-1f, 0f));
-            Build(asm, w, cfg, 0, 0, 0);
+            CollectDeaths(Build(asm, w, cfg, 0, 0, 0));
+            Assert.AreEqual(5, deathsDelivered.Count,
+                "five builds against a budget of one have delivered five distinct deaths so far");
 
             // Drain everything left and account for every event that ever rode:
             // seven deaths went in, seven deaths must come out, and nothing of
             // the dropped shot — no spawn, no sound, no ending.
-            int deathsDelivered = 0;
             for (int i = 0; i < 12; i++)
             {
                 w.TickAll(idle);
                 w.ClearEvents();
                 AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
-                deathsDelivered += f.CountOf(SnapshotEventKind.PlayerDied);
+                CollectDeaths(f);
                 Assert.AreEqual(0, f.CountOf(SnapshotEventKind.ProjectileSpawned),
                     "the refused spawn must never ride");
                 Assert.AreEqual(0, f.CountOf(SnapshotEventKind.ShotHeard),
@@ -1009,12 +1039,12 @@ namespace Ring.Simulation.Tests
                     + "subscription was opened for a dropped spawn (finding F1)");
             }
             // Accounting, so the kind assertions above scanned real frames and
-            // not a drained-empty queue: seven deaths were emitted, the five
-            // builds before this loop delivered one each (budget 1), so the
-            // loop itself must deliver exactly the remaining two.
-            Assert.AreEqual(2, deathsDelivered,
-                "seven deaths emitted minus five delivered by the five earlier builds — "
-                + "the drain loop must account for exactly the remaining two");
+            // not a drained-empty queue: seven deaths were emitted, five had
+            // been delivered by the five builds before this loop (budget 1), so
+            // the loop itself must have delivered exactly the remaining two.
+            Assert.AreEqual(7, deathsDelivered.Count,
+                "seven deaths emitted, seven distinct deaths delivered — the drain loop accounts for "
+                + "the two that had not been delivered before it");
         }
 
         [Test]
@@ -1082,6 +1112,518 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(f3.TryFirstOf(SnapshotEventKind.PlayerDashed, out int d3));
             Assert.Less(math.distance(f3.Events[d3].Pos, actorCell), 0.01f,
                 "the actor's own latch must survive the ricochet untouched");
+        }
+
+        // ================= Stage 2 Task 29 — redundancy (server half) =======
+
+        static readonly byte[] EveryBlockKind =
+        {
+            (byte)SnapshotBlockKind.Players, (byte)SnapshotBlockKind.Liveness,
+            (byte)SnapshotBlockKind.Mobs, (byte)SnapshotBlockKind.Wave, (byte)SnapshotBlockKind.Events,
+        };
+
+        /// The RAW bytes of a built frame's Events block. Task 29's resend
+        /// contract is a BYTE contract (task-29-brief §2.4) — the record that
+        /// rides again must be the one that rode, not a re-derivation that
+        /// happens to decode to a similar float — and a decoded `float2` is one
+        /// lossy step away from the two u16 codes actually on the wire.
+        static byte[] EventsBlockBytesOf(byte[] buffer, int bytes)
+        {
+            var reader = new SnapshotReader(new System.ReadOnlySpan<byte>(buffer, 0, bytes));
+            Assert.IsTrue(reader.TryReadHeader(out _, out _, out _));
+            byte[] found = null;
+            while (reader.TryReadBlock(EveryBlockKind, out byte kind, out System.ReadOnlySpan<byte> payload))
+                if ((SnapshotBlockKind)kind == SnapshotBlockKind.Events) found = payload.ToArray();
+            Assert.IsFalse(reader.Failed, "an assembled frame must parse cleanly to its end");
+            Assert.IsNotNull(found, "every assembled frame carries an Events block, empty or not");
+            return found;
+        }
+
+        static AssembledFrame BuildIdle(SnapshotAssembler asm, SimulationWorld w, in SimConfig cfg,
+            SimInput[] idle)
+        {
+            w.TickAll(idle);
+            w.ClearEvents();
+            return Build(asm, w, cfg, 0, 0, 0);
+        }
+
+        // ---- T29.A1. A resend is the delivered record, byte for byte ----
+
+        [Test]
+        public void Resend_IsByteIdentical_ToTheDeliveredRecord_EvenAfterTheSourceMoved()
+        {
+            // task-29-brief §2.1/§2.4, and the regression on the hole that
+            // re-routing a resend would open. A resend is a FROZEN copy of what
+            // shipped: kind, seq, position and payload are copied at delivery
+            // and never recomputed; only `tickDelta` is alive. Re-deriving the
+            // position would hand a stream of resends the FRESH cell of a source
+            // that has since moved — and a stream of independent cells is
+            // precisely the ESP-grade leak the app-vk1 latch closes (Р133).
+            var cfg = TestConfigs.Open();
+            float grid = cfg.Visibility.HearPositionGridMeters;
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            // Out of sight (past SightRadius + ExitHysteresis), inside earshot:
+            // the only rail on which a delivered position is coarsened at all.
+            var srcA = new float2(49.4f, 0f);
+            var srcB = new float2(55f, 0f);
+            Assert.Greater(srcA.x, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: the source must be out of sight when it fires the event");
+            Assert.Greater(srcB.x, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: and still out of sight after it moves");
+            Assert.Less(srcB.x, cfg.Visibility.HearRadius, "fixture premise: and still in earshot");
+            // THE MOVE MUST EXCEED THE LATCH MARGIN, or a re-deriving
+            // implementation would answer with the very same latched cell and
+            // this test would discriminate nothing (урок 109). The brief's
+            // wording says "inside the margin"; inside it the latch is a
+            // no-change by construction, so the discriminating fixture is the
+            // one that would genuinely re-latch. Recorded in the report.
+            Assert.Greater(math.abs(srcB.x - srcA.x), grid * 0.75f,
+                "fixture premise: the move must exceed the hysteresis margin, so a recomputed position "
+                + "would land on a DIFFERENT cell — otherwise the byte comparison below proves nothing");
+            Assert.Greater(math.distance(
+                    VisibilitySystem.QuantizeAudiblePos(srcB, cfg.Visibility),
+                    VisibilitySystem.QuantizeAudiblePos(srcA, cfg.Visibility)), 0.1f,
+                "fixture premise: and the two cells really do differ");
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            var idle = new SimInput[2];
+
+            TestWorlds.RelocatePlayerForTest(w, 1, srcA);
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDashed, srcA, 0, default, 0f, playerIndex: 1);
+            asm.BeginTick(w);
+            int bytesD = asm.BuildFor(0, 0, 0, Epoch);
+            byte[] blockD = EventsBlockBytesOf(asm.BufferFor(0), bytesD);
+            Assert.AreEqual(SnapshotBlocks.EventHeaderBytes
+                + SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDashed), blockD.Length,
+                "fixture premise: frame D carries exactly one record");
+
+            // Frame D+1: the source has moved, and nothing new is emitted, so
+            // the only record in the frame is the resend.
+            w.TickAll(idle);
+            w.ClearEvents();
+            TestWorlds.RelocatePlayerForTest(w, 1, srcB);
+            asm.BeginTick(w);
+            int bytesD1 = asm.BuildFor(0, 0, 0, Epoch);
+            byte[] blockD1 = EventsBlockBytesOf(asm.BufferFor(0), bytesD1);
+
+            Assert.AreEqual(blockD.Length, blockD1.Length,
+                "the resend is the same record, so it occupies the same number of bytes");
+            for (int i = 0; i < blockD.Length; i++)
+            {
+                if (i == 3)
+                {
+                    // Byte 3 is `tickDelta` (Task 27's record layout: kind(1),
+                    // seq(2), tickDelta(1), posX(2), posY(2), payloadBytes(1)).
+                    Assert.AreEqual(blockD[3] + 1, blockD1[3],
+                        "the ONLY live field of a resend is the tick delta, one tick larger");
+                    continue;
+                }
+                Assert.AreEqual(blockD[i], blockD1[i],
+                    $"byte {i} of the resend must be the byte that was delivered — position included "
+                    + "(task-29-brief §2.4: re-deriving it would leak the source's fresh cell)");
+            }
+        }
+
+        // ---- T29.A2. Resends and fresh events share ONE budget (Р61) ----
+
+        [Test]
+        public void Resends_ShareTheEventBudget_FreshFirst_ThenByRank()
+        {
+            // Р61 says the cap covers "including redundant resends", so a resend
+            // spends the same budget and the same bytes a fresh event does. The
+            // ORDER is fresh first: a fresh event has been transmitted zero
+            // times and has zero probability of having arrived, while any resend
+            // is already at ~95% after one 5%-loss hop.
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            var asm = new SnapshotAssembler(cfg, Net(eventBudget: 4), connectionCount: 1);
+            var idle = new SimInput[3];
+
+            // Frame D: three events, all inside a budget of four.
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                zone: HitZone.Body, playerIndex: 1);
+            w.Emit(SimEventKind.PlayerDamaged, new float2(6f, 0f), 1, default, 12f,
+                zone: HitZone.Body, hitDir: new float2(1f, 0f), playerIndex: 1);
+            w.Emit(SimEventKind.PlayerDashed, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+            AssembledFrame d = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(3, d.EventCount, "fixture premise: all three ride in their own frame");
+
+            // Frame D+1: two fresh events, so exactly two of the three possible
+            // resends fit — and they are the two best-ranked ones.
+            w.TickAll(idle);
+            w.ClearEvents();
+            w.Emit(SimEventKind.WaveStarted, float2.zero, 0, default, 0f);
+            w.Emit(SimEventKind.PlayerSlideStarted, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+            AssembledFrame d1 = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.AreEqual(4, d1.EventCount,
+                "the budget is ONE cap over fresh and resent alike (Р61) — four, not two plus three");
+            Assert.AreEqual((byte)0, d1.Events[0].TickDelta, "fresh events are written first...");
+            Assert.AreEqual((byte)0, d1.Events[1].TickDelta, "...both of them");
+            Assert.AreEqual((byte)SnapshotEventKind.WaveStarted, d1.Events[0].Kind,
+                "and among the fresh ones, by rank: a state change before a cosmetic");
+            Assert.AreEqual((byte)SnapshotEventKind.PlayerSlideStarted, d1.Events[1].Kind);
+            Assert.AreEqual((byte)1, d1.Events[2].TickDelta, "then the resends, one tick old");
+            Assert.AreEqual((byte)1, d1.Events[3].TickDelta);
+            Assert.AreEqual((byte)SnapshotEventKind.PlayerDied, d1.Events[2].Kind,
+                "and among the resends, by rank too — a death is repeated before a cosmetic is");
+            Assert.AreEqual((byte)SnapshotEventKind.PlayerDamaged, d1.Events[3].Kind);
+            Assert.AreEqual(0, d1.CountOf(SnapshotEventKind.PlayerDashed),
+                "the worst-ranked resend did not fit and must NOT have been packed past the cap");
+
+            // Frame D+2: nothing fresh, so the resend that missed its turn gets
+            // one — it stayed in the history rather than being dropped for not
+            // fitting once (task-29-brief §2.3).
+            AssembledFrame d2 = BuildIdle(asm, w, cfg, idle);
+            Assert.AreEqual(4, d2.EventCount, "a full budget of resends");
+            Assert.AreEqual(1, d2.CountOf(SnapshotEventKind.PlayerDashed),
+                "the resend that lost a place to the budget stays in the history and tries again");
+            Assert.AreEqual(0, d2.CountOf(SnapshotEventKind.PlayerSlideStarted),
+                "and it outranks the younger cosmetic on the older-tick tie-break, which is the same "
+                + "ordering key the carry queue uses");
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEvents,
+                "nothing here is a DROP — a resend that does not fit is a degree of redundancy, "
+                + "not a lost event (task-29-brief §2.3)");
+        }
+
+        // ---- T29.A3. The horizon, at both boundaries ----
+
+        [Test]
+        public void ResendHorizon_PresentUntilRedundancyTicksMinusOne_ThenGone()
+        {
+            // "Every snapshot repeats the events of the last EventRedundancyTicks
+            // ticks" (Р58) = one first delivery plus N-1 resends, so an event
+            // delivered in frame D is present in D+1 .. D+N-1 and gone in D+N.
+            // BOTH boundaries are asserted: an off-by-one in either direction is
+            // silent, and one of them doubles every death on the client.
+            const int redundancy = 4;
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            var asm = new SnapshotAssembler(cfg, Net(redundancyTicks: redundancy), connectionCount: 1);
+            var idle = new SimInput[3];
+
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                zone: HitZone.Body, playerIndex: 1);
+            AssembledFrame d = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(1, d.EventCount,
+                "in its OWN frame the event rides exactly once — a history filled before the resends "
+                + "are picked would send it twice in one frame");
+            Assert.AreEqual((byte)0, d.Events[0].TickDelta);
+
+            for (int age = 1; age <= redundancy - 1; age++)
+            {
+                AssembledFrame f = BuildIdle(asm, w, cfg, idle);
+                Assert.AreEqual(1, f.EventCount, $"frame D+{age} must still carry the resend");
+                Assert.AreEqual((byte)SnapshotEventKind.PlayerDied, f.Events[0].Kind);
+                Assert.AreEqual((byte)age, f.Events[0].TickDelta,
+                    $"and its tick delta counts back to the ORIGINAL tick, so at D+{age} it reads {age}");
+            }
+
+            AssembledFrame gone = BuildIdle(asm, w, cfg, idle);
+            Assert.AreEqual(0, gone.EventCount,
+                $"frame D+{redundancy} is past the horizon — {redundancy} transmissions is the whole "
+                + "of EventRedundancyTicks, and one more would be an off-by-one nobody would ever see");
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEvents,
+                "and ageing out of the history is not a drop: the event WAS delivered");
+        }
+
+        // ---- T29.A4. A deferred event enters the history when it SHIPS ----
+
+        [Test]
+        public void DeferredEvent_EntersHistoryWhenItShips_NotWhenItIsQueued()
+        {
+            // task-29-brief §2.2: the history is fed by the frame SELECTION, not
+            // by the carry queue. An event that waits a tick for room has not
+            // been delivered yet, so its redundancy window has not started —
+            // feeding the history at `Enqueue` would burn the window on frames
+            // that never carried the event at all, and it would expire early.
+            const int redundancy = 4;
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            var asm = new SnapshotAssembler(cfg,
+                Net(eventBudget: 2, redundancyTicks: redundancy), connectionCount: 1);
+            var idle = new SimInput[3];
+
+            // Frame D: three events, a budget of two — the cosmetic waits.
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                zone: HitZone.Body, playerIndex: 1);
+            w.Emit(SimEventKind.PlayerDamaged, new float2(6f, 0f), 1, default, 12f,
+                zone: HitZone.Body, hitDir: new float2(1f, 0f), playerIndex: 1);
+            w.Emit(SimEventKind.PlayerDashed, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+            AssembledFrame d = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(2, d.EventCount, "fixture premise: the budget of two admits two");
+            Assert.AreEqual(0, d.CountOf(SnapshotEventKind.PlayerDashed),
+                "fixture premise: the cosmetic is the one that waits");
+
+            // D+1: the deferred cosmetic finally ships, so ITS window starts here
+            // — three ticks later than the window of the two that went first.
+            AssembledFrame d1 = BuildIdle(asm, w, cfg, idle);
+            Assert.AreEqual(1, d1.CountOf(SnapshotEventKind.PlayerDashed),
+                "the deferred event ships in the first frame with room");
+            Assert.AreEqual(2, d1.EventCount, "and a resend fills the other half of the budget");
+
+            for (int i = 0; i < 2; i++) BuildIdle(asm, w, cfg, idle);   // D+2, D+3
+
+            AssembledFrame d4 = BuildIdle(asm, w, cfg, idle);
+            Assert.AreEqual(1, d4.CountOf(SnapshotEventKind.PlayerDashed),
+                "at D+4 the two events delivered in frame D are past their horizon, but the deferred "
+                + "one — delivered at D+1 — is only at age 3 and must still be resent. A history fed "
+                + "at ENQUEUE time would have expired it one frame ago");
+            Assert.AreEqual((byte)4, d4.Events[0].TickDelta,
+                "its tick delta still counts back to the tick it HAPPENED, not to the frame it shipped in");
+
+            AssembledFrame d5 = BuildIdle(asm, w, cfg, idle);
+            Assert.AreEqual(0, d5.EventCount, "witness: one frame later it really is gone");
+        }
+
+        // ---- T29.A5. Degenerate EventRedundancyTicks ----
+
+        [Test]
+        public void RedundancyTicksZeroOrOne_ProduceNoResends()
+        {
+            // NetConfig's Range is 0..15 and both degenerate ends are legal
+            // settings, not accidents: 0 disables redundancy, and 1 means "sent
+            // exactly once", which is the same thing said the other way. Neither
+            // may resend, and neither may throw.
+            foreach (int redundancy in new[] { 0, 1 })
+            {
+                SimulationWorld w = Trio(out SimConfig cfg,
+                    float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+                var asm = new SnapshotAssembler(cfg, Net(redundancyTicks: redundancy), connectionCount: 1);
+                var idle = new SimInput[3];
+
+                w.ClearEvents();
+                w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                    zone: HitZone.Body, playerIndex: 1);
+                AssembledFrame d = Build(asm, w, cfg, 0, 0, 0);
+                Assert.AreEqual(1, d.EventCount, $"redundancy {redundancy}: the event itself still ships");
+
+                AssembledFrame d1 = BuildIdle(asm, w, cfg, idle);
+                Assert.AreEqual(0, d1.EventCount,
+                    $"redundancy {redundancy}: nothing may be repeated");
+            }
+
+            // WITNESS, and the thing that keeps the loop above from passing on a
+            // do-nothing implementation: the very same fixture at the shipped
+            // default DOES repeat.
+            SimulationWorld w2 = Trio(out SimConfig cfg2, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            var asm2 = new SnapshotAssembler(cfg2, Net(), connectionCount: 1);
+            var idle2 = new SimInput[3];
+            w2.ClearEvents();
+            w2.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                zone: HitZone.Body, playerIndex: 1);
+            Build(asm2, w2, cfg2, 0, 0, 0);
+            Assert.AreEqual(1, BuildIdle(asm2, w2, cfg2, idle2).EventCount,
+                "witness: at the default EventRedundancyTicks the same event IS repeated, so the two "
+                + "zero-assertions above are about the setting and not about an unimplemented feature");
+        }
+
+        // ---- T29.A6. A resend has no side effects ----
+
+        [Test]
+        public void Resend_HasNoSideEffects_NoResubscribe_NoCounters()
+        {
+            // task-29-brief §2.1/§2.7: every side effect of an event — the spawn
+            // subscription, the audible latch, the counters — happened once, when
+            // the event was first routed. A resend is bytes. If a resent
+            // ProjectileSpawned re-opened its subscription, a round would keep
+            // delivering endings after the ending that closed it.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+
+            const int roundId = 4919;
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            var idle = new SimInput[2];
+
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileFired, new float2(1f, 0f), roundId, default, 0f,
+                ProjectileOwner.Player, playerIndex: 1);
+            AssembledFrame t0 = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(1, t0.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "fixture premise: the spawn is delivered, so a subscription exists to be reopened");
+
+            // T1: the round ends, the subscription closes, and the spawn is
+            // resent alongside.
+            w.TickAll(idle);
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileExpired, new float2(30f, 0f), roundId, default, 0f);
+            AssembledFrame t1 = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(1, CountWithDelta(t1, SnapshotEventKind.ProjectileEnded, 0),
+                "the ending is delivered fresh");
+            Assert.AreEqual(1, CountWithDelta(t1, SnapshotEventKind.ProjectileSpawned, 1),
+                "and the spawn rides again as a resend — the fixture premise that makes T2 below "
+                + "discriminate at all");
+
+            // T2: a second ending for the same round must find nobody. If the
+            // resent spawn had gone back through the routing switch, it would
+            // have re-subscribed and this would be delivered.
+            w.TickAll(idle);
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileExpired, new float2(31f, 0f), roundId, default, 0f);
+            AssembledFrame t2 = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(0, CountWithDelta(t2, SnapshotEventKind.ProjectileEnded, 0),
+                "no FRESH ending: the subscription closed with the first one and a resend must not "
+                + "have reopened it");
+            Assert.AreEqual(1, CountWithDelta(t2, SnapshotEventKind.ProjectileEnded, 1),
+                "witness: the first ending's own resend IS there, so the frame is not simply empty");
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEvents,
+                "and no counter moves for a resend (task-29-brief §2.7)");
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEntities);
+        }
+
+        static int CountWithDelta(AssembledFrame f, SnapshotEventKind kind, byte tickDelta)
+        {
+            int n = 0;
+            for (int i = 0; i < f.EventCount; i++)
+                if ((SnapshotEventKind)f.Events[i].Kind == kind && f.Events[i].TickDelta == tickDelta) n++;
+            return n;
+        }
+
+        // ---- T29.A7. A resend past the tick-delta byte leaves silently ----
+
+        [Test]
+        public void ResendPastTheTickDeltaByte_IsEvictedSilently_WithoutCountingADrop()
+        {
+            // task-29-brief §2.4. A record delivered with its delta already near
+            // the edge of the one-byte field cannot be described a tick later, so
+            // it leaves the history — but WITHOUT touching DroppedEvents, unlike
+            // the same overflow on the fresh path. The difference is real: there
+            // a meaning that was never delivered is lost; here only a degree of
+            // redundancy on something the client already has.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+
+            var asm = new SnapshotAssembler(cfg, Net(eventBudget: 1), connectionCount: 1);
+            var idle = new SimInput[2];
+
+            // The dash is held back by a budget of one behind a death, then left
+            // to age to the very edge of the tick-delta byte.
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                zone: HitZone.Body, playerIndex: 1);
+            w.Emit(SimEventKind.PlayerDashed, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+            Build(asm, w, cfg, 0, 0, 0);
+
+            for (int i = 0; i < byte.MaxValue - 1; i++) { w.TickAll(idle); w.ClearEvents(); }
+            AssembledFrame edge = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(1, edge.EventCount, "the carried dash finally ships at the edge of the byte");
+            Assert.AreEqual((byte)SnapshotEventKind.PlayerDashed, edge.Events[0].Kind);
+            Assert.AreEqual((byte)(byte.MaxValue - 1), edge.Events[0].TickDelta);
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEvents,
+                "fixture premise: nothing has been dropped up to here");
+
+            AssembledFrame last = BuildIdle(asm, w, cfg, idle);
+            Assert.AreEqual(1, last.EventCount, "one more tick still fits the byte exactly");
+            Assert.AreEqual(byte.MaxValue, last.Events[0].TickDelta,
+                "witness: the resend really does ride at the maximum describable delta");
+
+            AssembledFrame past = null;
+            Assert.DoesNotThrow(() => past = BuildIdle(asm, w, cfg, idle),
+                "a resend that outgrew the tick-delta byte must not make the frame throw");
+            Assert.AreEqual(0, past.EventCount, "and it must not ride with a wrapped delta either");
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEvents,
+                "and it must NOT be counted as a dropped event: the record was delivered, only its "
+                + "redundancy expired (task-29-brief §2.4)");
+        }
+
+        // ---- T29.A8. Resends allocate nothing in steady state ----
+
+        [Test]
+        public void Resends_DoNotAllocateGCMemory()
+        {
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            TestWorlds.SpawnMobsToCap(w);
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 3);
+            var idle = new SimInput[3];
+
+            // Three ticks of events, so every connection's history is populated
+            // across several ages.
+            for (int t = 0; t < 3; t++)
+            {
+                w.ClearEvents();
+                w.Emit(SimEventKind.WaveStarted, float2.zero, 0, default, 0f);
+                w.Emit(SimEventKind.PlayerDashed, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+                w.Emit(SimEventKind.PlayerSlideStarted, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+                asm.BeginTick(w);
+                for (int c = 0; c < 3; c++) asm.BuildFor(c, c, c, Epoch);
+                w.TickAll(idle);
+            }
+            w.ClearEvents();
+
+            // Warm-up OUTSIDE the measured lambda, with the premise that defeats
+            // a do-nothing implementation (Task 26 finding F-D): with no fresh
+            // events left, every record in the frame is a RESEND.
+            asm.BeginTick(w);
+            for (int c = 0; c < 3; c++)
+            {
+                int bytes = asm.BuildFor(c, c, c, Epoch);
+                AssembledFrame f = AssembledFrame.Decode(asm.BufferFor(c), bytes, cfg);
+                Assert.Greater(f.EventCount, 0, "fixture premise (stub-defeating): resends must ride");
+                for (int i = 0; i < f.EventCount; i++)
+                    Assert.Greater(f.Events[i].TickDelta, (byte)0,
+                        "fixture premise: nothing fresh is left, so every record is a resend");
+                Assert.Greater(f.MobCount, 0, "fixture premise: the frame is a full one, not an empty shell");
+            }
+
+            Assert.That(() =>
+            {
+                for (int i = 0; i < 200; i++)
+                {
+                    asm.BeginTick(w);
+                    for (int c = 0; c < 3; c++) asm.BuildFor(c, c, c, Epoch);
+                }
+            }, Is.Not.AllocatingGCMemory());
+        }
+
+        // ---- T29.A9. Frames with resends are still reproducible ----
+
+        [Test]
+        public void TwoConnectionsInTheSameState_ProduceByteIdenticalFrames_WithResends()
+        {
+            // The Task 28 invariant, extended over the new state: two
+            // connections that have seen the same frames must hold the same
+            // history and emit the same resend bytes. Without it a Task 32
+            // mismatch could never be told apart from a history that simply is
+            // not reproducible.
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            TestWorlds.SpawnMobsAt(w,
+                (MobType.Chaser, new float2(4f, 4f)), (MobType.Gunner, new float2(-5f, 1f)));
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 2);
+            var idle = new SimInput[3];
+
+            w.ClearEvents();
+            w.Emit(SimEventKind.WaveStarted, float2.zero, 0, default, 0f);
+            w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                zone: HitZone.Body, playerIndex: 1);
+            asm.BeginTick(w);
+            asm.BuildFor(0, 0, 0, Epoch);
+            asm.BuildFor(1, 0, 0, Epoch);
+
+            w.TickAll(idle);
+            w.ClearEvents();
+            asm.BeginTick(w);
+            int a = asm.BuildFor(0, 0, 0, Epoch);
+            int b = asm.BuildFor(1, 0, 0, Epoch);
+
+            AssembledFrame fa = AssembledFrame.Decode(asm.BufferFor(0), a, cfg);
+            Assert.Greater(fa.EventCount, 0, "fixture premise (stub-defeating): the compared frame "
+                + "must actually carry resends");
+            for (int i = 0; i < fa.EventCount; i++)
+                Assert.Greater(fa.Events[i].TickDelta, (byte)0, "fixture premise: all of them resends");
+
+            Assert.AreEqual(a, b, "two identically-fed connections must write the same number of bytes");
+            byte[] bufA = asm.BufferFor(0);
+            byte[] bufB = asm.BufferFor(1);
+            for (int i = 0; i < a; i++)
+                Assert.AreEqual(bufA[i], bufB[i],
+                    $"byte {i} must match — the resend history is a pure function of what was delivered");
         }
     }
 }
