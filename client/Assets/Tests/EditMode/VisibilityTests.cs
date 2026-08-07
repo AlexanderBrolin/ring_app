@@ -1322,5 +1322,81 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, result.Count,
                 "exactly the observer and the corpse — a corpse neither disappears nor duplicates");
         }
+
+        // --- 33: SetEnumerator_FollowsInsertionOrder (Stage 2 Task 28, §2.10) ---
+
+        [Test]
+        public void SetEnumerator_IdAtAndLingerAt_FollowInsertionOrder_AndClearResetsCount()
+        {
+            // carryover-t28.md §8а: VisibilitySet shipped with no way to
+            // ENUMERATE it — only Count/Contains/LingerOf — while its own class
+            // doc justified the flat array over a HashSet by "unordered
+            // iteration is unwanted", i.e. reasoned about an iteration the API
+            // did not have. Task 28's SnapshotAssembler has to walk "every
+            // entity visible to this observer" to build the Players/Mobs
+            // blocks, so IdAt/LingerAt are added here, with the ORDER pinned:
+            // the order of Add, which for a Compute() result is players by
+            // index and then mobs by slot.
+            //
+            // The order is the whole contract. A frame assembled in a
+            // different order every tick would be a different byte sequence
+            // for the same world (SnapshotAssemblerTests'
+            // DoubleBuild_SameWorld_IsByteIdentical rests on it), and the
+            // truncation branch's "survivors keep insertion order" rule would
+            // have nothing to keep.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+
+            // Half 1 — a hand-built set: the ids and lingers are stated by the
+            // fixture, so IdAt/LingerAt are compared against values no
+            // production code chose. Non-monotonic ids and DISTINCT linger
+            // values, so neither "sorted" nor "one shared counter" can pass.
+            var byHand = new VisibilitySet(TestWorlds.Capacity(cfg));
+            byHand.Add(41, 0);
+            byHand.Add(7, 3);
+            byHand.Add(-2, 5);
+            byHand.Add(19, 1);
+
+            Assert.AreEqual(4, byHand.Count, "test setup: four entries were added");
+            Assert.AreEqual(41, byHand.IdAt(0), "IdAt(0) must be the FIRST id added");
+            Assert.AreEqual(7, byHand.IdAt(1));
+            Assert.AreEqual(-2, byHand.IdAt(2));
+            Assert.AreEqual(19, byHand.IdAt(3), "IdAt(Count-1) must be the LAST id added");
+            Assert.AreEqual(0, byHand.LingerAt(0), "LingerAt must follow the SAME index as IdAt");
+            Assert.AreEqual(3, byHand.LingerAt(1));
+            Assert.AreEqual(5, byHand.LingerAt(2));
+            Assert.AreEqual(1, byHand.LingerAt(3));
+
+            // Cross-check against the existing lookup contract, so a mutant
+            // that returns the right values under the wrong PAIRING (ids from
+            // one array, lingers from another index) cannot survive.
+            for (int i = 0; i < byHand.Count; i++)
+                Assert.AreEqual(byHand.LingerOf(byHand.IdAt(i)), byHand.LingerAt(i),
+                    $"entry {i}: LingerAt(i) must agree with LingerOf(IdAt(i))");
+
+            // Clear resets the logical extent — the arrays are never
+            // reallocated, so a stale index is only ruled out by Count.
+            byHand.Clear();
+            Assert.AreEqual(0, byHand.Count, "Clear resets Count, which is the only bound a caller may trust");
+
+            // Half 2 — a REAL Compute() result: the order the assembler
+            // actually consumes is players by index, then mobs by slot.
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(4f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(-4f, 0f));
+            int mobA = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 6f));
+            int mobB = w.SpawnMobForTest(MobType.Gunner, new float2(0f, -6f));
+
+            var previous = new VisibilitySet(TestWorlds.Capacity(cfg));
+            var result = new VisibilitySet(TestWorlds.Capacity(cfg));
+            VisibilitySystem.Compute(w, 0, cfg.Visibility, previous, result);
+
+            Assert.AreEqual(5, result.Count, "test setup: three players and two mobs are all in sight in an open arena");
+            Assert.AreEqual(VisibilityIds.ForPlayer(0), result.IdAt(0), "players come first, by index — observer 0 itself");
+            Assert.AreEqual(VisibilityIds.ForPlayer(1), result.IdAt(1));
+            Assert.AreEqual(VisibilityIds.ForPlayer(2), result.IdAt(2));
+            Assert.AreEqual(mobA, result.IdAt(3), "mobs follow the players, in the world's own slot order");
+            Assert.AreEqual(mobB, result.IdAt(4));
+        }
     }
 }

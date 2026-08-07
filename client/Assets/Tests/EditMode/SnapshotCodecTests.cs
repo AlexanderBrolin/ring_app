@@ -1,8 +1,12 @@
+using System.Collections.Generic;
 using FishNet.Broadcast;
 using NUnit.Framework;
+using Ring.Data;
 using Ring.Networking.Protocol;
+using Ring.Networking.Server;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
+using UnityEngine;
 // AllocatingGCMemory is an extension method (UnityEngine.TestTools.Constraints) —
 // a fully-qualified call site doesn't compile (CS1061), so both usings below are
 // required by the file, not just convenience imports (InputCodecTests.cs and
@@ -2004,6 +2008,879 @@ namespace Ring.Simulation.Tests
                     }
                 }
             }, Is.Not.AllocatingGCMemory());
+        }
+
+        // ================= Stage 2 Task 28: the wire-event CATALOG =================
+        //
+        // Task 27 left the record's `kind` byte and its payload opaque. This is
+        // the catalog that fills them (task-28-brief §2.2) plus the frame
+        // budget the assembler spends (§2.8).
+        //
+        // FIXTURE NUMBERS, STATED AS WHAT WAS SEARCHED (same discipline and
+        // same pattern as the Task 26/27 note above):
+        //   grep -nP "(?<![\d.])<N>(?![\d.])" client/Assets/Data/*.asset
+        // run over all ten balance assets for every DATA number this region
+        // introduces — 210, 6.5, 61, 17, 4919, 51001, 7, 39, 7.25, 2.75, 1.25,
+        // 91, 57, 40507, 0.28, 0.96. Every one of them produces ZERO matches
+        // except `7`, whose only three hits are the pattern landing inside GUID
+        // hex on `m_Script: {..., guid: ...}` lines — the same false positive
+        // this file already documents for 14, 19, 22 and 23. No fixture matches
+        // a VALUE. Four numbers were CHANGED to get there and saying so is the
+        // point: 44 (proposed for the weapon speed) lives in ArenaConfig's wall
+        // `B: {x: 2, y: 44}`, 13 (velZ) and 9 (an index) in obstacle
+        // coordinates and Gunner.PreferredRange, 8 (an index) in
+        // MobGunnerConfig.ProjectileDamage. They became 61, -2.75 and 7.
+        //   Slot INDICES are the one place where a collision is unavoidable and
+        // also meaningless: they range over [0, MaxPlayers) — small integers
+        // that every balance sheet is full of — and no code path could
+        // substitute a damage multiplier for a slot number. 7 was picked
+        // because it happens to be clean anyway; the boundary pair 10/11 below
+        // is structural (it is MaxPlayers itself, minus one).
+        //   Structural numbers (payload sizes, byte offsets, block overhead)
+        // are not fixtures, same rule as the rest of this file.
+
+        const float EvtStaminaMax = 210f;
+        const float EvtMaxAimHeight = 6.5f;
+        const float EvtWeaponSpeed = 61f;
+        const float EvtGunnerSpeed = 17f;
+
+        /// Extends the Task 27 fixture config with the four scales the event
+        /// payloads quantize against. Radius/MaxPlayers/MaxHp are REUSED from
+        /// SnapCfg's own constants rather than restated (rule 2), so the
+        /// boundary tests below inherit the same deliberately-not-3 MaxPlayers.
+        static readonly SimConfig EvtCfg = new SimConfig
+        {
+            Arena = new ArenaSimConfig { Radius = SnapRadius, MaxPlayers = SnapMaxPlayers },
+            Hero = new HeroSimConfig
+            {
+                MaxHp = SnapHeroMaxHp, StaminaMax = EvtStaminaMax, MaxAimHeight = EvtMaxAimHeight,
+            },
+            Weapon = new WeaponSimConfig { ProjectileSpeed = EvtWeaponSpeed },
+            Chaser = new MobSimConfig { MaxHp = SnapChaserMaxHp },
+            Gunner = new MobSimConfig { MaxHp = SnapGunnerMaxHp, ProjectileSpeed = EvtGunnerSpeed },
+        };
+
+        const int EvtRoundId = 4919;        // 0x1337 -> 0x37, 0x13
+        const int EvtMobId = 51001;         // 0xC739 -> 0x39, 0xC7
+        const byte EvtSlot = 7;             // a real slot: below SnapMaxPlayers (11)
+        const float EvtHorizSpeedPlayer = 39f;   // /61  -> 163
+        const float EvtHorizSpeedMob = 7.25f;    // /17  -> 109
+        const float EvtVelZ = -2.75f;            // /61  -> 31290 (0x3A,0x7A); /17 -> 27467 (0x4B,0x6B)
+        const float EvtHeightHigh = 2.75f;       // /6.5 -> 108
+        const float EvtHeightLow = 1.25f;        // /6.5 -> 49
+        const float EvtDamage = 91f;             // /118 -> 197
+        const float EvtStaminaMissing = 57f;     // /210 -> 69
+        const int EvtWaveStartedIndex = 40507;   // 0x9E3B -> 0x3B, 0x9E
+
+        // Non-palindromic headings whose Dir codes differ from each other and
+        // from every rail value above (204 and 140).
+        static readonly float2 EvtDirA = new float2(-0.28f, 0.96f);   // -> 204
+        static readonly float2 EvtDirB = new float2(0.96f, 0.28f);    // -> 140
+
+        // Half a quantization step, derived from the wire widths HERE, never
+        // from Quantize (same rule as the Task 27 region): `Unit` spans
+        // [0, max] over 256 codes, `Pos` spans [-r, +r] over 65536.
+        static float HalfStepUnit(float max) => max / 255f / 2f;
+        static float HalfStepPos(float radius) => radius / 65535f;
+
+        static System.ReadOnlySpan<byte> Payload(byte[] buffer, SnapshotEventKind kind)
+            => new System.ReadOnlySpan<byte>(buffer, 0, SnapshotEvents.PayloadBytesFor(kind));
+
+        static SnapshotEventPayload Decoded(byte[] buffer, SnapshotEventKind kind)
+        {
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(kind, Payload(buffer, kind), EvtCfg,
+                out SnapshotEventPayload value, out SnapshotBlockError error),
+                $"{kind}: a payload this codec just wrote must decode");
+            Assert.AreEqual(SnapshotBlockError.None, error);
+            Assert.AreEqual(kind, value.Kind, "the decoded payload must remember which kind it is");
+            return value;
+        }
+
+        /// Writes one payload into a sentinel-filled buffer with room to spare,
+        /// asserting the returned length and that nothing was written past it.
+        static byte[] WritePayload(SnapshotEventKind kind, System.Func<byte[], int> write)
+        {
+            const int tailBytes = 4;
+            var buffer = Filled(SnapshotEvents.MaxPayloadBytes + tailBytes);
+            int written = write(buffer);
+            int expected = SnapshotEvents.PayloadBytesFor(kind);
+            Assert.AreEqual(expected, written, $"{kind}: a write must report its own declared payload size");
+            for (int i = expected; i < buffer.Length; i++)
+                Assert.AreEqual(Sentinel, buffer[i], $"{kind}: byte {i} is past the payload and must be untouched");
+            return buffer;
+        }
+
+        // ---- T28.1/2. Structural: the two enums ----
+
+        [Test]
+        public void SnapshotEventKind_ValuesArePinned_AndNoneIsZero()
+        {
+            Assert.AreEqual((byte)0, (byte)SnapshotEventKind.None,
+                "None must stay 0 — the same refusal sentinel contract SnapshotBlockKind.None carries");
+            Assert.AreEqual((byte)1, (byte)SnapshotEventKind.ProjectileSpawned);
+            Assert.AreEqual((byte)2, (byte)SnapshotEventKind.ProjectileEnded);
+            Assert.AreEqual((byte)3, (byte)SnapshotEventKind.ShotHeard);
+            Assert.AreEqual((byte)4, (byte)SnapshotEventKind.MobSpawned);
+            Assert.AreEqual((byte)5, (byte)SnapshotEventKind.MobDied);
+            Assert.AreEqual((byte)6, (byte)SnapshotEventKind.PlayerDamaged);
+            Assert.AreEqual((byte)7, (byte)SnapshotEventKind.PlayerDied);
+            Assert.AreEqual((byte)8, (byte)SnapshotEventKind.PlayerDashed);
+            Assert.AreEqual((byte)9, (byte)SnapshotEventKind.PlayerSlideStarted);
+            Assert.AreEqual((byte)10, (byte)SnapshotEventKind.DashRicocheted);
+            Assert.AreEqual((byte)11, (byte)SnapshotEventKind.StaminaDenied);
+            Assert.AreEqual((byte)12, (byte)SnapshotEventKind.WaveStarted);
+            Assert.AreEqual((byte)13, (byte)SnapshotEventKind.WaveCleared);
+
+            // The catalog is DENSE and WaveCleared really is its top — the
+            // decoder's own "is this kind known" test is a range check, so a
+            // kind added above WaveCleared without moving that bound would be
+            // silently unreadable, and a gap in the middle would make a
+            // never-declared value decode as legal. (Strengthening recorded in
+            // the report: without these two the test passed on a stubbed
+            // catalog, because an enum declaration has no body to stub.)
+            var declared = new HashSet<byte>();
+            foreach (SnapshotEventKind kind in System.Enum.GetValues(typeof(SnapshotEventKind)))
+                declared.Add((byte)kind);
+            Assert.AreEqual(14, declared.Count, "None plus thirteen kinds — no duplicate values");
+            for (byte v = 0; v <= (byte)SnapshotEventKind.WaveCleared; v++)
+                Assert.IsTrue(declared.Contains(v), $"value {v} must be declared — the catalog has no gaps");
+            Assert.AreEqual((byte)(declared.Count - 1), (byte)SnapshotEventKind.WaveCleared,
+                "and WaveCleared is the top of the range every decoder bounds against");
+        }
+
+        [Test]
+        public void ProjectileEndKind_ValuesArePinned_AndNoneIsZero()
+        {
+            Assert.AreEqual((byte)0, (byte)ProjectileEndKind.None,
+                "None must stay 0 and is never written — a zero here would be indistinguishable from an "
+                + "uninitialized payload byte");
+            Assert.AreEqual((byte)1, (byte)ProjectileEndKind.Blocked);
+            Assert.AreEqual((byte)2, (byte)ProjectileEndKind.Expired);
+            Assert.AreEqual((byte)3, (byte)ProjectileEndKind.HitMob);
+            Assert.AreEqual((byte)ProjectileEndKind.HitMob, SnapshotEvents.MaxProjectileEndKindValue,
+                "the domain bound must track the enum's own top value");
+            Assert.AreEqual((byte)HitZone.Head, SnapshotEvents.MaxHitZoneValue);
+
+            // Strengthening (recorded in the report): the three assertions
+            // above are about declarations and passed on a stubbed catalog.
+            // These tie the bounds to the enums they claim to bound, so a
+            // fourth ProjectileEndKind or a fourth HitZone in a later stage
+            // fails HERE, saying the wire domain moved, instead of quietly
+            // making legal traffic unparseable.
+            Assert.AreEqual(4, System.Enum.GetValues(typeof(ProjectileEndKind)).Length,
+                "None + three endings — growing this enum is a ProtocolVersion question");
+            Assert.AreEqual(4, System.Enum.GetValues(typeof(HitZone)).Length,
+                "None/Legs/Body/Head — the wire carries this as a raw byte");
+            foreach (ProjectileEndKind k in System.Enum.GetValues(typeof(ProjectileEndKind)))
+                Assert.LessOrEqual((byte)k, SnapshotEvents.MaxProjectileEndKindValue,
+                    $"{k} must be inside the bound every decoder checks against");
+            foreach (HitZone z in System.Enum.GetValues(typeof(HitZone)))
+                Assert.LessOrEqual((byte)z, SnapshotEvents.MaxHitZoneValue, $"{z} must be inside the bound");
+        }
+
+        [Test]
+        public void EventPriority_RanksDeathsAboveImpactsAboveStateAboveCosmetics_ForEveryKind()
+        {
+            // Р61 in one table, spelled out independently of PriorityOf itself —
+            // a `foreach + DoesNotThrow` loop would agree with a uniformly-wrong
+            // implementation, exactly the trap EventDeliveryTests.
+            // ChannelFor_HandlesEveryKind documents for the channel table.
+            var expected = new Dictionary<SnapshotEventKind, byte>
+            {
+                [SnapshotEventKind.PlayerDied] = SnapshotEvents.PriorityDeath,
+                [SnapshotEventKind.MobDied] = SnapshotEvents.PriorityDeath,
+                [SnapshotEventKind.PlayerDamaged] = SnapshotEvents.PriorityImpact,
+                [SnapshotEventKind.ProjectileEnded] = SnapshotEvents.PriorityImpact,
+                [SnapshotEventKind.ProjectileSpawned] = SnapshotEvents.PriorityState,
+                [SnapshotEventKind.MobSpawned] = SnapshotEvents.PriorityState,
+                [SnapshotEventKind.StaminaDenied] = SnapshotEvents.PriorityState,
+                [SnapshotEventKind.WaveStarted] = SnapshotEvents.PriorityState,
+                [SnapshotEventKind.WaveCleared] = SnapshotEvents.PriorityState,
+                [SnapshotEventKind.ShotHeard] = SnapshotEvents.PriorityCosmetic,
+                [SnapshotEventKind.PlayerDashed] = SnapshotEvents.PriorityCosmetic,
+                [SnapshotEventKind.PlayerSlideStarted] = SnapshotEvents.PriorityCosmetic,
+                [SnapshotEventKind.DashRicocheted] = SnapshotEvents.PriorityCosmetic,
+            };
+
+            foreach (SnapshotEventKind kind in System.Enum.GetValues(typeof(SnapshotEventKind)))
+            {
+                if (kind == SnapshotEventKind.None) continue;
+                Assert.IsTrue(expected.ContainsKey(kind),
+                    $"{kind} has no entry in this test's own Р61 table — a new kind must be ranked HERE "
+                    + "(and in PriorityOf), not left to inherit a rank nobody chose");
+                Assert.AreEqual(expected[kind], SnapshotEvents.PriorityOf(kind), $"{kind}'s rank");
+            }
+
+            // Lower is more important, and the four bands are distinct — a
+            // scale where every value happened to be equal would satisfy the
+            // table above only if the table were also flat, which it is not.
+            Assert.Less(SnapshotEvents.PriorityDeath, SnapshotEvents.PriorityImpact);
+            Assert.Less(SnapshotEvents.PriorityImpact, SnapshotEvents.PriorityState);
+            Assert.Less(SnapshotEvents.PriorityState, SnapshotEvents.PriorityCosmetic);
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.PriorityOf(SnapshotEventKind.None),
+                "the never-written sentinel has no rank");
+        }
+
+        [Test]
+        public void EventPayloadSizes_ArePinned_AndNoneExceedsMaxPayloadBytes()
+        {
+            Assert.AreEqual(8, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileSpawned));
+            Assert.AreEqual(5, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileEnded));
+            Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ShotHeard));
+            Assert.AreEqual(3, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.MobSpawned));
+            Assert.AreEqual(4, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.MobDied));
+            Assert.AreEqual(4, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDamaged));
+            Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDied));
+            Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDashed));
+            Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerSlideStarted));
+            Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.DashRicocheted));
+            Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.StaminaDenied));
+            Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.WaveStarted));
+            Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.WaveCleared));
+
+            Assert.AreEqual(8, SnapshotEvents.MaxPayloadBytes,
+                "MaxPayloadBytes sizes the assembler's carry-queue slots — it must be the real maximum, "
+                + "not a round number chosen next to it");
+            foreach (SnapshotEventKind kind in System.Enum.GetValues(typeof(SnapshotEventKind)))
+            {
+                if (kind == SnapshotEventKind.None) continue;
+                Assert.LessOrEqual(SnapshotEvents.PayloadBytesFor(kind), SnapshotEvents.MaxPayloadBytes,
+                    $"{kind} must fit a fixed carry-queue slot");
+            }
+            Assert.Throws<System.ArgumentException>(
+                () => SnapshotEvents.PayloadBytesFor(SnapshotEventKind.None));
+        }
+
+        // ---- T28.3-7. Payload byte layouts, kind by kind ----
+
+        [Test]
+        public void EventPayload_ProjectileSpawned_ByteLayout_OnBothOwnerRails()
+        {
+            const SnapshotEventKind kind = SnapshotEventKind.ProjectileSpawned;
+
+            byte[] player = WritePayload(kind, b => SnapshotEvents.WriteProjectileSpawned(
+                new System.Span<byte>(b), EvtRoundId, EvtSlot, EvtDirA,
+                EvtHorizSpeedPlayer, EvtVelZ, EvtHeightHigh, EvtCfg));
+
+            Assert.AreEqual((byte)0x37, player[0], "byte 0: id low (4919 = 0x1337)");
+            Assert.AreEqual((byte)0x13, player[1], "byte 1: id high");
+            Assert.AreEqual(EvtSlot, player[2], "byte 2: ownerIndex");
+            Assert.AreEqual((byte)204, player[3], "byte 3: dir (-0.28, 0.96) -> code 204");
+            Assert.AreEqual((byte)163, player[4], "byte 4: horizSpeed 39/61 -> code 163");
+            Assert.AreEqual((byte)0x3A, player[5], "byte 5: velZ low (-2.75 over +/-61 -> 31290 = 0x7A3A)");
+            Assert.AreEqual((byte)0x7A, player[6], "byte 6: velZ high");
+            Assert.AreEqual((byte)108, player[7], "byte 7: height 2.75/6.5 -> code 108");
+
+            byte[] mob = WritePayload(kind, b => SnapshotEvents.WriteProjectileSpawned(
+                new System.Span<byte>(b), EvtMobId, ProjectileIds.NoOwner, EvtDirB,
+                EvtHorizSpeedMob, EvtVelZ, EvtHeightLow, EvtCfg));
+
+            Assert.AreEqual((byte)0x39, mob[0], "byte 0: id low (51001 = 0xC739)");
+            Assert.AreEqual((byte)0xC7, mob[1], "byte 1: id high");
+            Assert.AreEqual(ProjectileIds.NoOwner, mob[2], "byte 2: 255 marks a mob's round");
+            Assert.AreEqual((byte)140, mob[3], "byte 3: dir (0.96, 0.28) -> code 140");
+            Assert.AreEqual((byte)109, mob[4], "byte 4: horizSpeed 7.25/17 -> code 109");
+            Assert.AreEqual((byte)0x4B, mob[5], "byte 5: velZ low (-2.75 over +/-17 -> 27467 = 0x6B4B)");
+            Assert.AreEqual((byte)0x6B, mob[6], "byte 6: velZ high");
+            Assert.AreEqual((byte)49, mob[7], "byte 7: height 1.25/6.5 -> code 49");
+
+            // The rails' whole point: the SAME velZ produces DIFFERENT bytes,
+            // because ownerIndex selects the scale (the Task 27 precedent of a
+            // mob's HP quantized against its own archetype's MaxHp).
+            Assert.AreNotEqual(player[5], mob[5],
+                "one velZ, two scales — a single hardcoded speedCap would make these agree");
+            Assert.AreNotEqual(player[6], mob[6]);
+
+            // Decoded values, asserted separately from the bytes (урок 108).
+            SnapshotEventPayload dp = Decoded(player, kind);
+            Assert.AreEqual(EvtRoundId, dp.Id);
+            Assert.AreEqual(EvtSlot, dp.PlayerIndex);
+            AssertDecodedHeading(dp.Dir, EvtDirA, "player rail dir");
+            Assert.That(dp.HorizSpeed, Is.EqualTo(EvtHorizSpeedPlayer)
+                .Within(HalfStepUnit(EvtWeaponSpeed) + 1e-3f));
+            Assert.That(dp.VelZ, Is.EqualTo(EvtVelZ).Within(HalfStepPos(EvtWeaponSpeed) + PosNoiseMeters));
+            Assert.That(dp.Height, Is.EqualTo(EvtHeightHigh).Within(HalfStepUnit(EvtMaxAimHeight) + 1e-3f));
+
+            SnapshotEventPayload dm = Decoded(mob, kind);
+            Assert.AreEqual(EvtMobId, dm.Id);
+            Assert.AreEqual(ProjectileIds.NoOwner, dm.PlayerIndex);
+            AssertDecodedHeading(dm.Dir, EvtDirB, "mob rail dir");
+            Assert.That(dm.HorizSpeed, Is.EqualTo(EvtHorizSpeedMob)
+                .Within(HalfStepUnit(EvtGunnerSpeed) + 1e-3f));
+            Assert.That(dm.VelZ, Is.EqualTo(EvtVelZ).Within(HalfStepPos(EvtGunnerSpeed) + PosNoiseMeters));
+            Assert.That(dm.Height, Is.EqualTo(EvtHeightLow).Within(HalfStepUnit(EvtMaxAimHeight) + 1e-3f));
+        }
+
+        [Test]
+        public void EventPayload_ProjectileEnded_ByteLayout_AndDecodedValues()
+        {
+            const SnapshotEventKind kind = SnapshotEventKind.ProjectileEnded;
+
+            byte[] blocked = WritePayload(kind, b => SnapshotEvents.WriteProjectileEnded(
+                new System.Span<byte>(b), EvtRoundId, ProjectileEndKind.Blocked, HitZone.None,
+                EvtHeightLow, EvtCfg));
+            Assert.AreEqual((byte)0x37, blocked[0], "byte 0: id low");
+            Assert.AreEqual((byte)0x13, blocked[1], "byte 1: id high");
+            Assert.AreEqual((byte)1, blocked[2], "byte 2: endKind Blocked");
+            Assert.AreEqual((byte)0, blocked[3], "byte 3: zone None — a wall has no hit zone");
+            Assert.AreEqual((byte)49, blocked[4], "byte 4: contact height 1.25/6.5 -> code 49");
+
+            byte[] onMob = WritePayload(kind, b => SnapshotEvents.WriteProjectileEnded(
+                new System.Span<byte>(b), EvtMobId, ProjectileEndKind.HitMob, HitZone.Head, 0f, EvtCfg));
+            Assert.AreEqual((byte)0x39, onMob[0]);
+            Assert.AreEqual((byte)0xC7, onMob[1]);
+            Assert.AreEqual((byte)3, onMob[2], "byte 2: endKind HitMob");
+            Assert.AreEqual((byte)HitZone.Head, onMob[3], "byte 3: the zone the shooter's hitmarker needs");
+            Assert.AreEqual((byte)0, onMob[4], "byte 4: height is 0 for every ending but Blocked");
+
+            SnapshotEventPayload db = Decoded(blocked, kind);
+            Assert.AreEqual(EvtRoundId, db.Id);
+            Assert.AreEqual(ProjectileEndKind.Blocked, db.EndKind);
+            Assert.AreEqual(HitZone.None, db.Zone);
+            Assert.That(db.Height, Is.EqualTo(EvtHeightLow).Within(HalfStepUnit(EvtMaxAimHeight) + 1e-3f));
+
+            SnapshotEventPayload dh = Decoded(onMob, kind);
+            Assert.AreEqual(EvtMobId, dh.Id);
+            Assert.AreEqual(ProjectileEndKind.HitMob, dh.EndKind);
+            Assert.AreEqual(HitZone.Head, dh.Zone);
+        }
+
+        [Test]
+        public void EventPayload_MobAndWaveKinds_ByteLayout_AndDecodedValues()
+        {
+            byte[] spawned = WritePayload(SnapshotEventKind.MobSpawned,
+                b => SnapshotEvents.WriteMobSpawned(new System.Span<byte>(b), EvtMobId, MobType.Gunner));
+            Assert.AreEqual((byte)0x39, spawned[0]);
+            Assert.AreEqual((byte)0xC7, spawned[1]);
+            Assert.AreEqual((byte)MobType.Gunner, spawned[2], "byte 2: mob type");
+            SnapshotEventPayload ds = Decoded(spawned, SnapshotEventKind.MobSpawned);
+            Assert.AreEqual(EvtMobId, ds.Id);
+            Assert.AreEqual(MobType.Gunner, ds.MobType);
+
+            byte[] died = WritePayload(SnapshotEventKind.MobDied,
+                b => SnapshotEvents.WriteMobDied(new System.Span<byte>(b), EvtRoundId, EvtSlot,
+                    HitZone.Head, EvtCfg));
+            Assert.AreEqual((byte)0x37, died[0]);
+            Assert.AreEqual((byte)0x13, died[1]);
+            Assert.AreEqual(EvtSlot, died[2], "byte 2: the killer's slot (ATTACKER convention)");
+            Assert.AreEqual((byte)HitZone.Head, died[3]);
+            SnapshotEventPayload dd = Decoded(died, SnapshotEventKind.MobDied);
+            Assert.AreEqual(EvtRoundId, dd.Id);
+            Assert.AreEqual(EvtSlot, dd.PlayerIndex);
+            Assert.AreEqual(HitZone.Head, dd.Zone);
+
+            // A kill nobody owns is legal here and must not be mistaken for a
+            // hostile index (SimulationWorld.DamageMob's own NoOwner guard).
+            byte[] unowned = WritePayload(SnapshotEventKind.MobDied,
+                b => SnapshotEvents.WriteMobDied(new System.Span<byte>(b), EvtRoundId,
+                    ProjectileIds.NoOwner, HitZone.Body, EvtCfg));
+            Assert.AreEqual(ProjectileIds.NoOwner, Decoded(unowned, SnapshotEventKind.MobDied).PlayerIndex);
+
+            byte[] started = WritePayload(SnapshotEventKind.WaveStarted,
+                b => SnapshotEvents.WriteWaveStarted(new System.Span<byte>(b), EvtWaveStartedIndex));
+            Assert.AreEqual((byte)0x3B, started[0], "byte 0: waveIndex low (40507 = 0x9E3B)");
+            Assert.AreEqual((byte)0x9E, started[1], "byte 1: waveIndex high");
+            Assert.AreEqual((ushort)EvtWaveStartedIndex,
+                Decoded(started, SnapshotEventKind.WaveStarted).WaveIndex);
+
+            byte[] cleared = WritePayload(SnapshotEventKind.WaveCleared,
+                b => SnapshotEvents.WriteWaveCleared(new System.Span<byte>(b), WaveFixtureIndex));
+            Assert.AreEqual((byte)0x29, cleared[0], "byte 0: waveIndex low (9001 = 0x2329)");
+            Assert.AreEqual((byte)0x23, cleared[1], "byte 1: waveIndex high");
+            Assert.AreEqual(WaveFixtureIndex, Decoded(cleared, SnapshotEventKind.WaveCleared).WaveIndex);
+        }
+
+        [Test]
+        public void EventPayload_PlayerAndShotKinds_ByteLayout_AndDecodedValues()
+        {
+            byte[] damaged = WritePayload(SnapshotEventKind.PlayerDamaged,
+                b => SnapshotEvents.WritePlayerDamaged(new System.Span<byte>(b), EvtSlot, HitZone.Legs,
+                    EvtDamage, EvtDirA, EvtCfg));
+            Assert.AreEqual(EvtSlot, damaged[0], "byte 0: victim slot");
+            Assert.AreEqual((byte)HitZone.Legs, damaged[1], "byte 1: zone");
+            Assert.AreEqual((byte)197, damaged[2], "byte 2: amount 91/118 -> code 197");
+            Assert.AreEqual((byte)204, damaged[3], "byte 3: hitDir -> code 204");
+            SnapshotEventPayload dd = Decoded(damaged, SnapshotEventKind.PlayerDamaged);
+            Assert.AreEqual(EvtSlot, dd.PlayerIndex);
+            Assert.AreEqual(HitZone.Legs, dd.Zone);
+            Assert.That(dd.Amount, Is.EqualTo(EvtDamage).Within(HalfStepUnit(SnapHeroMaxHp) + HpNoise));
+            AssertDecodedHeading(dd.Dir, EvtDirA, "hit direction");
+
+            byte[] died = WritePayload(SnapshotEventKind.PlayerDied,
+                b => SnapshotEvents.WritePlayerDied(new System.Span<byte>(b), EvtSlot, HitZone.Body, EvtCfg));
+            Assert.AreEqual(EvtSlot, died[0]);
+            Assert.AreEqual((byte)HitZone.Body, died[1]);
+            Assert.AreEqual(HitZone.Body, Decoded(died, SnapshotEventKind.PlayerDied).Zone);
+
+            byte[] dashed = WritePayload(SnapshotEventKind.PlayerDashed,
+                b => SnapshotEvents.WritePlayerDashed(new System.Span<byte>(b), EvtSlot, EvtCfg));
+            Assert.AreEqual(EvtSlot, dashed[0]);
+            Assert.AreEqual(EvtSlot, Decoded(dashed, SnapshotEventKind.PlayerDashed).PlayerIndex);
+
+            byte[] slid = WritePayload(SnapshotEventKind.PlayerSlideStarted,
+                b => SnapshotEvents.WritePlayerSlideStarted(new System.Span<byte>(b), EvtSlot, EvtCfg));
+            Assert.AreEqual(EvtSlot, slid[0]);
+            Assert.AreEqual(EvtSlot, Decoded(slid, SnapshotEventKind.PlayerSlideStarted).PlayerIndex);
+
+            byte[] ricochet = WritePayload(SnapshotEventKind.DashRicocheted,
+                b => SnapshotEvents.WriteDashRicocheted(new System.Span<byte>(b), EvtSlot, EvtDirB, EvtCfg));
+            Assert.AreEqual(EvtSlot, ricochet[0]);
+            Assert.AreEqual((byte)140, ricochet[1], "byte 1: the wall normal -> code 140");
+            AssertDecodedHeading(Decoded(ricochet, SnapshotEventKind.DashRicocheted).Dir, EvtDirB,
+                "ricochet normal");
+
+            // No slot byte at all: this kind reaches its owner and nobody else,
+            // so who it is about is already known to the receiver.
+            byte[] denied = WritePayload(SnapshotEventKind.StaminaDenied,
+                b => SnapshotEvents.WriteStaminaDenied(new System.Span<byte>(b), EvtStaminaMissing, EvtCfg));
+            Assert.AreEqual((byte)69, denied[0], "byte 0: missing stamina 57/210 -> code 69");
+            Assert.That(Decoded(denied, SnapshotEventKind.StaminaDenied).Amount,
+                Is.EqualTo(EvtStaminaMissing).Within(HalfStepUnit(EvtStaminaMax) + HpNoise));
+
+            byte[] heardPlayer = WritePayload(SnapshotEventKind.ShotHeard,
+                b => SnapshotEvents.WriteShotHeard(new System.Span<byte>(b), EvtSlot, EvtCfg));
+            Assert.AreEqual(EvtSlot, heardPlayer[0]);
+            byte[] heardMob = WritePayload(SnapshotEventKind.ShotHeard,
+                b => SnapshotEvents.WriteShotHeard(new System.Span<byte>(b), ProjectileIds.NoOwner, EvtCfg));
+            Assert.AreEqual(ProjectileIds.NoOwner, heardMob[0], "255 marks a shot no player fired");
+            Assert.AreEqual(ProjectileIds.NoOwner, Decoded(heardMob, SnapshotEventKind.ShotHeard).PlayerIndex);
+        }
+
+        // ---- T28.8-11. Hostile payloads: refused, never thrown ----
+
+        [Test]
+        public void EventPayload_WrongLength_IsRefusedWithoutThrowing()
+        {
+            var pool = new byte[SnapshotEvents.MaxPayloadBytes + 2];
+            foreach (SnapshotEventKind kind in System.Enum.GetValues(typeof(SnapshotEventKind)))
+            {
+                if (kind == SnapshotEventKind.None) continue;
+                int size = SnapshotEvents.PayloadBytesFor(kind);
+
+                Assert.IsFalse(SnapshotEvents.TryReadPayload(kind,
+                        new System.ReadOnlySpan<byte>(pool, 0, size + 1), EvtCfg,
+                        out SnapshotEventPayload longer, out SnapshotBlockError le),
+                    $"{kind}: a payload one byte too LONG must be refused — accepting it would leave the "
+                    + "extra byte to be read as the next record's kind");
+                Assert.AreEqual(SnapshotBlockError.MalformedLength, le);
+                Assert.AreEqual(SnapshotEventKind.None, longer.Kind, "a refusal must leave `value` default");
+
+                if (size > 0)
+                {
+                    Assert.IsFalse(SnapshotEvents.TryReadPayload(kind,
+                            new System.ReadOnlySpan<byte>(pool, 0, size - 1), EvtCfg,
+                            out _, out SnapshotBlockError se),
+                        $"{kind}: a payload one byte too SHORT must be refused");
+                    Assert.AreEqual(SnapshotBlockError.MalformedLength, se);
+                }
+            }
+        }
+
+        [Test]
+        public void EventPayload_SlotIndexAtOrAboveMaxPlayers_IsRefused_AndBelowIsAccepted()
+        {
+            // The boundary is read from `cfg`, never hardcoded — the fixture's
+            // MaxPlayers is deliberately 11 rather than the shipped 3, so a
+            // `>= 3` hardcode cannot pass both halves (the Task 27 precedent).
+            byte legal = (byte)(SnapMaxPlayers - 1);       // 10
+            byte hostile = (byte)SnapMaxPlayers;           // 11
+
+            var payload = new byte[SnapshotEvents.MaxPayloadBytes];
+            payload[1] = (byte)HitZone.Body;
+
+            payload[0] = legal;
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerDied,
+                    new System.ReadOnlySpan<byte>(payload, 0, 2), EvtCfg, out _, out SnapshotBlockError ok));
+            Assert.AreEqual(SnapshotBlockError.None, ok, "the last real slot must be accepted");
+
+            payload[0] = hostile;
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerDied,
+                    new System.ReadOnlySpan<byte>(payload, 0, 2), EvtCfg, out _, out SnapshotBlockError bad));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, bad,
+                "a slot this match does not have must be refused — Tasks 32/45 index per-slot pools by it");
+
+            payload[0] = ProjectileIds.NoOwner;
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerDied,
+                    new System.ReadOnlySpan<byte>(payload, 0, 2), EvtCfg, out _, out SnapshotBlockError none));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, none,
+                "a victim must be a real player: NoOwner is legal for a SHOOTER, never for a victim");
+
+            // ... while it IS legal on the kinds whose slot can be "no player".
+            var heard = new byte[] { ProjectileIds.NoOwner };
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.ShotHeard, heard, EvtCfg,
+                out _, out SnapshotBlockError heardOk));
+            Assert.AreEqual(SnapshotBlockError.None, heardOk, "a mob's shot names no player, by design");
+            heard[0] = hostile;
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.ShotHeard, heard, EvtCfg,
+                out _, out SnapshotBlockError heardBad));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, heardBad,
+                "but an index that is neither a slot nor the sentinel is still hostile");
+        }
+
+        [Test]
+        public void EventPayload_EnumeratorsOutsideTheirDomain_AreRefusedWithoutThrowing()
+        {
+            // Shape-legal, content-illegal: the one hostile class a length
+            // check can never catch, and the one that reaches furthest
+            // downstream (Р82 is "refuse bad input", not merely "never throw").
+            var ended = new byte[] { 0x37, 0x13, (byte)ProjectileEndKind.Blocked, (byte)HitZone.Body, 0 };
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileEnded, ended, EvtCfg,
+                out _, out SnapshotBlockError ok), "witness: the same shape with legal values is accepted");
+            Assert.AreEqual(SnapshotBlockError.None, ok);
+
+            ended[2] = (byte)ProjectileEndKind.None;
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileEnded, ended, EvtCfg,
+                out _, out SnapshotBlockError zeroEnd));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, zeroEnd,
+                "endKind 0 is never written, so receiving it means the bytes are not ours");
+
+            ended[2] = (byte)(SnapshotEvents.MaxProjectileEndKindValue + 1);
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileEnded, ended, EvtCfg,
+                out _, out SnapshotBlockError bigEnd));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, bigEnd);
+
+            ended[2] = (byte)ProjectileEndKind.HitMob;
+            ended[3] = (byte)(SnapshotEvents.MaxHitZoneValue + 1);
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileEnded, ended, EvtCfg,
+                out _, out SnapshotBlockError badZone));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, badZone,
+                "(HitZone)200 casts perfectly happily in C# and would index a feedback table on the client");
+
+            var spawned = new byte[] { 0x39, 0xC7, (byte)(SnapshotBlocks.MaxMobTypeValue + 1) };
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.MobSpawned, spawned, EvtCfg,
+                out _, out SnapshotBlockError badType));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, badType,
+                "the mob-type bound is reused from SnapshotBlocks, not restated");
+        }
+
+        [Test]
+        public void EventPayload_UnknownKind_IsRefusedByTheCatalog_ButSkippedByTheBlockWalker()
+        {
+            // Two different levels, two different answers, and both are right.
+            // The BLOCK walker (Task 27) steps over an unknown record by its
+            // declared length and reports no error — that is what lets a Stage
+            // 3 event kind ride an old client's wire (Р29). The CATALOG, asked
+            // to decode one anyway, can only say no.
+            const byte unknownKind = 0x7B;   // 123 — not in the catalog
+            Assert.Greater(unknownKind, (byte)SnapshotEventKind.WaveCleared,
+                "fixture premise: this kind must genuinely be outside the catalog");
+
+            var payload = new byte[] { 0x11, 0x22, 0x33 };
+            Assert.IsFalse(SnapshotEvents.TryReadPayload((SnapshotEventKind)unknownKind, payload, EvtCfg,
+                out SnapshotEventPayload value, out SnapshotBlockError error));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, error);
+            Assert.AreEqual(SnapshotEventKind.None, value.Kind);
+
+            // The same record inside a real block: walked over, counted as a
+            // record, and the block itself parses cleanly.
+            var known = new SnapshotBlocks.EventRecord
+            {
+                Kind = unknownKind, Seq = 31337, TickDelta = 3, Pos = new float2(17f, -49f),
+                PayloadOffset = 0, PayloadLength = (byte)payload.Length,
+            };
+            var buffer = new byte[SnapshotWriter.HeaderBytes
+                                  + SnapshotWriter.EventsBlockBytes(1, payload.Length)];
+            var writer = new SnapshotWriter(buffer);
+            writer.WriteHeader(Epoch, Tick, Flags);
+            writer.WriteEventsBlock(new[] { known }, payload, EvtCfg);
+
+            var reader = new SnapshotReader(buffer);
+            Assert.IsTrue(reader.TryReadHeader(out _, out _, out _));
+            Assert.IsTrue(reader.TryReadBlock(new[] { (byte)SnapshotBlockKind.Events },
+                out _, out System.ReadOnlySpan<byte> body));
+            var dest = new SnapshotBlocks.EventRecord[2];
+            Assert.IsTrue(SnapshotBlocks.TryReadEventsBlock(body, EvtCfg, dest, out int count,
+                out SnapshotBlockError blockError),
+                "an unknown event kind must NOT make the block itself unreadable");
+            Assert.AreEqual(SnapshotBlockError.None, blockError);
+            Assert.AreEqual(1, count);
+            Assert.AreEqual(unknownKind, dest[0].Kind);
+        }
+
+        [Test]
+        public void EventPayload_WriteSide_ThrowsOnEveryCallerDomainError()
+        {
+            // The mirror of the read side, and the asymmetry Tasks 26/27
+            // established: a value outside its domain handed to a WRITER is a
+            // bug in the assembler, not hostile traffic.
+            var buffer = new byte[SnapshotEvents.MaxPayloadBytes];
+
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WritePlayerDied(
+                new System.Span<byte>(buffer), (byte)SnapMaxPlayers, HitZone.Body, EvtCfg),
+                "a victim slot this match does not have");
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WritePlayerDied(
+                new System.Span<byte>(buffer), ProjectileIds.NoOwner, HitZone.Body, EvtCfg),
+                "and the shooter sentinel is not a victim either");
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WritePlayerDied(
+                new System.Span<byte>(buffer), EvtSlot, (HitZone)(SnapshotEvents.MaxHitZoneValue + 1), EvtCfg),
+                "a zone outside the enum");
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WriteProjectileEnded(
+                new System.Span<byte>(buffer), EvtRoundId, ProjectileEndKind.None, HitZone.None, 0f, EvtCfg),
+                "the never-written end kind");
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WriteMobSpawned(
+                new System.Span<byte>(buffer), EvtMobId, (MobType)(SnapshotBlocks.MaxMobTypeValue + 1)),
+                "a mob type outside the enum");
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WriteShotHeard(
+                new System.Span<byte>(buffer), (byte)SnapMaxPlayers, EvtCfg),
+                "a shooter slot this match does not have");
+
+            // Too small a destination is a caller bug too — the assembler owns
+            // the pool, so a short slot means its own arithmetic is wrong.
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WriteProjectileSpawned(
+                    new System.Span<byte>(buffer, 0, SnapshotEvents.MaxPayloadBytes - 1),
+                    EvtRoundId, EvtSlot, EvtDirA, EvtHorizSpeedPlayer, EvtVelZ, EvtHeightHigh, EvtCfg),
+                "a payload slot one byte short of the kind's own size");
+
+            // Witness: the legal call the four above are variations of really
+            // does succeed, so these are refusals rather than a broken writer.
+            Assert.DoesNotThrow(() => SnapshotEvents.WritePlayerDied(
+                new System.Span<byte>(buffer), EvtSlot, HitZone.Body, EvtCfg));
+        }
+
+        // ---- T28.12. The header's truncation bit ----
+
+        [Test]
+        public void SnapshotHeaderFlags_TruncatedIsBitZero_AndNoOtherBitIsAssigned()
+        {
+            Assert.AreEqual((byte)0x01, SnapshotHeaderFlags.Truncated,
+                "bit 0 — the first tenant of the byte Tasks 26/27 deliberately left reserved");
+            Assert.AreEqual(0, SnapshotHeaderFlags.Truncated & 0xFE,
+                "and it is a SINGLE bit: bits 1-7 stay free for Tasks 29/32 onwards");
+
+            // Strengthening (recorded in the report): the two assertions above
+            // are about a `const` and passed on a stubbed assembler. This one
+            // runs the bit through the real frame codec, so "the writer puts
+            // flags in header byte 7 and the reader hands the same byte back"
+            // is pinned for the bit that now MEANS something, not only for the
+            // reserved byte Task 26 pinned.
+            var buffer = new byte[SnapshotWriter.HeaderBytes];
+            var writer = new SnapshotWriter(buffer);
+            writer.WriteHeader(Epoch, Tick, SnapshotHeaderFlags.Truncated);
+            Assert.AreEqual(SnapshotHeaderFlags.Truncated, buffer[7],
+                "the truncation bit lands in header byte 7, where SnapshotWriter's layout puts flags");
+            var reader = new SnapshotReader(buffer);
+            Assert.IsTrue(reader.TryReadHeader(out _, out _, out byte flags));
+            Assert.AreNotEqual(0, flags & SnapshotHeaderFlags.Truncated,
+                "and comes back set — this is the bit Tasks 32/37 branch on");
+        }
+
+        // ---- T28.13. The worst-case frame, recomputed ----
+
+        [Test]
+        public void WorstCaseFrame_RecomputedFromTheCalculators_WithTheRealCatalog()
+        {
+            // Урок 103: the number is RECOMPUTED here, not quoted. Every
+            // earlier figure — spec §3.8's 1043, Task 26's 1052, Task 27's 1116
+            // — predates the event catalog it depends on, and Task 27's comment
+            // says so in as many words: 4 B of payload was an assumption. The
+            // real maximum is ProjectileSpawned's 8.
+            SimConfig shipped = TestConfigs.Default();
+            var net = ScriptableObject.CreateInstance<NetConfig>();   // the shipped C# defaults
+
+            int others = shipped.Arena.MaxPlayers - 1;
+            int events = net.SnapshotEventBudget;
+            int worstEventPayload = SnapshotEvents.MaxPayloadBytes;
+
+            // Strengthening (recorded in the report): this test passed on a
+            // stubbed catalog because it only read the `const`
+            // MaxPayloadBytes, which no stub touched. The worst case is only
+            // meaningful if the payload table it summarises is REAL — i.e. if
+            // ProjectileSpawned actually is the widest kind and other kinds
+            // actually are narrower. A catalog that answered "8" for
+            // everything would make the budget below arithmetically fine and
+            // completely wrong.
+            Assert.AreEqual(worstEventPayload,
+                SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileSpawned),
+                "the widest payload must be a real kind's, not a round number beside the table");
+            Assert.Less(SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ShotHeard), worstEventPayload,
+                "and the table must actually vary — a flat catalog would over-reserve every frame");
+
+            int header = SnapshotWriter.HeaderBytes;
+            int players = SnapshotWriter.PlayersBlockBytes(others);
+            int liveness = SnapshotWriter.LivenessBlockBytes();
+            int mobs = SnapshotWriter.MobsBlockBytes(shipped.Arena.MaxMobs);
+            int wave = SnapshotWriter.WaveBlockBytes();
+            int eventsBytes = SnapshotWriter.EventsBlockBytes(events, events * worstEventPayload);
+
+            // The arithmetic, spelled out rather than trusted to the
+            // calculators alone (they are what this is checking).
+            Assert.AreEqual(8, header, "8");
+            Assert.AreEqual(3 + 2 * 8, players, "3 + 2 records * 8 B = 19");
+            Assert.AreEqual(3 + 1, liveness, "3 + 1 mask byte = 4");
+            Assert.AreEqual(3 + 96 * 9, mobs, "3 + 96 records * 9 B = 867");
+            Assert.AreEqual(3 + 4, wave, "3 + 4 = 7");
+            Assert.AreEqual(3 + 16 * 9 + 16 * 8, eventsBytes, "3 + 16 * (9 header + 8 payload) = 275");
+
+            int total = header + players + liveness + mobs + wave + eventsBytes;
+            Assert.AreEqual(1180, total,
+                "8 + 19 + 4 + 867 + 7 + 275 — the live worst-case frame at the shipped caps. Task 27's "
+                + "1116 assumed 4 B of event payload; the real catalog's widest is 8");
+            Assert.Greater(total, net.SnapshotMaxBytes,
+                "and it still exceeds our own cap, which is why the budget exists at all");
+
+            // The fixed part always fits, by an enormous margin — asserted, not
+            // asserted in prose (task-28-brief §2.8 item 2).
+            int fixedPart = header + players + liveness + wave;
+            Assert.AreEqual(38, fixedPart, "8 + 19 + 4 + 7");
+            Assert.Less(fixedPart, net.SnapshotMaxBytes);
+
+            // FINDING, pinned here rather than left as a sentence. Spec §3.8
+            // argues the truncation branch is reachable because the worst case
+            // exceeds SnapshotMaxBytes — but the frame is not built worst-case
+            // first: mobs are budgeted BEFORE events (task-28-brief §2.8 items
+            // 3-4), and at the shipped numbers every mob fits with room to
+            // spare. Entity truncation is therefore NOT reachable at the
+            // defaults; it becomes reachable on a smaller cap or a larger mob
+            // cap, which is what WorstCase_ByCaps_TriggersTruncation configures.
+            int fixedWithEmptyBlocks = fixedPart
+                + SnapshotWriter.MobsBlockBytes(0) + SnapshotWriter.EventsBlockBytes(0, 0);
+            Assert.AreEqual(44, fixedWithEmptyBlocks, "38 + 3 + 3 — all five blocks always ride");
+            int roomForRecords = net.SnapshotMaxBytes - fixedWithEmptyBlocks;
+            Assert.GreaterOrEqual(roomForRecords, shipped.Arena.MaxMobs * SnapshotBlocks.MobRecordBytes,
+                "at the shipped defaults every mob fits, so entity truncation never fires there — "
+                + "the spec's 'worst case exceeds the cap, therefore truncation is reachable' skips "
+                + "the fact that events are the ones squeezed out first");
+            int leftoverForEvents = roomForRecords - shipped.Arena.MaxMobs * SnapshotBlocks.MobRecordBytes;
+            Assert.Less(leftoverForEvents, eventsBytes - SnapshotWriter.EventsBlockBytes(0, 0),
+                "and what is left over cannot carry a full event budget — events defer, entities do not");
+        }
+
+        // ---- T28.14. Truncation, by the caps (plan) ----
+
+        [Test]
+        public void WorstCase_ByCaps_TriggersTruncation()
+        {
+            // MaxPlayers - 1 other players, MaxMobs mobs, all in sight, against
+            // a byte cap that cannot hold them. What is asserted is the
+            // MECHANISM: the far ones go first, deterministically, the header
+            // says so, the counter agrees, and the writer never throws.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: cfg.Arena.MaxPlayers);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            for (int i = 1; i < cfg.Arena.MaxPlayers; i++)
+                TestWorlds.RelocatePlayerForTest(w, i, new float2(2f * i, 1f));
+            TestWorlds.SpawnMobsToCap(w);
+            Assert.AreEqual(cfg.Arena.MaxMobs, w.MobCount, "test setup: every mob slot is filled");
+
+            // A full budget of the widest events, so the frame is genuinely the
+            // worst case and not merely a crowd of mobs.
+            for (int i = 0; i < 16; i++)
+                w.Emit(SimEventKind.MobSpawned, w.Mobs[i].Pos, w.Mobs[i].Id, w.Mobs[i].Type, 0f);
+
+            const int cap = 500;
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            net.SnapshotMaxBytes = cap;
+            net.SnapshotEventBudget = 16;
+
+            var asm = new SnapshotAssembler(cfg, net, connectionCount: 1);
+            asm.BeginTick(w);
+            int bytes = asm.BuildFor(0, 0, 0, Epoch);
+            AssembledFrame f = AssembledFrame.Decode(asm.BufferFor(0), bytes, cfg);
+
+            Assert.LessOrEqual(bytes, cap, "the whole point: the frame stays inside the cap");
+            Assert.IsTrue(f.Truncated, "and says so in header bit 0, so the receiver can tell 'cut for room' "
+                + "from 'left my view' (Tasks 32/37)");
+
+            int fixedWithEmptyBlocks = SnapshotWriter.HeaderBytes
+                + SnapshotWriter.PlayersBlockBytes(cfg.Arena.MaxPlayers - 1)
+                + SnapshotWriter.LivenessBlockBytes()
+                + SnapshotWriter.WaveBlockBytes()
+                + SnapshotWriter.MobsBlockBytes(0)
+                + SnapshotWriter.EventsBlockBytes(0, 0);
+            int expectedMobs = (cap - fixedWithEmptyBlocks) / SnapshotBlocks.MobRecordBytes;
+            Assert.AreEqual(expectedMobs, f.MobCount, "exactly as many mobs as the remaining bytes hold");
+            Assert.Less(f.MobCount, cfg.Arena.MaxMobs, "test setup: this must really be a truncation");
+            Assert.AreEqual(cfg.Arena.MaxMobs - expectedMobs, asm.StatsFor(0).DroppedEntities,
+                "DroppedEntities must agree with what actually went missing");
+
+            // Deterministic order: the survivors are exactly the nearest ones,
+            // with the smaller id winning a tie. Computed here from the world,
+            // independently of the assembler.
+            var ranked = new List<(float dist, int id)>();
+            for (int i = 0; i < w.MobCount; i++)
+                ranked.Add((math.distance(w.Mobs[i].Pos, float2.zero), w.Mobs[i].Id));
+            ranked.Sort((a, b) => a.dist != b.dist ? a.dist.CompareTo(b.dist) : a.id.CompareTo(b.id));
+
+            for (int i = 0; i < expectedMobs; i++)
+                Assert.IsTrue(f.ContainsMob(ranked[i].id),
+                    $"the {i}-th nearest mob (id {ranked[i].id}) must have survived — far ones go first");
+            for (int i = expectedMobs; i < ranked.Count; i++)
+                Assert.IsFalse(f.ContainsMob(ranked[i].id),
+                    $"the {i}-th nearest mob (id {ranked[i].id}) is past the cut and must be gone");
+
+            // At the SHIPPED cap the very same world truncates nothing — the
+            // finding WorstCaseFrame_RecomputedFromTheCalculators states.
+            var roomy = ScriptableObject.CreateInstance<NetConfig>();
+            var asm2 = new SnapshotAssembler(cfg, roomy, connectionCount: 1);
+            asm2.BeginTick(w);
+            AssembledFrame full = AssembledFrame.Decode(asm2.BufferFor(0),
+                asm2.BuildFor(0, 0, 0, Epoch), cfg);
+            Assert.AreEqual(cfg.Arena.MaxMobs, full.MobCount,
+                "at SnapshotMaxBytes 1000 every mob still fits — entity truncation is a mechanism for a "
+                + "tighter cap or a bigger arena, not the ordinary shape of a full frame");
+            Assert.IsFalse(full.Truncated);
+            Assert.AreEqual(0, asm2.StatsFor(0).DroppedEntities);
+        }
+
+        // ---- T28.15. The event budget prefers deaths (plan) ----
+
+        [Test]
+        public void EventBudget_PrioritizesDeaths()
+        {
+            // Р61. With room for three of five, the three that ride are the
+            // three most important — and the two that do not are DEFERRED, not
+            // dropped, which is the difference the counters have to show.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, 7f));
+            int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(4f, 4f));
+            // The spawn seam emits a MobSpawned of its own — cleared, so the
+            // five events below are exactly the five this fixture states.
+            w.ClearEvents();
+
+            // Emitted WORST-FIRST on purpose: an implementation that simply
+            // took the first three in buffer order would deliver the cosmetics.
+            w.Emit(SimEventKind.PlayerDashed, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+            w.Emit(SimEventKind.PlayerSlideStarted, new float2(6f, 0f), 0, default, 0f, playerIndex: 1);
+            w.Emit(SimEventKind.MobSpawned, new float2(4f, 4f), mobId, MobType.Chaser, 0f);
+            w.Emit(SimEventKind.PlayerDamaged, new float2(6f, 0f), 1, default, 12f,
+                zone: HitZone.Body, hitDir: new float2(1f, 0f), playerIndex: 1);
+            w.Emit(SimEventKind.PlayerDied, new float2(0f, 7f), 2, default, 0f,
+                zone: HitZone.Head, playerIndex: 2);
+
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            net.SnapshotEventBudget = 3;
+            var asm = new SnapshotAssembler(cfg, net, connectionCount: 1);
+            asm.BeginTick(w);
+            AssembledFrame f = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, Epoch), cfg);
+
+            Assert.AreEqual(3, f.EventCount, "the budget admits three");
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.PlayerDied), "a death rides first (rank 0)");
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.PlayerDamaged), "then the impact (rank 1)");
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.MobSpawned), "then the state change (rank 2)");
+            Assert.AreEqual(0, f.CountOf(SnapshotEventKind.PlayerDashed), "cosmetics wait");
+            Assert.AreEqual(0, f.CountOf(SnapshotEventKind.PlayerSlideStarted));
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEvents,
+                "and they WAIT — a deferral is not a drop, and conflating the two would hide real loss");
+
+            // Rank order is also the order they are written in, which is what
+            // makes a truncated read on the client still meaningful.
+            Assert.AreEqual((byte)SnapshotEventKind.PlayerDied, f.Events[0].Kind);
+            Assert.AreEqual((byte)SnapshotEventKind.PlayerDamaged, f.Events[1].Kind);
+            Assert.AreEqual((byte)SnapshotEventKind.MobSpawned, f.Events[2].Kind);
+
+            // Next frame, with nothing new: the deferred pair arrives.
+            var idle = new SimInput[3];
+            w.TickAll(idle);
+            w.ClearEvents();
+            asm.BeginTick(w);
+            AssembledFrame f2 = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, Epoch), cfg);
+            Assert.AreEqual(2, f2.EventCount);
+            Assert.AreEqual(1, f2.CountOf(SnapshotEventKind.PlayerDashed));
+            Assert.AreEqual(1, f2.CountOf(SnapshotEventKind.PlayerSlideStarted));
+            Assert.AreEqual((byte)1, f2.Events[0].TickDelta, "carried from exactly one tick back");
         }
     }
 }

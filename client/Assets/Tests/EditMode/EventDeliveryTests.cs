@@ -1,8 +1,12 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using Ring.Data;
+using Ring.Networking.Protocol;
+using Ring.Networking.Server;
 using Ring.Simulation.Core;
 using Ring.Simulation.Visibility;
 using Unity.Mathematics;
+using UnityEngine;
 
 namespace Ring.Simulation.Tests
 {
@@ -697,6 +701,448 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, w, observerSet, cfg.Visibility, out float2 pos),
                 "a dead observer must still resolve its OWN position for the audibility gate, not silently fail closed");
             Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(actorPos, cfg.Visibility), pos);
+        }
+
+        // --- 12: ProjectileHit_CarriesKillingProjectileId (Stage 2 Task 28, §2.3) ---
+
+        [Test]
+        public void ProjectileHit_CarriesKillingProjectileId_AndMobDiedDoesNot()
+        {
+            // task-28-brief §2.3. Spec §3.8 wants ProjectileEndedNet keyed on
+            // the ROUND's id, and table Р28 routes it "to everyone who got that
+            // round's spawn" — both need the projectile's id at the moment it
+            // ends. Every other ending carries it already
+            // (ProjectileBlocked/ProjectileExpired emit with
+            // `EntityId = proj.Id`), but the mob-hit branch spends EntityId on
+            // the VICTIM (`mob.Id`, ProjectileSystem.cs's HitMob case), so the
+            // round's own identity was lost at the emit and the assembler had
+            // no way to close the subscription it opened on the spawn.
+            //
+            // SecondaryEntityId is the minimal fix: a second participant slot,
+            // written today by exactly one emit site. The negative half below
+            // is the boundary of that decision — MobDied does NOT get the id
+            // (DamageMob has no projectile in scope; threading one through it
+            // would widen the change into the damage API for no consumer), so
+            // the assembler's own MobDied/spawn-subscription union joins
+            // through the event BUFFER instead (§2.4 item 4).
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+
+            // A Gunner one-shot at head height: ProjectileHit and MobDied land
+            // in the SAME tick, which is exactly the pairing under test.
+            Assert.GreaterOrEqual(cfg.Weapon.Damage * cfg.Gunner.HeadDamageMult, cfg.Gunner.MaxHp,
+                "fixture premise: this must be a one-shot kill, so both events land in one tick");
+            var targetPos = new float2(1f, 0f); // under one tick of travel — the round lands next tick
+            TestWorlds.SpawnMobsAt(w, (MobType.Gunner, targetPos));
+            float headBand = 0.5f * (cfg.Gunner.BodyTop + cfg.Gunner.HeadTop);
+            int projectileId = TestWorlds.FireAimed3D(w, float2.zero, headBand, targetPos, headBand);
+            Assert.Greater(projectileId, 0, "fixture premise: the round must actually have spawned");
+            int mobId = w.Mobs[0].Id;
+            Assert.AreNotEqual(projectileId, mobId,
+                "fixture premise: the round's id and the mob's id must differ, or this test cannot tell them apart");
+
+            w.ClearEvents();
+            w.Tick(default);
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent hit),
+                "test setup: the round must have hit the mob");
+            Assert.AreEqual(mobId, hit.EntityId,
+                "EntityId keeps its meaning — the VICTIM — so no existing consumer moves");
+            Assert.AreEqual(projectileId, hit.SecondaryEntityId,
+                "SecondaryEntityId must carry the ROUND's own id: without it ProjectileEndedNet has no key "
+                + "and the spawn subscription can never be closed");
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.MobDied, out SimEvent died),
+                "test setup: the mob must have died from that same round");
+            Assert.AreEqual(mobId, died.EntityId, "MobDied's subject is still the mob itself");
+            Assert.AreEqual(0, died.SecondaryEntityId,
+                "the recorded boundary of this change: MobDied carries NO projectile id (0 = none), "
+                + "which is why the assembler joins death to round through the tick's event buffer");
+        }
+
+        // ================= Stage 2 Task 28: assembler-level ROUTING =================
+        //
+        // EventRelevance is a pure per-event predicate; the rules below are the
+        // ones it deliberately does NOT own — projectile relevance by trajectory
+        // (Р32, channel `None`), the spawn-subscription set that addresses a
+        // round's ending (Р28), the union that carries a mob's death to whoever
+        // watched the tracer, the ShotHeard/ProjectileSpawned split of a single
+        // shot, and the identity-versus-viewpoint split of `observerIndex`
+        // (carryover-t28.md §5). They live in SnapshotAssembler and are observed
+        // here through assembled frames.
+
+        const ushort AsmEpoch = 0x4D31;    // 19761 — both bytes nonzero and different
+
+        static NetConfig AsmNet(int maxBytes = 1000, int eventBudget = 16, int redundancyTicks = 4)
+        {
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            net.SnapshotMaxBytes = maxBytes;
+            net.SnapshotEventBudget = eventBudget;
+            net.EventRedundancyTicks = redundancyTicks;
+            return net;
+        }
+
+        static AssembledFrame BuildOne(SnapshotAssembler asm, SimulationWorld w, in SimConfig cfg,
+            int connection, int identityIndex, int viewpointIndex)
+        {
+            asm.BeginTick(w);
+            int bytes = asm.BuildFor(connection, identityIndex, viewpointIndex, AsmEpoch);
+            return AssembledFrame.Decode(asm.BufferFor(connection), bytes, cfg);
+        }
+
+        // --- 13: ProjectileRelevance_ByTrajectory (plan) ---
+
+        [Test]
+        public void ProjectileRelevance_ByTrajectory()
+        {
+            // Р32, and the regression on the rule it replaced. Rule v1 asked
+            // "is the point of fire visible", which left the whole band from
+            // SightRadius (45) out to the round's own reach — 45 + 52.5 m at
+            // the shipped Weapon numbers — in which a PvP round could kill a
+            // player who was never sent so much as a tracer. The rule is the
+            // whole SEGMENT `spawnPos -> spawnPos + vel * lifetime` against
+            // SightRadius, one ClosestPointOnSegment.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            float speed = cfg.Weapon.ProjectileSpeed;
+            float reach = speed * cfg.Weapon.ProjectileLifetime;
+            var muzzle = new float2(50f, 0f);
+            Assert.Greater(math.length(muzzle), cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: the point of fire itself must be INVISIBLE, or rule v1 would pass too");
+            Assert.Greater(math.length(muzzle) - reach, -cfg.Visibility.SightRadius,
+                "fixture premise: the arithmetic below stays inside the round's own reach");
+
+            // Inbound: straight back down the +X axis, so the segment sweeps
+            // through the observer's own position.
+            w.SpawnProjectileForTest(ProjectileOwner.Player, muzzle, new float2(-speed, 0f),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime);
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            AssembledFrame inbound = BuildOne(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(1, inbound.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "a round whose trajectory sweeps the observer must be delivered even though its muzzle "
+                + "flash is far outside sight — this is exactly the hole Р32 closes");
+
+            // Outbound from the same invisible muzzle: nothing on the segment
+            // ever comes close, so nothing is delivered.
+            var w2 = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w2, 0, float2.zero);
+            w2.SpawnProjectileForTest(ProjectileOwner.Player, muzzle, new float2(speed, 0f),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime);
+
+            var asm2 = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            AssembledFrame outbound = BuildOne(asm2, w2, cfg, 0, 0, 0);
+            Assert.AreEqual(0, outbound.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "a round flying AWAY from the observer must not be delivered — otherwise the filter is "
+                + "'anything within a round's reach', which is most of the arena");
+            Assert.AreEqual(1, outbound.CountOf(SnapshotEventKind.ShotHeard),
+                "witness: the same shot IS audible, so the frame is not simply empty");
+        }
+
+        // --- 14: ProjectileShooter_AlwaysOnItsOwnTrajectory ---
+
+        [Test]
+        public void ProjectileShooter_GetsItsOwnRound_WithNoSpecialCase()
+        {
+            // task-28-brief §2.5 claims the shooter passes the trajectory
+            // filter for free, because the segment BEGINS at the shooter's own
+            // muzzle — so no owner carve-out is written. A claim like that is
+            // worth exactly as much as the test that pins it.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, 55f));
+
+            float speed = cfg.Weapon.ProjectileSpeed;
+            // Player 0 fires straight up +Y, i.e. away from nothing in
+            // particular; the round's own owner must still see it.
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(0.5f, 0f), new float2(0f, speed),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime, ownerIndex: 0);
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            AssembledFrame own = BuildOne(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(1, own.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "a player must always receive its own round — the segment starts at its own muzzle");
+            Assert.IsTrue(own.TryFirstOf(SnapshotEventKind.ProjectileSpawned, out int idx));
+            Assert.AreEqual((byte)0, own.Payloads[idx].PlayerIndex,
+                "and the payload names the shooter, so the client can tell its own tracer from another's");
+        }
+
+        // --- 15: ProjectileEnded_GoesToSpawnSubscribers (plan) ---
+
+        [Test]
+        public void ProjectileEnded_GoesToSpawnSubscribers()
+        {
+            // Р28: a round's ending goes to everyone who received its SPAWN,
+            // by id, with no visibility check on the point of contact — that
+            // point is the past, not a live track on a target. The set is
+            // per-connection, and it closes when the ending is queued.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            // Connection 1's viewpoint is nowhere near the round.
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, -60f));
+
+            float speed = cfg.Weapon.ProjectileSpeed;
+            var muzzle = new float2(20f, 0f);
+            int roundId = w.SpawnProjectileForTest(ProjectileOwner.Player, muzzle, new float2(speed, 0f),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime);
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 2);
+            asm.BeginTick(w);
+            var subscriber = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            var bystander = AssembledFrame.Decode(asm.BufferFor(1), asm.BuildFor(1, 1, 1, AsmEpoch), cfg);
+            Assert.AreEqual(1, subscriber.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "test setup: connection 0 must be on the round's trajectory");
+            Assert.AreEqual(0, bystander.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "test setup: connection 1 must NOT be, or the negative half below proves nothing");
+
+            // The round dies far from both, on a point neither can see.
+            var contact = new float2(0f, 62f);
+            Assert.Greater(math.distance(contact, float2.zero),
+                cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: the contact point is invisible even to the subscriber");
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileBlocked, contact, roundId, default, 1.1f, hitDir: new float2(0f, -1f));
+
+            asm.BeginTick(w);
+            var endSub = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            var endBy = AssembledFrame.Decode(asm.BufferFor(1), asm.BuildFor(1, 1, 1, AsmEpoch), cfg);
+
+            Assert.AreEqual(1, endSub.CountOf(SnapshotEventKind.ProjectileEnded),
+                "the subscriber gets the ending even though the point of contact is invisible to it");
+            Assert.IsTrue(endSub.TryFirstOf(SnapshotEventKind.ProjectileEnded, out int e));
+            Assert.AreEqual(roundId, endSub.Payloads[e].Id, "and the payload names the round that ended");
+            Assert.AreEqual(ProjectileEndKind.Blocked, endSub.Payloads[e].EndKind);
+            Assert.AreEqual(0, endBy.CountOf(SnapshotEventKind.ProjectileEnded),
+                "a connection that never received the spawn must not receive the ending");
+
+            // The subscription closed with that ending: a second one for the
+            // same id finds nobody.
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileExpired, contact, roundId, default, 0f);
+            asm.BeginTick(w);
+            var again = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            Assert.AreEqual(0, again.CountOf(SnapshotEventKind.ProjectileEnded),
+                "the subscription is closed by the ending it was waiting for — a round cannot end twice");
+        }
+
+        // --- 16: MobDied routing, all three arms ---
+
+        [Test]
+        public void MobDied_ByVisibility_ByKillingRoundSubscription_AndNeitherForAContactKill()
+        {
+            // Table Р28 routes MobDied "by the mob's own visibility, UNION the
+            // round subscription". The union is what covers the 3 m band where
+            // a mob is still tracked through exit hysteresis (SightRadius +
+            // ExitHysteresis) while its spawn was only delivered out to
+            // SightRadius — and, more visibly, the observer who watched a
+            // tracer fly off and is owed its outcome.
+            //
+            // The killing round is joined through the tick's own event buffer:
+            // the last ProjectileHit naming this mob before its death carries
+            // the round in SecondaryEntityId. A contact kill has no such hit,
+            // so it falls back to plain visibility — which is correct, not a
+            // gap: nobody watched a tracer that never existed.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, -60f));
+
+            float speed = cfg.Weapon.ProjectileSpeed;
+            var muzzle = new float2(20f, 0f);
+            int roundId = w.SpawnProjectileForTest(ProjectileOwner.Player, muzzle, new float2(speed, 0f),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime);
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 2);
+            asm.BeginTick(w);
+            Assert.AreEqual(1,
+                AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg)
+                    .CountOf(SnapshotEventKind.ProjectileSpawned),
+                "test setup: connection 0 subscribes to the round");
+            Assert.AreEqual(0,
+                AssembledFrame.Decode(asm.BufferFor(1), asm.BuildFor(1, 1, 1, AsmEpoch), cfg)
+                    .CountOf(SnapshotEventKind.ProjectileSpawned),
+                "test setup: connection 1 does not");
+
+            // The round kills a mob neither connection can see.
+            var deathPos = new float2(60f, 0f);
+            Assert.Greater(math.distance(deathPos, float2.zero),
+                cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: the mob dies out of sight of BOTH connections");
+            const int mobId = 733;
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileHit, deathPos, mobId, MobType.Chaser, 12f,
+                zone: HitZone.Body, hitDir: new float2(1f, 0f), playerIndex: 0,
+                secondaryEntityId: roundId);
+            w.Emit(SimEventKind.MobDied, deathPos, mobId, MobType.Chaser, 12f,
+                zone: HitZone.Body, hitDir: new float2(1f, 0f), playerIndex: 0);
+
+            asm.BeginTick(w);
+            var watcher = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            var stranger = AssembledFrame.Decode(asm.BufferFor(1), asm.BuildFor(1, 1, 1, AsmEpoch), cfg);
+
+            Assert.AreEqual(1, watcher.CountOf(SnapshotEventKind.MobDied),
+                "the union arm: a subscriber to the KILLING round is owed the outcome even with the "
+                + "mob itself invisible (the join reads ProjectileHit.SecondaryEntityId, never EntityId, "
+                + "which holds the victim)");
+            Assert.AreEqual(0, stranger.CountOf(SnapshotEventKind.MobDied),
+                "and a connection with neither sight of the mob nor the round's spawn gets nothing");
+
+            // A contact kill of an invisible mob reaches nobody — there is no
+            // round to have been watched.
+            var w2 = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w2, 0, float2.zero);
+            var asm2 = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            BuildOne(asm2, w2, cfg, 0, 0, 0);   // one frame so a previous-tick set exists
+            w2.ClearEvents();
+            w2.Emit(SimEventKind.MobDied, deathPos, mobId, MobType.Chaser, 15f,
+                zone: HitZone.Body, playerIndex: ProjectileIds.NoOwner);
+            Assert.AreEqual(0, BuildOne(asm2, w2, cfg, 0, 0, 0).CountOf(SnapshotEventKind.MobDied),
+                "a contact kill out of sight has no tracer behind it, so the union adds nothing");
+
+            // Visibility arm, with the mob in plain sight: the ordinary route
+            // still works, so the two assertions above are about the UNION and
+            // not about MobDied being broken.
+            var w3 = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w3, 0, float2.zero);
+            int liveMob = w3.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
+            var asm3 = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            BuildOne(asm3, w3, cfg, 0, 0, 0);   // tick N: the mob is tracked
+            w3.DamageMob(0, 1e9f, new float2(5f, 0f), HitZone.Body, default, ownerIndex: 0);
+            Assert.AreEqual(0, w3.MobCount, "test setup: the mob is really gone from the world");
+            Assert.AreEqual(1, BuildOne(asm3, w3, cfg, 0, 0, 0).CountOf(SnapshotEventKind.MobDied),
+                "the visibility arm reads the PREVIOUS tick's set — the corpse is swap-removed the same "
+                + "tick it dies, so a current-tick set could never hold it and no death would ever ship");
+            Assert.Greater(liveMob, 0);
+        }
+
+        // --- 17: ShotHeard position, both source rails ---
+
+        [Test]
+        public void ShotHeard_ExactForAVisibleShooter_CoarseOtherwise_AndAlwaysCoarseForAMobsRound()
+        {
+            var cfg = TestConfigs.Open();
+            float sight = cfg.Visibility.SightRadius;
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            float speed = cfg.Weapon.ProjectileSpeed;
+
+            // Tick N: shooter comfortably in sight, so the exit hysteresis is
+            // armed for tick N+1.
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(sight - 3f, 0f));
+            BuildOne(asm, w, cfg, 0, 0, 0);
+
+            // Tick N+1: shooter inside the hysteresis band — still VISIBLE, but
+            // its round's trajectory (fired outbound) never comes within
+            // SightRadius, so this observer hears the shot instead of seeing
+            // the tracer. That is the only configuration in which a visible
+            // shooter produces a ShotHeard at all: the segment starts at the
+            // muzzle, so a shooter inside plain SightRadius always yields the
+            // tracer instead.
+            var bandPos = new float2(sight + cfg.Visibility.ExitHysteresis * 0.5f, 0f);
+            TestWorlds.RelocatePlayerForTest(w, 1, bandPos);
+            w.ClearEvents();
+            w.SpawnProjectileForTest(ProjectileOwner.Player, bandPos, new float2(speed, 0f),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime, ownerIndex: 1);
+
+            AssembledFrame seen = BuildOne(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(0, seen.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "test setup: the outbound round must NOT qualify on trajectory");
+            Assert.AreEqual(1, seen.CountOf(SnapshotEventKind.ShotHeard));
+            Assert.IsTrue(seen.TryFirstOf(SnapshotEventKind.ShotHeard, out int i1));
+            Assert.That(math.distance(seen.Events[i1].Pos, bandPos), Is.LessThan(0.01f),
+                "a VISIBLE shooter's report carries the exact muzzle position — the shooter's body is "
+                + "already replicated at full precision, so coarsening protects nothing");
+            Assert.AreEqual((byte)1, seen.Payloads[i1].PlayerIndex, "and names the shooter");
+
+            // A mob's round: the event carries no shooter at all (EntityId is
+            // the round), so there is no source to check visibility on and the
+            // position is ALWAYS coarsened.
+            var w2 = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w2, 0, float2.zero);
+            var mobMuzzle = new float2(0f, sight + 5f);
+            Assert.Greater(math.length(mobMuzzle), sight + cfg.Visibility.ExitHysteresis);
+            Assert.LessOrEqual(math.length(mobMuzzle), cfg.Visibility.HearRadius);
+            w2.SpawnProjectileForTest(ProjectileOwner.Mob, mobMuzzle, new float2(0f, cfg.Gunner.ProjectileSpeed),
+                cfg.Gunner.MuzzleHeight, 0f, cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius,
+                cfg.Gunner.ProjectileLifetime, ownerIndex: ProjectileIds.NoOwner);
+
+            var asm2 = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            AssembledFrame mobShot = BuildOne(asm2, w2, cfg, 0, 0, 0);
+            Assert.AreEqual(1, mobShot.CountOf(SnapshotEventKind.ShotHeard));
+            Assert.IsTrue(mobShot.TryFirstOf(SnapshotEventKind.ShotHeard, out int i2));
+            Assert.That(math.distance(mobShot.Events[i2].Pos,
+                    VisibilitySystem.QuantizeAudiblePos(mobMuzzle, cfg.Visibility)),
+                Is.LessThan(0.01f), "a mob's report is always coarsened");
+            Assert.Greater(math.distance(mobShot.Events[i2].Pos, mobMuzzle), 0.01f,
+                "witness: the coarse position really does differ from the true one");
+            Assert.AreEqual(ProjectileIds.NoOwner, mobShot.Payloads[i2].PlayerIndex,
+                "and it names no shooter, which is precisely why it can never be exact");
+        }
+
+        // --- 18: identity vs viewpoint (carryover-t28.md §5) ---
+
+        [Test]
+        public void OwnerChannel_FollowsIdentity_WhileTheVisibilitySetFollowsViewpoint()
+        {
+            // carryover-t28.md §5. `observerIndex` carries two roles at once —
+            // WHO this connection is (the Owner channel, the own-death
+            // carve-out) and WHERE it looks from (the visibility set). While a
+            // player watches its own body the two agree; spectating (Р70/Р88)
+            // splits them, and the assembler must not merge them back.
+            //
+            // The split is expressed as two parameters: `identityIndex` feeds
+            // ShouldDeliver, `viewpointIndex` feeds Compute. The known limit of
+            // the seam — its Audible branch reads the IDENTITY's own position
+            // for the hearing distance, not the viewpoint's — is recorded here
+            // and resolved by Task 42.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, 100f));    // the viewpoint, far away
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, -100f));   // and a third body, elsewhere
+            Assert.Greater(math.distance(w.PlayerAt(0).Pos, w.PlayerAt(1).Pos),
+                cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: the identity's own body is INVISIBLE from the viewpoint");
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+
+            // Owner channel: player 0's own private feedback reaches it while
+            // it looks through player 1's eyes.
+            w.Emit(SimEventKind.StaminaDenied, w.PlayerAt(0).Pos, 0, default, 12f, playerIndex: 0);
+            // ... and another player's identical event does not.
+            w.Emit(SimEventKind.StaminaDenied, w.PlayerAt(1).Pos, 0, default, 12f, playerIndex: 1);
+
+            AssembledFrame f = BuildOne(asm, w, cfg, 0, identityIndex: 0, viewpointIndex: 1);
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.StaminaDenied),
+                "exactly one StaminaDenied — the connection's OWN, keyed on identity, never on viewpoint");
+
+            // Own death: delivered to its owner even though the viewpoint
+            // cannot see the body, while a third party's death at the same
+            // invisible distance is not.
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDied, w.PlayerAt(0).Pos, 0, default, 0f,
+                zone: HitZone.Body, playerIndex: 0);
+            w.Emit(SimEventKind.PlayerDied, w.PlayerAt(2).Pos, 2, default, 0f,
+                zone: HitZone.Body, playerIndex: 2);
+
+            AssembledFrame d = BuildOne(asm, w, cfg, 0, identityIndex: 0, viewpointIndex: 1);
+            Assert.AreEqual(1, d.CountOf(SnapshotEventKind.PlayerDied),
+                "one death only: one's own always arrives (Р28's carve-out), a stranger's still needs "
+                + "the viewpoint to have seen it");
+            Assert.IsTrue(d.TryFirstOf(SnapshotEventKind.PlayerDied, out int di));
+            Assert.AreEqual((byte)0, d.Payloads[di].PlayerIndex, "and it is the connection's OWN death");
         }
     }
 }

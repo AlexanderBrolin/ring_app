@@ -432,11 +432,15 @@ namespace Ring.Simulation.Core
         /// meaningful for the seven player-scoped kinds — see
         /// SimEvent.PlayerIndex's own doc for the actor/victim split — and
         /// defaults to ProjectileIds.NoOwner, same "unused for every other
-        /// kind" contract as `owner`/`zone`/`hitDir` above.
+        /// kind" contract as `owner`/`zone`/`hitDir` above. `secondaryEntityId`
+        /// (Stage 2 Task 28) is meaningful for ProjectileHit alone — see
+        /// SimEvent.SecondaryEntityId's own doc — and defaults to 0 ("none"),
+        /// same trailing-optional shape as every parameter added before it.
         internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType, float amount,
             ProjectileOwner owner = ProjectileOwner.Player,
             HitZone zone = HitZone.None, float2 hitDir = default,
-            byte playerIndex = ProjectileIds.NoOwner)
+            byte playerIndex = ProjectileIds.NoOwner,
+            int secondaryEntityId = 0)
         {
             if (_eventCount < _events.Length)
             {
@@ -444,7 +448,8 @@ namespace Ring.Simulation.Core
                 {
                     Kind = kind, Tick = _tick, Pos = pos,
                     EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner,
-                    Zone = zone, HitDir = hitDir, PlayerIndex = playerIndex
+                    Zone = zone, HitDir = hitDir, PlayerIndex = playerIndex,
+                    SecondaryEntityId = secondaryEntityId
                 };
             }
             else

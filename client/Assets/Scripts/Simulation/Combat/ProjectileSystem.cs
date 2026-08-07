@@ -201,8 +201,16 @@ namespace Ring.Simulation.Combat
                         // playerIndex (Stage 2 Task 17, carryover-t17.md item 2):
                         // the SHOOTER, so Presentation can tell its own hitmarker
                         // from another player's in a multiplayer match.
+                        // secondaryEntityId (Stage 2 Task 28): the ROUND's own
+                        // id. EntityId is spent on the victim here — unlike the
+                        // Blocked/Expired branches above, which carry proj.Id
+                        // there — so without this the round's identity is lost
+                        // at the emit and the snapshot assembler cannot close
+                        // the per-connection spawn subscription this hit ends
+                        // (spec §3.8 ProjectileEndedNet, table Р28).
                         w.Emit(SimEventKind.ProjectileHit, contact, mob.Id, mob.Type, dmg,
-                            zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex);
+                            zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex,
+                            secondaryEntityId: proj.Id);
                         // ownerIndex (Stage 2 Task 7): the projectile carries its
                         // own shooter forward into the credit routing.
                         w.DamageMob(hitTargetIndex, dmg, contact, hitZone, hitDir, proj.OwnerIndex);

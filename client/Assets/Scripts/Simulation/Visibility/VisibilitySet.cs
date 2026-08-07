@@ -43,6 +43,40 @@ namespace Ring.Simulation.Visibility
             return 0;
         }
 
+        /// Entry `index` in INSERTION order (Stage 2 Task 28, carryover-t28.md
+        /// §8а). Together with LingerAt below this is the whole enumeration
+        /// contract: `for (int i = 0; i &lt; set.Count; i++) set.IdAt(i)` visits
+        /// every tracked id exactly once, in the order Add was called — which
+        /// for a VisibilitySystem.Compute result is players by index and then
+        /// mobs by world slot.
+        ///
+        /// THE ORDER IS THE CONTRACT, not an implementation detail. Task 28's
+        /// SnapshotAssembler writes its Players and Mobs blocks in exactly this
+        /// order, so the same world state has to produce the same byte sequence
+        /// twice; the truncation branch's "surviving entities keep insertion
+        /// order" rule has nothing to keep otherwise. Pinned by
+        /// VisibilityTests.SetEnumerator_IdAtAndLingerAt_FollowInsertionOrder_
+        /// AndClearResetsCount.
+        ///
+        /// Bounds behave exactly like the underlying array's: an index outside
+        /// [0, Count) is a CALLER bug (it can only come from ignoring Count),
+        /// not untrusted input, so IndexOutOfRangeException from the array
+        /// itself is the right answer and no guard is spent restating it. Note
+        /// that Clear() only resets Count — the array keeps its stale contents —
+        /// so an index at or above Count may well return a plausible-looking
+        /// id rather than throwing. Count is the only bound a caller may trust.
+        ///
+        /// NO ReadOnlySpan&lt;int&gt; ACCESSOR (task-28-brief §2.10): the two
+        /// methods cover the one consumer that exists, and a span would hand
+        /// out the internal arrays themselves — a wider contract than anything
+        /// asked for (AGENT.md rule 3).
+        public int IdAt(int index) => _ids[index];
+
+        /// The linger counter of entry `index`, under the same index as IdAt
+        /// above — `LingerAt(i)` always equals `LingerOf(IdAt(i))`, without the
+        /// linear scan. Same 0-means-"visible now" convention as LingerOf.
+        public int LingerAt(int index) => _lingerTicks[index];
+
         public void Add(int entityId, int lingerTicks = 0)
         {
             _ids[_count] = entityId;

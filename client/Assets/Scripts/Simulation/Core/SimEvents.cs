@@ -115,5 +115,27 @@ namespace Ring.Simulation.Core
         /// of StateHash — events are excluded from the hash entirely (spec §3.7,
         /// see this struct's own doc comment).
         public byte PlayerIndex;
+        /// Stage 2 Task 28: the event's SECOND participant, for the kinds whose
+        /// primary `EntityId` is already spent on the victim. Today the only
+        /// writer is ProjectileHit, where it carries the ROUND's own id while
+        /// EntityId keeps the mob's — every other projectile ending
+        /// (ProjectileBlocked/ProjectileExpired) already puts the round in
+        /// EntityId, so only the mob-hit branch needed a second slot.
+        ///
+        /// 0 MEANS "NONE", and that is safe rather than merely conventional:
+        /// SimulationWorld's `_nextEntityId` counter starts at 1 and only grows
+        /// (see VisibilityIds' own doc), so no real entity can ever be 0.
+        ///
+        /// WHY IT EXISTS AT ALL: spec §3.8's `ProjectileEndedNet (id, contact
+        /// point, end kind)` and table Р28's "to everyone who received THAT
+        /// round's spawn" are both keyed on the round's id, and without this
+        /// field a round that ended on a mob could never close the
+        /// per-connection spawn subscription it opened. Same "unused for every
+        /// other kind" contract as `Amount`/`Owner`/`Zone` above — and MobDied
+        /// is deliberately part of "every other kind" (SimulationWorld.DamageMob
+        /// has no projectile in scope; the assembler joins death to round
+        /// through the tick's event buffer instead, task-28-brief §2.4 item 4).
+        /// Not part of StateHash — events are excluded from the hash entirely.
+        public int SecondaryEntityId;
     }
 }
