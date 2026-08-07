@@ -1341,7 +1341,8 @@ namespace Ring.Simulation.Tests
             // The order is the whole contract. A frame assembled in a
             // different order every tick would be a different byte sequence
             // for the same world (SnapshotAssemblerTests'
-            // DoubleBuild_SameWorld_IsByteIdentical rests on it), and the
+            // TwoConnectionsInTheSameState_ProduceByteIdenticalFrames rests
+            // on it — name checked against the file, урок 111), and the
             // truncation branch's "survivors keep insertion order" rule would
             // have nothing to keep.
             var cfg = TestConfigs.Open();

@@ -515,13 +515,19 @@ namespace Ring.Networking.Server
                         float2 closest = Geometry.ClosestPointOnSegment(
                             _viewpointPos, we.Source.Pos, we.SegmentEnd, out _);
                         bool relevant = math.distance(closest, _viewpointPos) <= _cfg.Visibility.SightRadius;
-                        if (relevant)
-                        {
-                            Enqueue(c, i, we.Source.Pos);
-                            Subscribe(c, we.RoundId);
-                        }
+                        // The subscription follows the QUEUE's answer, not the
+                        // relevance check (fix-round F1): a full carry queue may
+                        // refuse the spawn itself as its worst newcomer, and a
+                        // subscription opened for a spawn that will never ship
+                        // hands this connection the round's ending — and the
+                        // union arm's MobDied — with no tracer context, exactly
+                        // what "to whoever received the spawn" rules out. The
+                        // same answer feeds the ShotHeard suppression below: a
+                        // dropped tracer must not also mute the shot's sound.
+                        bool queued = relevant && Enqueue(c, i, we.Source.Pos);
+                        if (queued) Subscribe(c, we.RoundId);
                         lastSpawnSource = we.SourceIndex;
-                        lastSpawnDelivered = relevant;
+                        lastSpawnDelivered = queued;
                         break;
                     }
 
@@ -627,7 +633,18 @@ namespace Ring.Networking.Server
                         // itself uses (`Contains` on the actor). The coarsening
                         // FORMULA is never restated: it is
                         // VisibilitySystem.QuantizeAudiblePos either way.
-                        if (EventRelevance.ChannelFor(we.Source.Kind) == DeliveryChannel.Audible)
+                        //
+                        // DashRicocheted is deliberately NOT latched (fix-round
+                        // F3): its Pos is the wall CONTACT point, not the
+                        // actor's own position (SimEvents.cs's own doc), while
+                        // the latch is keyed by ACTOR. Feeding a contact point
+                        // through the actor's key would deliver a stale actor
+                        // cell for a point on a wall — and the anti-dither
+                        // latch protects a SOURCE's position stream, which a
+                        // one-off contact point is not. The seam's own `pos`
+                        // is already the plain coarsened contact.
+                        if (EventRelevance.ChannelFor(we.Source.Kind) == DeliveryChannel.Audible
+                            && we.Source.Kind != SimEventKind.DashRicocheted)
                             pos = ResolveAudiblePos(c, VisibilityIds.ForPlayer(we.Source.PlayerIndex),
                                 we.Source.Pos);
 
@@ -739,9 +756,15 @@ namespace Ring.Networking.Server
             if (c.SubCount >= c.SubIds.Length)
             {
                 // Unreachable by construction — there cannot be more live
-                // rounds than Arena.MaxProjectiles — but a full set refuses
-                // honestly and counts rather than growing or overwriting.
-                c.Stats.DroppedEvents++;
+                // rounds than Arena.MaxProjectiles, and the set is sized to
+                // exactly that cap — but a full set refuses honestly rather
+                // than growing or overwriting. NOT counted as DroppedEvents
+                // (fix-round F2): nothing on the wire is dropped here — the
+                // spawn this call follows has already been queued and will
+                // ship. The honest cost is a subscription that never opens,
+                // so the round's ending would go undelivered and its tracer
+                // would die by the client's own lifetime timeout — the same
+                // bounded degradation the app-dsh expiry patch documents.
                 return;
             }
             c.SubIds[c.SubCount] = roundId;
@@ -781,7 +804,12 @@ namespace Ring.Networking.Server
 
         // ---- the carry queue ---------------------------------------------
 
-        void Enqueue(Connection c, int wireIndex, float2 pos)
+        /// True when the event entered the queue; false when the queue was full
+        /// and the newcomer itself was the worst candidate and got dropped
+        /// (counted either way). The ProjectileSpawned branch is the one caller
+        /// that must read this (fix-round F1): a subscription may only open for
+        /// a spawn the queue actually accepted.
+        bool Enqueue(Connection c, int wireIndex, float2 pos)
         {
             WireEvent we = _wire[wireIndex];
             var incoming = new Queued
@@ -805,9 +833,10 @@ namespace Ring.Networking.Server
                 if (!IsBetter(in incoming, in c.Queue[worst]))
                 {
                     // The newcomer IS the worst — dropping it keeps the queue's
-                    // contents strictly better than what it refuses.
-                    DropSubscriptionOf(c, in incoming);
-                    return;
+                    // contents strictly better than what it refuses. No
+                    // subscription cleanup is needed here (fix-round F1): the
+                    // caller has not subscribed yet and only will on `true`.
+                    return false;
                 }
                 DropSubscriptionOf(c, in c.Queue[worst]);
                 RemoveQueuedAt(c, worst);
@@ -817,6 +846,7 @@ namespace Ring.Networking.Server
             c.Queue[slot] = incoming;
             System.Array.Copy(_wirePayload, wireIndex * SnapshotEvents.MaxPayloadBytes,
                 c.QueuePayload, slot * SnapshotEvents.MaxPayloadBytes, we.PayloadLength);
+            return true;
         }
 
         /// A queued `ProjectileSpawned` that never ships takes its subscription

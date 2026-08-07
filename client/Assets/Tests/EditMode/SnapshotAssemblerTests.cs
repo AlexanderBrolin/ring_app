@@ -925,5 +925,163 @@ namespace Ring.Simulation.Tests
             Assert.Greater(asm.StatsFor(0).DroppedEvents, droppedBefore,
                 "and it must be counted as dropped, not vanish silently");
         }
+
+        // ---- T28 fix-round 1. Review findings F1 and F3 ----
+
+        [Test]
+        public void QueueOverflow_DroppedSpawn_LeavesNoSubscription_AndDoesNotSuppressShotHeard()
+        {
+            // Review finding F1. Enqueue used to be void, so the
+            // ProjectileSpawned branch subscribed unconditionally after it —
+            // and when a full queue refused the spawn itself as its worst
+            // newcomer, the connection stayed subscribed to a round whose
+            // tracer would never arrive: the round's ending (and the MobDied
+            // union arm) would then reach a peer with no spawn context, which
+            // is exactly what "to whoever received the spawn" rules out. The
+            // same broken flag also suppressed the shot's ShotHeard fallback,
+            // silencing BOTH halves of the shot.
+            var cfg = TestConfigs.Open();
+            cfg.Arena.MaxEventsPerFrame = 2;   // queue capacity 4
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+            var asm = new SnapshotAssembler(cfg, Net(eventBudget: 1), connectionCount: 1);
+            var idle = new SimInput[2];
+
+            // Three ticks of two deaths each against a budget of one leave the
+            // queue holding three rank-0 records...
+            for (int i = 0; i < 3; i++)
+            {
+                w.TickAll(idle);
+                w.ClearEvents();
+                w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                    zone: HitZone.Body, playerIndex: 1);
+                w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                    zone: HitZone.Body, playerIndex: 1);
+                Build(asm, w, cfg, 0, 0, 0);
+            }
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEvents,
+                "fixture premise: nothing may have been dropped before the shot fires");
+
+            // ...so one more death fills it to four, and the shot that follows
+            // finds no room: its spawn (rank 2) and its ShotHeard (rank 3) are
+            // both the worst newcomers against a queue of deaths. The exact
+            // count is the point: TWO drops means the ShotHeard was genuinely
+            // ATTEMPTED after the spawn was refused — the pre-fix flag
+            // suppressed it and would leave this at one.
+            const int roundId = 7001;
+            w.TickAll(idle);
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDied, new float2(6f, 0f), 1, default, 0f,
+                zone: HitZone.Body, playerIndex: 1);
+            w.Emit(SimEventKind.ProjectileFired, new float2(6f, 0f), roundId, default, 0f,
+                ProjectileOwner.Player, playerIndex: 1);
+            Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(2, asm.StatsFor(0).DroppedEvents,
+                "the refused spawn AND its still-attempted ShotHeard must both be counted — "
+                + "one drop would mean the dead flag still mutes the sound half");
+
+            // The round ends next tick. A connection whose spawn never shipped
+            // must not receive the ending — the subscription may only open for
+            // a spawn the queue actually accepted.
+            w.TickAll(idle);
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileBlocked, new float2(5.3f, 1.15f), roundId, default, 0.73f,
+                hitDir: new float2(-1f, 0f));
+            Build(asm, w, cfg, 0, 0, 0);
+
+            // Drain everything left and account for every event that ever rode:
+            // seven deaths went in, seven deaths must come out, and nothing of
+            // the dropped shot — no spawn, no sound, no ending.
+            int deathsDelivered = 0;
+            for (int i = 0; i < 12; i++)
+            {
+                w.TickAll(idle);
+                w.ClearEvents();
+                AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+                deathsDelivered += f.CountOf(SnapshotEventKind.PlayerDied);
+                Assert.AreEqual(0, f.CountOf(SnapshotEventKind.ProjectileSpawned),
+                    "the refused spawn must never ride");
+                Assert.AreEqual(0, f.CountOf(SnapshotEventKind.ShotHeard),
+                    "the shot's sound was refused by the same full queue and must never ride");
+                Assert.AreEqual(0, f.CountOf(SnapshotEventKind.ProjectileEnded),
+                    "an ending delivered to a peer that never saw the spawn means a "
+                    + "subscription was opened for a dropped spawn (finding F1)");
+            }
+            // Accounting, so the kind assertions above scanned real frames and
+            // not a drained-empty queue: seven deaths were emitted, the five
+            // builds before this loop delivered one each (budget 1), so the
+            // loop itself must deliver exactly the remaining two.
+            Assert.AreEqual(2, deathsDelivered,
+                "seven deaths emitted minus five delivered by the five earlier builds — "
+                + "the drain loop must account for exactly the remaining two");
+        }
+
+        [Test]
+        public void RicochetContactPoint_DoesNotPoisonTheActorsAudibleLatch()
+        {
+            // Review finding F3. DashRicocheted's Pos is the wall CONTACT
+            // point (SimEvents.cs's own doc), not the actor's position — but
+            // the audible latch is keyed by ACTOR. Routing the contact through
+            // the actor's key delivered the actor's stale latched cell for a
+            // point on a wall whenever the two happened to fall within the
+            // hysteresis margin of each other. The contact must coarsen on its
+            // own (plain QuantizeAudiblePos), and the actor's own latch must
+            // survive it untouched.
+            var cfg = TestConfigs.Open();
+            float grid = cfg.Visibility.HearPositionGridMeters;
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            var actorPos = new float2(49.6f, 0f);
+            TestWorlds.RelocatePlayerForTest(w, 1, actorPos);
+            Assert.Greater(actorPos.x, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: the actor must be out of sight");
+            Assert.Less(actorPos.x, cfg.Visibility.HearRadius,
+                "fixture premise: the actor must be in earshot");
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            var idle = new SimInput[2];
+            float2 actorCell = VisibilitySystem.QuantizeAudiblePos(actorPos, cfg.Visibility);
+
+            // Tick 1: a dash latches the actor's cell.
+            w.TickAll(idle);
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDashed, actorPos, 0, default, 0f, playerIndex: 1);
+            AssembledFrame f1 = Build(asm, w, cfg, 0, 0, 0);
+            Assert.IsTrue(f1.TryFirstOf(SnapshotEventKind.PlayerDashed, out int d1));
+            Assert.Less(math.distance(f1.Events[d1].Pos, actorCell), 0.01f,
+                "fixture premise: the dash must have latched the actor's own cell");
+
+            // Tick 2: the dash mirrors off a wall. The contact point rounds to
+            // a DIFFERENT cell than the actor's, but sits INSIDE the latch's
+            // hysteresis margin of the actor's latched centre — the exact
+            // geometry in which the actor-keyed latch used to answer with the
+            // actor's stale cell instead of the contact's own.
+            var contact = new float2(52.6f, 0.37f);
+            float2 contactCell = VisibilitySystem.QuantizeAudiblePos(contact, cfg.Visibility);
+            Assert.Greater(math.distance(contactCell, actorCell), 0.1f,
+                "fixture premise: the contact must round to a different cell");
+            Assert.Less(math.distance(contact, actorCell), grid * 0.75f,
+                "fixture premise: the contact must sit inside the latch margin of the actor's cell");
+            w.TickAll(idle);
+            w.ClearEvents();
+            w.Emit(SimEventKind.DashRicocheted, contact, 0, default, 0f,
+                hitDir: new float2(-1f, 0f), playerIndex: 1);
+            AssembledFrame f2 = Build(asm, w, cfg, 0, 0, 0);
+            Assert.IsTrue(f2.TryFirstOf(SnapshotEventKind.DashRicocheted, out int r2));
+            Assert.Less(math.distance(f2.Events[r2].Pos, contactCell), 0.01f,
+                "the contact point must coarsen on its own — the actor's stale cell "
+                + "answering for a point on a wall is finding F3");
+
+            // Tick 3: the next dash still reads the actor's original cell —
+            // the contact never touched the actor's latch.
+            w.TickAll(idle);
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDashed, new float2(49.8f, 0f), 0, default, 0f, playerIndex: 1);
+            AssembledFrame f3 = Build(asm, w, cfg, 0, 0, 0);
+            Assert.IsTrue(f3.TryFirstOf(SnapshotEventKind.PlayerDashed, out int d3));
+            Assert.Less(math.distance(f3.Events[d3].Pos, actorCell), 0.01f,
+                "the actor's own latch must survive the ricochet untouched");
+        }
     }
 }
