@@ -760,8 +760,10 @@ namespace Ring.Networking.Server
                 // exactly that cap — but a full set refuses honestly rather
                 // than growing or overwriting. NOT counted as DroppedEvents
                 // (fix-round F2): nothing on the wire is dropped here — the
-                // spawn this call follows has already been queued and will
-                // ship. The honest cost is a subscription that never opens,
+                // spawn this call follows has already been ACCEPTED by the
+                // queue (a later same-tick eviction of it would count itself
+                // and close its subscription through DropSubscriptionOf).
+                // The honest cost is a subscription that never opens,
                 // so the round's ending would go undelivered and its tracer
                 // would die by the client's own lifetime timeout — the same
                 // bounded degradation the app-dsh expiry patch documents.
