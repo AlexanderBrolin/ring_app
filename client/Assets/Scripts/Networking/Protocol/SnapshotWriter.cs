@@ -1,3 +1,5 @@
+using Ring.Simulation.Core;
+
 namespace Ring.Networking.Protocol
 {
     /// Serializes the snapshot FRAME into a caller-owned buffer (Stage 2 Task
@@ -169,6 +171,226 @@ namespace Ring.Networking.Protocol
         /// the writer's remaining room, not any argument of the call that
         /// discovers it (`WriteBlock`'s oversized-payload check above IS an
         /// argument fault, and throws accordingly).
+        // ---- Stage 2 Task 27: the five state blocks (spec §3.8, §3.12
+        // Р68, task-27-brief §2.2-§2.15). Each method appends ONE tagged
+        // block built from caller-owned records, quantizing through
+        // Quantize with `cfg` as a parameter (no formula lives twice — rule
+        // 2). Reading is the mirror-image static side on SnapshotBlocks
+        // (task-27-brief §2.10: these use `_pos`, the read side does not).
+        //
+        // NOTHING IS WRITTEN UNTIL EVERYTHING FITS, same discipline as
+        // WriteHeader/WriteBlock: any argument-shape problem (too many
+        // records for the u16 length field, an event payload outside its
+        // pool) is checked and thrown BEFORE `Reserve` is even called, and
+        // `Reserve` itself throws before a single byte moves.
+
+        /// Appends a Players block (task-27-brief §2.2 layout: index, posX,
+        /// posY, dir, hp, flags — 8 bytes per record).
+        public void WritePlayersBlock(System.ReadOnlySpan<SnapshotBlocks.PlayerRecord> records, in SimConfig cfg)
+        {
+            int payloadBytes = records.Length * SnapshotBlocks.PlayerRecordBytes;
+            if (payloadBytes > MaxBlockPayloadBytes)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WritePlayersBlock: {records.Length} records ({payloadBytes} bytes) "
+                    + $"exceed MaxBlockPayloadBytes ({MaxBlockPayloadBytes}); the length field is u16.",
+                    nameof(records));
+
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Players;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.PlayerRecord r = records[i];
+                _dst[cursor] = r.Index;
+                WriteU16(cursor + 1, Quantize.Pos(r.Pos.x, cfg.Arena.Radius));
+                WriteU16(cursor + 3, Quantize.Pos(r.Pos.y, cfg.Arena.Radius));
+                _dst[cursor + 5] = Quantize.Dir(r.Dir);
+                _dst[cursor + 6] = Quantize.Unit(r.Hp, cfg.Hero.MaxHp);
+                _dst[cursor + 7] = r.Flags;
+                cursor += SnapshotBlocks.PlayerRecordBytes;
+            }
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// Appends the Liveness block — exactly one mask byte, bit `i` =
+        /// "player `i` is alive" (task-27-brief §2.2, §2.4, Р70).
+        public void WriteLivenessBlock(byte aliveMask)
+        {
+            Reserve(BlockHeaderBytes + SnapshotBlocks.LivenessBlockPayloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Liveness;
+            WriteU16(_pos + 1, SnapshotBlocks.LivenessBlockPayloadBytes);
+            _dst[_pos + BlockHeaderBytes] = aliveMask;
+            _pos += BlockHeaderBytes + SnapshotBlocks.LivenessBlockPayloadBytes;
+        }
+
+        /// Appends a Mobs block (task-27-brief §2.2 layout: id, typeAndAi,
+        /// posX, posY, dir, hp — 9 bytes per record). `id` is truncated to
+        /// its low 16 bits (task-27-brief §2.8) — lossy by construction, see
+        /// SnapshotBlocks.MobRecord's doc. HP is quantized against the
+        /// record's OWN type's MaxHp (task-27-brief §2.7) — Chaser and
+        /// Gunner do not share a cap.
+        public void WriteMobsBlock(System.ReadOnlySpan<SnapshotBlocks.MobRecord> records, in SimConfig cfg)
+        {
+            int payloadBytes = records.Length * SnapshotBlocks.MobRecordBytes;
+            if (payloadBytes > MaxBlockPayloadBytes)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteMobsBlock: {records.Length} records ({payloadBytes} bytes) "
+                    + $"exceed MaxBlockPayloadBytes ({MaxBlockPayloadBytes}); the length field is u16.",
+                    nameof(records));
+
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Mobs;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.MobRecord r = records[i];
+                WriteU16(cursor, (ushort)(r.Id & 0xFFFF));
+                byte typeAndAi = (byte)((((byte)r.Type) << 4) | ((byte)r.Ai & 0x0F));
+                _dst[cursor + 2] = typeAndAi;
+                WriteU16(cursor + 3, Quantize.Pos(r.Pos.x, cfg.Arena.Radius));
+                WriteU16(cursor + 5, Quantize.Pos(r.Pos.y, cfg.Arena.Radius));
+                _dst[cursor + 7] = Quantize.Dir(r.Dir);
+                float maxHp = r.Type == MobType.Chaser ? cfg.Chaser.MaxHp : cfg.Gunner.MaxHp;
+                _dst[cursor + 8] = Quantize.Unit(r.Hp, maxHp);
+                cursor += SnapshotBlocks.MobRecordBytes;
+            }
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// Appends the Wave block — exactly 4 bytes: phase, waveIndex (LE),
+        /// aliveCount (task-27-brief §2.2).
+        public void WriteWaveBlock(WavePhase phase, ushort waveIndex, byte aliveCount)
+        {
+            Reserve(BlockHeaderBytes + SnapshotBlocks.WaveBlockPayloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Wave;
+            WriteU16(_pos + 1, SnapshotBlocks.WaveBlockPayloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            _dst[cursor] = (byte)phase;
+            WriteU16(cursor + 1, waveIndex);
+            _dst[cursor + 3] = aliveCount;
+            _pos += BlockHeaderBytes + SnapshotBlocks.WaveBlockPayloadBytes;
+        }
+
+        /// Appends an Events block: N variable-length records, each 9 +
+        /// `PayloadLength` bytes (task-27-brief §2.5). `payloadPool` backs
+        /// every record's opaque payload bytes; a record whose
+        /// `PayloadOffset + PayloadLength` runs past `payloadPool` is a
+        /// CALLER bug (Task 28 owns the pool) and throws, unlike everything
+        /// on the read side (Р82 does not apply to the write path — see
+        /// SnapshotWriter's class doc). Positions quantize through `Pos`,
+        /// never `Aim` (task-27-brief §2.2): an event's position is a point
+        /// inside the arena, not the wider domain `AimPoint`'s sanitizer
+        /// clamp needs.
+        public void WriteEventsBlock(
+            System.ReadOnlySpan<SnapshotBlocks.EventRecord> records,
+            System.ReadOnlySpan<byte> payloadPool,
+            in SimConfig cfg)
+        {
+            // Validate BEFORE touching the destination — mirrors WriteBlock's
+            // "nothing is written until everything fits" (Task 26).
+            int payloadBytes = 0;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.EventRecord r = records[i];
+                if (r.PayloadOffset + r.PayloadLength > payloadPool.Length)
+                    throw new System.ArgumentException(
+                        $"SnapshotWriter.WriteEventsBlock: record {i}'s payload "
+                        + $"[{r.PayloadOffset}, {r.PayloadOffset + r.PayloadLength}) "
+                        + $"runs past payloadPool.Length ({payloadPool.Length}) — a caller bug (Task 28 owns the pool).",
+                        nameof(records));
+                payloadBytes += SnapshotBlocks.EventHeaderBytes + r.PayloadLength;
+            }
+            if (payloadBytes > MaxBlockPayloadBytes)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteEventsBlock: {records.Length} records ({payloadBytes} bytes) "
+                    + $"exceed MaxBlockPayloadBytes ({MaxBlockPayloadBytes}); the length field is u16.",
+                    nameof(records));
+
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Events;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.EventRecord r = records[i];
+                _dst[cursor] = r.Kind;
+                WriteU16(cursor + 1, r.Seq);
+                _dst[cursor + 3] = r.TickDelta;
+                WriteU16(cursor + 4, Quantize.Pos(r.Pos.x, cfg.Arena.Radius));
+                WriteU16(cursor + 6, Quantize.Pos(r.Pos.y, cfg.Arena.Radius));
+                _dst[cursor + 8] = r.PayloadLength;
+                payloadPool.Slice(r.PayloadOffset, r.PayloadLength)
+                    .CopyTo(_dst.Slice(cursor + SnapshotBlocks.EventHeaderBytes, r.PayloadLength));
+                cursor += SnapshotBlocks.EventHeaderBytes + r.PayloadLength;
+            }
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// Bytes a Players block of `playerCount` records would occupy,
+        /// including its own 3-byte block header — the number Task 28's
+        /// truncation branch budgets against (task-27-brief §2.13), never
+        /// `MaxBlockPayloadBytes`.
+        public static int PlayersBlockBytes(int playerCount)
+            => BlockHeaderBytes + playerCount * SnapshotBlocks.PlayerRecordBytes;
+
+        /// Bytes the Liveness block occupies, header included — always the
+        /// same regardless of player count (task-27-brief §2.3).
+        public static int LivenessBlockBytes()
+            => BlockHeaderBytes + SnapshotBlocks.LivenessBlockPayloadBytes;
+
+        /// Bytes a Mobs block of `mobCount` records would occupy, header
+        /// included.
+        public static int MobsBlockBytes(int mobCount)
+            => BlockHeaderBytes + mobCount * SnapshotBlocks.MobRecordBytes;
+
+        /// Bytes the Wave block occupies, header included — fixed size.
+        public static int WaveBlockBytes()
+            => BlockHeaderBytes + SnapshotBlocks.WaveBlockPayloadBytes;
+
+        /// Bytes an Events block of `eventCount` records totalling
+        /// `totalPayloadBytes` of opaque payload would occupy, header
+        /// included.
+        public static int EventsBlockBytes(int eventCount, int totalPayloadBytes)
+            => BlockHeaderBytes + eventCount * SnapshotBlocks.EventHeaderBytes + totalPayloadBytes;
+
+        /// TASK 28's BUDGET INPUT (task-27-brief §2.13): Task 27 is the
+        /// first place a real event RECORD exists, so the frame's worst-case
+        /// size is recomputed here from these five calculators rather than
+        /// quoted from the spec or from Task 26's own estimate — both
+        /// predate this file. At the shipped caps (MaxPlayers 3, so 2 OTHER
+        /// players; MaxMobs 96; a 16-event `SnapshotEventBudget` at an
+        /// assumed 4 B of payload each):
+        ///
+        ///   HeaderBytes                                    8
+        ///   PlayersBlockBytes(2)                           19
+        ///   LivenessBlockBytes()                            4
+        ///   MobsBlockBytes(96)                            867
+        ///   WaveBlockBytes()                                7
+        ///   EventsBlockBytes(16, 16*4)                    211
+        ///   -------------------------------------------------
+        ///   total                                        1116
+        ///
+        /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 116 B OVER
+        /// the cap. Task 28's truncation branch is therefore not an edge
+        /// case: a full-cap frame (Mobs alone is 867 B, +8 B header = 875 B)
+        /// leaves only 125 B for Players+Liveness+Wave+Events, of which the
+        /// first three take 30 B, leaving *=95 B for events* — about 7
+        /// records at 13 B each (9 B header + 4 B payload), not the 16 the
+        /// raw `SnapshotEventBudget` config field suggests. The 4 B/event
+        /// payload assumption is Task 26/28's own estimate, not this file's
+        /// — a different payload size changes the 7, and Task 28 must
+        /// recompute it from the calculators above rather than re-quote this
+        /// comment (the mistake this very paragraph exists to correct: the
+        /// spec's 1043 B and Task 26's 1052 B both predate a real event
+        /// record and were wrong for the same reason this one will be wrong
+        /// once something here changes).
         void Reserve(int bytes)
         {
             int free = _dst.Length - _pos;
