@@ -430,22 +430,4 @@ namespace Ring.Simulation.Movement
             Geometry.Depenetrate(ref pos, ref vel, radius, arena, 1);
         }
     }
-
-    // TEMPORARY (T3 -> T30): replaced by PlayerPrediction.Step; do not build on this.
-    /// The stage-2 network spike (Assets/Scripts/Networking/Spike, plan task T3)
-    /// needs ONE public entry point into the movement tick so the client can
-    /// advance its predicted copy of PlayerState. PlayerMovementSystem itself is
-    /// `internal` and InternalsVisibleTo only opens it to the EditMode test
-    /// assembly (AssemblyInfo.cs), and widening that is not this task's call.
-    /// This forwards verbatim — no new movement logic, no reordering, no extra
-    /// step — so it cannot move the golden hash. The real seam is
-    /// PlayerPrediction.Step (spec §3.9): full step composition
-    /// (sanitize -> AimPoint -> movement -> weapon-without-spawn) plus a parity
-    /// test against the world, landing in T30 together with the deletion of
-    /// Networking/Spike/** and this class.
-    public static class PlayerMovementSpikeSeam
-    {
-        public static MovementResult Update(ref PlayerState p, in SimInput input, in SimConfig cfg)
-            => PlayerMovementSystem.Update(ref p, in input, in cfg);
-    }
 }

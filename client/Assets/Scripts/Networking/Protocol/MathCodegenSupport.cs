@@ -1,6 +1,5 @@
 using FishNet.CodeGenerating;
 using FishNet.Serializing;
-using Ring.Networking.Spike;
 using Unity.Mathematics;
 
 namespace Ring.Networking
@@ -13,10 +12,13 @@ namespace Ring.Networking
     /// resolve).
     ///
     /// THIS FILE IS PERMANENT — it is a package limitation, not spike scaffolding.
-    /// It outlives Networking/Spike/** (deleted in T30) and hosts the comparer of
-    /// the production ReplicateData from T34 on. Nothing in our code calls any of
-    /// these methods; the ILPP wires them in at compile time, so "unused, delete
-    /// it" is exactly the wrong conclusion. Line numbers below are inside
+    /// It outlived the Stage 2 Task 3 network spike whose crash first exposed the
+    /// limitation (deleted in Stage 2 Task 30, this file explicitly kept) and
+    /// hosts the comparer of the production ReplicateData from Stage 2 Task 34 on.
+    /// Nothing in our code calls any of these methods; the ILPP wires them in at
+    /// compile time, so "unused, delete it" is exactly the wrong conclusion — and
+    /// that applies to WireComparers below while it stands EMPTY between those two
+    /// tasks, which is the state it is deliberately left in. Line numbers below are inside
     /// com.firstgeargames.fishnet 4.7.2 and com.unity.mathematics 1.3.3.
     ///
     /// THE COMMON CAUSE. WriterProcessor.cs:82-86 lists assembly prefixes whose
@@ -99,24 +101,18 @@ namespace Ring.Networking
     /// this file exists and which struct needs an entry here.
     public static class WireComparers
     {
-        /// TEMPORARY member of a permanent class (T3 -> T30): it dies together with
-        /// Networking/Spike/**, and T34's ReplicateData comparer takes its place.
-        /// Mirrors the member set the generator would have used — public fields
-        /// only. SpikeReplicateData._tick is private and stays out on purpose:
-        /// FishNet stamps the tick before calling IsDefault
-        /// (ReplicateDataContainer.cs:60-64, NetworkBehaviour.Prediction.cs:561-566),
-        /// so comparing it would make IsDefault permanently false and input resends
-        /// would never throttle.
-        [CustomComparer]
-        public static bool CompareSpikeReplicateData(
-            SpikePlayerController.SpikeReplicateData a,
-            SpikePlayerController.SpikeReplicateData b)
-            => a.MoveDir.Equals(b.MoveDir)
-               && a.AimPoint.Equals(b.AimPoint)
-               && a.AimHeight == b.AimHeight
-               && a.FireHeld == b.FireHeld
-               && a.DashRequested == b.DashRequested
-               && a.AimHeld == b.AimHeld
-               && a.SlideRequested == b.SlideRequested;
+        // EMPTY BY DESIGN between Stage 2 Task 30 and Task 34. The Task 3 spike's
+        // own comparer lived here and died together with it; the production
+        // ReplicateData comparer that replaces it arrives in Task 34, and the
+        // shape it must have is spelled out in MathSerializers' doc above
+        // ([CustomComparer], bool, exactly two by-value parameters of the
+        // compared type, static, on a top-level static type of THIS assembly).
+        // Until then nothing in Ring.Networking reaches the wire carrying a
+        // Unity.Mathematics vector inside a [Replicate] struct, so there is
+        // nothing to register — and deleting the class would mean re-deriving all
+        // of that from the package sources again in three tasks' time. The
+        // FishNet.CodeGenerating using at the top of the file stays for the same
+        // reason: it is the home of [CustomComparer], the attribute the next
+        // member here must carry.
     }
 }

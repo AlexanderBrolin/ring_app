@@ -207,7 +207,7 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < _players.Length; i++)
             {
                 if (_players[i].Alive)
-                    WeaponSystem.Update(this, ref _players[i], in _sanitizedInputs[i], i);
+                    WeaponSystem.Update(this, ref _players[i], in _sanitizedInputs[i], (byte)i);
             }
             // Canonical tick order (spec Interfaces, Task 16/19/20): movement →
             // weapon → mobs (Phase 6) → mob separation → projectiles → (waves,
