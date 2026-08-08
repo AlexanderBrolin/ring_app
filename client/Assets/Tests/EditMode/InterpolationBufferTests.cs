@@ -16,28 +16,30 @@ namespace Ring.Simulation.Tests
 {
     /// Stage 2 Task 32 (spec §3.9 Р37/Р38/Р83, §6i Р150е): the ring buffer
     /// between the network and interpolation, and `RenderSnapshot.CopyFrom`,
-    /// the single deep-copy routine every consumer of a snapshot pair now
-    /// shares.
+    /// the single deep-copy routine `SimulationRunner`'s frozen hitstop pair
+    /// now shares.
     ///
     /// TWO SUBJECTS, ONE FILE, BECAUSE THE TASK BRIEF PUTS THEM IN ONE FILE.
-    /// `SnapshotQueue`'s own admission logic (tests 1, 3, 4, 5, 8, 9, 10, 11,
-    /// 12 below) and `RenderSnapshot.CopyFrom` (test 6) are otherwise
-    /// unrelated — the queue hands out `CopyFrom`'s TARGET (a preallocated
-    /// slot to decode into), it never calls `CopyFrom` itself. They are pinned
-    /// together here because both halves of Task 32 exist to serve the exact
-    /// same downstream consumer: Task 44's admitted-frame pipeline into the
-    /// render pair `SimulationRunner` owns.
+    /// `SnapshotQueue`'s own admission logic and `RenderSnapshot.CopyFrom`
+    /// (`CopyFrom_CopiesEveryPublicField_ByReflection`) are otherwise
+    /// unrelated — the queue hands the caller an EMPTY slot to decode wire
+    /// bytes into, it never calls `CopyFrom` itself (fix-round 1 correction:
+    /// an earlier draft of this doc, and of `RenderSnapshot.cs`'s own doc,
+    /// claimed otherwise). They are pinned together here because both halves
+    /// of Task 32 exist to serve the exact same downstream consumer: Task 44's
+    /// admitted-frame pipeline into the render pair `SimulationRunner` owns.
     ///
-    /// THE INTEGRATION TESTS (2, 8, 9) DRIVE A REAL `EventDedup` THROUGH A
-    /// TEST-ONLY DRIVER, `DriveFrame`. Task 32's own scope is the queue's
-    /// admission decision alone — wiring a live `EventDedup` into it is Task
-    /// 44's job — but the CONTRACT between the two (task brief §2.2) is
-    /// exactly the thing `EventDedup`'s own KNOWN LIMIT paragraph (fix round
-    /// 1, reviewer F2) hands to this task to close, so proving the contract
-    /// actually composes with the real class, not a mock of it, is the whole
-    /// point of Р150е. `DriveFrame` is not production code and does not
-    /// pretend to be FishNet-wired Task 44 — it is the smallest thing that
-    /// follows the four numbered steps of task brief §2.2 exactly.
+    /// THE INTEGRATION TESTS DRIVE A REAL `EventDedup` THROUGH A TEST-ONLY
+    /// DRIVER, `DriveFrame`. Task 32's own scope is the queue's admission
+    /// decision alone — wiring a live `EventDedup` into it is Task 44's job —
+    /// but the CONTRACT between the two (task brief §2.2) is exactly the thing
+    /// `EventDedup`'s own KNOWN LIMIT paragraph (fix round 1, reviewer F2)
+    /// hands to this task to close, so proving the contract actually composes
+    /// with the real class, not a mock of it, is the whole point of Р150е.
+    /// `DriveFrame` is not production code and does not pretend to be
+    /// FishNet-wired Task 44 — it is the smallest thing that follows the four
+    /// numbered steps of task brief §2.2 exactly, including the `Commit` half
+    /// of two-phase admission (fix-round 1) on the `Accepted` path.
     ///
     /// NUMBERS COME FROM FIXTURES, NEVER FROM `.asset` (Р56, same discipline
     /// as `RenderClockTests`): `Timings()` builds `NetTimings` by hand,
@@ -45,6 +47,16 @@ namespace Ring.Simulation.Tests
     /// Simulation-side fixtures (no new literal caps are invented here), and
     /// `SnapshotQueue.FutureHorizonTicks` is read off the real constant
     /// rather than restated as a literal 270.
+    ///
+    /// EVERY ADMISSION THAT MUST BE VISIBLE LATER IS FOLLOWED BY `Commit`
+    /// (fix-round 1, IMPORTANT #2). `Admit` only RESERVES a slot — `TryGet`,
+    /// `Count` and `NewestTick` all read the COMMITTED state, so any test
+    /// assertion about residency, capacity or the newest tick that skips the
+    /// matching `Commit` call is testing a reservation the class was never
+    /// told to publish, not the queue's real behavior. `DriveFrame` calls
+    /// `Commit` for every `Accepted` verdict automatically; direct `Admit`
+    /// calls in a few tests call it explicitly where the test's own later
+    /// assertions depend on it.
     public class InterpolationBufferTests
     {
         const ushort Epoch = 7;
@@ -81,11 +93,16 @@ namespace Ring.Simulation.Tests
         /// obligated to follow:
         ///   1. Admit the frame.
         ///   2. `FutureRejected`/`ForeignEpoch` — STOP. `EventDedup` never
-        ///      sees this frame's events at all.
+        ///      sees this frame's events at all — the driver never even
+        ///      calls `TryAcceptEvent` for them.
         ///   3. `Stale`/`Duplicate` — state is not applied, but every event
         ///      still goes through `EventDedup.TryAcceptEvent`.
-        ///   4. `Accepted` — the slot was handed out (state "applied"), and
-        ///      the events go through dedup exactly the same as step 3.
+        ///   4. `Accepted` — the slot was handed out AND `Commit`ted (state
+        ///      "applied" — fix-round 1's two-phase admission means a real
+        ///      caller only commits after successfully decoding, which this
+        ///      driver always does since it never simulates a decode
+        ///      failure), and the events go through dedup exactly the same
+        ///      as step 3.
         static SnapshotQueue.AdmitVerdict DriveFrame(SnapshotQueue queue, EventDedup dedup,
             ushort epoch, uint tick, SnapshotBlocks.EventRecord[] events,
             out bool stateApplied, out bool[] eventAccepted)
@@ -107,6 +124,7 @@ namespace Ring.Simulation.Tests
             if (verdict == SnapshotQueue.AdmitVerdict.Accepted)
             {
                 Assert.IsNotNull(slot, "fixture premise: Accepted always hands back a slot");
+                queue.Commit(tick);
                 stateApplied = true;
             }
 
@@ -147,7 +165,7 @@ namespace Ring.Simulation.Tests
                 "fixture premise: the newest frame the window is measured against");
 
             // Exactly Depth ticks behind the newest — the window edge, task
-            // brief §2.1: "older than the ring can hold at the current newest".
+            // brief §2.1: older than the ring can still use at the current newest.
             uint staleTick = 50u - (uint)queue.Depth;
             var freshEvent = Record(seq: 2, tickDelta: 0);
 
@@ -155,7 +173,7 @@ namespace Ring.Simulation.Tests
                 out bool applied, out bool[] results);
 
             Assert.AreEqual(SnapshotQueue.AdmitVerdict.Stale, verdict);
-            Assert.IsFalse(applied, "task brief §2.2 п.3: a Stale frame's STATE is never applied");
+            Assert.IsFalse(applied, "task brief §2.2 item 3: a Stale frame's STATE is never applied");
             Assert.AreEqual(1, results.Length);
             Assert.IsTrue(results[0],
                 "but its event, never seen before, is still handled — Р31: a packet that merely "
@@ -182,12 +200,14 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 101, out _),
                 "fixture premise: N+1 arrives first");
+            queue.Commit(101);
             Assert.AreEqual(101u, queue.NewestTick);
 
             Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 100, out RenderSnapshot slot),
                 "Р37: a reordered frame still inside the window fills the hole it left — the entire "
                 + "reason the ring exists");
             Assert.IsNotNull(slot);
+            queue.Commit(100);
             Assert.AreEqual(101u, queue.NewestTick,
                 "an older frame arriving after a newer one must not pull NewestTick backward");
 
@@ -201,9 +221,10 @@ namespace Ring.Simulation.Tests
             var queue = NewQueue(out _);
             queue.Reset(Epoch);
             Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 50, out _));
+            queue.Commit(50); // must be a COMMITTED resident to read as Duplicate below.
 
             Assert.AreEqual(SnapshotQueue.AdmitVerdict.Duplicate, queue.Admit(Epoch, 50, out RenderSnapshot slot),
-                "the exact same tick, still resident in the ring, is a duplicate — not a fresh admission");
+                "the exact same tick, still a committed resident, is a duplicate — not a fresh admission");
             Assert.IsNull(slot, "a refused admission never hands back a slot");
         }
 
@@ -220,6 +241,7 @@ namespace Ring.Simulation.Tests
 
             queue.Reset(oldEpoch);
             Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(oldEpoch, 1000, out _));
+            queue.Commit(1000);
             Assert.AreEqual(1000u, queue.NewestTick, "fixture premise: deep inside the old epoch");
 
             queue.Reset(newEpoch);
@@ -230,43 +252,193 @@ namespace Ring.Simulation.Tests
                 "a tick far SMALLER than anything the old epoch ever saw is ordinary in the new one — "
                 + "a restarted match replays its ticks from (near) zero");
             Assert.IsNotNull(slot);
+            queue.Commit(5);
             Assert.AreEqual(5u, queue.NewestTick);
         }
 
         // ---------------------------------------------------------------------
-        // T32.5 (plan Step 1 #5). Overflow evicts the oldest, and counts it (Р83).
+        // T32.5 (plan Step 1 #5, fix-round 1 IMPORTANT #1). Overflow evicts the
+        // TRUE oldest resident, never a physical-slot coincidence (Р83).
         // ---------------------------------------------------------------------
 
         [Test]
-        public void Overflow_EvictsOldest_CountsAndKeepsNewestAlive()
+        public void Overflow_EvictsTrueOldest_NotAModuloCoincidence()
         {
+            // Fix-round 1, IMPORTANT #1: the ORIGINAL bug was a `tick % Depth`
+            // SLOT-ADDRESSING scheme, where a tick exactly `Depth` ahead of the
+            // newest resident collided with that NEWEST resident's own slot
+            // address, evicting it instead of the true oldest — the
+            // reviewer's reproduction used residents 96..100 and an incoming
+            // tick of 105 (96 + Depth) to demonstrate it. That storage scheme
+            // no longer exists (see the class doc): slots are now assigned by
+            // `FreeSlotIndex` — first-come, first-slot — so residents admitted
+            // in increasing order land at slot 0, 1, 2, … in arrival order,
+            // and the true oldest is always slot 0 regardless of its own tick
+            // VALUE. A regression back to "evict `tick % Depth`" would
+            // therefore, by a coincidence specific to THIS fixture's fill
+            // order, still land on slot 0 if the incoming tick happened to be
+            // a multiple of `Depth` (105 = 21 * 5) — passing this test for the
+            // wrong reason. `106` (not a multiple of 5) is chosen instead:
+            // `106 % Depth == 1`, which is slot 1 — resident 97, NOT the true
+            // oldest (96, slot 0) — so a `tick % Depth` regression provably
+            // evicts the WRONG resident here, and this test catches it.
             var queue = NewQueue(out _);
             queue.Reset(Epoch);
             int depth = queue.Depth;
             Assert.AreEqual(5, depth, "fixture premise");
 
-            for (uint t = 1; t <= (uint)depth; t++)
+            // Fill the ring exactly to capacity via FREE slots — no eviction
+            // should happen here at all.
+            for (uint t = 96; t <= 100; t++)
+            {
                 Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, t, out _));
+                queue.Commit(t);
+            }
+            Assert.AreEqual(depth, queue.Count, "fixture premise: ring full via free slots alone");
+            Assert.AreEqual(0, queue.OverflowDroppedSnapshots,
+                "fix-round 1 IMPORTANT #1: filling free slots is not overflow — the counter must not "
+                + "grow while a free slot was available for every one of these admissions");
+
+            const uint incoming = 106; // NOT a multiple of Depth (5) — see the note above.
+            Assert.AreNotEqual(0u, incoming % (uint)depth,
+                "fixture premise: the incoming tick must NOT be a multiple of Depth, or a `tick % "
+                + "Depth` regression would coincidentally land on slot 0 (the true oldest here) and "
+                + "this test would pass for the wrong reason");
+            Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, incoming, out RenderSnapshot slot));
+            Assert.IsNotNull(slot);
+            queue.Commit(incoming);
+
+            Assert.AreEqual(1, queue.OverflowDroppedSnapshots,
+                "exactly one eviction, of a genuinely committed resident — the ring's true oldest");
+            Assert.AreEqual(depth, queue.Count, "the ring never holds more entries than its own depth");
+            Assert.AreEqual(incoming, queue.NewestTick);
+
+            Assert.IsFalse(queue.TryGet(96, out _), "96 was the TRUE oldest — the one that must be evicted");
+            Assert.IsTrue(queue.TryGet(97, out _),
+                "97 — slot 1, exactly where a `tick % Depth` regression would wrongly evict from — "
+                + "must survive");
+            Assert.IsTrue(queue.TryGet(98, out _));
+            Assert.IsTrue(queue.TryGet(99, out _));
+            Assert.IsTrue(queue.TryGet(100, out _), "the NEWEST resident before the gap must survive too");
+            Assert.IsTrue(queue.TryGet(incoming, out _));
+        }
+
+        [Test]
+        public void Overflow_Burst_EvictsInOrder_CountsEveryEviction()
+        {
+            // Follow-on Р83 stress case: several frames past capacity land in
+            // a row, none of them discharged — the counter must track every
+            // eviction, and the survivors must always be the newest ones.
+            var queue = NewQueue(out _);
+            queue.Reset(Epoch);
+            int depth = queue.Depth;
+
+            for (uint t = 1; t <= (uint)depth; t++)
+            {
+                Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, t, out _));
+                queue.Commit(t);
+            }
             Assert.AreEqual(depth, queue.Count, "fixture premise: the ring is full, nothing discharged");
             Assert.AreEqual(0, queue.OverflowDroppedSnapshots, "fixture premise: no eviction has happened yet");
 
-            // A burst of MORE frames than the ring can hold, none of them
-            // discharged — the Р83 scenario (a batch of delayed datagrams).
             const int extra = 3;
             for (uint t = (uint)depth + 1; t <= (uint)(depth + extra); t++)
+            {
                 Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, t, out RenderSnapshot slot),
                     $"tick {t}: a newer frame is accepted even while the ring is completely full");
+                Assert.IsNotNull(slot);
+                queue.Commit(t);
+            }
 
             Assert.AreEqual(extra, queue.OverflowDroppedSnapshots,
-                "Р83: one eviction per frame admitted past the ring's capacity");
+                "Р83: one eviction per frame committed past the ring's capacity");
             Assert.AreEqual(depth, queue.Count, "the ring never holds more entries than its own depth");
 
             for (uint t = 1; t <= extra; t++)
-                Assert.IsFalse(queue.TryGet(t, out _), $"tick {t}: evicted — it was the oldest");
+                Assert.IsFalse(queue.TryGet(t, out _), $"tick {t}: evicted — it was the oldest at the time");
             for (uint t = (uint)extra + 1; t <= (uint)(depth + extra); t++)
                 Assert.IsTrue(queue.TryGet(t, out _),
                     $"tick {t}: still resident — nothing this new was touched by the eviction");
             Assert.AreEqual((uint)(depth + extra), queue.NewestTick);
+        }
+
+        // ---------------------------------------------------------------------
+        // Fix-round 1, IMPORTANT #2. Admission is two-phase: a reservation
+        // that is never Committed must not be visible, must not count, and
+        // must not advance NewestTick.
+        // ---------------------------------------------------------------------
+
+        [Test]
+        public void Admit_WithoutCommit_LeavesSlotInvisible_AndDoesNotAdvanceState()
+        {
+            var queue = NewQueue(out _);
+            queue.Reset(Epoch);
+
+            int depth = queue.Depth;
+            for (uint t = 1; t <= (uint)depth; t++)
+            {
+                Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, t, out _));
+                queue.Commit(t);
+            }
+            Assert.AreEqual(depth, queue.Count, "fixture premise: ring full, all committed");
+
+            // A new tick reserves a slot by evicting the true oldest (tick 1)
+            // — but the caller (simulating Task 44 abandoning a malformed
+            // decode) never calls Commit.
+            uint abandonedTick = (uint)depth + 1;
+            var verdict = queue.Admit(Epoch, abandonedTick, out RenderSnapshot slot);
+            Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, verdict);
+            Assert.IsNotNull(slot, "fixture premise: Accepted still hands back a buffer to decode into");
+
+            Assert.IsFalse(queue.TryGet(1, out _), "the evicted resident's bookkeeping is already gone");
+            Assert.IsFalse(queue.TryGet(abandonedTick, out _),
+                "fix-round 1 IMPORTANT #2: an uncommitted reservation must never be visible to TryGet — "
+                + "a consumer must not read a buffer that was never actually filled under this tick's "
+                + "identity");
+            Assert.AreEqual(depth - 1, queue.Count,
+                "the reservation does not count until committed — capacity reads exactly the eviction, "
+                + "nothing added yet");
+            Assert.AreEqual((uint)depth, queue.NewestTick,
+                "NewestTick must not run ahead of what is actually resident — an abandoned decode must "
+                + "not let a downstream render clock target a moment with no real data behind it");
+
+            // The dangling reservation is silently reclaimed by the NEXT
+            // Admit call (Р82 discipline), regardless of what that call
+            // decides — one abandoned decode costs at most one slot for one
+            // cycle, never a permanent leak.
+            uint nextTick = abandonedTick + 1;
+            Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, nextTick, out RenderSnapshot slot2));
+            Assert.IsNotNull(slot2);
+            queue.Commit(nextTick);
+            Assert.IsTrue(queue.TryGet(nextTick, out _), "positive witness: a fresh, committed admission works normally");
+            Assert.AreEqual(depth, queue.Count, "and capacity is back to full — nothing was permanently lost");
+        }
+
+        [Test]
+        public void Commit_WithWrongOrMissingTick_IsSilentNoOp()
+        {
+            var queue = NewQueue(out _);
+            queue.Reset(Epoch);
+
+            // No pending reservation at all yet.
+            queue.Commit(1);
+            Assert.AreEqual(0, queue.Count, "Commit with nothing pending is a silent no-op (Р82)");
+
+            Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 10, out _));
+            // A tick that does not match the pending reservation.
+            queue.Commit(11);
+            Assert.IsFalse(queue.TryGet(10, out _), "a mismatched Commit must not publish someone else's reservation");
+            Assert.AreEqual(0, queue.Count);
+
+            // Positive witness: the RIGHT tick still works.
+            queue.Commit(10);
+            Assert.IsTrue(queue.TryGet(10, out _));
+            Assert.AreEqual(1, queue.Count);
+
+            // A second Commit of the same tick, with nothing pending anymore,
+            // is also a silent no-op — not a double-count.
+            queue.Commit(10);
+            Assert.AreEqual(1, queue.Count, "a repeated Commit must not double-count the same resident");
         }
 
         // ---------------------------------------------------------------------
@@ -277,11 +449,11 @@ namespace Ring.Simulation.Tests
             typeof(RenderSnapshot).GetFields(BindingFlags.Public | BindingFlags.Instance);
 
         /// Array fields mapped to the COUNT field that bounds their meaningful
-        /// content (task brief §2.5 test 6: "по содержимому до счётчиков" —
-        /// the arena-capacity slots past the count are never written by
-        /// anything and comparing them would only pin `default`s). A future
-        /// array field this map has not been taught about fails LOUDLY in the
-        /// loop below instead of silently comparing nothing.
+        /// content (task brief §2.5 test 6: the arena-capacity slots past the
+        /// count are never written by anything and comparing them would only
+        /// pin defaults). A future array field this map has not been taught
+        /// about fails LOUDLY in the loop below instead of silently comparing
+        /// nothing.
         static readonly Dictionary<string, string> ArrayCountField = new Dictionary<string, string>
         {
             { nameof(RenderSnapshot.Players), nameof(RenderSnapshot.PlayerCount) },
@@ -349,6 +521,66 @@ namespace Ring.Simulation.Tests
             s.WorldStats = new WorldStats { WavesCleared = 2, MobSpawnsSkipped = 1, ProjectileSpawnsSkipped = 4 };
         }
 
+        /// `value == default(T)` for a boxed value of any VALUE type the
+        /// fixture might produce (int/uint/float/bool/byte, enums, `float2`,
+        /// and the plain structs `PlayerState`/`MobState`/`ProjectileState`/
+        /// `WaveState`/`MatchStats`/`WorldStats` — none of them nest a
+        /// reference type, confirmed by inspection of `Simulation/Core/
+        /// SimStates.cs`, so comparing against a freshly-activated instance of
+        /// the same type is exact). A REFERENCE type this helper was never
+        /// taught to compare fails LOUDLY (fix-round 1, IMPORTANT #3:
+        /// "unknown type = loud Fail demanding the filler be taught") rather
+        /// than silently reporting a wrong answer.
+        static bool IsDefaultValue(object value)
+        {
+            System.Type t = value.GetType();
+            if (t.IsValueType) return value.Equals(System.Activator.CreateInstance(t));
+            Assert.Fail($"fixture guard: IsDefaultValue does not know reference type {t} — teach it "
+                + "before trusting the reflection test's coverage of a field of this type");
+            return false; // unreachable — Assert.Fail throws.
+        }
+
+        /// Fix-round 1, IMPORTANT #3. The reflection loop in
+        /// `CopyFrom_CopiesEveryPublicField_ByReflection` compares `source`
+        /// against `dest` — a future NON-array field `FillDistinctValues`
+        /// forgets to populate stays at ITS TYPE'S default in `source` too,
+        /// so a `CopyFrom` that never copies it would still read as
+        /// "agreement" (both sides default) instead of "never exercised".
+        /// This guard runs BEFORE that comparison and independently confirms
+        /// every public field of `source` — and, for the four mapped array
+        /// fields, every element up to the relevant count — reads as
+        /// non-default, so a commented-out line in the filler is caught here,
+        /// by name, rather than passing the CopyFrom comparison for the wrong
+        /// reason.
+        static void AssertEveryFieldIsNonDefault(RenderSnapshot source)
+        {
+            foreach (FieldInfo field in RenderSnapshotFields)
+            {
+                if (field.FieldType.IsArray)
+                {
+                    Assert.IsTrue(ArrayCountField.TryGetValue(field.Name, out string countFieldName),
+                        $"fixture guard: unmapped array field {field.Name} — teach ArrayCountField "
+                        + "before trusting the fixture's coverage of it");
+                    int count = (int)typeof(RenderSnapshot).GetField(countFieldName).GetValue(source);
+                    Assert.Greater(count, 0,
+                        $"fixture guard: {field.Name}'s count is zero — FillDistinctValues must "
+                        + "populate at least one element or this field's copy is never exercised");
+                    System.Array arr = (System.Array)field.GetValue(source);
+                    for (int i = 0; i < count; i++)
+                        Assert.IsFalse(IsDefaultValue(arr.GetValue(i)),
+                            $"fixture guard: {field.Name}[{i}] is still default — FillDistinctValues "
+                            + "must give it a non-default value before the CopyFrom comparison means "
+                            + "anything");
+                }
+                else
+                {
+                    Assert.IsFalse(IsDefaultValue(field.GetValue(source)),
+                        $"fixture guard: {field.Name} is still default after FillDistinctValues — "
+                        + "extend the filler before trusting the reflection test's coverage of it");
+                }
+            }
+        }
+
         [Test]
         public void CopyFrom_CopiesEveryPublicField_ByReflection()
         {
@@ -356,6 +588,7 @@ namespace Ring.Simulation.Tests
             var source = new RenderSnapshot(in arena);
             var dest = new RenderSnapshot(in arena);
             FillDistinctValues(source, in arena);
+            AssertEveryFieldIsNonDefault(source); // fix-round 1 IMPORTANT #3 guard
 
             dest.CopyFrom(source);
 
@@ -431,7 +664,7 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(poisonApplied);
             Assert.AreEqual(0, poisonResults.Length,
                 "the driver never even asks EventDedup about a FutureRejected frame — task brief "
-                + "§2.2 п.2, 'СТОП, дедуп кадра НЕ ВИДИТ'");
+                + "§2.2 item 2: dedup never sees this frame's events at all");
 
             Assert.AreEqual(100u, queue.NewestTick,
                 "Р150е: a rejected frame must not move the admission floor — the poisoned tick never "
@@ -448,12 +681,17 @@ namespace Ring.Simulation.Tests
             // already had, not against the tick the rejected frame named.
             Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 101, out _),
                 "a rejected frame must not poison admission for the very next honest one");
+            queue.Commit(101);
 
             // Boundary witness, on a fresh queue: EXACTLY at the horizon is
-            // still accepted — only STRICTLY further is rejected.
+            // still accepted — only STRICTLY further is rejected. The first
+            // admission MUST be committed, or `_hasNewestAccepted` stays false
+            // and the horizon check below would be skipped entirely (the
+            // "first frame since Reset" bypass), testing nothing.
             var boundaryQueue = NewQueue(out _);
             boundaryQueue.Reset(Epoch);
             Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, boundaryQueue.Admit(Epoch, 200, out _));
+            boundaryQueue.Commit(200);
             uint boundary = 200u + (uint)SnapshotQueue.FutureHorizonTicks;
             Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, boundaryQueue.Admit(Epoch, boundary, out _),
                 "the boundary tick — exactly FutureHorizonTicks ahead — is still accepted");
@@ -522,7 +760,10 @@ namespace Ring.Simulation.Tests
             queue.Reset(Epoch);
 
             for (uint t = 1; t <= 5; t++)
+            {
                 Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, t, out _));
+                queue.Commit(t);
+            }
 
             queue.DiscardBelow(3); // ticks 1, 2 discharged; 3, 4, 5 remain resident.
             Assert.IsFalse(queue.TryGet(1, out _));
@@ -565,6 +806,7 @@ namespace Ring.Simulation.Tests
             for (uint t = 1; t <= 5; t++)
             {
                 Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, t, out _));
+                queue.Commit(t);
                 Assert.IsTrue(queue.TryGet(t, out _));
             }
             queue.DiscardBelow(3);
@@ -575,6 +817,7 @@ namespace Ring.Simulation.Tests
                 for (uint t = 6; t < 6 + 500; t++)
                 {
                     queue.Admit(Epoch, t, out RenderSnapshot _);
+                    queue.Commit(t);
                     queue.TryGet(t, out RenderSnapshot _);
                     queue.DiscardBelow(t - 3);
                 }

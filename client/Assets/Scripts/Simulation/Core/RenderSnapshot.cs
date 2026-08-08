@@ -46,17 +46,18 @@ namespace Ring.Simulation.Core
         }
 
         /// Deep-copies one tick's worth of render data FROM `other` INTO this
-        /// instance (Stage 2 Task 32) — the ONE copy routine every consumer of a
-        /// `RenderSnapshot` pair uses, so a field this class grows in a future
+        /// instance (Stage 2 Task 32) — the ONE copy routine `SimulationRunner`'s
+        /// frozen hitstop pair uses, so a field this class grows in a future
         /// phase only needs teaching to ONE place, not to every call site that
         /// happens to duplicate a snapshot. Moved here, unchanged in body, from
         /// `SimulationRunner`'s private `CopySnapshot(from, to)` (Task 25/Task 4/
         /// Task 5): `SimulationRunner.FreezeRender`/`UnfreezeRender` call
-        /// `to.CopyFrom(from)` where they used to call `CopySnapshot(from, to)`,
-        /// and `Networking.Client.SnapshotQueue` fills its admitted slots through
-        /// this same method — a second, independent copy routine in the queue
-        /// would be exactly the field-by-field drift this consolidation exists
-        /// to prevent.
+        /// `to.CopyFrom(from)` where they used to call `CopySnapshot(from, to)`.
+        /// `Networking.Client.SnapshotQueue` (Task 32's other half) does NOT
+        /// call this method — it hands the caller (Task 44) a preallocated,
+        /// empty slot to DECODE wire bytes directly into, never a snapshot to
+        /// copy FROM (fix-round 1 correction: an earlier draft of this doc
+        /// claimed otherwise).
         ///
         /// Every field here is either a struct or a struct array, so plain
         /// assignment/indexed-copy IS the deep copy — nothing reaches beyond this
