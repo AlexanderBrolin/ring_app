@@ -958,3 +958,118 @@ invalid 0, other 0 (mask Invalid), last Ticked, Created`.
 `EXCLUDED_ASSEMBLY_PREFIXES`, ломавшая и компарер, и сериализатор `float2`) —
 именно того класса неизвестных, ради которых вертикальный спайк ставится первым
 таском этапа.
+
+---
+
+## 10. Дополнения гейта Ф7 (2026-08-09) — что фаза узнала о пакете сверх §1–§9
+
+Собрано фазовым ревью гейта Ф7; каждый пункт подтверждён имплементацией/ревью
+фазы по исходникам PackageCache. Поздний пункт перекрывает ранний текст заметки.
+
+### К §4 (prediction pipeline)
+
+- **Тик реплики штампует КЛИЕНТ** (`Replicate_Authoritative`:
+  `NetworkBehaviour.Prediction.cs:531-532`, `dataTick = TimeManager.LocalTick`);
+  сервер НЕ перештамповывает — строка `data.Data.SetTick(tm.LocalTick)`
+  ЗАКОММЕНТИРОВАНА (`:716-717`). Тик реплики живёт в домене FishNet-клиента:
+  вычитать из него мировой тик — мусор (критический фикс Т36 C1; расстояния —
+  только в мировых тиках, тик реплики — идентичность).
+- **Тик reconcile перештамповывается на ОБОИХ путях**: `:1291`
+  (`SetTick(LocalTick)` в локальной истории) и `:1479`
+  (`Reconcile_Reader_Remote`). Значение из конструктора `IReconcileData` живёт
+  до входа в конвейер.
+- **Пропуск инпута = `default(T)`, НЕ повтор последнего**
+  (`ReplicateDataContainer<T>.GetDefault`, `:698-712`). Для нашего 8-байтового
+  формата default декодируется в прицел `(−3R, −3R)` — легальный, никем не
+  посланный инпут; потреблять несвежие данные нельзя (контракт Т34/Т36:
+  публикуются только `Created`).
+- **`[Replicate]` вызывается и на ЧУЖИХ клиентах при `EnableStateForwarding`**
+  (`:611`, `:620-624` → `ReplicateDefaultData`) — сериализованное поле
+  префаба; без гварда `IsOwner` клиент предсказывал бы чужие объекты
+  default-инпутом (фикс Т34 I2). Судьбу поля решает Т41/Т44 осознанно.
+- **Цикл реконсиляции `PredictionManager`**: `OnReconcile` (`:667-668`) →
+  наш `[Reconcile]` (последняя строка `Reconcile_Client`,
+  `NetworkBehaviour.Prediction.cs:1435`) → петля реплеев до
+  `lastLocalTickCompleted` (`:702-721`) → **`OnPostReconcile`** (`:183`,
+  инвок `:723-724`). «Насколько прыгнула картинка» измеримо ТОЛЬКО в
+  `OnPostReconcile`.
+- **`TickNetworkBehaviour` подписывается на `OnTick`/`OnPostTick` в
+  `OnStartNetwork`** (`:43-49`) — на СПАВНЕ. Вместе с FIFO (§6) это даёт
+  зеркальный приём к «последним не бывает»: подписка в КОНСТРУКТОРЕ до
+  спавна объектов = гарантированно ПЕРВЫЙ (используется `MatchServer`).
+- **`Dispose()` реплик-данных зовётся и при переполнении очереди приёма**:
+  `maximumReplicates` (дефолт 15, `PredictionManager.cs:343`), старейший
+  `Dequeue()+Dispose()` — `NetworkBehaviour.Prediction.cs:1140-1144`.
+- **Дефект XML-дока пакета: `IsReplayedCreated`** — док называет тройную
+  маску, код — `== (Replayed | Created)`. §4 заметки выше тиражирует док —
+  верить телу хелпера, не доку (третий случай «доки против кода»).
+
+### К §4 — кодоген компареров (уточнение Р110)
+
+- `CreateEqualityComparer` — один call-site, replicate-параметр
+  (`PredictionProcessor.cs:717`); reconcile-структурам компарер не генерится.
+- **Компарер эмитится ВСЕГДА, даже для полностью примитивной структуры**, с
+  рекурсией в типы полей (факт Т34: `Comparer___ReplicateData` +
+  `Comparer___System.UInt16` + `Comparer___System.Byte`). Подавление — только
+  `[CustomComparer]` (таблица `GeneralHelper.cs:1113`).
+- `CreateIsDefaultComparer` (`:718`) таблицу НЕ смотрит — `IsDefault___…`
+  генерится всегда; при ручном компарере — как вызов В него. Греп Р110
+  честен: паттерн `Comparer___` не матчит `IsDefault___`/
+  `GeneratedComparers___Internal`.
+- **`IsDefault(data) = AreEqual(data, default)`** (`GeneralHelper.cs:1404-1445`;
+  единственный рантайм-потребитель — `PublicPropertyComparer<T>.IsDefault`,
+  `NetworkBehaviour.Prediction.cs:524`); `Compare`-свойство кодоген заполняет
+  (`:1380`), рантайм не читает. Форма ручного метода: static bool, два
+  параметра ПО ЗНАЧЕНИЮ. `SetDataTick` (`:561`) идёт ДО `isDefaultDel`
+  (`:565`) — тик в сравнении = вечный `false` = resends не сворачиваются.
+- Следствие для §5: **идле-подавление для нашего 8-байтового формата не
+  срабатывает никогда** (середины диапазонов ≠ default) — факт для замера
+  полосы В2, не дефект.
+
+### К §5 (избыточность)
+
+- `consumeExcess = !DropExcessiveReplicates || IsClientOnlyStarted`
+  (`NetworkBehaviour.Prediction.cs:673-677`): при дефолтном
+  `_dropExcessiveReplicates = true` (`PredictionManager.cs:336`) второй
+  `[Replicate]` за серверный тик не наступает — механизм эмпирики §(в).
+  Каталог файла — `Runtime/Managing/Prediction/`, namespace —
+  `FishNet.Managing.Predicting` (ловушка using).
+
+### К §7 (smoothing)
+
+- **`MovementSettings.TeleportThreshold` кэшируется В КВАДРАТЕ**
+  (`UniversalTickSmoother.cs:448`) и сравнивается с ЛИНЕЙНОЙ дистанцией
+  (`MoveRates.cs:216-218`, `Vectors.cs:26-30`): число инспектора ведёт себя
+  как метры², совпадает с метрами только в точке 1.0. Тот же квадрат в
+  threaded-двойнике (`TickSmoothingManager.Types.cs:802-803`).
+- **И это не порог поправки вовсе**: сравнивается дельта трансформа МЕЖДУ
+  тиками (`UniversalTickSmoother.cs:829-831`), куда легитимное движение и
+  поправка входят неразличимо. Вывод Р78/Р106/Р160: снап поправки — свой
+  код от `ReconcileSnapMeters`; `TeleportThreshold` не использовать.
+
+### К §8 (latency simulator)
+
+- `CanSimulate` (`LatencySimulator.cs:46`) — литеральная форма «активен»
+  (`enabled && (latency>0 || loss>0 || outOfOrder>0)`) — годится для
+  обратного чтения ФАКТА из транспорта.
+- Потолок `_latency` — только `[Range(0, 60000)]` (`:85-87`); сеттеры
+  `SetLatency`/`SetPacketLoss` НЕ клампят (`:99`, `:140`) — клампы на нашей
+  стороне (`DevLatencySetup`).
+- `SetEnabled`-вызов `TransportManager.cs:810` живёт под ОТДЕЛЬНЫМ
+  `#if UNITY_EDITOR` (`:799`, OnValidate-хозяйство) — не часть
+  `#if DEVELOPMENT`-пути «гарантии выключения».
+
+### Прочее
+
+- `NetworkConnection.IsActive` (`NetworkConnection.cs:123`) =
+  `ClientId >= 0 && !Disconnecting` — предикат «жив для отправки»;
+  `Broadcast` в мёртвое соединение даёт per-tick `LogWarning`
+  (спам stdout headless) — гвард обязателен (Т36).
+- `ServerManager.Broadcast<T>(conn, msg, requireAuthenticated = true,
+  channel = Channel.Reliable)` (`ServerManager.Broadcast.cs:118`); без
+  аутентификатора FishNet сам помечает соединение аутентифицированным
+  (`ServerManager.cs:591-595`). Оверсайз не роняет — `SendSplitMessage`
+  (`TransportManager.cs:506-512`).
+- `CreateReconcile()` (`NetworkBehaviour:1242`) — виртуальная пустышка,
+  фреймворк её НЕ вызывает: ручной вызов из своего `OnPostTick` — штатный
+  паттерн (демо пакета `RigidbodyPrediction.cs:153-156`).
