@@ -39,8 +39,9 @@ namespace Ring.Data
     /// project relies on. The cap is OURS, not the transport's, and what it
     /// actually squeezes at the shipped numbers is the EVENT budget, never
     /// the entity list: Task 28 measured the worst case at 1180 B (spec §6i
-    /// Р146) with mobs fitting the remainder outright (956 B available, 867
-    /// needed), so entity truncation is unreachable at the defaults — events
+    /// Р146) with mobs fitting the remainder outright (956 B of record room
+    /// after the 44 B fixed part, 864 B of mob records needed), so entity
+    /// truncation is unreachable at the defaults — events
     /// defer and re-ride instead (Р61), and the truncation branch stays
     /// tested through a fixture cap (§6i Р147). Either way the frame never
     /// reaches the transport oversized, which is the point of the gap.

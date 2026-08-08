@@ -18,7 +18,7 @@ namespace Ring.Networking.Protocol
     ///     [0]     version        u8   — ProtocolVersion.Current
     ///     [1..2]  epoch          u16  — MatchEpoch (Р60)
     ///     [3..6]  tick           u32  — server simulation tick
-    ///     [7]     flags          u8   — RESERVED, see below
+    ///     [7]     flags          u8   — bit 0 = truncated (SnapshotHeaderFlags); bits 1-7 free
     ///   then zero or more blocks, back to back, no padding:
     ///     [0]     kind           u8   — block kind tag
     ///     [1..2]  payloadBytes   u16  — LENGTH IN BYTES of what follows
@@ -70,7 +70,8 @@ namespace Ring.Networking.Protocol
     /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 180 B over the
     /// cap ON PAPER. What actually gives at the defaults is the EVENT budget,
     /// never the entity list: the assembler spends the fixed part and the
-    /// mobs first (956 B available, 867 needed), so entity truncation is NOT
+    /// mobs first (956 B of record room after the 44 B fixed part with all
+    /// five tags, 864 B of mob RECORDS needed), so entity truncation is NOT
     /// reachable at the shipped numbers — events are squeezed instead and
     /// carry over (Р61), and the truncation branch is exercised by tests
     /// through a fixture cap (spec §6i Р147). Pinned by
