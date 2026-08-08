@@ -3265,6 +3265,43 @@ namespace Ring.Simulation.Tests
                 "witness: the slot is working — the second copy of THAT event is refused");
         }
 
+        // ---- T29.C8b (fix round 1). The window walk terminates at the u32 edge ----
+
+        [Test]
+        public void Dedup_WindowAdvance_AtTheU32Edge_TerminatesAndAnswers()
+        {
+            // Fix round 1, reviewer finding F1. The incremental wipe used to
+            // walk ABSOLUTE tick values — `for (t = newest + 1; t <= tick; t++)`
+            // — and at tick == uint.MaxValue that condition holds for EVERY
+            // uint: the increment wraps to zero and the loop never leaves. Two
+            // well-formed frames of the tracked epoch reach it, so this is
+            // hostile-input territory (Р82), and the failure mode is the worst
+            // of the three — not a throw, not a wrong answer, a hang. RED for
+            // this test is therefore a HANG killed by the harness timeout, not
+            // an assert. The fix walks the STEP COUNT, bounded by the jump,
+            // itself under WindowTicks here — which no input can stretch.
+            var cfg = TestConfigs.Open();
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            // A jump of exactly the tick-delta byte's ceiling: comfortably
+            // inside the window, so the incremental branch (the one that used
+            // to walk absolute ticks) is the branch that runs.
+            Assert.Less((int)byte.MaxValue, EventDedup.WindowTicks,
+                "premise: a 255-tick jump takes the incremental branch, not the full wipe");
+            const uint nearTop = uint.MaxValue - byte.MaxValue;
+            SnapshotBlocks.EventRecord plant = DedupRecord(seq: 1, tickDelta: 0);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, nearTop, in plant),
+                "the frame that plants the window's edge near the top of u32 is ordinary");
+
+            SnapshotBlocks.EventRecord atTheEdge = DedupRecord(seq: 2, tickDelta: 0);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, uint.MaxValue, in atTheEdge),
+                "a fresh key at tick uint.MaxValue itself is answered on its merits — the "
+                + "incremental wipe must terminate for control to even get here");
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, uint.MaxValue, in atTheEdge),
+                "witness that the masks survived the walk: the second copy is a duplicate");
+        }
+
         // ---- T29.C9. The client half allocates nothing either ----
 
         [Test]

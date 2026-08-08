@@ -65,6 +65,16 @@ namespace Ring.Networking.Client
     ///     tick's bits would silently swallow real events of a new tick, which
     ///     is the failure mode that looks exactly like a delivery bug.
     ///
+    /// KNOWN LIMIT, AND THE OWNER RESOLVES IT (fix round 1, reviewer F2). The
+    /// window advances on whatever original tick the tracked epoch's frames
+    /// name, so a single well-formed frame naming a tick far in the future
+    /// would drag the window — and the state gate's floor — forward until
+    /// `Reset`, conservatively eating every real event behind it. This class
+    /// has no notion of "the present" to bound that with; Task 32 does (it
+    /// owns the render clock), so frames beyond a sane future horizon must be
+    /// discarded BEFORE this class sees them. Recorded here so Task 32
+    /// inherits the obligation explicitly rather than by archaeology.
+    ///
     /// HOSTILE INPUT IS REFUSED, NEVER THROWN (Р82, and Р82 is BOTH halves —
     /// do not throw AND do not hand back rubbish). `seq` is a raw `ushort` off
     /// the wire and the mask is indexed by it, so a value at or above the
@@ -222,8 +232,15 @@ namespace Ring.Networking.Client
             }
             else
             {
-                for (uint t = _newestTick + 1; t <= tick; t++)
-                    System.Array.Clear(_seen, SlotOf(t), _wordsPerTick);
+                // Walk the STEP COUNT, never absolute tick values (fix round 1,
+                // reviewer F1): `for (t = _newestTick + 1; t <= tick; t++)`
+                // holds for EVERY uint when tick == uint.MaxValue — the
+                // increment wraps to zero and the loop never leaves, which two
+                // well-formed frames of the tracked epoch can reach. The step
+                // count is bounded by `jump`, itself under WindowTicks on this
+                // branch, and no input stretches that.
+                for (uint step = 1; step <= jump; step++)
+                    System.Array.Clear(_seen, SlotOf(_newestTick + step), _wordsPerTick);
             }
             _newestTick = tick;
         }
