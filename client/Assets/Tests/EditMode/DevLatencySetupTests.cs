@@ -31,8 +31,8 @@ namespace Ring.Simulation.Tests
             // Р107, the main test of this task: NetConfig's shipped default
             // is LatencySimRttMs = 80 (round-trip); the transport must
             // receive HALF of that, 40, not 80 — the doubling bug this
-            // whole task exists to prevent (urok 56, FishNet's own tooltip
-            // is false — task-33-brief.md §0a).
+            // whole task exists to prevent (lesson 56, FishNet's own
+            // tooltip is false — task-33-brief.md §0a).
             var (sim, net, stats) = Fixture();
             Assert.AreEqual(80, net.LatencySimRttMs, "fixture premise: NetConfig's shipped default");
 
@@ -79,6 +79,8 @@ namespace Ring.Simulation.Tests
             // land in NetStats, so Task 48's overlay never has to divide in
             // its head.
             var (sim, net, stats) = Fixture();
+            Assert.AreEqual(80, net.LatencySimRttMs, "fixture premise: NetConfig's shipped default");
+            Assert.AreEqual(5f, net.LatencySimLossPercent, "fixture premise: NetConfig's shipped default");
 
             DevLatencySetup.Apply(sim, net, stats);
 
@@ -115,6 +117,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, sim.GetLatency());
             Assert.AreEqual(0d, sim.GetPacketLost());
             Assert.IsFalse(stats.LatencySimActive);
+            // Fix-round 1, I-3: NetStats stores APPLIED facts, not the raw
+            // hostile knobs straight through — a mutation that writes
+            // net.LatencySimRttMs verbatim would leak -80 here instead of
+            // the clamped 0.
+            Assert.AreEqual(0, stats.LatencySimRttMs);
+            Assert.AreEqual(0, stats.LatencySimOneWayMs);
+            Assert.AreEqual(0f, stats.LatencySimLossPercent);
 
             // Witness (same assertion as Apply_WritesBothNumbersAndTheFlagToNetStats /
             // test 1/3): the same pair of methods fed VALID numbers DOES
@@ -154,6 +163,65 @@ namespace Ring.Simulation.Tests
             DevLatencySetup.Apply(sim, net, stats);
 
             Assert.AreEqual(1.0d, sim.GetPacketLost());
+            // Fix-round 1, I-3: the applied fact in NetStats mirrors the
+            // clamp too — 250f in, 100f (not 250f) recorded as applied.
+            Assert.AreEqual(100f, stats.LatencySimLossPercent);
+        }
+
+        [Test]
+        public void Apply_LossAtExactlyHundredPercentGivesExactlyOne()
+        {
+            // Fix-round 1, M-3: the boundary itself, distinct from
+            // Apply_LossAboveHundredPercentClampsToOne (250f, ABOVE the
+            // ceiling) — 100f must land on EXACTLY 1.0 through the ordinary
+            // conversion path, not through the clamp branch, and not on
+            // 0.999... or 1.000...1 from a rounding artifact.
+            var (sim, net, stats) = Fixture();
+            net.LatencySimLossPercent = 100f;
+
+            DevLatencySetup.Apply(sim, net, stats);
+
+            Assert.AreEqual(1.0d, sim.GetPacketLost());
+        }
+
+        [Test]
+        public void OneWayLatencyMs_TinyPositiveRttRoundsDownToZero()
+        {
+            // Fix-round 1, M-3: the nearest surprise of Р107 — a POSITIVE
+            // RTT of 1 ms still rounds down to 0 one-way ms (integer
+            // division truncates), not just a negative-input edge case.
+            Assert.AreEqual(0, DevLatencySetup.OneWayLatencyMs(1));
+        }
+
+        [Test]
+        public void OneWayLatencyMs_ClampsToSixtyThousandCeiling()
+        {
+            // Fix-round 1, M-1: FishNet's own Inspector ceiling on
+            // _latency (LatencySimulator.cs:85-87, [Range(0, 60000)]) —
+            // SetLatency itself does not enforce it (task-33-brief.md §0a),
+            // so OneWayLatencyMs is the only place it's enforced at all.
+            Assert.AreEqual(60000, DevLatencySetup.OneWayLatencyMs(int.MaxValue));
+        }
+
+        [Test]
+        public void Apply_NaNLossIsTreatedAsZero()
+        {
+            // Fix-round 1, I-2: `lossPercent <= 0f` is FALSE for NaN, so a
+            // naive guard lets NaN fall through to SetPacketLoss and
+            // NetStats unclamped (every comparison against NaN is false,
+            // including the upper clamp's `> 1d` check). NaN must be
+            // treated as "no loss configured", same as an ordinary
+            // non-positive percentage — and must not poison
+            // LatencySimActive, since the RTT knob (still the shipped
+            // default 80) keeps the simulator genuinely active on its own.
+            var (sim, net, stats) = Fixture();
+            net.LatencySimLossPercent = float.NaN;
+
+            DevLatencySetup.Apply(sim, net, stats);
+
+            Assert.AreEqual(0d, sim.GetPacketLost());
+            Assert.AreEqual(0f, stats.LatencySimLossPercent);
+            Assert.IsTrue(stats.LatencySimActive, "the RTT knob alone must still report activity");
         }
     }
 }

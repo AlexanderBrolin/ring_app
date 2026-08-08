@@ -40,10 +40,22 @@ namespace Ring.Networking
     /// release build simply never calls Apply and the fields stay at their
     /// C# defaults (false/0/0/0f) for free, so NetStats keeps ONE ABI
     /// across both configurations instead of growing a conditional shape.
-    /// LatencySimActive mirrors the transport's own truth
-    /// (LatencySimulator.CanSimulate, LatencySimulator.cs:46) rather than
-    /// the mere fact that Apply ran: it reads false whenever both knobs are
-    /// zero, even though the simulator was still enabled.
+    /// LatencySimActive mirrors the transport's own truth, read BACK from
+    /// the simulator after applying (LatencySimulator.CanSimulate,
+    /// LatencySimulator.cs:46 — fix-round 1, M-2) rather than the mere fact
+    /// that Apply ran: it reads false whenever both knobs are zero, even
+    /// though the simulator was still enabled.
+    ///
+    /// RttMs/OneWayMs/LossPercent are the APPLIED facts, not a copy of
+    /// NetConfig's raw knobs (fix-round 1, I-3, coordinator decision variant
+    /// a): RttMs = OneWayMs * 2 and LossPercent = the fraction actually
+    /// handed to SetPacketLoss, times 100. "OneWayMs == RttMs / 2" is
+    /// therefore true across the WHOLE input domain, including hostile
+    /// ones — a negative NetConfig.LatencySimRttMs never leaks through as
+    /// -80, it reads back as 0/0/0 with LatencySimActive false. For every
+    /// well-behaved input (CR 7's own 80/5) the applied facts and the raw
+    /// knobs are numerically identical, so this is invisible at the
+    /// defaults.
     public sealed class NetStats
     {
         public int EdgeRequestsRejected, StaleSnapshots, DuplicateSnapshots,
@@ -51,11 +63,12 @@ namespace Ring.Networking
             UnconfirmedGhosts;
         public long BytesDown, BytesUp;
 
-        // Stage 2 Task 33 (spec §3.14, Р107): dev latency-simulator facts
-        // for the Task 48 overlay. RttMs is the owner's knob (NetConfig.
-        // LatencySimRttMs); OneWayMs is what DevLatencySetup actually
-        // handed the transport (= RttMs / 2, Р107) so the overlay never has
-        // to divide in its head. LossPercent is per-direction, same as the
+        // Stage 2 Task 33 (spec §3.14, Р107): dev latency-simulator APPLIED
+        // FACTS for the Task 48 overlay (fix-round 1, I-3 — not a copy of
+        // the raw NetConfig knobs, see the class doc above). RttMs is
+        // derived back from OneWayMs (= OneWayMs * 2) so the overlay never
+        // has to divide in its head and the invariant holds even on
+        // hostile input. LossPercent is per-direction, same as the
         // NetConfig field it mirrors (5 => ~9.75% round-trip).
         public bool LatencySimActive;
         public int LatencySimRttMs;

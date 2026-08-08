@@ -151,10 +151,11 @@ namespace Ring.Simulation.Tests
             // 14, not 10: Stage 2 Task 33 (plan :1603-1606) added the four
             // LatencySim* fields — a deliberate, sanctioned composition
             // change (task-33-brief.md §2.3), not drift. This literal is a
-            // characterization pin; a NINTH addition should fail here too
+            // characterization pin; a FIFTEENTH field should fail here too
             // and prompt the same update, not slide through silently.
             Assert.AreEqual(14, netFieldNames.Count,
-                "fourteen network counters expected — the composition of NetStats has changed");
+                "fourteen NetStats fields expected (ten counters + four latency-simulator " +
+                "facts) — the composition of NetStats has changed");
 
             foreach (FieldInfo f in typeof(MatchStats).GetFields())
                 Assert.IsFalse(netFieldNames.Contains(f.Name),
