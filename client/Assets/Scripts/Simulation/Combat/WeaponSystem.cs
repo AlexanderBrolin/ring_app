@@ -3,19 +3,36 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.Combat
 {
-    /// PUBLIC FOR EXACTLY ONE MEMBER (owner decision, 2026-08-08, Stage 2 Task
-    /// 35 §0a, variant "a"): the class itself is `public` solely so `CanFire`
-    /// below — the single home of the can-fire predicate — is reachable from
-    /// outside `Ring.Simulation` at all. Everything else stays `internal`:
+    /// PUBLIC FOR EXACTLY TWO MEMBERS (owner decision, 2026-08-08, Stage 2
+    /// Task 35 §0a variant "a", extended the same day to variant "Б" —
+    /// fix-round 1, finding I-1): the class itself is `public` so `CanFire`
+    /// and `WouldFireThisTick` below are reachable from outside
+    /// `Ring.Simulation` at all. Everything else stays `internal`:
     /// `Update`/`AdvanceNoSpawn` are mutators no outside caller may drive
-    /// (their own docs cover why), and `Advance`/`SpawnShot` were never public
-    /// to begin with. The two consumers this opens the door for are ghost
-    /// projectiles (Task 35, this same task) and the Presentation-side copy
-    /// of this predicate at `SimulationRunner:127-146` (Task 43, not yet
-    /// lifted). Resilience against future weapons/upgrades was checked before
-    /// taking this decision: the predicate is parameterized entirely by
-    /// `WeaponSimConfig`, and balance lives in data (CR 6) — no code changes
-    /// with it.
+    /// (their own docs cover why), and `Advance`/`SpawnShot` were never
+    /// public to begin with.
+    ///
+    /// WHY A SECOND MEMBER. `CanFire` alone (variant "a") turned out coarser
+    /// than "a shot fires this tick" — it never reads `FireCooldown` — so a
+    /// caller gating a per-tick spawn on it alone (ghost projectiles, Task
+    /// 35) would fire on EVERY tick the trigger stays held, not once per
+    /// `FireInterval`: measured at the shipped balance, 30 ghosts/s against
+    /// an actual 8.33 shots/s (`FireInterval` 0.12 s), a 3.6x over-spawn that
+    /// permanently shifts the FIFO `GhostProjectiles.Confirm` matches
+    /// against. `WouldFireThisTick` closes that gap without a third body of
+    /// fire-timing logic (CR 2) — it reads `CanFire`'s own answer and adds
+    /// exactly the one further line `Advance`'s own loop decides on.
+    ///
+    /// The three consumers this opens the door for: ghost projectiles (Task
+    /// 35 — the spawn gate, switched from `CanFire` to `WouldFireThisTick`
+    /// in fix-round 1), the Presentation-side copy at
+    /// `SimulationRunner:127-146` (Task 43, not yet lifted — see
+    /// `WouldFireThisTick`'s own doc for a dated defect in that copy worth
+    /// fixing when it is lifted), and per-tick fire detection generally
+    /// (Task 44). Resilience against future weapons/upgrades was checked
+    /// before taking either decision: both predicates are parameterized
+    /// entirely by `WeaponSimConfig`/`PlayerState`, and balance lives in data
+    /// (CR 6) — no code changes with it.
     public static class WeaponSystem
     {
         /// Advances the weapon by one tick (spec §3.5): cooldown always ticks down,
@@ -105,10 +122,18 @@ namespace Ring.Simulation.Combat
         internal static void AdvanceNoSpawn(ref PlayerState p, in SimInput input, in SimConfig cfg)
             => Advance(ref p, in input, in cfg, null, ProjectileIds.NoOwner);
 
-        /// Single home of the "can fire this frame" predicate — consumed by
-        /// Advance above, and by the client-side consumers that must agree with it
-        /// exactly (SimulationRunner.WouldFireThisFrame, Stage 2 Task 43; ghost
-        /// projectiles, Stage 2 Task 35), so the three can never drift apart.
+        /// Single home of the FOUR eligibility terms (FireHeld, Alive, dash,
+        /// slide) — consumed by Advance above directly, and by every
+        /// client-side consumer that must agree with them exactly, either
+        /// directly or (fix-round 1) through `WouldFireThisTick` below:
+        /// ghost projectiles (Stage 2 Task 35) read it via that composition;
+        /// the Presentation-side copy (SimulationRunner.WouldFireThisFrame,
+        /// Stage 2 Task 43, not yet lifted) restates these four terms inline
+        /// today and should call `WouldFireThisTick` once lifted (see that
+        /// method's own doc for a dated defect in the copy's cooldown term).
+        /// Deliberately does NOT decide "fires THIS tick" by itself — see
+        /// `WouldFireThisTick`'s own doc for why that needs a fifth term this
+        /// method does not own.
         ///
         /// p.Alive is redundant for today's authoritative call site —
         /// SimulationWorld.TickAll (Task 23) only reaches Update from its Alive
@@ -123,6 +148,47 @@ namespace Ring.Simulation.Combat
             => input.FireHeld && p.Alive
                && (weapon.CanFireWhileDash || p.DashTimer <= 0f)
                && (weapon.CanFireWhileSlide || p.SlideTimer <= 0f);
+
+        /// Whether the authoritative loop in `Advance` above would spawn AT
+        /// LEAST ONE round on the tick that consumes `p`/`input` — the
+        /// second half of decision "Б" (owner decision 2026-08-08, fix-round
+        /// 1 finding I-1), added because `CanFire` alone is coarser than
+        /// this (see the class doc's "WHY A SECOND MEMBER" paragraph for the
+        /// measured over-spawn a `CanFire`-only gate produces). Reuses
+        /// `CanFire`'s own answer rather than restating it (CR 2) and adds
+        /// exactly the one further line `Advance`'s own loop decides on:
+        /// `FireCooldown` AFTER this tick's unconditional `-= TickDt` at
+        /// line 57 above, tested with the SAME `<= 0f` the loop itself uses.
+        ///
+        /// STATE CONTRACT — SAME AS `CanFire`'s OWN: `p` must be the
+        /// player's state AFTER this tick's movement phase and BEFORE its
+        /// weapon phase (DashTimer/SlideTimer already settled by movement,
+        /// FireCooldown not yet decremented for this tick), never a stale
+        /// copy from before movement ran.
+        ///
+        /// A `bool` CANNOT EXPRESS ">1 SHOT THIS TICK". `Advance`'s own
+        /// `while` loop can fire more than once per tick when `FireInterval`
+        /// is shorter than `TickDt` — spec-legal, unreached at the shipped
+        /// balance (`FireInterval` 0.12 s > `TickDt`'s ~0.0333 s). A caller
+        /// that needs an exact shot COUNT, not merely "would it fire", gets
+        /// nothing more from this method — recorded here rather than
+        /// assumed away, since nothing in the signature rules it out for a
+        /// future weapon.
+        ///
+        /// TASK 43'S OWN COPY (`SimulationRunner.WouldFireThisFrame`,
+        /// `SimulationRunner.cs:140-149`) TESTS A NARROWER CONDITION — a
+        /// dated defect for whoever lifts it. That copy gates on
+        /// `p.FireCooldown <= 0f`; this method gates on `p.FireCooldown <=
+        /// TickDt` (algebraically: `(p.FireCooldown - TickDt) <= 0f`).
+        /// Every state the copy accepts, this method also accepts (`0f <=
+        /// TickDt` always holds), but not the reverse: the half-open window
+        /// `(0, TickDt]` answers "would fire" here and does not there.
+        /// Replacing that copy with a call to this method is Task 43's job,
+        /// not this fix-round's — see the class doc.
+        public static bool WouldFireThisTick(in PlayerState p, in SimInput input,
+            in WeaponSimConfig weapon)
+            => CanFire(in p, in input, in weapon)
+               && (p.FireCooldown - SimulationWorld.TickDt) <= 0f;
 
         /// The shot itself: everything the authoritative sink owns and a
         /// predicting client must not (CR 3) — the round, the spread draw that

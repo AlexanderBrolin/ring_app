@@ -13,30 +13,31 @@ namespace Ring.Networking.Client
     /// assembly, same as `EventDedup`/`SnapshotQueue` beside it — nothing
     /// here touches UnityEngine or FishNet, and Simulation.Combat's
     /// `WeaponSystem` is the only cross-assembly dependency, reached through
-    /// its one public member (`CanFire`, task-35-brief §0a/§2.1).
+    /// its two public members (`CanFire`/`WouldFireThisTick`, task-35-brief
+    /// §0a/§2.1, decision "Б" — fix-round 1, finding I-1).
     ///
     /// NO FLIGHT MATH LIVES HERE, ON PURPOSE. Task 35's whole job is
     /// deciding WHICH tracer exists and for how long, never WHERE it flies —
     /// geometry (position, velocity, the aim/spread draw `WeaponSystem.
     /// SpawnShot` owns) is Ф9's job (the renderer), and this class never
     /// reads a single field of `PlayerState`/`SimInput`/`WeaponSimConfig`
-    /// beyond what `CanFire` itself consumes. The one "trajectory" parameter
+    /// beyond what the gate itself consumes. The one "trajectory" parameter
     /// this class stores is the predicted BIRTH TICK (brief §2.2: opaque
     /// storage, at minimum the birth tick) — everything a ghost's own
     /// lifecycle (`Advance` below) needs, and nothing a renderer would need
     /// to relitigate.
     ///
-    /// THE SPAWN GATE IS EXACTLY `WeaponSystem.CanFire`, NO MORE AND NO LESS
-    /// (owner decision 0a, 2026-08-08). `CanFire` is coarser than "a shot
-    /// actually leaves the barrel this tick" — it never reads
-    /// `PlayerState.FireCooldown`, which gates the separate fire-loop inside
-    /// `WeaponSystem`'s private `Advance` — so this class does not attempt to
-    /// replicate "the exact tick a round fires" itself. That timing decision
-    /// belongs to whichever caller invokes `TrySpawnFromPrediction` (Task
-    /// 44): `CanFire` here is the single shared eligibility gate three
-    /// consumers agree on bit for bit (`WeaponSystem.Advance` itself, the
-    /// Presentation copy at `SimulationRunner:127-146` pending Task 43, and
-    /// this class) — see `WeaponSystem.CanFire`'s own doc.
+    /// THE SPAWN GATE IS `WeaponSystem.WouldFireThisTick` (fix-round 1,
+    /// finding I-1 — supersedes the original decision 0a text below).
+    /// `CanFire` alone is coarser than "a shot fires this tick": it never
+    /// reads `FireCooldown`, so gating a per-tick spawn on it alone fires on
+    /// EVERY tick the trigger stays held — measured, a 3.6x over-spawn
+    /// against the shipped `FireInterval`, which permanently shifts the FIFO
+    /// `Confirm` matches against (fix-round 1 finding I-1's own numbers).
+    /// `WouldFireThisTick` composes `CanFire` with the one further term
+    /// `Advance`'s own loop decides the shot on — see that method's doc for
+    /// the exact formula and its state contract (same as `CanFire`'s own:
+    /// AFTER movement, BEFORE this tick's weapon phase).
     ///
     /// GHOST IDS ARE NEGATIVE AND NEVER REMAPPED (Р67, plan finding C-2). The
     /// id handed back by `TrySpawnFromPrediction` is the ONLY id this ghost
@@ -50,7 +51,11 @@ namespace Ring.Networking.Client
     /// counter that MINTS these ids starts at -1 and counts DOWN — server ids
     /// arrive as `u16` (0..65535) over the wire, so the two spaces can never
     /// collide by construction, with no runtime check needed to keep them
-    /// apart.
+    /// apart. Freeing a slot (expiry, translation, or the fix-round 1
+    /// `maxTrackTicks` ceiling below) never returns its GHOST id to
+    /// circulation either — only the physical SLOT is reclaimed — so a stale
+    /// visual entity keyed off a forgotten id can never collide with a new
+    /// ghost's id later in the same match.
     ///
     /// MATCHING IS POSITIONAL FIFO, NOT IDENTITY (brief §2.2). The server
     /// spawns a shooter's own rounds in the order their predicted ticks fired
@@ -64,34 +69,73 @@ namespace Ring.Networking.Client
     /// consumer (telemetry, latency measurement) is free to start reading it
     /// without a signature change.
     ///
+    /// KNOWN LIMIT, DEFERRED TO THE CALLER (fix-round 1, finding I-4 — same
+    /// discipline `EventDedup`'s own class doc records for its finding F2).
+    /// I-1/I-2 remove the two causes of MASS FIFO desync (over-spawn, and
+    /// mass-expiry on a backward replayed tick); what remains is a single
+    /// residual case neither this class nor any code change can close: a
+    /// server-side spawn event is lost in transit (events are unreliable,
+    /// Р58), so the ghost it would have confirmed instead ages out via
+    /// `ghostConfirmTicks` and is forgotten — and when that lost
+    /// confirmation's OWN `Confirm` call eventually, wrongly, never arrives
+    /// (the server only ever sends it once per spawn), the FIFO itself never
+    /// desyncs from this case alone. The genuine residual risk is a
+    /// DIFFERENT shape: a confirmation arrives for a ghost that has ALREADY
+    /// expired, while the queue is NOT empty (a newer ghost is waiting) — the
+    /// stray `Confirm` then matches that newer ghost instead of no-oping,
+    /// because this class has no wire-carried identity to refuse it by (the
+    /// class doc's own "MATCHING IS POSITIONAL FIFO" paragraph is exactly
+    /// why: the protocol never gives `Confirm` anything else to check). The
+    /// FIFO SELF-CORRECTS the moment the queue next runs empty — one bad
+    /// match costs one mismatched ghost, never a permanent drift — so the
+    /// visible symptom is a single wrong tracer identity, not a cascading
+    /// desync. Closing this fully would require the wire protocol to carry a
+    /// client-assigned correlation id the server echoes back, which is out
+    /// of this class's — and this fix-round's — scope; Task 44 inherits the
+    /// obligation to decide whether that residual risk is worth a protocol
+    /// change.
+    ///
     /// STORAGE: FIXED SLOTS, A CIRCULAR FIFO OF SLOT INDICES, A REUSED
     /// SCRATCH BUFFER — nothing allocates after the constructor returns
     /// (same discipline as `EventDedup`/`SnapshotQueue`). `capacity` bounds
     /// the total number of ghost RECORDS alive at once (confirmed and
     /// unconfirmed together) — a confirmed ghost keeps its slot until
-    /// `TryTranslateEnd` (its own end event) frees it, it is never aged out
-    /// by `Advance`. A serverId's "already confirmed" bookkeeping doubles as
-    /// its own duplicate-guard: an occupied slot's `_serverId` is the
-    /// sentinel `NoServerId` (-1) until `Confirm` assigns it, so scanning for
-    /// a match answers both "is this a duplicate Confirm" and "which slot
-    /// does this end event belong to" with the same O(capacity) scan
-    /// `SnapshotQueue`'s own class doc argues for at this scale (a match's
-    /// worth of simultaneous own-shot ghosts is small — dozens, not
-    /// thousands).
+    /// `TryTranslateEnd` (its own end event) frees it, OR until
+    /// `maxTrackTicks` (fix-round 1, finding I-3) frees it as registry
+    /// hygiene if no end event ever arrives. A serverId's "already
+    /// confirmed" bookkeeping doubles as its own duplicate-guard: an
+    /// occupied slot's `_serverId` is the sentinel `NoServerId` (-1) until
+    /// `Confirm` assigns it, so scanning for a match answers both "is this a
+    /// duplicate Confirm" and "which slot does this end event belong to"
+    /// with the same O(capacity) scan `SnapshotQueue`'s own class doc argues
+    /// for at this scale (a match's worth of simultaneous own-shot ghosts is
+    /// small — dozens, not thousands).
     ///
     /// A SPAWN THAT FINDS NO FREE SLOT REFUSES SILENTLY (Р82), exactly like a
-    /// `CanFire` refusal — `TrySpawnFromPrediction` returns `false` either
-    /// way, and the caller cannot and need not distinguish "the weapon
-    /// couldn't fire" from "every record slot is already in use". In
-    /// production `capacity` is sized off the arena's own projectile cap
-    /// (task-35-brief §2.2), so this is a defensive floor, not an expected
-    /// path.
+    /// gate refusal — `TrySpawnFromPrediction` returns `false` either way,
+    /// and the caller cannot and need not distinguish "the weapon wouldn't
+    /// fire" from "every record slot is already in use" (pinned by
+    /// `TrySpawnFromPrediction_CapacityExhaustedRefusesSilently`, fix-round
+    /// 1 M-4). In production `capacity` is sized off the arena's own
+    /// projectile cap (task-35-brief §2.2) and `maxTrackTicks` reclaims any
+    /// slot an end event never frees (I-3), so exhaustion is a defensive
+    /// floor, not an expected path.
     ///
-    /// HOSTILE INPUT IS REFUSED, NEVER THROWN (Р82). `Confirm`/
-    /// `TryTranslateEnd` reject a negative `serverId` outright, before it
-    /// can ever collide with the `NoServerId` sentinel an unconfirmed slot
-    /// carries — every other branch below answers with a bool/no-op rather
-    /// than an exception, on any input.
+    /// HOSTILE INPUT (WIRE-SOURCED DATA) IS REFUSED, NEVER THROWN (Р82) —
+    /// fix-round 1, finding M-9 narrows this from the original "any input"
+    /// phrasing. `Confirm`/`TryTranslateEnd` reject a negative `serverId`
+    /// outright, before it can ever collide with the `NoServerId` sentinel
+    /// an unconfirmed slot carries — every other branch on the DATA path
+    /// (wire-sourced serverIds/ticks) answers with a bool/no-op rather than
+    /// an exception, on any such input. The CONSTRUCTOR'S OWN arguments are
+    /// a different trust boundary: `stats` is required and a `null` there is
+    /// a wiring bug of the caller (Task 44's own bootstrap), deliberately
+    /// NOT swallowed — the first `Advance`/expiry call dereferences it and
+    /// throws an ordinary `NullReferenceException`, the same discipline Task
+    /// 34's fix-round 1 (finding M7) established for a required constructor
+    /// dependency: a caller that forgot to wire a dependency should fail
+    /// loudly at the seam, not have this class pretend a match can run
+    /// without health telemetry.
     public sealed class GhostProjectiles
     {
         /// The value an occupied slot's `_serverId` carries while its ghost
@@ -108,6 +152,7 @@ namespace Ring.Networking.Client
 
         readonly int _capacity;
         readonly int _ghostConfirmTicks;
+        readonly int _maxTrackTicks;
         readonly NetStats _stats;
 
         readonly bool[] _occupied;
@@ -127,18 +172,41 @@ namespace Ring.Networking.Client
 
         /// Reused scratch `Advance` writes expired ghost ids into before
         /// handing back a view over it — sized to `capacity` because no
-        /// single `Advance` call can expire more ghosts than the class can
-        /// hold at once. This is the "out-buffer without allocations" the
-        /// brief leaves to the implementer's own form (§2.2).
+        /// single `Advance` call can expire more UNCONFIRMED ghosts than the
+        /// class can hold at once. This is the "out-buffer without
+        /// allocations" the brief leaves to the implementer's own form
+        /// (§2.2). ONLY unconfirmed expiries land here — a confirmed ghost
+        /// freed by the `maxTrackTicks` ceiling (I-3) never does, by design
+        /// (registry hygiene, not an unfulfilled prediction). THE RETURNED
+        /// VIEW IS INVALIDATED BY THE NEXT `Advance` OR `Reset` CALL
+        /// (fix-round 1, M-6): it is a window over this SAME reused array,
+        /// not a copy, so a caller that needs to hold onto the ids past that
+        /// point must finish consuming them (or copy them out) first — the
+        /// same discipline any span over a reused buffer demands.
         readonly int[] _expiredScratch;
         int _expiredCount;
 
         int _nextGhostId;
 
-        public GhostProjectiles(int capacity, int ghostConfirmTicks, NetStats stats)
+        /// `capacity`/`ghostConfirmTicks`/`maxTrackTicks` all clamp to
+        /// defensive floors — an owner-tuned `NetConfig`/fixture value is
+        /// never trusted at face value, the same discipline `SnapshotQueue`'s
+        /// own constructor applies to `InterpBufferTicks` (fix-round 1,
+        /// M-4): `capacity` floors at 1 (a zero-or-negative capacity has no
+        /// representation an array-backed ring can use); `ghostConfirmTicks`
+        /// floors at 0 — AT (not fewer than) 0 confirm-ticks a ghost still
+        /// survives the tick it was born on (`Advance` never expires a ghost
+        /// on its own birth tick, see that method's doc), gasping only on
+        /// the very next one, i.e. a "life of one tick" rather than zero;
+        /// `maxTrackTicks` floors at `ghostConfirmTicks` itself (post-clamp)
+        /// — a ceiling BELOW the confirm window would kill a freshly
+        /// confirmed ghost before an unconfirmed one would even expire,
+        /// which is never the intent of a "registry hygiene" ceiling (I-3).
+        public GhostProjectiles(int capacity, int ghostConfirmTicks, int maxTrackTicks, NetStats stats)
         {
             _capacity = math.max(1, capacity);
             _ghostConfirmTicks = math.max(0, ghostConfirmTicks);
+            _maxTrackTicks = math.max(_ghostConfirmTicks, maxTrackTicks);
             _stats = stats;
 
             _occupied = new bool[_capacity];
@@ -152,16 +220,19 @@ namespace Ring.Networking.Client
             _nextGhostId = FirstGhostId;
         }
 
-        /// Spawns a ghost for a predicted shot, gated EXACTLY by
-        /// `WeaponSystem.CanFire` — `false` on refusal (gate closed or no
-        /// free slot, Р82) with `ghostId` left at 0. No flight math, no
-        /// spread draw: the class doc explains why `predicted`/`input`/
-        /// `weapon` exist only to feed the gate.
+        /// Spawns a ghost for a predicted shot, gated by
+        /// `WeaponSystem.WouldFireThisTick` (fix-round 1, finding I-1 —
+        /// supersedes the original `CanFire`-only gate) — `false` on refusal
+        /// (gate closed or no free slot, Р82) with `ghostId` left at 0 on
+        /// EITHER refusal path (fix-round 1, M-8 — the caller never needs to
+        /// tell them apart, see the class doc). No flight math, no spread
+        /// draw: the class doc explains why `predicted`/`input`/`weapon`
+        /// exist only to feed the gate.
         public bool TrySpawnFromPrediction(in PlayerState predicted, in SimInput input,
             in WeaponSimConfig weapon, uint predictedTick, out int ghostId)
         {
             ghostId = 0;
-            if (!WeaponSystem.CanFire(in predicted, in input, in weapon)) return false;
+            if (!WeaponSystem.WouldFireThisTick(in predicted, in input, in weapon)) return false;
 
             int slot = FreeSlotIndex();
             if (slot < 0) return false;
@@ -181,10 +252,28 @@ namespace Ring.Networking.Client
 
         /// Matches `serverId` to the OLDEST still-unconfirmed ghost (FIFO,
         /// class doc) and remembers the pairing internally — the ghost's own
-        /// id and birth tick never change. A duplicate `serverId` (already
-        /// confirmed) or an empty queue (nothing waiting — including a late
-        /// confirmation for a ghost that already expired, class doc) is a
-        /// silent no-op, same as any other Р82 refusal.
+        /// id and birth tick never change. Two refusals, BOTH silent
+        /// no-ops (Р82), and NEITHER decorative — see
+        /// `Confirm_DuplicateServerIdIsSilentNoOp`/
+        /// `Confirm_AfterExpiryIsSilentNoOp` (fix-round 1, finding I-5
+        /// pinned the first with a dedicated test; it was reachable but
+        /// unpinned before):
+        ///   * a DUPLICATE `serverId` — an occupied slot already carries it.
+        ///     This guard is guaranteed ONLY while that slot is still ALIVE
+        ///     (occupied): once `TryTranslateEnd` has freed it, a
+        ///     POST-FACTUM duplicate (the same wire event delivered twice
+        ///     AFTER this class already forgot the first) is NOT this
+        ///     class's to catch — the id space has moved on and nothing
+        ///     here remembers a translated serverId anymore. That is the
+        ///     caller's (Task 44) precondition to uphold: a repeated
+        ///     `ProjectileSpawnedNet` for the same server projectile is
+        ///     filtered upstream by `EventDedup`, before it ever reaches
+        ///     this method.
+        ///   * an EMPTY queue — nothing waiting, including a late
+        ///     confirmation for a ghost that already expired (class doc's
+        ///     KNOWN LIMIT paragraph covers the one case this does NOT fully
+        ///     close: a non-empty queue at the time the stray confirmation
+        ///     arrives).
         public void Confirm(int serverId, uint tick)
         {
             if (serverId < 0) return;
@@ -201,7 +290,10 @@ namespace Ring.Networking.Client
         /// For a CONFIRMED `serverId`, hands back the ghost's own id and
         /// frees the record (an end event is terminal — Task 44 routes it
         /// once). An unknown `serverId` (never confirmed, already
-        /// translated, or negative) refuses without throwing.
+        /// translated, freed early by the `maxTrackTicks` ceiling, or
+        /// negative) refuses without throwing, `ghostId` left at 0 on that
+        /// path too (fix-round 1, M-8 — same discipline as
+        /// `TrySpawnFromPrediction`'s refusal).
         public bool TryTranslateEnd(int serverId, out int ghostId)
         {
             ghostId = 0;
@@ -219,14 +311,37 @@ namespace Ring.Networking.Client
             return false;
         }
 
-        /// Ages every still-unconfirmed ghost against the PREDICTED tick
-        /// base (Р67 — never `RenderTick`). A ghost exactly
-        /// `ghostConfirmTicks` old is still alive; one tick past that, it
-        /// gasps: its record is freed, its id lands in the returned view,
-        /// and `NetStats.UnconfirmedGhosts` counts it once. Confirmed
-        /// ghosts never age here — the FIFO this walks holds only
-        /// unconfirmed slots, so a confirmed record survives `Advance`
-        /// unconditionally until `TryTranslateEnd` retires it.
+        /// Ages every record against the PREDICTED tick base (Р67 — never
+        /// `RenderTick`) and returns a view over the UNCONFIRMED ids that
+        /// gasped this call (see `_expiredScratch`'s own doc for the view's
+        /// lifetime). Two independent ceilings, in order:
+        ///
+        /// UNCONFIRMED (the FIFO this walks first) — not confirmed within
+        /// `ghostConfirmTicks` of its own birth tick: freed, its id lands in
+        /// the returned view, `NetStats.UnconfirmedGhosts` counts it once.
+        /// A ghost exactly `ghostConfirmTicks` old is still alive; one tick
+        /// past that, it gasps.
+        ///
+        /// CONFIRMED, NO END EVENT (fix-round 1, finding I-3) — a confirmed
+        /// record is never walked by the FIFO above (`Confirm` already
+        /// dequeued it) and would otherwise occupy its slot until `Reset`:
+        /// a lost `ProjectileEndedNet` (events are unreliable, Р58)
+        /// permanently burns capacity, and exhausting `capacity` this way
+        /// silently refuses every spawn for the rest of the match. Every
+        /// occupied CONFIRMED slot gets the same treatment past
+        /// `maxTrackTicks` ticks old, freed SILENTLY: it was confirmed —
+        /// this is registry hygiene, not an unfulfilled prediction, so it
+        /// touches neither the returned view nor `NetStats`.
+        ///
+        /// BOTH AGE COMPUTATIONS ARE SIGNED (fix-round 1, finding I-2 —
+        /// `AgeOf`'s own doc). FishNet replays the `[Replicate]` queue after
+        /// every state packet — the predicted tick this method is called
+        /// with runs BACKWARD relative to the previous call roughly as often
+        /// as state packets arrive (~30x/s on an ordinary connection), not a
+        /// hypothetical. A ghost whose age reads NEGATIVE — "born after the
+        /// tick this call is asking about", the replay-tick case — is
+        /// treated as too young to judge either ceiling, not as a fully
+        /// wrapped-around unsigned age past every threshold at once.
         public System.ReadOnlySpan<int> Advance(uint predictedTick)
         {
             _expiredCount = 0;
@@ -234,8 +349,8 @@ namespace Ring.Networking.Client
             while (_queueCount > 0)
             {
                 int slot = _unconfirmedQueue[_queueHead];
-                uint age = predictedTick - _birthTick[slot];
-                if (age <= (uint)_ghostConfirmTicks) break;
+                int age = AgeOf(slot, predictedTick);
+                if (age <= _ghostConfirmTicks) break;
 
                 DequeueUnconfirmedFront();
                 _expiredScratch[_expiredCount] = _ghostId[slot];
@@ -244,14 +359,27 @@ namespace Ring.Networking.Client
                 _stats.UnconfirmedGhosts++;
             }
 
+            for (int i = 0; i < _capacity; i++)
+            {
+                if (!_occupied[i] || _serverId[i] == NoServerId) continue;
+                if (AgeOf(i, predictedTick) > _maxTrackTicks) FreeSlot(i);
+            }
+
             return new System.ReadOnlySpan<int>(_expiredScratch, 0, _expiredCount);
         }
 
         /// Forgets every record, the unconfirmed queue, and restarts the id
         /// counter at `FirstGhostId` — a new match is a new life (brief
-        /// §2.2). `NetStats` is NOT touched: it is a per-connection instance
-        /// Task 44 owns across matches, the same discipline `SnapshotQueue.
-        /// Reset` documents for `OverflowDroppedSnapshots`.
+        /// §2.2). `NetStats` is NOT touched by `Reset`: it is a
+        /// per-connection instance Task 44 owns and resets (if ever) on its
+        /// OWN lifecycle, not this class's per-match one — this class only
+        /// ever INCREMENTS into it, sanctioned by `NetStats.cs`'s own class
+        /// doc (lines 5-9), which names this task among the several systems
+        /// that increment its counters every tick (fix-round 1, M-10
+        /// corrects an earlier draft of this doc that miscited
+        /// `SnapshotQueue.OverflowDroppedSnapshots` — a field SnapshotQueue
+        /// owns OUTRIGHT, not an external sink it writes into like this
+        /// class writes `NetStats` — as if it were the same shape of fact).
         public void Reset()
         {
             for (int i = 0; i < _capacity; i++)
@@ -289,6 +417,21 @@ namespace Ring.Networking.Client
             birthTick = 0;
             return false;
         }
+
+        /// The SIGNED age of slot `slot`'s record against `predictedTick`
+        /// (fix-round 1, finding I-2). `predictedTick - _birthTick[slot]` is
+        /// unsigned `uint` arithmetic that WRAPS on a backward tick (a
+        /// replayed `[Replicate]` queue, class doc) into a value near
+        /// `uint.MaxValue` — reinterpreting those same 32 bits as `int`
+        /// (`unchecked`, never throws) recovers the true signed distance for
+        /// every gap this class will ever see in one match (ticks measured
+        /// in the tens of thousands at most, nowhere near the ~2^31 a signed
+        /// distance could misread). A NEGATIVE result reads as "born after
+        /// the tick being asked about" — a ghost from the future, relative
+        /// to a replay that walked time backward — and both callers below
+        /// treat it as too young for their own ceiling, never as expired.
+        int AgeOf(int slot, uint predictedTick)
+            => unchecked((int)(predictedTick - _birthTick[slot]));
 
         int FreeSlotIndex()
         {
