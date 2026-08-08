@@ -422,14 +422,38 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(StalePolicy.StaleState.Gone, policy.StateOf(1),
                 "the OnEntitySeen frameTick guard must have refused the absurd "
                 + "tick — id 1 was never legitimately seen, so it reads Gone.");
-            Assert.IsFalse(policy.GlobalStarvation,
-                "the OnFrameApplied frameTick guard must have refused the "
-                + "absurd tick — no legitimate frame was ever applied in this "
-                + "test, so GlobalStarvation cannot have armed.");
             Assert.AreEqual(StalePolicy.StaleState.Stale, policy.StateOf(0),
                 "Advance(-1) must be a no-op, not corrupt the stored render "
                 + "tick — id 0 still reads its LAST LEGITIMATE position "
                 + "(Stale, from renderTick 10), not a nonsensical Live from -1.");
+
+            // Fix-round 2, W2 (both phase reviewers): the assertion this
+            // block used to make here — `Assert.IsFalse(policy.
+            // GlobalStarvation, ...)` — was a VACUOUS witness for the
+            // OnFrameApplied frameTick guard. It holds even with the guard
+            // deleted, because `_globalStarvation` is only ever RECOMPUTED
+            // inside `Advance`, and the `Advance(-1)` above is a no-op that
+            // never touches it — so a mutant that removes `if (frameTick >
+            // MaxRepresentableTick) return;` from `OnFrameApplied` left this
+            // whole test green. The DISCRIMINATING witness needs a REAL
+            // `Advance` call after the absurd `OnFrameApplied`: with the
+            // guard removed, the absurd tick would have become
+            // `_lastNonTruncatedTick`, which — being far larger than
+            // `_lastSeenTick[0]` (5) — would satisfy `ConfirmedAbsent(0)`
+            // and unblock the fade this very `Advance` call would then
+            // spend a tick of, moving id 0 from Stale into Fading.
+            policy.Advance(11);
+            Assert.AreEqual(StalePolicy.StaleState.Stale, policy.StateOf(0),
+                "the OnFrameApplied frameTick guard must have refused the "
+                + "absurd tick outright — a REAL Advance call afterward is "
+                + "the proof: id 0 must still read Stale, not Fading, because "
+                + "a corrupted _lastNonTruncatedTick would otherwise wrongly "
+                + "confirm its absence and spend a tick of fade budget it "
+                + "never earned.");
+            Assert.AreEqual(0f, policy.FadeProgress(0),
+                "positive witness: no fade budget was spent at all — the "
+                + "guard's own refusal, not merely a state label, kept the "
+                + "fade blocked.");
         }
 
         [Test]

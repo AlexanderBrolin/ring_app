@@ -5,7 +5,7 @@ namespace Ring.Networking
     /// entities/events, input-starvation health and ghost-confirmation
     /// health, plus raw byte counters. Incremented from several systems
     /// across a single tick — the snapshot assembler (Task 28), the
-    /// transport layer (Task 33/Task 36) and the ghost interpolation
+    /// transport layer (Task 33/Task 36) and the ghost projectile
     /// system (Task 35) — so this is a sealed CLASS, not a struct: a
     /// struct would force `ref` plumbing through every one of those call
     /// sites, or worse, silently drop increments applied to a copy —

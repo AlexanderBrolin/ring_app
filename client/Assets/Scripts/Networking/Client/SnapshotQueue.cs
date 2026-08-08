@@ -212,7 +212,12 @@ namespace Ring.Networking.Client
     ///
     /// HOSTILE INPUT IS REFUSED, NEVER THROWN (Р82). Every branch above answers
     /// with a verdict or a no-op; nothing on this class's data path throws for
-    /// any tick or epoch value, wire-sourced or not.
+    /// any tick or epoch value, wire-sourced or not. A tick beyond
+    /// `MaxRepresentableTick` (`int.MaxValue`) is refused as `FutureRejected`
+    /// before it can occupy a slot or move `NewestTick` (fix-round 2, W1) —
+    /// the same bound `RenderClock.OnSnapshot`/`StalePolicy`'s own guards
+    /// already refuse at; this queue is the one OTHER consumer of the
+    /// identical wire tick that, until now, had no guard of its own.
     public sealed class SnapshotQueue
     {
         /// The future horizon a frame's tick may not cross past the newest one
@@ -220,6 +225,17 @@ namespace Ring.Networking.Client
         /// than restated as its own literal — see the class doc's Р150е
         /// paragraph for why 270 is not a second, independently-chosen number.
         public const int FutureHorizonTicks = EventDedup.WindowTicks;
+
+        /// Highest wire tick this class will ever store as a resident or
+        /// pending value (fix-round 2, W1) — a stored tick can end up handed
+        /// to a caller that eventually subtracts it against an `int`-typed
+        /// clock elsewhere in the client (`RenderClock.RenderTick`,
+        /// `StalePolicy`'s own render-tick domain), the same bound
+        /// `RenderClock.MaxRepresentableTick`/`StalePolicy.
+        /// MaxRepresentableTick` use for exactly that reason. `Admit` refuses
+        /// anything past it outright — see the class doc's HOSTILE INPUT
+        /// paragraph and `Admit`'s own doc.
+        const uint MaxRepresentableTick = int.MaxValue;
 
         /// The outcome of one `Admit` call. See the class doc for what
         /// distinguishes each refusal from the others.
@@ -334,7 +350,11 @@ namespace Ring.Networking.Client
         /// refusals could otherwise both apply (an epoch check always wins,
         /// and a tick that is a COMMITTED resident is `Duplicate` even where
         /// it would also read as `Stale`-by-window against a newer tick
-        /// already committed).
+        /// already committed). A tick beyond `MaxRepresentableTick` is
+        /// refused as `FutureRejected` immediately after the epoch check
+        /// (fix-round 2, W1) — mirroring `RenderClock.OnSnapshot`'s own
+        /// order — since an unrepresentable tick can never legitimately be a
+        /// floor hit or a duplicate of anything already resident.
         public AdmitVerdict Admit(ushort epoch, uint tick, out RenderSnapshot slot)
         {
             slot = null;
@@ -346,6 +366,7 @@ namespace Ring.Networking.Client
             _hasPending = false;
 
             if (!_hasEpoch || epoch != _epoch) return AdmitVerdict.ForeignEpoch;
+            if (tick > MaxRepresentableTick) return AdmitVerdict.FutureRejected;
             if (_hasFloor && tick < _floor) return AdmitVerdict.Stale;
             if (IndexOfCommitted(tick) >= 0) return AdmitVerdict.Duplicate;
 

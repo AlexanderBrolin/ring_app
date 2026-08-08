@@ -791,6 +791,54 @@ namespace Ring.Simulation.Tests
         }
 
         // ---------------------------------------------------------------------
+        // Fix-round 2, W1. A tick beyond int.MaxValue can never be
+        // represented downstream (RenderClock.OnSnapshot/StalePolicy's own
+        // MaxRepresentableTick guards) — this queue is the sole OTHER
+        // consumer of the same wire tick and, until this fix, had no guard
+        // of its own.
+        // ---------------------------------------------------------------------
+
+        [Test]
+        public void UnrepresentableTick_IsFutureRejected_NextOrdinaryFrameStillAccepted()
+        {
+            var queue = NewQueue(out _);
+            queue.Reset(Epoch);
+
+            const uint unrepresentable = uint.MaxValue; // > int.MaxValue.
+            var verdict = queue.Admit(Epoch, unrepresentable, out RenderSnapshot slot);
+
+            Assert.AreEqual(SnapshotQueue.AdmitVerdict.FutureRejected, verdict,
+                "a tick beyond int.MaxValue can never be represented downstream — the queue must "
+                + "refuse it the same way RenderClock.OnSnapshot/StalePolicy already do at this bound.");
+            Assert.IsNull(slot, "a refused admission never hands back a slot");
+            Assert.IsFalse(queue.HasNewestTick,
+                "the absurd tick must never become NewestTick — nothing has been accepted yet");
+
+            // Positive witness: the very next ORDINARY frame is unaffected —
+            // the floor was never poisoned by the refusal above.
+            Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 1, out RenderSnapshot slot2),
+                "the FutureRejected refusal above must not poison admission for the very next honest frame");
+            Assert.IsNotNull(slot2);
+            queue.Commit(1);
+            Assert.AreEqual(1u, queue.NewestTick);
+
+            // Boundary witness, on a fresh queue: EXACTLY int.MaxValue is
+            // still representable and passes through the ORDINARY branches
+            // — only STRICTLY beyond it triggers the new guard. The very
+            // first tick since Reset bypasses the horizon check entirely
+            // (class doc's KNOWN LIMIT), isolating this assertion to the
+            // representability guard alone rather than the horizon one.
+            var boundaryQueue = NewQueue(out _);
+            boundaryQueue.Reset(Epoch);
+            Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted,
+                boundaryQueue.Admit(Epoch, (uint)int.MaxValue, out RenderSnapshot boundarySlot),
+                "tick == int.MaxValue exactly is still representable — only strictly beyond it is refused");
+            Assert.IsNotNull(boundarySlot);
+            boundaryQueue.Commit((uint)int.MaxValue);
+            Assert.AreEqual((uint)int.MaxValue, boundaryQueue.NewestTick);
+        }
+
+        // ---------------------------------------------------------------------
         // T32.12 (coordinator #12). The data path allocates nothing.
         // ---------------------------------------------------------------------
 

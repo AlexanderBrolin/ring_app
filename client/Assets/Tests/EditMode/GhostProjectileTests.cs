@@ -207,10 +207,11 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Ghost_SpawnGateIsTheSharedCanFirePredicate()
+        public void Ghost_SpawnGateIsWouldFireThisTick()
         {
             // Coordinator test 6 (brief §2.3 #6), STRENGTHENED fix-round 1
-            // (finding I-1/decision "Б"): the spawn gate is
+            // (finding I-1/decision "Б"), RENAMED fix-round 2 (W13) to name
+            // the gate the decision actually landed on: the spawn gate is
             // `WeaponSystem.WouldFireThisTick`, not bare `CanFire` — `CanFire`
             // alone never reads `FireCooldown` and would fire every tick the
             // trigger stays held (measured 3.6x over-spawn, see the class
@@ -373,12 +374,19 @@ namespace Ring.Simulation.Tests
             //     `Advance`'s real expiry branch runs (FreeSlot + the
             //     NetStats increment) a few iterations later instead of
             //     always finding an empty queue;
-            //   * with capacity exhausted by the accumulating unconfirmed
-            //     ghosts, some spawn attempts genuinely take the "no free
-            //     slot" refusal branch, not just the CanFire/WouldFireThisTick
-            //     one;
             //   * even iterations still spawn-confirm-translate in the same
             //     tick, exercising the FIFO/duplicate-scan/translate paths.
+            //
+            // Fix-round 2, W14 (both phase reviewers traced this): an
+            // earlier draft of this comment ALSO claimed the loop exercises
+            // the "no free slot" capacity-refusal branch. That is false —
+            // in this loop's steady state a free slot is ALWAYS available
+            // (a confirmed ghost frees its slot the SAME iteration it is
+            // confirmed, and an unconfirmed one expires within
+            // `ghostConfirmTicks`), so that branch is never actually taken
+            // here. This loop covers spawn/confirm/translate/expire only;
+            // the capacity-refusal branch is pinned separately by
+            // `TrySpawnFromPrediction_CapacityExhaustedRefusesSilently`.
             var stats = new NetStats();
             var ghosts = new GhostProjectiles(4, 2, RoomyMaxTrackTicks, stats);
             var weapon = Weapon();

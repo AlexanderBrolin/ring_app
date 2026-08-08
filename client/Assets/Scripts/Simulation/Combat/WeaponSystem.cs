@@ -26,7 +26,7 @@ namespace Ring.Simulation.Combat
     /// The three consumers this opens the door for: ghost projectiles (Task
     /// 35 — the spawn gate, switched from `CanFire` to `WouldFireThisTick`
     /// in fix-round 1), the Presentation-side copy at
-    /// `SimulationRunner:127-146` (Task 43, not yet lifted — see
+    /// `SimulationRunner:140-149` (Task 43, not yet lifted — see
     /// `WouldFireThisTick`'s own doc for a dated defect in that copy worth
     /// fixing when it is lifted), and per-tick fire detection generally
     /// (Task 44). Resilience against future weapons/upgrades was checked
@@ -158,7 +158,7 @@ namespace Ring.Simulation.Combat
         /// `CanFire`'s own answer rather than restating it (CR 2) and adds
         /// exactly the one further line `Advance`'s own loop decides on:
         /// `FireCooldown` AFTER this tick's unconditional `-= TickDt` at
-        /// line 57 above, tested with the SAME `<= 0f` the loop itself uses.
+        /// line 74 above, tested with the SAME `<= 0f` the loop itself uses.
         ///
         /// STATE CONTRACT — SAME AS `CanFire`'s OWN: `p` must be the
         /// player's state AFTER this tick's movement phase and BEFORE its

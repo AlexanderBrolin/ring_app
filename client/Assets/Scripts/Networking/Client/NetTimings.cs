@@ -16,6 +16,22 @@ namespace Ring.Networking.Client
     /// asset at the one place it is read, and a second, weaker copy of those
     /// rules living down here would be a second answer to the same question.
     ///
+    /// ONLY THREE OF THE FOUR FIELDS ACTUALLY COME OFF THAT ASSET (fix-round
+    /// 2, W17 — an earlier draft of this doc claimed all four did).
+    /// `InterpBufferTicks`/`InterpMaxStaleTicks`/`RenderClockSnapTicks` map
+    /// straight onto `NetConfig`'s own same-named fields; `SlewFraction` has
+    /// NO counterpart there at all — `NetConfig` carries fifteen fields
+    /// (`TickRate` through `MatchMaxDurationSeconds`) and none of them is
+    /// named `SlewFraction`. Where the caller is meant to get this fourth
+    /// number from is an OPEN END, not yet decided (a code constant, or a
+    /// future `NetConfig` field validated by `NetInvariants` — Task 41/44's
+    /// call to make). Left at its C# default of `0`, `SlewFraction` does not
+    /// merely mistune the correction — it DISABLES it outright:
+    /// `RenderClock.SlewFractionOf` reads any value at or below zero as "do
+    /// not correct", and the render clock falls back to the hard snap alone
+    /// for every desync, however small. A caller that forgets to set this
+    /// field explicitly gets that silently, with nothing anywhere to catch it.
+    ///
     /// NO TICK RATE FIELD, DELIBERATELY. Every number below is already counted
     /// in world ticks, and the one place seconds have to become ticks — the
     /// render clock's delta time — divides by `SimulationWorld.TickDt`, the

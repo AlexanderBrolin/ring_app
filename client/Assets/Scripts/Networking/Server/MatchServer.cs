@@ -80,10 +80,27 @@ namespace Ring.Networking.Server
     /// fix-round 1, M2 — this handler would otherwise run past `StopMatch`'s
     /// null-outs and NRE).
     ///
+    /// ONE `MatchServer` PER PROCESS, DECLARED EXPLICITLY (fix-round 2, W9).
+    /// The `OnPostTick` subscription above lives for the rest of the
+    /// PROCESS's lifetime, not merely this instance's — there is no
+    /// unsubscribe anywhere in this class, on purpose (the FIFO guarantee
+    /// I1 above rests on exactly that permanence). A `MatchServer` that
+    /// falls out of scope is therefore NOT garbage-collected: `_nm.
+    /// TimeManager`'s own event still holds a live delegate reference into
+    /// it for as long as the `NetworkManager` itself exists. Ф8's bootstrap
+    /// must construct exactly ONE instance for the whole process and reuse
+    /// it across every `StartMatch`/`StopMatch` cycle (see the re-entrancy
+    /// paragraph above) — constructing a second one would leave the first's
+    /// subscription still firing (inert while its own `_running` is false,
+    /// per the SUBSCRIPTION TIMING paragraph, but never released) alongside
+    /// the new one's.
+    ///
     /// TWO READINGS OF `SimulationWorld.CurrentTick` PER CALL, NOT ONE
     /// (fix-round 1, M1). `CurrentTick` counts ticks the world has FINISHED —
-    /// `SimulationWorld.TickAll`'s very first statement is `_tick++`
-    /// (`SimulationWorld.cs`'s own body), so the property reads 0 before the
+    /// `SimulationWorld.TickAll`'s own length guards run first (fix-round 2,
+    /// W7 — precise: a throw must never leave `_tick` half-bumped), and
+    /// `_tick++` is the first MUTATION of state after them
+    /// (`SimulationWorld.cs:196`), so the property still reads 0 before the
     /// match's first tick has run at all. `OnPostTick` reads it TWICE, on
     /// purpose, once on each side of `TickAll`, and the two readings mean
     /// different things: `preTickWorldTick` (before) is "how many ticks were
@@ -142,8 +159,8 @@ namespace Ring.Networking.Server
     /// to make, not this one's to add speculatively — AGENT.md rule 3).
     ///
     /// NETSTATS OWNERSHIP — HONEST CORRECTION (fix-round 1, M3). Task-36-brief
-    /// §2.2 reads "NetStats — экземпляры на соединение создаёт MatchServer на
-    /// матч". That is imprecise: the per-connection `NetStats` instances are
+    /// §2.2, in paraphrase, states that `MatchServer` creates one `NetStats`
+    /// instance per connection per match. That is imprecise: the per-connection `NetStats` instances are
     /// allocated by `SnapshotAssembler`'s OWN constructor (`SnapshotAssembler.
     /// cs`'s `Connection` type, `Stats = new NetStats()`), never by this class
     /// directly — `MatchServer` only WRITES into them (`InputStarved`, via
@@ -279,16 +296,30 @@ namespace Ring.Networking.Server
 
             // Fix-round 1, C1: fresh freshness-memory every match (Р151's own
             // reasoning applies here too — see the class doc). `uint.MaxValue`
-            // can never collide with a real FishNet tick in this match's
-            // lifetime, so the very FIRST real replicate for a player — even
-            // one whose raw tick happens to be 0 — is always detected as a
-            // change. A player who never sends a single input keeps this
-            // sentinel forever (nothing ever matches it to update
-            // `lastFreshWorldTick`), which combined with `lastFreshWorldTick`
-            // starting at 0 — `SimulationWorld` always begins at `CurrentTick
-            // 0` (its own constructor) — means that player starves exactly
-            // `starveTicks` ticks after match start, the honest fallback
-            // task-36-brief fix-round 1 (C1) names explicitly.
+            // can never collide with a real FishNet tick, so every player
+            // starts at that sentinel — but fix-round 2 (W6) corrects two
+            // false claims an earlier draft of this comment made about what
+            // happens next.
+            //
+            // THE SENTINEL DOES NOT SURVIVE "FOREVER" FOR A SILENT PLAYER: it
+            // lives only until this player's very FIRST `Gather` call, win or
+            // lose. `default(ServerTickInput).Tick` is `0`, not
+            // `uint.MaxValue` — so a player who has never sent a single input
+            // reads `Tick == 0` on that first call, which already differs
+            // from the sentinel and is therefore detected as "a change" right
+            // there, exactly like a genuine first input whose own raw tick
+            // happens to be `0` would be. The two are LATENTLY
+            // indistinguishable this way (a real ambiguity, though it does
+            // not bite in practice — a connected client's own `TimeManager.
+            // LocalTick` is never actually `0` by the time it can replicate
+            // anything — named here rather than left implicit). Either way
+            // `lastFreshWorldTick[i]` lands at the world tick of that first
+            // `Gather` call — `0` at match start, since `SimulationWorld`
+            // always begins at `CurrentTick 0` (its own constructor) — so a
+            // player who never sends anything still starves exactly
+            // `starveTicks` ticks after match start: the SAME outcome the
+            // earlier wording described, reached by the OPPOSITE mechanism
+            // (the sentinel evaporating on tick one, not surviving it).
             var lastSeenInputTick = new uint[playerCount];
             var lastFreshWorldTick = new int[playerCount];
             for (int i = 0; i < playerCount; i++) lastSeenInputTick[i] = uint.MaxValue;
@@ -397,6 +428,10 @@ namespace Ring.Networking.Server
             // unmodified, see InputStarvation's own doc).
             _world.TickAll(_effectiveInputsScratch);
 
+            // Fix-round 2, W8: captured BEFORE the try and used in `finally`
+            // below instead of the field — see the `finally` block's own
+            // note for why.
+            var world = _world;
             try
             {
                 // 3. One capture + wire-event expansion shared by every
@@ -445,9 +480,9 @@ namespace Ring.Networking.Server
                 // bookkeeping, never the packet. Runs AFTER the snapshot send
                 // (step 4) and BEFORE `ClearEvents` (step 6), matching Р22's
                 // fixed order and letting `SendStateUpdate` (§0a) pick it up
-                // the same tick it was set — and, per fix-round 1 I1, AFTER
+                // the same tick it was set — and, per fix-round 1 I1, BEFORE
                 // every controller's own `OnPostTick`-driven `CreateReconcile`
-                // will have run, because this whole handler is guaranteed to
+                // runs, because this whole handler is guaranteed to
                 // fire before theirs.
                 uint postTickWorldTickU = (uint)postTickWorldTick;
                 for (int i = 0; i < _controllers.Length; i++)
@@ -461,11 +496,26 @@ namespace Ring.Networking.Server
                 // no render frame to otherwise drain it, and a buffer that
                 // survives a bad tick either overflows the next one or hands
                 // a later tick's clients events that already went stale.
-                _world.ClearEvents();
-            }
+                //
+                // `world` (the LOCAL captured above, fix-round 2 W8) — not
+                // `_world` — because a nested `StopMatch` triggered
+                // synchronously from steps 3-5 (e.g. a disconnect handler
+                // reacting to step 4's own `Broadcast` call) nulls the FIELD
+                // as part of its own cleanup; reading the field here would
+                // then throw an NRE that MASKS whatever exception steps 3-5
+                // were actually propagating, instead of letting that real
+                // exception surface.
+                world.ClearEvents();
 
-            _stopwatch.Stop();
-            _tickTime.Record(_stopwatch.Elapsed.TotalMilliseconds);
+                // Fix-round 2, W8: moved into `finally`, AFTER `ClearEvents`,
+                // so this tick's own timing is never silently lost — the two
+                // statements used to sit AFTER the whole try/finally, which
+                // an exception out of steps 3-5 would skip entirely (nothing
+                // past a propagating throw runs), under-counting `TickTime`
+                // on exactly the ticks most worth knowing were slow or broken.
+                _stopwatch.Stop();
+                _tickTime.Record(_stopwatch.Elapsed.TotalMilliseconds);
+            }
         }
     }
 
@@ -584,7 +634,7 @@ namespace Ring.Networking.Server
     }
 
     /// Tiny pure accumulator for the server tick's own wall-clock cost (spec
-    /// §3.11: "среднее и максимум времени тика" in the per-match log line —
+    /// §3.11: the per-match log line's average and maximum tick time —
     /// Ф8 assembles the log string, this only holds the numbers). `Stopwatch`-
     /// driven by the caller (`MatchServer.OnPostTick`), deliberately NOT Unity
     /// time: this measures the process, not the simulation, and the class

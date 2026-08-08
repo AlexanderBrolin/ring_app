@@ -35,8 +35,13 @@ namespace Ring.Networking
     ///
     /// WHAT DRIVES IT, AND WHAT IT DOES NOT OWN. Input arrives from OUTSIDE
     /// through `SetPendingInput`, because `InputSampler` lives in
-    /// `Ring.Presentation` and Presentation already references
-    /// `Ring.Networking` — sampling here would close an assembly cycle (Р35).
+    /// `Ring.Presentation` (fix-round 2, W18 — corrects an earlier,
+    /// PREMATURE claim: `Presentation.asmdef` carries no reference to
+    /// `Ring.Networking` today, and will not until Task 43 adds one per the
+    /// plan). The direction is chosen so that adding that reference later
+    /// does NOT close an assembly cycle (Р35) — `Ring.Networking` must
+    /// never reference `Ring.Presentation` back, which is exactly what
+    /// sampling INSIDE this class instead of outside it would require.
     /// The world that feeds `SetAuthoritativeState` and consumes
     /// `Core.LastServerInput` is Task 36's; the prefab this component sits on,
     /// the `NetworkTickSmoother` beside it and the death event feeding

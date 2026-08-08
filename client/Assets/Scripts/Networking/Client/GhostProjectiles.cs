@@ -73,27 +73,40 @@ namespace Ring.Networking.Client
     /// discipline `EventDedup`'s own class doc records for its finding F2).
     /// I-1/I-2 remove the two causes of MASS FIFO desync (over-spawn, and
     /// mass-expiry on a backward replayed tick); what remains is a single
-    /// residual case neither this class nor any code change can close: a
-    /// server-side spawn event is lost in transit (events are unreliable,
-    /// Р58), so the ghost it would have confirmed instead ages out via
-    /// `ghostConfirmTicks` and is forgotten — and when that lost
-    /// confirmation's OWN `Confirm` call eventually, wrongly, never arrives
-    /// (the server only ever sends it once per spawn), the FIFO itself never
-    /// desyncs from this case alone. The genuine residual risk is a
-    /// DIFFERENT shape: a confirmation arrives for a ghost that has ALREADY
-    /// expired, while the queue is NOT empty (a newer ghost is waiting) — the
-    /// stray `Confirm` then matches that newer ghost instead of no-oping,
-    /// because this class has no wire-carried identity to refuse it by (the
-    /// class doc's own "MATCHING IS POSITIONAL FIFO" paragraph is exactly
-    /// why: the protocol never gives `Confirm` anything else to check). The
-    /// FIFO SELF-CORRECTS the moment the queue next runs empty — one bad
-    /// match costs one mismatched ghost, never a permanent drift — so the
-    /// visible symptom is a single wrong tracer identity, not a cascading
-    /// desync. Closing this fully would require the wire protocol to carry a
-    /// client-assigned correlation id the server echoes back, which is out
-    /// of this class's — and this fix-round's — scope; Task 44 inherits the
-    /// obligation to decide whether that residual risk is worth a protocol
-    /// change.
+    /// residual RISK SHAPE neither this class nor any code change can close
+    /// (fix-round 2, W12 rewrites this paragraph — an earlier draft's
+    /// sentence here was unreadable, and it overreached alongside it by
+    /// claiming a lost spawn event was FIFO-safe, which is false): a
+    /// WRONG-IDENTITY match, whenever a `Confirm` call lands on a ghost
+    /// OTHER than the one it actually belongs to, while the queue is
+    /// non-empty. Two wire events can trigger it, not one:
+    ///   * a server-side SPAWN event is lost in transit (events are
+    ///     unreliable, Р58) — the ghost it would have confirmed (say G1, the
+    ///     oldest unconfirmed) is never told to `Confirm` and just sits at
+    ///     the front of the FIFO. If a LATER projectile's own spawn
+    ///     confirmation then arrives — `Confirm` for a different, younger
+    ///     ghost's serverId — it matches G1 instead, because matching always
+    ///     resolves against the oldest unconfirmed, never by identity. When
+    ///     that serverId's own end event arrives, it translates G1, not the
+    ///     ghost it actually belongs to (example: spawn #1 is lost, confirm
+    ///     #2 matches G1 → #2's end event translates to G1; G2, the true
+    ///     owner, is left waiting behind it and eventually gasps
+    ///     unconfirmed instead).
+    ///   * a confirmation arrives for a ghost that has ALREADY expired via
+    ///     `ghostConfirmTicks`, while the queue is NOT empty (a newer ghost
+    ///     is waiting) — the stray `Confirm` matches that newer ghost
+    ///     instead of no-oping, for the identical reason: this class has no
+    ///     wire-carried identity to refuse it by (the class doc's own
+    ///     "MATCHING IS POSITIONAL FIFO" paragraph is exactly why — the
+    ///     protocol never gives `Confirm` anything else to check).
+    /// Both shapes SELF-CORRECT the moment the queue next runs empty — one
+    /// bad match costs one mismatched ghost, never a permanent drift — so
+    /// the visible symptom either way is a single wrong tracer identity,
+    /// not a cascading desync. Closing this fully would require the wire
+    /// protocol to carry a client-assigned correlation id the server echoes
+    /// back, which is out of this class's — and this fix-round's — scope;
+    /// Task 44 inherits the obligation to decide whether that residual risk
+    /// is worth a protocol change.
     ///
     /// STORAGE: FIXED SLOTS, A CIRCULAR FIFO OF SLOT INDICES, A REUSED
     /// SCRATCH BUFFER — nothing allocates after the constructor returns
@@ -202,6 +215,12 @@ namespace Ring.Networking.Client
         /// — a ceiling BELOW the confirm window would kill a freshly
         /// confirmed ghost before an unconfirmed one would even expire,
         /// which is never the intent of a "registry hygiene" ceiling (I-3).
+        /// WHERE THE NUMBER ITSELF COMES FROM IS AN OPEN END (fix-round 2,
+        /// W19 — the same open end `StalePolicy.cs`'s own `fadeTicks` doc
+        /// records): wiring a concrete value is Task 44's job, not this
+        /// one's — a plausible starting point is `ceil(ProjectileLifetime /
+        /// TickDt) + margin`, since a confirmed ghost has no legitimate
+        /// reason to outlive its own projectile's flight by much.
         public GhostProjectiles(int capacity, int ghostConfirmTicks, int maxTrackTicks, NetStats stats)
         {
             _capacity = math.max(1, capacity);

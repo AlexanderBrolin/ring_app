@@ -96,7 +96,7 @@ namespace Ring.Networking.Client
     /// invariant: budget truncation must never make a live entity vanish
     /// from the screen).
     ///
-    /// "ВЕСЬ МИР STALE": GLOBAL STARVATION OVERRIDES THE READING, NOT THE
+    /// "WHOLE WORLD STALE": GLOBAL STARVATION OVERRIDES THE READING, NOT THE
     /// COUNTER. While `GlobalStarvation` is true, `StateOf` reports `Stale`
     /// for every not-yet-`Gone` entity regardless of its own fade progress —
     /// a network hiccup must not let the world visibly keep dying while the
@@ -164,8 +164,12 @@ namespace Ring.Networking.Client
     /// fact — see task-37-report.md §6 for the contract line this demands of
     /// Task 44/Ф9.
     ///
-    /// HOSTILE INPUT IS REFUSED, NEVER THROWN (Р82). `id` is a small
-    /// caller-controlled index that is nonetheless refused outside
+    /// HOSTILE INPUT IS REFUSED, NEVER THROWN (Р82). `id` is a DENSE index
+    /// into the CLIENT's own view registry, `[0, capacity)` — NOT the wire
+    /// `EntityId` (`u16`, sparse, and free to exceed `capacity`): mapping
+    /// the wire id down to this dense one is Task 44's job (fix-round 2,
+    /// W16 — an earlier draft of this doc left the distinction unstated).
+    /// `id` is nonetheless refused outside
     /// `[0, capacity)` — `OnEntitySeen` no-ops, `StateOf`/`FadeProgress`
     /// answer `Gone`/`0f`. `frameTick` arguments beyond `int.MaxValue` are
     /// refused (same bound `RenderClock` uses for its own wire tick, since
@@ -193,6 +197,17 @@ namespace Ring.Networking.Client
     /// both guards unconditionally — `Gone` becomes reachable only the tick
     /// after the entity was actually eligible to fade AND unblocked, never
     /// merely because `fadeTicks` was left at zero.
+    ///
+    /// CALLER OBLIGATION: `OnFrameApplied` MUST BE CALLED FOR EVERY APPLIED
+    /// FRAME (fix-round 2, W16). `GlobalStarvation` is computed purely from
+    /// `renderTick - lastAppliedTick` (see the BOUNDARY CHOICE paragraph
+    /// above) — it has no independent notion of "a frame arrived", only of
+    /// "the clock this method maintains says one recently did". A caller
+    /// (Task 44/Ф9) that applies a frame without also calling this method
+    /// for it starves this class's OWN bookkeeping, not the connection: the
+    /// indicator arms itself on a perfectly healthy connection —
+    /// indistinguishable from a genuine stall — the moment `renderTick`
+    /// outpaces the last call this method actually received.
     ///
     /// NOTHING HERE ALLOCATES. Every array is sized once in the constructor;
     /// `Advance`/`StateOf`/`FadeProgress` are plain array reads/writes and an
