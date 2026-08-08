@@ -110,9 +110,9 @@ namespace Ring.Simulation.Tests
         {
             ulong nullHash = 0UL;
             Assert.DoesNotThrow(() => nullHash = SimConfigHash.Compute(in withNull),
-                $"{path}: null-массив бросил вместо маркера длины");
+                $"{path}: a null array must hash as the length marker, not throw");
             Assert.AreNotEqual(nullHash, SimConfigHash.Compute(in withEmpty),
-                $"{path}: null и пустой массив дали один хеш");
+                $"{path}: a null and an empty array must not hash identically");
         }
 
         [Test]
@@ -147,16 +147,16 @@ namespace Ring.Simulation.Tests
             // silently drops increments applied to copies, the exact defect
             // class phase Ф5 hit four times) was pinned only by a comment.
             Assert.IsFalse(typeof(NetStats).IsValueType,
-                "NetStats обязан быть классом: структура молча теряла бы инкременты на копиях");
+                "NetStats must be a class: a struct would silently drop increments applied to copies");
             Assert.AreEqual(10, netFieldNames.Count,
-                "ожидались десять сетевых счётчиков — состав NetStats изменился");
+                "ten network counters expected — the composition of NetStats has changed");
 
             foreach (FieldInfo f in typeof(MatchStats).GetFields())
                 Assert.IsFalse(netFieldNames.Contains(f.Name),
-                    $"NetStats.{f.Name} совпадает по имени с MatchStats.{f.Name}");
+                    $"NetStats.{f.Name} collides by name with MatchStats.{f.Name}");
             foreach (FieldInfo f in typeof(WorldStats).GetFields())
                 Assert.IsFalse(netFieldNames.Contains(f.Name),
-                    $"NetStats.{f.Name} совпадает по имени с WorldStats.{f.Name}");
+                    $"NetStats.{f.Name} collides by name with WorldStats.{f.Name}");
         }
 
         // ---- reflection sweep helpers (WorldLifecycleTests-style — see flagman doc) ----
@@ -184,12 +184,12 @@ namespace Ring.Simulation.Tests
                 sectionField.SetValue(cfg, section);
                 var mutated = (SimConfig)cfg;
                 Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
-                    $"{sectionName}.{field.Name} не в хеше");
+                    $"{sectionName}.{field.Name} is not in the hash");
             }
 
             CollectionAssert.AreEquivalent(expectedArrayFields, skippedArrayFields,
-                $"{sectionName}: набор массивных полей изменился — новое поле не проверяется " +
-                "ни этим свипом, ни поэлементными хелперами, то есть не пинится ничем");
+                $"{sectionName}: the set of array fields has changed — a new one is checked neither " +
+                "by this sweep nor by the per-element helpers, i.e. pinned by nothing");
         }
 
         /// Fails loudly with the section's name instead of a bare NRE deeper
@@ -197,7 +197,7 @@ namespace Ring.Simulation.Tests
         static FieldInfo Section(string sectionName)
         {
             FieldInfo field = typeof(SimConfig).GetField(sectionName);
-            Assert.IsNotNull(field, $"SimConfig.{sectionName} не существует");
+            Assert.IsNotNull(field, $"SimConfig.{sectionName} does not exist");
             return field;
         }
 
@@ -230,7 +230,7 @@ namespace Ring.Simulation.Tests
             sectionField.SetValue(lenCfg, lenSection);
             var mutatedLen = (SimConfig)lenCfg;
             Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutatedLen),
-                $"{sectionName}.{fieldName}.Length не в хеше");
+                $"{sectionName}.{fieldName}.Length is not in the hash");
 
             void AssertElementBump(int index, float2 delta, string component)
             {
@@ -242,7 +242,7 @@ namespace Ring.Simulation.Tests
                 sectionField.SetValue(cfg, section);
                 var mutated = (SimConfig)cfg;
                 Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
-                    $"{sectionName}.{fieldName}[{index}].{component} не в хеше");
+                    $"{sectionName}.{fieldName}[{index}].{component} is not in the hash");
             }
         }
 
@@ -266,7 +266,7 @@ namespace Ring.Simulation.Tests
                 sectionField.SetValue(cfg, section);
                 var mutated = (SimConfig)cfg;
                 Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
-                    $"{sectionName}.{fieldName}[{i}] не в хеше");
+                    $"{sectionName}.{fieldName}[{i}] is not in the hash");
             }
 
             object lenCfg = TestConfigs.Default();
@@ -279,7 +279,7 @@ namespace Ring.Simulation.Tests
             sectionField.SetValue(lenCfg, lenSection);
             var mutatedLen = (SimConfig)lenCfg;
             Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutatedLen),
-                $"{sectionName}.{fieldName}.Length не в хеше");
+                $"{sectionName}.{fieldName}.Length is not in the hash");
         }
 
         static object Bump(object v) => v switch

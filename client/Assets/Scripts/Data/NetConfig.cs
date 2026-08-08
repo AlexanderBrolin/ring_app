@@ -36,12 +36,14 @@ namespace Ring.Data
     /// below our cap is deliberate: FishNet silently upgrades an oversized
     /// Unreliable send to Reliable instead of dropping the packet, which
     /// would quietly break the "state travels unreliably" model this
-    /// project relies on. And the cap is OURS, not the transport's, which
-    /// is exactly why Task 28's truncation branch is REACHABLE and testable
-    /// at all: the spec's worst-case payload is ~1043 B (§3.8), over this
-    /// 1000-byte cap but well under 1282, so truncation triggers on our
-    /// own budget long before the transport could ever silently switch
-    /// channels.
+    /// project relies on. The cap is OURS, not the transport's, and what it
+    /// actually squeezes at the shipped numbers is the EVENT budget, never
+    /// the entity list: Task 28 measured the worst case at 1180 B (spec §6i
+    /// Р146) with mobs fitting the remainder outright (956 B available, 867
+    /// needed), so entity truncation is unreachable at the defaults — events
+    /// defer and re-ride instead (Р61), and the truncation branch stays
+    /// tested through a fixture cap (§6i Р147). Either way the frame never
+    /// reaches the transport oversized, which is the point of the gap.
     ///
     /// [Range] attributes below are Inspector hints only. The real
     /// cross-config checks (e.g. GhostConfirmTicks > InterpBufferTicks) live

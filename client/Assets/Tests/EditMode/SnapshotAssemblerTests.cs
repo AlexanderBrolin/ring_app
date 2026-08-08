@@ -1625,5 +1625,34 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual(bufA[i], bufB[i],
                     $"byte {i} must match — the resend history is a pure function of what was delivered");
         }
+
+        // ---- Phase gate fix wave (finding G7). One assembler, one config ----
+
+        [Test]
+        public void BeginTick_RefusesAWorldWithMoreEventCapacityThanConstructed()
+        {
+            // The wire buffers are sized once, from the constructor's caps; a
+            // world carrying a larger Arena.MaxEventsPerFrame could overrun
+            // them without diagnosis. Task 36 builds both from one
+            // MatchConfig, so today the mismatch takes a caller bug — which
+            // is exactly what a loud refusal is for (same asymmetry as the
+            // writer: this is a server-side programming error, not hostile
+            // input).
+            SimulationWorld matched = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f),
+                new float2(0f, 8f));
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+
+            SimConfig bigger = cfg;
+            bigger.Arena.MaxEventsPerFrame = cfg.Arena.MaxEventsPerFrame * 2;
+            var biggerWorld = new SimulationWorld(1, bigger, playerCount: 3);
+
+            Assert.Throws<System.InvalidOperationException>(() => asm.BeginTick(biggerWorld),
+                "a world with more event capacity than the constructor sized for must be refused loudly");
+            // The matched world still works after the refusal — the guard
+            // rejects the call, not the instance.
+            asm.BeginTick(matched);
+            Assert.Greater(asm.BuildFor(0, 0, 0, Epoch), 0,
+                "the refusal must leave the assembler fully usable for its own config");
+        }
     }
 }

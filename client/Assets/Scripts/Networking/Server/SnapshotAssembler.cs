@@ -118,10 +118,24 @@ namespace Ring.Networking.Server
     ///
     /// ZERO ALLOCATIONS IN STEADY STATE. Every buffer is built in the
     /// constructor and sized from the caps; nothing below is `new`d per tick or
-    /// per connection. `NetConfig`'s three numbers are copied into plain fields
+    /// per connection. `NetConfig`'s numbers are copied into plain fields
     /// at construction — they are per-match settings, and reading a
     /// `ScriptableObject` field inside the per-tick loop would put a native
     /// object access on the hot path for no benefit.
+    ///
+    /// ONE INSTANCE SERVES ONE MATCH (phase gate fix wave, finding G4).
+    /// Every per-connection memory here — the carry queue, the resend
+    /// history, the subscription expiries — keys its arithmetic on the
+    /// world's own `CurrentTick`, and a match restart (Р60) rewinds that
+    /// clock to zero: every age and expiry would go negative at once, and
+    /// the first casualty would be redundancy (Р58), silently dead for the
+    /// whole new match — a full history that never prunes refuses every new
+    /// delivery. Task 36, which owns the match lifecycle, must construct a
+    /// FRESH assembler per match, the server-side mirror of
+    /// `EventDedup.Reset`. `BeginTick` guards the related mismatch — a world
+    /// with more event capacity than the constructor sized the wire buffers
+    /// for — because both failure shapes are the same mistake: one instance
+    /// outliving the one configuration it was built against.
     public sealed class SnapshotAssembler
     {
         /// Ordering key the carry queue is read by, and the eviction key read
@@ -247,6 +261,14 @@ namespace Ring.Networking.Server
             // deliberately NOT added: it widens the simulation's public API
             // beyond the two additions this task already makes there.
             _cfg = world.Config;
+            // The wire buffers were sized once, from the constructor's caps
+            // (see the class doc's one-instance-one-match paragraph); a world
+            // with a larger event cap would overrun them without diagnosis.
+            if (_cfg.Arena.MaxEventsPerFrame * 2 > _wire.Length)
+                throw new System.InvalidOperationException(
+                    "SnapshotAssembler.BeginTick: the world's Arena.MaxEventsPerFrame exceeds the cap "
+                    + "this assembler was constructed for — one instance serves one match and its one "
+                    + "config (see class doc).");
             _tick = world.CurrentTick;
             world.CaptureSnapshot(_capture);
 

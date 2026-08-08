@@ -202,9 +202,15 @@ namespace Ring.Networking.Protocol
         ///
         /// `TickDelta` counts ticks BACK FROM THE FRAME HEADER's tick, not
         /// an absolute tick — that is the entire reason the field is one
-        /// byte instead of four: `EventRedundancyTicks` (NetConfig, default
-        /// 4) never needs more than a tiny window, while an absolute tick
-        /// would need the full `u32` the header already carries.
+        /// byte instead of four: an absolute tick would need the full `u32`
+        /// the header already carries. The byte's 255-tick reach is what the
+        /// server budgets against — the redundancy window
+        /// (`EventRedundancyTicks`, default 4) is tiny, and the carry
+        /// queue / resend history evict, with a counter or silently per
+        /// their own docs, anything whose delta would no longer fit
+        /// (phase gate fix wave: the horizon guards in SnapshotAssembler
+        /// are this field's real binding consumer, not the redundancy
+        /// window alone).
         public struct EventRecord
         {
             public byte Kind;

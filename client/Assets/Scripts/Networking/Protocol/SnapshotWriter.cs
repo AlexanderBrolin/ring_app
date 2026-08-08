@@ -49,31 +49,33 @@ namespace Ring.Networking.Protocol
     /// is the one right below, not the 1052 B this paragraph used to end on.
     /// The spec line goes to the Task 57 amendments.
     ///
-    /// WORST-CASE FRAME SIZE — TASK 28'S BUDGET INPUT, 1116 B. Recomputed in
-    /// Task 27 from the five calculators below, not quoted: Task 27 is the
-    /// first place where a real event RECORD exists, so every earlier figure
-    /// predates the thing being measured. Spec §3.8 said 1043 B (header 14 B,
-    /// event ~9 B); Task 26 corrected the format overhead and got 1052 B while
-    /// leaving the spec's event estimate untouched. Neither was dishonest —
-    /// both were computed before the record they depend on existed. At the
-    /// shipped caps (`MaxPlayers` 3, so 2 OTHER players; `MaxMobs` 96; a
-    /// 16-event `SnapshotEventBudget` at an assumed 4 B of payload each):
+    /// WORST-CASE FRAME SIZE — 1180 B, RECOMPUTED BY TASK 28 FROM THE REAL
+    /// EVENT CATALOG (phase gate fix wave; this paragraph's own earlier
+    /// figures 1043, 1052 and 1116 each predated something — the format
+    /// overhead, the event record, the actual payload widths — and each was
+    /// corrected by the first task that owned the missing piece; the running
+    /// history lives in spec §6i Р146). At the shipped caps (`MaxPlayers` 3,
+    /// so 2 OTHER players; `MaxMobs` 96; a 16-event `SnapshotEventBudget` at
+    /// the catalog's widest payload — `ProjectileSpawned`, 8 B):
     ///
     ///   HeaderBytes                                    8
     ///   PlayersBlockBytes(2)                          19
     ///   LivenessBlockBytes()                           4
     ///   MobsBlockBytes(96)                           867
     ///   WaveBlockBytes()                               7
-    ///   EventsBlockBytes(16, 16*4)                   211
+    ///   EventsBlockBytes(16, 16*8)                   275
     ///   -----------------------------------------------
-    ///   total                                       1116
+    ///   total                                       1180
     ///
-    /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 116 B OVER the cap,
-    /// so Task 28's truncation branch is not an edge case but the ordinary
-    /// shape of a full frame. Mobs alone is 867 B; with the 8 B header that
-    /// leaves 125 B for everything else, of which Players+Liveness+Wave take
-    /// 30 B — about 95 B for events, roughly SEVEN records at 13 B each, not
-    /// the sixteen the raw `SnapshotEventBudget` config field suggests.
+    /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 180 B over the
+    /// cap ON PAPER. What actually gives at the defaults is the EVENT budget,
+    /// never the entity list: the assembler spends the fixed part and the
+    /// mobs first (956 B available, 867 needed), so entity truncation is NOT
+    /// reachable at the shipped numbers — events are squeezed instead and
+    /// carry over (Р61), and the truncation branch is exercised by tests
+    /// through a fixture cap (spec §6i Р147). Pinned by
+    /// SnapshotCodecTests.WorstCaseFrame_RecomputedFromTheCalculators_
+    /// WithTheRealCatalog.
     ///
     /// THE 4 B/EVENT PAYLOAD IS AN ASSUMPTION, NOT A MEASUREMENT — the event
     /// catalog is Task 28's (Task 27 leaves the payload opaque), so a
@@ -82,12 +84,13 @@ namespace Ring.Networking.Protocol
     /// exists to correct is exactly the one it will itself commit the moment
     /// anything below changes.
     ///
-    /// `flags` IS RESERVED AND NO BIT IS ASSIGNED. It is written and read
-    /// verbatim so the field exists on the wire from version 1 onward, but
-    /// Tasks 27-29 own its meaning (a "snapshot truncated" bit is the
-    /// expected first tenant). Assigning a bit here, with no producer and no
-    /// consumer, would be a feature for its own sake (AGENT.md rule 3).
-    /// Callers in Task 26 pass 0.
+    /// `flags` IS WRITTEN AND READ VERBATIM; ITS BITS BELONG TO THE CATALOG.
+    /// Task 26 shipped the field reserved (assigning a bit with no producer
+    /// would have been a feature for its own sake — AGENT.md rule 3); Task 28
+    /// claimed bit 0 the moment it had both producer and consumer:
+    /// `SnapshotHeaderFlags.Truncated` (SnapshotEvents.cs) — "this frame
+    /// dropped at least one ENTITY for room". Bits 1-7 remain free and NOT
+    /// assigned; the meanings live with `SnapshotHeaderFlags`, never here.
     ///
     /// THE WRITE SIDE THROWS; THE READ SIDE NEVER DOES. Running out of room
     /// is a bug in the CALLER — Task 28 owns the byte budget and must respect
@@ -170,8 +173,9 @@ namespace Ring.Networking.Protocol
         /// `SnapshotBroadcast.Payload`.
         public int BytesWritten => _pos;
 
-        /// Writes the 8-byte header. `flags` is reserved (see the class doc);
-        /// pass 0 until a bit is assigned.
+        /// Writes the 8-byte header. Bit meanings of `flags` live in
+        /// `SnapshotHeaderFlags` (bit 0 = truncated, Task 28); unassigned
+        /// bits are passed as 0.
         public void WriteHeader(ushort epoch, uint tick, byte flags)
         {
             Reserve(HeaderBytes);
