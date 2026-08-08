@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 using FishNet.Serializing;
+using FishNet.Serializing.Helping;
 using NUnit.Framework;
 using Ring.Networking;
 using Ring.Networking.Protocol;
@@ -196,11 +197,27 @@ namespace Ring.Simulation.Tests
             };
         }
 
+        /// A core that has been through one COMPLETE reconciliation cycle —
+        /// `BeginReconcile` (what `[Reconcile]` does) plus `FinishReconcile`
+        /// (what `PredictionManager.OnPostReconcile` does). Tests never call
+        /// only one half, because the pipeline never does either.
         static PlayerPredictionCore CoreReconciledTo(in PlayerState state)
         {
             var core = new PlayerPredictionCore();
-            core.ApplyReconcile(WorldTick, in state);
+            core.BeginReconcile(WorldTick, in state);
+            core.FinishReconcile();
             return core;
+        }
+
+        /// A short run of movement frames — enough ticks that the player
+        /// travels well over the snap threshold, so "measured before the
+        /// replay" and "measured after it" are far apart.
+        static SimInput[] MovementFrames(int count)
+        {
+            var frames = new SimInput[count];
+            for (int i = 0; i < count; i++)
+                frames[i] = new SimInput { MoveDir = new float2(1f, 0f) };
+            return frames;
         }
 
         // ---------------------------------------------- 1. reconcile round trip
@@ -217,7 +234,8 @@ namespace Ring.Simulation.Tests
                 + "on the wire, but the value the world hands in is what the builder is asked for");
 
             var core = new PlayerPredictionCore();
-            core.ApplyReconcile(data.GetTick(), in data.State);
+            core.BeginReconcile(data.GetTick(), in data.State);
+            core.FinishReconcile();
 
             AssertPlayerStateBitEqual(source, core.Predicted,
                 "world -> ReconcileData -> predicted copy");
@@ -611,9 +629,11 @@ namespace Ring.Simulation.Tests
             ReplicateData sameInputAnotherTick = a;
             sameInputAnotherTick.SetTick(7u);
             Assert.IsTrue(WireComparers.AreEqual(a, sameInputAnotherTick),
-                "the tick must not take part: FishNet stamps the ticks of its own queue, and two "
-                + "entries carrying the same input ARE the same input — comparing the tick would "
-                + "make every entry unique and defeat the deduplication the comparer exists for");
+                "the tick must not take part. The comparer's ONE consumer is IsDefault, built by "
+                + "codegen as AreEqual(data, default) (GeneralHelper.cs:1404-1445), and "
+                + "SetDataTick runs at NetworkBehaviour.Prediction.cs:561 — four lines BEFORE "
+                + "isDefaultDel.Invoke at :565. A tick-aware comparer would answer 'not default' "
+                + "on every tick of the match and the resend counters would never collapse");
 
             foreach (FieldInfo f in ReplicateDataFields)
             {
@@ -625,6 +645,37 @@ namespace Ring.Simulation.Tests
                     + "does not read is a field two different inputs can differ in while FishNet "
                     + "treats them as identical");
             }
+        }
+
+        [Test]
+        public void ReplicateComparer_IsTheOneFishNetActuallyCallsThroughIsDefault()
+        {
+            // The wiring, not just the logic (fix-round 1). Codegen registers
+            // our method as PublicPropertyComparer<ReplicateData>.IsDefault —
+            // built as `AreEqual(data, default)` — and that delegate is the
+            // SINGLE runtime consumer of the comparer
+            // (NetworkBehaviour.Prediction.cs:524; the two-argument `Compare`
+            // property is set by codegen at GeneralHelper.cs:1380 and read
+            // nowhere). Without this test the hand-written comparer could be
+            // registered under a type nobody asks about and every other
+            // assertion in this file would still pass.
+            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedComparers___Internal");
+
+            Assert.IsNotNull(PublicPropertyComparer<ReplicateData>.IsDefault,
+                "codegen must have registered an IsDefault for ReplicateData — Replicate_"
+                + "Authoritative refuses to run at all without one (NetworkBehaviour."
+                + "Prediction.cs:524-528)");
+
+            Assert.IsTrue(PublicPropertyComparer<ReplicateData>.IsDefault(default),
+                "a zeroed payload IS default — this is the call FishNet makes to decide whether "
+                + "to let the redundancy counters run down");
+
+            SimConfig cfg = TestConfigs.Open();
+            SimInput sample = SampleInputs(in cfg)[0];
+            ReplicateData live = ReplicateData.FromInput(in sample, in cfg);
+            Assert.IsFalse(PublicPropertyComparer<ReplicateData>.IsDefault(live),
+                "a real input must not read as default, or every frame of the match would look "
+                + "like an idle one to the resend logic");
         }
 
         static object BumpedValue(FieldInfo f, object current)
@@ -640,66 +691,198 @@ namespace Ring.Simulation.Tests
         // ------------------------------------------ reconciliation snap (Р78/Р106)
 
         [Test]
-        public void ReconcileCorrection_IsMeasuredAndComparedAgainstTheSnapThreshold()
+        public void SnapThreshold_IsStrictlyAbove()
         {
-            const float Threshold = 1.0f;   // NetConfig.ReconcileSnapMeters' default
-
-            Assert.IsTrue(PlayerPredictionCore.ShouldSnapCorrection(1.5f, Threshold),
+            Assert.IsTrue(PlayerPredictionCore.ShouldSnapCorrection(1.5f, SnapThreshold),
                 "a correction past the threshold reads as a teleport and must snap");
-            Assert.IsFalse(PlayerPredictionCore.ShouldSnapCorrection(0.5f, Threshold),
+            Assert.IsFalse(PlayerPredictionCore.ShouldSnapCorrection(0.5f, SnapThreshold),
                 "a correction inside the threshold must be smoothed, not snapped");
-            Assert.IsFalse(PlayerPredictionCore.ShouldSnapCorrection(Threshold, Threshold),
+            Assert.IsFalse(PlayerPredictionCore.ShouldSnapCorrection(SnapThreshold, SnapThreshold),
                 "exactly at the threshold is still a correction — the config reads 'above this', "
                 + "and a boundary that snapped would make the number mean something else");
+        }
 
+        /// The measurement itself, over the sequence the pipeline actually
+        /// runs (fix-round 1, finding C1). One reconciliation cycle is:
+        /// `[Reconcile]` -> `BeginReconcile` (predicted copy jumps BACK to the
+        /// world's state, several ticks in the past), then FishNet replays the
+        /// queue forward to the newest tick, then `OnPostReconcile` ->
+        /// `FinishReconcile`.
+        ///
+        /// Measuring at the first of those three is measuring how far the
+        /// player has MOVED since the state was captured — around a metre on
+        /// the run at 30 Hz, several in a dash — and calling it a correction.
+        /// This test refuses to accept anything but EXACTLY zero when the
+        /// prediction was right, which is the only assertion that can tell the
+        /// two measurements apart.
+        [Test]
+        public void ReconcileCorrection_IsTheJumpLeftAfterTheReplay_ZeroWhenPredictionWasRight()
+        {
             SimConfig cfg = TestConfigs.Open();
-            PlayerState believed = LivePlayerState(in cfg);
-            PlayerPredictionCore core = CoreReconciledTo(in believed);
-            core.ApplyReconcile(WorldTick, in believed);
+            PlayerState worldState = LivePlayerState(in cfg);
+            SimInput[] frames = MovementFrames(ReplayTicks);
+
+            PlayerPredictionCore core = CoreReconciledTo(in worldState);
+
+            // The client runs ahead of the state it last heard about.
+            for (int i = 0; i < frames.Length; i++)
+                core.Predict(in frames[i], in cfg);
+            float2 aheadPos = core.Predicted.Pos;
+
+            // Premise: it really did run ahead — far enough that a measurement
+            // taken before the replay could not be mistaken for zero, and far
+            // enough to clear the snap threshold on its own.
+            Assert.Greater(math.distance(aheadPos, worldState.Pos), SnapThreshold,
+                "fixture: the client must run more than the snap threshold ahead of the state "
+                + "it is about to reconcile against, or this test cannot tell the two "
+                + "measurements apart");
+
+            // The world turns out to have agreed exactly: same state, same
+            // inputs replayed on top of it.
+            core.BeginReconcile(WorldTick + 1u, in worldState);
+            for (int i = 0; i < frames.Length; i++)
+                core.Predict(in frames[i], in cfg);
+            core.FinishReconcile();
+
             Assert.AreEqual(0f, core.LastCorrectionMeters, 0f,
-                "reconciling to the state we already believed is not a correction");
+                "prediction was perfect, so the picture did not jump at all — the correction is "
+                + "how far the predicted copy MOVED across the whole reconciliation, not the "
+                + "distance to a state several ticks in the past");
+            Assert.IsFalse(
+                PlayerPredictionCore.ShouldSnapCorrection(core.LastCorrectionMeters, SnapThreshold),
+                "and therefore nothing to snap");
 
-            // 3-4-5: an exact distance, so the assert pins the measurement
-            // rather than a rounding of it.
-            PlayerState authoritative = believed;
-            authoritative.Pos = believed.Pos + new float2(3f, 4f);
-            core.ApplyReconcile(WorldTick + 1u, in authoritative);
+            // Now the world disagrees by a known amount. 3-4-5 so the expected
+            // distance is exact rather than a rounding of one.
+            PlayerState moved = worldState;
+            moved.Pos = worldState.Pos + new float2(3f, 4f);
+            core.BeginReconcile(WorldTick + 2u, in moved);
+            for (int i = 0; i < frames.Length; i++)
+                core.Predict(in frames[i], in cfg);
+            core.FinishReconcile();
 
-            Assert.AreEqual(5f, core.LastCorrectionMeters, 1e-4f,
-                "the correction is the distance between what the client believed and what the "
-                + "world says — measured BEFORE the predicted copy is overwritten, because "
-                + "afterwards it exists nowhere");
+            Assert.Greater(core.LastCorrectionMeters, 0f,
+                "a real disagreement must show as a real correction");
+            Assert.AreEqual(5f, core.LastCorrectionMeters, 1e-2f,
+                "…and it must be the jump we injected (3-4-5), not the distance the player "
+                + "travelled while the state was in flight");
             Assert.IsTrue(
-                PlayerPredictionCore.ShouldSnapCorrection(core.LastCorrectionMeters, Threshold),
+                PlayerPredictionCore.ShouldSnapCorrection(core.LastCorrectionMeters, SnapThreshold),
                 "witness: a 5 m correction at the default threshold must snap");
         }
+
+        /// Long enough that the player travels well past `SnapThreshold`
+        /// during the replay window (TestConfigs.Open's MaxSpeed 7 m/s at 30 Hz).
+        const int ReplayTicks = 12;
+
+        /// `NetConfig.ReconcileSnapMeters`' shipped default.
+        const float SnapThreshold = 1.0f;
 
         // ------------------------------------------- server-side input for Task 36
 
         [Test]
-        public void ServerInput_ExposesTheDecodedInputTickAndFreshness()
+        public void ServerInput_PublishesOnlyTheInputsThatActuallyArrived()
         {
-            // The contract Task 36 consumes: what the server must feed the world
-            // for this player on this tick, and whether the client's data for it
-            // actually arrived (ReplicateState carries `Created` only when it
-            // did — a repeat under packet loss does not).
+            // The contract Task 36 consumes. There is NO freshness flag: an
+            // unfresh tick is never published in the first place, because
+            // FishNet does not repeat the last input when a packet is missing —
+            // it substitutes `default(T)` (NetworkBehaviour.Prediction.cs
+            // :698-712), whose eight zero bytes decode to an aim point in the
+            // far corner of the arena rather than to a neutral standstill.
+            // Publishing that would hand the world an input no player sent.
             SimConfig cfg = TestConfigs.Open();
-            SimInput sample = SampleInputs(in cfg)[1];
+            SimInput[] samples = SampleInputs(in cfg);
             var core = new PlayerPredictionCore();
 
-            Assert.IsFalse(core.LastServerInput.IsFresh,
-                "a core that has seen no input must not claim a fresh one");
+            // The gate is a pure function, so "unfresh is not published" is
+            // pinned at the decision rather than at the call site.
+            Assert.AreEqual(ReplicateRoute.Ignore,
+                PlayerPredictionCore.RouteReplicate(isServerStarted: true, isOwner: false,
+                    dataIsFresh: false),
+                "a server tick FishNet had no data for must not reach the world at all");
 
-            core.RecordServerInput(WorldTick, in sample, isFresh: true);
+            core.RecordServerInput(WorldTick, in samples[1]);
             Assert.AreEqual(WorldTick, core.LastServerInput.Tick, "the tick must be carried");
-            Assert.IsTrue(core.LastServerInput.IsFresh, "freshness must be carried");
-            AssertSimInputEqual(sample, core.LastServerInput.Input, "the decoded input must be carried");
+            AssertSimInputEqual(samples[1], core.LastServerInput.Input,
+                "the decoded input must be carried");
 
-            core.RecordServerInput(WorldTick + 1u, in sample, isFresh: false);
-            Assert.AreEqual(WorldTick + 1u, core.LastServerInput.Tick, "a later tick must replace it");
-            Assert.IsFalse(core.LastServerInput.IsFresh,
-                "a repeated tick with no data of its own must report itself as not fresh, or the "
-                + "world cannot tell a held input from a starved one (Р25)");
+            // A later arrival replaces it whole.
+            core.RecordServerInput(WorldTick + 4u, in samples[2]);
+            Assert.AreEqual(WorldTick + 4u, core.LastServerInput.Tick,
+                "a later arrival must replace the tick");
+            AssertSimInputEqual(samples[2], core.LastServerInput.Input,
+                "…and the input with it");
+
+            // Starvation is a question about ticks, not about a flag (Р25):
+            // the world compares the tick it is running against this one.
+            Assert.AreEqual(6u, (WorldTick + 10u) - core.LastServerInput.Tick,
+                "the gap between the running tick and the last received one IS the starvation "
+                + "measure NetConfig.InputStarveTicks is written in");
+        }
+
+        // ------------------------------------------------- replicate routing (CR 3)
+
+        [Test]
+        public void ReplicateRouting_PredictsOnlyForTheOwnerAndRecordsOnlyOnTheServer()
+        {
+            // A non-owning client DOES run this replicate whenever the object
+            // has EnableStateForwarding on: NetworkBehaviour.Prediction.cs:611
+            // only exits early when state forwarding is off and we are not the
+            // server. Predicting there would be a client deciding another
+            // player's outcome (CR 3), from `default(ReplicateData)` at that
+            // (:620-624 -> ReplicateDefaultData).
+            Assert.AreEqual(ReplicateRoute.PredictLocally,
+                PlayerPredictionCore.RouteReplicate(isServerStarted: false, isOwner: true,
+                    dataIsFresh: true),
+                "the owning client predicts its own player");
+            Assert.AreEqual(ReplicateRoute.PredictLocally,
+                PlayerPredictionCore.RouteReplicate(isServerStarted: false, isOwner: true,
+                    dataIsFresh: false),
+                "…and keeps predicting through its own replays, where nothing is 'fresh'");
+            Assert.AreEqual(ReplicateRoute.Ignore,
+                PlayerPredictionCore.RouteReplicate(isServerStarted: false, isOwner: false,
+                    dataIsFresh: true),
+                "a client must NEVER predict somebody else's player (CR 3)");
+            Assert.AreEqual(ReplicateRoute.Ignore,
+                PlayerPredictionCore.RouteReplicate(isServerStarted: false, isOwner: false,
+                    dataIsFresh: false),
+                "…forwarded or not, fresh or not");
+            Assert.AreEqual(ReplicateRoute.RecordForServer,
+                PlayerPredictionCore.RouteReplicate(isServerStarted: true, isOwner: false,
+                    dataIsFresh: true),
+                "the server publishes the input it received");
+            Assert.AreEqual(ReplicateRoute.RecordForServer,
+                PlayerPredictionCore.RouteReplicate(isServerStarted: true, isOwner: true,
+                    dataIsFresh: true),
+                "…including as host, where it owns the object too — the world is the authority "
+                + "there, so there is nothing to predict");
+            Assert.AreEqual(ReplicateRoute.Ignore,
+                PlayerPredictionCore.RouteReplicate(isServerStarted: true, isOwner: true,
+                    dataIsFresh: false),
+                "a server tick with no real data behind it is published nowhere");
+        }
+
+        [Test]
+        public void Reconcile_IsNotSentBeforeTheWorldHasProducedAState()
+        {
+            // `default(PlayerState)` is Alive == false at the arena origin.
+            // Broadcasting it between spawn and the first world update would
+            // tell every client this player is dead in the middle of the map,
+            // on every tick.
+            Assert.IsFalse(
+                PlayerPredictionCore.ShouldSendReconcile(isServerStarted: true,
+                    hasAuthoritativeState: false),
+                "the server must not reconcile anyone to a state the world has never produced");
+            Assert.IsTrue(
+                PlayerPredictionCore.ShouldSendReconcile(isServerStarted: true,
+                    hasAuthoritativeState: true),
+                "witness: once the world has spoken, the server reconciles normally");
+            Assert.IsTrue(
+                PlayerPredictionCore.ShouldSendReconcile(isServerStarted: false,
+                    hasAuthoritativeState: false),
+                "a client always may: its own predicted copy is a legitimate local fallback for "
+                + "a lost state packet, and it is empty only while prediction is not running "
+                + "anyway");
         }
     }
 }

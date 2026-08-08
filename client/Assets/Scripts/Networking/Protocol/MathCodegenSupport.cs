@@ -111,7 +111,7 @@ namespace Ring.Networking
     /// reach it and the generated comparer would have been perfectly valid.
     ///
     /// What the generator does regardless is EMIT. `CreateEqualityComparer` is
-    /// unconditional for the replicate parameter (PredictionProcessor.cs:717-718),
+    /// unconditional for the replicate parameter (PredictionProcessor.cs:717),
     /// so a build without the entry below is not hypothetical — it was run, and
     /// `strings -a Library/ScriptAssemblies/Ring.Networking.dll | grep
     /// "Comparer___"` answered with three lines:
@@ -122,19 +122,45 @@ namespace Ring.Networking
     /// project's Р110 gate is a mechanical grep that must come back EMPTY, and
     /// those three lines fail it. Declaring the comparer by hand hits the
     /// registered-comparer table at GeneralHelper.cs:1113 and the generator then
-    /// "emits nothing at all" — all three lines are gone, which is what keeps the
-    /// gate an absolute rather than a judgement call. The same build proved the
-    /// serializer half: no `GWrite___Unity`/`GRead___Unity` line appears even
-    /// though ReconcileData carries a whole PlayerState full of float2, exactly
-    /// as MathSerializers' doc predicts.
+    /// emits none of them, which is what keeps the gate an absolute rather than a
+    /// judgement call. The same build proved the serializer half: no
+    /// `GWrite___Unity`/`GRead___Unity` line appears even though ReconcileData
+    /// carries a whole PlayerState full of float2, exactly as MathSerializers'
+    /// doc predicts.
+    ///
+    /// "EMITS NOTHING" IS ABOUT THE COMPARER, NOT ABOUT EVERYTHING (fix-round 1).
+    /// `CreateIsDefaultComparer` runs on the very next line
+    /// (PredictionProcessor.cs:718) and never consults the custom table, so
+    /// `IsDefault___Ring.Networking.Protocol.ReplicateData` IS generated either
+    /// way — and with the entry below in place it is generated as a call INTO
+    /// it. That is the proof the hand-written comparer sits on the hot path
+    /// rather than beside it, and it is also why the gate grep stays honest:
+    /// the pattern `Comparer___` matches neither `IsDefault___…` nor the
+    /// container class `GeneratedComparers___Internal` (both are in the shipped
+    /// assembly right now, and the gate is still empty).
     public static class WireComparers
     {
-        /// Replicate-data comparison for ReplicateData (Stage 2 Task 34).
+        /// Equality for ReplicateData (Stage 2 Task 34).
         ///
-        /// Payload only — the tick is NOT compared. FishNet owns the ticks of
-        /// its own queue and stamps them itself; two entries carrying the same
-        /// input are the same input, and folding the tick in would make every
-        /// entry unique and defeat the deduplication the comparer exists for.
+        /// WHO ACTUALLY CALLS THIS, precisely — because the obvious guess is
+        /// wrong (fix-round 1). FishNet never compares two replicate entries
+        /// against each other: `PublicPropertyComparer<T>.Compare` is SET by
+        /// codegen (GeneralHelper.cs:1380) and read nowhere in the runtime. The
+        /// single consumer is `PublicPropertyComparer<T>.IsDefault`
+        /// (NetworkBehaviour.Prediction.cs:524, in `Replicate_Authoritative`),
+        /// and codegen builds that as `IsDefault(data) => AreEqual(data,
+        /// default)` — literally push the argument, push a zeroed local, call
+        /// this method (GeneralHelper.cs:1404-1445). Its answer decides
+        /// `resetResends`: a non-default input re-arms the redundancy counters,
+        /// a default one lets them run down.
+        ///
+        /// SO THE TICK MUST NOT PARTICIPATE — for that reason, not for a
+        /// deduplication that does not exist. `SetDataTick` runs at
+        /// NetworkBehaviour.Prediction.cs:561, four lines BEFORE
+        /// `isDefaultDel.Invoke` at :565, so by the time this method sees the
+        /// data its tick is already `TimeManager.LocalTick`. A comparer that
+        /// compared ticks would therefore answer "not default" on every tick of
+        /// the match, and the resend counters would never collapse.
         ///
         /// Shape is dictated by the ILPP, not by taste: [CustomComparer],
         /// static, returning bool, exactly two parameters of the compared type

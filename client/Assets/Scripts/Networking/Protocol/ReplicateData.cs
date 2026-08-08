@@ -30,6 +30,23 @@ namespace Ring.Networking.Protocol
     ///     A comparer is still declared in `WireComparers`, for a different
     ///     reason entirely — see it.
     ///
+    /// FISHNET'S IDLE-INPUT SUPPRESSION WILL NEVER ENGAGE FOR THIS FORMAT, and
+    /// Task 36's bandwidth measurement on milestone В2 needs to know it up
+    /// front (fix-round 1). The package decides whether to let its redundancy
+    /// counters run down by asking `IsDefault(data)`, which codegen builds as
+    /// `AreEqual(data, default)` (WireComparers' own doc) — i.e. "are all six
+    /// payload fields zero". Standing perfectly still is not that: `AimX`/`AimY`
+    /// are `Quantize.Aim` codes, and they are zero only at the very bottom of
+    /// the aim domain. So the owner sends a replicate EVERY tick for the whole
+    /// match — 8 B x 30 Hz plus FishNet's redundancy, which is what §3.8's
+    /// uplink budget already assumes, but not because idle frames were
+    /// collapsed. The mirror image is the curiosity worth knowing: the ONE
+    /// input that does read as default — aim at `(-3R, -3R)`, height 0, no
+    /// flags, no movement — is a perfectly legal input, and it is the one that
+    /// WOULD have its resends suppressed. Neither effect is worth code: the
+    /// first costs nothing we had not budgeted, and the second is a corner of
+    /// the arena nobody aims at.
+    ///
     /// THE TICK FIELD'S SHAPE IS A CODEGEN CONTRACT, not a style choice.
     /// `PredictionProcessor.TickFieldIsNonSerializable` (:383-416) walks
     /// `GetTick`'s IL looking for a plain `ldfld` and then rejects the field
