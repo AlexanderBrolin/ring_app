@@ -1,7 +1,7 @@
 {
     "name": "Ring.Simulation.Tests",
     "rootNamespace": "Ring.Simulation.Tests",
-    "references": ["Ring.Simulation", "Ring.Data", "Ring.Networking", "FishNet.Runtime", "Unity.Mathematics", "UnityEngine.TestRunner", "UnityEditor.TestRunner", "Unity.InputSystem"],
+    "references": ["Ring.Simulation", "Ring.Data", "Ring.Networking", "Ring.Server", "FishNet.Runtime", "Unity.Mathematics", "UnityEngine.TestRunner", "UnityEditor.TestRunner", "Unity.InputSystem"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
