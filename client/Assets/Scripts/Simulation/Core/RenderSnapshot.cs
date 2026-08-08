@@ -44,5 +44,42 @@ namespace Ring.Simulation.Core
             Projectiles = new ProjectileState[arena.MaxProjectiles];
             PlayerStats = new MatchStats[arena.MaxPlayers];
         }
+
+        /// Deep-copies one tick's worth of render data FROM `other` INTO this
+        /// instance (Stage 2 Task 32) — the ONE copy routine every consumer of a
+        /// `RenderSnapshot` pair uses, so a field this class grows in a future
+        /// phase only needs teaching to ONE place, not to every call site that
+        /// happens to duplicate a snapshot. Moved here, unchanged in body, from
+        /// `SimulationRunner`'s private `CopySnapshot(from, to)` (Task 25/Task 4/
+        /// Task 5): `SimulationRunner.FreezeRender`/`UnfreezeRender` call
+        /// `to.CopyFrom(from)` where they used to call `CopySnapshot(from, to)`,
+        /// and `Networking.Client.SnapshotQueue` fills its admitted slots through
+        /// this same method — a second, independent copy routine in the queue
+        /// would be exactly the field-by-field drift this consolidation exists
+        /// to prevent.
+        ///
+        /// Every field here is either a struct or a struct array, so plain
+        /// assignment/indexed-copy IS the deep copy — nothing reaches beyond this
+        /// class's own already-public fields. Contract: `other` and `this` are
+        /// built from the SAME arena caps (both constructed via `new
+        /// RenderSnapshot(in arena)` off one `ArenaSimConfig`), so every index up
+        /// to `other`'s counts is in bounds on this side too — callers that
+        /// preallocate every `RenderSnapshot` they ever copy between off one
+        /// config (both `SimulationRunner` and `SnapshotQueue` do) get this for
+        /// free.
+        public void CopyFrom(RenderSnapshot other)
+        {
+            Tick = other.Tick;
+            PlayerCount = other.PlayerCount;
+            for (int i = 0; i < other.PlayerCount; i++) Players[i] = other.Players[i];
+            LocalPlayerIndex = other.LocalPlayerIndex;
+            MobCount = other.MobCount;
+            for (int i = 0; i < other.MobCount; i++) Mobs[i] = other.Mobs[i];
+            ProjectileCount = other.ProjectileCount;
+            for (int i = 0; i < other.ProjectileCount; i++) Projectiles[i] = other.Projectiles[i];
+            Wave = other.Wave;
+            for (int i = 0; i < other.PlayerCount; i++) PlayerStats[i] = other.PlayerStats[i];
+            WorldStats = other.WorldStats;
+        }
     }
 }

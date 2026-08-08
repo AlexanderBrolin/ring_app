@@ -306,8 +306,8 @@ namespace Ring.Presentation
         /// moment instead of leaving it stuck on the FIRST hit in a chain.
         public void FreezeRender()
         {
-            CopySnapshot(Prev, _renderPrevFrozen);
-            CopySnapshot(Curr, _renderCurrFrozen);
+            _renderPrevFrozen.CopyFrom(Prev);
+            _renderCurrFrozen.CopyFrom(Curr);
             RenderAlpha = Alpha;
             _renderFrozen = true;
             _catchUpRemaining = 0f; // a fresh freeze cancels any catch-up in flight
@@ -332,7 +332,7 @@ namespace Ring.Presentation
                 // `_renderPrevFrozen` (RenderPrev's frozen backing store) to it so
                 // the catch-up blends FROM there, not from the older `Prev` half
                 // of the pair that was frozen alongside it.
-                CopySnapshot(_renderCurrFrozen, _renderPrevFrozen);
+                _renderPrevFrozen.CopyFrom(_renderCurrFrozen);
                 _catchUpDuration = catchUpSeconds;
                 _catchUpRemaining = catchUpSeconds;
             }
@@ -340,36 +340,6 @@ namespace Ring.Presentation
             {
                 _catchUpRemaining = 0f;
             }
-        }
-
-        /// Deep-copies one tick's worth of render data between two
-        /// `RenderSnapshot` instances of matching capacity (`FreezeRender`/
-        /// `UnfreezeRender` above — both `to` buffers are allocated in `Restart`
-        /// with this same runner's `ArenaConfig` caps, same as `Prev`/`Curr`
-        /// themselves). Every field on `RenderSnapshot` is either a struct or a
-        /// struct array, so plain assignment/indexed-copy IS the deep copy —
-        /// nothing here reaches into `Ring.Simulation.Core` beyond reading its
-        /// already-public fields (Simulation itself is untouched by this task).
-        /// Stage 2 Task 4: `Player` moved from a plain field to
-        /// `Players`/`PlayerCount` (plus the new `LocalPlayerIndex`) — all
-        /// three copied explicitly here, same indexed-copy pattern as
-        /// `Mobs`/`Projectiles` below. Stage 2 Task 5: `Stats` split the same
-        /// way — `PlayerStats` gets the indexed-copy treatment (bounded by
-        /// `PlayerCount`, same array every player-indexed field here uses),
-        /// `WorldStats` is a single plain-struct assignment, same as `Wave`.
-        static void CopySnapshot(RenderSnapshot from, RenderSnapshot to)
-        {
-            to.Tick = from.Tick;
-            to.PlayerCount = from.PlayerCount;
-            for (int i = 0; i < from.PlayerCount; i++) to.Players[i] = from.Players[i];
-            to.LocalPlayerIndex = from.LocalPlayerIndex;
-            to.MobCount = from.MobCount;
-            for (int i = 0; i < from.MobCount; i++) to.Mobs[i] = from.Mobs[i];
-            to.ProjectileCount = from.ProjectileCount;
-            for (int i = 0; i < from.ProjectileCount; i++) to.Projectiles[i] = from.Projectiles[i];
-            to.Wave = from.Wave;
-            for (int i = 0; i < from.PlayerCount; i++) to.PlayerStats[i] = from.PlayerStats[i];
-            to.WorldStats = from.WorldStats;
         }
 
         public void Restart(long seed)
