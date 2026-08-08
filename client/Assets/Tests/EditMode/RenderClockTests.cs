@@ -613,7 +613,81 @@ namespace Ring.Simulation.Tests
             }
         }
 
-        // ---- T31.12. The data path allocates nothing ----
+        // ---- T31.12. A broken snap threshold breaks neither half of the contract ----
+
+        [Test]
+        public void HostileSnapThreshold_NeverReversesTimeAndKeepsTheSlew()
+        {
+            // Fix round 1, reviewer IMPORTANT. `RenderClockSnapTicks` reaches
+            // this class through a plain struct the caller fills in, so
+            // `NetConfig`'s [Range(1, 60)] and NetInvariants stand between the
+            // OWNER and a bad value — not between a buggy caller and the clock.
+            // Both non-positive values break the snap in a different direction
+            // and both are covered here:
+            //   * negative — a NEGATIVE drift exceeds it, i.e. a target sitting
+            //     BEHIND the clock qualifies as a "forward" snap and rewinds
+            //     time, which is the exact thing the asymmetric snap exists to
+            //     forbid;
+            //   * zero — every sub-tick error becomes a per-frame teleport onto
+            //     the target and the slew is silently dead.
+            int[] hostile = { -5, 0 };
+            foreach (int snapTicks in hostile)
+            {
+                var sane = Fixture();
+                var broken = Fixture();
+                broken.RenderClockSnapTicks = snapTicks;
+
+                // 1. AHEAD of a frozen target. A few frames under a SANE
+                //    threshold first, so a snap onto that target would be a
+                //    genuine rewind and not merely a freeze in place.
+                var clock = Armed(sane, out double start);
+                for (int f = 0; f < 3; f++) clock.Advance(Dt, in sane);
+                double ahead = clock.RenderTime;
+                Assert.Greater(ahead, start + 2d,
+                    $"SnapTicks {snapTicks}: fixture premise — the clock is ticks ahead of "
+                    + "its frozen target, so a snap onto that target would rewind it");
+
+                double previous = clock.RenderTime;
+                for (int f = 0; f < 40; f++)
+                {
+                    clock.Advance(Dt, in broken);
+                    Assert.GreaterOrEqual(clock.RenderTime, previous,
+                        $"SnapTicks {snapTicks}: renderTime never moves backwards — a "
+                        + "threshold the asset's own Range cannot express must not turn "
+                        + "the forward-only snap into a rewind");
+                    previous = clock.RenderTime;
+                }
+                Assert.Greater(clock.RenderTime, ahead,
+                    $"SnapTicks {snapTicks}: positive witness — the clock kept running "
+                    + "forward instead of being pinned onto its target");
+
+                // 2. BEHIND the target. The correction must stay a SLEW: a
+                //    threshold that names no gap disables the jump, it does not
+                //    turn every drift into one.
+                var catching = Armed(broken, out double start2);
+                catching.OnSnapshot(CatchUpNewest, Epoch);
+                double target = CatchUpNewest - broken.InterpBufferTicks;
+                Assert.Greater(target - start2, 1d,
+                    $"SnapTicks {snapTicks}: fixture premise — the clock is behind a target "
+                    + "far enough away to demand a correction");
+
+                double previous2 = catching.RenderTime, maxStep = 0d;
+                for (int f = 0; f < 20; f++)
+                {
+                    catching.Advance(Dt, in broken);
+                    maxStep = math.max(maxStep, catching.RenderTime - previous2);
+                    previous2 = catching.RenderTime;
+                }
+                Assert.LessOrEqual(maxStep, FastStep(broken) + Eps,
+                    $"SnapTicks {snapTicks}: the correction stayed a slew — no frame "
+                    + "teleported onto the target");
+                Assert.Greater(catching.RenderTime, start2,
+                    $"SnapTicks {snapTicks}: positive witness — and the clock really was "
+                    + "correcting, not standing still");
+            }
+        }
+
+        // ---- T31.13. The data path allocates nothing ----
 
         [Test]
         public void Clock_DoesNotAllocateGCMemory()

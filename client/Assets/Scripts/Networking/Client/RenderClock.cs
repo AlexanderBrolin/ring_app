@@ -59,7 +59,10 @@ namespace Ring.Networking.Client
     ///   * Inside the snap threshold the rate becomes `1 ± SlewFraction` and
     ///     the error is walked out over many frames.
     ///   * Beyond `RenderClockSnapTicks` of error the clock JUMPS onto the
-    ///     target — but only FORWARD. A clock that has run AHEAD of its target
+    ///     target — but only FORWARD, and only when that threshold is a
+    ///     positive number of ticks; anything else disables the jump rather
+    ///     than reshaping it (see the hostile-input note below). A clock that
+    ///     has run AHEAD of its target
     ///     (the buffer starved) is never snapped back, however far ahead it
     ///     has run, because `renderTime` is monotonic inside an epoch (spec
     ///     §3.9) and a backward jump would replay moments the player has
@@ -115,9 +118,14 @@ namespace Ring.Networking.Client
     /// refused outright — it is 828 days of match away and can only be
     /// corruption. `unscaledDeltaTime` that is not a positive finite number
     /// buys a frame of nothing. `SlewFraction` is clamped into a range that
-    /// keeps the rate positive, because "renderTime is monotonic" is a promise
-    /// of this class and not a consequence of someone having tuned an asset
-    /// correctly.
+    /// keeps the rate positive, and a `RenderClockSnapTicks` that is not a
+    /// positive number of ticks disables the snap outright — because
+    /// "renderTime is monotonic" is a promise of this class and not a
+    /// consequence of someone having tuned an asset correctly. Both knobs
+    /// arrive through `NetTimings`, which is a plain struct any caller can
+    /// build by hand or leave at `default`, so neither the asset's `[Range]`
+    /// attributes nor `NetInvariants` stand between a caller bug and this code
+    /// (fix round 1: the int knob was unguarded while the float one was not).
     ///
     /// NOTHING HERE ALLOCATES. The whole state is a handful of scalars; there
     /// is no buffer to size and the constructor is the implicit one.
@@ -290,11 +298,26 @@ namespace Ring.Networking.Client
             // would land, measured against the target as it stands now.
             double drift = target - (_renderTime + dtTicks);
 
-            if (drift > cfg.RenderClockSnapTicks)
+            if (cfg.RenderClockSnapTicks > 0 && drift > cfg.RenderClockSnapTicks)
             {
-                // Forward only, and only past the threshold. The comparison is
-                // strict: a gap of exactly RenderClockSnapTicks is still the
-                // slew's to walk out.
+                // Forward only, and only past the threshold. BOTH halves of the
+                // condition are load-bearing (fix round 1):
+                //   * the threshold has to be a POSITIVE number of ticks before
+                //     it names a gap at all. A negative one — a caller bug, not
+                //     something the asset's own [Range(1, 60)] can produce —
+                //     would be exceeded by a NEGATIVE drift, i.e. by a target
+                //     sitting BEHIND the clock, and this branch would then
+                //     rewind time in the name of the forward-only snap. A
+                //     threshold of zero would be worse in the other direction:
+                //     every sub-tick error becomes a per-frame teleport and the
+                //     slew is silently dead. So a non-positive threshold
+                //     DISABLES the jump and leaves the whole correction to the
+                //     slew, which cannot break monotonicity — the same shape as
+                //     a non-positive `SlewFraction` disabling the slew in
+                //     `SlewFractionOf`. A hardening path degrades a mechanism;
+                //     it never invents a bound the caller did not ask for.
+                //   * `drift > threshold` is strict: a gap of exactly
+                //     RenderClockSnapTicks is still the slew's to walk out.
                 _slew = SlewState.Neutral;
                 SetTime(target);
                 return;
