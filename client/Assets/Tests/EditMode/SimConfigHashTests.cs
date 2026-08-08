@@ -148,8 +148,13 @@ namespace Ring.Simulation.Tests
             // class phase Ф5 hit four times) was pinned only by a comment.
             Assert.IsFalse(typeof(NetStats).IsValueType,
                 "NetStats must be a class: a struct would silently drop increments applied to copies");
-            Assert.AreEqual(10, netFieldNames.Count,
-                "ten network counters expected — the composition of NetStats has changed");
+            // 14, not 10: Stage 2 Task 33 (plan :1603-1606) added the four
+            // LatencySim* fields — a deliberate, sanctioned composition
+            // change (task-33-brief.md §2.3), not drift. This literal is a
+            // characterization pin; a NINTH addition should fail here too
+            // and prompt the same update, not slide through silently.
+            Assert.AreEqual(14, netFieldNames.Count,
+                "fourteen network counters expected — the composition of NetStats has changed");
 
             foreach (FieldInfo f in typeof(MatchStats).GetFields())
                 Assert.IsFalse(netFieldNames.Contains(f.Name),
