@@ -37,6 +37,23 @@ namespace Ring.Networking.Client
     /// unseen an entity (or the world) is already Stale, not for one tick
     /// longer.
     ///
+    /// THE EFFECTIVE WALL-CLOCK THRESHOLD IS `staleTicks + InterpBufferTicks`,
+    /// NOT `staleTicks` (fix round 1, finding I-2 — confirmed CORRECT
+    /// behavior, doc-only fix). `renderTick` trails the newest APPLIED frame
+    /// by the interpolation buffer's own depth (see "TWO TICK DOMAINS"
+    /// above), so `GlobalStarvation`'s `renderTick - lastAppliedTick >=
+    /// staleTicks` test only crosses once that many render ticks of LOCAL
+    /// time AND that many buffered ticks of silence have both elapsed. At
+    /// the shipped defaults (`staleTicks` 3, `InterpBufferTicks` 3) the
+    /// connection indicator trips after roughly 6 render ticks — about
+    /// 200 ms at 30 Hz — of genuine silence, not 100 ms. This is intended,
+    /// not a defect: the buffer is supposed to absorb a hole up to its own
+    /// depth without raising any indicator at all, and the identical offset
+    /// applies to every per-entity `age` computation in this class (both
+    /// sides subtract against the SAME `renderTick`), so the two thresholds
+    /// stay self-consistent with each other rather than one silently running
+    /// ahead of the other.
+    ///
     /// FADE PROGRESS IS AN EXPLICIT, BLOCKABLE COUNTER, NOT A SUBTRACTION.
     /// Eligibility ("has this gone stale") is read straight off `renderTick -
     /// lastSeenTick`, because that quantity is SUPPOSED to keep climbing
@@ -75,8 +92,9 @@ namespace Ring.Networking.Client
     /// beyond the two ticks already stored for other reasons; the fact falls
     /// out of the same subtraction discipline as everything else here. An
     /// entity can freeze (become `Stale`) on age alone, truncated frames or
-    /// not — only the FADE start is gated (task-37-brief §2.1: "усечение
-    /// бюджета никогда не гасит живую сущность с экрана").
+    /// not — only the FADE start is gated (task-37-brief §2.1's own
+    /// invariant: budget truncation must never make a live entity vanish
+    /// from the screen).
     ///
     /// "ВЕСЬ МИР STALE": GLOBAL STARVATION OVERRIDES THE READING, NOT THE
     /// COUNTER. While `GlobalStarvation` is true, `StateOf` reports `Stale`
@@ -93,6 +111,18 @@ namespace Ring.Networking.Client
     /// the whole time, so a caller can tell "world-frozen Stale" from
     /// "genuinely fresh Stale" if it ever needs to.
     ///
+    /// CALLER CONTRACT, SPELLED OUT (fix round 1, finding I-3 — doc-only;
+    /// the override above already behaves this way, this paragraph exists so
+    /// Presentation does not misread it). Apply `FadeProgress(id)` whenever
+    /// it is `> 0`, REGARDLESS of what `StateOf(id)` currently reads.
+    /// `StateOf` answers "is this entity alive, frozen, or gone" — never
+    /// "should the alpha fade be applied this frame." A caller that instead
+    /// applies alpha only while `StateOf == Fading` would see a visible POP:
+    /// an entity 34% faded snaps back to fully opaque the instant
+    /// `GlobalStarvation` forces its reading to `Stale`, then snaps again
+    /// once recovery lets `Fading` show through — exactly the artifact the
+    /// frozen counter above exists to prevent, not cause.
+    ///
     /// MONOTONIC FACTS, NEVER REGRESSED (same discipline as `RenderClock.
     /// OnSnapshot`/`SnapshotQueue.NewestTick`/`EventDedup`'s own newest-tick
     /// bookkeeping). `OnEntitySeen` only advances `lastSeenTick[id]` on a
@@ -104,16 +134,35 @@ namespace Ring.Networking.Client
     /// beyond being ignored; it can never make an entity look FRESHER than
     /// the newest fact already on record.
     ///
-    /// `Reset()` TAKES NO EPOCH. Unlike `EventDedup`/`RenderClock`/
-    /// `SnapshotQueue`, this class never reads or checks one — the plan gives
-    /// none of its three entry points an epoch parameter (task-37-brief
-    /// §2.1). The owner (Task 44/Ф9) is responsible for calling `Reset()` on
+    /// `Reset()` TAKES NO EPOCH — AND THAT MAKES IT LOAD-BEARING, NOT MERELY
+    /// GOOD HYGIENE (fix round 1, finding M-4 corrects an earlier, WRONG
+    /// safety claim this paragraph used to make). Unlike `EventDedup`/
+    /// `RenderClock`/`SnapshotQueue`, this class never reads or checks an
+    /// epoch — the plan gives none of its three entry points one
+    /// (task-37-brief §2.1). The owner (Task 44/Ф9) MUST call `Reset()` on
     /// every epoch change, a restart included, the same trigger as its
-    /// neighbors — this class just does not need to verify it independently,
-    /// since it has no cross-connection state (like `EventDedup`'s seq
-    /// bitmasks) that a foreign epoch's data could corrupt if it slipped
-    /// through; every fact here is already keyed by an `id` the caller
-    /// controls the meaning of.
+    /// neighbors — but UNLIKE its neighbors, a forgotten call here is not
+    /// merely "stale data quietly ignored until a legitimate fact arrives":
+    /// `lastAppliedTick`/`lastNonTruncatedTick` are GLOBAL clocks, not keyed
+    /// per id, and a restarted match's `renderTick` starts back near zero
+    /// (`RenderClock` resets on the very same epoch change) while these two
+    /// would still hold the PREVIOUS match's high tick values. Both failures
+    /// this causes are SILENT, not a crash: `GlobalStarvation` (`renderTick -
+    /// lastAppliedTick >= staleTicks`) reads `false` for as long as the new
+    /// match's `renderTick` stays behind the stale `lastAppliedTick` —
+    /// potentially the whole match — so the connection indicator never trips
+    /// even during genuine silence; and `ConfirmedAbsent`
+    /// (`lastNonTruncatedTick > lastSeenTick[id]`) reads `true` for every
+    /// entity from the new match's very first tick, because the stale,
+    /// enormous `lastNonTruncatedTick` outranks every fresh, small
+    /// `lastSeenTick` — Р149's own gate, propped open from the first frame,
+    /// exactly the failure it exists to prevent. Neither failure shows up as
+    /// a test failure at wiring time; both surface only as "fades started
+    /// too early" or "the indicator never lit," days later. This is the one
+    /// call in this class's contract where a missed caller obligation
+    /// corrupts behavior across an ENTIRE match, not just a single stale
+    /// fact — see task-37-report.md §6 for the contract line this demands of
+    /// Task 44/Ф9.
     ///
     /// HOSTILE INPUT IS REFUSED, NEVER THROWN (Р82). `id` is a small
     /// caller-controlled index that is nonetheless refused outside
@@ -127,10 +176,23 @@ namespace Ring.Networking.Client
     /// `capacity`/`staleTicks`/`fadeTicks` clamp defensively in the
     /// constructor, same discipline as `GhostProjectiles`: `capacity` floors
     /// at 1 (a zero-or-negative capacity has no representation an
-    /// array-backed store can use), `staleTicks`/`fadeTicks` floor at 0 (a
-    /// zero `staleTicks` is a legal, if extreme, tuning — "no grace at all";
-    /// a zero `fadeTicks` skips `Fading` outright and goes straight to
-    /// `Gone` the instant the entity is confirmed absent).
+    /// array-backed store can use); `staleTicks` floors at 0 (a zero
+    /// `staleTicks` is a legal, if extreme, tuning — "no grace at all").
+    /// `fadeTicks` FLOORS AT 1, NOT 0 (fix round 1, finding I-1 — the same
+    /// relational-floor precedent `GhostProjectiles.cs:209` uses for
+    /// `maxTrackTicks >= ghostConfirmTicks`). At the OLD floor of 0,
+    /// `StateOf`'s terminal check (`_fadeProgress[id] >= _fadeTicks`) was
+    /// unconditionally true for any not-live entity, and it ran BEFORE the
+    /// starvation and truncation-confirmation guards below it — so a
+    /// caller-side `fadeTicks` left at its C# default of 0 (a plausible
+    /// "forgot to wire the field" bug, and task-37-brief §2.1's own open end
+    /// for where this number eventually comes from) made an entity vanish
+    /// OUTRIGHT during a starvation window instead of freezing with the rest
+    /// of the world, and made Р149's truncation gate meaningless. Flooring
+    /// at 1 forces every `Gone` transition through `Advance`, which honors
+    /// both guards unconditionally — `Gone` becomes reachable only the tick
+    /// after the entity was actually eligible to fade AND unblocked, never
+    /// merely because `fadeTicks` was left at zero.
     ///
     /// NOTHING HERE ALLOCATES. Every array is sized once in the constructor;
     /// `Advance`/`StateOf`/`FadeProgress` are plain array reads/writes and an
@@ -140,8 +202,8 @@ namespace Ring.Networking.Client
     {
         /// The four states Presentation reads per entity. `Fading` carries no
         /// progress of its own — see `FadeProgress`, a separate query so the
-        /// enum itself stays a plain state name (task-37-brief §2.1: "форма
-        /// исполнителю").
+        /// enum itself stays a plain state name (task-37-brief §2.1 left the
+        /// form to the implementer).
         public enum StaleState : byte
         {
             Live,
@@ -188,7 +250,7 @@ namespace Ring.Networking.Client
         {
             _capacity = math.max(1, capacity);
             _staleTicks = math.max(0, staleTicks);
-            _fadeTicks = math.max(0, fadeTicks);
+            _fadeTicks = math.max(1, fadeTicks); // fix round 1, finding I-1 — floors at 1, not 0 (class doc).
 
             _everSeen = new bool[_capacity];
             _lastSeenTick = new uint[_capacity];
@@ -294,17 +356,18 @@ namespace Ring.Networking.Client
         /// Fraction of the fade budget spent, in `[0, 1]` — `0` while `Live`
         /// or never seen, `1` once `Gone`. Returns the RAW accumulator even
         /// while `StateOf` reports `Stale` because of the global-starvation
-        /// override (class doc): the two answer different questions. A
-        /// `fadeTicks` of zero (Р82 clamp floor) reads `1` for any not-live
-        /// entity — there is no fade duration to divide by, so the fade is
-        /// spent the instant it would have started.
+        /// override (class doc's CALLER CONTRACT paragraph, fix round 1
+        /// finding I-3): the two answer different questions, and Presentation
+        /// must apply this value whenever it is `> 0` regardless of what
+        /// `StateOf` currently reads. `fadeTicks` is always `>= 1` post-clamp
+        /// (fix round 1, finding I-1), so the division below never sees a
+        /// zero denominator — no separate zero-duration branch exists.
         public float FadeProgress(int id)
         {
             if (id < 0 || id >= _capacity || !_everSeen[id]) return 0f;
 
             int age = _currentRenderTick - (int)_lastSeenTick[id];
             if (age < _staleTicks) return 0f;
-            if (_fadeTicks <= 0) return 1f;
 
             return math.min(1f, _fadeProgress[id] / (float)_fadeTicks);
         }
@@ -332,6 +395,12 @@ namespace Ring.Networking.Client
         /// `OnEntitySeen` would have advanced `lastSeenTick[id]` past it —
         /// so a later non-truncated frame existing at all is proof this
         /// entity was looked for and not found, not merely cut for budget.
+        /// CONFIRMATION IS MONOTONIC (fix round 1, finding M-3): a later
+        /// truncated frame never re-blocks a fade already unblocked —
+        /// `lastNonTruncatedTick` only ever advances forward (class doc,
+        /// MONOTONIC FACTS), so once it has passed `id`'s last sighting it
+        /// stays passed it no matter how many truncated frames arrive
+        /// afterward.
         bool ConfirmedAbsent(int id)
             => _hasNonTruncated && _lastNonTruncatedTick > _lastSeenTick[id];
     }

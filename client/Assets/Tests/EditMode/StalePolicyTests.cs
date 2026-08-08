@@ -14,7 +14,10 @@ namespace Ring.Simulation.Tests
     /// `Entity_FreezesThenFades`, `GlobalStarvation_FreezesWorld_NoFade` and
     /// `Recovery_ClearsFlag` (RED step); the coordinator's brief (§2.2) adds
     /// five more — truncation, reappearance, Reset, the Р82 id guard and the
-    /// zero-allocation hot path.
+    /// zero-allocation hot path. Fix round 1 adds `Constructor_
+    /// ClampsNonPositiveTunings` (findings I-1/M-6) and strengthens three
+    /// existing tests (M-2/M-3/M-5) — see each test's own comment for which
+    /// finding it pins.
     ///
     /// TWO TICK DOMAINS, ON PURPOSE (task-37-brief §2.1). `OnEntitySeen`/
     /// `OnFrameApplied` take the WIRE frame's own simulation tick (`uint`,
@@ -38,8 +41,8 @@ namespace Ring.Simulation.Tests
     /// starvation test pins it on the world side.
     ///
     /// FADE PROGRESS IS AN EXPLICIT, BLOCKABLE COUNTER, NOT A SUBTRACTION
-    /// (task-37-brief §2.1's own "форма учёта — исполнителю"). Eligibility
-    /// ("has this entity gone stale") is read straight off `renderTick -
+    /// (task-37-brief §2.1 left the tracking form to the implementer).
+    /// Eligibility ("has this entity gone stale") is read straight off `renderTick -
     /// lastSeenTick`, because that quantity is SUPPOSED to keep growing while
     /// nothing updates the entity — `Advance` runs every render frame
     /// regardless of network activity. Fade progress cannot be read the same
@@ -56,8 +59,8 @@ namespace Ring.Simulation.Tests
     /// FadeProgress RETURNS THE RAW STORED VALUE, EVEN WHILE `StateOf` READS
     /// `Stale` FOR AN ENTITY THAT WAS ALREADY MID-FADE. The two answer
     /// different questions — "what should Presentation SHOW right now"
-    /// (`StateOf`, which the class doc's "весь мир Stale" override can force
-    /// away from `Fading`) versus "how much fade budget has actually been
+    /// (`StateOf`, which the class doc's "whole world Stale" override can
+    /// force away from `Fading`) versus "how much fade budget has actually been
     /// spent" (`FadeProgress`, the frozen accumulator itself) — and
     /// `GlobalStarvation_FreezesWorld_NoFade` reads both at once specifically
     /// to prove the freeze is a real pause of the number, not merely a
@@ -166,6 +169,26 @@ namespace Ring.Simulation.Tests
                 "three render ticks of starvation must not have advanced the "
                 + "fade at all — frozen in place (class doc), not merely masked "
                 + "by the Stale state.");
+
+            // M-2 (fix round 1): pins the §5.3 judgment call — Gone is
+            // terminal and must not be un-Gone-ed by a LATER starvation.
+            // Recover and let the fade finish to Gone under normal operation.
+            policy.OnFrameApplied(11, truncated: false);
+            policy.Advance(11); // recovers; unblocked — fadeProgress 4 -> 5.
+            policy.OnFrameApplied(12, truncated: false);
+            policy.Advance(12); // fadeProgress 5 -> 6 == fadeTicks: Gone.
+            Assert.AreEqual(StalePolicy.StaleState.Gone, policy.StateOf(1),
+                "fixture premise: fully faded and gone before the second starvation.");
+
+            // A SECOND starvation, after Gone, must not resurrect the entity
+            // into Stale.
+            policy.Advance(13); // 13 - 12 = 1 < staleTicks: not starved yet.
+            policy.Advance(14); // 14 - 12 = 2 < staleTicks: still not starved.
+            policy.Advance(15); // 15 - 12 = 3 == staleTicks: starving again.
+            Assert.IsTrue(policy.GlobalStarvation, "fixture premise: the world is starved a second time.");
+            Assert.AreEqual(StalePolicy.StaleState.Gone, policy.StateOf(1),
+                "Gone is terminal — a LATER global starvation must not un-Gone "
+                + "an entity back into Stale (class doc's un-gone-ing paragraph).");
         }
 
         [Test]
@@ -264,6 +287,21 @@ namespace Ring.Simulation.Tests
                 + "unblocks the fade — witness: with a non-truncated frame, it "
                 + "starts.");
             Assert.Greater(policy.FadeProgress(1), 0f);
+
+            // M-3 (fix round 1): confirmation is monotonic — once unblocked,
+            // a LATER truncated frame must not re-block the fade.
+            policy.OnFrameApplied(9, truncated: true);
+            policy.Advance(9);
+            policy.OnFrameApplied(10, truncated: false);
+            policy.Advance(10);
+            Assert.AreEqual(StalePolicy.StaleState.Fading, policy.StateOf(1),
+                "a truncated frame arriving AFTER confirmation must not "
+                + "re-block an already-unblocked fade.");
+            Assert.AreEqual(3f / fadeTicks, policy.FadeProgress(1), 1e-6f,
+                "BOTH oscillation ticks (9 truncated, 10 not) progressed the "
+                + "fade by exactly one each — a hypothetical de-confirm on the "
+                + "truncated tick would have skipped tick 9's increment and "
+                + "left this at 2/4, not 3/4.");
         }
 
         [Test]
@@ -369,9 +407,110 @@ namespace Ring.Simulation.Tests
             // Witness: none of the invalid calls above corrupted a VALID id's
             // own tracking.
             policy.OnEntitySeen(0, frameTick: 5);
-            policy.Advance(5);
-            Assert.AreEqual(StalePolicy.StaleState.Live, policy.StateOf(0),
+            policy.Advance(10); // age = 5 > staleTicks(3): Stale — fixture premise for the Advance(-1) witness below.
+            Assert.AreEqual(StalePolicy.StaleState.Stale, policy.StateOf(0),
                 "the invalid-id calls above must not have disturbed a valid id.");
+
+            // M-5 (fix round 1): the three tick-range guards (Р82), reachable
+            // but previously unpinned — a frameTick beyond int.MaxValue on
+            // EITHER wire input, and a negative renderTick on Advance.
+            const uint absurdTick = (uint)int.MaxValue + 1;
+            Assert.DoesNotThrow(() => policy.OnEntitySeen(1, frameTick: absurdTick));
+            Assert.DoesNotThrow(() => policy.OnFrameApplied(absurdTick, truncated: false));
+            Assert.DoesNotThrow(() => policy.Advance(-1));
+
+            Assert.AreEqual(StalePolicy.StaleState.Gone, policy.StateOf(1),
+                "the OnEntitySeen frameTick guard must have refused the absurd "
+                + "tick — id 1 was never legitimately seen, so it reads Gone.");
+            Assert.IsFalse(policy.GlobalStarvation,
+                "the OnFrameApplied frameTick guard must have refused the "
+                + "absurd tick — no legitimate frame was ever applied in this "
+                + "test, so GlobalStarvation cannot have armed.");
+            Assert.AreEqual(StalePolicy.StaleState.Stale, policy.StateOf(0),
+                "Advance(-1) must be a no-op, not corrupt the stored render "
+                + "tick — id 0 still reads its LAST LEGITIMATE position "
+                + "(Stale, from renderTick 10), not a nonsensical Live from -1.");
+        }
+
+        [Test]
+        public void Constructor_ClampsNonPositiveTunings()
+        {
+            // Fix round 1, findings I-1 + M-6 (in the same fix). fadeTicks
+            // floors at 1, NOT 0 (relational-floor precedent from
+            // GhostProjectiles.cs:209's own maxTrackTicks >= ghostConfirmTicks).
+            // At the OLD floor of 0, StateOf's terminal Gone check ran
+            // unconditionally true for any not-live entity, BEFORE the
+            // starvation/truncation guards below it — a caller-side fadeTicks
+            // left at its C# default of 0 made an entity vanish outright
+            // during a starvation window instead of freezing, and made
+            // Р149's truncation gate meaningless. Per M-7 (same fix round):
+            // even at the new floor of 1, `Fading` itself is never
+            // OBSERVABLE via StateOf — the single eligible tick both spends
+            // the entire (size-1) budget AND satisfies the terminal check in
+            // the same Advance/StateOf pair — so this test proves the
+            // INVARIANT the fix protects (Gone unreachable except through
+            // Advance's own guards), not an intermediate Fading reading that
+            // does not exist at this extreme setting.
+            const int staleTicks = 3;
+
+            // (a) capacity floors at 1, and the sole valid id (0) works normally.
+            var zeroCapacity = new StalePolicy(capacity: 0, staleTicks, fadeTicks: 4);
+            Assert.AreEqual(1, zeroCapacity.Capacity);
+            zeroCapacity.OnEntitySeen(0, frameTick: 5);
+            zeroCapacity.Advance(5);
+            Assert.AreEqual(StalePolicy.StaleState.Live, zeroCapacity.StateOf(0));
+
+            // (b) fadeTicks floors at 1. UNBLOCKED: Gone is reached, but only
+            // through Advance — never skipping the Stale grace tick.
+            var unblocked = new StalePolicy(capacity: 4, staleTicks, fadeTicks: 0);
+            unblocked.OnEntitySeen(0, frameTick: 0);
+            unblocked.OnFrameApplied(1, truncated: false);
+            unblocked.Advance(1); // age = 1: Live.
+            Assert.AreEqual(StalePolicy.StaleState.Live, unblocked.StateOf(0));
+            unblocked.OnFrameApplied(2, truncated: false);
+            unblocked.Advance(2); // age = 2: Live.
+            Assert.AreEqual(StalePolicy.StaleState.Live, unblocked.StateOf(0));
+            unblocked.OnFrameApplied(3, truncated: false);
+            unblocked.Advance(3); // age = 3 == staleTicks: the grace tick.
+            Assert.AreEqual(StalePolicy.StaleState.Stale, unblocked.StateOf(0),
+                "even at the minimum fadeTicks, the grace tick still reads "
+                + "Stale, not Gone — Gone is one MORE Advance call away.");
+            unblocked.OnFrameApplied(4, truncated: false);
+            unblocked.Advance(4); // age = 4 > staleTicks: the one eligible tick spends the whole (size-1) budget.
+            Assert.AreEqual(StalePolicy.StaleState.Gone, unblocked.StateOf(0),
+                "the fade budget is fully spent in exactly one eligible "
+                + "Advance call at fadeTicks == 1 — but it still took that "
+                + "Advance call, never the constructor or OnEntitySeen directly.");
+
+            // (c-i) fadeTicks floors at 1, but BLOCKED by global starvation
+            // still holds Stale, never Gone.
+            var starved = new StalePolicy(capacity: 4, staleTicks, fadeTicks: 0);
+            starved.OnEntitySeen(0, frameTick: 0);
+            starved.OnFrameApplied(0, truncated: false); // one applied frame to arm _hasApplied, then silence.
+            starved.Advance(3);
+            starved.Advance(4);
+            starved.Advance(5);
+            Assert.IsTrue(starved.GlobalStarvation, "fixture premise: the world is starved.");
+            Assert.AreEqual(StalePolicy.StaleState.Stale, starved.StateOf(0),
+                "starvation must hold Stale even at the minimum fadeTicks — "
+                + "Gone never happens while the world itself reads starved.");
+
+            // (c-ii) fadeTicks floors at 1, but BLOCKED by Р149 (only
+            // truncated frames since) still holds Stale, never Gone.
+            var truncatedOnly = new StalePolicy(capacity: 4, staleTicks, fadeTicks: 0);
+            truncatedOnly.OnEntitySeen(0, frameTick: 0);
+            truncatedOnly.OnFrameApplied(1, truncated: true);
+            truncatedOnly.Advance(1);
+            truncatedOnly.OnFrameApplied(2, truncated: true);
+            truncatedOnly.Advance(2);
+            truncatedOnly.OnFrameApplied(3, truncated: true);
+            truncatedOnly.Advance(3);
+            truncatedOnly.OnFrameApplied(4, truncated: true);
+            truncatedOnly.Advance(4); // well past staleTicks + fadeTicks(1), still only truncated frames.
+            Assert.AreEqual(StalePolicy.StaleState.Stale, truncatedOnly.StateOf(0),
+                "truncation must hold Stale even at the minimum fadeTicks — "
+                + "Gone is reachable ONLY through an unblocked Advance call, "
+                + "never merely by enough render ticks passing.");
         }
 
         [Test]
