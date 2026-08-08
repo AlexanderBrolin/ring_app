@@ -3,7 +3,20 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.Combat
 {
-    internal static class WeaponSystem
+    /// PUBLIC FOR EXACTLY ONE MEMBER (owner decision, 2026-08-08, Stage 2 Task
+    /// 35 §0a, variant "a"): the class itself is `public` solely so `CanFire`
+    /// below — the single home of the can-fire predicate — is reachable from
+    /// outside `Ring.Simulation` at all. Everything else stays `internal`:
+    /// `Update`/`AdvanceNoSpawn` are mutators no outside caller may drive
+    /// (their own docs cover why), and `Advance`/`SpawnShot` were never public
+    /// to begin with. The two consumers this opens the door for are ghost
+    /// projectiles (Task 35, this same task) and the Presentation-side copy
+    /// of this predicate at `SimulationRunner:127-146` (Task 43, not yet
+    /// lifted). Resilience against future weapons/upgrades was checked before
+    /// taking this decision: the predicate is parameterized entirely by
+    /// `WeaponSimConfig`, and balance lives in data (CR 6) — no code changes
+    /// with it.
+    public static class WeaponSystem
     {
         /// Advances the weapon by one tick (spec §3.5): cooldown always ticks down,
         /// recoil always decays, and while FireHeld stays true the cooldown's
@@ -77,7 +90,7 @@ namespace Ring.Simulation.Combat
         /// Stage 2 Task 30 — every consumer downstream already speaks byte
         /// (SpawnProjectile's own ownerIndex, ProjectileIds.NoOwner), and the
         /// no-spawn twin below needs that sentinel to be expressible at all.
-        public static void Update(SimulationWorld w, ref PlayerState p, in SimInput input,
+        internal static void Update(SimulationWorld w, ref PlayerState p, in SimInput input,
             byte ownerIndex)
             => Advance(ref p, in input, w.Config, w, ownerIndex);
 
@@ -89,7 +102,7 @@ namespace Ring.Simulation.Combat
         /// sentinel is unreachable here by construction (the sink is null), and
         /// naming it is what keeps that fact readable instead of passing a 0 that
         /// would look like "player 0".
-        public static void AdvanceNoSpawn(ref PlayerState p, in SimInput input, in SimConfig cfg)
+        internal static void AdvanceNoSpawn(ref PlayerState p, in SimInput input, in SimConfig cfg)
             => Advance(ref p, in input, in cfg, null, ProjectileIds.NoOwner);
 
         /// Single home of the "can fire this frame" predicate — consumed by
