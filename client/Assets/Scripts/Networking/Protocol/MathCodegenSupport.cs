@@ -1,5 +1,6 @@
 using FishNet.CodeGenerating;
 using FishNet.Serializing;
+using Ring.Networking.Protocol;
 using Unity.Mathematics;
 
 namespace Ring.Networking
@@ -13,13 +14,12 @@ namespace Ring.Networking
     ///
     /// THIS FILE IS PERMANENT — it is a package limitation, not spike scaffolding.
     /// It outlived the Stage 2 Task 3 network spike whose crash first exposed the
-    /// limitation (deleted in Stage 2 Task 30, this file explicitly kept) and
-    /// hosts the comparer of the production ReplicateData from Stage 2 Task 34 on.
-    /// Nothing in our code calls any of these methods; the ILPP wires them in at
-    /// compile time, so "unused, delete it" is exactly the wrong conclusion — and
-    /// that applies to WireComparers below while it stands EMPTY between those two
-    /// tasks, which is the state it is deliberately left in. Line numbers below are inside
-    /// com.firstgeargames.fishnet 4.7.2 and com.unity.mathematics 1.3.3.
+    /// limitation (deleted in Stage 2 Task 30, this file explicitly kept) and now
+    /// hosts the comparer of the production ReplicateData (Stage 2 Task 34).
+    /// Nothing in our own code calls the serializers below; the ILPP wires them in
+    /// at compile time, so "unused, delete it" is exactly the wrong conclusion.
+    /// Line numbers below are inside com.firstgeargames.fishnet 4.7.2 and
+    /// com.unity.mathematics 1.3.3.
     ///
     /// THE COMMON CAUSE. WriterProcessor.cs:82-86 lists assembly prefixes whose
     /// types must be treated as opaque, and means to name Unity.Mathematics — but
@@ -64,12 +64,15 @@ namespace Ring.Networking
     ///     [DefaultWriter]/[DefaultReader], so codegen never finds them
     ///     (FindInstancedWriters, WriterProcessor.cs:116-141). We reuse the bodies
     ///     rather than re-implement them.
-    ///   * Comparers: needed once per [Replicate] data struct that holds a
-    ///     Unity.Mathematics vector, directly or through a nested struct. Reconcile
-    ///     data needs none — CreateEqualityComparer has exactly one call site and
-    ///     it is the replicate parameter (PredictionProcessor.cs:717-718) — which
-    ///     is why the full PlayerState carried by ReconcileData (spec 3.9) needs
-    ///     nothing here beyond the float2 serializer.
+    ///   * Comparers: needed once per [Replicate] data struct, whether or not it
+    ///     holds a Unity.Mathematics vector. A vector makes the generated comparer
+    ///     a CRASH; without one it is merely emitted, and emission alone fails the
+    ///     project's Р110 grep — see WireComparers' own doc for the measured
+    ///     evidence. Reconcile data needs none in either sense:
+    ///     CreateEqualityComparer has exactly one call site and it is the
+    ///     replicate parameter (PredictionProcessor.cs:717-718), which is why the
+    ///     full PlayerState carried by ReconcileData (spec 3.9) needs nothing here
+    ///     beyond the float2 serializer.
     ///
     /// SHAPE REQUIRED BY THE ILPP. Everything below is registered before any code
     /// is generated (FishNetILPP.cs:78 and :80, both ahead of :86).
@@ -99,20 +102,54 @@ namespace Ring.Networking
 
     /// Equality comparers for [Replicate] data. See MathSerializers above for why
     /// this file exists and which struct needs an entry here.
+    ///
+    /// THE ENTRY BELOW EXISTS FOR THE GATE, NOT FOR THE CRASH — and the
+    /// distinction is worth stating plainly, because the reasoning that put the
+    /// spike's comparer here does NOT apply to this one. ReplicateData (Stage 2
+    /// Task 34) is fully quantized: six primitives, no Unity.Mathematics field
+    /// anywhere in it, so the unverifiable-IL failure described above cannot
+    /// reach it and the generated comparer would have been perfectly valid.
+    ///
+    /// What the generator does regardless is EMIT. `CreateEqualityComparer` is
+    /// unconditional for the replicate parameter (PredictionProcessor.cs:717-718),
+    /// so a build without the entry below is not hypothetical — it was run, and
+    /// `strings -a Library/ScriptAssemblies/Ring.Networking.dll | grep
+    /// "Comparer___"` answered with three lines:
+    ///     Comparer___System.UInt16
+    ///     Comparer___Ring.Networking.Protocol.ReplicateData
+    ///     Comparer___System.Byte
+    /// (the generator recurses into field types, hence the two primitives). The
+    /// project's Р110 gate is a mechanical grep that must come back EMPTY, and
+    /// those three lines fail it. Declaring the comparer by hand hits the
+    /// registered-comparer table at GeneralHelper.cs:1113 and the generator then
+    /// "emits nothing at all" — all three lines are gone, which is what keeps the
+    /// gate an absolute rather than a judgement call. The same build proved the
+    /// serializer half: no `GWrite___Unity`/`GRead___Unity` line appears even
+    /// though ReconcileData carries a whole PlayerState full of float2, exactly
+    /// as MathSerializers' doc predicts.
     public static class WireComparers
     {
-        // EMPTY BY DESIGN between Stage 2 Task 30 and Task 34. The Task 3 spike's
-        // own comparer lived here and died together with it; the production
-        // ReplicateData comparer that replaces it arrives in Task 34, and the
-        // shape it must have is spelled out in MathSerializers' doc above
-        // ([CustomComparer], bool, exactly two by-value parameters of the
-        // compared type, static, on a top-level static type of THIS assembly).
-        // Until then nothing in Ring.Networking reaches the wire carrying a
-        // Unity.Mathematics vector inside a [Replicate] struct, so there is
-        // nothing to register — and deleting the class would mean re-deriving all
-        // of that from the package sources again in three tasks' time. The
-        // FishNet.CodeGenerating using at the top of the file stays for the same
-        // reason: it is the home of [CustomComparer], the attribute the next
-        // member here must carry.
+        /// Replicate-data comparison for ReplicateData (Stage 2 Task 34).
+        ///
+        /// Payload only — the tick is NOT compared. FishNet owns the ticks of
+        /// its own queue and stamps them itself; two entries carrying the same
+        /// input are the same input, and folding the tick in would make every
+        /// entry unique and defeat the deduplication the comparer exists for.
+        ///
+        /// Shape is dictated by the ILPP, not by taste: [CustomComparer],
+        /// static, returning bool, exactly two parameters of the compared type
+        /// BY VALUE (the generated IsDefault pushes a `default` local with
+        /// ldloc, GeneralHelper.cs:1428-1445, so `in`/`ref` would not match) —
+        /// all of it spelled out in MathSerializers' doc above.
+        [CustomComparer]
+        public static bool AreEqual(ReplicateData a, ReplicateData b)
+        {
+            return a.MoveAngle == b.MoveAngle
+                && a.MoveMagnitude == b.MoveMagnitude
+                && a.AimX == b.AimX
+                && a.AimY == b.AimY
+                && a.AimHeight == b.AimHeight
+                && a.Flags == b.Flags;
+        }
     }
 }

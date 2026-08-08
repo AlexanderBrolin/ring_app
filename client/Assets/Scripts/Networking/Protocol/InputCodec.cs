@@ -90,6 +90,12 @@ namespace Ring.Networking.Protocol
     /// cfg)` before handing the result to `PlayerPrediction.Step`, exactly
     /// as InputCodecTests.Idempotency_SecondPass_SameBytesAndSameDecodedValue
     /// does below the encode/decode pair it exercises.
+    ///
+    /// TWO DECODES, ONE FORMAT (Stage 2 Task 34, app-ltw). `Decode` throws
+    /// for trusted in-process callers; `TryDecode` refuses, with a `bool`,
+    /// for untrusted bytes off the wire. They share one body — the
+    /// asymmetry is in the failure contract only, and each method's own doc
+    /// says why it is deliberate rather than an inconsistency.
     public static class InputCodec
     {
         public const int SizeBytes = 8;
@@ -153,11 +159,53 @@ namespace Ring.Networking.Protocol
             dst[7] = flags;
         }
 
+        /// Decode for a TRUSTED caller — one that allocated `src` itself, in
+        /// process, where a short span can only be its own bug. That is why
+        /// this one still throws, and why every existing call site keeps
+        /// behaving byte for byte as it did (PredictionParityTests and
+        /// InputCodecTests both depend on the exception).
+        ///
+        /// THE NETWORK PATH MUST NOT USE IT — use `TryDecode` (Stage 2 Task
+        /// 34, app-ltw, Р82). A truncated datagram is ORDINARY input there:
+        /// UDP loss, an MTU cut, a peer of another version, a hostile client.
+        /// Left on this method the first such packet would throw out of the
+        /// server's own tick. The asymmetry between the two is therefore
+        /// deliberate and is the same one `SnapshotReader` documents for the
+        /// same reason: an exception is for a programming error, a `bool` is
+        /// for untrusted bytes.
+        ///
+        /// `Encode` has no `TryEncode` twin, and that is not an oversight. Its
+        /// destination is always a buffer the CALLER sized — there is no
+        /// hostile-input path into it at all — so a short `dst` is exactly the
+        /// programming error an exception is for.
         public static SimInput Decode(System.ReadOnlySpan<byte> src, in SimConfig cfg)
         {
-            if (src.Length < SizeBytes)
+            if (!TryDecode(src, in cfg, out SimInput input))
                 throw new System.ArgumentException(
                     $"InputCodec.Decode: src.Length ({src.Length}) must be >= SizeBytes ({SizeBytes}).", nameof(src));
+
+            return input;
+        }
+
+        /// Decode that REFUSES instead of throwing (Stage 2 Task 34, closes
+        /// app-ltw; Р82). Returns false and leaves `input` at `default` for
+        /// anything shorter than `SizeBytes` — never a half-decoded value a
+        /// caller could mistake for a real input. A longer span is accepted
+        /// and its tail ignored, exactly as `Decode` has always done: this
+        /// payload is a fixed-size record inside a larger datagram, not the
+        /// whole of one.
+        ///
+        /// The refusal is observable (a `bool`) and deliberately carries no
+        /// counter of its own: whoever consumes the network path owns the
+        /// statistics for it (Tasks 36/44), the same division of labour
+        /// `SnapshotReader` documents for its own per-parse flags.
+        public static bool TryDecode(System.ReadOnlySpan<byte> src, in SimConfig cfg, out SimInput input)
+        {
+            if (src.Length < SizeBytes)
+            {
+                input = default;
+                return false;
+            }
 
             float2 dir = Quantize.DirBack(src[0]);
             float magnitude = Quantize.UnitBack(src[1], 1f);
@@ -166,7 +214,7 @@ namespace Ring.Networking.Protocol
             ushort aimYCode = ReadU16(src, 4);
             byte flags = src[7];
 
-            return new SimInput
+            input = new SimInput
             {
                 MoveDir = dir * magnitude,
                 AimPoint = new float2(
@@ -178,6 +226,7 @@ namespace Ring.Networking.Protocol
                 AimHeld = (flags & (1 << AimHeldBit)) != 0,
                 SlideRequested = (flags & (1 << SlideRequestedBit)) != 0,
             };
+            return true;
         }
 
         static void WriteU16(System.Span<byte> dst, int offset, ushort value)
