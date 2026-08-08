@@ -65,15 +65,16 @@ namespace Ring.Networking.Client
     ///     tick's bits would silently swallow real events of a new tick, which
     ///     is the failure mode that looks exactly like a delivery bug.
     ///
-    /// KNOWN LIMIT, AND THE OWNER RESOLVES IT (fix round 1, reviewer F2). The
-    /// window advances on whatever original tick the tracked epoch's frames
-    /// name, so a single well-formed frame naming a tick far in the future
-    /// would drag the window — and the state gate's floor — forward until
-    /// `Reset`, conservatively eating every real event behind it. This class
-    /// has no notion of "the present" to bound that with; Task 32 does (it
-    /// owns the render clock), so frames beyond a sane future horizon must be
-    /// discarded BEFORE this class sees them. Recorded here so Task 32
-    /// inherits the obligation explicitly rather than by archaeology.
+    /// KNOWN LIMIT, DEFERRED TO THE CALLER — NOT resolved here (fix round 1,
+    /// reviewer F2). The window advances on whatever original tick the tracked
+    /// epoch's frames name, so a single well-formed frame naming a tick far in
+    /// the future would drag the window — and the state gate's floor — forward
+    /// until `Reset`, conservatively eating every real event behind it. This
+    /// class has no notion of "the present" to bound that with; the receiving
+    /// side does (Phase Ф7 builds its render clock), so Task 32 — the one
+    /// caller feeding this class — must discard frames beyond a sane future
+    /// horizon before this class sees them. Recorded here so that obligation
+    /// is inherited explicitly rather than by archaeology.
     ///
     /// HOSTILE INPUT IS REFUSED, NEVER THROWN (Р82, and Р82 is BOTH halves —
     /// do not throw AND do not hand back rubbish). `seq` is a raw `ushort` off
