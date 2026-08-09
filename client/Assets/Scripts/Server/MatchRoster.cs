@@ -35,13 +35,14 @@ namespace Ring.Server
     /// mobs would eat their unowned bodies). `PlayerCount` freezes at
     /// `Start()` and throws before it — the same "silent 0 is indistinguishable
     /// from nobody home" reasoning as `MatchServer.StatsFor`
-    /// (`MatchServer.cs:240-245`).
+    /// (`MatchServer.StatsFor`).
     ///
     /// SLOTS ARE ASSIGNED IN ACCEPTANCE ORDER, NOT `Players[]` ORDER, AND
     /// NEVER CHANGE ONCE GIVEN. This is the SAME numbering Task 39 hands to
     /// `MatchServer.StartMatch`'s `connections[i]`/`controllers[i]` — a
     /// second, independently-ordered numbering would let the two arrays
-    /// disagree about which index is which player (`MatchServer.cs:129-146`'s
+    /// disagree about which index is which player (`MatchServer`'s class doc,
+    /// paragraph "WHAT Ф8 MUST HAND IN",
     /// own "assumed to be the SAME player, by index" contract).
     ///
     /// `TryJoin`'S CHECK ORDER IS FIXED (brief §2.6, extended fix-round 1
@@ -66,17 +67,23 @@ namespace Ring.Server
     /// `Start()` REQUIRES AT LEAST ONE CONNECTION (fix-round 1, m5). A
     /// zero-connection `Start()` would freeze `PlayerCount` at `0` and hand
     /// that silently down two more layers to `MatchServer.StartMatch`, which
-    /// throws on an empty `connections` array (`MatchServer.cs:269-273`) —
+    /// throws on an empty `connections` array (`MatchServer.ValidateRoster`) —
     /// this class is where that "nobody ever joined" state is still
     /// diagnosable as ITS OWN problem, not a stack trace from an unrelated
     /// class two calls later.
     ///
-    /// THIS INSTANCE IS SINGLE-USE (fix-round 1, m6 — restated here for
-    /// anyone reading only this class doc). `_started` is a one-way flag:
-    /// there is no `Reset`, and none is planned — a restart (a new
-    /// `MatchEpoch`, Task 40) is a NEW `MatchRoster` built from the ORIGINAL
-    /// `MatchConfig` (which is never re-read from the environment/file on
-    /// restart), not this instance reused.
+    /// THIS INSTANCE IS SINGLE-USE, AND A RESTART DOES NOT NEED A SECOND
+    /// ONE (fix-round 1 m6, CORRECTED at the Ф8 phase gate against the later
+    /// §6k Р164 — the original wording said a restart builds a NEW
+    /// `MatchRoster`, and that is exactly what Р164 ruled out). `_started` is
+    /// a one-way flag with no `Reset`, and none is planned, because a restart
+    /// never asks this class anything again: spec §3.10 refuses joining a
+    /// match in progress, so a restart HAS no join phase, and this instance
+    /// simply keeps answering `MatchAlreadyStarted` to anything that arrives.
+    /// The roster and the handshake are objects of the JOIN PHASE; they
+    /// survive an epoch untouched, and `MatchConfig` is never re-read from
+    /// the environment either (owner's decision, Р164: a restart is a rerun
+    /// of the match this process was given, not a new session).
     ///
     /// THE CALLER MUST HAND IN A `MatchConfig` FROM AN `Ok == true` RESULT
     /// (fix-round 1, I-1). The constructor below guards the two ways a
@@ -229,7 +236,7 @@ namespace Ring.Server
             // Fix-round 1, m5: a zero-connection Start() would freeze
             // PlayerCount at 0 and let that reach MatchServer.StartMatch two
             // layers down, which throws on an empty connections array
-            // (MatchServer.cs:269-273) — diagnosed here instead, where the
+            // (MatchServer.ValidateRoster) — diagnosed here instead, where the
             // "nobody ever joined" state is still this class's own problem.
             if (_connectedCount == 0)
             {

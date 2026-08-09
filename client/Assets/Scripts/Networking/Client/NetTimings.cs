@@ -24,7 +24,7 @@ namespace Ring.Networking.Client
     /// SlewFraction`, defaulting to 0.05, its band checked by `NetInvariants`
     /// — so `InterpBufferTicks`/`InterpMaxStaleTicks`/`RenderClockSnapTicks`/
     /// `SlewFraction` all map straight onto same-named `NetConfig` fields
-    /// (seventeen of them now, `TickRate` through
+    /// (every one of them, `TickRate` through
     /// `MatchAbandonGraceSeconds`).
     ///
     /// THE HAZARD BELOW SURVIVES THAT CHANGE, so it stays written down. Left

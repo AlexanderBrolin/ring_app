@@ -203,6 +203,20 @@ namespace Ring.Networking.Server
         /// beating check 4 in the same stroke);
         /// `Order_TargetDeadWinsOverCooldownActive` pins check 4 against 5.
         ///
+        /// WHY WATCHING YOURSELF IS REFUSED AT ALL, and what that costs
+        /// (the `TargetIsSelf` doc above promises this explanation; the Ф8
+        /// phase gate found it was never written). A slot's viewpoint STARTS
+        /// at its own body and only ever moves when an accepted request moves
+        /// it, so "watch myself" asks for a state the slot already had — the
+        /// refusal denies nothing that was available. THE COST, NAMED: because
+        /// this branch refuses before anything else can accept it, a spectator
+        /// who has moved away can never come BACK to its own corpse — the
+        /// viewpoint travels one way for the rest of the match. Spec §3.10
+        /// names only "a living player" as a legal target and says nothing
+        /// about returning, so this is inside the letter of it; whether a
+        /// spectator should be able to return is a Ф9 question, recorded here
+        /// rather than decided by silence.
+        ///
         /// THE COOLDOWN BOUNDARY IS INCLUSIVE: `currentTick - lastSwitchTick
         /// >= _cooldownTicks` is accepted, not `>`. AT exactly the
         /// configured interval the next switch is due, not one tick later.

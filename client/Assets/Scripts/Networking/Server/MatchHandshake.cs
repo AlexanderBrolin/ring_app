@@ -353,11 +353,17 @@ namespace Ring.Networking.Server
         /// `UnregisterHandler`'s own `IndexOf`-then-`RemoveAt` returns
         /// early on an unknown handler — so calling `Unregister()` more
         /// than once on the same instance is safe and idempotent, it is
-        /// only the FIRST call that does anything. `Unregister` must be
-        /// called before any `MatchHandshake` is discarded (a restart, Task
-        /// 40) — this class does not call it itself on any internal event,
-        /// matching `MatchServer`'s own choice to never self-unsubscribe
-        /// from `OnPostTick`.
+        /// only the FIRST call that does anything.
+        ///
+        /// A RESTART IS NOT A REASON TO CALL IT (CORRECTED at the Ф8 phase
+        /// gate — the original wording named "a restart, Task 40" as the
+        /// case this method exists for, and the later §6k Р164 ruled the
+        /// opposite: `Unregister()` is explicitly NOT a step of a restart,
+        /// because this instance and its roster survive an epoch untouched).
+        /// What it is for: stopping the process, and the hypothetical second
+        /// instance the paragraph above describes. This class never calls it
+        /// itself on any internal event, matching `MatchServer`'s own choice
+        /// to never self-unsubscribe from `OnPostTick`.
         public void Unregister()
         {
             _nm.ServerManager.UnregisterBroadcast<ClientHelloNet>(OnClientHello);

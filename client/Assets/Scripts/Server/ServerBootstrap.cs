@@ -111,8 +111,18 @@ namespace Ring.Server
     /// rebuilt with it; (2) despawn the finished match's controllers and spawn
     /// NEW objects on the same slots, because `PlayerPredictionCore` has no
     /// reset and `NotifyOwnDeath` is a one-way latch; (3) hand
-    /// `_slotConnections` back in as the connections argument — this class
-    /// owns that table and `MatchServer` releases its own copy in `StopMatch`;
+    /// the connections argument back in — this class owns that table and
+    /// `MatchServer` releases its own copy in `StopMatch`. NOT the raw
+    /// `_slotConnections` FIELD, though: it is sized `MaxPlayers` and a match
+    /// that started with fewer players (the ordinary dev case — one client of
+    /// three) leaves a `null` tail, which `ValidateRoster` would reject on the
+    /// length check, or — with a controller array of the same wrong length —
+    /// would NRE inside the restart broadcast's own `IsActive` guard. Hand in
+    /// the same PREFIX COPY `StartMatch` was given, of length
+    /// `MatchRoster.PlayerCount` (see `StartMatch` below, where that copy is
+    /// built). §6k Р164's phrase "the same array the bootstrap collected from
+    /// `onAccepted`" means that copy, and the phase gate corrected the wording
+    /// here rather than leaving Ф9 to find it at run time;
     /// (4) reuse `_config.Seed`, unchanged, because a restart is a rerun of
     /// the match this process was given rather than a new session (owner's
     /// decision, Р164) — `MatchConfig` is read from the environment exactly
@@ -562,6 +572,13 @@ namespace Ring.Server
         void OnAccepted(int slot, NetworkConnection connection)
         {
             _slotConnections[slot] = connection;
+            // The comparison is defensive, not load-bearing: `MatchRoster`
+            // hands slots out densely and monotonically from zero, so `slot`
+            // is always exactly `_slotCount` here and the branch is taken
+            // every time (Ф8 phase gate). It is kept rather than simplified to
+            // a bare assignment because a future roster that ever handed out
+            // slots in another order would otherwise shrink this count
+            // silently — the guard costs one comparison per JOIN, not per tick.
             if (slot >= _slotCount) _slotCount = slot + 1;
 
             Debug.Log(string.Format(CultureInfo.InvariantCulture,
