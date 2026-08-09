@@ -29,3 +29,4 @@ MonoBehaviour:
   MatchEndLingerSeconds: 10
   MatchMaxDurationSeconds: 1800
   MatchAbandonGraceSeconds: 30
+  SpectatorSwitchCooldownSeconds: 0.35

@@ -539,9 +539,14 @@ namespace Ring.Editor
             // both would silently fall back to their C# initializers while
             // EditMode stayed green (the tests read the C# defaults, not the
             // asset). Same drill as HeroConfig's own marker moves above
-            // (AimSettleSeconds -> LinkRefund -> EdgeRequestMinTicks).
+            // (AimSettleSeconds -> LinkRefund -> EdgeRequestMinTicks). Stage
+            // 2 Task 42a moves the marker again, to
+            // SpectatorSwitchCooldownSeconds, which it appended as the
+            // class's new last field — same drill, same reason: with
+            // MatchAbandonGraceSeconds still named here the new field would
+            // never reach NetConfig.asset either.
             EditorBootstrapUtils.EnsureAssetHasKey(net, $"{DataDir}/NetConfig.asset",
-                "MatchAbandonGraceSeconds"); // Stage 2 Task 41b (was MatchMaxDurationSeconds, Task 23)
+                "SpectatorSwitchCooldownSeconds"); // Stage 2 Task 42a (was MatchAbandonGraceSeconds, Task 41b; MatchMaxDurationSeconds, Task 23)
 
             AssetDatabase.SaveAssets();
 

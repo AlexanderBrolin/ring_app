@@ -156,6 +156,23 @@ namespace Ring.Data
         // JoinTimeoutSeconds and MatchEndLingerSeconds in the asset rather
         // than as a literal in the bootstrap, by the same rule that put those
         // two here (Critical Rule 6).
+        [Range(5, 300)] public int MatchAbandonGraceSeconds = 30;
+
+        // Stage 2 Task 42a (spec §3.10 :673-678, Р70): the minimum interval,
+        // in seconds, between two ACCEPTED spectate-target switches by the
+        // SAME dead player. Server-side by rule, not merely by convenience —
+        // the visibility set a spectator receives is computed from the
+        // TARGET's own position, so a client cycling through targets with no
+        // limit would sample one living player's visibility set after
+        // another in a matter of seconds and reconstruct the whole map from
+        // their union, defeating the entire reason fog of war exists.
+        // `SpectatePolicy` (Ring.Networking.Server) is the class that
+        // actually enforces this; `ServerBootstrap` converts the seconds
+        // below into world ticks (`Ceiling(seconds * TickRate)`, rounded UP
+        // so the enforced interval is never SHORTER than configured) because
+        // the policy itself works in ticks — the same domain
+        // `SimulationWorld.CurrentTick` does, and the one
+        // `MatchEndPolicy`'s own constructor already reads its limit in.
         //
         // MARKER FIELD. The backfill mechanism is
         // EditorBootstrapUtils.EnsureAssetHasKey(so, path, markerField),
@@ -163,10 +180,13 @@ namespace Ring.Data
         // if the marker names a field the .asset already carries, the search
         // succeeds, nothing is dirtied, and NO new key is ever written. So the
         // marker has to be the LAST field added, and the call site has to name
-        // THIS field — Task 41b's job. Until it does, neither SlewFraction nor
-        // MatchAbandonGraceSeconds reaches NetConfig.asset and both silently
-        // fall back to the C# initializers above.
-        [Range(5, 300)] public int MatchAbandonGraceSeconds = 30; // sync-marker key — keep LAST
+        // THIS field — Task 42a's job. Until it does, this field never
+        // reaches NetConfig.asset and silently falls back to the C#
+        // initializer below. `MatchAbandonGraceSeconds` above carried the
+        // marker before this field existed (Task 41b) — its own field
+        // comment no longer mentions the mechanism now that the marker has
+        // moved off it.
+        [Range(0.05f, 2f)] public float SpectatorSwitchCooldownSeconds = 0.35f; // sync-marker key — keep LAST
 
 #if UNITY_EDITOR
         void OnValidate() => RingDataChanged.Raise();

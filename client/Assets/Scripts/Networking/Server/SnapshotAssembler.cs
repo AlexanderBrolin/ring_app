@@ -70,9 +70,13 @@ namespace Ring.Networking.Server
     /// entirely in the set. KNOWN LIMIT: the seam's own `Audible` branch reads
     /// `w.PlayerAt(observerIndex).Pos` for the hearing distance, so while
     /// spectating it measures earshot from the IDENTITY's body (a corpse)
-    /// rather than the viewpoint's. Until Task 42 the two indices are always
-    /// equal and nothing diverges; Task 42 resolves it, and this paragraph is
-    /// the record.
+    /// rather than the viewpoint's. Stage 2 Task 42a is the task that makes
+    /// the two indices diverge at all (`MatchServer.OnSpectateRequest` can
+    /// now move a slot's `viewpointIndex` away from its `identityIndex`) —
+    /// the limit above is REAL as of that task, not merely theoretical
+    /// anymore, and it stays open until Task 42b folds `observerIndex` into
+    /// two separate parameters the way this class's own `identityIndex`/
+    /// `viewpointIndex` split already models.
     ///
     /// THE BUDGET IS DECIDED BEFORE THE FIRST BYTE (task-28-brief §2.8). The
     /// header is written first and its `flags` byte cannot be patched
@@ -394,8 +398,10 @@ namespace Ring.Networking.Server
         /// bytes it occupies.
         ///
         /// `identityIndex` is WHO this connection is; `viewpointIndex` is WHERE
-        /// it looks from. The two are equal until spectating lands (Task 42) —
-        /// see this class's own doc for the split and its one known limit.
+        /// it looks from. The two start equal and stay that way until this
+        /// connection's own player dies and spectates someone else (Stage 2
+        /// Task 42a, `MatchServer.OnSpectateRequest`) — see this class's own
+        /// doc for the split and its one known limit, still open.
         public int BuildFor(int connection, int identityIndex, int viewpointIndex, ushort epoch)
         {
             if (_world == null)

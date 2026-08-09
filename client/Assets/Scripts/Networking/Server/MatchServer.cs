@@ -128,12 +128,17 @@ namespace Ring.Networking.Server
     ///
     /// WHAT Ф8 MUST HAND IN (task-36-brief §5's contract, extended by
     /// fix-round 1 I1/I3.1): `connections[i]` and `controllers[i]` are assumed
-    /// to be the SAME player, by index — `identityIndex`/`viewpointIndex` in
-    /// every `SnapshotAssembler.BuildFor` call below are both `i`, matching
-    /// that class's own doc ("the two are equal until spectating lands", Task
-    /// 42). Both arrays must be non-empty and the same length; `playerCount`
-    /// is derived from them rather than taken as a separate parameter, so the
-    /// two can never disagree by a caller's mistake. `StartMatch` itself calls
+    /// to be the SAME player, by index — `identityIndex` in every
+    /// `SnapshotAssembler.BuildFor` call below is always `i` (WHO this
+    /// connection is never changes). `viewpointIndex` is `_viewpointIndex[i]`
+    /// instead (Stage 2 Task 42a, spec §3.10 :673-678): it STARTS at `i`,
+    /// same as identity, and only ever moves when this connection's own dead
+    /// player sends an accepted `SpectateRequestNet` — see `OnSpectateRequest`
+    /// below for the decision and `SnapshotAssembler`'s own class doc for
+    /// the split these two parameters feed. Both arrays must be non-empty
+    /// and the same length; `playerCount` is derived from them rather than
+    /// taken as a separate parameter, so the two can never disagree by a
+    /// caller's mistake. `StartMatch` itself calls
     /// `Configure` on every controller (I3.1) — see that method's own comment
     /// — so Ф8 must NOT call it a second time (harmless if it does; the last
     /// call wins). **This `MatchServer` instance must be CONSTRUCTED BEFORE
@@ -262,6 +267,13 @@ namespace Ring.Networking.Server
         // and this class only asks the question.
         readonly MatchEndPolicy _endPolicy;
 
+        // Stage 2 Task 42a (spec §3.10 :673-678, Р70): the spectate-switch
+        // decision, handed in ready-made — the same reason `_endPolicy` is:
+        // the seconds-to-ticks conversion (`SpectatorSwitchCooldownSeconds *
+        // TickRate`) is `ServerBootstrap`'s arithmetic, not this class's own
+        // opinion (see `SpectatePolicy`'s own doc).
+        readonly SpectatePolicy _spectatePolicy;
+
         readonly TickTimeAccumulator _tickTime = new TickTimeAccumulator();
         readonly Stopwatch _stopwatch = new Stopwatch();
 
@@ -293,6 +305,22 @@ namespace Ring.Networking.Server
         // AGNOSTICISM" paragraph and Gather's own doc for the full account.
         uint[] _lastSeenInputTick;
         int[] _lastFreshWorldTick;
+
+        // Stage 2 Task 42a (spec §3.10 :673-678, Р70): per-slot spectate
+        // state, the same "fresh scratch every StartMatch, released every
+        // StopMatch" treatment as `_lastSeenInputTick`/`_lastFreshWorldTick`
+        // above, for the identical reason (Р151) — a restart's world starts
+        // back at tick 0, and either array surviving a restart would either
+        // apply a stale viewpoint (`_viewpointIndex`) or a stale cooldown
+        // origin (`_lastSpectateSwitchTick`) to a match that never earned it.
+        // `_viewpointIndex[i]` is WHERE slot `i` currently looks from — `i`
+        // itself (its own body) until an accepted `SpectateRequestNet` moves
+        // it. `_lastSpectateSwitchTick[i]` is the world tick of slot `i`'s
+        // last ACCEPTED switch, or `SpectatePolicy.NoPriorSwitch` if none has
+        // happened yet this match — see that constant's own doc for why a
+        // sentinel is safer here than `int.MinValue`.
+        int[] _viewpointIndex;
+        int[] _lastSpectateSwitchTick;
 
         ushort _epoch;
         bool _running;
@@ -351,16 +379,29 @@ namespace Ring.Networking.Server
         /// previous match's numbers.
         public MatchSummary LastSummary => _lastSummary;
 
-        public MatchServer(NetworkManager networkManager, NetConfig netConfig, MatchEndPolicy endPolicy)
+        public MatchServer(NetworkManager networkManager, NetConfig netConfig, MatchEndPolicy endPolicy,
+            SpectatePolicy spectatePolicy)
         {
             _nm = networkManager ?? throw new ArgumentNullException(nameof(networkManager));
             _netConfig = netConfig ?? throw new ArgumentNullException(nameof(netConfig));
             _endPolicy = endPolicy ?? throw new ArgumentNullException(nameof(endPolicy));
+            _spectatePolicy = spectatePolicy ?? throw new ArgumentNullException(nameof(spectatePolicy));
 
             // Fix-round 1, I1 — see the class doc's "SUBSCRIPTION TIMING"
             // paragraph for why this happens exactly once, here, and never
             // again in StartMatch/StopMatch.
             _nm.TimeManager.OnPostTick += OnPostTick;
+
+            // Stage 2 Task 42a: the process's one `SpectateRequestNet`
+            // handler, registered here for the same reason and with the same
+            // permanence as the `OnPostTick` subscription above — this is a
+            // DIFFERENT FishNet event chain (broadcast dispatch, not the tick
+            // loop), so the FIFO-ordering argument that pins `OnPostTick` to
+            // the constructor does not apply here the same way; what does
+            // apply is the class doc's "ONE MatchServer PER PROCESS" rule —
+            // exactly one registration must ever exist, and the constructor
+            // is the one place that runs exactly once per instance.
+            _nm.ServerManager.RegisterBroadcast<SpectateRequestNet>(OnSpectateRequest);
         }
 
         /// Starts a match — or restarts one, if this instance is already
@@ -424,6 +465,21 @@ namespace Ring.Networking.Server
             var lastFreshWorldTick = new int[playerCount];
             for (int i = 0; i < playerCount; i++) lastSeenInputTick[i] = uint.MaxValue;
 
+            // Stage 2 Task 42a: fresh every match, same Р151 reasoning as the
+            // pair above. `_viewpointIndex[i] = i` — identity and viewpoint
+            // start equal for every slot, exactly matching
+            // `SnapshotAssembler`'s own doc ("the two are equal until
+            // spectating lands"); `_lastSpectateSwitchTick[i]` starts at the
+            // sentinel so this match's first spectate request from any slot
+            // is never refused for a cooldown inherited from nowhere.
+            var viewpointIndex = new int[playerCount];
+            var lastSpectateSwitchTick = new int[playerCount];
+            for (int i = 0; i < playerCount; i++)
+            {
+                viewpointIndex[i] = i;
+                lastSpectateSwitchTick[i] = SpectatePolicy.NoPriorSwitch;
+            }
+
             _world = world;
             _assembler = assembler;
             _connections = connections;
@@ -434,6 +490,8 @@ namespace Ring.Networking.Server
             _starvedScratch = starvedScratch;
             _lastSeenInputTick = lastSeenInputTick;
             _lastFreshWorldTick = lastFreshWorldTick;
+            _viewpointIndex = viewpointIndex;
+            _lastSpectateSwitchTick = lastSpectateSwitchTick;
             _tickTime.Reset();
 
             // Stage 2 Task 40: a running match has no outcome, and no summary
@@ -608,6 +666,115 @@ namespace Ring.Networking.Server
             _starvedScratch = null;
             _lastSeenInputTick = null;
             _lastFreshWorldTick = null;
+            _viewpointIndex = null;
+            _lastSpectateSwitchTick = null;
+        }
+
+        /// The `SpectateRequestNet` handler (Stage 2 Task 42a, spec §3.10
+        /// :673-678, Р70) — every decision lives in `SpectatePolicy.Evaluate`;
+        /// this method only gathers the facts, calls it once, and either
+        /// commits the switch or does nothing.
+        ///
+        /// MUST NEVER THROW — THIS RUNS INSIDE A FISHNET BROADCAST HANDLER.
+        /// In a release headless build (`BuildLinuxServer` never sets
+        /// `BuildOptions.Development`) `ServerManager.ParseReceived` wraps
+        /// every handler dispatch in a `try/catch` that turns ANY exception
+        /// into an immediate `Kick(..., KickReason.MalformedData, ...)` —
+        /// see `HandshakeDecision`'s own doc for the full mechanism, verified
+        /// there against `BuildCommands.cs`. A bug in this method would
+        /// therefore disconnect an innocent client and blame it for
+        /// "malformed data". `SpectatePolicy.Evaluate` already answers with a
+        /// VALUE for exactly this reason; the guards below exist so this
+        /// method never even reaches `PlayerAt` with an index that could
+        /// throw on its own.
+        ///
+        /// `if (!_running) return;` FIRST, THE SAME WAY `OnPostTick`'s OWN
+        /// FIRST LINE DOES. Between matches `_world`/`_connections` are `null`
+        /// (`StopMatch`), and a `SpectateRequestNet` arriving in that window
+        /// — the join phase of the NEXT match, or the linger after this one
+        /// ended — must be silently ignored rather than NRE.
+        ///
+        /// THE REQUESTING SLOT IS FOUND BY REFERENCE EQUALITY, DELIBERATELY
+        /// NOT `==`/`Equals`. `NetworkConnection` overloads both of its own
+        /// comparers to compare by `ClientId` rather than object identity —
+        /// safe for the package's own ordinary use, but this method has no
+        /// reason to trust anything looser than "this is literally the
+        /// connection `StartMatch` put in this slot" for a lookup that
+        /// decides which player's cooldown gets spent.
+        ///
+        /// THE RANGE CHECK RUNS BEFORE `PlayerAt(target)`, NEVER AFTER.
+        /// `SimulationWorld.PlayerAt` is a bare array index with no bounds
+        /// guard of its own, so a `target` outside `[0, playerCount)` would
+        /// throw before `SpectatePolicy` ever got a chance to answer
+        /// `TargetOutOfRange` — exactly the exception this method exists to
+        /// never produce. `targetAlive` is computed with the range check
+        /// inlined into it (`target is in range AND PlayerAt(target).Alive`)
+        /// rather than as two separate reads, so there is no path on which an
+        /// invalid `target` reaches `PlayerAt` at all; the placeholder
+        /// `false` a short-circuited range check leaves in `targetAlive` is
+        /// never actually read by `Evaluate`, because `TargetOutOfRange` is
+        /// checked before `TargetDead` in the policy's own fixed order.
+        ///
+        /// DEATH OF THE CURRENT TARGET IS NOT HANDLED HERE, ON PURPOSE. This
+        /// method only ever runs when a `SpectateRequestNet` arrives — it
+        /// does not watch `_viewpointIndex[i]`'s target for a death that
+        /// happens while nobody asked to switch away from it. That is a
+        /// deliberate omission, not a gap: the spec gives no rule for
+        /// auto-returning a spectator to their own body when their target
+        /// dies, and inventing one would have the server silently decide
+        /// something for the player instead of waiting for their own next
+        /// request. `VisibilitySystem.Compute`/`EventRelevance` already read
+        /// a dead `PlayerAt` without an `Alive` guard (`EventRelevance.cs`'s
+        /// own "no Alive gate" comment), so a corpse works as a viewpoint
+        /// without any special-casing here — the client simply keeps
+        /// watching a body that stopped moving until it asks to look
+        /// somewhere else.
+        void OnSpectateRequest(NetworkConnection connection, SpectateRequestNet msg, Channel channel)
+        {
+            if (!_running) return;
+
+            int slot = -1;
+            for (int i = 0; i < _connections.Length; i++)
+            {
+                if (ReferenceEquals(_connections[i], connection))
+                {
+                    slot = i;
+                    break;
+                }
+            }
+            // Not a seated connection (e.g. one `MatchHandshake` refused
+            // with `DuplicatePlayer` but left connected, `MatchHandshake.cs`'s
+            // own doc on that path) — nothing to act on.
+            if (slot < 0) return;
+
+            int target = msg.TargetIndex;
+            int playerCount = _world.PlayerCount;
+            bool requesterAlive = _world.PlayerAt(slot).Alive;
+            bool targetInRange = target >= 0 && target < playerCount;
+            bool targetAlive = targetInRange && _world.PlayerAt(target).Alive;
+            int currentTick = _world.CurrentTick;
+
+            SpectateRefusal refusal = _spectatePolicy.Evaluate(slot, target, playerCount,
+                requesterAlive, targetAlive, _lastSpectateSwitchTick[slot], currentTick);
+
+            if (refusal == SpectateRefusal.None)
+            {
+                _viewpointIndex[slot] = target;
+                _lastSpectateSwitchTick[slot] = currentTick;
+                _nm.Log($"MatchServer: spectate switch accepted — slot={slot} target={target} "
+                    + $"tick={currentTick}.");
+            }
+            else
+            {
+                // Diagnostic wording only, the same discipline
+                // `MatchHandshake.Refuse` names in its own doc: never
+                // "exploit"/"illegitimate"/"security" — an unmodified client
+                // reaches every one of these reasons through ordinary play
+                // (a stale target that just died, a double-tap past the
+                // cooldown).
+                _nm.Log($"MatchServer: refusing spectate switch — slot={slot} target={target} "
+                    + $"tick={currentTick} — {refusal}.");
+            }
         }
 
         /// The whole per-tick pipeline (spec §3.7, Р22 — order is load-bearing,
@@ -702,9 +869,12 @@ namespace Ring.Networking.Server
                 _assembler.BeginTick(_world);
 
                 // 4. Per-connection frame, Unreliable (spec §3.7 table Р27:
-                // state travels unreliably). `identityIndex`/`viewpointIndex`
-                // are both `i` — see the class doc's "what Ф8 must hand in"
-                // paragraph.
+                // state travels unreliably). `identityIndex` is always `i` —
+                // WHO this connection is never changes. `viewpointIndex` is
+                // `_viewpointIndex[i]` (Stage 2 Task 42a) — WHERE it looks
+                // from, `i` by default and only ever moved by that slot's own
+                // accepted `SpectateRequestNet` (`OnSpectateRequest` below).
+                // See the class doc's "what Ф8 must hand in" paragraph.
                 for (int i = 0; i < _connections.Length; i++)
                 {
                     // Task 36, I3.3: a disconnected/disconnecting connection
@@ -727,7 +897,7 @@ namespace Ring.Networking.Server
                     // true for only one of the two states `IsActive` covers.
                     if (!_connections[i].IsActive) continue;
 
-                    int len = _assembler.BuildFor(i, i, i, _epoch);
+                    int len = _assembler.BuildFor(i, i, _viewpointIndex[i], _epoch);
                     var broadcast = new SnapshotBroadcast
                     {
                         Tick = (uint)postTickWorldTick,

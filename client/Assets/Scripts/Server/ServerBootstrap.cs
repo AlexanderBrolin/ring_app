@@ -317,10 +317,23 @@ namespace Ring.Server
             // seconds-to-ticks conversion belongs to whoever reads the asset,
             // and that is this class. Both operands come from the same
             // `NetConfig` instance the `MatchServer` itself is handed.
+            //
+            // `SpectatePolicy` (Stage 2 Task 42a) takes the same kind of
+            // finished tick count, built the same way and for the same
+            // reason (`SpectatePolicy`'s own doc). The rounding is UP
+            // (`Math.Ceiling`), never a bare `(int)` truncation: at the
+            // shipped default `0.35 * 30 = 10.5`, and truncating would enforce
+            // a 10-tick (0.333s) cooldown — SHORTER than the 0.35s the asset
+            // names, which weakens the exact limiter Р70 exists to enforce.
+            // Ceiling gives 11 ticks (0.367s) instead — never shorter than
+            // configured, only ever equal or longer.
             try
             {
+                int spectateCooldownTicks = (int)Math.Ceiling(
+                    (double)_net.SpectatorSwitchCooldownSeconds * _net.TickRate);
                 _matchServer = new MatchServer(_nm, _net,
-                    new MatchEndPolicy(_net.MatchMaxDurationSeconds * _net.TickRate));
+                    new MatchEndPolicy(_net.MatchMaxDurationSeconds * _net.TickRate),
+                    new SpectatePolicy(spectateCooldownTicks));
             }
             catch (Exception ex)
             {
