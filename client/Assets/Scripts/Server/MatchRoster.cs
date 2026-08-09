@@ -4,11 +4,18 @@ namespace Ring.Server
 {
     /// Why `TryJoin` refused a candidate — spec §3.10, brief §2.6. `None`
     /// (`0`) never appears as the OUT rejection when `TryJoin` returns
-    /// `true`; it is the value written on the accepted path.
+    /// `true`; it is the value written on the accepted path. `InvalidPlayerId`
+    /// added fix-round 1 (I-3): the wire hands `playerId` in from Task 39's
+    /// handshake, and a `null`/empty value reaching `TryJoin` unchecked used
+    /// to slot in as a literal `null` string and get misdiagnosed as
+    /// `DuplicatePlayer` on the SECOND such attempt — the wire was weaker
+    /// than the config loader, which has required non-empty `playerId` for
+    /// every roster entry since Task 38 (`MatchConfigLoader.cs`).
     public enum JoinRejection : byte
     {
         None = 0,
         MatchAlreadyStarted,
+        InvalidPlayerId,
         UnknownPlayer,
         BadToken,
         DuplicatePlayer,
@@ -37,13 +44,17 @@ namespace Ring.Server
     /// disagree about which index is which player (`MatchServer.cs:129-146`'s
     /// own "assumed to be the SAME player, by index" contract).
     ///
-    /// `TryJoin`'S CHECK ORDER IS FIXED (brief §2.6): `MatchAlreadyStarted` ->
-    /// `DuplicatePlayer` -> (only when `MatchConfig.Players` is non-empty)
-    /// `UnknownPlayer` -> `BadToken` -> `MatchFull`. Duplicate is checked
-    /// before unknown deliberately — a repeat of an id already accepted is
-    /// "you again", not "who are you". An EMPTY `Players[]` (the dev
-    /// `countdown` shape) skips the roster-membership/token checks entirely:
-    /// any non-empty `playerId` is accepted up to `MaxPlayers`, and
+    /// `TryJoin`'S CHECK ORDER IS FIXED (brief §2.6, extended fix-round 1
+    /// I-3): `MatchAlreadyStarted` -> `InvalidPlayerId` -> `DuplicatePlayer`
+    /// -> (only when `MatchConfig.Players` is non-empty) `UnknownPlayer` ->
+    /// `BadToken` -> `MatchFull`. `InvalidPlayerId` sits right after the
+    /// started-gate and BEFORE the duplicate scan deliberately — comparing a
+    /// `null`/empty candidate against already-accepted ids is a meaningless
+    /// comparison to make at all, not a "no match found" one. Duplicate is
+    /// checked before unknown deliberately — a repeat of an id already
+    /// accepted is "you again", not "who are you". An EMPTY `Players[]` (the
+    /// dev `countdown` shape) skips the roster-membership/token checks
+    /// entirely: any non-empty `playerId` is accepted up to `MaxPlayers`, and
     /// `joinToken` is never compared against anything.
     ///
     /// `ShouldStart` — `waitForAll` needs every entry of `Players[]` to have
@@ -51,6 +62,29 @@ namespace Ring.Server
     /// past `CountdownSeconds` measured from the FIRST accepted join, never
     /// from construction (a countdown ticking from construction could expire
     /// before anyone ever connects at all, starting a match with zero players).
+    ///
+    /// `Start()` REQUIRES AT LEAST ONE CONNECTION (fix-round 1, m5). A
+    /// zero-connection `Start()` would freeze `PlayerCount` at `0` and hand
+    /// that silently down two more layers to `MatchServer.StartMatch`, which
+    /// throws on an empty `connections` array (`MatchServer.cs:268-272`) —
+    /// this class is where that "nobody ever joined" state is still
+    /// diagnosable as ITS OWN problem, not a stack trace from an unrelated
+    /// class two calls later.
+    ///
+    /// THIS INSTANCE IS SINGLE-USE (fix-round 1, m6 — restated here for
+    /// anyone reading only this class doc). `_started` is a one-way flag:
+    /// there is no `Reset`, and none is planned — a restart (a new
+    /// `MatchEpoch`, Task 40) is a NEW `MatchRoster` built from the ORIGINAL
+    /// `MatchConfig` (which is never re-read from the environment/file on
+    /// restart), not this instance reused.
+    ///
+    /// THE CALLER MUST HAND IN A `MatchConfig` FROM AN `Ok == true` RESULT
+    /// (fix-round 1, I-1). The constructor below guards the two ways a
+    /// caller could otherwise reach a broken instance: a `null` `Players`
+    /// (only possible via `default(MatchConfig)`, e.g. blindly wrapping a
+    /// refused `MatchConfigLoadResult.Config` — see `MatchConfig`'s own doc)
+    /// and a non-positive `MaxPlayers` (which `new string[MaxPlayers]` below
+    /// would otherwise turn into a bare, unexplained `OverflowException`).
     public sealed class MatchRoster
     {
         readonly MatchConfig _config;
@@ -63,6 +97,20 @@ namespace Ring.Server
 
         public MatchRoster(in MatchConfig config)
         {
+            if (config.Players == null)
+            {
+                throw new ArgumentException(
+                    "MatchRoster: MatchConfig.Players is null — only a MatchConfigLoadResult " +
+                    "with Ok == true produces a valid MatchConfig (default(MatchConfig), e.g. " +
+                    "from a refused result, is not one; see MatchConfig's own doc).",
+                    nameof(config));
+            }
+            if (config.MaxPlayers < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(config), config.MaxPlayers,
+                    "MatchRoster: MatchConfig.MaxPlayers must be >= 1.");
+            }
+
             _config = config;
             _slotPlayerIds = new string[config.MaxPlayers];
         }
@@ -102,6 +150,15 @@ namespace Ring.Server
             if (_started)
             {
                 rejection = JoinRejection.MatchAlreadyStarted;
+                return false;
+            }
+
+            // Fix-round 1, I-3: checked before the duplicate scan below —
+            // comparing null/empty against already-accepted ids is not a
+            // meaningful "found/not found" question.
+            if (string.IsNullOrEmpty(playerId))
+            {
+                rejection = JoinRejection.InvalidPlayerId;
                 return false;
             }
 
@@ -161,6 +218,17 @@ namespace Ring.Server
 
         public void Start()
         {
+            // Fix-round 1, m5: a zero-connection Start() would freeze
+            // PlayerCount at 0 and let that reach MatchServer.StartMatch two
+            // layers down, which throws on an empty connections array
+            // (MatchServer.cs:268-272) — diagnosed here instead, where the
+            // "nobody ever joined" state is still this class's own problem.
+            if (_connectedCount == 0)
+            {
+                throw new InvalidOperationException(
+                    "MatchRoster.Start: cannot start with zero connected players.");
+            }
+
             _frozenPlayerCount = _connectedCount;
             _started = true;
         }

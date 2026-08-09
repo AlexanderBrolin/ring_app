@@ -12,11 +12,12 @@ namespace Ring.Simulation.Tests
     /// (task-38-brief §0).
     ///
     /// Tests 1-9 are the plan's own letter (brief §3, Step 1); 10-24 are the
-    /// coordinator's additions (brief §2.7). Every negative test carries a
-    /// positive witness beside it (brief §2.8), so a mutation that always
-    /// refuses (or always accepts) cannot survive unnoticed — see
-    /// task-38-report.md's mutation table for the M-1..M-19 sweep this file
-    /// was written against.
+    /// coordinator's additions (brief §2.7); the final section is fix-round 1
+    /// (Opus review C-1/I-1/I-3/I-4/m5/m8 — task-38-report.md §10). Every
+    /// negative test carries a positive witness beside it (brief §2.8), so a
+    /// mutation that always refuses (or always accepts) cannot survive
+    /// unnoticed — see task-38-report.md's mutation table for the full
+    /// M-1..M-25 sweep this file was written against.
     ///
     /// ARENA CAP IS A FIXTURE, NEVER THE BARE LITERAL 3 (brief §4/§2.2):
     /// `ArenaCap` below reads `TestConfigs.Default().Arena.MaxPlayers` — the
@@ -174,6 +175,10 @@ namespace Ring.Simulation.Tests
             AssertRefused(Parse("not json at all"));
             AssertRefused(Parse(""));
             AssertRefused(Parse(null));
+            // Witness (m3, fix-round 1): well-formed JSON is still accepted —
+            // this test's four refusals are refusing the INPUT, not just
+            // always refusing.
+            AssertAccepted(Parse(Json()));
         }
 
         [Test]
@@ -351,7 +356,12 @@ namespace Ring.Simulation.Tests
             // The degenerate-handle guard (brief §2.5, lesson 125): waiting
             // for nobody must never reach MatchServer.StartMatch with a
             // zero-length connections array.
-            AssertRefused(Parse(Json(startMode: "\"waitForAll\"", players: "[]")));
+            var refused = Parse(Json(startMode: "\"waitForAll\"", players: "[]"));
+            AssertRefused(refused);
+            // m4, fix-round 1: pin the FIELD in the message, not just the
+            // flag — a mutation that always refuses would still pass a
+            // flag-only assertion.
+            StringAssert.Contains("waitForAll", refused.Error);
             // Witness: countdown with an empty roster is fine — it's the dev
             // default's own shape.
             AssertAccepted(Parse(Json(startMode: "\"countdown\"", players: "[]")));
@@ -371,7 +381,10 @@ namespace Ring.Simulation.Tests
         {
             string json = Json(maxPlayers: "2",
                 players: "[{\"playerId\":\"a\",\"joinToken\":\"1\"},{\"playerId\":\"a\",\"joinToken\":\"2\"}]");
-            AssertRefused(Parse(json));
+            var refused = Parse(json);
+            AssertRefused(refused);
+            // m4, fix-round 1: pin the field/reason in the message.
+            StringAssert.Contains("duplicate", refused.Error);
             // Witness: distinct ids are fine.
             string ok = Json(maxPlayers: "2",
                 players: "[{\"playerId\":\"a\",\"joinToken\":\"1\"},{\"playerId\":\"b\",\"joinToken\":\"2\"}]");
@@ -383,7 +396,10 @@ namespace Ring.Simulation.Tests
         {
             string json = Json(maxPlayers: "1",
                 players: "[{\"playerId\":\"a\",\"joinToken\":\"1\"},{\"playerId\":\"b\",\"joinToken\":\"2\"}]");
-            AssertRefused(Parse(json));
+            var refused = Parse(json);
+            AssertRefused(refused);
+            // m4, fix-round 1: pin the field/reason in the message.
+            StringAssert.Contains("exceeding maxPlayers", refused.Error);
             // Witness: a roster within the cap passes.
             string ok = Json(maxPlayers: "2",
                 players: "[{\"playerId\":\"a\",\"joinToken\":\"1\"},{\"playerId\":\"b\",\"joinToken\":\"2\"}]");
@@ -527,6 +543,134 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(joined);
             Assert.AreEqual(JoinRejection.MatchFull, rejection);
             Assert.AreEqual(-1, slot);
+        }
+
+        // ==================================================================
+        // 25-30: fix-round 1 additions (Opus review C-1/I-1/I-3/I-4/m5/m8).
+        // ==================================================================
+
+        [Test]
+        public void TwoSentinelMechanism_DistinguishesPresenceFromSentinelValuedFields()
+        {
+            // I-4: a naive single-sentinel presence check (compare one parsed
+            // instance against a fixed constant) passes every OTHER test in
+            // this file, because none of them feeds a value that happens to
+            // equal an internal sentinel. This test closes that gap directly
+            // — mutation M-20 in task-38-report.md is exactly that naive
+            // single-sentinel form, and it fails HERE.
+            var seedAtSentinel = Parse(Json(seed: long.MinValue.ToString()));
+            AssertAccepted(seedAtSentinel);
+            Assert.AreEqual(long.MinValue, seedAtSentinel.Config.Seed);
+
+            var maxPlayersAtSentinel = Parse(Json(
+                maxPlayers: int.MinValue.ToString(), players: "[]", startMode: "\"countdown\""));
+            AssertRefused(maxPlayersAtSentinel);
+            // Refused by the RANGE check (a real value, just out of range),
+            // never by "missing" — proves the field was correctly read as PRESENT.
+            StringAssert.Contains("must be in", maxPlayersAtSentinel.Error);
+
+            var portAtSentinel = Parse(Json(port: int.MaxValue.ToString()));
+            AssertRefused(portAtSentinel);
+            StringAssert.Contains("must be in", portAtSentinel.Error);
+
+            // A matchId equal to the loader's own internal sentinel text is
+            // still accepted — the mechanism never depends on user data
+            // avoiding it (see MatchConfigLoader's own doc on the sentinel
+            // constants, fix-round 1 C-1).
+            var matchIdAtSentinel = Parse(Json(matchId: "\"__ring_sentinel_lo__\""));
+            AssertAccepted(matchIdAtSentinel);
+            Assert.AreEqual("__ring_sentinel_lo__", matchIdAtSentinel.Config.MatchId);
+        }
+
+        [Test]
+        public void MatchId_Empty_IsRefused()
+        {
+            // m8, coordinator ruling: matchId feeds Task 41's startup log
+            // line and the meta's own records, where "" is indistinguishable
+            // from a generator bug.
+            AssertRefusedNaming(Parse(Json(matchId: "\"\"")), "matchId");
+            // Witness.
+            AssertAccepted(Parse(Json(matchId: "\"m1\"")));
+        }
+
+        [Test]
+        public void RosterConstructor_RejectsNullPlayers()
+        {
+            // I-1: default(MatchConfig) — what a refused MatchConfigLoadResult.
+            // Config actually is — has Players == null. MatchRoster must
+            // refuse it loudly, not NRE on first use two calls later.
+            var badConfig = default(MatchConfig);
+            Assert.Throws<ArgumentException>(() => new MatchRoster(in badConfig));
+        }
+
+        [Test]
+        public void RosterConstructor_RejectsNonPositiveMaxPlayers()
+        {
+            // I-1: without this guard, `new string[MaxPlayers]` throws a bare,
+            // unexplained OverflowException on a negative value.
+            var badConfig = new MatchConfig("m", 1, -5, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.Countdown, 5);
+            Assert.Throws<ArgumentOutOfRangeException>(() => new MatchRoster(in badConfig));
+            var zeroConfig = new MatchConfig("m", 1, 0, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.Countdown, 5);
+            Assert.Throws<ArgumentOutOfRangeException>(() => new MatchRoster(in zeroConfig));
+            // Witness: MaxPlayers == 1 (the minimum legal value) constructs fine.
+            var okConfig = new MatchConfig("m", 1, 1, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.Countdown, 5);
+            Assert.DoesNotThrow(() => new MatchRoster(in okConfig));
+        }
+
+        [Test]
+        public void Roster_InvalidPlayerId_IsRejectedBeforeDuplicateCheck()
+        {
+            // I-3: a null/empty playerId (Task 39's handshake handing in a
+            // raw wire value) must not be silently accepted, nor
+            // misdiagnosed as DuplicatePlayer on a second such attempt.
+            var config = new MatchConfig("m", 1, 2, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.Countdown, 5);
+            var roster = new MatchRoster(in config);
+
+            bool joinedNull = roster.TryJoin(null, "", 0.0, out int slotNull, out var rejectionNull);
+            Assert.IsFalse(joinedNull);
+            Assert.AreEqual(JoinRejection.InvalidPlayerId, rejectionNull);
+            Assert.AreEqual(-1, slotNull);
+
+            // A second null attempt must ALSO read InvalidPlayerId, not
+            // DuplicatePlayer — proves the guard runs before the duplicate
+            // scan, not after a null slipped into it.
+            bool joinedNullAgain = roster.TryJoin(null, "", 0.0, out _, out var rejectionAgain);
+            Assert.IsFalse(joinedNullAgain);
+            Assert.AreEqual(JoinRejection.InvalidPlayerId, rejectionAgain);
+
+            bool joinedEmpty = roster.TryJoin("", "", 0.0, out _, out var rejectionEmpty);
+            Assert.IsFalse(joinedEmpty);
+            Assert.AreEqual(JoinRejection.InvalidPlayerId, rejectionEmpty);
+
+            // Witness: a well-formed id is accepted.
+            bool joinedOk = roster.TryJoin("a", "", 0.0, out _, out var rejectionOk);
+            Assert.IsTrue(joinedOk);
+            Assert.AreEqual(JoinRejection.None, rejectionOk);
+        }
+
+        [Test]
+        public void Roster_Start_RequiresAtLeastOneConnection()
+        {
+            // m5: a zero-connection Start() must not silently freeze
+            // PlayerCount at 0 — MatchServer.StartMatch throws two layers
+            // down on an empty connections array; this class is where
+            // "nobody ever joined" is still diagnosable as its own problem.
+            var config = new MatchConfig("m", 1, 2, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.Countdown, 5);
+            var roster = new MatchRoster(in config);
+            Assert.Throws<InvalidOperationException>(() => roster.Start());
+
+            // Witness: one connection is enough.
+            var config2 = new MatchConfig("m", 1, 2, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.Countdown, 5);
+            var roster2 = new MatchRoster(in config2);
+            roster2.TryJoin("a", "", 0.0, out _, out _);
+            Assert.DoesNotThrow(() => roster2.Start());
+            Assert.AreEqual(1, roster2.PlayerCount);
         }
     }
 }

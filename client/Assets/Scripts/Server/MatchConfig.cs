@@ -32,12 +32,22 @@ namespace Ring.Server
 
     /// Plain value — spec §3.10. Never mutated after `MatchConfigLoader.Load`/
     /// `Parse` hands it back (readonly struct, readonly fields). `Players` is
-    /// NEVER null — an absent `"players"` key and `"players": []` both produce
-    /// a zero-length array (same "arrays EMPTY, never null" precedent as
-    /// `ArenaSimConfig.WallA/WallB`, `SimConfig.cs`); the constructor enforces
-    /// this even when a caller (e.g. a future test) passes `null` directly, so
-    /// the invariant cannot be defeated by construction, not just by
-    /// `MatchConfigLoader`'s own discipline.
+    /// NEVER null when built THROUGH THIS CONSTRUCTOR — an absent
+    /// `"players"` key and `"players": []` both produce a zero-length array
+    /// (same "arrays EMPTY, never null" precedent as
+    /// `ArenaSimConfig.WallA/WallB`, `SimConfig.cs`), and a caller passing
+    /// `null` directly gets the same coalesced empty array back.
+    ///
+    /// THAT GUARANTEE ONLY HOLDS FOR A `MatchConfigLoadResult` WHOSE `Ok` IS
+    /// `true` (fix-round 1, I-1 — an earlier draft of this doc overclaimed
+    /// "cannot be defeated by construction", which is false: `default
+    /// (MatchConfig)` bypasses this constructor entirely — every struct has
+    /// one — and `MatchConfigLoader.Refuse` hands out exactly that `default`
+    /// inside every refused `MatchConfigLoadResult.Config`, `Players`
+    /// included, as `null`). Do not read `.Config` off a result with
+    /// `Ok == false`; do not construct a `MatchRoster` from one either —
+    /// `MatchRoster`'s own constructor guards against exactly this by
+    /// throwing on a `null` `Players` (see its class doc).
     public readonly struct MatchConfig
     {
         public readonly string MatchId;
