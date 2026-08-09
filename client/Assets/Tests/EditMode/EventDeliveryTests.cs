@@ -560,7 +560,10 @@ namespace Ring.Simulation.Tests
             var projectileKinds = new[]
             {
                 SimEventKind.ProjectileFired, SimEventKind.ProjectileHit,
-                SimEventKind.ProjectileBlocked, SimEventKind.ProjectileExpired
+                SimEventKind.ProjectileBlocked, SimEventKind.ProjectileExpired,
+                // Stage 2 Task 44a: a round ending on a player is a round
+                // ending — same trajectory-relevance question, same answer.
+                SimEventKind.ProjectileHitPlayer
             };
 
             foreach (SimEventKind kind in projectileKinds)
@@ -653,7 +656,8 @@ namespace Ring.Simulation.Tests
                 [SimEventKind.ProjectileFired] = DeliveryChannel.None,
                 [SimEventKind.ProjectileHit] = DeliveryChannel.None,
                 [SimEventKind.ProjectileBlocked] = DeliveryChannel.None,
-                [SimEventKind.ProjectileExpired] = DeliveryChannel.None
+                [SimEventKind.ProjectileExpired] = DeliveryChannel.None,
+                [SimEventKind.ProjectileHitPlayer] = DeliveryChannel.None
             };
 
             foreach (SimEventKind kind in System.Enum.GetValues(typeof(SimEventKind)))
@@ -942,6 +946,64 @@ namespace Ring.Simulation.Tests
             var again = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
             Assert.AreEqual(0, again.CountOf(SnapshotEventKind.ProjectileEnded),
                 "the subscription is closed by the ending it was waiting for — a round cannot end twice");
+        }
+
+        // --- Stage 2 Task 44a: a round that ended on a PLAYER ---
+
+        [Test]
+        public void ProjectileHitPlayer_ClosesTheRoundAsHitPlayer_NotHitMob()
+        {
+            var cfg = TestConfigs.Open();
+            // Three slots so the VICTIM sits at index 2 while the round takes
+            // id 1 (SimulationWorld hands entity ids out from 1): the payload
+            // assertion below distinguishes "named the round" from "named the
+            // victim", which two equal numbers could not.
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, -60f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, 40f));
+            const int victimSlot = 2;
+
+            float speed = cfg.Weapon.ProjectileSpeed;
+            var muzzle = new float2(20f, 0f);
+            int roundId = w.SpawnProjectileForTest(ProjectileOwner.Player, muzzle, new float2(speed, 0f),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime);
+            Assert.AreNotEqual(roundId, victimSlot,
+                "fixture premise: the round's id and the victim's slot must differ");
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 3);
+            asm.BeginTick(w);
+            var spawn = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            var outsider = AssembledFrame.Decode(asm.BufferFor(1), asm.BuildFor(1, 1, 1, AsmEpoch), cfg);
+            Assert.AreEqual(1, spawn.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "test setup: connection 0 must be on the round's trajectory");
+            Assert.AreEqual(0, outsider.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "test setup: connection 1 must NOT be, or the negative half below proves nothing");
+
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileHitPlayer, new float2(30f, 0f), victimSlot, default,
+                cfg.Weapon.Damage * cfg.Hero.HeadDamageMult, zone: HitZone.Head,
+                hitDir: new float2(1f, 0f), playerIndex: 0, secondaryEntityId: roundId);
+
+            asm.BeginTick(w);
+            var ended = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            var endedOutsider = AssembledFrame.Decode(asm.BufferFor(1), asm.BuildFor(1, 1, 1, AsmEpoch), cfg);
+
+            Assert.AreEqual(1, ended.CountOf(SnapshotEventKind.ProjectileEnded),
+                "a PvP hit ends the round on the wire exactly like every other ending — otherwise the "
+                + "subscriber's tracer hangs until its own confirm timeout");
+            Assert.IsTrue(ended.TryFirstOf(SnapshotEventKind.ProjectileEnded, out int e));
+            Assert.AreEqual(roundId, ended.Payloads[e].Id,
+                "the payload names the ROUND (SecondaryEntityId), not the victim slot EntityId carries");
+            Assert.AreEqual(ProjectileEndKind.HitPlayer, ended.Payloads[e].EndKind,
+                "and it says the round ended on a PLAYER");
+            Assert.AreNotEqual(ProjectileEndKind.HitMob, ended.Payloads[e].EndKind,
+                "witness: reusing the mob's ending would put a literal falsehood on the wire");
+            Assert.AreEqual(HitZone.Head, ended.Payloads[e].Zone,
+                "the zone rides along, so the client can pick headshot feedback from the ending alone");
+            Assert.AreEqual(0, endedOutsider.CountOf(SnapshotEventKind.ProjectileEnded),
+                "a connection that never received the spawn must not receive the ending");
         }
 
         // --- 16: MobDied routing, all three arms ---

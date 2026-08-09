@@ -229,6 +229,166 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, w.StatsAt(0).ShotsHit, "and only THAT round is credited");
         }
 
+        // ---- Stage 2 Task 44a: the PvP hit's own event -------------------
+
+        /// Slot of the shooter and of the victim in the fixture below. THREE
+        /// slots, and the victim in the LAST one, for a reason the tests
+        /// depend on: SimulationWorld hands out entity ids from 1, so in a
+        /// two-player duel the fixture's first round is id 1 and the victim is
+        /// index 1 — the two numbers the event must keep apart would be equal,
+        /// and an emit that wrote the victim into SecondaryEntityId (or the
+        /// round into EntityId) would pass unnoticed. The shooter's own slot is
+        /// likewise never the victim's, so a swap of EntityId and PlayerIndex
+        /// cannot pass either.
+        const int ShooterSlot = 0, VictimSlot = 2, BystanderSlot = 1;
+
+        /// Duel() geometry with a third body: shooter at the origin, victim
+        /// TargetX downrange, bystander well off the firing line so it can
+        /// never intercept the round (asserted, not assumed).
+        static SimulationWorld TrioDuel(out SimConfig c)
+        {
+            c = Range();
+            Assert.Less(TargetX, c.Weapon.ProjectileSpeed * SimulationWorld.TickDt,
+                "fixture premise: the victim stands within one tick of projectile travel");
+            Assert.AreEqual(0, c.Arena.ObstacleCount + c.Arena.WallCount,
+                "fixture premise: the duel arena carries no geometry to depenetrate against");
+
+            var w = new SimulationWorld(1, c, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, ShooterSlot, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, VictimSlot, new float2(TargetX, 0f));
+            const float bystanderOffAxis = 10f;
+            TestWorlds.RelocatePlayerForTest(w, BystanderSlot, new float2(0f, -bystanderOffAxis));
+
+            const float posTolerance = 1e-4f;
+            Assert.Less(math.distance(w.PlayerAt(ShooterSlot).Pos, float2.zero), posTolerance,
+                "fixture premise: the shooter stands exactly at the origin");
+            Assert.Less(math.distance(w.PlayerAt(VictimSlot).Pos, new float2(TargetX, 0f)), posTolerance,
+                "fixture premise: the victim stands exactly TargetX downrange");
+            Assert.Greater(bystanderOffAxis, c.Hero.Radius + c.Weapon.ProjectileRadius,
+                "fixture premise: the bystander is clear of the firing line, so every hit below is "
+                + "on the victim the expectations name");
+            return w;
+        }
+
+        /// The one buffered ProjectileHitPlayer, or a failed assertion saying
+        /// so — every test below opens with this, and none of them should be
+        /// able to read a second event's fields by accident.
+        static SimEvent SolePvpHit(SimulationWorld w)
+        {
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileHitPlayer),
+                "exactly one round ended on a player this tick");
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHitPlayer, out SimEvent hit));
+            return hit;
+        }
+
+        [Test]
+        public void PvpHit_EmitsItsOwnKind_VictimInEntityId_ShooterInPlayerIndex()
+        {
+            SimulationWorld w = TrioDuel(out SimConfig c);
+            TestWorlds.FireAimed3D(w, float2.zero, BodyBand(c), new float2(TargetX, 0f), BodyBand(c),
+                ownerIndex: (byte)ShooterSlot);
+
+            w.ClearEvents();
+            TickIdle(w);
+
+            Assert.AreNotEqual(ShooterSlot, VictimSlot,
+                "fixture premise: the two indices this test compares must be different numbers, "
+                + "or a swapped EntityId/PlayerIndex would pass");
+            SimEvent hit = SolePvpHit(w);
+            Assert.AreEqual(VictimSlot, hit.EntityId,
+                "EntityId is the VICTIM's player slot, mirroring ProjectileHit's victim convention");
+            Assert.AreEqual(ShooterSlot, hit.PlayerIndex,
+                "PlayerIndex is the SHOOTER — the whole point of the kind (app-dsh): a player must be "
+                + "able to tell its own PvP hit from somebody else's");
+
+            Assert.AreEqual(0, TestEvents.CountOf(w, SimEventKind.ProjectileHit),
+                "a player victim must never ride the mob-hit kind — the snapshot assembler maps that "
+                + "one to a hardcoded ProjectileEndKind.HitMob");
+            Assert.AreEqual(c.Weapon.Damage * c.Hero.BodyDamageMult, hit.Amount, 1e-4f,
+                "Amount is the post-multiplier damage, same contract as ProjectileHit");
+            Assert.AreEqual(1f, hit.HitDir.x, 1e-3f,
+                "HitDir is the round's travel direction at contact — this shot flies straight down +X");
+            Assert.AreEqual(0f, hit.HitDir.y, 1e-3f);
+            Assert.Greater(hit.Pos.x, 0f,
+                "Pos is the CONTACT point, somewhere between the muzzle and the victim's centre");
+            Assert.LessOrEqual(hit.Pos.x, TargetX + 1e-3f);
+        }
+
+        [Test]
+        public void PvpHit_CarriesTheRoundIdInSecondaryEntityId_NotInEntityId()
+        {
+            SimulationWorld w = TrioDuel(out SimConfig c);
+            int roundId = TestWorlds.FireAimed3D(w, float2.zero, BodyBand(c),
+                new float2(TargetX, 0f), BodyBand(c), ownerIndex: (byte)ShooterSlot);
+
+            w.ClearEvents();
+            TickIdle(w);
+
+            Assert.AreNotEqual(roundId, VictimSlot,
+                "fixture premise: the round's id and the victim's slot must be different numbers, or "
+                + "the two assertions below could not tell the fields apart");
+            SimEvent hit = SolePvpHit(w);
+            Assert.AreEqual(roundId, hit.SecondaryEntityId,
+                "the round's own identity survives the emit — without it the snapshot assembler cannot "
+                + "close the per-connection spawn subscription this hit ends");
+            Assert.AreNotEqual(hit.EntityId, hit.SecondaryEntityId,
+                "witness: the two id slots carry DIFFERENT things — victim and round, not one value twice");
+        }
+
+        [Test]
+        public void PvpHit_EmittedEvenWhenIframesAbsorbTheDamage()
+        {
+            SimulationWorld w = TrioDuel(out SimConfig c);
+            SetIframes(w, VictimSlot, c.Hero.DashIframes);
+            int roundId = TestWorlds.FireAimed3D(w, float2.zero, BodyBand(c),
+                new float2(TargetX, 0f), BodyBand(c), ownerIndex: (byte)ShooterSlot);
+
+            w.ClearEvents();
+            TickIdle(w);
+
+            Assert.AreEqual(c.Hero.MaxHp, w.PlayerAt(VictimSlot).Hp, 1e-4f,
+                "fixture premise: the i-frames really did absorb the blow");
+            Assert.AreEqual(0, TestEvents.CountOf(w, SimEventKind.PlayerDamaged),
+                "fixture premise: an absorbed blow emits no PlayerDamaged");
+            Assert.AreEqual(0, w.ProjectileCount,
+                "fixture premise: the round is consumed on contact all the same");
+
+            SimEvent hit = SolePvpHit(w);
+            Assert.AreEqual(roundId, hit.SecondaryEntityId,
+                "the event reports the ROUND ENDING, not the damage landing — a tracer whose end went "
+                + "unreported would hang on the client until its confirm timeout");
+            Assert.AreEqual(c.Weapon.Damage * c.Hero.BodyDamageMult, hit.Amount, 1e-4f,
+                "and Amount is what the round CARRIED: DamagePlayer returns nothing, so the applied "
+                + "figure is not available at the emit site at all");
+        }
+
+        [Test]
+        public void PvpHit_ReportsTheZoneTheRoundLandedIn()
+        {
+            SimulationWorld head = TrioDuel(out SimConfig hc);
+            TestWorlds.FireAimed3D(head, float2.zero, HeadBand(hc), new float2(TargetX, 0f), HeadBand(hc),
+                ownerIndex: (byte)ShooterSlot);
+            head.ClearEvents();
+            TickIdle(head);
+            Assert.AreEqual(HitZone.Head, SolePvpHit(head).Zone,
+                "a headshot must stay distinguishable — ADR-001 §10's per-hit feedback and the head "
+                + "hitstop scale both key off this");
+
+            // Positive witness on the same fixture, one band lower: the zone
+            // genuinely varies with the shot rather than being a constant that
+            // happens to read Head.
+            SimulationWorld body = TrioDuel(out SimConfig bc);
+            TestWorlds.FireAimed3D(body, float2.zero, BodyBand(bc), new float2(TargetX, 0f), BodyBand(bc),
+                ownerIndex: (byte)ShooterSlot);
+            body.ClearEvents();
+            TickIdle(body);
+            SimEvent bodyHit = SolePvpHit(body);
+            Assert.AreEqual(HitZone.Body, bodyHit.Zone, "a body shot reports its own band");
+            Assert.AreNotEqual(HitZone.Head, bodyHit.Zone);
+            Assert.AreNotEqual(HitZone.None, bodyHit.Zone,
+                "and never the neutral 'no blow' value — that is what a dropped zone would look like");
+        }
+
         [Test]
         public void KillCreditGoesToShooter()
         {

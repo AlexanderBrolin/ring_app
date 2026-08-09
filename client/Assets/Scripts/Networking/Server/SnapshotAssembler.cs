@@ -440,6 +440,22 @@ namespace Ring.Networking.Server
                                 ProjectileEndKind.HitMob, ev.Zone, 0f);
                         break;
 
+                    case SimEventKind.ProjectileHitPlayer:
+                        // Stage 2 Task 44a: same shape as ProjectileHit above,
+                        // same guard and for the same reason — EntityId is the
+                        // victim's PLAYER SLOT here, so the round can only be
+                        // addressed through SecondaryEntityId. The end kind is
+                        // the one thing that differs, and it is the whole point:
+                        // reusing HitMob would tell the client a round that
+                        // landed on a player ended on a mob.
+                        // No contact height: a body is not a surface, exactly as
+                        // for a mob hit (the Blocked branch below is the only
+                        // one that carries one).
+                        if (ev.SecondaryEntityId != 0)
+                            AddProjectileEnded(ref seq, i, in ev, ev.SecondaryEntityId,
+                                ProjectileEndKind.HitPlayer, ev.Zone, 0f);
+                        break;
+
                     case SimEventKind.ProjectileBlocked:
                         // Amount carries the contact HEIGHT for this kind
                         // (ProjectileSystem's barrier/floor branches).

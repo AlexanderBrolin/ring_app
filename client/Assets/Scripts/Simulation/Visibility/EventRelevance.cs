@@ -67,6 +67,13 @@ namespace Ring.Simulation.Visibility
                 case SimEventKind.ProjectileHit:
                 case SimEventKind.ProjectileBlocked:
                 case SimEventKind.ProjectileExpired:
+                // Stage 2 Task 44a: a round ending ON A PLAYER is a round
+                // ending, and belongs to this group for the same reason as
+                // ProjectileHit next to it — who sees it is a question about
+                // the ROUND's trajectory (who received its spawn), not about
+                // the victim's visibility, so the per-kind table above cannot
+                // express it and must not pretend to.
+                case SimEventKind.ProjectileHitPlayer:
                     return DeliveryChannel.None;
 
                 default:

@@ -14,13 +14,15 @@ namespace Ring.Networking.Protocol
     ///     `ProjectileSpawned` for whoever the round flies near (Р32) and
     ///     `ShotHeard` for whoever merely hears it (Р28) — with different
     ///     addressees and different `seq` values;
-    ///   * three sim kinds (`ProjectileHit`, `ProjectileBlocked`,
-    ///     `ProjectileExpired`) collapse into ONE `ProjectileEnded`,
+    ///   * four sim kinds (`ProjectileHit`, `ProjectileHitPlayer`,
+    ///     `ProjectileBlocked`, `ProjectileExpired`) collapse into ONE
+    ///     `ProjectileEnded`,
     ///     discriminated by `ProjectileEndKind` below. There is deliberately no
     ///     separate "projectile hit" wire kind: the tracer's end and the
     ///     shooter's hitmarker are the same fact seen from two sides, and
     ///     `endKind` + `zone` carry everything either side needs. A mob's death
-    ///     from that round rides its own `MobDied`.
+    ///     from that round rides its own `MobDied`; a player's rides
+    ///     `PlayerDied`.
     ///
     /// `None = 0` MUST NEVER BE WRITTEN — the same refusal-sentinel contract
     /// `SnapshotBlockKind.None` carries, for the same reason: a consumer that
@@ -58,13 +60,22 @@ namespace Ring.Networking.Protocol
     /// `SnapshotEventKind.None`: a zero here would be indistinguishable from an
     /// uninitialized payload byte, and the client kills its tracer differently
     /// per ending (a spark on a wall, a fade on expiry, a flesh impact on a
-    /// mob).
+    /// mob, and — Stage 2 Task 44a — one on a player).
     public enum ProjectileEndKind : byte
     {
         None = 0,
         Blocked = 1,
         Expired = 2,
         HitMob = 3,
+
+        /// Stage 2 Task 44a: the round ended on a PLAYER. Its own value rather
+        /// than a reused `HitMob` because the client picks its impact feedback
+        /// off this byte — a hit on a player must not spawn a mob's flesh
+        /// impact, and `SimEventKind.ProjectileHitPlayer`'s own doc explains
+        /// why the two are separate on the simulation side too. Costs ZERO
+        /// extra wire bytes: `SnapshotEventKind.ProjectileEnded` already
+        /// carries this discriminator in a byte that had room.
+        HitPlayer = 4,
     }
 
     /// Bit meanings of the snapshot header's `flags` byte (SnapshotWriter's
@@ -144,7 +155,8 @@ namespace Ring.Networking.Protocol
         /// stamina that was missing.
         public float Amount;
 
-        /// The blow's vertical zone — `ProjectileEnded` (HitMob), `MobDied`,
+        /// The blow's vertical zone — `ProjectileEnded` (HitMob and, since
+        /// Stage 2 Task 44a, HitPlayer), `MobDied`,
         /// `PlayerDamaged`, `PlayerDied`. `HitZone.None` where no blow applies.
         public HitZone Zone;
 
@@ -258,7 +270,7 @@ namespace Ring.Networking.Protocol
         /// bound is NOT restated here — `SnapshotBlocks.MaxMobTypeValue` is
         /// reused directly.
         public const byte MaxHitZoneValue = (byte)HitZone.Head;
-        public const byte MaxProjectileEndKindValue = (byte)ProjectileEndKind.HitMob;
+        public const byte MaxProjectileEndKindValue = (byte)ProjectileEndKind.HitPlayer;
 
         /// Priority ranks, LOWER IS MORE IMPORTANT — the order the event budget
         /// (Р61) spends its room in, and the order it defers what does not fit.

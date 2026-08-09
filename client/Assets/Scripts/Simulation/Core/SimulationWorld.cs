@@ -433,8 +433,10 @@ namespace Ring.Simulation.Core
         /// SimEvent.PlayerIndex's own doc for the actor/victim split — and
         /// defaults to ProjectileIds.NoOwner, same "unused for every other
         /// kind" contract as `owner`/`zone`/`hitDir` above. `secondaryEntityId`
-        /// (Stage 2 Task 28) is meaningful for ProjectileHit alone — see
-        /// SimEvent.SecondaryEntityId's own doc — and defaults to 0 ("none"),
+        /// (Stage 2 Task 28) is meaningful for ProjectileHit and, since Stage 2
+        /// Task 44a, ProjectileHitPlayer — the two kinds whose EntityId is
+        /// spent on a victim, see SimEvent.SecondaryEntityId's own doc — and
+        /// defaults to 0 ("none"),
         /// same trailing-optional shape as every parameter added before it.
         internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType, float amount,
             ProjectileOwner owner = ProjectileOwner.Player,

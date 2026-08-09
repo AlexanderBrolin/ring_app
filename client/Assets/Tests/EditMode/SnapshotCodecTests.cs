@@ -2158,7 +2158,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual((byte)1, (byte)ProjectileEndKind.Blocked);
             Assert.AreEqual((byte)2, (byte)ProjectileEndKind.Expired);
             Assert.AreEqual((byte)3, (byte)ProjectileEndKind.HitMob);
-            Assert.AreEqual((byte)ProjectileEndKind.HitMob, SnapshotEvents.MaxProjectileEndKindValue,
+            // Stage 2 Task 44a: the fourth ending. This test's own strengthening
+            // note below predicted it and asked to be told HERE when the wire
+            // domain moved — so the numbers move together, deliberately, rather
+            // than the bound being widened while the pin quietly kept claiming
+            // HitMob was the top.
+            Assert.AreEqual((byte)4, (byte)ProjectileEndKind.HitPlayer);
+            Assert.AreEqual((byte)ProjectileEndKind.HitPlayer, SnapshotEvents.MaxProjectileEndKindValue,
                 "the domain bound must track the enum's own top value");
             Assert.AreEqual((byte)HitZone.Head, SnapshotEvents.MaxHitZoneValue);
 
@@ -2168,8 +2174,8 @@ namespace Ring.Simulation.Tests
             // fourth ProjectileEndKind or a fourth HitZone in a later stage
             // fails HERE, saying the wire domain moved, instead of quietly
             // making legal traffic unparseable.
-            Assert.AreEqual(4, System.Enum.GetValues(typeof(ProjectileEndKind)).Length,
-                "None + three endings — growing this enum is a ProtocolVersion question");
+            Assert.AreEqual(5, System.Enum.GetValues(typeof(ProjectileEndKind)).Length,
+                "None + four endings — growing this enum is a ProtocolVersion question");
             Assert.AreEqual(4, System.Enum.GetValues(typeof(HitZone)).Length,
                 "None/Legs/Body/Head — the wire carries this as a raw byte");
             foreach (ProjectileEndKind k in System.Enum.GetValues(typeof(ProjectileEndKind)))

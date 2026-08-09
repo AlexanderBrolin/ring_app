@@ -221,11 +221,39 @@ namespace Ring.Simulation.Combat
                     {
                         float2 contact = math.lerp(startPos, target, bestT);
                         float2 hitDir = math.normalizesafe(proj.Vel, new float2(1f, 0f));
+                        // Multiplier applies BEFORE both the event and the blow,
+                        // exactly as in the HitMob branch above.
+                        float dmg = proj.Damage * hitMult;
+                        // Stage 2 Task 44a (bd app-dsh): this branch used to
+                        // remove the round without emitting anything at all,
+                        // while every neighbouring branch emits — so a PvP hit
+                        // produced no end-of-round event, the client's ghost
+                        // tracer had to time out instead of being cut, and
+                        // ADR-001 §10's per-hit feedback had nothing to fire on.
+                        // The kind is its own rather than the mob branch's:
+                        // EntityId here is a PLAYER SLOT, and the assembler maps
+                        // ProjectileHit to a hardcoded HitMob (see
+                        // SimEventKind.ProjectileHitPlayer's own doc for both
+                        // halves of the reasoning).
+                        // playerIndex is the SHOOTER (ATTACKER convention),
+                        // secondaryEntityId the ROUND — EntityId is spent on the
+                        // victim here, same as in the mob branch, and without it
+                        // the assembler cannot close the spawn subscription this
+                        // hit ends.
+                        // EMITTED UNCONDITIONALLY, next to the removal it
+                        // describes: DamagePlayer below is a no-op while the
+                        // victim's i-frames are up, but the round is consumed
+                        // either way, and a consumed round whose end went
+                        // unreported is precisely the hanging tracer this event
+                        // exists to prevent.
+                        w.Emit(SimEventKind.ProjectileHitPlayer, contact, hitTargetIndex, default, dmg,
+                            zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex,
+                            secondaryEntityId: proj.Id);
                         // Stage 2 Task 17: victim = the player this scan actually
                         // resolved onto, attacker = the round's own shooter
                         // (ProjectileIds.NoOwner for a mob's round, which credits
                         // nobody — see DamagePlayer's own doc).
-                        w.DamagePlayer(hitTargetIndex, proj.OwnerIndex, proj.Damage * hitMult,
+                        w.DamagePlayer(hitTargetIndex, proj.OwnerIndex, dmg,
                             contact, hitZone, hitDir);
                         w.RemoveProjectileAt(i);
                         break;
