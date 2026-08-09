@@ -316,6 +316,17 @@ namespace Ring.Networking.Server
         /// already received before the switch, which carries zero bits of
         /// new information.
         ///
+        /// TWO PRECISIONS ON THAT, SO THE PARAGRAPH IS NOT READ WIDER THAN
+        /// IT IS TRUE (coordinator, fix-round 2 re-review M-R9). First, it
+        /// is the latched VALUE that is source-only: an entry's LIFECYCLE
+        /// does depend on the viewpoint, because `ResolveAudiblePos` drops
+        /// an entry once the source becomes visible in `Current`, and
+        /// `Current` is computed from `viewpointIndex`. Second, "the same
+        /// stale cell" holds while the source stays within the latch's own
+        /// margin; a source that genuinely moves past it re-latches on a
+        /// fresh rounding, which is the residual leak Р133 already accepts
+        /// by choosing this grid at all — not something a switch introduces.
+        ///
         /// PROJECTILE SUBSCRIPTIONS (`SubIds`/`SubExpiry`/`SubCount`,
         /// `PendingUnsub*`) ARE ALSO DELIBERATELY LEFT ALONE — a decision,
         /// not an omission. They are memory of this connection's own
@@ -349,14 +360,23 @@ namespace Ring.Networking.Server
         public void ResetViewpointMemory(int connection)
         {
             Connection c = _connections[connection];
-            // `Compute` clears `result` itself before reading `previous`
-            // (this class's own aliasing-guard doc), and `BuildFor`'s
-            // ping-pong overwrites `Current` with a fresh `Compute` result on
-            // the very next call regardless — so `Current.Clear()` here is
-            // DEFENSIVE, not load-bearing (fix-round 2, M-b): nothing reads
-            // a stale `Current` before it is overwritten. `Previous.Clear()`
-            // is the one that matters — it is what the next `Compute` call
-            // actually reads for hysteresis/linger continuity.
+            // WHICH OF THE TWO LINES BELOW IS LOAD-BEARING IS NOT OBVIOUS,
+            // AND AN EARLIER REDACTION OF THIS COMMENT HAD IT EXACTLY
+            // BACKWARDS — so it is settled here by measurement rather than by
+            // reading (coordinator, fix-round 2 re-review C-R1: removing
+            // `Current.Clear()` alone fails both reset tests, 753/755;
+            // removing `Previous.Clear()` alone fails nothing, 755/755).
+            //
+            // `BuildFor`'s ping-pong swaps the pair BEFORE computing: the set
+            // that is `Current` right now becomes the next call's `previous`,
+            // and `previous` is what `VisibilitySystem.Compute` reads for
+            // hysteresis and linger continuity. So `Current.Clear()` is the
+            // line that actually severs the old viewpoint's memory.
+            // `Previous.Clear()` is DEFENSIVE: that instance becomes the next
+            // call's `result`, which `Compute` clears itself before reading
+            // anything (this class's own aliasing-guard doc says as much).
+            // It is kept because leaving one of a pair stale invites the next
+            // reader to reason about which half is safe to skip.
             c.Previous.Clear();
             c.Current.Clear();
         }

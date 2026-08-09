@@ -266,6 +266,24 @@ namespace Ring.Networking.Server
         /// the brief's own rejected "log at most once per N ticks"
         /// alternative would have (fix-round 1's own `OnSpectateRequest` doc
         /// already made that argument once).
+        /// THREE COSTS OF THIS SHAPE, NAMED RATHER THAN LEFT TO BE
+        /// DISCOVERED (coordinator, fix-round 2 re-review M-R1/M-R2/M-R3):
+        ///   * A TRANSIENT reason is lost outright, not merely delayed. The
+        ///     paragraph above is true for a reason that is still current
+        ///     when the window reopens; one that appears and disappears
+        ///     INSIDE the window (a single `TargetDead` tick between runs of
+        ///     `CooldownActive`) is never logged at all.
+        ///   * THE BOND IS ONLY AS STRONG AS THE COOLDOWN ITSELF. At the
+        ///     legal floor of the asset's own range a cooldown can round to
+        ///     ONE tick, and a one-tick bond throttles nothing; a
+        ///     `cooldownTicks` of `0` (legal for this class, unreachable from
+        ///     the asset — see the constructor) degenerates the predicate to
+        ///     "always log". The shipped numbers are not near either edge.
+        ///   * A CLIENT STUCK ON ONE UNCHANGING REASON NOW PRINTS FOREVER,
+        ///     once per window, for as long as it keeps asking. Fix-round 1's
+        ///     own doc rejected the periodic shape partly for this — the
+        ///     objection was real and is accepted here, because the
+        ///     alternative it preferred turned out to bound nothing at all.
         public bool ShouldLogRefusal(SpectateRefusal lastLogged, int lastLogTick, int currentTick)
         {
             if (lastLogged == SpectateRefusal.None) return true;
