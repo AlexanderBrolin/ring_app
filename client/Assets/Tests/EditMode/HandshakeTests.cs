@@ -20,8 +20,9 @@ namespace Ring.Simulation.Tests
     ///
     /// Every negative test carries a positive witness beside it (brief
     /// §2.8), so a mutation that always refuses (or always accepts) cannot
-    /// survive unnoticed — see task-39-report.md's mutation table (M-1..M-7)
-    /// for the full sweep this file was written against.
+    /// survive unnoticed — see task-39-report.md's mutation table (M-1..M-11,
+    /// M-8..M-11 added fix-round 1) for the full sweep this file was
+    /// written against.
     public class HandshakeTests
     {
         // Two-source-of-numbers convention (Global Constraints): the
@@ -110,26 +111,40 @@ namespace Ring.Simulation.Tests
         public void FromJoinRejection_MapsEveryJoinRejectionValue()
         {
             // Every REAL current member (except None, covered separately
-            // below) must map to its OWN non-None HandshakeRefusal — a
-            // mapping that silently fell back to None for an unrecognized
-            // member would let a rejected join through as if it had been
-            // accepted (brief §0 scenario 2/§2.4).
+            // below) must map to its OWN, SAME-NAMED HandshakeRefusal — not
+            // merely "some non-None value" (fix-round 1, I-2). AreNotEqual
+            // (None) alone would pass a mapping that is a plain
+            // renumbering of the two enums (e.g. JoinRejection.
+            // MatchAlreadyStarted (1) -> HandshakeRefusal.SimConfigMismatch
+            // (2)) or a straight permutation of two members with no count
+            // change at all — both silently misreport WHY a join was
+            // refused while still "not None". All six non-None
+            // JoinRejection members are deliberately spelled identically in
+            // HandshakeRefusal (HandshakeNet.cs), so a by-NAME assert is
+            // exact, not approximate.
             foreach (JoinRejection value in Enum.GetValues(typeof(JoinRejection)))
             {
                 if (value == JoinRejection.None) continue;
                 HandshakeRefusal refusal = HandshakeDecision.FromJoinRejection((byte)value);
                 Assert.AreNotEqual(HandshakeRefusal.None, refusal,
                     $"JoinRejection.{value} must not map to HandshakeRefusal.None.");
+                Assert.AreEqual(value.ToString(), refusal.ToString(),
+                    $"JoinRejection.{value} must map to HandshakeRefusal.{value} by name, "
+                    + $"not to {refusal} — a mismatched-but-non-None mapping is still wrong.");
             }
 
-            // Totality is only meaningful if an UNRECOGNIZED code is also
-            // refused loudly rather than swallowed into None — the same
-            // failure a future JoinRejection member added without a mapping
-            // update would produce. 255 is outside every current
-            // JoinRejection value (0-6).
-            Assert.Throws<ArgumentOutOfRangeException>(
-                () => HandshakeDecision.FromJoinRejection(255),
-                "an unrecognized rejection code must be a loud failure, not a silent None.");
+            // Fix-round 1, N-2/N-3: FromJoinRejection no longer THROWS on
+            // an unrecognized code (a thrown exception inside a FishNet
+            // broadcast handler escapes into the transport's own read loop
+            // and hangs the connection with no refusal and no disconnect —
+            // worse than the bug this guards against). It maps to the
+            // dedicated UnrecognizedRejection member instead — still a
+            // loud, distinguishable answer (MatchHandshake.Refuse logs an
+            // error specifically for it), never a silent None. 255 is
+            // outside every current JoinRejection value (0-6).
+            Assert.AreEqual(HandshakeRefusal.UnrecognizedRejection,
+                HandshakeDecision.FromJoinRejection(255),
+                "an unrecognized rejection code must map to UnrecognizedRejection, not silently to None.");
         }
 
         [Test]
@@ -174,6 +189,9 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(6, (byte)HandshakeRefusal.MatchFull);
             Assert.AreEqual(7, (byte)HandshakeRefusal.MatchAlreadyStarted);
             Assert.AreEqual(8, (byte)HandshakeRefusal.InvalidPlayerId);
+            // Fix-round 1, N-2/N-3: appended, not inserted — every member
+            // above kept its original value (HandshakeNet.cs's own doc).
+            Assert.AreEqual(9, (byte)HandshakeRefusal.UnrecognizedRejection);
         }
     }
 }
