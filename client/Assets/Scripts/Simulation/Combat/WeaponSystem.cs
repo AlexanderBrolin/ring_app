@@ -25,11 +25,11 @@ namespace Ring.Simulation.Combat
     ///
     /// The three consumers this opens the door for: ghost projectiles (Task
     /// 35 — the spawn gate, switched from `CanFire` to `WouldFireThisTick`
-    /// in fix-round 1), the Presentation-side copy at
-    /// `SimulationRunner:140-149` (Task 43, not yet lifted — see
-    /// `WouldFireThisTick`'s own doc for a dated defect in that copy worth
-    /// fixing when it is lifted), and per-tick fire detection generally
-    /// (Task 44). Resilience against future weapons/upgrades was checked
+    /// in fix-round 1), the Presentation-side fire prediction
+    /// (`SimulationRunner.WouldFireThisFrame`, which Task 43 lifted onto
+    /// `WouldFireThisTick` — it restates no term of its own any more; see
+    /// that method's doc for what the lift changed), and per-tick fire
+    /// detection generally (Task 44). Resilience against future weapons/upgrades was checked
     /// before taking either decision: both predicates are parameterized
     /// entirely by `WeaponSimConfig`/`PlayerState`, and balance lives in data
     /// (CR 6) — no code changes with it.
@@ -127,10 +127,11 @@ namespace Ring.Simulation.Combat
         /// client-side consumer that must agree with them exactly, either
         /// directly or (fix-round 1) through `WouldFireThisTick` below:
         /// ghost projectiles (Stage 2 Task 35) read it via that composition;
-        /// the Presentation-side copy (SimulationRunner.WouldFireThisFrame,
-        /// Stage 2 Task 43, not yet lifted) restates these four terms inline
-        /// today and should call `WouldFireThisTick` once lifted (see that
-        /// method's own doc for a dated defect in the copy's cooldown term).
+        /// so does the Presentation-side prediction
+        /// (`SimulationRunner.WouldFireThisFrame`) since Stage 2 Task 43
+        /// replaced its hand-written restatement of these four terms with a
+        /// call to `WouldFireThisTick` (see that method's own doc for what
+        /// the lift changed about when the prediction arms).
         /// Deliberately does NOT decide "fires THIS tick" by itself — see
         /// `WouldFireThisTick`'s own doc for why that needs a fifth term this
         /// method does not own.
@@ -175,16 +176,25 @@ namespace Ring.Simulation.Combat
         /// assumed away, since nothing in the signature rules it out for a
         /// future weapon.
         ///
-        /// TASK 43'S OWN COPY (`SimulationRunner.WouldFireThisFrame`,
-        /// `SimulationRunner.cs:140-149`) TESTS A NARROWER CONDITION — a
-        /// dated defect for whoever lifts it. That copy gates on
-        /// `p.FireCooldown <= 0f`; this method gates on `p.FireCooldown <=
-        /// TickDt` (algebraically: `(p.FireCooldown - TickDt) <= 0f`).
-        /// Every state the copy accepts, this method also accepts (`0f <=
-        /// TickDt` always holds), but not the reverse: the half-open window
-        /// `(0, TickDt]` answers "would fire" here and does not there.
-        /// Replacing that copy with a call to this method is Task 43's job,
-        /// not this fix-round's — see the class doc.
+        /// WHAT TASK 43 CHANGED BY LIFTING THE PRESENTATION COPY ONTO THIS
+        /// METHOD, MEASURED RATHER THAN ESTIMATED. The copy
+        /// (`SimulationRunner.WouldFireThisFrame`) gated on `p.FireCooldown
+        /// <= 0f`; this method gates on `p.FireCooldown <= TickDt`
+        /// (algebraically: `(p.FireCooldown - TickDt) <= 0f`). Every state
+        /// the copy accepted this one also accepts, but not the reverse —
+        /// the half-open window `(0, TickDt]` answers "would fire" here and
+        /// did not there. That window is not a corner case at the shipped
+        /// balance: `Advance` above leaves `FireCooldown` STRICTLY positive
+        /// on every tick it actually fires (the `while` loop exits only once
+        /// the increment carries it past zero, and the only thing that ever
+        /// puts it back at zero is the clamp in the `!CanFire` branch). So
+        /// the old copy answered true essentially once per press — the first
+        /// shot after a release, a dash or a match start — while this method
+        /// answers true once per `FireInterval`, i.e. for every shot of a
+        /// burst. The client-side muzzle/audio prediction that reads it
+        /// therefore arms per SHOT now, not per PRESS; the authoritative
+        /// shot is unaffected, it still rides the tick's own
+        /// `ProjectileFired`.
         public static bool WouldFireThisTick(in PlayerState p, in SimInput input,
             in WeaponSimConfig weapon)
             => CanFire(in p, in input, in weapon)

@@ -82,7 +82,8 @@ namespace Ring.Editor
                         $"{snapshot.Player.Alive},{snapshot.Player.Hp},{stats.Kills},{snapshot.Wave.WaveIndex}");
                 }
 
-                // Mirrors SimulationRunner.Update's per-frame ClearEvents() cadence
+                // Mirrors the per-frame event-buffer flush SimulationRunner drives
+                // through its backend (ISimBackend.EndFrame since Task 43) cadence
                 // (one flush per render frame; at 30 Hz with no catch-up debt that's
                 // one flush per tick) — without this, the preallocated event buffer
                 // fills up within the first few ticks and DroppedEvents free-runs
