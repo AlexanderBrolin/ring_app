@@ -444,10 +444,13 @@ namespace Ring.Server
         /// SnapshotWireOverheadBytes` already contains FishNet's own 2-byte MTU
         /// reserve, so the already-reduced number would make the check two
         /// bytes stricter than it should be while the raw one keeps it exact
-        /// (task-41a-report §6.2). The transport itself is safe to read here
-        /// and not in `Awake`: `TransportManager.InitializeOnce_Internal`
-        /// (which is what fills `Transport`) runs inside `NetworkManager.
-        /// Awake`, and every `Awake` completes before any `Start`.
+        /// (task-41a-report §6.2). The transport is already filled by the time
+        /// anything here reads it — `TransportManager.InitializeOnce_Internal`
+        /// runs inside `NetworkManager.Awake`, which `[DefaultExecutionOrder(
+        /// short.MinValue)]` puts ahead of this component's own `Awake`, let
+        /// alone its `Start`. Reading it in `Awake` would therefore have been
+        /// safe too; this sits in the boot sequence because that is where the
+        /// step belongs, not because `Awake` would have raced.
         bool TryValidateInvariants()
         {
             string[] violations = NetInvariants.Validate(_net, in _simConfig,
@@ -855,11 +858,13 @@ namespace Ring.Server
 
         /// The one place the process's exit code is set.
         ///
-        /// `Application.Quit(int)` DOES NOT END THE FRAME, and it does nothing
-        /// at all in the Editor beyond a log line — so a dev run started from
-        /// the Editor never demonstrates an exit code, and the codes of §3.11
-        /// are only observable on a built player (which is what the Task 41c
-        /// evidence exercises). `_phase` going terminal is what keeps the rest
+        /// `Application.Quit(int)` DOES NOT END THE FRAME, and Unity documents
+        /// it as ignored in the Editor — so a dev run started from the Editor
+        /// never demonstrates an exit code, and the codes of §3.11 are only
+        /// observable on a built player (which is what the Task 41c evidence
+        /// exercises). What the Editor DOES leave behind is this method's own
+        /// `exiting with code N` line above; whether the engine adds one of its
+        /// own was never observed here, so nothing is claimed about it. `_phase` going terminal is what keeps the rest
         /// of this frame, and any tick still queued behind it, from acting on
         /// a process that is already leaving.
         void Exit(int exitCode)
