@@ -56,8 +56,12 @@ namespace Ring.Server
         /// The prefab spawned once per player slot (Р164: a restart spawns NEW
         /// objects, never the same ones again). Its root carries
         /// `NetworkObject` + `PlayerNetworkController`; the smoothing lives on
-        /// its `Visual` child. Held as a `GameObject` rather than as a
-        /// `NetworkObject` because that is what the spawn call takes.
+        /// its `Visual` child. Held as a `GameObject` by the Task 41 brief's
+        /// own choice, NOT because the spawn call demands one: `ServerManager.
+        /// Spawn` is overloaded for both, and the `GameObject` form is a thin
+        /// `GetComponent&lt;NetworkObject&gt;` wrapper over the `NetworkObject`
+        /// form. Task 41c may take either; it must not read this field's type
+        /// as a statement about the package.
         [SerializeField] GameObject _playerPrefab;
     }
 }

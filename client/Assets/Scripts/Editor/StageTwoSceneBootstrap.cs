@@ -293,6 +293,14 @@ namespace Ring.Editor
         /// `ProjectSettings/EditorBuildSettings.asset` byte-identical. The
         /// order is not cosmetic: index 0 is the scene a player build opens,
         /// and `Main.unity` has held it since Stage 1.
+        ///
+        /// THIS LIST IS OWNED HERE, AND OWNERSHIP MEANS REPLACEMENT, NOT MERGE.
+        /// A scene added to the list by hand is dropped by the next `Apply`
+        /// without being named in the log: the comparison below only runs when
+        /// the lengths already match, so any third entry falls through to a
+        /// wholesale rewrite. That is the intended enforcement — it is what
+        /// keeps `AssetPreview.unity` out of player builds — but it is worth
+        /// knowing before wondering where a hand-added scene went.
         static bool EnsureBuildScenes()
         {
             var desired = new[]
@@ -338,8 +346,9 @@ namespace Ring.Editor
         /// Integer sibling of `EditorBootstrapUtils.SetRef` — write-if-different
         /// so a re-Apply stays a no-op like every other wiring call here. Kept
         /// private rather than promoted to `EditorBootstrapUtils`: it has one
-        /// call site, and the shared file's contract is "primitives more than
-        /// one bootstrap uses".
+        /// call site, and that file describes itself as holding the guard
+        /// primitives the idempotent bootstraps SHARE — a single-caller helper
+        /// does not qualify yet.
         static bool SetInt(SerializedObject so, string fieldName, int value)
         {
             SerializedProperty prop = so.FindProperty(fieldName);
