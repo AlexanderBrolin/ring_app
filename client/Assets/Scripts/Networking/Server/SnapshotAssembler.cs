@@ -250,6 +250,58 @@ namespace Ring.Networking.Server
         /// rest (Tasks 33/35/36).
         public NetStats StatsFor(int connection) => _connections[connection].Stats;
 
+        /// Clears `connection`'s VIEWPOINT memory — both visibility sets
+        /// (`Previous`/`Current`) and the Р133 anti-dither latch
+        /// (`LatchIds`/`LatchCells`/`LatchCount`) — so the very next
+        /// `BuildFor` call computes a visibility set with NO hysteresis/
+        /// linger continuity and NO latched audible cell carried over from
+        /// wherever this connection was looking a moment ago.
+        ///
+        /// WHY THIS EXISTS (Stage 2 Task 42a fix-round 1, I-1, spec §3.10
+        /// :673-678 Р70). `VisibilitySystem`'s own hysteresis/linger step
+        /// widens an already-tracked entity's radius by `ExitHysteresis` and
+        /// keeps a just-lost entity visible for `LingerTicks` further ticks —
+        /// both read `previous`, which `BuildFor` ping-pongs from the LAST
+        /// call's `Current`. A spectator whose `viewpointIndex` just moved to
+        /// a different player therefore has `previous` still computed from
+        /// the OLD viewpoint, and for `LingerTicks` ticks afterward would
+        /// receive live, current-tick coordinates of everyone who was
+        /// visible from THAT position — a small leak that repeats on every
+        /// accepted switch and, across enough switches, reassembles the map
+        /// exactly the cooldown (`SpectatePolicy`) exists to make expensive.
+        /// The caller (`MatchServer.OnSpectateRequest`) calls this in the
+        /// SAME branch that commits the switch, so the very next frame this
+        /// connection receives starts the new viewpoint with nothing carried
+        /// over from the old one.
+        ///
+        /// PROJECTILE SUBSCRIPTIONS (`SubIds`/`SubExpiry`/`SubCount`,
+        /// `PendingUnsub*`) ARE DELIBERATELY LEFT ALONE — a decision, not an
+        /// omission. They are memory of this connection's own IDENTITY ("I
+        /// saw this round's spawn, I am owed its ending"), not of the
+        /// viewpoint: a spectator who watched a round get fired a moment
+        /// before switching targets is still owed that round's
+        /// `ProjectileEnded`, and severing the subscription mid-flight would
+        /// only make the picture ragged without closing any visibility leak
+        /// — a subscription carries no position of a living player, only the
+        /// tail of an event this connection already legitimately saw.
+        ///
+        /// THE CONSEQUENCE IS NAMED, NOT HIDDEN: after this call `Previous`
+        /// is empty, so the very next `BuildFor` starts exactly like a
+        /// brand-new connection's FIRST frame — this class's own doc already
+        /// describes that state for the ordinary case ("the world was born
+        /// this instant and nobody was there to watch"): a `MobDied` of that
+        /// one tick will not reach this connection, and hysteresis/linger
+        /// begin from a clean slate rather than mid-window. That is the
+        /// accepted cost of not leaking the old viewpoint's positions, not
+        /// an oversight.
+        public void ResetViewpointMemory(int connection)
+        {
+            Connection c = _connections[connection];
+            c.Previous.Clear();
+            c.Current.Clear();
+            c.LatchCount = 0;
+        }
+
         /// Per-tick, shared by every connection: captures the world once and
         /// expands this tick's `SimEvent` buffer into wire events with `seq`
         /// and payload bytes already assigned. Call after the world has ticked

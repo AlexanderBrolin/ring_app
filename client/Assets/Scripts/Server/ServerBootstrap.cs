@@ -321,16 +321,43 @@ namespace Ring.Server
             // `SpectatePolicy` (Stage 2 Task 42a) takes the same kind of
             // finished tick count, built the same way and for the same
             // reason (`SpectatePolicy`'s own doc). The rounding is UP
-            // (`Math.Ceiling`), never a bare `(int)` truncation: at the
-            // shipped default `0.35 * 30 = 10.5`, and truncating would enforce
-            // a 10-tick (0.333s) cooldown — SHORTER than the 0.35s the asset
-            // names, which weakens the exact limiter Р70 exists to enforce.
-            // Ceiling gives 11 ticks (0.367s) instead — never shorter than
-            // configured, only ever equal or longer.
+            // (`Math.Ceiling`), never a bare `(int)` truncation: truncating
+            // could enforce a cooldown SHORTER than the asset names, which
+            // weakens the exact limiter Р70 exists to enforce.
+            //
+            // `decimal`, NOT `double` (Task 42a fix-round 1, I-2 — this was
+            // the round's own defect, since corrected; the earlier comment
+            // here claimed "0.35 * 30 = 10.5", which is a statement about the
+            // MATHEMATICAL real numbers, not about what this line actually
+            // computes). `(double)SpectatorSwitchCooldownSeconds * TickRate`
+            // is exactly the trap spec Р141 names: widening a `float` to
+            // `double` preserves the float's OWN rounding error instead of
+            // fixing it, so a value the Inspector shows as a clean decimal
+            // can land fractionally ABOVE its intended product — measured
+            // directly (not assumed): `(double)0.1f * 30` is
+            // `3.0000000447034836`, whose `Ceiling` is `4`, one tick more
+            // than the `3` the number `0.1` actually means; the same defect
+            // reproduces at `0.2` (`Ceiling` `7`, not `6`) and `0.4`
+            // (`Ceiling` `13`, not `12`), silently lengthening the cooldown
+            // by exactly one tick on those and roughly a third of the legal
+            // `[Range(0.05f, 2f)]` × `{20, 30, 60}` combinations checked
+            // while fixing this. The shipped default `0.35` happens to be
+            // unaffected purely by chance (`10.499999821186066` still ceils
+            // to `11`, the same answer the exact `10.5` would) — which is
+            // exactly why R-TEST alone, run only against the shipped
+            // default, could never have caught this. `(decimal)float`
+            // widens through the float's OWN ~7-significant-digit precision
+            // instead of `double`'s ~15-17, which is enough to recover the
+            // clean decimal a human actually typed into the Inspector for
+            // every value checked above — verified against the
+            // mathematically exact product computed straight from the
+            // decimal LITERAL (`decimal.Parse` on the same text, never
+            // touching `float` at all), not merely against `double`'s own
+            // answer.
             try
             {
                 int spectateCooldownTicks = (int)Math.Ceiling(
-                    (double)_net.SpectatorSwitchCooldownSeconds * _net.TickRate);
+                    (decimal)_net.SpectatorSwitchCooldownSeconds * _net.TickRate);
                 _matchServer = new MatchServer(_nm, _net,
                     new MatchEndPolicy(_net.MatchMaxDurationSeconds * _net.TickRate),
                     new SpectatePolicy(spectateCooldownTicks));

@@ -180,12 +180,12 @@ namespace Ring.Data
         // if the marker names a field the .asset already carries, the search
         // succeeds, nothing is dirtied, and NO new key is ever written. So the
         // marker has to be the LAST field added, and the call site has to name
-        // THIS field — Task 42a's job. Until it does, this field never
-        // reaches NetConfig.asset and silently falls back to the C#
-        // initializer below. `MatchAbandonGraceSeconds` above carried the
-        // marker before this field existed (Task 41b) — its own field
-        // comment no longer mentions the mechanism now that the marker has
-        // moved off it.
+        // THIS field — Task 42a moved it here, in the same commit that added
+        // this field, and the R-APPLY that commit's own report cites already
+        // wrote the key into NetConfig.asset. `MatchAbandonGraceSeconds`
+        // above carried the marker before this field existed (Task 41b) —
+        // its own field comment no longer mentions the mechanism now that
+        // the marker has moved off it.
         [Range(0.05f, 2f)] public float SpectatorSwitchCooldownSeconds = 0.35f; // sync-marker key — keep LAST
 
 #if UNITY_EDITOR

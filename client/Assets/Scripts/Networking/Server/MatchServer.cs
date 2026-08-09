@@ -80,20 +80,35 @@ namespace Ring.Networking.Server
     /// fix-round 1, M2 — this handler would otherwise run past `StopMatch`'s
     /// null-outs and NRE).
     ///
-    /// ONE `MatchServer` PER PROCESS, DECLARED EXPLICITLY (fix-round 2, W9).
-    /// The `OnPostTick` subscription above lives for the rest of the
+    /// ONE `MatchServer` PER PROCESS, DECLARED EXPLICITLY (fix-round 2, W9;
+    /// extended by Task 42a fix-round 1, M-5 — TWO permanent roots now, not
+    /// one). The `OnPostTick` subscription lives for the rest of the
     /// PROCESS's lifetime, not merely this instance's — there is no
     /// unsubscribe anywhere in this class, on purpose (the FIFO guarantee
-    /// I1 above rests on exactly that permanence). A `MatchServer` that
-    /// falls out of scope is therefore NOT garbage-collected: `_nm.
-    /// TimeManager`'s own event still holds a live delegate reference into
-    /// it for as long as the `NetworkManager` itself exists. Ф8's bootstrap
-    /// must construct exactly ONE instance for the whole process and reuse
-    /// it across every `StartMatch`/`StopMatch` cycle (see the re-entrancy
+    /// I1 above rests on exactly that permanence). Task 42a's constructor
+    /// ALSO registers `OnSpectateRequest` as this process's one
+    /// `SpectateRequestNet` handler, with the identical never-released shape
+    /// — no `UnregisterBroadcast` call exists anywhere in this class either.
+    /// A `MatchServer` that falls out of scope is therefore NOT
+    /// garbage-collected THROUGH EITHER ROOT: `_nm.TimeManager`'s own event
+    /// keeps a live delegate into `OnPostTick`, and `_nm.ServerManager`'s own
+    /// broadcast handler list keeps one into `OnSpectateRequest`, both for as
+    /// long as the `NetworkManager` itself exists. Ф8's bootstrap must
+    /// construct exactly ONE instance for the whole process and reuse it
+    /// across every `StartMatch`/`StopMatch` cycle (see the re-entrancy
     /// paragraph above) — constructing a second one would leave the first's
-    /// subscription still firing (inert while its own `_running` is false,
-    /// per the SUBSCRIPTION TIMING paragraph, but never released) alongside
-    /// the new one's.
+    /// OWN copies of BOTH subscriptions still firing (inert while its own
+    /// `_running` is false, per the SUBSCRIPTION TIMING paragraph, but never
+    /// released) alongside the new one's. `MatchHandshake.Unregister`'s own
+    /// doc walks the mechanism this second consequence rests on in full
+    /// (`AddUnique`/`Delegate.Equals`, `ServerManager.RegisterBroadcast`'s
+    /// package internals): two `MatchServer` INSTANCES convert their own
+    /// `OnSpectateRequest` to the same METHOD but with two DIFFERENT
+    /// invocation targets, so FishNet's own `Delegate.Equals`-based
+    /// deduplication correctly treats them as different handlers and
+    /// subscribes BOTH — the second construction does not even fail loudly,
+    /// it just doubles the handler that answers every future
+    /// `SpectateRequestNet` for the rest of the process.
     ///
     /// TWO READINGS OF `SimulationWorld.CurrentTick` PER CALL, NOT ONE
     /// (fix-round 1, M1). `CurrentTick` counts ticks the world has FINISHED —
@@ -322,6 +337,14 @@ namespace Ring.Networking.Server
         int[] _viewpointIndex;
         int[] _lastSpectateSwitchTick;
 
+        // Stage 2 Task 42a fix-round 1, M-6: the last REFUSAL reason logged
+        // for this slot, `SpectateRefusal.None` meaning "nothing logged yet
+        // since the last accepted switch (or match start)". See
+        // `OnSpectateRequest`'s own doc for why this exists — same
+        // fresh-every-`StartMatch`/released-in-`StopMatch` treatment as the
+        // pair above, for the identical Р151 reason.
+        SpectateRefusal[] _lastLoggedRefusal;
+
         ushort _epoch;
         bool _running;
 
@@ -480,6 +503,11 @@ namespace Ring.Networking.Server
                 lastSpectateSwitchTick[i] = SpectatePolicy.NoPriorSwitch;
             }
 
+            // Stage 2 Task 42a fix-round 1, M-6: `default(SpectateRefusal)`
+            // is `None`, exactly the "nothing logged yet" sentinel this array
+            // wants — no explicit fill loop needed, unlike the two above.
+            var lastLoggedRefusal = new SpectateRefusal[playerCount];
+
             _world = world;
             _assembler = assembler;
             _connections = connections;
@@ -492,6 +520,7 @@ namespace Ring.Networking.Server
             _lastFreshWorldTick = lastFreshWorldTick;
             _viewpointIndex = viewpointIndex;
             _lastSpectateSwitchTick = lastSpectateSwitchTick;
+            _lastLoggedRefusal = lastLoggedRefusal;
             _tickTime.Reset();
 
             // Stage 2 Task 40: a running match has no outcome, and no summary
@@ -668,6 +697,7 @@ namespace Ring.Networking.Server
             _lastFreshWorldTick = null;
             _viewpointIndex = null;
             _lastSpectateSwitchTick = null;
+            _lastLoggedRefusal = null;
         }
 
         /// The `SpectateRequestNet` handler (Stage 2 Task 42a, spec §3.10
@@ -702,18 +732,24 @@ namespace Ring.Networking.Server
         /// connection `StartMatch` put in this slot" for a lookup that
         /// decides which player's cooldown gets spent.
         ///
-        /// THE RANGE CHECK RUNS BEFORE `PlayerAt(target)`, NEVER AFTER.
-        /// `SimulationWorld.PlayerAt` is a bare array index with no bounds
-        /// guard of its own, so a `target` outside `[0, playerCount)` would
-        /// throw before `SpectatePolicy` ever got a chance to answer
-        /// `TargetOutOfRange` — exactly the exception this method exists to
-        /// never produce. `targetAlive` is computed with the range check
-        /// inlined into it (`target is in range AND PlayerAt(target).Alive`)
-        /// rather than as two separate reads, so there is no path on which an
-        /// invalid `target` reaches `PlayerAt` at all; the placeholder
-        /// `false` a short-circuited range check leaves in `targetAlive` is
-        /// never actually read by `Evaluate`, because `TargetOutOfRange` is
-        /// checked before `TargetDead` in the policy's own fixed order.
+        /// THE RANGE CHECK RUNS BEFORE `PlayerAt(target)`, NEVER AFTER, AND
+        /// SHARES ITS ONE RULE WITH `SpectatePolicy.Evaluate` (Stage 2 Task
+        /// 42a fix-round 1, I-4). `SimulationWorld.PlayerAt` is a bare array
+        /// index with no bounds guard of its own, so a `target` outside `[0,
+        /// playerCount)` would throw before `SpectatePolicy` ever got a
+        /// chance to answer `TargetOutOfRange` — exactly the exception this
+        /// method exists to never produce. `targetAlive` is computed with
+        /// `SpectatePolicy.IsTargetInRange` inlined into it (`in range AND
+        /// PlayerAt(target).Alive`) rather than as two separate reads, so
+        /// there is no path on which an invalid `target` reaches `PlayerAt`
+        /// at all; the placeholder `false` a short-circuited range check
+        /// leaves in `targetAlive` is never actually read by `Evaluate`,
+        /// because `TargetOutOfRange` is checked before `TargetDead` in the
+        /// policy's own fixed order. `IsTargetInRange` is the SAME static
+        /// method `Evaluate` itself calls — before this fix-round the
+        /// comparison was two independent copies (the original task-42a
+        /// review, I-4): this one, and the one buried in `Evaluate`'s own
+        /// body, and only the latter had a test watching it.
         ///
         /// DEATH OF THE CURRENT TARGET IS NOT HANDLED HERE, ON PURPOSE. This
         /// method only ever runs when a `SpectateRequestNet` arrives — it
@@ -729,6 +765,46 @@ namespace Ring.Networking.Server
         /// without any special-casing here — the client simply keeps
         /// watching a body that stopped moving until it asks to look
         /// somewhere else.
+        ///
+        /// AN ACCEPTED SWITCH RESETS THE ASSEMBLER'S VIEWPOINT MEMORY (Stage
+        /// 2 Task 42a fix-round 1, I-1 — CRITICAL finding, coordinator-
+        /// verified). Without this, `SnapshotAssembler.BuildFor`'s
+        /// hysteresis/linger continuity (`VisibilitySystem`'s own doc) reads
+        /// `previous` — computed from the OLD viewpoint — for up to
+        /// `VisibilityConfig.LingerTicks` further ticks after the switch,
+        /// handing the spectator live current-tick positions from wherever
+        /// they used to be looking. `SpectatePolicy`'s cooldown limits how
+        /// OFTEN that leak can be triggered but does nothing to stop it from
+        /// happening once per accepted switch — and across enough switches
+        /// that is the exact map-scan Р70 exists to prevent. Called ONLY on
+        /// acceptance, never on refusal: a refusal changes nothing about
+        /// this connection's current viewpoint, so there is nothing of its
+        /// memory to invalidate. See `ResetViewpointMemory`'s own doc for
+        /// what is cleared and what is deliberately left alone.
+        ///
+        /// REFUSAL LOGGING IS THROTTLED PER SLOT (Stage 2 Task 42a fix-round
+        /// 1, M-6) — UNLIKE `MatchHandshake.Refuse`'s "one log per
+        /// connection" shape, which this handler cannot copy: a handshake
+        /// refusal ends the connection (or is the one-time `DuplicatePlayer`
+        /// retry case), while a dead client can legitimately send
+        /// `SpectateRequestNet` every single tick — a UI that retries on
+        /// refusal, or simply spam from a player mashing the switch key
+        /// during someone else's cooldown. The cooldown limits ACCEPTED
+        /// switches to one per `CooldownTicks`, but places no limit on
+        /// REFUSED ones, so an unthrottled log here would flood `Player.log`
+        /// with one line per tick for the whole rest of a dead player's
+        /// match. `_lastLoggedRefusal[slot]` remembers the last reason
+        /// actually written to the log for this slot; a refusal logs only
+        /// when the reason DIFFERS from that memory (a player stuck on
+        /// `CooldownActive` produces exactly one line, not one per tick),
+        /// and an ACCEPTED switch clears the memory back to `None` so the
+        /// NEXT refusal — even one with a reason seen before the switch —
+        /// is logged fresh rather than staying silently suppressed for the
+        /// rest of the match. The alternative brief-offered shape (log at
+        /// most once per N ticks) was rejected: it would still print
+        /// periodically for a player parked on one unchanging reason, and N
+        /// would be one more tuning number with no natural value, where
+        /// "on change" needs none.
         void OnSpectateRequest(NetworkConnection connection, SpectateRequestNet msg, Channel channel)
         {
             if (!_running) return;
@@ -750,7 +826,7 @@ namespace Ring.Networking.Server
             int target = msg.TargetIndex;
             int playerCount = _world.PlayerCount;
             bool requesterAlive = _world.PlayerAt(slot).Alive;
-            bool targetInRange = target >= 0 && target < playerCount;
+            bool targetInRange = SpectatePolicy.IsTargetInRange(target, playerCount);
             bool targetAlive = targetInRange && _world.PlayerAt(target).Alive;
             int currentTick = _world.CurrentTick;
 
@@ -761,11 +837,19 @@ namespace Ring.Networking.Server
             {
                 _viewpointIndex[slot] = target;
                 _lastSpectateSwitchTick[slot] = currentTick;
+                // I-1: the old viewpoint's hysteresis/linger memory must not
+                // survive into the new one — see this method's own doc.
+                _assembler.ResetViewpointMemory(slot);
+                // M-6: an accepted switch resets what the throttle
+                // remembers, so the next refusal — of any reason, even one
+                // this slot already logged before the switch — is fresh.
+                _lastLoggedRefusal[slot] = SpectateRefusal.None;
                 _nm.Log($"MatchServer: spectate switch accepted — slot={slot} target={target} "
                     + $"tick={currentTick}.");
             }
-            else
+            else if (_lastLoggedRefusal[slot] != refusal)
             {
+                _lastLoggedRefusal[slot] = refusal;
                 // Diagnostic wording only, the same discipline
                 // `MatchHandshake.Refuse` names in its own doc: never
                 // "exploit"/"illegitimate"/"security" — an unmodified client

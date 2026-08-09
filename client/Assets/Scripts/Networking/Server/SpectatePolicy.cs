@@ -135,6 +135,21 @@ namespace Ring.Networking.Server
             _cooldownTicks = cooldownTicks;
         }
 
+        /// Whether `targetIndex` names a legal player slot — `[0,
+        /// playerCount)`, half-open. Stage 2 Task 42a fix-round 1, I-4: this
+        /// used to be two independent copies of the identical rule, one here
+        /// (inside `Evaluate`, below) and one in `MatchServer.
+        /// OnSpectateRequest` (needed there BEFORE `Evaluate` runs, to avoid
+        /// handing `PlayerAt` an invalid index — see that method's own doc).
+        /// Two homes for one predicate is exactly the duplication AGENT.md
+        /// rule 2 forbids, and the wiring copy was the dangerous one: it had
+        /// no EditMode coverage at all, so a drift between the two would have
+        /// been silent. `SpectateTests.IsTargetInRange_ChecksBothBoundaries`
+        /// pins this one copy directly; `MatchServer.OnSpectateRequest` calls
+        /// it instead of restating the comparison.
+        public static bool IsTargetInRange(int targetIndex, int playerCount)
+            => targetIndex >= 0 && targetIndex < playerCount;
+
         /// The verdict for one `SpectateRequestNet`. `requesterIndex`/
         /// `targetIndex` are player slots; `playerCount` bounds the legal
         /// range for `targetIndex`; `requesterAlive`/`targetAlive` are each
@@ -159,14 +174,25 @@ namespace Ring.Networking.Server
         ///      so, not blame a "dead target" that is really the requester's
         ///      own corpse.
         ///   4. `TargetDead` — the target's own state.
-        ///   5. `CooldownActive` — LAST, deliberately. Spending the cooldown
-        ///      on a request that was never going to succeed for any other
-        ///      reason (a garbage index, a mistyped target) would let a
-        ///      client that sends nonsense lock itself out of a LEGITIMATE
-        ///      switch it sends right after — indistinguishable, from a log,
-        ///      from "the player's switch stopped working".
+        ///   5. `CooldownActive` — LAST, deliberately. `_cooldownTicks` is
+        ///      only ever CONSUMED on ACCEPTANCE (`MatchServer.
+        ///      OnSpectateRequest` writes `_lastSpectateSwitchTick` only in
+        ///      the branch where `Evaluate` returned `None`), so a request
+        ///      refused for some OTHER reason never spends it — a garbage
+        ///      index cannot "waste" a cooldown that was never going to be
+        ///      touched either way. The real reason the cooldown check comes
+        ///      last is diagnostic: if it ran first, a client sending a
+        ///      genuinely invalid request (an out-of-range index, a dead
+        ///      target) while ALSO inside its cooldown window would see
+        ///      `CooldownActive` in the log — masking the request's real,
+        ///      earlier defect behind a reason that has nothing to do with
+        ///      why it was actually refused.
         /// `SpectateTests.Order_RequesterAliveWinsOverEveryOtherReason` pins
-        /// this specifically.
+        /// checks 1 and 2 against each other (its own positive witness passes
+        /// `requesterAlive: false` on the same out-of-range/dead-target
+        /// fixture and still gets `TargetOutOfRange`, which is check 2
+        /// beating check 4 in the same stroke);
+        /// `Order_TargetDeadWinsOverCooldownActive` pins check 4 against 5.
         ///
         /// THE COOLDOWN BOUNDARY IS INCLUSIVE: `currentTick - lastSwitchTick
         /// >= _cooldownTicks` is accepted, not `>`. AT exactly the
@@ -180,7 +206,7 @@ namespace Ring.Networking.Server
             bool requesterAlive, bool targetAlive, int lastSwitchTick, int currentTick)
         {
             if (requesterAlive) return SpectateRefusal.RequesterAlive;
-            if (targetIndex < 0 || targetIndex >= playerCount) return SpectateRefusal.TargetOutOfRange;
+            if (!IsTargetInRange(targetIndex, playerCount)) return SpectateRefusal.TargetOutOfRange;
             if (targetIndex == requesterIndex) return SpectateRefusal.TargetIsSelf;
             if (!targetAlive) return SpectateRefusal.TargetDead;
 

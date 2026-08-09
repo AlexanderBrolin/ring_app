@@ -104,6 +104,17 @@ namespace Ring.Simulation.Tests
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "a dead player naming their own slot must be refused as TargetIsSelf, not TargetDead — "
                 + "the corpse belongs to them, this is not 'watching a stranger's body'");
+
+            // Positive witness (Task 42a fix-round 1, I-3 — the class doc
+            // claims every negative case carries one, and this test did not
+            // until now): the SAME requester naming a DIFFERENT, living
+            // slot passes. TargetIsSelf is the only thing that changed.
+            Assert.AreEqual(SpectateRefusal.None,
+                policy.Evaluate(requesterIndex: 1, targetIndex: 0, PlayerCount,
+                    requesterAlive: false, targetAlive: true,
+                    lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
+                "witness: the same dead requester naming SOMEONE ELSE's living slot must be accepted — "
+                + "TargetIsSelf is the only thing that changed");
         }
 
         [Test]
@@ -209,6 +220,69 @@ namespace Ring.Simulation.Tests
                 "a live requester must be refused RequesterAlive even when the target index is "
                 + "also invalid and the target is also dead — RequesterAlive is checked FIRST "
                 + "and every later reason is irrelevant once it has already refused");
+
+            // Positive witness (Task 42a fix-round 1, I-3 — this test had
+            // none until now): the SAME out-of-range/dead-target fixture,
+            // requester now dead, must be refused TargetOutOfRange, not
+            // TargetDead — this doubles as fix-round 1 M-2's first missing
+            // order case ("out of range + targetAlive: false ->
+            // TargetOutOfRange"), proving check 2 (TargetOutOfRange) beats
+            // check 4 (TargetDead) in the same stroke that proves
+            // RequesterAlive was the only thing making the first assert
+            // refuse for A DIFFERENT reason.
+            Assert.AreEqual(SpectateRefusal.TargetOutOfRange,
+                policy.Evaluate(requesterIndex: 0, targetIndex: 99, PlayerCount,
+                    requesterAlive: false, targetAlive: false,
+                    lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
+                "witness: with a DEAD requester the same fixture must be refused TargetOutOfRange — "
+                + "an invalid index outranks a targetAlive value that was never even in range to matter");
+        }
+
+        [Test]
+        public void Order_TargetDeadWinsOverCooldownActive()
+        {
+            // Fix-round 1, M-2's second missing order case: a dead target
+            // AND an unexpired cooldown must be refused TargetDead, not
+            // CooldownActive — check 4 is checked before check 5, and the
+            // policy's own doc explains why (spending the log's diagnostic
+            // value on the cooldown would mask the target's own dead state).
+            const int cooldownTicks = 10;
+            var policy = new SpectatePolicy(cooldownTicks);
+
+            Assert.AreEqual(SpectateRefusal.TargetDead,
+                policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
+                    requesterAlive: false, targetAlive: false,
+                    lastSwitchTick: 100, currentTick: 100 + cooldownTicks - 1),
+                "a dead target must be refused TargetDead even while the cooldown has not "
+                + "elapsed either — TargetDead is checked BEFORE CooldownActive");
+
+            // Positive witness: the SAME cooldown state, target alive, is
+            // refused CooldownActive instead — proving the fixture's
+            // cooldown really is active and TargetDead was the only reason
+            // the assert above did not report it.
+            Assert.AreEqual(SpectateRefusal.CooldownActive,
+                policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
+                    requesterAlive: false, targetAlive: true,
+                    lastSwitchTick: 100, currentTick: 100 + cooldownTicks - 1),
+                "witness: with a LIVE target the same unexpired cooldown must surface as "
+                + "CooldownActive — TargetDead was the only thing masking it above");
+        }
+
+        [Test]
+        public void IsTargetInRange_ChecksBothBoundaries()
+        {
+            // Fix-round 1, I-4: the ONE home for this predicate, now that
+            // MatchServer.OnSpectateRequest calls it instead of restating
+            // the comparison. Both illegal boundaries, both legal edges.
+            Assert.IsFalse(SpectatePolicy.IsTargetInRange(-1, PlayerCount),
+                "a negative index is outside [0, playerCount)");
+            Assert.IsFalse(SpectatePolicy.IsTargetInRange(PlayerCount, PlayerCount),
+                "targetIndex == playerCount is one past the last legal slot — the range is HALF-OPEN");
+
+            Assert.IsTrue(SpectatePolicy.IsTargetInRange(0, PlayerCount),
+                "witness: slot 0, the lowest legal index, is in range");
+            Assert.IsTrue(SpectatePolicy.IsTargetInRange(PlayerCount - 1, PlayerCount),
+                "witness: playerCount - 1, the highest legal index, is in range");
         }
     }
 }

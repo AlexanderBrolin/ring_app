@@ -1654,5 +1654,65 @@ namespace Ring.Simulation.Tests
             Assert.Greater(asm.BuildFor(0, 0, 0, Epoch), 0,
                 "the refusal must leave the assembler fully usable for its own config");
         }
+
+        // ---- Stage 2 Task 42a fix-round 1, I-1: viewpoint memory reset ----
+
+        /// One mob starting in plain sight, then moved past `SightRadius +
+        /// ExitHysteresis` — the exact fixture shape
+        /// `MobFilter_InvisibleAbsent_LingeringPresent_BehindObstacleAbsent`
+        /// already uses to exercise Р19's linger. A fresh `SimulationWorld`/
+        /// `SnapshotAssembler` pair per call, so the witness and the reset
+        /// branch below never share state with each other.
+        static (SimulationWorld world, SimConfig cfg, SnapshotAssembler asm, int mobId) LingerFixture()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            return (w, cfg, asm, mobId);
+        }
+
+        static void MoveMobPastSightAndHysteresis(SimulationWorld w, in SimConfig cfg)
+        {
+            MobState m = w.Mobs[0];
+            m.Pos = new float2(0f, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis + 5f);
+            w.SetMobForTest(0, m);
+        }
+
+        [Test]
+        public void ResetViewpointMemory_ClearsLingerAndHysteresis_WitnessedAgainstNoReset()
+        {
+            // Positive witness FIRST: without a reset, a mob that just left
+            // sight keeps riding through the linger window (Р19) — proving
+            // this fixture genuinely exercises linger, so the "no longer
+            // held" assert below is actually about ResetViewpointMemory and
+            // not an accident of a fixture that never lingered anything to
+            // begin with.
+            (SimulationWorld wWitness, SimConfig cfgWitness, SnapshotAssembler asmWitness, int mobWitness) =
+                LingerFixture();
+            Build(asmWitness, wWitness, cfgWitness, 0, 0, 0);
+            MoveMobPastSightAndHysteresis(wWitness, in cfgWitness);
+            AssembledFrame witnessFrame = Build(asmWitness, wWitness, cfgWitness, 0, 0, 0);
+            Assert.IsTrue(witnessFrame.ContainsMob(mobWitness),
+                "witness: WITHOUT a reset, a mob that just left sight must keep riding through the "
+                + "linger window (Р19) — this is the premise the reset assert below defeats");
+
+            // The target: the identical sequence, but ResetViewpointMemory
+            // runs between the move and the next BuildFor — exactly what
+            // MatchServer.OnSpectateRequest does on an accepted switch
+            // (Stage 2 Task 42a fix-round 1, I-1).
+            (SimulationWorld wReset, SimConfig cfgReset, SnapshotAssembler asmReset, int mobReset) =
+                LingerFixture();
+            Build(asmReset, wReset, cfgReset, 0, 0, 0);
+            MoveMobPastSightAndHysteresis(wReset, in cfgReset);
+            asmReset.ResetViewpointMemory(0);
+            AssembledFrame resetFrame = Build(asmReset, wReset, cfgReset, 0, 0, 0);
+            Assert.IsFalse(resetFrame.ContainsMob(mobReset),
+                "ResetViewpointMemory must clear the linger/hysteresis memory (Previous) — a mob "
+                + "that just left sight must NOT keep riding once this connection's viewpoint memory "
+                + "was reset in between (Stage 2 Task 42a fix-round 1, I-1: a switched spectator must "
+                + "not receive live positions computed from the OLD viewpoint)");
+        }
     }
 }
