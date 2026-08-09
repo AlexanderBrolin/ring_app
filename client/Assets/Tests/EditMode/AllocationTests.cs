@@ -10,6 +10,10 @@ using Is = UnityEngine.TestTools.Constraints.Is;
 
 namespace Ring.Simulation.Tests
 {
+    /// Task 42b split `EventRelevance.ShouldDeliver`'s single `observerIndex`
+    /// into `identityIndex`/`viewpointIndex`. The three call sites below pass
+    /// the SAME value for both — this file measures allocations, not
+    /// spectating behaviour, so the extra argument pins nothing new.
     public class AllocationTests
     {
         [Test]
@@ -288,10 +292,10 @@ namespace Ring.Simulation.Tests
             // decision path of each channel rather than bailing out early.
             for (int e = 0; e < events.Length; e++)
             {
-                Assert.IsTrue(EventRelevance.ShouldDeliver(events[e], 0, w, setB, config.Visibility, out _),
+                Assert.IsTrue(EventRelevance.ShouldDeliver(events[e], 0, 0, w, setB, config.Visibility, out _),
                     $"fixture premise: {events[e].Kind} must actually be delivered to observer 0");
             }
-            Assert.IsTrue(EventRelevance.ShouldDeliver(events[2], 0, w, setB, config.Visibility, out float2 heardPos));
+            Assert.IsTrue(EventRelevance.ShouldDeliver(events[2], 0, 0, w, setB, config.Visibility, out float2 heardPos));
             Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(audiblePos, config.Visibility), heardPos,
                 "fixture premise: the audible event must come back COARSENED, proving it took the hearing "
                 + "path and not the visible one");
@@ -303,7 +307,7 @@ namespace Ring.Simulation.Tests
                     for (int e = 0; e < events.Length; e++)
                     {
                         for (int observerIndex = 0; observerIndex < w.PlayerCount; observerIndex++)
-                            EventRelevance.ShouldDeliver(events[e], observerIndex, w, setB, config.Visibility, out _);
+                            EventRelevance.ShouldDeliver(events[e], observerIndex, observerIndex, w, setB, config.Visibility, out _);
                     }
                 }
             }, Is.Not.AllocatingGCMemory());

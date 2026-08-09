@@ -39,6 +39,13 @@ namespace Ring.Simulation.Tests
     /// same value, ShouldDeliver could read either one and every assertion
     /// here still passed, so the VICTIM-by-PlayerIndex convention was prose,
     /// not contract.
+    ///
+    /// Task 42b split `ShouldDeliver`'s single `observerIndex` into
+    /// `identityIndex`/`viewpointIndex`. Every PRE-EXISTING call site below
+    /// passes the SAME value for both — none of these fixtures involves
+    /// spectating, so nothing here pins new behaviour; only fixtures 19-23
+    /// (added by Task 42b, at the end of this file) pass genuinely different
+    /// indices.
     public class EventDeliveryTests
     {
         // Task 21 fix-round 1 (M-2): Capacity moved to TestWorlds — see its
@@ -70,7 +77,7 @@ namespace Ring.Simulation.Tests
             var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
             observerSet.Add(VisibilityIds.ForPlayer(1));
 
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, w, observerSet, cfg.Visibility, out float2 ownerPos),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, 1, w, observerSet, cfg.Visibility, out float2 ownerPos),
                 "the event's own owner must receive it");
             Assert.AreEqual(ev.Pos, ownerPos,
                 "StaminaDenied is private feedback: the delivered position is the raw, EXACT one, never quantized");
@@ -84,7 +91,7 @@ namespace Ring.Simulation.Tests
             // `false` — a caller that trusts `out` without checking the
             // `bool` first (a plausible per-connection assembler pattern,
             // Task 28) would still leak it. `out _` could never catch that.
-            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
                 "a neighbour must not receive another player's StaminaDenied — it would leak Stamina economy");
             Assert.AreEqual(float2.zero, refusedPos,
                 "a `false` return must carry `default` (zero), never the leaked owner's exact position");
@@ -112,7 +119,7 @@ namespace Ring.Simulation.Tests
 
                 for (int observerIndex = 0; observerIndex < w.PlayerCount; observerIndex++)
                 {
-                    Assert.IsTrue(EventRelevance.ShouldDeliver(ev, observerIndex, w, emptySet, cfg.Visibility, out float2 pos),
+                    Assert.IsTrue(EventRelevance.ShouldDeliver(ev, observerIndex, observerIndex, w, emptySet, cfg.Visibility, out float2 pos),
                         $"{kind} must reach every observer, regardless of visibility");
                     Assert.AreEqual(float2.zero, pos, $"{kind} must never leak its position (spec Р28 forbids it explicitly)");
                 }
@@ -152,7 +159,7 @@ namespace Ring.Simulation.Tests
             // included (task-21-brief.md's own "dead behind a wall" phrasing).
             var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
 
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, victimIndex, w, observerSet, cfg.Visibility, out float2 ownPos),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, victimIndex, victimIndex, w, observerSet, cfg.Visibility, out float2 ownPos),
                 "a player's own death must reach them even when the ordinary visibility gate would refuse it — "
                 + "the owner carve-out is keyed on PlayerIndex (the VICTIM), never on EntityId");
             Assert.AreEqual(ev.Pos, ownPos);
@@ -161,7 +168,7 @@ namespace Ring.Simulation.Tests
             // without checking it isn't a blanket rule): a DIFFERENT observer,
             // facing the exact same absent-from-the-set victim, must NOT get
             // it — the special case is scoped to the owner only.
-            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, observerSet, cfg.Visibility, out _),
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, 0, w, observerSet, cfg.Visibility, out _),
                 "a bystander must still go through the ordinary visibility gate for someone ELSE's death");
         }
 
@@ -209,7 +216,7 @@ namespace Ring.Simulation.Tests
                 Pos = m.Pos
             };
 
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, setA, cfg.Visibility, out float2 deliveredPos),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, 0, w, setA, cfg.Visibility, out float2 deliveredPos),
                 "a mob that dies while still tracked visible-now in the hysteresis band must have its death delivered");
             Assert.AreEqual(ev.Pos, deliveredPos);
         }
@@ -268,13 +275,13 @@ namespace Ring.Simulation.Tests
             // Negative witness: the trap is real — the CURRENT tick's own
             // set genuinely refuses delivery for a mob that was visible right
             // up until the tick it died.
-            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, setAfterDeath, cfg.Visibility, out _),
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, 0, w, setAfterDeath, cfg.Visibility, out _),
                 "the CURRENT tick's set must not deliver — this is exactly the trap the previous-tick contract exists to avoid");
 
             // Positive witness: the PREVIOUS tick's set (still holding the
             // subject as visible-now, from before the death) delivers
             // correctly.
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, setBeforeDeath, cfg.Visibility, out float2 deliveredPos),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, 0, w, setBeforeDeath, cfg.Visibility, out float2 deliveredPos),
                 "the PREVIOUS tick's set — from before the death — must deliver");
             Assert.AreEqual(ev.Pos, deliveredPos);
         }
@@ -328,7 +335,7 @@ namespace Ring.Simulation.Tests
 
             // Negative arm: the trap is real — reusing MobDied's own
             // previous-tick set here refuses delivery to everyone.
-            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, setBeforeSpawn, cfg.Visibility, out float2 refusedPos),
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, 0, w, setBeforeSpawn, cfg.Visibility, out float2 refusedPos),
                 "the PREVIOUS tick's set must NOT deliver a MobSpawned — this is exactly the mirror trap of 4b, "
                 + "and the reason the caller picks the tick per KIND");
             Assert.AreEqual(float2.zero, refusedPos,
@@ -336,7 +343,7 @@ namespace Ring.Simulation.Tests
 
             // Positive arm: the CURRENT tick's set — the one this kind's
             // subject actually lives in — delivers.
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, setAfterSpawn, cfg.Visibility, out float2 deliveredPos),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, 0, w, setAfterSpawn, cfg.Visibility, out float2 deliveredPos),
                 "the CURRENT tick's set must deliver a MobSpawned for a mob the observer can see");
             Assert.AreEqual(ev.Pos, deliveredPos);
         }
@@ -362,7 +369,7 @@ namespace Ring.Simulation.Tests
                 "test setup: this position must actually sit within HearRadius of the observer");
 
             var evAudible = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 1, Pos = audiblePos };
-            Assert.IsTrue(EventRelevance.ShouldDeliver(evAudible, 0, w, observerSet, cfg.Visibility, out float2 pos),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(evAudible, 0, 0, w, observerSet, cfg.Visibility, out float2 pos),
                 "an invisible but audible actor's dash must still be delivered");
             Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(audiblePos, cfg.Visibility), pos);
             Assert.AreNotEqual(audiblePos, pos,
@@ -376,7 +383,7 @@ namespace Ring.Simulation.Tests
             // Task 21 fix-round 1 (I-1): named variable, not `out _` — pins
             // the same "`deliveredPos` is `default` on `false`" contract on
             // the Audible channel's OUTER-range refusal branch.
-            Assert.IsFalse(EventRelevance.ShouldDeliver(evFar, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
+            Assert.IsFalse(EventRelevance.ShouldDeliver(evFar, 0, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
                 "an actor beyond even HearRadius must not have this event delivered at all");
             Assert.AreEqual(float2.zero, refusedPos,
                 "a `false` return must carry `default` (zero), never a raw or coarsened position");
@@ -418,13 +425,13 @@ namespace Ring.Simulation.Tests
             // inconsistent with the two channels).
             var lingering = new VisibilitySet(TestWorlds.Capacity(cfg));
             lingering.Add(actorId, cfg.Visibility.LingerTicks);
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, lingering, cfg.Visibility, out float2 exactPos));
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, 0, w, lingering, cfg.Visibility, out float2 exactPos));
             Assert.AreEqual(pos, exactPos, "an actor merely LINGERING (Contains true, LingerOf > 0) must still get the EXACT position");
 
             // Half 2 — genuinely not tracked at all: same event, same
             // distance (well within HearRadius), but the actor is absent.
             var untracked = new VisibilitySet(TestWorlds.Capacity(cfg));
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, untracked, cfg.Visibility, out float2 coarsePos));
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, 0, w, untracked, cfg.Visibility, out float2 coarsePos));
             Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(pos, cfg.Visibility), coarsePos,
                 "an actor absent from the visibility set entirely must get the COARSENED position, never the exact one");
             Assert.AreNotEqual(exactPos, coarsePos, "the two halves must actually produce DIFFERENT positions, or this test cannot tell them apart");
@@ -460,7 +467,7 @@ namespace Ring.Simulation.Tests
             // mob) would find the killer's id absent and wrongly REFUSE delivery.
             var mobVisibleOnly = new VisibilitySet(TestWorlds.Capacity(cfg));
             mobVisibleOnly.Add(mobId);
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, mobVisibleOnly, cfg.Visibility, out float2 pos1),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, 0, w, mobVisibleOnly, cfg.Visibility, out float2 pos1),
                 "MobDied must be delivered by the MOB's own visibility, not its killer's");
             Assert.AreEqual(pos, pos1);
 
@@ -469,7 +476,7 @@ namespace Ring.Simulation.Tests
             // the killer's id present and wrongly DELIVER.
             var killerVisibleOnly = new VisibilitySet(TestWorlds.Capacity(cfg));
             killerVisibleOnly.Add(killerVisId);
-            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, killerVisibleOnly, cfg.Visibility, out _),
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, 0, w, killerVisibleOnly, cfg.Visibility, out _),
                 "the killer being visible must NOT be enough — the mob itself, identified by EntityId, is what must be checked");
         }
 
@@ -516,7 +523,7 @@ namespace Ring.Simulation.Tests
             // id) is in the set.
             var correctSet = new VisibilitySet(TestWorlds.Capacity(cfg));
             correctSet.Add(VisibilityIds.ForPlayer(victimIndex));
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, w, correctSet, cfg.Visibility, out float2 pos1),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 0, 0, w, correctSet, cfg.Visibility, out float2 pos1),
                 "PlayerDamaged must be delivered by the victim's SYNTHETIC player id, derived from PlayerIndex");
             Assert.AreEqual(pos, pos1);
 
@@ -534,7 +541,7 @@ namespace Ring.Simulation.Tests
             wrongSet.Add(victimIndex);
             wrongSet.Add(foreignEntityId);
             wrongSet.Add(VisibilityIds.ForPlayer(foreignEntityId));
-            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, w, wrongSet, cfg.Visibility, out _),
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, 0, w, wrongSet, cfg.Visibility, out _),
                 "neither field read the wrong way may deliver — only ForPlayer(PlayerIndex), the victim's "
                 + "synthetic player id, counts as this event's subject");
         }
@@ -561,7 +568,7 @@ namespace Ring.Simulation.Tests
 
                 var ev = new SimEvent { Kind = kind };
                 Assert.Throws<System.ArgumentException>(() =>
-                        EventRelevance.ShouldDeliver(ev, 0, w, observerSet, cfg.Visibility, out _),
+                        EventRelevance.ShouldDeliver(ev, 0, 0, w, observerSet, cfg.Visibility, out _),
                     $"{kind} must THROW rather than silently return false — a silent false would make a future " +
                     "Task 28 caller drop every projectile event on an oversight, indistinguishable from a correct " +
                     "'nobody nearby' answer (task-21-brief.md: None means 'decided elsewhere', not 'nobody')");
@@ -599,7 +606,7 @@ namespace Ring.Simulation.Tests
             // Task 21 fix-round 1 (I-1): named variable, not `out _` — pins
             // the same "`deliveredPos` is `default` on `false`" contract on
             // the Visible channel's own refusal branch.
-            Assert.IsFalse(EventRelevance.ShouldDeliver(evInvisible, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
+            Assert.IsFalse(EventRelevance.ShouldDeliver(evInvisible, 0, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
                 "a Visible-channel event for an invisible subject must not be delivered, even when it is audible");
             Assert.AreEqual(float2.zero, refusedPos,
                 "a `false` return must carry `default` (zero), never the invisible subject's position");
@@ -609,7 +616,7 @@ namespace Ring.Simulation.Tests
                 Kind = SimEventKind.MobSpawned, MobType = MobType.Chaser,
                 EntityId = visibleMobId, Pos = new float2(2f, 2f)
             };
-            Assert.IsTrue(EventRelevance.ShouldDeliver(evVisible, 0, w, observerSet, cfg.Visibility, out float2 pos),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(evVisible, 0, 0, w, observerSet, cfg.Visibility, out float2 pos),
                 "witness: a genuinely visible subject's MobSpawned must actually be delivered");
             Assert.AreEqual(evVisible.Pos, pos);
         }
@@ -696,9 +703,9 @@ namespace Ring.Simulation.Tests
             var ev = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 0, Pos = actorPos };
             var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg)); // actor not visible — audibility path only
 
-            Assert.DoesNotThrow(() => EventRelevance.ShouldDeliver(ev, 1, w, observerSet, cfg.Visibility, out _),
+            Assert.DoesNotThrow(() => EventRelevance.ShouldDeliver(ev, 1, 1, w, observerSet, cfg.Visibility, out _),
                 "a dead observer must not make ShouldDeliver throw");
-            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, w, observerSet, cfg.Visibility, out float2 pos),
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, 1, w, observerSet, cfg.Visibility, out float2 pos),
                 "a dead observer must still resolve its OWN position for the audibility gate, not silently fail closed");
             Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(actorPos, cfg.Visibility), pos);
         }
@@ -1103,10 +1110,12 @@ namespace Ring.Simulation.Tests
             // splits them, and the assembler must not merge them back.
             //
             // The split is expressed as two parameters: `identityIndex` feeds
-            // ShouldDeliver, `viewpointIndex` feeds Compute. The known limit of
-            // the seam — its Audible branch reads the IDENTITY's own position
-            // for the hearing distance, not the viewpoint's — is recorded here
-            // and resolved by Task 42.
+            // ShouldDeliver, `viewpointIndex` feeds Compute. This fixture pins
+            // the two channels that stay on IDENTITY (Owner, the own-death
+            // carve-out); the Audible branch's own earshot fix — the seam's
+            // known limit until Task 42b, which measured hearing distance from
+            // the IDENTITY's own position instead of the viewpoint's — is
+            // pinned separately below, in the Task 42b section of this file.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 3);
             TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
@@ -1143,6 +1152,225 @@ namespace Ring.Simulation.Tests
                 + "the viewpoint to have seen it");
             Assert.IsTrue(d.TryFirstOf(SnapshotEventKind.PlayerDied, out int di));
             Assert.AreEqual((byte)0, d.Payloads[di].PlayerIndex, "and it is the connection's OWN death");
+        }
+
+        // ================= Task 42b: identity vs viewpoint earshot =================
+        //
+        // Task 42a made `identityIndex`/`viewpointIndex` genuinely diverge for
+        // the first time (MatchServer.OnSpectateRequest can move a slot's
+        // viewpoint away from its identity); the four fixtures below are the
+        // ones that could not exist before that split, because ShouldDeliver
+        // only ever took ONE index. Each pins one of the two things that
+        // change (the Audible branch's hearing position) or must NOT change
+        // (the Owner channel, the own-death carve-out) under the split.
+
+        // --- 19: AudibleChannel_MeasuresFromViewpoint_NotIdentity (Task 42b) ---
+
+        [Test]
+        public void AudibleChannel_MeasuresFromViewpoint_NotIdentity()
+        {
+            // The defect this task closes (SnapshotAssembler's own KNOWN LIMIT
+            // paragraph): a dead observer spectating a teammate across the
+            // arena must hear gunfire around the TEAMMATE, not around its own
+            // corpse. Distances are fixture expressions off HearRadius (Р56),
+            // never literals, so the arithmetic states its own premise instead
+            // of hiding it in a magic number.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            var farPos = new float2(cfg.Visibility.HearRadius + 1f, 0f);    // outside earshot
+            var closePos = new float2(cfg.Visibility.HearRadius - 1f, 0f); // inside earshot
+            TestWorlds.RelocatePlayerForTest(w, 0, farPos);    // identity: far from the shot
+            TestWorlds.RelocatePlayerForTest(w, 1, closePos);  // viewpoint: close to the shot
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, 5000f)); // the actor, elsewhere entirely
+
+            var ev = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 2, Pos = float2.zero };
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg)); // actor not visible — hearing path only
+
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, identityIndex: 0, viewpointIndex: 1, w, observerSet,
+                    cfg.Visibility, out float2 pos),
+                "the viewpoint (player 1) is within HearRadius of the shot — it must be delivered even though "
+                + "the identity's own body (player 0) sits far outside it");
+            Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(ev.Pos, cfg.Visibility), pos);
+
+            // Positive witness (Урок 129): the SAME call with the two indices
+            // merged back onto the identity — exactly what every call site did
+            // before this task — must refuse, proving the delivery above
+            // actually exercises the new parameter rather than some other path
+            // that happens to always say yes.
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, identityIndex: 0, viewpointIndex: 0, w, observerSet,
+                    cfg.Visibility, out float2 refusedPos),
+                "witness: with viewpointIndex folded back onto identityIndex (player 0's own far position), "
+                + "the same shot must NOT be delivered — otherwise the positive result above proves nothing "
+                + "about which parameter is actually read");
+            Assert.AreEqual(float2.zero, refusedPos);
+        }
+
+        // --- 20: AudibleChannel_RefusesWhenViewpointIsFar_EvenIfIdentityIsClose (Task 42b) ---
+
+        [Test]
+        public void AudibleChannel_RefusesWhenViewpointIsFar_EvenIfIdentityIsClose()
+        {
+            // Mirror of the fixture above. An implementation that swapped the
+            // two new parameters (identityIndex feeding the hearing check
+            // instead of viewpointIndex, silently unchanged from before this
+            // task) would still pass 19's positive half by reading the CLOSE
+            // identity there — both mirrors are required to pin a parameter
+            // swap in both directions (spec §0 of this task's own brief).
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            var closePos = new float2(cfg.Visibility.HearRadius - 1f, 0f); // inside earshot
+            var farPos = new float2(cfg.Visibility.HearRadius + 1f, 0f);   // outside earshot
+            TestWorlds.RelocatePlayerForTest(w, 0, closePos); // identity: close to the shot
+            TestWorlds.RelocatePlayerForTest(w, 1, farPos);   // viewpoint: far from the shot
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, 5000f)); // the actor, elsewhere entirely
+
+            var ev = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 2, Pos = float2.zero };
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
+
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, identityIndex: 0, viewpointIndex: 1, w, observerSet,
+                    cfg.Visibility, out float2 refusedPos),
+                "the viewpoint (player 1) is outside HearRadius — it must be refused even though the "
+                + "identity's own body (player 0) sits comfortably within earshot");
+            Assert.AreEqual(float2.zero, refusedPos);
+
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, identityIndex: 0, viewpointIndex: 0, w, observerSet,
+                    cfg.Visibility, out float2 pos),
+                "witness: with viewpointIndex folded back onto identityIndex (player 0's own close position), "
+                + "the same shot IS delivered — the refusal above is really about the far viewpoint, not some "
+                + "other gate");
+            Assert.AreEqual(VisibilitySystem.QuantizeAudiblePos(ev.Pos, cfg.Visibility), pos);
+        }
+
+        // --- 21: OwnerChannel_StaysOnIdentity_EvenAcrossSplitIndices (Task 42b) ---
+
+        [Test]
+        public void OwnerChannel_StaysOnIdentity_EvenAcrossSplitIndices()
+        {
+            // This task's own decision record, §2.2's first "must NOT change"
+            // item: Owner is private feedback belonging to the IDENTITY, never
+            // the viewpoint — keying it on viewpointIndex would leak the
+            // spectated player's Stamina economy to whoever is spectating them
+            // (spec Р28).
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
+
+            // Half 1: the event belongs to the IDENTITY (player 0) while the
+            // viewpoint is player 1 — must still be delivered.
+            var ownEvent = new SimEvent { Kind = SimEventKind.StaminaDenied, PlayerIndex = 0, Pos = new float2(3f, -1f) };
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ownEvent, identityIndex: 0, viewpointIndex: 1, w,
+                    observerSet, cfg.Visibility, out float2 ownPos),
+                "the identity's OWN StaminaDenied must reach it, even while its viewpoint looks through "
+                + "another player");
+            Assert.AreEqual(ownEvent.Pos, ownPos);
+
+            // Half 2 (the discriminating counterpart): the event belongs to the
+            // VIEWPOINT (player 1), not the identity — a bug that keyed Owner
+            // on viewpointIndex instead would wrongly deliver this.
+            var viewpointsOwnEvent = new SimEvent { Kind = SimEventKind.StaminaDenied, PlayerIndex = 1, Pos = new float2(3f, -1f) };
+            Assert.IsFalse(EventRelevance.ShouldDeliver(viewpointsOwnEvent, identityIndex: 0, viewpointIndex: 1, w,
+                    observerSet, cfg.Visibility, out float2 refusedPos),
+                "the VIEWPOINT's own StaminaDenied must NOT reach this connection — Owner is keyed on "
+                + "identity, never on viewpoint, or a spectator would learn the spectated player's Stamina "
+                + "economy (Р28)");
+            Assert.AreEqual(float2.zero, refusedPos);
+        }
+
+        // --- 22: OwnDeathCarveOut_StaysOnIdentity_EvenAcrossSplitIndices (Task 42b) ---
+
+        [Test]
+        public void OwnDeathCarveOut_StaysOnIdentity_EvenAcrossSplitIndices()
+        {
+            // §2.2's second "must NOT change" item: "my own death" is a
+            // property of identity, not of where the connection currently
+            // looks — the carve-out must not silently move onto viewpointIndex.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg)); // absent from the set on both halves
+
+            // Half 1: PlayerDied belongs to the IDENTITY (player 0) — reaches
+            // it even though the ordinary visibility gate (empty set) would
+            // refuse it, and even while the viewpoint is player 1.
+            var ownDeath = new SimEvent
+            {
+                Kind = SimEventKind.PlayerDied, PlayerIndex = 0, EntityId = 1, Pos = new float2(-4f, 21f)
+            };
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ownDeath, identityIndex: 0, viewpointIndex: 1, w,
+                    observerSet, cfg.Visibility, out float2 ownPos),
+                "the identity's own PlayerDied must reach it via the carve-out, even while its viewpoint is "
+                + "another player");
+            Assert.AreEqual(ownDeath.Pos, ownPos);
+
+            // Half 2 (the discriminating counterpart): PlayerDied belongs to
+            // the VIEWPOINT (player 1), not the identity — a bug that keyed
+            // the carve-out on viewpointIndex instead would wrongly deliver
+            // this too, defeating the ordinary visibility gate for someone
+            // else's death.
+            var viewpointsDeath = new SimEvent
+            {
+                Kind = SimEventKind.PlayerDied, PlayerIndex = 1, EntityId = 2, Pos = new float2(-4f, 21f)
+            };
+            Assert.IsFalse(EventRelevance.ShouldDeliver(viewpointsDeath, identityIndex: 0, viewpointIndex: 1, w,
+                    observerSet, cfg.Visibility, out float2 refusedPos),
+                "the VIEWPOINT's own PlayerDied must NOT bypass the visibility gate — the carve-out is "
+                + "identity-only, never viewpoint");
+            Assert.AreEqual(float2.zero, refusedPos);
+        }
+
+        // --- 23: ShotHeard_MeasuresFromViewpoint_NotIdentity (Task 42b, assembler-level) ---
+
+        [Test]
+        public void ShotHeard_MeasuresFromViewpoint_NotIdentity()
+        {
+            // §2.3's third call-site fix: SnapshotAssembler.RouteEvents routes
+            // ShotHeard DIRECTLY (past EventRelevance — one SimEvent feeds two
+            // wire events with different rules), so its own hearing-distance
+            // read needed its own fix and is not exercised by fixtures 19-20
+            // above at all. Beyond this task's own four-fixture minimum: a
+            // production line changed with no discriminating test would be
+            // exactly the silent gap Task 42b exists to close for the OTHER
+            // Audible branch.
+            var cfg = TestConfigs.Open();
+            var muzzle = float2.zero;
+            var farPos = new float2(cfg.Visibility.HearRadius + 1f, 0f);   // identity: outside earshot
+            var closePos = new float2(cfg.Visibility.HearRadius - 1f, 0f); // viewpoint: inside earshot
+            // Fired AWAY from both candidate observer positions (+X), so the
+            // trajectory's closest approach to either one stays at the muzzle
+            // itself — comfortably beyond SightRadius + ExitHysteresis for
+            // both, meaning ProjectileSpawned never qualifies and this
+            // fixture isolates the ShotHeard hearing check alone.
+            Assert.Greater(cfg.Visibility.HearRadius - 1f, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: the close position must still be outside the tracer's own trajectory gate");
+
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, farPos);
+            TestWorlds.RelocatePlayerForTest(w, 1, closePos);
+            w.SpawnProjectileForTest(ProjectileOwner.Mob, muzzle, new float2(-cfg.Gunner.ProjectileSpeed, 0f),
+                cfg.Gunner.MuzzleHeight, 0f, cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius,
+                cfg.Gunner.ProjectileLifetime, ownerIndex: ProjectileIds.NoOwner);
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            AssembledFrame close = BuildOne(asm, w, cfg, 0, identityIndex: 0, viewpointIndex: 1);
+            Assert.AreEqual(0, close.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "fixture premise: the tracer itself must not qualify, or this is not isolating ShotHeard");
+            Assert.AreEqual(1, close.CountOf(SnapshotEventKind.ShotHeard),
+                "the viewpoint (player 1) is within HearRadius of the muzzle — the shot must be heard even "
+                + "though the identity's own body (player 0) sits far outside it");
+
+            // Witness: the same world, but the viewpoint folded back onto the
+            // (far) identity — exactly the pre-Task-42b call shape — refuses.
+            var w2 = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w2, 0, farPos);
+            TestWorlds.RelocatePlayerForTest(w2, 1, closePos);
+            w2.SpawnProjectileForTest(ProjectileOwner.Mob, muzzle, new float2(-cfg.Gunner.ProjectileSpeed, 0f),
+                cfg.Gunner.MuzzleHeight, 0f, cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius,
+                cfg.Gunner.ProjectileLifetime, ownerIndex: ProjectileIds.NoOwner);
+            var asm2 = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            AssembledFrame folded = BuildOne(asm2, w2, cfg, 0, identityIndex: 0, viewpointIndex: 0);
+            Assert.AreEqual(0, folded.CountOf(SnapshotEventKind.ShotHeard),
+                "witness: with viewpointIndex folded back onto identityIndex (player 0's own far position), "
+                + "the same shot must NOT be heard — otherwise the positive result above proves nothing about "
+                + "which position is actually read");
         }
     }
 }

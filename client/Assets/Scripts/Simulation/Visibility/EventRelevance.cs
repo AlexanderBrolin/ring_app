@@ -104,8 +104,21 @@ namespace Ring.Simulation.Visibility
             }
         }
 
-        /// Decides whether `ev` reaches `observerIndex`, and — when it does —
-        /// the position to deliver it with (spec §3.7, Р28).
+        /// Decides whether `ev` reaches a connection, and — when it does — the
+        /// position to deliver it with (spec §3.7, Р28).
+        ///
+        /// TWO INDICES, TWO ROLES (Task 42b, carryover-t28.md §5). `identityIndex`
+        /// is WHO this connection is — it feeds the `Owner` channel and the
+        /// own-death carve-out, both privacy/identity questions that must not
+        /// move just because the connection is spectating someone else.
+        /// `viewpointIndex` is WHERE it looks from — it feeds the Audible
+        /// channel's hearing-distance check (the one place inside this method
+        /// that reads a live position rather than trusting `observerSet`). The
+        /// two agree while a connection watches its own body and diverge only
+        /// under spectating (Р70/Р88, Stage 2 Task 42a). `observerSet` itself
+        /// is untouched by this split — it is the caller's responsibility to
+        /// have computed it from `viewpointIndex` already (`VisibilitySystem.
+        /// Compute`), positional semantics living entirely in the set.
         ///
         /// `observerSet` must be the set from the tick in which the event's
         /// SUBJECT actually exists, and which tick that is depends ON THE KIND
@@ -133,8 +146,9 @@ namespace Ring.Simulation.Visibility
         /// check `ChannelFor(ev.Kind)` for `None` BEFORE calling this method:
         /// a None-channel kind makes this throw rather than silently
         /// deciding anything (see the DeliveryChannel.None case below).
-        public static bool ShouldDeliver(in SimEvent ev, int observerIndex, SimulationWorld w,
-            VisibilitySet observerSet, in VisibilitySimConfig cfg, out float2 deliveredPos)
+        public static bool ShouldDeliver(in SimEvent ev, int identityIndex, int viewpointIndex,
+            SimulationWorld w, VisibilitySet observerSet, in VisibilitySimConfig cfg,
+            out float2 deliveredPos)
         {
             switch (ChannelFor(ev.Kind))
             {
@@ -152,7 +166,7 @@ namespace Ring.Simulation.Visibility
                     // assembler pattern, Task 28) another player's EXACT
                     // position on every refusal, which is precisely the
                     // private feedback this channel exists to keep private.
-                    bool isOwner = observerIndex == ev.PlayerIndex;
+                    bool isOwner = identityIndex == ev.PlayerIndex;
                     deliveredPos = isOwner ? ev.Pos : default;
                     return isOwner;
                 }
@@ -177,7 +191,7 @@ namespace Ring.Simulation.Visibility
                     // PlayerDied alone: PlayerDamaged/MobSpawned/MobDied all
                     // go through the plain visibility gate below with no
                     // owner carve-out.
-                    if (ev.Kind == SimEventKind.PlayerDied && observerIndex == ev.PlayerIndex)
+                    if (ev.Kind == SimEventKind.PlayerDied && identityIndex == ev.PlayerIndex)
                     {
                         deliveredPos = ev.Pos;
                         return true;
@@ -210,12 +224,18 @@ namespace Ring.Simulation.Visibility
                         deliveredPos = ev.Pos;
                         return true;
                     }
-                    // Not visible: falls back to hearing, over the SAME
-                    // observer position VisibilitySystem.Compute itself reads
-                    // (a plain PlayerAt — no Alive gate, so a dead observer,
-                    // e.g. spectating, resolves exactly the same way, spec
-                    // rule Р70).
-                    float2 observerPos = w.PlayerAt(observerIndex).Pos;
+                    // Not visible: falls back to hearing, over the VIEWPOINT's
+                    // own position (Task 42b) — the SAME position
+                    // VisibilitySystem.Compute itself reads to build
+                    // `observerSet` (a plain PlayerAt — no Alive gate, so a
+                    // dead observer's viewpoint, e.g. spectating, resolves
+                    // exactly the same way, spec rule Р70). Before Task 42b
+                    // this read `identityIndex` instead, which agreed with
+                    // `viewpointIndex` for every caller that existed at the
+                    // time (spectating did not yet split them) and silently
+                    // stopped agreeing the moment it could — see this class's
+                    // own two-indices paragraph above.
+                    float2 observerPos = w.PlayerAt(viewpointIndex).Pos;
                     if (VisibilitySystem.IsAudible(observerPos, ev.Pos, in cfg))
                     {
                         deliveredPos = VisibilitySystem.QuantizeAudiblePos(ev.Pos, in cfg);

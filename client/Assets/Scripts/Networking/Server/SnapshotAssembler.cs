@@ -61,22 +61,26 @@ namespace Ring.Networking.Server
     /// than worked around: the world was born this instant and nobody was there
     /// to watch.
     ///
-    /// IDENTITY AND VIEWPOINT ARE TWO PARAMETERS (carryover-t28.md §5).
-    /// `EventRelevance.ShouldDeliver`'s single `observerIndex` carries two
-    /// roles: WHO this connection is (the `Owner` channel, the own-death
-    /// carve-out) and WHERE it looks from. Spectating (Р70/Р88) splits them.
-    /// So `identityIndex` is what reaches `ShouldDeliver`, while the visibility
-    /// sets are computed from `viewpointIndex` — positional semantics live
-    /// entirely in the set. KNOWN LIMIT: the seam's own `Audible` branch reads
-    /// `w.PlayerAt(observerIndex).Pos` for the hearing distance, so while
-    /// spectating it measures earshot from the IDENTITY's body (a corpse)
-    /// rather than the viewpoint's. Stage 2 Task 42a is the task that makes
-    /// the two indices diverge at all (`MatchServer.OnSpectateRequest` can
-    /// now move a slot's `viewpointIndex` away from its `identityIndex`) —
-    /// the limit above is REAL as of that task, not merely theoretical
-    /// anymore, and it stays open until Task 42b folds `observerIndex` into
-    /// two separate parameters the way this class's own `identityIndex`/
-    /// `viewpointIndex` split already models.
+    /// IDENTITY AND VIEWPOINT ARE TWO PARAMETERS (carryover-t28.md §5, LIMIT
+    /// CLOSED BY TASK 42b). `EventRelevance.ShouldDeliver` takes
+    /// `identityIndex` (WHO this connection is — the `Owner` channel, the
+    /// own-death carve-out) and `viewpointIndex` (WHERE it looks from — the
+    /// `Audible` branch's own hearing-distance read) as two SEPARATE required
+    /// parameters. Spectating (Р70/Р88) is what makes them diverge at all:
+    /// Stage 2 Task 42a is the task that first let `MatchServer.
+    /// OnSpectateRequest` move a slot's `viewpointIndex` away from its
+    /// `identityIndex`, while the visibility sets this class computes were
+    /// already keyed on `viewpointIndex` from that same task on (`BuildFor`
+    /// below). WAS: until Task 42b, the seam still took a single
+    /// `observerIndex` for both roles, so its `Audible` branch measured
+    /// earshot from the IDENTITY's body (a corpse, while spectating) instead
+    /// of the viewpoint's — a real divergence from Task 42a onward, not merely
+    /// theoretical. NOW: `observerIndex` is folded into the two parameters
+    /// this class's own `identityIndex`/`viewpointIndex` split already
+    /// modeled, and the seam's hearing read takes `viewpointIndex` too (Task
+    /// 42b, one line). Positional semantics still live entirely in the
+    /// visibility SET for the `Visible` channel — only the `Audible` branch's
+    /// own direct position read was ever affected.
     ///
     /// THE BUDGET IS DECIDED BEFORE THE FIRST BYTE (task-28-brief §2.8). The
     /// header is written first and its `flags` byte cannot be patched
@@ -532,7 +536,7 @@ namespace Ring.Networking.Server
         /// it looks from. The two start equal and stay that way until this
         /// connection's own player dies and spectates someone else (Stage 2
         /// Task 42a, `MatchServer.OnSpectateRequest`) — see this class's own
-        /// doc for the split and its one known limit, still open.
+        /// doc for the split, closed by Task 42b.
         public int BuildFor(int connection, int identityIndex, int viewpointIndex, ushort epoch)
         {
             if (_world == null)
@@ -554,7 +558,7 @@ namespace Ring.Networking.Server
             _viewpointPos = _world.PlayerAt(viewpointIndex).Pos;
 
             SweepExpiredSubscriptions(c);
-            RouteEvents(c, identityIndex);
+            RouteEvents(c, identityIndex, viewpointIndex);
             return WriteFrame(c, identityIndex, _viewpointPos, epoch);
         }
 
@@ -675,7 +679,7 @@ namespace Ring.Networking.Server
 
         // ---- per-connection routing --------------------------------------
 
-        void RouteEvents(Connection c, int identityIndex)
+        void RouteEvents(Connection c, int identityIndex, int viewpointIndex)
         {
             // Pairing state for the ShotHeard suppression below. The two halves
             // of one shot are always adjacent (BeginTick emits primary then
@@ -730,10 +734,15 @@ namespace Ring.Networking.Server
                         // routed to channel `None`, because one sim event feeds
                         // two wire events with different rules, and that seam
                         // throws rather than guess. Earshot is measured from
-                        // the IDENTITY's own position — the same choice the
-                        // seam's own Audible branch makes, and the same known
-                        // spectating limit (see the class doc).
-                        float2 observerPos = _world.PlayerAt(identityIndex).Pos;
+                        // the VIEWPOINT's own position (Task 42b) — reusing
+                        // `_viewpointPos`, already computed once in `BuildFor`
+                        // above `RouteEvents`'s own call, rather than a second
+                        // `PlayerAt` for the same number (AGENT.md rule 2).
+                        // Before Task 42b this read the IDENTITY's position
+                        // instead, the same limit the seam's own Audible
+                        // branch carried and Task 42b closes in both places
+                        // (see the class doc).
+                        float2 observerPos = _viewpointPos;
                         if (!VisibilitySystem.IsAudible(observerPos, we.Source.Pos, in _cfg.Visibility))
                             break;
 
@@ -792,7 +801,7 @@ namespace Ring.Networking.Server
                         // outcome. Its price, sanctioned by that same table's
                         // wording, is that "someone died over there" reaches an
                         // observer who cannot see the target.
-                        if (EventRelevance.ShouldDeliver(in we.Source, identityIndex, _world,
+                        if (EventRelevance.ShouldDeliver(in we.Source, identityIndex, viewpointIndex, _world,
                                 c.Previous, in _cfg.Visibility, out float2 seen))
                         {
                             Enqueue(c, i, seen);
@@ -808,7 +817,7 @@ namespace Ring.Networking.Server
                     {
                         // Every remaining kind goes through the seam, against
                         // the CURRENT tick's set.
-                        if (!EventRelevance.ShouldDeliver(in we.Source, identityIndex, _world,
+                        if (!EventRelevance.ShouldDeliver(in we.Source, identityIndex, viewpointIndex, _world,
                                 c.Current, in _cfg.Visibility, out float2 pos))
                             break;
 
