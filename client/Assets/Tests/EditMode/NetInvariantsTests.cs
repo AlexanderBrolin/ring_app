@@ -294,8 +294,15 @@ namespace Ring.Simulation.Tests
             // its own invariant.
             int sceneTickRate = net.TickRate * 2;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), sceneTickRate),
-                "Net.TickRate");
+            string[] errors = NetInvariants.Validate(net, in sim, FittingMtu(net), sceneTickRate);
+            AssertOnly(errors, "Net.TickRate");
+
+            // Ф8 gate, re-review M-1: invariants #6 and #8 now share a subject,
+            // so a prefix assert alone cannot tell which of the two answered —
+            // and the gate's own requirement was that the message name BOTH
+            // numbers. Without the line below, deleting the TimeManager half of
+            // the message leaves this suite green.
+            StringAssert.Contains("TimeManager.TickRate", errors[0]);
         }
 
         [Test]

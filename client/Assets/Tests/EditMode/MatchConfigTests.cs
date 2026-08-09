@@ -452,13 +452,18 @@ namespace Ring.Simulation.Tests
         [Test]
         public void PlayersArray_NullElement_IsRefusedNamingItsIndex()
         {
-            // Ф8 gate W-2 in this test's own numbering scheme, gate W-7
-            // (1/2) in the fixwave brief's: `Parse`'s per-entry loop reads
-            // `playersJson[i]?.playerId` — the null-conditional exists
-            // specifically for a JSON array element that is the literal
-            // `null` (UnityEngine.JsonUtility represents that as a `null`
-            // C# reference in the deserialized array), and nothing in this
-            // file had ever fed it one before.
+            // Ф8 gate, fixwave W-7: what this fixture actually pins is the
+            // EMPTY-`playerId` refusal, and the phase gate's re-review is why
+            // that is said plainly here. An earlier version of this comment
+            // claimed the null-conditional in `Parse`'s per-entry loop guards
+            // a literal `null` array element, which UnityEngine.JsonUtility
+            // supposedly represents as a null C# reference — MEASURED FALSE by
+            // this wave's own mutation run: the serializer substitutes a
+            // default-initialised instance whose `playerId` is null, so the
+            // refusal below comes from the emptiness check, not from `?.`.
+            // The null-conditional stays as one token of insurance against a
+            // future serializer that behaves otherwise; it is not the live
+            // path, and no test can reach it today.
             string json = Json(maxPlayers: "2",
                 players: "[null,{\"playerId\":\"p2\",\"joinToken\":\"t2\"}]");
             var refused = Parse(json);

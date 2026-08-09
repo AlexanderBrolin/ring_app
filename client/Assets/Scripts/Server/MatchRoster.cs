@@ -125,9 +125,13 @@ namespace Ring.Server
                 throw new ArgumentOutOfRangeException(nameof(config), config.MaxPlayers,
                     "MatchRoster: MatchConfig.MaxPlayers must be >= 1.");
             }
-            // Ф8 gate W-6: the SAME degenerate-handle guard `MatchConfigLoader.
-            // Parse` already applies (its own "non-empty players[]" refusal) —
-            // moved down to where the decision actually lives. `ShouldStart`'s
+            // Ф8 gate W-6: the same degenerate-roster rule `MatchConfigLoader.
+            // Parse` already applies, RESTATED here rather than moved — the
+            // loader's own refusal stays where it is, and its test with it.
+            // Two homes, two contracts: the loader answers "is this
+            // configuration well-formed" with a VALUE, this constructor answers
+            // "may this object exist at all" with a throw, and a caller that
+            // never goes through the loader reaches only the second. `ShouldStart`'s
             // WaitForAll arm reads `_connectedCount >= _config.Players.Length`,
             // which is true on the FIRST connection when `Players.Length == 0`
             // (`0 >= 0` is already true before anyone joins, and every count

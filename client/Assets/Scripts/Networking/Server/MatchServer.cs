@@ -450,6 +450,13 @@ namespace Ring.Networking.Server
         /// arrays are required, non-empty and the same length. Calls
         /// `Configure` on every controller (I3.1) — a match this method
         /// returns from is therefore never silently inert.
+        ///
+        /// THE SECOND AND EVERY LATER START OF THIS INSTANCE MUST CARRY THE
+        /// SAME ROSTER LENGTH as the first (Ф8 gate, W-13; §6k Р164). The guard
+        /// lives in `ValidateRoster` and fires whether the caller came through
+        /// `RestartMatch` or called this method again directly: a shorter or
+        /// longer roster would silently rename players against the slot
+        /// indices the join-phase handshake already promised them.
         public void StartMatch(long seed, in SimConfig simConfig, ushort epoch,
             NetworkConnection[] connections, PlayerNetworkController[] controllers)
         {
@@ -718,8 +725,9 @@ namespace Ring.Networking.Server
             if (lastPlayerCount >= 0 && controllers.Length != lastPlayerCount)
             {
                 throw new ArgumentException(
-                    $"MatchServer: a restart must field the same player count as the previous "
-                    + $"match (got {controllers.Length}, previous match had {lastPlayerCount}) — a "
+                    $"MatchServer: a restart — or any repeat start of this instance — must "
+                    + $"field the same player count as the previous match (got {controllers.Length}, "
+                    + $"previous match had {lastPlayerCount}) — a "
                     + "shorter or longer roster would silently rename players against the slot "
                     + "indices already promised to clients in the join-phase handshake.",
                     nameof(controllers));
@@ -1090,7 +1098,24 @@ namespace Ring.Networking.Server
                 // does close, cheaply, is the simpler half — a nested
                 // `StopMatch` with no restart — rather than calling
                 // `EndMatch` a second time on an instance already stopped.
-                if (reason != MatchEndReason.None && _running) EndMatch(reason);
+                if (reason != MatchEndReason.None && _running)
+                {
+                    EndMatch(reason);
+                }
+                else if (reason != MatchEndReason.None)
+                {
+                    // Ф8 gate, re-review M-6: the `_running` half above turns a
+                    // nested StopMatch into a silent no-op, and silence is what
+                    // this class refuses everywhere else. The state is
+                    // unreachable on any legal path (OnPostTick returns at its
+                    // first line when no match is running), so reaching it means
+                    // another subscriber stopped the match from inside this very
+                    // tick — worth a line no operator can miss rather than a match
+                    // that simply stops reporting.
+                    _nm.LogError("MatchServer: the match ended mid-tick for " + reason
+                        + ", but something else had already stopped it in this same tick — "
+                        + "no MatchEndedNet was sent and Outcome stays None.");
+                }
             }
             finally
             {

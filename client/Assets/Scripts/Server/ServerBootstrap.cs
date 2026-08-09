@@ -873,6 +873,11 @@ namespace Ring.Server
             }
             catch (Exception ex)
             {
+                // Ф8 gate, re-review M-5: this is the one catch in the boot
+                // path wrapping ENGINE and package code rather than our own, so
+                // `ex.Message` alone would read "Object reference not set…" and
+                // name nothing diagnosable. The full exception goes out first.
+                Debug.LogException(ex);
                 Fail(ExitBadConfig, "player spawn failed — " + ex.Message);
                 return;
             }
