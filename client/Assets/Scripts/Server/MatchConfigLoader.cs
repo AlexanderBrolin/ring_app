@@ -241,7 +241,7 @@ namespace Ring.Server
                 countdownSeconds = lo.countdownSeconds;
                 if (countdownSeconds < 0)
                     return Refuse($"countdownSeconds must be >= 0 (got {countdownSeconds}).");
-                // NO UPPER BOUND HERE, DELIBERATELY (spec §2.5). How long a
+                // NO UPPER BOUND HERE, DELIBERATELY (brief §2.5). How long a
                 // countdown may run is not this field's concern — the actual
                 // ceiling on "how long we wait for players" is
                 // `NetConfig.JoinTimeoutSeconds` (Task 40's exit code 3, a

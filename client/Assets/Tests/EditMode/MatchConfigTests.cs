@@ -358,10 +358,17 @@ namespace Ring.Simulation.Tests
             // zero-length connections array.
             var refused = Parse(Json(startMode: "\"waitForAll\"", players: "[]"));
             AssertRefused(refused);
-            // m4, fix-round 1: pin the FIELD in the message, not just the
-            // flag — a mutation that always refuses would still pass a
-            // flag-only assertion.
-            StringAssert.Contains("waitForAll", refused.Error);
+            // m4 (fix-round 1) / N-1 (fix-round 2): pin the FIELD in the
+            // message, not just the flag — a mutation that always refuses
+            // would still pass a flag-only assertion. "waitForAll" alone
+            // does NOT discriminate: it also appears in the UNRELATED
+            // "startMode must be exactly ..." refusal (MatchConfigLoader.cs,
+            // the startMode-validity check) — an off-target refusal from
+            // that OTHER check would pass a "waitForAll"-only assertion too.
+            // "non-empty players[]" appears in exactly one Refuse(...) call
+            // in the whole file (grepped, fix-round 2 N-1) — the degenerate-
+            // handle guard this test actually targets.
+            StringAssert.Contains("non-empty players[]", refused.Error);
             // Witness: countdown with an empty roster is fine — it's the dev
             // default's own shape.
             AssertAccepted(Parse(Json(startMode: "\"countdown\"", players: "[]")));

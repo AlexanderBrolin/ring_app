@@ -4,7 +4,7 @@ namespace Ring.Server
 {
     /// Stage 2 Task 38 (spec §3.10, plan Т38): how a match starts — mirrors the
     /// two JSON string values `MatchConfigLoader` accepts for `startMode`
-    /// ("waitForAll"/"countdown"), never any other casing (spec §2.5's strict
+    /// ("waitForAll"/"countdown"), never any other casing (brief §2.5's strict
     /// ordinal comparison — a machine-generated config from Э5's meta should
     /// never silently tolerate a typo).
     public enum MatchStartMode : byte

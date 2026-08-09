@@ -66,7 +66,7 @@ namespace Ring.Server
     /// `Start()` REQUIRES AT LEAST ONE CONNECTION (fix-round 1, m5). A
     /// zero-connection `Start()` would freeze `PlayerCount` at `0` and hand
     /// that silently down two more layers to `MatchServer.StartMatch`, which
-    /// throws on an empty `connections` array (`MatchServer.cs:268-272`) —
+    /// throws on an empty `connections` array (`MatchServer.cs:269-273`) —
     /// this class is where that "nobody ever joined" state is still
     /// diagnosable as ITS OWN problem, not a stack trace from an unrelated
     /// class two calls later.
@@ -83,8 +83,16 @@ namespace Ring.Server
     /// caller could otherwise reach a broken instance: a `null` `Players`
     /// (only possible via `default(MatchConfig)`, e.g. blindly wrapping a
     /// refused `MatchConfigLoadResult.Config` — see `MatchConfig`'s own doc)
-    /// and a non-positive `MaxPlayers` (which `new string[MaxPlayers]` below
-    /// would otherwise turn into a bare, unexplained `OverflowException`).
+    /// and a non-positive `MaxPlayers`. THE TWO NON-POSITIVE CASES FAIL
+    /// DIFFERENTLY WITHOUT THIS GUARD (fix-round 2, N-2 — an earlier draft
+    /// of this doc wrongly claimed BOTH throw): a NEGATIVE value makes
+    /// `new string[MaxPlayers]` below throw a bare, unexplained
+    /// `OverflowException`; `MaxPlayers == 0` throws NOTHING — `new
+    /// string[0]` is a perfectly legal empty allocation — and instead
+    /// produces a silently inert roster where every `TryJoin` reads
+    /// `_connectedCount (0) >= _config.MaxPlayers (0)` and returns
+    /// `MatchFull` forever, no player ever able to join. The guard below
+    /// closes both failure shapes with the same loud, named exception.
     public sealed class MatchRoster
     {
         readonly MatchConfig _config;
@@ -221,7 +229,7 @@ namespace Ring.Server
             // Fix-round 1, m5: a zero-connection Start() would freeze
             // PlayerCount at 0 and let that reach MatchServer.StartMatch two
             // layers down, which throws on an empty connections array
-            // (MatchServer.cs:268-272) — diagnosed here instead, where the
+            // (MatchServer.cs:269-273) — diagnosed here instead, where the
             // "nobody ever joined" state is still this class's own problem.
             if (_connectedCount == 0)
             {
