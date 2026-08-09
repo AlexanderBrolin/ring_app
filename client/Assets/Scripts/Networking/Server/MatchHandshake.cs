@@ -375,12 +375,23 @@ namespace Ring.Networking.Server
                 if (accepted)
                 {
                     // No slot-range check here (fix-round 2, K-1/N-1 ruling
-                    // — fix-round 1 had one). `(byte)slot` below is
-                    // PROVABLY safe: the constructor's `SlotsFitOnTheWire`
-                    // precondition already guarantees every slot `TryJoin`
-                    // could ever produce fits, so a per-join runtime check
-                    // would only re-verify arithmetic that construction
-                    // already settled once for the whole instance.
+                    // — fix-round 1 had one). `(byte)slot` below is safe
+                    // PROVIDED the constructor was handed the same
+                    // maxPlayers the join delegate's roster was actually
+                    // built with (contract §7 of task-39-report.md;
+                    // fix-round 3, NNF-2 — corrects an earlier "PROVABLY
+                    // safe" overclaim here). That is CONTRACTUAL, not
+                    // something this method — or the class — can verify:
+                    // `maxPlayers` is not even kept as a field (see the
+                    // constructor), so there is no way to cross-check it
+                    // against whatever roster `_tryJoin` actually consults.
+                    // `SlotsFitOnTheWire`'s own doc says the same thing
+                    // from the other side ("re-states the same bound
+                    // independently rather than trusting a caller who
+                    // might not go through MatchRoster at all") — a
+                    // mismatched maxPlayers (Task 41 passing one number
+                    // here and building the roster with another) would
+                    // silently alias slots 256+ right back, unnoticed.
 
                     // Fix-round 1, I-3: called BEFORE the welcome send —
                     // see the class doc's own paragraph on this callback

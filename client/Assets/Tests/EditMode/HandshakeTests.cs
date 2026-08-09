@@ -20,10 +20,11 @@ namespace Ring.Simulation.Tests
     ///
     /// Every negative test carries a positive witness beside it (brief
     /// §2.8), so a mutation that always refuses (or always accepts) cannot
-    /// survive unnoticed — see task-39-report.md's mutation table (M-1..M-12:
-    /// M-8..M-11 added fix-round 1, M-12 added fix-round 2, replacing M-9
-    /// after the fix-round 2 K-1/N-1 ruling deleted the code M-9 targeted)
-    /// for the full sweep this file was written against.
+    /// survive unnoticed — see task-39-report.md's mutation table (M-1..M-13:
+    /// M-8..M-11 added fix-round 1, M-12 added fix-round 2 (replacing M-9
+    /// after the fix-round 2 K-1/N-1 ruling deleted the code M-9 targeted),
+    /// M-13 added fix-round 3 (NNF-1, upper-bound negative witness)) for the
+    /// full sweep this file was written against.
     public class HandshakeTests
     {
         // Two-source-of-numbers convention (Global Constraints): the
@@ -196,6 +197,13 @@ namespace Ring.Simulation.Tests
             // still valid, this is the last maxPlayers that fits.
             Assert.IsTrue(HandshakeDecision.SlotsFitOnTheWire(256),
                 "256 seats (highest slot 255 == byte.MaxValue) is the last value that still fits.");
+            // Fix-round 3, NNF-1: the negative witness 256's own positive
+            // result needs — the upper bound is the ONE reason this
+            // function exists (narrowing to a byte), and without a value
+            // just past it the bound itself is unpinned: neither raising
+            // it by one nor deleting it changes any assertion above.
+            Assert.IsFalse(HandshakeDecision.SlotsFitOnTheWire(257),
+                "257 seats would need slot 256, one past byte.MaxValue.");
         }
 
         // ------------------------------------------------------------------
