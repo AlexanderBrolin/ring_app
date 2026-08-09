@@ -14,25 +14,31 @@ namespace Ring.Simulation.Tests
     /// match's own life cycle — the epoch it is minted under, the two ways it
     /// can end, and the five client-side seams a restart has to clear.
     ///
-    /// FOUR SUBJECTS, ONE FILE, BECAUSE THEY ARE ONE CONTRACT.
-    /// `MatchEpochCounter` (`Ring.Server`), `MatchEndPolicy`
-    /// (`Ring.Networking.Server`), the two wire structs
-    /// (`Ring.Networking.Protocol`) and `ClientMatchReset`
+    /// FIVE SUBJECTS, ONE FILE, BECAUSE THEY ARE ONE CONTRACT.
+    /// `MatchEpochCounter` (`Ring.Server`), `MatchEndPolicy` and
+    /// `MatchServer.EndedNetFor` (`Ring.Networking.Server`), the two wire
+    /// structs (`Ring.Networking.Protocol`) and `ClientMatchReset`
     /// (`Ring.Networking.Client`) live in three namespaces and two assemblies,
     /// but a match end, a restart and an epoch are one story: the epoch names
     /// the match, the policy decides when it is over, the structs carry both
-    /// facts to the client, and the reset is what makes the client able to
-    /// believe the next one.
+    /// facts to the client, the copy fills them in, and the reset is what
+    /// makes the client able to believe the next one.
     ///
-    /// `MatchServer` ITSELF IS NOT UNIT-TESTED HERE, ON PURPOSE — the same
-    /// deliberate split `SnapshotAssembler`, `PlayerNetworkController` and
-    /// `MatchHandshake` already carry in their own class docs (and the same
-    /// one `HandshakeTests` records for Task 39): the end-of-match send, the
-    /// restart broadcast and the disconnect-kill pass are FishNet wiring
-    /// around a live `NetworkManager`, which EditMode cannot raise. R-COMPILE
-    /// and, eventually, the two-process milestone В1 are that proof instead.
-    /// Everything those three code paths DECIDE lives in `MatchEndPolicy`
-    /// below and is pinned here directly.
+    /// `MatchServer`'s FISHNET WIRING IS NOT UNIT-TESTED HERE, ON PURPOSE —
+    /// the same deliberate split `SnapshotAssembler`, `PlayerNetworkController`
+    /// and `MatchHandshake` already carry in their own class docs (and the
+    /// same one `HandshakeTests` records for Task 39): the end-of-match send,
+    /// the restart broadcast and the disconnect-kill pass need a live
+    /// `NetworkManager`, which EditMode cannot raise. R-COMPILE and,
+    /// eventually, the two-process milestone В1 are that proof instead.
+    ///
+    /// WHAT IS LIFTED OUT OF THAT WIRING IS TESTED HERE, THOUGH — the split is
+    /// about the network, not about the file a method happens to sit in.
+    /// Everything those code paths DECIDE lives in `MatchEndPolicy`, and
+    /// `MatchServer.EndedNetFor` — a pure summary-to-message copy with no
+    /// FishNet in it — is `internal` precisely so a test can reach it
+    /// (fix-round 1, I-5; `EffectiveInputBatch` in that same file set the
+    /// precedent).
     ///
     /// EVERY RESET TEST OBSERVES ITS OWN SEAM THROUGH THAT SEAM'S OWN PUBLIC
     /// BEHAVIOR, and carries a positive witness that the behavior it asserts
@@ -387,6 +393,30 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, clock.RenderTick,
                 "the new match starts at tick 0, so the clock must not still read the old "
                 + "match's render tick — this is the 'snap on MatchEpoch change' of spec §3.9");
+
+            // Clearing is only half the seam: the clock must now TRACK THE
+            // EPOCH IT WAS GIVEN. A reset that forwarded the wrong epoch (a
+            // zero, or the epoch that just ended) clears exactly the same
+            // state and passes every assertion above — and then the clock
+            // ignores every frame of the new match forever, because
+            // `OnSnapshot` refuses anything that is not the tracked epoch.
+            // Both halves are checked below: the old epoch must not start it,
+            // the new one must.
+            clock.OnSnapshot(500, OldEpoch);
+            clock.OnSnapshot(501, OldEpoch);
+            Assert.IsFalse(clock.Started,
+                "frames of the FINISHED match's epoch must be ignored after the reset");
+
+            clock.OnSnapshot(10, NewEpoch);
+            clock.OnSnapshot(11, NewEpoch);
+            Assert.IsTrue(clock.Started,
+                "two distinct frames of the NEW epoch must start the clock — if they do not, "
+                + "the reset handed the clock an epoch nobody is sending");
+
+            clock.Advance(SimulationWorld.TickDt, in timings);
+            Assert.AreEqual(11 - timings.InterpBufferTicks, clock.RenderTick,
+                "and the first frame after that start places the clock on the NEW match's "
+                + "own target");
         }
 
         [Test]
@@ -500,6 +530,60 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(t.IsValueType,
                 $"{t.Name} must be a struct — FishNet's Broadcast<T> is constrained to structs.");
             Assert.IsTrue(typeof(IBroadcast).IsAssignableFrom(t), $"{t.Name} must implement IBroadcast.");
+        }
+
+        [Test]
+        public void EndedNetFor_CopiesEveryStat()
+        {
+            // `MatchServer.EndedNetFor` is a pure function of a summary and a
+            // slot — no FishNet, no world, no clock — and eleven same-typed
+            // assignments in a row are exactly the shape where a swapped pair
+            // compiles, runs, and misreports a number for the rest of the
+            // project's life. Every value below is DISTINCT for that reason: a
+            // fixture with repeated numbers cannot tell a swap from a copy.
+            var mine = new MatchStats
+            {
+                Kills = 11,
+                HeadshotKills = 12,
+                ShotsFired = 13,
+                ShotsHit = 14,
+                DashesUsed = 15,
+                SlidesUsed = 16,
+                DeathTick = 17,
+                DamageTaken = 18.5f,
+            };
+            // The other slot carries different numbers again, so a message
+            // built for the wrong player is as visible as a swapped field.
+            var other = new MatchStats { Kills = 91, HeadshotKills = 92, ShotsFired = 93 };
+            var world = new WorldStats
+            {
+                WavesCleared = 21,
+                MobSpawnsSkipped = 22,
+                ProjectileSpawnsSkipped = 23,
+            };
+
+            var summary = new MatchSummary(MatchEndReason.MaxDurationReached, NewEpoch,
+                finalTick: 4242, in world, droppedEvents: 31,
+                new[] { other, mine }, new[] { new NetStats(), new NetStats() });
+
+            MatchEndedNet net = MatchServer.EndedNetFor(in summary, slot: 1);
+
+            Assert.AreEqual((byte)MatchEndReason.MaxDurationReached, net.Reason, "Reason");
+            Assert.AreEqual(NewEpoch, net.MatchEpoch, "MatchEpoch");
+            Assert.AreEqual(4242u, net.FinalTick, "FinalTick");
+
+            Assert.AreEqual(11, net.Kills, "Kills");
+            Assert.AreEqual(12, net.HeadshotKills, "HeadshotKills");
+            Assert.AreEqual(13, net.ShotsFired, "ShotsFired");
+            Assert.AreEqual(14, net.ShotsHit, "ShotsHit");
+            Assert.AreEqual(15, net.DashesUsed, "DashesUsed");
+            Assert.AreEqual(16, net.SlidesUsed, "SlidesUsed");
+            Assert.AreEqual(17, net.DeathTick, "DeathTick");
+            Assert.AreEqual(18.5f, net.DamageTaken, "DamageTaken");
+
+            Assert.AreEqual(21, net.WavesCleared, "WavesCleared");
+            Assert.AreEqual(22, net.MobSpawnsSkipped, "MobSpawnsSkipped");
+            Assert.AreEqual(23, net.ProjectileSpawnsSkipped, "ProjectileSpawnsSkipped");
         }
 
         [Test]

@@ -28,10 +28,14 @@ namespace Ring.Server
     /// live epoch.
     ///
     /// THE WRAP IS SAFE BECAUSE THE CLIENT RULE IS "DIFFERENT", NOT "GREATER"
-    /// (Р163). Every epoch-aware client seam compares for INEQUALITY
-    /// (`RenderClock.ResetForEpoch`'s own `epoch != _epoch`, `SnapshotQueue.
-    /// Admit`'s `ForeignEpoch` branch), so an epoch number that has come back
-    /// around after 65535 matches is as good as any other. Nothing anywhere
+    /// (Р163). Every place a client compares an epoch at all is an ARRIVAL
+    /// path, and every one of them tests INEQUALITY: `SnapshotQueue.Admit`
+    /// answers `ForeignEpoch` on `epoch != _epoch`, `RenderClock.OnSnapshot`
+    /// returns on the same test, and both of `EventDedup`'s questions open
+    /// with it. The RESETS themselves compare nothing — they assign the new
+    /// epoch unconditionally, which is what makes a repeated lifecycle message
+    /// a full reset rather than a no-op. So an epoch number that has come back
+    /// around after 65535 matches is as good as any other: nothing anywhere
     /// orders two epochs against each other.
     ///
     /// MINT BEFORE THE PORT OPENS (Р163в) — a caller obligation this class

@@ -7,11 +7,13 @@ namespace Ring.Networking.Protocol
     /// Р44/Р60, §6k Р164).
     ///
     /// THIS MESSAGE IS THE ONLY THING THAT CARRIES THE RIGHT TO RESET. The
-    /// client's four epoch-aware seams (`EventDedup`, `SnapshotQueue`,
-    /// `RenderClock`, and through them the rest) each track exactly one epoch
-    /// and REFUSE a frame naming any other — `SnapshotQueue.Admit` answers
-    /// `ForeignEpoch` and changes nothing. Only `Reset`/`ResetForEpoch`
-    /// switches the tracked epoch, and this is the message that calls for it
+    /// client's three epoch-aware seams — `EventDedup`, `SnapshotQueue` and
+    /// `RenderClock` — each track exactly one epoch and REFUSE a frame naming
+    /// any other (`SnapshotQueue.Admit` answers `ForeignEpoch` and changes
+    /// nothing). The other two per-match seams `ClientMatchReset` clears
+    /// (`GhostProjectiles`, `StalePolicy`) track no epoch at all and are
+    /// cleared outright. Only `Reset`/`ResetForEpoch` switches the tracked
+    /// epoch, and this is the message that calls for it
     /// (`ClientMatchReset`). That is why the server sends this BEFORE its
     /// first snapshot of the new epoch: a frame that arrives ahead of the
     /// right to reset is discarded, and the few opening frames a `Reliable`

@@ -11,15 +11,32 @@ namespace Ring.Networking.Client
     /// WHY ONE HANDLER AND NOT FIVE CALL SITES. The five objects below each
     /// carry a piece of "where this client is in the match", and each of them
     /// fails SILENTLY when it is the one that was forgotten — no exception, no
-    /// log line, just one guarantee quietly dead for the whole next match: an
-    /// unreset `EventDedup` refuses every event of the new epoch (its
-    /// last-applied tick is still in the future); an unreset `SnapshotQueue`
-    /// refuses the frames themselves as `ForeignEpoch`; an unreset
-    /// `RenderClock` keeps running on the previous match's tick numbers; an
-    /// unreset `GhostProjectiles` carries the previous match's tracers into
-    /// the new one; and an unreset `StalePolicy` — by its own class doc, which
-    /// spells this failure out at length — reads the whole world as `Stale`
-    /// while the new match's render tick trails its stale applied-frame clock.
+    /// log line, just one guarantee quietly dead for the whole next match:
+    ///   * an unreset `EventDedup` still tracks the PREVIOUS epoch, and its
+    ///     epoch test opens both of its questions, so every frame of the new
+    ///     match is refused for its state AND its events. (Its stale
+    ///     `_lastAppliedTick` is a second, independent refusal — but of state
+    ///     only, and only in the same-epoch case: `TryAcceptEvent` never reads
+    ///     that field at all.)
+    ///   * an unreset `SnapshotQueue` refuses the frames themselves as
+    ///     `ForeignEpoch`;
+    ///   * an unreset `RenderClock` keeps running on the previous match's tick
+    ///     numbers, and ignores the new match's snapshots by the same epoch
+    ///     test;
+    ///   * an unreset `GhostProjectiles` carries the previous match's tracers
+    ///     into the new one;
+    ///   * an unreset `StalePolicy` — the one seam whose failure is NOT a
+    ///     refusal — keeps the finished match's two global clocks, and both
+    ///     of its readings then invert. `GlobalStarvation` is
+    ///     `renderTick - lastAppliedTick >= staleTicks`, and the new match's
+    ///     `renderTick` starts back near zero while `lastAppliedTick` still
+    ///     holds the old match's high value, so the subtraction stays deeply
+    ///     negative and the connection indicator NEVER lights, not even
+    ///     through genuine silence. Meanwhile `ConfirmedAbsent` is
+    ///     `lastNonTruncatedTick > lastSeenTick[id]`, and that stale, enormous
+    ///     left-hand side outranks every fresh sighting, so Р149's gate stands
+    ///     propped open from the new match's first frame and entities begin
+    ///     fading — and reach `Gone` — while they are perfectly alive.
     /// Five call sites spread across a receiver would be five chances to
     /// forget one; one call site is one.
     ///
