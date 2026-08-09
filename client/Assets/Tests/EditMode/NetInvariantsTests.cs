@@ -189,12 +189,19 @@ namespace Ring.Simulation.Tests
             SimConfig sim = TestConfigs.Default();
             // NaN passes BOTH ordinary comparisons — `NaN < 0f` and
             // `NaN > 0.10f` are each false — so a floor written as `x < 0f`
-            // would wave it through and hand RenderClock a fraction that
-            // poisons the clock arithmetic. The validator is written as
-            // `!(x >= 0f)` precisely to refuse it, and that reasoning is
-            // stated in its doc; without this test the doc would be the only
-            // thing holding it, and a refactor back to `x < 0f` would pass
-            // every other test in the suite (fix-round 1).
+            // would wave it through, and the NaN would reach the render clock,
+            // where `SlewFractionOf` reads it as "do not correct at all"
+            // (its own `!(fraction > 0f)` branch names NaN explicitly, and
+            // `RenderClockTests.HostileSlewFraction_NeverReversesTime` already
+            // pins that). NaN is therefore NOT poisonous downstream — the harm
+            // is quieter than that: a typo switches the correction OFF and
+            // nothing anywhere says so. Zero means the same thing but is a
+            // DELIBERATE mode (Р154); NaN is not a mode, so it has to be
+            // reported here, where a human still reads the message. The
+            // validator is written as `!(x >= 0f)` precisely to refuse it, and
+            // that reasoning is stated in its doc; without this test the doc
+            // would be the only thing holding it, and a refactor back to
+            // `x < 0f` would pass every other test in the suite (fix-round 1).
             net.SlewFraction = float.NaN;
 
             AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)), "Net.SlewFraction");

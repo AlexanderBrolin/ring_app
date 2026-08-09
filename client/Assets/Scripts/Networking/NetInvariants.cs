@@ -244,9 +244,11 @@ namespace Ring.Networking
             //   * every disagreement worth catching misses by orders of
             //     magnitude more than that. The realistic mistakes are large:
             //     TickRate 29 against 1f/30f misses by ~1.0, TickRate 60 by
-            //     ~30. Deliberately near misses stay caught too, though the
-            //     margin shrinks and no single floor covers them all: a TickDt
-            //     of 1f/29.6f leaves ~0.400 and 1f/29.9f only ~0.100 — still a
+            //     ~30. Near misses stay caught down to a disagreement of about
+            //     a thousandth of a tick per second, and no closer: anything
+            //     inside that is, by construction, not a disagreement this
+            //     check makes. A TickDt of 1f/29.6f leaves ~0.400 and 1f/29.9f
+            //     only ~0.100 — still a
             //     hundred times the tolerance, but the earlier claim that any
             //     non-whole rate misses "by 0.4 or more" was a false
             //     generalization and is not what makes this safe. What makes
