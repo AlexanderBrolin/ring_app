@@ -16,21 +16,27 @@ namespace Ring.Networking.Client
     /// asset at the one place it is read, and a second, weaker copy of those
     /// rules living down here would be a second answer to the same question.
     ///
-    /// ONLY THREE OF THE FOUR FIELDS ACTUALLY COME OFF THAT ASSET (fix-round
-    /// 2, W17 — an earlier draft of this doc claimed all four did).
-    /// `InterpBufferTicks`/`InterpMaxStaleTicks`/`RenderClockSnapTicks` map
-    /// straight onto `NetConfig`'s own same-named fields; `SlewFraction` has
-    /// NO counterpart there at all — `NetConfig` carries fifteen fields
-    /// (`TickRate` through `MatchMaxDurationSeconds`) and none of them is
-    /// named `SlewFraction`. Where the caller is meant to get this fourth
-    /// number from is an OPEN END, not yet decided (a code constant, or a
-    /// future `NetConfig` field validated by `NetInvariants` — Task 41/44's
-    /// call to make). Left at its C# default of `0`, `SlewFraction` does not
-    /// merely mistune the correction — it DISABLES it outright:
-    /// `RenderClock.SlewFractionOf` reads any value at or below zero as "do
-    /// not correct", and the render clock falls back to the hard snap alone
-    /// for every desync, however small. A caller that forgets to set this
-    /// field explicitly gets that silently, with nothing anywhere to catch it.
+    /// ALL FOUR FIELDS NOW COME OFF THAT ASSET (Stage 2 Task 41). This
+    /// paragraph previously said three of four, and was correct when Task 31
+    /// wrote it: `SlewFraction` had no counterpart in `NetConfig`, and Р154
+    /// left "code constant or SO field" explicitly open for Task 41/44 to
+    /// settle. Task 41 settled it in favour of a field — `NetConfig.
+    /// SlewFraction`, defaulting to 0.05, its band checked by `NetInvariants`
+    /// — so `InterpBufferTicks`/`InterpMaxStaleTicks`/`RenderClockSnapTicks`/
+    /// `SlewFraction` all map straight onto same-named `NetConfig` fields
+    /// (seventeen of them now, `TickRate` through
+    /// `MatchAbandonGraceSeconds`).
+    ///
+    /// THE HAZARD BELOW SURVIVES THAT CHANGE, so it stays written down. Left
+    /// at its C# default of `0`, this struct's `SlewFraction` does not merely
+    /// mistune the correction — it DISABLES it outright: `RenderClock.
+    /// SlewFractionOf` reads any value at or below zero as "do not correct",
+    /// and the render clock falls back to the hard snap alone for every
+    /// desync, however small. `NetInvariants` guards the ASSET, not this
+    /// struct — and it deliberately accepts 0 there, because switching slew
+    /// off is a legitimate mode (Р154). So a caller that builds a `NetTimings`
+    /// and forgets to copy this fourth field still gets a silently
+    /// snap-only clock, with nothing anywhere to catch it.
     ///
     /// NO TICK RATE FIELD, DELIBERATELY. Every number below is already counted
     /// in world ticks, and the one place seconds have to become ticks — the
@@ -69,9 +75,11 @@ namespace Ring.Networking.Client
 
         /// How much the render clock's rate may deviate from real time while
         /// it corrects a desync: the clock runs at `1 ± SlewFraction` instead
-        /// of jumping. Documented range 0.05..0.10 — below that a correction
-        /// takes too long to finish before the next one starts, above it the
-        /// change of pace becomes visible in animation.
+        /// of jumping. Source is `NetConfig.SlewFraction` (Task 41), whose
+        /// default is 0.05. Spec §3.9's tuning band is 0.05..0.10 — below that
+        /// a correction takes too long to finish before the next one starts,
+        /// above it the change of pace becomes visible in animation — while
+        /// exactly 0 is the separate, legal "do not slew at all" mode.
         public float SlewFraction;
     }
 }

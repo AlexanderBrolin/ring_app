@@ -82,6 +82,24 @@ namespace Ring.Data
         // 333 ms at 30 Hz; the Range ceiling of 60 is two seconds.
         [Range(1, 60)] public int RenderClockSnapTicks = 10;
 
+        // Stage 2 Task 41 (spec §3.9, Р154): how far the render clock's rate
+        // may deviate from real time while it works off a desync — it runs at
+        // 1 ± SlewFraction instead of jumping. Sits next to
+        // RenderClockSnapTicks because the two are the same clock's two
+        // correction modes, and it is a FIELD rather than a code constant for
+        // the same reason its three neighbours are: NetTimings' other numbers
+        // all come off this asset, and a fourth one living in code would be an
+        // exception without a cause. It is also a taste knob, and taste is
+        // tuned by playtest in the .asset, not by recompiling.
+        //
+        // 0.05 IS THE MIDDLE OF §3.9's BAND, AND THE DEFAULT MATTERS MORE THAN
+        // USUAL: default(float) is 0, and RenderClock.SlewFractionOf reads
+        // anything at or below zero as "do not correct at all", so shipping
+        // the C# zero would install the feature switched off. Zero stays LEGAL
+        // (NetInvariants accepts it) because switching slew off deliberately
+        // is a mode, not a mistake — it is only the DEFAULT that must not be 0.
+        [Range(0f, 0.10f)] public float SlewFraction = 0.05f;
+
         // Ticks an event stays redundantly re-sent before being dropped.
         // 0 disables redundancy entirely (an event is sent exactly once).
         [Range(0, 15)] public int EventRedundancyTicks = 4;
@@ -115,7 +133,26 @@ namespace Ring.Data
 
         [Range(0, 60)] public int MatchEndLingerSeconds = 10;
 
-        [Range(60, 7200)] public int MatchMaxDurationSeconds = 1800; // sync-marker key — keep LAST
+        [Range(60, 7200)] public int MatchMaxDurationSeconds = 1800;
+
+        // Stage 2 Task 41 (spec §3.10; Task 40 brief §2.7): once EVERY client
+        // has disconnected, the server process waits this long before exiting
+        // with code 0. A process watchdog, not a match rule — the code that
+        // reads it is ServerBootstrap — but the number belongs beside
+        // JoinTimeoutSeconds and MatchEndLingerSeconds in the asset rather
+        // than as a literal in the bootstrap, by the same rule that put those
+        // two here (Critical Rule 6).
+        //
+        // MARKER FIELD. The backfill mechanism is
+        // EditorBootstrapUtils.EnsureAssetHasKey(so, path, markerField),
+        // which is a text search for the marker's name in the committed YAML:
+        // if the marker names a field the .asset already carries, the search
+        // succeeds, nothing is dirtied, and NO new key is ever written. So the
+        // marker has to be the LAST field added, and the call site has to name
+        // THIS field — Task 41b's job. Until it does, neither SlewFraction nor
+        // MatchAbandonGraceSeconds reaches NetConfig.asset and both silently
+        // fall back to the C# initializers above.
+        [Range(5, 300)] public int MatchAbandonGraceSeconds = 30; // sync-marker key — keep LAST
 
 #if UNITY_EDITOR
         void OnValidate() => RingDataChanged.Raise();
