@@ -339,9 +339,12 @@ namespace Ring.Server
             // than the `3` the number `0.1` actually means; the same defect
             // reproduces at `0.2` (`Ceiling` `7`, not `6`) and `0.4`
             // (`Ceiling` `13`, not `12`), silently lengthening the cooldown
-            // by exactly one tick on those and roughly a third of the legal
-            // `[Range(0.05f, 2f)]` × `{20, 30, 60}` combinations checked
-            // while fixing this. The shipped default `0.35` happens to be
+            // by exactly one tick on those and on 46 of the 120
+            // `[Range(0.05f, 2f)]` step-0.05 × `{20, 30, 60}` combinations
+            // actually checked while fixing this (fix-round 2, M-d — a
+            // measured count, not "roughly a third", which reads as a share
+            // of the whole legal range rather than of the specific grid this
+            // sentence checked). The shipped default `0.35` happens to be
             // unaffected purely by chance (`10.499999821186066` still ceils
             // to `11`, the same answer the exact `10.5` would) — which is
             // exactly why R-TEST alone, run only against the shipped

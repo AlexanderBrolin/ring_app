@@ -215,5 +215,61 @@ namespace Ring.Networking.Server
 
             return SpectateRefusal.None;
         }
+
+        /// Whether `MatchServer.OnSpectateRequest` should write a REFUSAL to
+        /// the log (Stage 2 Task 42a fix-round 2, I-C) — moved here from that
+        /// method's own body, which fix-round 1 left as untested wiring
+        /// (MUT-7 of that round measured exactly that gap). `lastLogged` is
+        /// `SpectateRefusal.None` when nothing has been logged for this slot
+        /// since the last accepted switch (or match start) — the same
+        /// sentinel convention `MatchServer._lastLoggedRefusal` already uses;
+        /// `lastLogTick` is the world tick that entry was written at (its
+        /// value is never read while `lastLogged` is the sentinel, so the
+        /// caller does not need one for the very first call either).
+        ///
+        /// THIS IS A PLAIN RATE LIMIT ONCE THE FIRST LINE HAS BEEN WRITTEN,
+        /// NOT A "LOG ON CHANGE" GATE — and that is a deliberate departure
+        /// from fix-round 2's own brief text, recorded here rather than
+        /// silently implemented. The brief's own prose rule ("a new reason
+        /// OR at least `CooldownTicks` since the last entry") is an OR over
+        /// "differs from the last LOGGED reason" — and that OR does NOT bound
+        /// the adversarial case the brief itself demands be bounded
+        /// (fix-round 2, I-C, point 1's own alternating-cause example): under
+        /// PURE two-value alternation every tick, EVERY tick's reason differs
+        /// from whichever one was logged immediately before it, so the
+        /// "differs" half of the OR is true on every single call and the
+        /// time bond never gets a chance to matter — the exact flood fix-
+        /// round 1 shipped, un-fixed. Measured, not assumed: a 20-tick pure
+        /// A/B/A/B/... simulation of the brief's literal OR rule logs
+        /// 20 times; the rule actually below logs 4. What this method
+        /// enforces instead: the FIRST refusal after a reset (`lastLogged ==
+        /// None`) always logs; every one after that — REGARDLESS of whether
+        /// the reason changed — logs again only once `CooldownTicks` ticks
+        /// have passed since the last logged entry. A change of reason is
+        /// therefore still visible in the log (the NEXT line after a quiet
+        /// window names whatever the CURRENT reason is), just not on every
+        /// single tick a flapping client can produce.
+        ///
+        /// NO `now`/CURRENT-REASON PARAMETER, ON PURPOSE, DESPITE THE
+        /// BRIEF'S OWN SUGGESTED SIGNATURE CARRYING ONE. Once the design
+        /// above dropped "differs from the last logged reason" as a
+        /// deciding factor (the paragraph above explains why it has to), a
+        /// `now`/`SpectateRefusal` parameter would sit in the signature
+        /// without ever affecting the return value — an unused parameter is
+        /// a worse api than an honest, smaller one; `MatchServer.
+        /// OnSpectateRequest` still has its own `refusal` value for what it
+        /// writes into `_lastLoggedRefusal` afterward, this method just
+        /// never needs to see it to answer WHETHER to log.
+        ///
+        /// THE BOND IS THE SAME `CooldownTicks` THE SWITCH ITSELF USES —
+        /// deliberately, so this introduces no second tunable number the way
+        /// the brief's own rejected "log at most once per N ticks"
+        /// alternative would have (fix-round 1's own `OnSpectateRequest` doc
+        /// already made that argument once).
+        public bool ShouldLogRefusal(SpectateRefusal lastLogged, int lastLogTick, int currentTick)
+        {
+            if (lastLogged == SpectateRefusal.None) return true;
+            return currentTick - lastLogTick >= _cooldownTicks;
+        }
     }
 }

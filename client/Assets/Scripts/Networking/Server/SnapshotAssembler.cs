@@ -250,12 +250,12 @@ namespace Ring.Networking.Server
         /// rest (Tasks 33/35/36).
         public NetStats StatsFor(int connection) => _connections[connection].Stats;
 
-        /// Clears `connection`'s VIEWPOINT memory — both visibility sets
-        /// (`Previous`/`Current`) and the Р133 anti-dither latch
-        /// (`LatchIds`/`LatchCells`/`LatchCount`) — so the very next
-        /// `BuildFor` call computes a visibility set with NO hysteresis/
-        /// linger continuity and NO latched audible cell carried over from
-        /// wherever this connection was looking a moment ago.
+        /// Clears `connection`'s VIEWPOINT memory — the visibility pair
+        /// (`Previous`/`Current`) ONLY — so the very next `BuildFor` call
+        /// computes a visibility set with NO hysteresis/linger continuity
+        /// carried over from wherever this connection was looking a moment
+        /// ago. Everything ELSE a connection owns survives this call, on
+        /// purpose — see the two paragraphs below for what and why.
         ///
         /// WHY THIS EXISTS (Stage 2 Task 42a fix-round 1, I-1, spec §3.10
         /// :673-678 Р70). `VisibilitySystem`'s own hysteresis/linger step
@@ -270,20 +270,72 @@ namespace Ring.Networking.Server
         /// accepted switch and, across enough switches, reassembles the map
         /// exactly the cooldown (`SpectatePolicy`) exists to make expensive.
         /// The caller (`MatchServer.OnSpectateRequest`) calls this in the
-        /// SAME branch that commits the switch, so the very next frame this
-        /// connection receives starts the new viewpoint with nothing carried
-        /// over from the old one.
+        /// SAME branch that commits the switch, so the very next FRAME this
+        /// connection receives is built against the new viewpoint's own
+        /// visibility, with no hysteresis/linger inherited from the old one.
+        ///
+        /// THREE OTHER STRUCTURES SURVIVE THIS CALL, AND THAT IS CORRECT, NOT
+        /// AN OVERSIGHT (fix-round 2, I-A — an earlier draft of this doc
+        /// claimed the next frame carried "nothing... over from the old
+        /// one", which was false: the carry queue (`Queue`/`QueuePayload`),
+        /// the resend history (`History`/`HistoryPayload`) and the
+        /// projectile subscriptions all live on past this call). The reason
+        /// none of the three is a leak is the SAME for all three: every
+        /// position they carry was resolved and FROZEN at the tick the
+        /// event actually happened, never re-derived against a viewpoint
+        /// later — `Enqueue` copies its `pos` argument into `Queued.Pos`
+        /// once, at routing time, and `Sent`'s own doc says the same about
+        /// the resend copy in as many words ("every field but
+        /// `DeliveredTick` is a frozen copy of what went on the wire — the
+        /// resend re-derives nothing"). A frozen position from an already-
+        /// delivered or already-queued tick is authorized PAST, not a live
+        /// read of anyone's current position — there is nothing for this
+        /// method to invalidate in any of the three.
+        ///
+        /// THE Р133 ANTI-DITHER LATCH (`LatchIds`/`LatchCells`/`LatchCount`)
+        /// IS ALSO DELIBERATELY LEFT ALONE (fix-round 2, C-1 — REVERSING
+        /// fix-round 1's own ruling, which called this the SAME kind of
+        /// memory as the visibility pair above and was wrong to). The latch
+        /// is memory of the SOURCE, not of this connection's viewpoint:
+        /// `VisibilitySystem.QuantizeAudiblePos(pos, cfg)` — `round(pos /
+        /// grid) * grid` — is a pure function of the SOURCE's own position
+        /// and the grid alone; the observer's position appears in it in no
+        /// form whatsoever, and `ResolveAudiblePos` keys every latch entry
+        /// by `sourceId`, never by anything about the connection asking.
+        /// Clearing it on a switch would FORCE a fresh, independent rounding
+        /// of that source's position on its very next audible event — and
+        /// this class's own Р133 doc names exactly why that is dangerous:
+        /// "N independent roundings of a smooth path recover it to about
+        /// `grid / sqrt(12N)` … an ESP-grade leak assembled out of
+        /// individually-harmless events". A spectate switch that reset the
+        /// latch on every accepted switch would manufacture exactly that
+        /// stream of independent roundings — the averaging attack Р133
+        /// exists to close — once per switch, for every source this
+        /// connection can still only hear. Keeping the latch does the
+        /// opposite: it hands back the SAME stale cell this connection
+        /// already received before the switch, which carries zero bits of
+        /// new information.
         ///
         /// PROJECTILE SUBSCRIPTIONS (`SubIds`/`SubExpiry`/`SubCount`,
-        /// `PendingUnsub*`) ARE DELIBERATELY LEFT ALONE — a decision, not an
-        /// omission. They are memory of this connection's own IDENTITY ("I
-        /// saw this round's spawn, I am owed its ending"), not of the
-        /// viewpoint: a spectator who watched a round get fired a moment
-        /// before switching targets is still owed that round's
+        /// `PendingUnsub*`) ARE ALSO DELIBERATELY LEFT ALONE — a decision,
+        /// not an omission. They are memory of this connection's own
+        /// IDENTITY ("I saw this round's spawn, I am owed its ending"), not
+        /// of the viewpoint: a spectator who watched a round get fired a
+        /// moment before switching targets is still owed that round's
         /// `ProjectileEnded`, and severing the subscription mid-flight would
-        /// only make the picture ragged without closing any visibility leak
-        /// — a subscription carries no position of a living player, only the
-        /// tail of an event this connection already legitimately saw.
+        /// only make the picture ragged without closing any visibility leak.
+        /// A subscription itself carries no position at all, only a round id
+        /// and an expiry tick — but the ENDING it eventually unlocks does
+        /// carry one, and that position is NEW information at a LATER tick
+        /// (the contact point, or a mob's death position — the
+        /// `ProjectileEnded` routing's own spec §3.8 comment: "that point is
+        /// the past, not a live track on a target"),
+        /// not a repeat of anything this connection saw before (fix-round 2,
+        /// M-e — an earlier draft of this paragraph undersold that ending as
+        /// merely "the tail of an event already legitimately saw"). It is
+        /// still not a leak FROM THE OLD VIEWPOINT: the position rides once,
+        /// on its own frozen tick, the same as every record in the carry
+        /// queue and resend history above.
         ///
         /// THE CONSEQUENCE IS NAMED, NOT HIDDEN: after this call `Previous`
         /// is empty, so the very next `BuildFor` starts exactly like a
@@ -297,9 +349,16 @@ namespace Ring.Networking.Server
         public void ResetViewpointMemory(int connection)
         {
             Connection c = _connections[connection];
+            // `Compute` clears `result` itself before reading `previous`
+            // (this class's own aliasing-guard doc), and `BuildFor`'s
+            // ping-pong overwrites `Current` with a fresh `Compute` result on
+            // the very next call regardless — so `Current.Clear()` here is
+            // DEFENSIVE, not load-bearing (fix-round 2, M-b): nothing reads
+            // a stale `Current` before it is overwritten. `Previous.Clear()`
+            // is the one that matters — it is what the next `Compute` call
+            // actually reads for hysteresis/linger continuity.
             c.Previous.Clear();
             c.Current.Clear();
-            c.LatchCount = 0;
         }
 
         /// Per-tick, shared by every connection: captures the world once and

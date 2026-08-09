@@ -337,13 +337,20 @@ namespace Ring.Networking.Server
         int[] _viewpointIndex;
         int[] _lastSpectateSwitchTick;
 
-        // Stage 2 Task 42a fix-round 1, M-6: the last REFUSAL reason logged
-        // for this slot, `SpectateRefusal.None` meaning "nothing logged yet
-        // since the last accepted switch (or match start)". See
+        // Stage 2 Task 42a fix-round 1, M-6 (throttle decision moved into
+        // SpectatePolicy.ShouldLogRefusal, fix-round 2, I-C — these two
+        // arrays are its memory, the wiring holds none of the decision
+        // itself). `_lastLoggedRefusal[slot]` is the last REFUSAL reason
+        // logged for this slot, `SpectateRefusal.None` meaning "nothing
+        // logged yet since the last accepted switch (or match start)";
+        // `_lastLoggedRefusalTick[slot]` is the world tick that entry was
+        // written at (meaningless while `_lastLoggedRefusal[slot]` is the
+        // sentinel — `ShouldLogRefusal` never reads it in that case). See
         // `OnSpectateRequest`'s own doc for why this exists — same
         // fresh-every-`StartMatch`/released-in-`StopMatch` treatment as the
         // pair above, for the identical Р151 reason.
         SpectateRefusal[] _lastLoggedRefusal;
+        int[] _lastLoggedRefusalTick;
 
         ushort _epoch;
         bool _running;
@@ -506,7 +513,11 @@ namespace Ring.Networking.Server
             // Stage 2 Task 42a fix-round 1, M-6: `default(SpectateRefusal)`
             // is `None`, exactly the "nothing logged yet" sentinel this array
             // wants — no explicit fill loop needed, unlike the two above.
+            // `lastLoggedRefusalTick` needs no fill either: `ShouldLogRefusal`
+            // never reads a slot's tick while that slot's reason is still the
+            // sentinel (fix-round 2, I-C).
             var lastLoggedRefusal = new SpectateRefusal[playerCount];
+            var lastLoggedRefusalTick = new int[playerCount];
 
             _world = world;
             _assembler = assembler;
@@ -521,6 +532,7 @@ namespace Ring.Networking.Server
             _viewpointIndex = viewpointIndex;
             _lastSpectateSwitchTick = lastSpectateSwitchTick;
             _lastLoggedRefusal = lastLoggedRefusal;
+            _lastLoggedRefusalTick = lastLoggedRefusalTick;
             _tickTime.Reset();
 
             // Stage 2 Task 40: a running match has no outcome, and no summary
@@ -698,6 +710,7 @@ namespace Ring.Networking.Server
             _viewpointIndex = null;
             _lastSpectateSwitchTick = null;
             _lastLoggedRefusal = null;
+            _lastLoggedRefusalTick = null;
         }
 
         /// The `SpectateRequestNet` handler (Stage 2 Task 42a, spec §3.10
@@ -782,29 +795,24 @@ namespace Ring.Networking.Server
         /// memory to invalidate. See `ResetViewpointMemory`'s own doc for
         /// what is cleared and what is deliberately left alone.
         ///
-        /// REFUSAL LOGGING IS THROTTLED PER SLOT (Stage 2 Task 42a fix-round
-        /// 1, M-6) — UNLIKE `MatchHandshake.Refuse`'s "one log per
-        /// connection" shape, which this handler cannot copy: a handshake
-        /// refusal ends the connection (or is the one-time `DuplicatePlayer`
-        /// retry case), while a dead client can legitimately send
-        /// `SpectateRequestNet` every single tick — a UI that retries on
-        /// refusal, or simply spam from a player mashing the switch key
-        /// during someone else's cooldown. The cooldown limits ACCEPTED
-        /// switches to one per `CooldownTicks`, but places no limit on
-        /// REFUSED ones, so an unthrottled log here would flood `Player.log`
-        /// with one line per tick for the whole rest of a dead player's
-        /// match. `_lastLoggedRefusal[slot]` remembers the last reason
-        /// actually written to the log for this slot; a refusal logs only
-        /// when the reason DIFFERS from that memory (a player stuck on
-        /// `CooldownActive` produces exactly one line, not one per tick),
-        /// and an ACCEPTED switch clears the memory back to `None` so the
-        /// NEXT refusal — even one with a reason seen before the switch —
-        /// is logged fresh rather than staying silently suppressed for the
-        /// rest of the match. The alternative brief-offered shape (log at
-        /// most once per N ticks) was rejected: it would still print
-        /// periodically for a player parked on one unchanging reason, and N
-        /// would be one more tuning number with no natural value, where
-        /// "on change" needs none.
+        /// REFUSAL LOGGING IS RATE-LIMITED PER SLOT (Stage 2 Task 42a
+        /// fix-round 1, M-6; the actual THROTTLE DECISION moved out of this
+        /// method in fix-round 2, I-C — see `SpectatePolicy.ShouldLogRefusal`
+        /// for the predicate and, importantly, for why it is a plain rate
+        /// limit and not a "log on change" gate). This method's own job is
+        /// only to gather the two pieces of memory that predicate needs
+        /// (`_lastLoggedRefusal[slot]`, `_lastLoggedRefusalTick[slot]`) and
+        /// write them back when it says yes — UNLIKE `MatchHandshake.
+        /// Refuse`'s "one log per connection" shape, which this handler
+        /// cannot copy: a handshake refusal ends the connection (or is the
+        /// one-time `DuplicatePlayer` retry case), while a dead client can
+        /// legitimately send `SpectateRequestNet` every single tick — a UI
+        /// that retries on refusal, or simply spam from a player mashing the
+        /// switch key. An ACCEPTED switch resets `_lastLoggedRefusal[slot]`
+        /// back to `None`, which is `ShouldLogRefusal`'s own sentinel for
+        /// "log the next one unconditionally" — so the first refusal after
+        /// a fresh switch is never silently swallowed by a rate-limit window
+        /// that started before the switch happened.
         void OnSpectateRequest(NetworkConnection connection, SpectateRequestNet msg, Channel channel)
         {
             if (!_running) return;
@@ -840,16 +848,18 @@ namespace Ring.Networking.Server
                 // I-1: the old viewpoint's hysteresis/linger memory must not
                 // survive into the new one — see this method's own doc.
                 _assembler.ResetViewpointMemory(slot);
-                // M-6: an accepted switch resets what the throttle
+                // M-6/I-C: an accepted switch resets what the throttle
                 // remembers, so the next refusal — of any reason, even one
                 // this slot already logged before the switch — is fresh.
                 _lastLoggedRefusal[slot] = SpectateRefusal.None;
                 _nm.Log($"MatchServer: spectate switch accepted — slot={slot} target={target} "
                     + $"tick={currentTick}.");
             }
-            else if (_lastLoggedRefusal[slot] != refusal)
+            else if (_spectatePolicy.ShouldLogRefusal(_lastLoggedRefusal[slot],
+                _lastLoggedRefusalTick[slot], currentTick))
             {
                 _lastLoggedRefusal[slot] = refusal;
+                _lastLoggedRefusalTick[slot] = currentTick;
                 // Diagnostic wording only, the same discipline
                 // `MatchHandshake.Refuse` names in its own doc: never
                 // "exploit"/"illegitimate"/"security" — an unmodified client

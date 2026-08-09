@@ -1675,14 +1675,32 @@ namespace Ring.Simulation.Tests
 
         static void MoveMobPastSightAndHysteresis(SimulationWorld w, in SimConfig cfg)
         {
+            // Fix-round 2, M-c: the same "test setup" discipline
+            // MobFilter_InvisibleAbsent_LingeringPresent_BehindObstacleAbsent
+            // already uses before trusting a spawn-order slot index — even
+            // though LingerFixture spawns exactly one mob, so `Mobs[0]` could
+            // not actually be ambiguous today, the assert is what keeps that
+            // true a mechanical fact rather than an assumption the next
+            // reader has to re-derive by counting spawn calls.
             MobState m = w.Mobs[0];
+            Assert.AreEqual(1, w.MobCount, "test setup: LingerFixture spawns exactly one mob");
             m.Pos = new float2(0f, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis + 5f);
             w.SetMobForTest(0, m);
         }
 
         [Test]
-        public void ResetViewpointMemory_ClearsLingerAndHysteresis_WitnessedAgainstNoReset()
+        public void ResetViewpointMemory_ClearsLinger_WitnessedAgainstNoReset()
         {
+            // Fix-round 2, M-a: named for what this fixture ACTUALLY
+            // exercises. The mob moves to SightRadius + ExitHysteresis + 5 —
+            // past the WIDENED hysteresis radius too, not merely past
+            // SightRadius — so what carries it into the second frame is
+            // PURELY Р19's linger, never the hysteresis widening itself
+            // (`MobFilter_..._LingeringPresent...`'s own fixture makes the
+            // identical choice, for the identical reason: a mob sitting
+            // INSIDE the hysteresis band would leave it ambiguous which of
+            // the two mechanisms the assert is actually about).
+            //
             // Positive witness FIRST: without a reset, a mob that just left
             // sight keeps riding through the linger window (Р19) — proving
             // this fixture genuinely exercises linger, so the "no longer
@@ -1709,10 +1727,72 @@ namespace Ring.Simulation.Tests
             asmReset.ResetViewpointMemory(0);
             AssembledFrame resetFrame = Build(asmReset, wReset, cfgReset, 0, 0, 0);
             Assert.IsFalse(resetFrame.ContainsMob(mobReset),
-                "ResetViewpointMemory must clear the linger/hysteresis memory (Previous) — a mob "
-                + "that just left sight must NOT keep riding once this connection's viewpoint memory "
-                + "was reset in between (Stage 2 Task 42a fix-round 1, I-1: a switched spectator must "
-                + "not receive live positions computed from the OLD viewpoint)");
+                "ResetViewpointMemory must clear the linger memory (Previous) — a mob that just left "
+                + "sight must NOT keep riding once this connection's viewpoint memory was reset in "
+                + "between (Stage 2 Task 42a fix-round 1, I-1: a switched spectator must not receive "
+                + "live positions computed from the OLD viewpoint)");
+        }
+
+        [Test]
+        public void ResetViewpointMemory_PreventsAnEntityLeakingAcrossARealViewpointSwitch()
+        {
+            // Fix-round 2, I-B: the SHAPE the previous test does not cover.
+            // `ResetViewpointMemory_ClearsLinger_WitnessedAgainstNoReset`
+            // above calls BuildFor twice with the SAME viewpointIndex (0)
+            // and moves the ENTITY — it pins linger, but MUT-1 of fix-round 1
+            // showed it does not pin the actual defect I-1 fixes, because
+            // that defect is about `viewpointIndex` itself CHANGING between
+            // two BuildFor calls (exactly what MatchServer.OnSpectateRequest
+            // does on an accepted switch), not about an entity moving while
+            // the viewpoint stays put. This test drives that real shape.
+            //
+            // Geometry: a mob sits next to player 0 (visible from viewpoint
+            // 0); player 2 sits far enough away that it could never see that
+            // mob on its own merits (distance from the mob comfortably past
+            // SightRadius + ExitHysteresis — the same widened bound the
+            // fixture above defeats). Build once from viewpoint 0 (the mob
+            // enters `Current`, hence next call's `Previous`), then again
+            // from viewpoint 2 — a DIFFERENT, unrelated position.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(200f, 0f));
+            int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
+
+            float distanceFromPlayer2 = math.distance(new float2(200f, 0f), new float2(0f, 10f));
+            Assert.Greater(distanceFromPlayer2, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: player 2 must sit far enough away that it could never see the mob "
+                + "on the strength of its own position — anything else would confound the leak this "
+                + "test is about with an ordinary, legitimate sighting");
+
+            // Witness FIRST, WITHOUT a reset: the mob — visible only from
+            // viewpoint 0 — must leak into the frame built for viewpoint 2.
+            // This is the defect fix-round 1 actually introduced and fixed;
+            // proving it reproduces here is what makes the reset assert
+            // below a real regression guard rather than a tautology.
+            var asmWitness = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            Build(asmWitness, w, cfg, connection: 0, identityIndex: 0, viewpointIndex: 0);
+            AssembledFrame beforeSwitch = Build(asmWitness, w, cfg, connection: 0, identityIndex: 0,
+                viewpointIndex: 2);
+            Assert.IsTrue(beforeSwitch.ContainsMob(mobId),
+                "witness: WITHOUT ResetViewpointMemory between two BuildFor calls that change "
+                + "viewpointIndex, an entity visible only from the OLD viewpoint leaks into the frame "
+                + "built for the NEW one — this is the actual shape of fix-round 1's I-1 finding");
+
+            // The target: the identical sequence, on a fresh assembler, with
+            // ResetViewpointMemory called between the two BuildFor calls —
+            // exactly what MatchServer.OnSpectateRequest does on an accepted
+            // switch.
+            var asmReset = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            Build(asmReset, w, cfg, connection: 0, identityIndex: 0, viewpointIndex: 0);
+            asmReset.ResetViewpointMemory(0);
+            AssembledFrame afterSwitch = Build(asmReset, w, cfg, connection: 0, identityIndex: 0,
+                viewpointIndex: 2);
+            Assert.IsFalse(afterSwitch.ContainsMob(mobId),
+                "ResetViewpointMemory must prevent an entity visible only from the OLD viewpoint from "
+                + "leaking into the frame built for a genuinely DIFFERENT new viewpointIndex — the real "
+                + "shape of the spectate-switch leak, not merely an entity moving under a fixed viewpoint");
         }
     }
 }

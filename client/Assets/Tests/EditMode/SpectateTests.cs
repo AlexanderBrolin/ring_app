@@ -7,14 +7,19 @@ using Ring.Networking.Server;
 namespace Ring.Simulation.Tests
 {
     /// Stage 2 Task 42a (spec §3.10 :673-678, Р70; task-42a-brief.md §2.7):
-    /// the spectate-switch decision — `SpectatePolicy.Evaluate` — and the
-    /// wire shape of `SpectateRequestNet`. `MatchServer.OnSpectateRequest`
-    /// itself is NOT covered here, by the same split every other broadcast
-    /// handler in this project carries (`MatchHandshake`/`HandshakeTests`,
-    /// `MatchServer`/`MatchLifecycleTests`): the FishNet wiring needs a live
+    /// the spectate-switch decision — `SpectatePolicy.Evaluate`,
+    /// `IsTargetInRange` and `ShouldLogRefusal` — and the wire shape of
+    /// `SpectateRequestNet`. `MatchServer.OnSpectateRequest` itself is NOT
+    /// covered here, by the same split every other broadcast handler in this
+    /// project carries (`MatchHandshake`/`HandshakeTests`, `MatchServer`/
+    /// `MatchLifecycleTests`): the FishNet wiring needs a live
     /// `NetworkManager` EditMode cannot raise, and R-COMPILE plus milestone
     /// В1 stand in for it instead. Everything that DECIDES anything lives in
-    /// `SpectatePolicy`, so it is what this file tests, completely.
+    /// `SpectatePolicy`, so it is what this file tests, completely — a claim
+    /// fix-round 1 broke without noticing (its own refusal-log throttle was
+    /// a decision left inline in `OnSpectateRequest`, untested — fix-round
+    /// 1's own MUT-7 measured exactly that gap) and fix-round 2's I-C
+    /// restores by moving that decision here too.
     ///
     /// EVERY NEGATIVE CASE CARRIES A POSITIVE WITNESS RIGHT NEXT TO IT — the
     /// same discipline `MatchLifecycleTests`/`HandshakeTests` already use:
@@ -283,6 +288,125 @@ namespace Ring.Simulation.Tests
                 "witness: slot 0, the lowest legal index, is in range");
             Assert.IsTrue(SpectatePolicy.IsTargetInRange(PlayerCount - 1, PlayerCount),
                 "witness: playerCount - 1, the highest legal index, is in range");
+        }
+
+        [Test]
+        public void ShouldLogRefusal_LogsTheFirstRefusalSinceReset()
+        {
+            // Fix-round 2, I-C: `SpectateRefusal.None` is ShouldLogRefusal's
+            // own sentinel for "nothing logged yet for this slot since the
+            // last accepted switch (or match start)" — the same convention
+            // Evaluate's NoPriorSwitch uses for the switch cooldown itself.
+            // `lastLogTick` must not matter while the sentinel is in force:
+            // proven with two wildly different currentTick values, both true.
+            var policy = new SpectatePolicy(cooldownTicks: 10);
+
+            Assert.IsTrue(policy.ShouldLogRefusal(SpectateRefusal.None, lastLogTick: 0, currentTick: 0),
+                "the first refusal since a reset must log, at tick 0");
+            Assert.IsTrue(policy.ShouldLogRefusal(SpectateRefusal.None, lastLogTick: 0, currentTick: 1_000_000),
+                "the first refusal since a reset must log at ANY currentTick — lastLogTick is "
+                + "meaningless while lastLogged is still the None sentinel");
+        }
+
+        [Test]
+        public void ShouldLogRefusal_SuppressesWithinTheBond_AndAllowsAgainOnTheBoundary()
+        {
+            // Fix-round 2, I-C, cases 2 and 4 of the brief: an immediate
+            // repeat is suppressed; once CooldownTicks ticks have passed
+            // since the last logged entry, the next call logs again — same
+            // inclusive boundary convention Evaluate's own cooldown uses.
+            const int cooldownTicks = 11;
+            var policy = new SpectatePolicy(cooldownTicks);
+
+            Assert.IsFalse(
+                policy.ShouldLogRefusal(SpectateRefusal.CooldownActive, lastLogTick: 100,
+                    currentTick: 100 + cooldownTicks - 1),
+                "one tick short of the bond, a repeat refusal must still be suppressed");
+
+            Assert.IsTrue(
+                policy.ShouldLogRefusal(SpectateRefusal.CooldownActive, lastLogTick: 100,
+                    currentTick: 100 + cooldownTicks),
+                "AT exactly cooldownTicks ticks since the last logged entry, the next refusal "
+                + "must log again — the boundary is >=, not >");
+        }
+
+        [Test]
+        public void ShouldLogRefusal_BoundsRapidAlternationBetweenTwoReasons()
+        {
+            // Fix-round 2, I-C, case 3 — the case the brief names as failing
+            // TODAY under fix-round 1's "log on change" rule, and the reason
+            // ShouldLogRefusal takes no `now`/current-reason parameter at
+            // all (see that method's own doc): a client alternating between
+            // TWO DIFFERENT refusal reasons every tick (e.g. an invalid
+            // index one tick, a live target the next) must NOT flood the
+            // log the way "log whenever the reason differs from the last
+            // one logged" would — under pure alternation, EVERY tick's
+            // reason differs from whichever was logged immediately before
+            // it, so a rule that keys off "differs" alone never throttles at
+            // all. This test plays out the exact wiring loop
+            // MatchServer.OnSpectateRequest runs, calling ShouldLogRefusal
+            // every tick and updating its own memory only when told to log —
+            // ShouldLogRefusal's blindness to WHICH reason is being asked
+            // about is exactly what makes alternation and repetition equally
+            // throttled.
+            const int cooldownTicks = 5;
+            var policy = new SpectatePolicy(cooldownTicks);
+
+            SpectateRefusal lastLogged = SpectateRefusal.None;
+            int lastLogTick = 0;
+            int logCount = 0;
+            var loggedAtTicks = new System.Collections.Generic.List<int>();
+
+            for (int tick = 0; tick < 20; tick++)
+            {
+                // The alternating reason itself is irrelevant to the
+                // predicate (it takes no `now`) — two DISTINCT values are
+                // used here purely to narrate the adversarial scenario the
+                // brief describes.
+                SpectateRefusal current = (tick % 2 == 0) ? SpectateRefusal.TargetOutOfRange
+                    : SpectateRefusal.TargetIsSelf;
+
+                if (policy.ShouldLogRefusal(lastLogged, lastLogTick, tick))
+                {
+                    logCount++;
+                    loggedAtTicks.Add(tick);
+                    lastLogged = current;
+                    lastLogTick = tick;
+                }
+            }
+
+            // Fixture-premise witness first: a naive "log whenever the
+            // reason differs from the last LOGGED one" rule — fix-round 1's
+            // actual shape, and the brief's own literal "a new reason OR..."
+            // formula reduces to exactly this under pure two-value
+            // alternation, since "differs from the last logged reason" is
+            // true on every single tick — floods all 20 ticks. Proven here,
+            // not asserted, so the bounded count below is read against a
+            // real baseline rather than an assumed one.
+            SpectateRefusal naiveLastLogged = SpectateRefusal.None;
+            int naiveLogCount = 0;
+            for (int tick = 0; tick < 20; tick++)
+            {
+                SpectateRefusal current = (tick % 2 == 0) ? SpectateRefusal.TargetOutOfRange
+                    : SpectateRefusal.TargetIsSelf;
+                if (current != naiveLastLogged)
+                {
+                    naiveLogCount++;
+                    naiveLastLogged = current;
+                }
+            }
+            Assert.AreEqual(20, naiveLogCount,
+                "witness: the naive 'log on change' rule floods every single tick under pure "
+                + "alternation — this is the fix-round 1 shape ShouldLogRefusal replaces");
+
+            Assert.AreEqual(4, logCount,
+                "ShouldLogRefusal must bound 20 ticks of pure two-reason alternation at "
+                + "cooldownTicks=5 to exactly 4 logged lines (ticks 0, 5, 10, 15) — a plain "
+                + "per-slot rate limit, not a 'log on every change' gate");
+            CollectionAssert.AreEqual(new[] { 0, 5, 10, 15 }, loggedAtTicks,
+                "witness: the four logged lines land exactly on the bond boundaries, confirming "
+                + "the throttle re-arms itself deterministically rather than merely counting low "
+                + "by coincidence");
         }
     }
 }
