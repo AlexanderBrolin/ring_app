@@ -24,8 +24,8 @@ namespace Ring.Presentation
     /// quantization. The cone's RADIUS is the one place this class reads the
     /// simulation snapshot at all (`RenderCurr.Player`, the hitstop-consistent
     /// half of the render pair, the same snapshot `PlayerView`/`CameraRig`
-    /// already read), fed into `Spread.HipRadians` alongside `World.Config.
-    /// Weapon`/`World.Config.Hero` (hot-tweakable via their SOs, never hardcoded
+    /// already read), fed into `Spread.HipRadians` alongside the runner's
+    /// `Config.Weapon`/`Config.Hero` (hot-tweakable via their SOs, never hardcoded
     /// here) — `settleFactor` is deliberately NOT applied (PD15 above): that
     /// shrink exists only on `WeaponSystem`'s AIMED-fire branch, which this cone
     /// never represents.
@@ -186,8 +186,8 @@ namespace Ring.Presentation
         /// Radius = `tan(Spread.HipRadians(...)) * distanceToAimPoint` — the
         /// half-angle the HIP-FIRE branch's next shot could land within, read via
         /// the single shared `Ring.Simulation.Combat.Spread.HipRadians` formula
-        /// (class doc — PC6) off `World.Config.Weapon`/`RenderCurr.Player`/
-        /// `World.Config.Hero`, never a private copy of the math, projected out
+        /// (class doc — PC6) off `_runner.Config.Weapon`/`RenderCurr.Player`/
+        /// `_runner.Config.Hero`, never a private copy of the math, projected out
         /// to the player's current aim distance (spec §3.5/§3.11: the player
         /// sees the weapon's REAL current hip-fire spread — recoil AND
         /// movement-widening both included, since `Spread.HipRadians` folds in

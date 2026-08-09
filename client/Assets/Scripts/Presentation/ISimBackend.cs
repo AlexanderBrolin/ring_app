@@ -23,10 +23,37 @@ namespace Ring.Presentation
     /// serialization, on scene wiring, or on which side of the wire the numbers
     /// were built on.
     ///
-    /// CALL CONTRACT: `Ready` and `Config` answer at any time; every other
-    /// member below may be called only while `Ready` is true. The facade's own
-    /// members and the views' guards are what hold that, not a runtime check
+    /// CALL CONTRACT — three groups, not two (Task 43 fix-round 1: the earlier
+    /// one-line version said "every member other than `Ready`/`Config` may be
+    /// called only while `Ready` is true", which is false on the very first call
+    /// any backend receives — see the mutators below).
+    ///
+    /// ANSWERED AT ANY TIME, ready or not: `Ready`, `Config` (reads `default`
+    /// before the first `Restart`), `HasStateHash`, `CanDevSpawnMob`,
+    /// `DroppedTime`. The facade reads several of these on frames that draw
+    /// nothing, so an implementation returns a value here rather than throwing.
+    ///
+    /// READ ONLY WHILE `Ready` IS TRUE — the observers of simulation state:
+    /// `CurrentTick`, `Prev`, `Curr`, `Alpha`, `EventCount`, `GetEvent`,
+    /// `StateHash`, `DroppedEvents`, `DevSpawnMob`. There is no state to answer
+    /// with before that. What keeps them from being reached early is the
+    /// facade's own members plus the views' `Ready` guards, not a runtime check
     /// inside each implementation.
+    ///
+    /// OUTSIDE THAT RULE — the lifecycle mutators, called on the facade's own
+    /// schedule: `Restart`, `ApplyConfig`, `OnPausedChanged`, `Advance`,
+    /// `EndFrame`. `Restart` is what MAKES an implementation ready and is
+    /// therefore called while `Ready` is still false — `SimulationRunner.Awake`
+    /// -> `RestartNewSeed` -> `Restart(seed)` -> `_backend.Restart(seed, cfg)`
+    /// is the first call any backend sees, so an implementation that refuses it
+    /// on `!Ready` refuses the start of the match. `OnPausedChanged` has no
+    /// readiness guard on the facade either (the `Paused` setter forwards it
+    /// unconditionally) and must stay answerable regardless; the local backend
+    /// touches only its accumulator there, never its world. `ApplyConfig`,
+    /// `Advance` and `EndFrame` are reached only from `SimulationRunner.Update`,
+    /// which runs strictly after that `Awake`, so those three do see a ready
+    /// backend — and `EndFrame` only after an `Advance` that returned a nonzero
+    /// tick count (see its own doc for why the order matters).
     public interface ISimBackend
     {
         /// Whether there is state to show (Р66) — successor to the

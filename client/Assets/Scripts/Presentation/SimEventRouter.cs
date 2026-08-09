@@ -50,9 +50,11 @@ namespace Ring.Presentation
         /// the early exit is what keeps the gap between the two from being read
         /// as an event buffer.
         ///
-        /// `count` is read once, before the loop: a fan-out slot may spawn
-        /// objects, so re-reading it per iteration would be asking the backend a
-        /// question about a buffer that is being consumed.
+        /// `count` is read once, before the loop: one hop through the facade to
+        /// the backend instead of N, for a value that cannot change while the
+        /// loop runs. No fan-out slot can move it — Presentation never emits a
+        /// `SimEvent` — and the buffer is dropped only by `EndFrame`, which the
+        /// facade calls after this method has returned.
         void OnTicksFlushed()
         {
             if (!_runner.Ready) return;

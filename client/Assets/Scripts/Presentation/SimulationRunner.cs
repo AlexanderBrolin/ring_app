@@ -192,9 +192,12 @@ namespace Ring.Presentation
         /// already dated the defect that copy carried — it tested
         /// `FireCooldown <= 0f` where the simulation tests
         /// `(FireCooldown - TickDt) <= 0f`, so the half-open window
-        /// `(0, TickDt]` predicted "no shot" for a tick that then fired. Both
-        /// halves of this property now come off `Config` (Р87), the same built
-        /// `SimConfig` the authoritative path reads.
+        /// `(0, TickDt]` predicted "no shot" for a tick that then fired. The
+        /// weapon numbers handed to that gate now come off `Config` — the same
+        /// built `SimConfig` the authoritative path itself reads — which is what
+        /// puts this property and `RenderMuzzleHeight` above on ONE config
+        /// source (Р87), instead of the world for one and a `WeaponConfig` asset
+        /// for the other.
         ///
         /// Still evaluated against `RenderCurr` — the last COMPLETE tick's state
         /// — rather than any Simulation internals, per client/CLAUDE.md's

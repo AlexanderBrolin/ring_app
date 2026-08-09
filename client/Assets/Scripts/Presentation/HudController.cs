@@ -7,8 +7,8 @@ using UnityEngine.UI;
 namespace Ring.Presentation
 {
     /// HUD skeleton (Stage 1 Task 14, spec §3.10): HP bar, current wave number.
-    /// Reads exclusively from the runner's `Curr` snapshot every frame —
-    /// `World.Config` is the one exception, used only for the HP maximum
+    /// Reads exclusively from the runner's `Curr` snapshot every frame — the
+    /// runner's `Config` is the one exception, used only for the HP maximum
     /// needed to normalize the bar, never for live per-tick state. This keeps
     /// Presentation a pure reader: it never computes game outcomes, only renders what
     /// the snapshot already decided.

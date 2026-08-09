@@ -321,7 +321,7 @@ namespace Ring.Presentation
         /// routes through `DamagePlayer`/a different event kind entirely,
         /// never `ProjectileHit`) — so both reads below are always
         /// meaningful, never a defensive guess. `ZoneHeight` reads the SAME
-        /// `World.Config.Chaser`/`Gunner` belts `PartHeight`/`AimProxy_*`
+        /// `Config.Chaser`/`Gunner` belts `PartHeight`/`AimProxy_*`
         /// already read (class doc), keyed off `HitZone` instead of
         /// `GibPartKind` — the spark now visibly appears at head height for
         /// a headshot, body height for a body shot, etc.
@@ -403,7 +403,7 @@ namespace Ring.Presentation
         /// event's own `Pos` (owner requirement, веха 3 — XY always rides
         /// `e.Pos`, never `ViewRegistry`/`MobView` state), each at a
         /// belt-derived height keyed off its own `GibView.ClassifyPart` kind
-        /// (`PartHeight` below) — the SAME `World.Config.Chaser`/`Gunner`
+        /// (`PartHeight` below) — the SAME `Config.Chaser`/`Gunner`
         /// zone-geometry belts `ProjectileSystem`'s hit-zone classification
         /// and the `AimProxy_*` colliders already read. NO corpse spawns in
         /// this variant — every part IS the "corpse" here (class doc).

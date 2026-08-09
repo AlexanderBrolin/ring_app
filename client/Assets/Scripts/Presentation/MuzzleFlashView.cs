@@ -29,10 +29,24 @@ namespace Ring.Presentation
     /// `SimulationRunner.WouldFireThisFrame` is the single source of truth for
     /// the heuristic (shared with `AudioDirector`, so the two components' guesses
     /// can never disagree). `_predicted`/`_predictedExpireAt` latch the
-    /// prediction so it fires ONCE per press (not every render frame while
-    /// `RenderCurr` is stale between two ticks) and get consumed by the matching
-    /// real `ProjectileFired` event in `HandleEvent` to avoid a visible double
-    /// burst — the TTL itself is `SimulationRunner.ImmediatePredictionTtlSeconds`,
+    /// prediction so at most one burst is predicted per SHOT, not one per render
+    /// frame while `RenderCurr` is stale between two ticks: `Update` arms the
+    /// latch on the first frame the gate is satisfied and early-returns on every
+    /// frame after that while it holds, the matching PLAYER-owned
+    /// `ProjectileFired` in `HandleEvent` consumes it (which is what avoids a
+    /// visible double burst), and the next satisfied gate re-arms it. Across a
+    /// held burst that is one prediction per ROUND, not one per press: Task 43
+    /// put this gate on `WeaponSystem.WouldFireThisTick`, whose cooldown term is
+    /// `(FireCooldown - TickDt) <= 0f`, and `WeaponSystem.Advance` leaves
+    /// `FireCooldown` strictly positive after every tick of sustained fire (its
+    /// `while` loop can only exit above zero; the clamp back to zero lives in
+    /// the "not firing" branch) — so that term comes true once per
+    /// `FireInterval / TickDt` ticks (~4 at the shipped balance), i.e. once per
+    /// round actually leaving the barrel. The pre-Task-43 copy tested
+    /// `FireCooldown <= 0f` against that same always-positive value, so it was
+    /// true practically only for the FIRST shot after a press/dash/start — that
+    /// is what the old "ONCE per press" wording here described, and it no longer
+    /// holds. The TTL itself is `SimulationRunner.ImmediatePredictionTtlSeconds`,
     /// a single shared constant (fix-round review #3) so this component and
     /// `AudioDirector` can never drift onto two different windows. If no
     /// matching event arrives within it (a false prediction — e.g.
