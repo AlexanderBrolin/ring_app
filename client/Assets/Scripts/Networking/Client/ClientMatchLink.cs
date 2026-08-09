@@ -21,15 +21,34 @@ namespace Ring.Networking.Client
     ///
     /// NOT ONE METHOD HERE THROWS, AND THAT IS NOT A STYLE CHOICE. Every one
     /// of them is called, directly, from inside a FishNet broadcast handler,
-    /// and `MatchHandshake`'s own doc records what an exception out of one of
-    /// those does in each build: in a DEVELOPMENT build `ParseReceived` has no
-    /// try/catch and the exception escapes with the message never answered; in
-    /// the PRODUCTION build this project actually ships (`BuildCommands` never
-    /// sets `BuildOptions.Development`) the same loop catches EVERYTHING and
-    /// turns it into an immediate `Kick(KickReason.MalformedData)`. On the
-    /// SERVER that misblames the client; here, on the client, the mirror
-    /// consequence is a match lost to a bug in this file. So a refusal is a
-    /// VALUE — `LinkVerdict` — and the wiring turns it into a log line.
+    /// and the CLIENT's parsing loop — `ClientManager.ParseReader`, which walks
+    /// the messages BATCHED into one datagram and dispatches each in turn —
+    /// answers an exception out of one of them two ways, neither of them a
+    /// refusal. In the Editor and in a development build (that file opens by
+    /// defining `DEVELOPMENT` as `UNITY_EDITOR || DEVELOPMENT_BUILD`) the loop
+    /// has no try/catch at all and the exception escapes into the transport's
+    /// receive callback. In the production player this project actually ships
+    /// (`BuildCommands` never sets `BuildOptions.Development`) the same loop is
+    /// wrapped in a try/catch compiled in exactly when `DEVELOPMENT` is NOT
+    /// defined, and that catch does one thing: `LogError` naming the packet id.
+    ///
+    /// WHAT IT COSTS IS A FRAME OF DATA, SILENTLY. Either way the throw leaves
+    /// the loop, so every message batched BEHIND the one that threw is never
+    /// read, and the `Objects.IterateObjectCache()` that closes the loop is
+    /// skipped for that datagram — one error line in a log no player will see,
+    /// and a hole in the stream nothing on this side reports.
+    ///
+    /// THE CLIENT IS NOT KICKED FOR IT, AND THE ASYMMETRY WITH THE SERVER RUNS
+    /// ONE WAY ONLY (fix round 1, F-1 — this paragraph previously claimed the
+    /// mirror consequence was "a match lost", which is the SERVER's behavior
+    /// carried over untested). `KickReason.MalformedData` occurs exactly once
+    /// in the whole of FishNet's `Runtime/Managing`, in `ServerManager`'s own
+    /// catch, where `MatchHandshake`'s doc records it misblaming the client for
+    /// a bug on the server. The client's catch contains no kick and no
+    /// disconnect. So a refusal here is a VALUE — `LinkVerdict` — that the
+    /// wiring turns into a log line, not because a throw would end the match,
+    /// but because a throw would take the rest of the datagram down with it and
+    /// leave this class's own decision unrecorded.
     ///
     /// THE PHASE IS THE WHOLE MEMORY, AND IT ONLY EVER MOVES FORWARD.
     /// `Connecting -> HelloSent -> Joined` on the ordinary path;
@@ -291,6 +310,22 @@ namespace Ring.Networking.Client
         /// is that caller: a restart naming the epoch already tracked is
         /// refused as `DuplicateEpoch` rather than allowed to clear the ring
         /// of a match already in progress.
+        ///
+        /// THE LIMIT THAT COMES WITH THAT, NAMED RATHER THAN LEFT TO BE FOUND
+        /// (fix round 1, M-2): A DELIBERATE RESTART ON THE EPOCH ALREADY
+        /// TRACKED IS NOT SUPPORTED BY THIS CLIENT. It is indistinguishable
+        /// from a repeat on this end and is refused as one, so a server that
+        /// sent it would get a client holding every seam pointed at the
+        /// finished match, silent for the whole next one. Nothing produces that
+        /// message today — `MatchEpochCounter.Mint` advances the counter on
+        /// every call and never returns the same number twice running, and
+        /// `MatchServer.RestartMatch` takes the epoch from its caller rather
+        /// than reusing its own — so the obligation sits with whoever mints an
+        /// epoch for a restart, and it is written down here because here is
+        /// where breaking it shows up. The test cannot be relaxed into an
+        /// ordering to cover the case either: Р163 forbids ORDERING epochs
+        /// because the counter wraps `65535 -> 1`, which is why this is
+        /// equality and not `<=`.
         public LinkAction OnRestarted(in MatchRestartedNet restarted)
         {
             if (Phase == LinkPhase.Refused) return Refuse(LinkVerdict.LinkRefused);
@@ -491,9 +526,9 @@ namespace Ring.Networking.Client
             {
                 _nm.Log($"ClientMatchLink: {message} not applied — {action.Verdict} "
                     + $"(link phase {_state.Phase}, tracked epoch {_state.MatchEpoch}). "
-                    + "Refusing by value: a broadcast handler that threw would be turned into "
-                    + "a disconnect by the transport, which is never the right answer to a "
-                    + "message that merely arrived at the wrong moment.");
+                    + "Refusing by value: a broadcast handler that threw would abandon every "
+                    + "further message batched into the same datagram, which is never the right "
+                    + "answer to a message that merely arrived at the wrong moment.");
             }
         }
 

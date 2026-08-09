@@ -119,7 +119,7 @@ namespace Ring.Simulation.Tests
 
             eventAccepted = new bool[events.Length];
             for (int i = 0; i < events.Length; i++)
-                eventAccepted[i] = dedup.TryAcceptEvent(epoch, tick, in events[i]);
+                eventAccepted[i] = dedup.TryAcceptEvent(epoch, tick, in events[i], out _);
 
             if (verdict == SnapshotQueue.AdmitVerdict.Accepted)
             {
@@ -673,7 +673,7 @@ namespace Ring.Simulation.Tests
             // Direct witness that EventDedup itself never saw the poisoned
             // key: if the driver HAD fed it through (a contract violation),
             // this exact key would already read as seen here.
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, poison, in poisonEvent),
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, poison, in poisonEvent, out _),
                 "the poisoned frame's own event is still UNSEEN by dedup — proof the driver stopped "
                 + "before calling TryAcceptEvent, not merely that the call would have been refused");
 
@@ -718,7 +718,7 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(applied);
             Assert.AreEqual(0, results.Length, "a foreign epoch never reaches EventDedup through the driver");
 
-            Assert.IsFalse(dedup.TryAcceptEvent(OtherEpoch, 50, in record),
+            Assert.IsFalse(dedup.TryAcceptEvent(OtherEpoch, 50, in record, out _),
                 "direct witness: EventDedup itself refuses the stray epoch too, on its own account");
 
             // Positive witness: the SAME tick, the TRACKED epoch, works on both sides.

@@ -12,7 +12,8 @@ namespace Ring.Networking.Client
     /// WHY IT HAD TO EXIST AT ALL. The two neighbours it sits between each
     /// answer a different question and neither holds an event:
     ///   * `EventDedup.TryAcceptEvent` returns a VERDICT — "is this the first
-    ///     sight of this event" — and stores one bit, never the record;
+    ///     sight of this event" — plus the absolute tick of the one it
+    ///     approved, and stores one bit, never the record;
     ///   * `SnapshotQueue` stores `RenderSnapshot`, which carries the world's
     ///     STATE (players, mobs, projectiles, wave, stats) and no events at
     ///     all.
@@ -30,15 +31,18 @@ namespace Ring.Networking.Client
     /// it approved is Task 44c; the caller that drains it against
     /// `RenderClock.RenderTick` is the same one.
     ///
-    /// THE TICK IS ABSOLUTE, AND THE CALLER COMPUTES IT THE ONE WAY THERE IS.
+    /// THE TICK IS ABSOLUTE, AND EXACTLY ONE PLACE DERIVES IT.
     /// `SnapshotBlocks.EventRecord.TickDelta` counts ticks BACK FROM THE
     /// FRAME HEADER's tick (the field's own doc; `SnapshotAssembler` writes
     /// it as `(byte)(_tick - <the record's own tick>)`), so the absolute tick
-    /// is `frameTick - record.TickDelta` — the same subtraction
-    /// `EventDedup.TryAcceptEvent` performs internally to build its key. This
-    /// class takes the RESULT rather than the pair, because it has no
-    /// business re-deriving a number the dedup has already derived and
-    /// answered for: two derivations of one key are two chances to disagree.
+    /// is `frameTick - record.TickDelta` — the subtraction
+    /// `EventDedup.TryAcceptEvent` has to perform anyway to build its key.
+    /// That method hands the result out through `out originTick` (fix round 1,
+    /// F-2, which is what makes this paragraph true rather than aspirational),
+    /// and THAT is the number to pass here. This class takes the RESULT rather
+    /// than the pair because nothing downstream has any business re-deriving a
+    /// number the dedup has already derived and answered for: two derivations
+    /// of one key are two chances to disagree.
     ///
     /// DELIVERY ORDER IS BY TICK FIRST, ARRIVAL SECOND. Frames arrive
     /// reordered as a matter of course at the 5% loss Critical Rule 7
@@ -146,7 +150,9 @@ namespace Ring.Networking.Client
         }
 
         /// Takes an event the dedup has ALREADY approved, together with its
-        /// absolute tick, and holds it until that tick is on screen. `false`
+        /// absolute tick — the `out originTick` of the call that approved it,
+        /// not a second subtraction — and holds it until that tick is on
+        /// screen. `false`
         /// means the queue was full and this record was refused — counted in
         /// `OverflowDroppedEvents` and gone for good (see the class doc);
         /// the residents are left exactly as they were.

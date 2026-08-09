@@ -2971,7 +2971,7 @@ namespace Ring.Simulation.Tests
                     {
                         recordsOffered++;
                         var key = (f.Tick - f.Events[i].TickDelta, f.Events[i].Seq);
-                        if (!dedup.TryAcceptEvent(f.Epoch, f.Tick, in f.Events[i])) continue;
+                        if (!dedup.TryAcceptEvent(f.Epoch, f.Tick, in f.Events[i], out _)) continue;
                         handled[key] = handled.TryGetValue(key, out int n) ? n + 1 : 1;
                         handledAtDelta[key] = f.Events[i].TickDelta;
                     }
@@ -3048,11 +3048,11 @@ namespace Ring.Simulation.Tests
 
             // The NEWER datagram overtakes the older one.
             Assert.IsTrue(dedup.TryAcceptState(newer.Epoch, newer.Tick), "the newer state applies");
-            Assert.IsTrue(dedup.TryAcceptEvent(newer.Epoch, newer.Tick, in newer.Events[0]));
+            Assert.IsTrue(dedup.TryAcceptEvent(newer.Epoch, newer.Tick, in newer.Events[0], out _));
 
             Assert.IsFalse(dedup.TryAcceptState(older.Epoch, older.Tick),
                 "the overtaken frame's STATE is stale and must not be applied over the newer one (Р31)");
-            Assert.IsTrue(dedup.TryAcceptEvent(older.Epoch, older.Tick, in older.Events[0]),
+            Assert.IsTrue(dedup.TryAcceptEvent(older.Epoch, older.Tick, in older.Events[0], out _),
                 "but its event has never been seen and must still be handled — dropping it with the "
                 + "state is exactly the hole the Р31 refinement closes");
         }
@@ -3086,7 +3086,7 @@ namespace Ring.Simulation.Tests
 
             Assert.IsTrue(dedup.TryAcceptState(f.Epoch, f.Tick));
             for (int i = 0; i < f.EventCount; i++)
-                Assert.IsTrue(dedup.TryAcceptEvent(f.Epoch, f.Tick, in f.Events[i]),
+                Assert.IsTrue(dedup.TryAcceptEvent(f.Epoch, f.Tick, in f.Events[i], out _),
                     $"first pass: event {i} has never been seen");
 
             // The identical datagram arrives a second time — a duplicated packet
@@ -3094,7 +3094,7 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(dedup.TryAcceptState(f.Epoch, f.Tick),
                 "the same tick's state is not applied twice (the gate is `<=`, not `<`)");
             for (int i = 0; i < f.EventCount; i++)
-                Assert.IsFalse(dedup.TryAcceptEvent(f.Epoch, f.Tick, in f.Events[i]),
+                Assert.IsFalse(dedup.TryAcceptEvent(f.Epoch, f.Tick, in f.Events[i], out _),
                     $"second pass: event {i} must not be handled again");
         }
 
@@ -3115,18 +3115,94 @@ namespace Ring.Simulation.Tests
 
             const uint frame = 1000;
             SnapshotBlocks.EventRecord first = DedupRecord(seq: 7, tickDelta: 2);
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, frame, in first),
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, frame, in first, out uint firstOrigin),
                 "first sight of the event that happened on tick 998");
+            Assert.AreEqual(998u, firstOrigin,
+                "and the tick it names is the ORIGINAL one, not the frame's own 1000 — the caller "
+                + "files the event under this number and must not re-derive it (fix round 1, F-2)");
 
             SnapshotBlocks.EventRecord resend = DedupRecord(seq: 7, tickDelta: 3);
-            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, frame + 1, in resend),
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, frame + 1, in resend, out _),
                 "one frame later, one delta larger — the SAME event (tick 998, seq 7), and keying on "
                 + "the frame tick instead would have called it a new one");
 
             SnapshotBlocks.EventRecord other = DedupRecord(seq: 7, tickDelta: 2);
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, frame + 1, in other),
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, frame + 1, in other, out uint otherOrigin),
                 "witness: the same seq from a DIFFERENT origin tick (999) is a different event — "
                 + "seq is unique per tick, not per match");
+            Assert.AreEqual(999u, otherOrigin,
+                "and it says so: the two accepted events differ by exactly the one tick their "
+                + "origins differ by, which is what makes them two keys and not one");
+        }
+
+        // ---- T29.C4b (Task 44b fix round 1, F-2). The origin tick comes back ----
+
+        [Test]
+        public void Dedup_AcceptedEvent_HandsBackTheOriginTick_AndCannotUnderflow()
+        {
+            // Fix round 1, reviewer finding F-2. `ClientEventQueue` files an
+            // accepted event under its ABSOLUTE tick, and until this round the
+            // dedup derived that number, kept it in a local and returned a bare
+            // bool — so the receiver had to perform the same subtraction a
+            // second time. Two derivations of one key are two chances to
+            // disagree, over a value that must match byte for byte or the event
+            // surfaces on the wrong frame. The number now leaves through
+            // `out originTick`, and this test is what holds that contract up.
+            var cfg = TestConfigs.Open();
+            var dedup = new EventDedup(cfg);
+            dedup.Reset(Epoch);
+
+            // 1. The ordinary case: an event several ticks back inside a frame.
+            SnapshotBlocks.EventRecord ordinary = DedupRecord(seq: 1, tickDelta: 7);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 500, in ordinary, out uint ordinaryOrigin));
+            Assert.AreEqual(493u, ordinaryOrigin, "500 - 7, and nothing else");
+
+            // 2. Delta 0 — the event of the frame's own tick.
+            SnapshotBlocks.EventRecord fresh = DedupRecord(seq: 2, tickDelta: 0);
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 500, in fresh, out uint freshOrigin));
+            Assert.AreEqual(500u, freshOrigin, "delta 0 rides its own tick");
+
+            // 3. THE UNDERFLOW BOUNDARY, both sides of it. `TickDelta ==
+            // frameTick` names tick 0 — the first tick of the match, a legal
+            // origin — and is admitted; one further back names a tick from
+            // before the match began and is refused BEFORE the subtraction, so
+            // the enormous wrapped uint that `frameTick - TickDelta` would
+            // otherwise produce never exists. The guard is what the out
+            // parameter's whole contract now rests on.
+            var edge = new EventDedup(cfg);
+            edge.Reset(Epoch);
+            SnapshotBlocks.EventRecord atZero = DedupRecord(seq: 3, tickDelta: 9);
+            Assert.IsTrue(edge.TryAcceptEvent(Epoch, 9, in atZero, out uint zeroOrigin),
+                "delta exactly equal to the frame's tick is admitted — it names tick 0");
+            Assert.AreEqual(0u, zeroOrigin, "and tick 0 is a real answer here, not an absence");
+
+            SnapshotBlocks.EventRecord beforeTheMatch = DedupRecord(seq: 4, tickDelta: 10);
+            Assert.IsFalse(edge.TryAcceptEvent(Epoch, 9, in beforeTheMatch, out uint refusedOrigin),
+                "one tick further back is a record from before the match began (Р82)");
+            Assert.AreEqual(0u, refusedOrigin,
+                "and the refusal leaves `default`, not the ~4.29-billion wrap the subtraction would "
+                + "have produced — which is exactly the number that would have been filed as a tick");
+
+            // 4. Every OTHER refusal leaves `default` too, so a caller that
+            // reads the number without checking the bool at least reads
+            // something harmless. `default` is NOT a sentinel — case 3 above
+            // returns 0 on success — the bool is.
+            SnapshotBlocks.EventRecord foreign = DedupRecord(seq: 5, tickDelta: 0);
+            Assert.IsFalse(dedup.TryAcceptEvent(OtherEpoch, 500, in foreign, out uint foreignOrigin),
+                "a foreign epoch is refused");
+            Assert.AreEqual(0u, foreignOrigin, "and hands back nothing that looks like a tick");
+
+            SnapshotBlocks.EventRecord hostileSeq = DedupRecord((ushort)dedup.SeqCapacity, 0);
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, 500, in hostileSeq, out uint hostileOrigin),
+                "a seq at capacity is refused");
+            Assert.AreEqual(0u, hostileOrigin);
+
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, 500, in ordinary, out uint duplicateOrigin),
+                "and the second copy of case 1's event is a duplicate");
+            Assert.AreEqual(0u, duplicateOrigin,
+                "which is the refusal that matters most: the record IS well-formed and its origin "
+                + "tick WAS computed on the way to the verdict, so this is the one place the number "
+                + "could have leaked out attached to a 'no'");
         }
 
         // ---- T29.C5. One epoch, and Reset clears everything ----
@@ -3151,14 +3227,14 @@ namespace Ring.Simulation.Tests
                 + "take the match over");
 
             SnapshotBlocks.EventRecord record = DedupRecord(seq: 3, tickDelta: 0);
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 500, in record));
-            Assert.IsFalse(dedup.TryAcceptEvent(OtherEpoch, 500, in record),
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 500, in record, out _));
+            Assert.IsFalse(dedup.TryAcceptEvent(OtherEpoch, 500, in record, out _),
                 "a foreign epoch's events are refused too — an id in one match means nothing in another");
 
             // A restart (Р60): the owner names the new epoch and everything the
             // old one taught is forgotten.
             dedup.Reset(OtherEpoch);
-            Assert.IsTrue(dedup.TryAcceptEvent(OtherEpoch, 500, in record),
+            Assert.IsTrue(dedup.TryAcceptEvent(OtherEpoch, 500, in record, out _),
                 "after Reset the very same key is unseen again — a new match replays its own history");
             Assert.IsTrue(dedup.TryAcceptState(OtherEpoch, 0),
                 "and state applies from tick zero again, because a restarted match starts at zero");
@@ -3207,21 +3283,21 @@ namespace Ring.Simulation.Tests
 
             SnapshotBlocks.EventRecord justOver = DedupRecord((ushort)dedup.SeqCapacity, 0);
             bool atCapacity = true;
-            Assert.DoesNotThrow(() => atCapacity = dedup.TryAcceptEvent(Epoch, 100, in justOver),
+            Assert.DoesNotThrow(() => atCapacity = dedup.TryAcceptEvent(Epoch, 100, in justOver, out _),
                 "a hostile seq must not throw — Р82 is 'do not throw' AND 'do not hand back rubbish'");
             Assert.IsFalse(atCapacity, "and it must be refused, not handled");
 
             bool maxed = true;
             SnapshotBlocks.EventRecord huge = DedupRecord(ushort.MaxValue, 0);
-            Assert.DoesNotThrow(() => maxed = dedup.TryAcceptEvent(Epoch, 100, in huge));
+            Assert.DoesNotThrow(() => maxed = dedup.TryAcceptEvent(Epoch, 100, in huge, out _));
             Assert.IsFalse(maxed);
 
             // Nothing was corrupted on the way past: an ordinary record still
             // works, and still deduplicates.
             SnapshotBlocks.EventRecord legal = DedupRecord(seq: 3, tickDelta: 0);
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 100, in legal),
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 100, in legal, out _),
                 "witness: the refusals above left the structure usable");
-            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, 100, in legal),
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, 100, in legal, out _),
                 "and still deduplicating");
         }
 
@@ -3249,14 +3325,14 @@ namespace Ring.Simulation.Tests
 
             const uint newest = 100000;
             SnapshotBlocks.EventRecord newestRecord = DedupRecord(seq: 1, tickDelta: 0);
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, newest, in newestRecord));
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, newest, in newestRecord, out _));
 
             SnapshotBlocks.EventRecord justInside = DedupRecord(seq: 1, tickDelta: 0);
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, newest - (EventDedup.WindowTicks - 1), in justInside),
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, newest - (EventDedup.WindowTicks - 1), in justInside, out _),
                 "one tick inside the window is still remembered, so it is answered on its own merits");
 
             SnapshotBlocks.EventRecord justOutside = DedupRecord(seq: 2, tickDelta: 0);
-            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, newest - EventDedup.WindowTicks, in justOutside),
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, newest - EventDedup.WindowTicks, in justOutside, out _),
                 "exactly one tick further back is outside the window, and an unknown answer is "
                 + "conservatively 'already seen'");
 
@@ -3265,16 +3341,16 @@ namespace Ring.Simulation.Tests
             fresh.Reset(Epoch);
             const uint baseTick = 1000;
             SnapshotBlocks.EventRecord marker = DedupRecord(seq: 5, tickDelta: 0);
-            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick, in marker));
-            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 10, in marker),
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick, in marker, out _));
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 10, in marker, out _),
                 "a different tick, so a different mask");
             SnapshotBlocks.EventRecord walker = DedupRecord(seq: 9, tickDelta: 0);
-            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 100, in walker));
-            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 200, in walker));
-            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 10 + EventDedup.WindowTicks, in marker),
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 100, in walker, out _));
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 200, in walker, out _));
+            Assert.IsTrue(fresh.TryAcceptEvent(Epoch, baseTick + 10 + EventDedup.WindowTicks, in marker, out _),
                 "the slot that held tick 1010's mask has come round again — a ring that did not wipe "
                 + "it as the window advanced would call this brand-new event a duplicate and eat it");
-            Assert.IsFalse(fresh.TryAcceptEvent(Epoch, baseTick + 10 + EventDedup.WindowTicks, in marker),
+            Assert.IsFalse(fresh.TryAcceptEvent(Epoch, baseTick + 10 + EventDedup.WindowTicks, in marker, out _),
                 "witness: the slot is working — the second copy of THAT event is refused");
         }
 
@@ -3304,14 +3380,14 @@ namespace Ring.Simulation.Tests
                 "premise: a 255-tick jump takes the incremental branch, not the full wipe");
             const uint nearTop = uint.MaxValue - byte.MaxValue;
             SnapshotBlocks.EventRecord plant = DedupRecord(seq: 1, tickDelta: 0);
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, nearTop, in plant),
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, nearTop, in plant, out _),
                 "the frame that plants the window's edge near the top of u32 is ordinary");
 
             SnapshotBlocks.EventRecord atTheEdge = DedupRecord(seq: 2, tickDelta: 0);
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, uint.MaxValue, in atTheEdge),
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, uint.MaxValue, in atTheEdge, out _),
                 "a fresh key at tick uint.MaxValue itself is answered on its merits — the "
                 + "incremental wipe must terminate for control to even get here");
-            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, uint.MaxValue, in atTheEdge),
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, uint.MaxValue, in atTheEdge, out _),
                 "witness that the masks survived the walk: the second copy is a duplicate");
         }
 
@@ -3329,8 +3405,8 @@ namespace Ring.Simulation.Tests
             // either, so the measurement only means something once the thing
             // being measured is shown to work.
             SnapshotBlocks.EventRecord warm = DedupRecord(seq: 1, tickDelta: 0);
-            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 500, in warm));
-            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, 500, in warm),
+            Assert.IsTrue(dedup.TryAcceptEvent(Epoch, 500, in warm, out _));
+            Assert.IsFalse(dedup.TryAcceptEvent(Epoch, 500, in warm, out _),
                 "fixture premise: the dedup really is deduplicating");
             Assert.IsTrue(dedup.TryAcceptState(Epoch, 500));
             Assert.IsFalse(dedup.TryAcceptState(Epoch, 500), "fixture premise: the gate really gates");
@@ -3350,7 +3426,7 @@ namespace Ring.Simulation.Tests
                             TickDelta = (byte)(i & 3),
                             PayloadLength = 2,
                         };
-                        dedup.TryAcceptEvent(Epoch, frameTick, in record);
+                        dedup.TryAcceptEvent(Epoch, frameTick, in record, out _);
                     }
                 }
             }, Is.Not.AllocatingGCMemory());

@@ -22,10 +22,11 @@ namespace Ring.Networking.Client
     ///     `<= lastAppliedTick` does not apply its state. The boundary is `<=`,
     ///     not `<`: a duplicated datagram carries the tick that was just
     ///     applied, and re-applying it would rewind interpolation for nothing.
-    ///   * `TryAcceptEvent(epoch, frameTick, record)` — "is this the first sight
-    ///     of this event?" A frame whose STATE was refused as stale still has
-    ///     its unseen events handled, because a packet that merely overtook
-    ///     another would otherwise swallow a death that was never shown.
+    ///   * `TryAcceptEvent(epoch, frameTick, record, out originTick)` — "is this
+    ///     the first sight of this event?" A frame whose STATE was refused as
+    ///     stale still has its unseen events handled, because a packet that
+    ///     merely overtook another would otherwise swallow a death that was
+    ///     never shown.
     /// Counting the refusals is the CALLER's job: `NetStats.StaleSnapshots` and
     /// `DuplicateSnapshots` are per-FRAME counters and this class answers per
     /// record, so it increments nothing (task-29-brief §2.7).
@@ -38,6 +39,11 @@ namespace Ring.Networking.Client
     /// (SnapshotAssembler's own doc), which is what makes the key stable at
     /// all. Keying on the frame's tick instead would give each resend its own
     /// identity and redundancy would double every death instead of insuring it.
+    /// THAT ORIGINAL TICK LEAVES BY THE FRONT DOOR (fix round 1, F-2): an
+    /// accepted event hands it back through `out originTick`, because the
+    /// caller needs the very same number — `ClientEventQueue` files the event
+    /// under it — and a number derived twice is a number that can disagree with
+    /// itself.
     ///
     /// ONE EPOCH IS TRACKED, AND ONLY `Reset` CHANGES IT. The epoch arrives
     /// over the Reliable lifecycle channel (Р60) and the owner (Task 32) calls
@@ -172,18 +178,44 @@ namespace Ring.Networking.Client
         }
 
         /// Is this the FIRST sight of the event `record` carried by the frame
-        /// `(epoch, frameTick)`? `true` also marks it seen. Deliberately
-        /// independent of `TryAcceptState`: an event out of a frame whose state
-        /// was refused as stale is still handled if its key is new (spec §3.7's
-        /// refinement of Р31).
+        /// `(epoch, frameTick)`? `true` also marks it seen AND hands back
+        /// `originTick`, the absolute tick the event actually happened on.
+        /// Deliberately independent of `TryAcceptState`: an event out of a frame
+        /// whose state was refused as stale is still handled if its key is new
+        /// (spec §3.7's refinement of Р31).
         ///
         /// The key is built HERE rather than by the caller, because the
         /// subtraction that produces it — the frame's tick minus the record's
         /// delta — is the one step in the whole scheme that must never be got
         /// wrong, and a contract every call site restates is a contract every
-        /// call site can break.
-        public bool TryAcceptEvent(ushort epoch, uint frameTick, in SnapshotBlocks.EventRecord record)
+        /// call site can break. `originTick` is what makes that hold for the
+        /// caller's own copy of the number too (fix round 1, F-2): the receiver
+        /// files an accepted event in `ClientEventQueue` under its absolute
+        /// tick, and computing that tick a second time on the way there would
+        /// put two derivations behind one key — two chances to disagree — over
+        /// a value that must match this one exactly or the event is shown on the
+        /// wrong frame.
+        ///
+        /// `originTick` MEANS SOMETHING ONLY WHEN THIS RETURNS `true`. Every
+        /// refusal leaves it at `default`, and that is emphatically NOT a
+        /// sentinel: tick 0 carried at delta 0 is a perfectly legal origin, so
+        /// the returned bool is the only thing that says whether the number is
+        /// an answer at all.
+        ///
+        /// IT CANNOT UNDERFLOW ON THE PATH THAT HANDS IT BACK. The guard
+        /// `record.TickDelta > frameTick` refuses — before any subtraction —
+        /// every record naming a tick from before the match began, so the only
+        /// subtraction that can reach `originTick` is one whose subtrahend is no
+        /// larger than its minuend. The boundary case is admitted on purpose:
+        /// `TickDelta == frameTick` names tick 0, the first tick of the match.
+        public bool TryAcceptEvent(ushort epoch, uint frameTick, in SnapshotBlocks.EventRecord record,
+            out uint originTick)
         {
+            // Set once, on the way out of the accepting path only. Every `return
+            // false` below therefore leaves the caller holding `default` rather
+            // than a number that looks like an answer.
+            originTick = default;
+
             if (!_hasEpoch || epoch != _epoch) return false;
 
             // Both guards are on untrusted wire bytes (Р82) and both come BEFORE
@@ -192,18 +224,18 @@ namespace Ring.Networking.Client
             if (record.Seq >= SeqCapacity) return false;
             if (record.TickDelta > frameTick) return false;
 
-            uint originTick = frameTick - record.TickDelta;
+            uint origin = frameTick - record.TickDelta;
 
             if (!_hasWindow)
             {
                 _hasWindow = true;
-                _newestTick = originTick;
+                _newestTick = origin;
             }
-            else if (originTick > _newestTick)
+            else if (origin > _newestTick)
             {
-                AdvanceWindow(originTick);
+                AdvanceWindow(origin);
             }
-            else if (_newestTick - originTick >= WindowTicks)
+            else if (_newestTick - origin >= WindowTicks)
             {
                 // Older than the ring can answer for. Conservative refusal —
                 // see the class doc for why a false "seen" is the cheap error
@@ -211,11 +243,12 @@ namespace Ring.Networking.Client
                 return false;
             }
 
-            int word = SlotOf(originTick) + (record.Seq >> 6);
+            int word = SlotOf(origin) + (record.Seq >> 6);
             ulong bit = 1UL << (record.Seq & (SeqBitsPerWord - 1));
             if ((_seen[word] & bit) != 0) return false;
 
             _seen[word] |= bit;
+            originTick = origin;
             return true;
         }
 
