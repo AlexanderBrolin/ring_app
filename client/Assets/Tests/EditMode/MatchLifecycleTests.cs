@@ -13,7 +13,9 @@ namespace Ring.Simulation.Tests
 {
     /// Stage 2 Task 40 (spec §3.10, §3.11, §6k Р163/Р164; plan Т40): the
     /// match's own life cycle — the epoch it is minted under, the two ways it
-    /// can end, and the five client-side seams a restart has to clear.
+    /// can end, and the SIX client-side seams a restart has to clear (five in
+    /// Task 40; `ClientEventQueue` joined them in Task 44b, by the two-places
+    /// rule `ClientMatchReset`'s own doc states).
     ///
     /// FIVE SUBJECTS, ONE FILE, BECAUSE THEY ARE ONE CONTRACT.
     /// `MatchEpochCounter` (`Ring.Server`), `MatchEndPolicy` and
@@ -49,11 +51,11 @@ namespace Ring.Simulation.Tests
     /// next match, so a test that cannot tell the two apart pins nothing.
     ///
     /// A NEW PER-MATCH SEAM MUST BE ADDED IN TWO PLACES — `ClientMatchReset`
-    /// and this file. The completeness of the set of five is contractual, not
+    /// and this file. The completeness of the set is contractual, not
     /// something the type system holds up: nothing in C# can say "these are
-    /// all the objects a restart must clear". The mutation wave of this task
-    /// (one removed call per seam) is what pins the current five
-    /// mechanically; a sixth inherits the same obligation.
+    /// all the objects a restart must clear". The mutation wave of each task
+    /// (one removed call per seam) is what pins the current six
+    /// mechanically; a seventh inherits the same obligation.
     ///
     /// FIXTURES ARE HAND-BUILT (Р56 — the asset owns the game's numbers, the
     /// fixture owns the test's), with the two existing Simulation-side
@@ -98,6 +100,25 @@ namespace Ring.Simulation.Tests
 
         static StalePolicy NewStalePolicy() =>
             new StalePolicy(capacity: 4, staleTicks: 3, fadeTicks: 4);
+
+        /// The sixth seam (Task 44b). A one-event budget keeps the queue
+        /// small and readable — `ClientLinkTests` owns the capacity
+        /// arithmetic itself; this file only asks whether the seam was
+        /// cleared.
+        static ClientEventQueue NewEventQueue()
+        {
+            var timings = Timings();
+            return new ClientEventQueue(in timings, snapshotEventBudget: 1);
+        }
+
+        /// One accepted event record, identified by its `seq`. The payload
+        /// fields are left at zero: this file never decodes one, it only
+        /// watches whether records survive a restart.
+        static SnapshotBlocks.EventRecord EventAt(ushort seq) => new SnapshotBlocks.EventRecord
+        {
+            Kind = 1,
+            Seq = seq,
+        };
 
         /// Spawns `count` unconfirmed ghosts born on tick 0. The gate is
         /// `WeaponSystem.WouldFireThisTick`, so the fixture has to satisfy it:
@@ -476,6 +497,49 @@ namespace Ring.Simulation.Tests
                 + "ticks past the last applied frame is starvation, and the indicator must arm");
         }
 
+        [Test]
+        public void ResetForEpoch_ClearsEventQueue()
+        {
+            // The sixth seam (Task 44b; spec §3.10 lists "the receive queue of
+            // events" among what a full client reset must clear, as its own
+            // item beside the set of seen (epoch, tick, seq)).
+            //
+            // This seam fails in the OPPOSITE direction from the other five: a
+            // forgotten Reset here does not refuse anything, it PRODUCES.
+            // Records are keyed by ABSOLUTE tick and the restarted match
+            // replays its ticks from zero, so a leftover record is handed out
+            // again the moment the NEW match's render clock reaches that same
+            // tick number — the finished match's death surfacing in the middle
+            // of the next one — while occupying capacity until then.
+            const uint OldMatchTick = 400;
+
+            // Positive witness, on an untouched instance: the leftover record
+            // really is still deliverable. Without it the assertion below
+            // would also pass on a queue that never delivers anything at all.
+            var witness = NewEventQueue();
+            Assert.IsTrue(witness.Enqueue(OldMatchTick, EventAt(seq: 1)),
+                "fixture premise: the old match's event is queued");
+            Assert.IsTrue(witness.TryDequeue((int)OldMatchTick, out ClientEventQueue.PendingEvent stale),
+                "witness: an unreset queue still hands the previous match's event out when the "
+                + "next match's clock reaches that tick number");
+            Assert.AreEqual(OldMatchTick, stale.Tick,
+                "witness: and it is the OLD match's record, on the old match's own tick");
+
+            var events = NewEventQueue();
+            events.Enqueue(OldMatchTick, EventAt(seq: 1));
+
+            var reset = NewReset(NewDedup(), NewQueue(), new RenderClock(), NewGhosts(),
+                NewStalePolicy(), events);
+            reset.ResetForEpoch(NewEpoch);
+
+            Assert.IsFalse(events.TryDequeue(int.MaxValue, out _),
+                "after the restart the previous match's events must be gone at EVERY render tick — "
+                + "an event replayed into the new match is a death or a hit shown for something "
+                + "that never happened in the world the player is looking at");
+            Assert.AreEqual(0, events.Count,
+                "ClientEventQueue.Count must be zero after the seam is cleared");
+        }
+
         // ------------------------------------------------------------------
         // Guards and wire shape.
         // ------------------------------------------------------------------
@@ -528,30 +592,35 @@ namespace Ring.Simulation.Tests
             var clock = new RenderClock();
             var ghosts = NewGhosts();
             var policy = NewStalePolicy();
+            var events = NewEventQueue();
 
-            // Five separate guards, five separate assertions on the PARAMETER
+            // Six separate guards, six separate assertions on the PARAMETER
             // NAME: "something threw" would pass even if one seam's guard
             // covered another's argument, which is precisely the mistake a
-            // five-argument constructor invites.
+            // six-argument constructor invites.
             Assert.AreEqual("dedup",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(null, queue, clock, ghosts, policy)).ParamName);
+                    () => new ClientMatchReset(null, queue, clock, ghosts, policy, events)).ParamName);
             Assert.AreEqual("snapshotQueue",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy)).ParamName);
+                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy, events)).ParamName);
             Assert.AreEqual("renderClock",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy, events)).ParamName);
             Assert.AreEqual("ghosts",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, null, policy)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, null, policy, events)).ParamName);
             Assert.AreEqual("stalePolicy",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null, events)).ParamName);
+            // The sixth seam (Task 44b), by the same rule as the five above.
+            Assert.AreEqual("eventQueue",
+                Assert.Throws<ArgumentNullException>(
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, null)).ParamName);
 
             // Positive witness: a fully wired set constructs.
-            Assert.DoesNotThrow(() => new ClientMatchReset(dedup, queue, clock, ghosts, policy),
-                "witness: all five seams present is the legal construction");
+            Assert.DoesNotThrow(() => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events),
+                "witness: all six seams present is the legal construction");
         }
 
         [Test]
@@ -640,8 +709,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, (byte)MatchEndReason.MaxDurationReached);
         }
 
+        /// `eventQueue` is last and defaulted (Task 44b): every existing
+        /// call site keeps reading exactly as it did, and only the test that
+        /// is ABOUT the sixth seam has to name it.
         static ClientMatchReset NewReset(EventDedup dedup, SnapshotQueue queue, RenderClock clock,
-            GhostProjectiles ghosts, StalePolicy stalePolicy)
-            => new ClientMatchReset(dedup, queue, clock, ghosts, stalePolicy);
+            GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue = null)
+            => new ClientMatchReset(dedup, queue, clock, ghosts, stalePolicy,
+                eventQueue ?? NewEventQueue());
     }
 }

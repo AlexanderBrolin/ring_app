@@ -10,9 +10,10 @@ namespace Ring.Networking.Protocol
     /// client's three epoch-aware seams — `EventDedup`, `SnapshotQueue` and
     /// `RenderClock` — each track exactly one epoch and REFUSE a frame naming
     /// any other (`SnapshotQueue.Admit` answers `ForeignEpoch` and changes
-    /// nothing). The other two per-match seams `ClientMatchReset` clears
-    /// (`GhostProjectiles`, `StalePolicy`) track no epoch at all and are
-    /// cleared outright. Only `Reset`/`ResetForEpoch` switches the tracked
+    /// nothing). The other three per-match seams `ClientMatchReset` clears
+    /// (`GhostProjectiles`, `StalePolicy` and, since Task 44b,
+    /// `ClientEventQueue`) track no epoch at all and are cleared outright.
+    /// Only `Reset`/`ResetForEpoch` switches the tracked
     /// epoch, and this is the message that calls for it
     /// (`ClientMatchReset`). That is why the server sends this BEFORE its
     /// first snapshot of the new epoch: a frame that arrives ahead of the
