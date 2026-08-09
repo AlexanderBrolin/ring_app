@@ -1794,5 +1794,105 @@ namespace Ring.Simulation.Tests
                 + "leaking into the frame built for a genuinely DIFFERENT new viewpointIndex — the real "
                 + "shape of the spectate-switch leak, not merely an entity moving under a fixed viewpoint");
         }
+
+        [Test]
+        public void AudibleLatch_SurvivesResetViewpointMemory_AcrossARealViewpointSwitch()
+        {
+            // Ф8 gate W-10. `ResetViewpointMemory`'s own doc records a
+            // DELIBERATE decision (fix-round 2, C-1, reversing fix-round 1's
+            // own ruling): the Р133 anti-dither latch (`LatchIds`/
+            // `LatchCells`/`LatchCount`) is memory of the SOURCE, not of this
+            // connection's viewpoint, and clearing it on every accepted
+            // switch would force a fresh, independent rounding of that
+            // source's position on its very next audible event — exactly the
+            // averaging attack Р133 exists to close, once per switch, for
+            // every source a spectator can still only hear. Nothing in this
+            // suite pinned that decision before this test: every OTHER
+            // ResetViewpointMemory fixture is about the VISIBILITY pair
+            // (Previous/Current), and every OTHER AudibleLatch fixture never
+            // calls ResetViewpointMemory at all — so a future "fix" that
+            // taught ResetViewpointMemory to also clear the latch would pass
+            // every existing test in this file and silently reopen the leak.
+            var cfg = TestConfigs.Open();
+            float grid = cfg.Visibility.HearPositionGridMeters;
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            // Player 2 is the switch's DESTINATION viewpoint, placed at the
+            // IDENTICAL position as player 0 on purpose: this isolates
+            // ResetViewpointMemory's own effect on the latch from any change
+            // in hearing/sight geometry a genuinely different viewpoint
+            // position would also introduce (ResetViewpointMemory_
+            // PreventsAnEntityLeakingAcrossARealViewpointSwitch above already
+            // covers the geometry-changes case, for visibility, not hearing).
+            TestWorlds.RelocatePlayerForTest(w, 2, float2.zero);
+
+            // The source STRADDLES a grid cell boundary between the two
+            // frames — AudibleLatch_OscillationInsideTheMargin's own
+            // technique, reused here for the reason that test explains: a
+            // STATIONARY source cannot discriminate "the old latch survived"
+            // from "the latch was cleared and immediately re-latched onto
+            // the SAME unmoved position", because both give the identical
+            // answer (measured directly: an earlier draft of this fixture
+            // used one fixed position and passed unchanged even after
+            // ResetViewpointMemory was mutated to also clear the latch).
+            // `boundaryX` is exactly on a 3 m cell boundary (1.5 + 3*16, the
+            // same value that fixture uses) and both positions stay out of
+            // sight (> SightRadius + ExitHysteresis) and in earshot
+            // (< HearRadius) throughout.
+            const float boundaryX = 49.5f;
+            const float amplitude = 0.1f;
+            Assert.Greater(boundaryX - amplitude, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: the source must stay out of sight on both sides of the boundary");
+            Assert.Less(boundaryX + amplitude, cfg.Visibility.HearRadius,
+                "fixture premise: the source must stay in earshot on both sides of the boundary");
+            Assert.Less(amplitude, grid * 0.75f,
+                "fixture premise: the move must stay inside the latch's own hysteresis margin — "
+                + "otherwise even a SURVIVING latch would legitimately re-latch, and the test would "
+                + "prove nothing about ResetViewpointMemory specifically");
+            var pos1 = new float2(boundaryX - amplitude, 0f);
+            var pos2 = new float2(boundaryX + amplitude, 0f);
+            Assert.Greater(math.distance(
+                    VisibilitySystem.QuantizeAudiblePos(pos1, cfg.Visibility),
+                    VisibilitySystem.QuantizeAudiblePos(pos2, cfg.Visibility)),
+                grid * 0.5f,
+                "fixture premise: a FRESH coarsening of the two positions must land in DIFFERENT cells, "
+                + "or a cleared-and-relatched result could not be told apart from a kept one");
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+
+            // Frame 1: viewpoint 0, the source (player 1) at pos1 — latches
+            // a cell.
+            TestWorlds.RelocatePlayerForTest(w, 1, pos1);
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDashed, pos1, 0, default, 0f, playerIndex: 1);
+            AssembledFrame first = Build(asm, w, cfg, connection: 0, identityIndex: 0, viewpointIndex: 0);
+            Assert.AreEqual(1, first.EventCount, "fixture premise: the dash must be delivered by hearing");
+            float2 latchedCell = first.Events[0].Pos;
+            Assert.That(math.distance(latchedCell, VisibilitySystem.QuantizeAudiblePos(pos1, cfg.Visibility)),
+                Is.LessThan(0.01f),
+                "fixture premise: the first delivery is the plain coarsening of the source's own position");
+
+            // The switch: MatchServer.OnSpectateRequest's own sequence —
+            // reset this connection's viewpoint memory, then (in the next
+            // BuildFor call) move viewpointIndex itself.
+            asm.ResetViewpointMemory(0);
+
+            // Frame 2: the source moves to pos2 — just across the grid
+            // boundary, still well inside the latch's hysteresis margin —
+            // and is now viewed from player 2 (a genuinely different
+            // viewpointIndex, at the same position as player 0 — see the
+            // geometry note above).
+            TestWorlds.RelocatePlayerForTest(w, 1, pos2);
+            w.ClearEvents();
+            w.Emit(SimEventKind.PlayerDashed, pos2, 0, default, 0f, playerIndex: 1);
+            AssembledFrame second = Build(asm, w, cfg, connection: 0, identityIndex: 0, viewpointIndex: 2);
+            Assert.AreEqual(1, second.EventCount, "the dash must still be delivered by hearing after the switch");
+
+            Assert.That(math.distance(second.Events[0].Pos, latchedCell), Is.LessThan(0.01f),
+                "the Р133 latch must survive ResetViewpointMemory — a switch that cleared it would force "
+                + "a fresh, independent rounding of the source's new (but still-within-margin) position "
+                + "on its very next audible event, exactly the averaging leak Р133 exists to close "
+                + "(SnapshotAssembler.ResetViewpointMemory's own doc, fix-round 2 C-1)");
+        }
     }
 }

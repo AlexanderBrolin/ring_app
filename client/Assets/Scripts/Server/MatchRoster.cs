@@ -125,6 +125,26 @@ namespace Ring.Server
                 throw new ArgumentOutOfRangeException(nameof(config), config.MaxPlayers,
                     "MatchRoster: MatchConfig.MaxPlayers must be >= 1.");
             }
+            // Ф8 gate W-6: the SAME degenerate-handle guard `MatchConfigLoader.
+            // Parse` already applies (its own "non-empty players[]" refusal) —
+            // moved down to where the decision actually lives. `ShouldStart`'s
+            // WaitForAll arm reads `_connectedCount >= _config.Players.Length`,
+            // which is true on the FIRST connection when `Players.Length == 0`
+            // (`0 >= 0` is already true before anyone joins, and every count
+            // afterward is too) — unreachable through the loader today, since
+            // it refuses this combination first, but a caller that builds a
+            // `MatchConfig` directly (every test in this file, and any future
+            // production path that skips the loader) has no such gate. The
+            // rule the loader enforces belongs here, not only in a parser one
+            // layer up (AGENT.md rule 4: "the decision lives in the core").
+            if (config.StartMode == MatchStartMode.WaitForAll && config.Players.Length == 0)
+            {
+                throw new ArgumentException(
+                    "MatchRoster: MatchStartMode.WaitForAll requires a non-empty " +
+                    "MatchConfig.Players roster — waiting for an empty roster starts on the very " +
+                    "first connection (ShouldStart's own comparison against Players.Length).",
+                    nameof(config));
+            }
 
             _config = config;
             _slotPlayerIds = new string[config.MaxPlayers];

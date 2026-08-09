@@ -4,6 +4,7 @@ using System.Text;
 using FishNet;
 using FishNet.Connection;
 using FishNet.Managing;
+using FishNet.Transporting;
 using Ring.Data;
 using Ring.Networking;
 using Ring.Networking.Protocol;
@@ -238,6 +239,7 @@ namespace Ring.Server
         Phase _phase = Phase.Booting;
         bool _tickSubscribed;
         bool _frameRateLogged;
+        bool _transportStartChecked;
         ushort _requestedFrameRate;
 
         /// Abandon watchdog state (spec §3.10's "all clients disconnected ->
@@ -504,10 +506,28 @@ namespace Ring.Server
         /// alone its `Start`. Reading it in `Awake` would therefore have been
         /// safe too; this sits in the boot sequence because that is where the
         /// step belongs, not because `Awake` would have raced.
+        ///
+        /// `GetMTU` IS ASKED ABOUT `Channel.Unreliable` (Ф8 gate W-5), NOT
+        /// channel 0 (`Channel.Reliable`) — snapshots ride `Unreliable`
+        /// (`MatchServer.OnPostTick`'s own `Broadcast` call, step 4), and
+        /// `NetInvariants`'s own class doc documents the parameter as the MTU
+        /// of the SNAPSHOT channel. `Tugboat.GetMTU(byte channel)` ignores its
+        /// argument today and returns the same number for every channel, so
+        /// this was harmless in practice — but the call site's own argument
+        /// must still name the channel the check is actually about, not
+        /// whichever one happens to be numerically first.
+        ///
+        /// `_nm.TimeManager.TickRate` IS THE FOURTH ARGUMENT (Ф8 gate W-1):
+        /// invariant #8 pins `NetConfig.TickRate` against the rate this
+        /// SCENE's `TimeManager` is actually configured to tick at — a
+        /// different agreement from invariant #6, which only ever compared
+        /// `NetConfig.TickRate` against `SimulationWorld.TickDt` and had
+        /// nothing to say about the scene itself.
         bool TryValidateInvariants()
         {
             string[] violations = NetInvariants.Validate(_net, in _simConfig,
-                _nm.TransportManager.Transport.GetMTU(0));
+                _nm.TransportManager.Transport.GetMTU((byte)Channel.Unreliable),
+                _nm.TimeManager.TickRate);
             if (violations.Length == 0) return true;
 
             // Every line, not the first: an operator raising a server whose
@@ -581,11 +601,19 @@ namespace Ring.Server
             // silently — the guard costs one comparison per JOIN, not per tick.
             if (slot >= _slotCount) _slotCount = slot + 1;
 
+            // Ф8 gate W-3: `playerId` from the match config, not merely the
+            // transport's own `clientId` (which is a per-CONNECTION number
+            // FishNet assigns and which changes between runs) — without it,
+            // the container's own logs give no way to map "slot N" back to
+            // WHICH configured player actually took that seat.
+            // `MatchRoster.PlayerIdAt` is safe here: `TryJoin` already wrote
+            // this slot's id before calling back into this method (`OnAccepted`'s
+            // own doc, "the only moment it exists").
             Debug.Log(string.Format(CultureInfo.InvariantCulture,
-                "ServerBootstrap: player accepted slot={0} clientId={1} connected={2}/{3} " +
-                "atSeconds={4:F3}",
-                slot, connection.ClientId, _roster.ConnectedCount, _config.MaxPlayers,
-                NowSeconds()));
+                "ServerBootstrap: player accepted slot={0} playerId={1} clientId={2} " +
+                "connected={3}/{4} atSeconds={5:F3}",
+                slot, _roster.PlayerIdAt(slot), connection.ClientId, _roster.ConnectedCount,
+                _config.MaxPlayers, NowSeconds()));
         }
 
         double NowSeconds() => _clock.Elapsed.TotalSeconds;
@@ -593,6 +621,47 @@ namespace Ring.Server
         void OnPostTick()
         {
             if (_phase == Phase.Exiting) return;
+
+            // Ф8 gate W-8. Checked on the FIRST OnPostTick after Start()
+            // opened the port (step 8) — LogEffectiveFrameRateOnce's own doc
+            // below establishes why that is already the earliest honest
+            // reading of `ServerManager.Started`: the tick loop drains the
+            // queued connection-state transitions (`TransportManager.
+            // IterateIncoming`) BEFORE invoking `OnPostTick` on that same
+            // tick, so a start that actually succeeded has already turned
+            // `Started` true by the time this line runs.
+            //
+            // ON TUGBOAT 4.7.2, A BIND FAILURE NEVER REACHES THE BOOLEAN
+            // THIS CLASS ALREADY CHECKS AT STEP 8. `Tugboat.StartServer` ->
+            // `ServerSocket.StartConnection(ushort, int, string, string)`
+            // enqueues `LocalConnectionState.Starting`, assigns the socket's
+            // fields, calls `StartSocket()` SYNCHRONOUSLY (its own
+            // `Task.Run(StartSocket)` alternative is commented out in the
+            // shipped package) and then `return true;` UNCONDITIONALLY —
+            // the return statement does not depend on anything `StartSocket`
+            // decided. `StartSocket` itself does the real bind
+            // (`NetManager.Start(ipv4, ipv6, _port)`) and, on failure, logs
+            // an error and calls the socket's OWN `StopConnection()` instead
+            // of ever enqueueing `Started` — but by then the outer method
+            // has already returned `true`. So `ServerManager.StartConnection`
+            // — the return value `Boot()` already inspects at step 8 — can
+            // never observe a busy port; only `ServerManager.Started`
+            // staying false on this first tick can. Without this check, a
+            // busy port makes the process sit through the entire
+            // `JoinTimeoutSeconds` window (nobody can ever connect to a port
+            // that never bound) and exit 3 ("no players joined") instead of
+            // failing fast with the real diagnosis — "plainly a bad
+            // deployment", not "plainly nobody showed up".
+            if (!_transportStartChecked)
+            {
+                _transportStartChecked = true;
+                if (!_nm.ServerManager.Started)
+                {
+                    Fail(ExitBadConfig, $"transport did not start on port {_config.Port} — the " +
+                        "port is likely already in use, or otherwise unavailable to this process.");
+                    return;
+                }
+            }
 
             LogEffectiveFrameRateOnce();
 
@@ -760,33 +829,52 @@ namespace Ring.Server
             Array.Copy(_slotConnections, connections, playerCount);
 
             var controllers = new PlayerNetworkController[playerCount];
-            for (int i = 0; i < playerCount; i++)
+            // Ф8 gate W-9: the whole spawn loop is inside this try, not just
+            // the two explicit refusals below. The window is theoretical
+            // today — the shipped player prefab always carries
+            // `PlayerNetworkController` (`StageTwoSceneBootstrap.
+            // GetOrCreatePlayerPrefab` builds it that way, and never
+            // overwrites an existing one) — but `Instantiate`/`ServerManager.
+            // Spawn` are still calls into engine/package code this class does
+            // not own, and a thrown NRE out of either would previously have
+            // propagated straight past `Boot()`'s caller with no `Fail`/`Exit`
+            // ever running: cheaper to close the window than to keep
+            // explaining why it is theoretical.
+            try
             {
-                // OWNERSHIP IS NOT OPTIONAL. `IsOwner` is what decides both
-                // that a client builds a local prediction replica for this
-                // object and which branch `PlayerNetworkController`'s
-                // replicate takes; an unowned spawn would produce a body
-                // nobody drives. `Configure` is deliberately NOT called here
-                // — `StartMatch` does it for every controller it is handed.
-                GameObject instance = Instantiate(_playerPrefab);
-                _nm.ServerManager.Spawn(instance, connections[i]);
+                for (int i = 0; i < playerCount; i++)
+                {
+                    // OWNERSHIP IS NOT OPTIONAL. `IsOwner` is what decides both
+                    // that a client builds a local prediction replica for this
+                    // object and which branch `PlayerNetworkController`'s
+                    // replicate takes; an unowned spawn would produce a body
+                    // nobody drives. `Configure` is deliberately NOT called here
+                    // — `StartMatch` does it for every controller it is handed.
+                    GameObject instance = Instantiate(_playerPrefab);
+                    _nm.ServerManager.Spawn(instance, connections[i]);
 
-                if (!instance.TryGetComponent(out PlayerNetworkController controller))
-                {
-                    Fail(ExitBadConfig, "the player prefab has no PlayerNetworkController on its " +
-                        "root — the spawned object cannot be driven by the match.");
-                    return;
+                    if (!instance.TryGetComponent(out PlayerNetworkController controller))
+                    {
+                        Fail(ExitBadConfig, "the player prefab has no PlayerNetworkController on its " +
+                            "root — the spawned object cannot be driven by the match.");
+                        return;
+                    }
+                    if (!controller.IsSpawned)
+                    {
+                        // `ServerManager.Spawn` reports a refusal as a warning and
+                        // returns; without this check the match would start with a
+                        // controller that is not on the network at all.
+                        Fail(ExitBadConfig, $"slot {i}'s player object failed to spawn over the " +
+                            "network (see the warning above).");
+                        return;
+                    }
+                    controllers[i] = controller;
                 }
-                if (!controller.IsSpawned)
-                {
-                    // `ServerManager.Spawn` reports a refusal as a warning and
-                    // returns; without this check the match would start with a
-                    // controller that is not on the network at all.
-                    Fail(ExitBadConfig, $"slot {i}'s player object failed to spawn over the " +
-                        "network (see the warning above).");
-                    return;
-                }
-                controllers[i] = controller;
+            }
+            catch (Exception ex)
+            {
+                Fail(ExitBadConfig, "player spawn failed — " + ex.Message);
+                return;
             }
 
             try
@@ -880,11 +968,20 @@ namespace Ring.Server
             for (int i = 0; i < summary.PlayerStats.Length; i++)
             {
                 MatchStats p = summary.PlayerStats[i];
+                // Ф8 gate W-3: `playerId`, not just the slot number — the
+                // meta reads this container's OWN logs (§3.11) and has no
+                // other way to map "player[N]" back to WHICH configured
+                // player that slot was. `_roster` is safe to read here: it
+                // is never released (unlike `MatchServer`'s own fields,
+                // which `StopMatch` nulls) and `Start()` already froze
+                // `PlayerCount`/`PlayerIdAt`'s range at exactly
+                // `summary.PlayerStats.Length` by the time a match can have
+                // ended at all.
                 sb.AppendFormat(CultureInfo.InvariantCulture,
-                    "\n  player[{0}] kills={1} headshotKills={2} shotsFired={3} shotsHit={4} " +
-                    "dashesUsed={5} slidesUsed={6} deathTick={7} damageTaken={8:F1}",
-                    i, p.Kills, p.HeadshotKills, p.ShotsFired, p.ShotsHit, p.DashesUsed,
-                    p.SlidesUsed, p.DeathTick, p.DamageTaken);
+                    "\n  player[{0}] playerId={1} kills={2} headshotKills={3} shotsFired={4} " +
+                    "shotsHit={5} dashesUsed={6} slidesUsed={7} deathTick={8} damageTaken={9:F1}",
+                    i, _roster.PlayerIdAt(i), p.Kills, p.HeadshotKills, p.ShotsFired, p.ShotsHit,
+                    p.DashesUsed, p.SlidesUsed, p.DeathTick, p.DamageTaken);
             }
 
             // The snapshot's own losses (spec §3.11's "dropped entities and

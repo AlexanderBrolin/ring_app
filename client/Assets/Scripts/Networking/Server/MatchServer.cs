@@ -355,6 +355,16 @@ namespace Ring.Networking.Server
         ushort _epoch;
         bool _running;
 
+        // Ф8 gate W-13. `-1` means "no match has ever started on this
+        // instance yet" — the ONLY state that skips ValidateRoster's new
+        // length check below, because a first start has no previous roster
+        // to disagree with. Deliberately NOT nulled by `StopMatch`, unlike
+        // `_connections` (whose `.Length` this field otherwise duplicates):
+        // the whole point is to survive past a `StopMatch` so the NEXT
+        // `StartMatch`/`RestartMatch` — the "restart" this class doc means —
+        // can still compare against it.
+        int _lastPlayerCount = -1;
+
         // Stage 2 Task 40. `_outcome` is `None` for as long as a match is
         // running and for as long as none has run yet; `_lastSummary` is
         // meaningful only while `_outcome` is not `None` (StartMatch clears
@@ -448,7 +458,7 @@ namespace Ring.Networking.Server
             // `MatchRestartedNet` before it gets here, so it must be able to
             // reject a bad roster BEFORE that send — which it can only do if
             // the rule lives somewhere both can reach.
-            ValidateRoster(connections, controllers);
+            ValidateRoster(connections, controllers, _lastPlayerCount);
 
             if (_running) StopMatch();
 
@@ -524,6 +534,10 @@ namespace Ring.Networking.Server
             _connections = connections;
             _controllers = controllers;
             _epoch = epoch;
+            // Ф8 gate W-13: committed AFTER ValidateRoster already passed
+            // above, so a REJECTED restart never overwrites the length a
+            // FUTURE restart must still compare against.
+            _lastPlayerCount = playerCount;
             _lastInputsScratch = lastInputsScratch;
             _effectiveInputsScratch = effectiveInputsScratch;
             _starvedScratch = starvedScratch;
@@ -635,7 +649,7 @@ namespace Ring.Networking.Server
             NetworkConnection[] connections, PlayerNetworkController[] freshControllers)
         {
             // Before the irreversible send — see this method's doc.
-            ValidateRoster(connections, freshControllers);
+            ValidateRoster(connections, freshControllers, _lastPlayerCount);
 
             var restarted = new MatchRestartedNet
             {
@@ -666,7 +680,26 @@ namespace Ring.Networking.Server
         /// role the argument plays, not the identifier at that call site. The
         /// exception MESSAGE names the actual lengths either way, which is
         /// what a caller debugs from.
-        static void ValidateRoster(NetworkConnection[] connections, PlayerNetworkController[] controllers)
+        ///
+        /// `lastPlayerCount` (Ф8 gate W-13) IS THE PREVIOUS MATCH'S OWN
+        /// `controllers.Length`, OR `-1` WHEN NONE HAS STARTED YET — the
+        /// caller's `_lastPlayerCount` field, handed in explicitly rather
+        /// than read off an instance so this stays the same kind of pure,
+        /// static check the rest of this method already is. A restart that
+        /// hands in a DIFFERENT player count than the match it is restarting
+        /// silently renames every player past the shorter length against the
+        /// slot indices `MatchWelcomeNet.PlayerIndex` already promised those
+        /// clients in the join phase — a length MISMATCH is always wrong and
+        /// is refused unconditionally; an EQUAL length is not a guarantee the
+        /// two rosters actually name the same players in the same order
+        /// (this check cannot see identities, only counts), so it closes
+        /// only the provable half of the defect.
+        /// `internal` rather than `private`, the same reason `EndedNetFor`
+        /// is (see that method's own doc): a caller-supplied
+        /// `lastPlayerCount` needs no live `NetworkManager` at all, so a test
+        /// can drive every branch directly.
+        internal static void ValidateRoster(NetworkConnection[] connections,
+            PlayerNetworkController[] controllers, int lastPlayerCount)
         {
             if (connections == null) throw new ArgumentNullException(nameof(connections));
             if (controllers == null) throw new ArgumentNullException(nameof(controllers));
@@ -681,6 +714,15 @@ namespace Ring.Networking.Server
                     $"MatchServer: connections.Length ({connections.Length}) must equal "
                     + $"controllers.Length ({controllers.Length}) — Ф8 must hand in the same player at "
                     + "the same index in both arrays.", nameof(controllers));
+            }
+            if (lastPlayerCount >= 0 && controllers.Length != lastPlayerCount)
+            {
+                throw new ArgumentException(
+                    $"MatchServer: a restart must field the same player count as the previous "
+                    + $"match (got {controllers.Length}, previous match had {lastPlayerCount}) — a "
+                    + "shorter or longer roster would silently rename players against the slot "
+                    + "indices already promised to clients in the join-phase handshake.",
+                    nameof(controllers));
             }
         }
 
@@ -1027,7 +1069,28 @@ namespace Ring.Networking.Server
                 // all. `EndMatch` stops the match, so nothing below it in this
                 // try block may assume `_world`/`_assembler` still exist —
                 // which is why it is LAST.
-                if (reason != MatchEndReason.None) EndMatch(reason);
+                //
+                // `&& _running` (Ф8 gate W-12) RE-CHECKS THE FLAG DECIDED AT
+                // 2b IS STILL TRUE HERE, AFTER STEPS 3-5 RAN. `reason` was
+                // computed against THIS match's `_world` at step 2b; steps
+                // 3-5 then call out through `Broadcast` and
+                // `SetAuthoritativeState`, and if any of that somehow ran a
+                // nested `StopMatch` synchronously (the same class of
+                // re-entrancy `OnPostTick`'s own first line and the
+                // `finally` block below both already guard against), this
+                // flag would be the one place left to notice before
+                // `EndMatch` acted on a decision that no longer describes
+                // the match this instance is holding. Practically
+                // unreachable today — nothing in this codebase restarts a
+                // match synchronously from inside a `Broadcast` callback —
+                // and NOT a complete fix even if it happened: a nested
+                // `StopMatch` FOLLOWED BY a nested `StartMatch` would leave
+                // `_running` back at `true` for the NEW match, which this
+                // one check cannot tell apart from the original. What it
+                // does close, cheaply, is the simpler half — a nested
+                // `StopMatch` with no restart — rather than calling
+                // `EndMatch` a second time on an instance already stopped.
+                if (reason != MatchEndReason.None && _running) EndMatch(reason);
             }
             finally
             {

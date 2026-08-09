@@ -165,7 +165,15 @@ namespace Ring.Networking
         /// plain `int` on purpose — this class must stay drivable in EditMode
         /// with no `NetworkManager`, no scene and no engine loop, which is the
         /// same reason `NetTimings` carries values rather than the asset.
-        public static string[] Validate(NetConfig net, in SimConfig sim, int transportMtu)
+        ///
+        /// `timeManagerTickRate` (Ф8 gate W-1) is the tick rate FishNet's own
+        /// `TimeManager` actually carries on THIS scene (`TimeManager.
+        /// TickRate`, a `ushort`, widened to `int` for the same
+        /// no-NetworkManager-required reason `transportMtu` is a plain `int`
+        /// above) — see invariant #8 below for why a fifth tick-rate home
+        /// needed a check of its own.
+        public static string[] Validate(NetConfig net, in SimConfig sim, int transportMtu,
+            int timeManagerTickRate)
         {
             if (net == null)
                 throw new ArgumentNullException(nameof(net));
@@ -276,6 +284,27 @@ namespace Ring.Networking
             {
                 errors.Add($"Net.SlewFraction must be in [0, {MaxSlewFraction}] " +
                     $"(got SlewFraction={net.SlewFraction}).");
+            }
+
+            // #8 (Ф8 gate W-1). A DIFFERENT agreement from #6 above: #6 pins
+            // `NetConfig.TickRate` against `SimulationWorld.TickDt` (the
+            // WORLD's own fixed step); this one pins it against the rate
+            // FishNet's `TimeManager` is actually configured to tick the
+            // SCENE at. Before this invariant existed, the two could disagree
+            // with #6 fully satisfied: ticks are produced by `TimeManager`,
+            // but every seconds-to-ticks conversion this project makes
+            // (`ServerBootstrap`'s match-duration/join/spectate-cooldown
+            // timers) reads `NetConfig.TickRate` — so a scene left on the old
+            // rate after a retune would silently run every one of those
+            // timers at the wrong pace while every existing test stayed
+            // green (no test built a scene). Exact equality, not a
+            // tolerance: both sides are integers (`TimeManager.TickRate` is a
+            // `ushort`), so there is no float-rounding case to admit the way
+            // #6 has to.
+            if (net.TickRate != timeManagerTickRate)
+            {
+                errors.Add("Net.TickRate must equal the scene's TimeManager.TickRate " +
+                    $"(got Net.TickRate={net.TickRate}, TimeManager.TickRate={timeManagerTickRate}).");
             }
 
             return errors.ToArray();

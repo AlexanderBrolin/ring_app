@@ -318,6 +318,42 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void BodyVariableAlone_IsUsed_WithNoPathVariableSet()
+        {
+            // Ф8 gate W-2: PathVariableWins_AndItsFailureIsFatal above always
+            // sets BOTH variables; EmptyEnvironment_YieldsDevDefaults sets
+            // NEITHER — no existing test in this file ever exercises
+            // RING_MATCH_CONFIG_JSON alone. A mutant that deleted the whole
+            // body branch (`Load`'s `if (!string.IsNullOrEmpty(body)) return
+            // Parse(body, ...)`) would fall through to dev defaults instead —
+            // and dev defaults ALSO answer `Ok == true`, so a test that only
+            // asserted `AssertAccepted` here would still pass against that
+            // mutant. The assertion on `MatchId` below is what actually
+            // distinguishes "the body was read" from "dev defaults were used
+            // instead" — a production deploy that hands the config over as a
+            // body would otherwise silently boot a dev match.
+            string bodyJson = Json(matchId: "\"from-body\"");
+            var result = MatchConfigLoader.Load(ArenaCap,
+                getEnv: name => name == MatchConfigLoader.BodyVariable ? bodyJson : null,
+                // The path variable is unset, so PathVariable's branch must
+                // never call readFile at all — throwing here turns a
+                // regression that DID reach for the path into a loud
+                // failure instead of a silent one.
+                readFile: _ => throw new InvalidOperationException(
+                    "readFile must not be called when only RING_MATCH_CONFIG_JSON is set"));
+            AssertAccepted(result);
+            Assert.AreEqual("from-body", result.Config.MatchId);
+
+            // Witness (the discriminator named above, made explicit): dev
+            // defaults alone do NOT carry this MatchId — proving the
+            // assertion above is really about the body being read, not
+            // merely about SOME accepted config coming back.
+            var devResult = MatchConfigLoader.Load(ArenaCap, getEnv: _ => null, readFile: _ => null);
+            AssertAccepted(devResult);
+            Assert.AreNotEqual("from-body", devResult.Config.MatchId);
+        }
+
+        [Test]
         public void UnknownStartMode_IsRefused()
         {
             AssertRefusedNaming(Parse(Json(startMode: "\"WaitForAll\"")), "startMode");
@@ -411,6 +447,52 @@ namespace Ring.Simulation.Tests
             string ok = Json(maxPlayers: "2",
                 players: "[{\"playerId\":\"a\",\"joinToken\":\"1\"},{\"playerId\":\"b\",\"joinToken\":\"2\"}]");
             AssertAccepted(Parse(ok));
+        }
+
+        [Test]
+        public void PlayersArray_NullElement_IsRefusedNamingItsIndex()
+        {
+            // Ф8 gate W-2 in this test's own numbering scheme, gate W-7
+            // (1/2) in the fixwave brief's: `Parse`'s per-entry loop reads
+            // `playersJson[i]?.playerId` — the null-conditional exists
+            // specifically for a JSON array element that is the literal
+            // `null` (UnityEngine.JsonUtility represents that as a `null`
+            // C# reference in the deserialized array), and nothing in this
+            // file had ever fed it one before.
+            string json = Json(maxPlayers: "2",
+                players: "[null,{\"playerId\":\"p2\",\"joinToken\":\"t2\"}]");
+            var refused = Parse(json);
+            AssertRefused(refused);
+            StringAssert.Contains("players[0]", refused.Error);
+
+            // Witness: the identical body with the null element replaced by
+            // a well-formed entry parses.
+            string ok = Json(maxPlayers: "2",
+                players: "[{\"playerId\":\"p1\",\"joinToken\":\"t1\"},{\"playerId\":\"p2\",\"joinToken\":\"t2\"}]");
+            AssertAccepted(Parse(ok));
+        }
+
+        [Test]
+        public void PlayersArray_MissingJoinToken_DefaultsToEmptyString()
+        {
+            // Ф8 gate W-7 (2/2): `joinToken` is read as `playersJson[i].
+            // joinToken ?? string.Empty` — the OMITTED-key case (not merely
+            // an explicit `""`) never had a test naming the RESULTING value,
+            // and the brief calls this branch non-harmless: without the
+            // substitution, an honest client that sent an empty token would
+            // be compared against a `null` MatchPlayerEntry.JoinToken and
+            // refused by MatchRoster.TryJoin's BadToken check instead of
+            // accepted.
+            string json = Json(maxPlayers: "1",
+                players: "[{\"playerId\":\"p1\"}]"); // joinToken key entirely absent
+            var accepted = Parse(json);
+            AssertAccepted(accepted);
+            Assert.AreEqual(1, accepted.Config.Players.Length);
+            Assert.AreEqual("p1", accepted.Config.Players[0].PlayerId);
+            Assert.AreEqual(string.Empty, accepted.Config.Players[0].JoinToken,
+                "an omitted joinToken must default to the empty string, not null — MatchRoster."
+                + "TryJoin compares it with ==, and a null default would refuse an honest client "
+                + "that sends an empty token to match");
         }
 
         [Test]
@@ -628,6 +710,33 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void RosterConstructor_RejectsWaitForAllWithEmptyRoster()
+        {
+            // Ф8 gate W-6: the SAME degenerate-handle rule
+            // WaitForAllWithEmptyRoster_IsRefused pins at the LOADER — moved
+            // into the core, which is where the decision actually belongs
+            // (AGENT.md rule 4). A caller that builds a MatchConfig directly,
+            // past the loader (every fixture in this file, and any future
+            // production path that skips it), had no such gate before this:
+            // ShouldStart's WaitForAll arm reads `_connectedCount >=
+            // _config.Players.Length`, which an empty Players[] already
+            // satisfies at `_connectedCount == 0`, so the FIRST connection
+            // would start the match before ANY of the (zero) required
+            // players had actually joined.
+            var badConfig = new MatchConfig("m", 1, 2, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.WaitForAll, 0);
+            Assert.Throws<ArgumentException>(() => new MatchRoster(in badConfig));
+
+            // Witness: the identical shape with a non-empty roster constructs
+            // fine — the guard is about the EMPTY roster, not about
+            // WaitForAll itself (a mutant that refused every WaitForAll
+            // config outright would still pass the negative assert above).
+            var okConfig = new MatchConfig("m", 1, 2, 7000,
+                new[] { new MatchPlayerEntry("a", "") }, MatchStartMode.WaitForAll, 0);
+            Assert.DoesNotThrow(() => new MatchRoster(in okConfig));
+        }
+
+        [Test]
         public void Roster_InvalidPlayerId_IsRejectedBeforeDuplicateCheck()
         {
             // I-3: a null/empty playerId (Task 39's handshake handing in a
@@ -678,6 +787,77 @@ namespace Ring.Simulation.Tests
             roster2.TryJoin("a", "", 0.0, out _, out _);
             Assert.DoesNotThrow(() => roster2.Start());
             Assert.AreEqual(1, roster2.PlayerCount);
+        }
+
+        // ==================================================================
+        // Ф8 gate W-4: three class-doc-declared guards of the roster's own
+        // core, none of them previously pinned by a test.
+        // ==================================================================
+
+        [Test]
+        public void Roster_PlayerCount_ThrowsBeforeStart()
+        {
+            // W-4 (1/3): PlayerCount's own doc says it throws before Start()
+            // rather than answering the frozen field's un-set sentinel (-1) —
+            // without the guard, ServerBootstrap.StartMatch would build a
+            // NEGATIVE-length connections/controllers array from that -1.
+            var config = new MatchConfig("m", 1, 2, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.Countdown, 5);
+            var roster = new MatchRoster(in config);
+
+            Assert.Throws<InvalidOperationException>(() => { _ = roster.PlayerCount; });
+
+            // Witness: once frozen by Start(), the same property answers.
+            roster.TryJoin("a", "", 0.0, out _, out _);
+            roster.Start();
+            Assert.DoesNotThrow(() => { _ = roster.PlayerCount; });
+            Assert.AreEqual(1, roster.PlayerCount);
+        }
+
+        [Test]
+        public void Roster_PlayerIdAt_RejectsBothSidesOfTheRange()
+        {
+            // W-4 (2/3): PlayerIdAt's legal range is [0, ConnectedCount) —
+            // both ends need their own assertion, since a guard closing only
+            // one side (e.g. `slot < 0` alone, with no upper check) would
+            // still pass a test that only tried the other side.
+            var config = new MatchConfig("m", 1, 3, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.Countdown, 5);
+            var roster = new MatchRoster(in config);
+            roster.TryJoin("a", "", 0.0, out _, out _);
+            roster.TryJoin("b", "", 0.0, out _, out _);
+
+            Assert.Throws<ArgumentOutOfRangeException>(() => roster.PlayerIdAt(-1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => roster.PlayerIdAt(2));
+
+            // Witness: both ends of the legal range answer correctly.
+            Assert.AreEqual("a", roster.PlayerIdAt(0));
+            Assert.AreEqual("b", roster.PlayerIdAt(1));
+        }
+
+        [Test]
+        public void Roster_ShouldStart_ReturnsFalseAfterStart()
+        {
+            // W-4 (3/3): ShouldStart's own guard is `_started ||
+            // _connectedCount == 0`. Roster_JoinAfterStart_Rejected already
+            // pins TryJoin's OWN post-start refusal, but nothing in the suite
+            // called ShouldStart itself after Start() — so the `_started`
+            // half of this OR specifically could be deleted and every
+            // existing test would still pass (CountdownSeconds == 0 below
+            // means the countdown half of the OR, on its own, would still
+            // read "start" at nowSeconds == 0.0, which is exactly what makes
+            // this fixture discriminate the `_started` term rather than
+            // merely restating the countdown boundary).
+            var config = new MatchConfig("m", 1, 2, 7000,
+                Array.Empty<MatchPlayerEntry>(), MatchStartMode.Countdown, 0);
+            var roster = new MatchRoster(in config);
+            roster.TryJoin("a", "", 0.0, out _, out _);
+            Assert.IsTrue(roster.ShouldStart(0.0),
+                "fixture premise: the match must be startable before Start() is ever called");
+
+            roster.Start();
+            Assert.IsFalse(roster.ShouldStart(0.0),
+                "an already-started roster must answer ShouldStart false — the _started half of the OR");
         }
     }
 }

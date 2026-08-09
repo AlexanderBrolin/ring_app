@@ -34,11 +34,25 @@ namespace Ring.Editor
     /// rather than a shape that cannot go wrong. A camera, a light or a HUD
     /// object appearing here later is a review finding, not an oversight.
     ///
-    /// THE TICK RATE IS STATED, NOT INHERITED. `TimeManager`'s own default
-    /// happens to be 30, but the number is spec-pinned (§3.7) and
-    /// `NetInvariants` refuses a `NetConfig.TickRate` that disagrees with
-    /// `SimulationWorld.TickDt`. Writing it into the scene makes the three
-    /// numbers one fact with one owner instead of three that happen to agree.
+    /// THE TICK RATE COMES FROM `NetConfig`, NOT A SEPARATE CONSTANT (Ф8
+    /// gate W-1, correcting this paragraph's own earlier claim).
+    /// `TimeManager`'s own default happens to be 30, but the number is
+    /// spec-pinned (§3.7), and this class writes `net.TickRate` — the very
+    /// same `NetConfig` asset it already loads below — into the scene's
+    /// `TimeManager._tickRate`, rather than carrying a second literal that
+    /// could drift from it. That closes only ONE of the two remaining
+    /// agreements, though, and the paragraph this replaces overstated what
+    /// it bought: `NetInvariants` connects the scene and `NetConfig` to each
+    /// other with its own invariant #8 (Ф8 gate), and separately connects
+    /// `NetConfig.TickRate` to `SimulationWorld.TickDt` — the WORLD's own
+    /// fixed step — with invariant #6. `SimulationWorld.TickDt` itself stays
+    /// a plain `const float` of the simulation assembly: it cannot read a
+    /// `ScriptableObject` at all (Critical Rule 1 — no `UnityEngine` in
+    /// `Simulation`), so there is no way to fold it into `NetConfig` and make
+    /// this "one fact with one owner" in the strong sense. What exists
+    /// instead is two facts — `TickDt`, and `NetConfig.TickRate == this
+    /// scene's TimeManager.TickRate` — kept in step by two independently
+    /// tested invariants rather than by a single shared owner.
     ///
     /// THE BUILD-SCENE LIST IS WRITTEN HERE AND NOWHERE ELSE. `BuildCommands`
     /// stopped reading `EditorBuildSettings` in Task 41a — it takes a per-target
@@ -66,11 +80,6 @@ namespace Ring.Editor
         const string BootstrapObjectName = "ServerBootstrap";
         const string PlayerPrefabName = "NetworkPlayer";
         const string GraphicalChildName = "Visual";
-
-        /// Spec §3.7: the server simulates 30 times per second — the same
-        /// number `NetConfig.TickRate` carries and `NetInvariants` invariant #6
-        /// pins against `SimulationWorld.TickDt`.
-        const int TickRate = 30;
 
         [MenuItem("Ring/Bootstrap/Stage 2 Server Scene")]
         public static void Apply()
@@ -134,7 +143,7 @@ namespace Ring.Editor
             }
 
             var timeSo = new SerializedObject(timeManager);
-            if (SetInt(timeSo, "_tickRate", TickRate))
+            if (SetInt(timeSo, "_tickRate", net.TickRate))
             {
                 timeSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;

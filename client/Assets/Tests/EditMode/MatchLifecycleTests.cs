@@ -1,5 +1,6 @@
 using System;
 using FishNet.Broadcast;
+using FishNet.Connection;
 using NUnit.Framework;
 using Ring.Networking;
 using Ring.Networking.Client;
@@ -478,6 +479,46 @@ namespace Ring.Simulation.Tests
         // ------------------------------------------------------------------
         // Guards and wire shape.
         // ------------------------------------------------------------------
+
+        [Test]
+        public void ValidateRoster_RejectsPlayerCountChangedFromThePreviousMatch()
+        {
+            // Ф8 gate W-13. `ValidateRoster` never dereferences an element of
+            // either array (only `.Length` and the two nulls above) — the
+            // same reason this class's own doc gives for NOT unit-testing
+            // MatchServer's FishNet wiring does not apply here, and arrays of
+            // null references are enough to drive every branch.
+            var connections = new NetworkConnection[2];
+            var controllers = new PlayerNetworkController[2];
+
+            // -1: no match has ever started on this instance — a first start
+            // has no previous roster to disagree with, so any count is legal.
+            Assert.DoesNotThrow(
+                () => MatchServer.ValidateRoster(connections, controllers, lastPlayerCount: -1),
+                "a first start (lastPlayerCount == -1, the 'never started' sentinel) has nothing "
+                + "to compare against and must not be rejected");
+
+            // Witness: a restart naming the SAME player count as the
+            // previous match is legal — proves the check below is about the
+            // MISMATCH, not about restarting at all.
+            Assert.DoesNotThrow(
+                () => MatchServer.ValidateRoster(connections, controllers, lastPlayerCount: 2),
+                "a restart fielding the SAME player count as the previous match must be accepted");
+
+            // The defect this closes: a restart naming a DIFFERENT player
+            // count. A compacted or padded roster would silently rename
+            // players against the slot indices MatchWelcomeNet.PlayerIndex
+            // already promised those clients in the join-phase handshake.
+            var ex = Assert.Throws<ArgumentException>(
+                () => MatchServer.ValidateRoster(connections, controllers, lastPlayerCount: 3));
+            Assert.AreEqual("controllers", ex.ParamName);
+            StringAssert.Contains("previous match", ex.Message);
+
+            // The mirror direction — the new roster is LONGER than the
+            // previous match's — must be refused too, not merely a shrink.
+            Assert.Throws<ArgumentException>(
+                () => MatchServer.ValidateRoster(connections, controllers, lastPlayerCount: 1));
+        }
 
         [Test]
         public void ClientMatchReset_RejectsNullSeams()

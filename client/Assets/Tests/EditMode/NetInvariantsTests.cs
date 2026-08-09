@@ -64,7 +64,7 @@ namespace Ring.Simulation.Tests
             NetConfig net = DefaultNet();
             SimConfig sim = TestConfigs.Default();
 
-            string[] errors = NetInvariants.Validate(net, in sim, FittingMtu(net));
+            string[] errors = NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate);
 
             Assert.IsNotNull(errors, "Validate must answer with a value, never null");
             CollectionAssert.IsEmpty(errors,
@@ -78,7 +78,7 @@ namespace Ring.Simulation.Tests
             SimConfig sim = TestConfigs.Default();
             net.InterpBufferTicks = 0;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)),
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "Net.InterpBufferTicks");
         }
 
@@ -89,7 +89,7 @@ namespace Ring.Simulation.Tests
             SimConfig sim = TestConfigs.Default();
             net.SnapshotEventBudget = 0;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)),
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "Net.SnapshotEventBudget");
         }
 
@@ -102,7 +102,7 @@ namespace Ring.Simulation.Tests
             // value — and the one a "> vs >=" slip would let through.
             net.GhostConfirmTicks = net.InterpBufferTicks;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)),
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "Net.GhostConfirmTicks");
         }
 
@@ -113,7 +113,7 @@ namespace Ring.Simulation.Tests
             SimConfig sim = TestConfigs.Default();
             sim.Visibility.LingerTicks = net.InterpBufferTicks + 1;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)),
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "Visibility.LingerTicks");
         }
 
@@ -127,7 +127,7 @@ namespace Ring.Simulation.Tests
             // per-broadcast and per-datagram bytes are paid for.
             net.SnapshotMaxBytes = mtu - NetInvariants.SnapshotWireOverheadBytes + 1;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, mtu), "Net.SnapshotMaxBytes");
+            AssertOnly(NetInvariants.Validate(net, in sim, mtu, net.TickRate), "Net.SnapshotMaxBytes");
         }
 
         [Test]
@@ -137,7 +137,7 @@ namespace Ring.Simulation.Tests
             SimConfig sim = TestConfigs.Default();
             net.TickRate = 60;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)), "Net.TickRate");
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate), "Net.TickRate");
         }
 
         [Test]
@@ -150,7 +150,7 @@ namespace Ring.Simulation.Tests
             // would miss. Both are pinned so neither mistake can hide.
             net.TickRate = 29;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)), "Net.TickRate");
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate), "Net.TickRate");
         }
 
         [Test]
@@ -160,7 +160,7 @@ namespace Ring.Simulation.Tests
             SimConfig sim = TestConfigs.Default();
             net.SlewFraction = 0.15f;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)), "Net.SlewFraction");
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate), "Net.SlewFraction");
         }
 
         [Test]
@@ -172,14 +172,14 @@ namespace Ring.Simulation.Tests
             // (RenderClock.SlewFractionOf reads anything <= 0 that way), not a
             // misconfiguration, so the invariant must NOT reject it.
             net.SlewFraction = 0f;
-            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net)),
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "SlewFraction = 0 is the legal 'slew disabled' mode, not an error");
 
             // A negative fraction is NOT that mode — it is a value no band
             // admits, and the floor has to be closed or the check would be
             // one-sided.
             net.SlewFraction = -0.01f;
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)), "Net.SlewFraction");
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate), "Net.SlewFraction");
         }
 
         [Test]
@@ -204,7 +204,7 @@ namespace Ring.Simulation.Tests
             // `x < 0f` would pass every other test in the suite (fix-round 1).
             net.SlewFraction = float.NaN;
 
-            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)), "Net.SlewFraction");
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate), "Net.SlewFraction");
         }
 
         [Test]
@@ -219,7 +219,7 @@ namespace Ring.Simulation.Tests
             net.SnapshotEventBudget = 0;
             net.SlewFraction = 0.15f;
 
-            string[] errors = NetInvariants.Validate(net, in sim, FittingMtu(net));
+            string[] errors = NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate);
 
             Assert.AreEqual(2, errors.Length,
                 "both violations must be reported: " + string.Join(" | ", errors));
@@ -239,28 +239,28 @@ namespace Ring.Simulation.Tests
 
             // #3: strictly greater. Equal fails, one more holds.
             net.GhostConfirmTicks = net.InterpBufferTicks;
-            AssertOnly(NetInvariants.Validate(net, in sim, mtu), "Net.GhostConfirmTicks");
+            AssertOnly(NetInvariants.Validate(net, in sim, mtu, net.TickRate), "Net.GhostConfirmTicks");
             net.GhostConfirmTicks = net.InterpBufferTicks + 1;
-            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, mtu),
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, mtu, net.TickRate),
                 "GhostConfirmTicks == InterpBufferTicks + 1 is the first legal value");
             net.GhostConfirmTicks = ghostConfirmDefault;
 
             // #4: at least InterpBufferTicks + 2. Exactly that holds, one less fails.
             sim.Visibility.LingerTicks = net.InterpBufferTicks + 2;
-            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, mtu),
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, mtu, net.TickRate),
                 "LingerTicks == InterpBufferTicks + 2 is legal — the rule is >=, not >");
             sim.Visibility.LingerTicks = net.InterpBufferTicks + 1;
-            AssertOnly(NetInvariants.Validate(net, in sim, mtu), "Visibility.LingerTicks");
+            AssertOnly(NetInvariants.Validate(net, in sim, mtu, net.TickRate), "Visibility.LingerTicks");
             sim.Visibility.LingerTicks = net.InterpBufferTicks + 2;
 
             // #5: the whole budget may be spent. Exactly the budget holds, one
             // byte more fails.
             int budget = mtu - NetInvariants.SnapshotWireOverheadBytes;
             net.SnapshotMaxBytes = budget;
-            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, mtu),
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, mtu, net.TickRate),
                 "SnapshotMaxBytes may use the whole budget — the rule is <=, not <");
             net.SnapshotMaxBytes = budget + 1;
-            AssertOnly(NetInvariants.Validate(net, in sim, mtu), "Net.SnapshotMaxBytes");
+            AssertOnly(NetInvariants.Validate(net, in sim, mtu, net.TickRate), "Net.SnapshotMaxBytes");
         }
 
         [Test]
@@ -272,7 +272,46 @@ namespace Ring.Simulation.Tests
             // caller could print and act upon. Refusals are values here
             // (§2.1); this one is not a refusal.
             Assert.Throws<System.ArgumentNullException>(
-                () => NetInvariants.Validate(null, in sim, 1024));
+                () => NetInvariants.Validate(null, in sim, 1024, 30));
+        }
+
+        // ==================================================================
+        // Invariant #8 (Ф8 gate W-1): NetConfig.TickRate vs the scene's own
+        // TimeManager.TickRate — a DIFFERENT agreement from #6 above, which
+        // only ever compared NetConfig.TickRate against SimulationWorld.
+        // TickDt and had nothing to say about the scene actually producing
+        // the ticks.
+        // ==================================================================
+
+        [Test]
+        public void SceneTickRateDisagreesWithNetConfig_IsReported()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            // TickDt/NetConfig still agree (invariant #6 stays satisfied) —
+            // only the SCENE's own TimeManager is out of step, isolating #8
+            // from #6 the same way every other fixture in this file isolates
+            // its own invariant.
+            int sceneTickRate = net.TickRate * 2;
+
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), sceneTickRate),
+                "Net.TickRate");
+        }
+
+        [Test]
+        public void SceneTickRateMatchesNetConfig_ReportsNothing()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+
+            // Positive witness (lesson 129, this file's own discipline): the
+            // negative test above proves a mismatch is CAUGHT; this proves
+            // agreement is not itself mistaken for one — without it, a
+            // validator that always reported "Net.TickRate" regardless of
+            // the fourth argument would still pass the negative test alone.
+            CollectionAssert.IsEmpty(
+                NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "the scene's TimeManager.TickRate agreeing with Net.TickRate must report nothing");
         }
     }
 }

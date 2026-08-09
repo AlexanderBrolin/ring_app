@@ -1186,13 +1186,24 @@ namespace Ring.Simulation.Tests
             // of hiding it in a magic number.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 3);
-            var farPos = new float2(cfg.Visibility.HearRadius + 1f, 0f);    // outside earshot
-            var closePos = new float2(cfg.Visibility.HearRadius - 1f, 0f); // inside earshot
+            // Ф8 gate W-11: `evPos` is deliberately NONZERO and off the 3 m
+            // quantization grid (AudibleLatch_Stationary_MovedFar_
+            // AndBecomingVisible's own "restPos" sets this off-grid
+            // convention elsewhere in the suite) — `QuantizeAudiblePos(
+            // float2.zero, ...)` is `float2.zero` too, which would coincide
+            // with the refusal branch's own `default` value below and hide a
+            // mutant that always returns `default` for `deliveredPos`
+            // regardless of the `bool` it returns. `farPos`/`closePos` are
+            // stated as OFFSETS from `evPos` so the fixture's
+            // HearRadius-relative geometry is unchanged.
+            var evPos = new float2(17.6f, -4.3f);
+            var farPos = evPos + new float2(cfg.Visibility.HearRadius + 1f, 0f);    // outside earshot
+            var closePos = evPos + new float2(cfg.Visibility.HearRadius - 1f, 0f); // inside earshot
             TestWorlds.RelocatePlayerForTest(w, 0, farPos);    // identity: far from the shot
             TestWorlds.RelocatePlayerForTest(w, 1, closePos);  // viewpoint: close to the shot
             TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, 5000f)); // the actor, elsewhere entirely
 
-            var ev = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 2, Pos = float2.zero };
+            var ev = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 2, Pos = evPos };
             var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg)); // actor not visible — hearing path only
 
             Assert.IsTrue(EventRelevance.ShouldDeliver(ev, identityIndex: 0, viewpointIndex: 1, w, observerSet,
@@ -1227,13 +1238,17 @@ namespace Ring.Simulation.Tests
             // swap in both directions (this task's own brief, §2.4).
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 3);
-            var closePos = new float2(cfg.Visibility.HearRadius - 1f, 0f); // inside earshot
-            var farPos = new float2(cfg.Visibility.HearRadius + 1f, 0f);   // outside earshot
+            // Ф8 gate W-11: same off-grid, nonzero `evPos` fix as fixture 19
+            // above — see that fixture's own comment for why `float2.zero`
+            // does not discriminate a mutant that always returns `default`.
+            var evPos = new float2(-8.9f, 22.1f);
+            var closePos = evPos + new float2(cfg.Visibility.HearRadius - 1f, 0f); // inside earshot
+            var farPos = evPos + new float2(cfg.Visibility.HearRadius + 1f, 0f);   // outside earshot
             TestWorlds.RelocatePlayerForTest(w, 0, closePos); // identity: close to the shot
             TestWorlds.RelocatePlayerForTest(w, 1, farPos);   // viewpoint: far from the shot
             TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, 5000f)); // the actor, elsewhere entirely
 
-            var ev = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 2, Pos = float2.zero };
+            var ev = new SimEvent { Kind = SimEventKind.PlayerDashed, PlayerIndex = 2, Pos = evPos };
             var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
 
             Assert.IsFalse(EventRelevance.ShouldDeliver(ev, identityIndex: 0, viewpointIndex: 1, w, observerSet,
