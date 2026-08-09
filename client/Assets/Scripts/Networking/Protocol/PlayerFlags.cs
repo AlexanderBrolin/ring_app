@@ -18,18 +18,38 @@ namespace Ring.Networking.Protocol
     /// which `PlayerState` field each bit drives.
     ///
     /// WHY A SYNTHETIC STATE AT ALL. The 8-byte Players record carries
-    /// position, heading, hp and this flags byte, while `PlayerVisual` reads
-    /// `DashTimer`, `DashDir`, `SlideTimer`, `AimSettleTimer` and `AimPoint`.
-    /// Without one fixed mapping, the networked doll would need a second
+    /// position, heading, hp and this flags byte — but the doll that has to
+    /// strike a pose from it is driven off a whole `PlayerState`. `PlayerVisual`
+    /// is the reference for what that costs: it reads `DashTimer` and `DashDir`
+    /// for the dash lean, `SlideTimer` for the slide-pose FSM, and
+    /// `PostDashSlideTimer`/`LinkWindowTimer` for the combo-window emission
+    /// pulse. Without one fixed mapping the networked doll would need a second
     /// rendering path of its own, or would simply lose the slide and dash poses
     /// — which is exactly the divergence spec §3.12 pins this table against.
+    ///
+    /// THE AIM FIELDS ARE A DIFFERENT CASE, AND NOT PlayerVisual's. The local
+    /// doll never reads `AimSettleTimer` or `PlayerState.AimPoint` for its
+    /// pose — it orients from `AimProvider.CurrentAimSimPos`, the local
+    /// cursor, which a REMOTE player has no equivalent of. `AimPoint` itself is
+    /// read in Presentation by `MuzzleFlashView` and `AudioDirector`, and
+    /// `AimSettleTimer` only by `WeaponSystem`'s spread and by this wire byte's
+    /// own producer (`SnapshotAssembler.PlayerRecordOf`). So the synthetic
+    /// `AimPoint` below is not a copy of what the local path reads — it is the
+    /// stand-in for the aim provider a remote doll does not have, which is
+    /// precisely why the mapping has to invent one.
+    ///
+    /// ONE WIRE BIT, TWO LOCAL TIMERS. `LinkWindow` drives `LinkWindowTimer`
+    /// alone, and that is enough: the pulse's predicate is
+    /// `PostDashSlideTimer > 0 || LinkWindowTimer > 0`, so lighting either one
+    /// opens the window.
     ///
     /// THE TIMERS ARE NOT A DURATION, THEY ARE A "YES". A flag says the pose is
     /// active THIS frame and says nothing about how much of it is left, so the
     /// timers are set to one tick — the smallest value that still reads as
     /// "on". `PlayerState`'s timers are SECONDS (see the struct's own fields),
-    /// so a literal `1` would claim a dash roughly thirty times longer than any
-    /// dash lasts.
+    /// so a literal `1` would mean a full second: thirty ticks, and about
+    /// eleven times the shipped `HeroConfig` dash of 0.09 s (under seven times
+    /// even the 0.15 s code default).
     public static class PlayerFlags
     {
         /// How far downrange the synthetic `AimPoint` is placed along the
@@ -51,6 +71,17 @@ namespace Ring.Networking.Protocol
         /// and nothing else: the corpse is drawn by its own branch, and zeroing
         /// the pose here would silently decide a presentation question this
         /// mapping has no business deciding.
+        ///
+        /// ONE HEADING SERVES THREE DIRECTIONS, AND THAT IS A KNOWN
+        /// APPROXIMATION (recorded here as an open end for Task 45, which
+        /// builds the doll that will show it). The wire `Dir` is the AIM
+        /// heading — `SnapshotAssembler` writes `normalizesafe(AimPoint - Pos)`
+        /// — and it is fed here to `DashDir` and `SlideDir` as well, because
+        /// the 8-byte Players record carries no second direction to spend
+        /// (spec §3.12's table). The price is real and bounded to cosmetics: a
+        /// player dashing sideways while aiming forward leans along the AIM on
+        /// a remote doll instead of along the dash. Nothing in `Simulation`
+        /// reads this state, so no gameplay outcome moves with it.
         public static PlayerState ToSyntheticState(byte flags, float2 pos, float2 heading,
             float hp01, in SimConfig cfg)
         {

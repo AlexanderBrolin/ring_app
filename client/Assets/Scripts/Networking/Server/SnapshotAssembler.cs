@@ -205,15 +205,38 @@ namespace Ring.Networking.Server
             _eventBudget = net.SnapshotEventBudget;
             _redundancyTicks = net.EventRedundancyTicks;
 
-            // app-dsh PATCH (task-28-brief §2.6). A round absorbed by a
-            // player's i-frames emits NOTHING today — ProjectileSystem's
-            // HitPlayer branch is silent — so a spawn subscription opened for
-            // it would never be closed and the per-connection set would fill up
-            // over a match. Every subscription therefore carries an expiry:
-            // the longest a round of EITHER archetype can live, plus the
-            // redundancy window a resend could still arrive in. Task 44 decides
-            // what that branch emits (owner decision Р128) and either removes
-            // this patch or confirms it.
+            // app-dsh PATCH (task-28-brief §2.6) — CONFIRMED by Task 44a, on a
+            // NEW justification, the original one having expired with the very
+            // change that resolved it.
+            //
+            // WHAT CHANGED. This patch used to rest on "a round absorbed by a
+            // player's i-frames emits NOTHING — ProjectileSystem's HitPlayer
+            // branch is silent". That is no longer true: Task 44a gave the
+            // branch its own `ProjectileHitPlayer`, and every one of the five
+            // `RemoveProjectileAt` call sites in `ProjectileSystem` is now
+            // paired with an `Emit` (barrier and floor → ProjectileBlocked,
+            // mob → ProjectileHit, player → ProjectileHitPlayer, TTL →
+            // ProjectileExpired). There are no silent removals left in the
+            // simulation, so owner decision Р128 is settled and the branch this
+            // patch was waiting on has landed.
+            //
+            // WHY THE EXPIRY STAYS ANYWAY. An ending that is never EMITTED
+            // still reaches no one: `SimulationWorld.Emit` drops events once
+            // the tick's buffer (`Arena.MaxEventsPerFrame`) is full, counting
+            // them in `DroppedEvents` instead of growing. That drop happens
+            // upstream of every connection, so a round whose ending is lost
+            // there leaves the subscription its spawn opened with nothing that
+            // could ever close it — for the rest of the match. The expiry is
+            // what bounds that: the longest a round of EITHER archetype can
+            // live, plus the redundancy window a resend could still arrive in.
+            //
+            // NOT the per-connection budget, which cannot leak and is not the
+            // reason: the `ProjectileEnded` routing calls `QueueUnsubscribe`
+            // UNCONDITIONALLY after `Enqueue`, so an ending dropped by a full
+            // carry queue closes its subscription all the same; a spawn the
+            // queue refuses never subscribes at all (`Subscribe` follows the
+            // queue's answer, fix-round F1); and a spawn evicted later takes
+            // its subscription with it (`DropSubscriptionOf`).
             float maxLifetime = math.max(cfg.Weapon.ProjectileLifetime, cfg.Gunner.ProjectileLifetime);
             _projectileSubscriptionTicks =
                 (int)math.ceil(maxLifetime / SimulationWorld.TickDt) + net.EventRedundancyTicks;
@@ -1460,8 +1483,10 @@ namespace Ring.Networking.Server
             return true;
         }
 
-        /// Producer half of the flag mapping Task 45 reads back (Р68,
-        /// task-28-brief §2.11). `AimHeld` is proxied by `AimSettleTimer > 0`:
+        /// Producer half of the flag mapping (Р68, task-28-brief §2.11). The
+        /// consuming half landed in Task 44a as `PlayerFlags.ToSyntheticState`;
+        /// Task 45 is the doll that will pose from what it returns.
+        /// `AimHeld` is proxied by `AimSettleTimer > 0`:
         /// the input flag itself never reaches the server-side assembler, and
         /// the timer rises while aim is held and decays at twice that rate once
         /// released — a tail of under half a second, which is cosmetically

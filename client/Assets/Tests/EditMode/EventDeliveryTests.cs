@@ -1004,6 +1004,19 @@ namespace Ring.Simulation.Tests
                 "the zone rides along, so the client can pick headshot feedback from the ending alone");
             Assert.AreEqual(0, endedOutsider.CountOf(SnapshotEventKind.ProjectileEnded),
                 "a connection that never received the spawn must not receive the ending");
+
+            // Fix-round 1 (M-3): the name says CLOSES, so the closure is
+            // asserted here rather than left to the reader — the sibling
+            // Blocked test above proves the same property for its own kind,
+            // and a PvP ending that ended the round on the wire but left the
+            // subscription open would leak one slot of the per-connection set
+            // per PvP hit, bounded only by the app-dsh expiry sweep.
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileExpired, new float2(30f, 0f), roundId, default, 0f);
+            asm.BeginTick(w);
+            var again = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            Assert.AreEqual(0, again.CountOf(SnapshotEventKind.ProjectileEnded),
+                "the HitPlayer ending closed the subscription — a round cannot end twice");
         }
 
         // --- 16: MobDied routing, all three arms ---

@@ -804,14 +804,26 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SpawnSubscription_ExpiresOnItsOwn_WhenNoEndEventEverArrives()
         {
-            // bd app-dsh: a round absorbed by a player's i-frames emits NOTHING
-            // at all today (ProjectileSystem's HitPlayer branch), so a
-            // subscription opened on its spawn would never be closed and the
-            // per-connection set would fill up over a match. Task 44 decides
-            // what that branch emits (owner decision Р128); until then every
-            // subscription carries its own expiry — spawn tick plus the longest
-            // a round can live plus the redundancy window — and is swept
-            // lazily. Task 44 either removes this patch or confirms it.
+            // bd app-dsh, CONFIRMED by Task 44a on a new justification (the
+            // assembler's own constructor comment carries the same record).
+            //
+            // This test used to stand for "the HitPlayer branch is silent, so
+            // an ending may never exist". Task 44a made that branch emit
+            // `ProjectileHitPlayer`, and all five `RemoveProjectileAt` sites in
+            // `ProjectileSystem` now emit, so owner decision Р128 is settled.
+            // The expiry survives because an ending can still fail to be
+            // EMITTED: `SimulationWorld.Emit` drops events once the tick's
+            // `Arena.MaxEventsPerFrame` buffer is full (counted in
+            // `DroppedEvents`), upstream of every connection — and a
+            // subscription whose ending was dropped there has nothing left
+            // that could close it. The per-connection budget is NOT the reason
+            // and cannot leak: `ProjectileEnded` routing unsubscribes
+            // unconditionally, even when the carry queue refuses the ending.
+            //
+            // So what this test pins is unchanged and still load-bearing: a
+            // subscription for which NO end event ever arrives closes itself —
+            // spawn tick plus the longest a round can live plus the redundancy
+            // window — and is swept lazily.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 2);
             TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);

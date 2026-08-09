@@ -12,7 +12,7 @@ namespace Ring.Networking.Protocol
     /// BUMP THIS ONLY DELIBERATELY. Client and server read the same constant
     /// from the same build, so a bump is invisible in a single-build test run
     /// and only shows up as "every snapshot refused" against an older peer.
-    /// SnapshotCodecTests.ProtocolVersion_Current_IsPinnedToOne pins the
+    /// SnapshotCodecTests.ProtocolVersion_Current_IsPinnedToTwo pins the
     /// literal for exactly that reason: the value cannot drift without a
     /// human editing a test that says, in words, that this is a
     /// compatibility break.
@@ -23,8 +23,21 @@ namespace Ring.Networking.Protocol
     /// entire point of the tagged, length-prefixed block format documented on
     /// SnapshotWriter: an older reader skips a kind it does not know and
     /// counts it (Р29).
+    ///
+    /// HISTORY — one line per break, so the reason is here and not in a log:
+    ///   1 → 2 (Stage 2 Task 44a): the DOMAIN of `ProjectileEndKind` grew by
+    ///   `HitPlayer` = 4 inside the existing `ProjectileEnded` block. That is
+    ///   the rule above, not its exception: no new block kind was added, so
+    ///   an older reader does not skip and count anything — it validates the
+    ///   payload byte against its own `MaxProjectileEndKindValue` of 3 and
+    ///   rejects the WHOLE event as `MalformedContent` (SnapshotEvents'
+    ///   ProjectileEnded decoder). The handshake could not catch that on its
+    ///   own either: `ProjectileEndKind` is not part of `SimConfigHash`, so
+    ///   an old client would pass the config check and then silently lose
+    ///   every PvP ending. The bump is what turns that into an honest
+    ///   `HandshakeRefusal.ProtocolVersionMismatch`.
     public static class ProtocolVersion
     {
-        public const byte Current = 1;
+        public const byte Current = 2;
     }
 }

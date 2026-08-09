@@ -40,7 +40,7 @@ namespace Ring.Simulation.Tests
             PlayerState dashing = State(PlayerWireFlags.Alive | PlayerWireFlags.Dashing, in cfg);
             Assert.AreEqual(SimulationWorld.TickDt, dashing.DashTimer, 1e-6f,
                 "one TICK, not one second — PlayerState's timers are seconds, so a literal 1 would "
-                + "claim a dash roughly thirty times longer than any dash lasts");
+                + "mean thirty ticks: about eleven times the shipped HeroConfig dash of 0.09 s");
             Assert.AreEqual(Heading.x, dashing.DashDir.x, 1e-6f, "the dash runs along the decoded heading");
             Assert.AreEqual(Heading.y, dashing.DashDir.y, 1e-6f);
 

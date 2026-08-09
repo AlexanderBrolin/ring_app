@@ -165,10 +165,13 @@ namespace Ring.Simulation.Tests
             var writer = new SnapshotWriter(buffer);
             writer.WriteHeader(Epoch, Tick, Flags);
 
-            // Literal 1, not ProtocolVersion.Current: comparing the writer
+            // Literal 2, not ProtocolVersion.Current: comparing the writer
             // against the very constant it wrote would pass under a version
-            // bump that silently broke every peer.
-            Assert.AreEqual((byte)1, buffer[0], "byte 0: protocol version");
+            // bump that silently broke every peer. The literal is therefore
+            // MEANT to be edited by hand on a bump — it moved 1 → 2 with
+            // Task 44a's ProjectileEndKind growth, alongside the pin in
+            // ProtocolVersion_Current_IsPinnedToTwo below.
+            Assert.AreEqual((byte)2, buffer[0], "byte 0: protocol version");
             Assert.AreEqual((byte)0x34, buffer[1], "byte 1: epoch low byte (little-endian)");
             Assert.AreEqual((byte)0x12, buffer[2], "byte 2: epoch high byte (little-endian)");
             Assert.AreEqual((byte)0xEF, buffer[3], "byte 3: tick byte 0 (little-endian)");
@@ -455,14 +458,18 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void ProtocolVersion_Current_IsPinnedToOne()
+        public void ProtocolVersion_Current_IsPinnedToTwo()
         {
             // A silent bump would part client and server with no red test
             // anywhere: the version is compared in the handshake (Task 39)
             // and on every snapshot, and both sides read the same constant.
-            Assert.AreEqual((byte)1, ProtocolVersion.Current,
-                "protocol version 1 is the wire contract of Stage 2 — changing it is a "
-                + "compatibility break that must be a deliberate, reviewed edit");
+            Assert.AreEqual((byte)2, ProtocolVersion.Current,
+                "protocol version 2 is the wire contract of Stage 2 — changing it is a "
+                + "compatibility break that must be a deliberate, reviewed edit. It became 2 in "
+                + "Task 44a, when ProjectileEndKind grew HitPlayer = 4: a version-1 reader "
+                + "validates that payload byte against its own bound of 3 and throws the whole "
+                + "ProjectileEnded event out as MalformedContent, and SimConfigHash does not "
+                + "cover the enum, so nothing but this version byte separates the two builds");
         }
 
         // ---- 8. Failure is sticky ----
