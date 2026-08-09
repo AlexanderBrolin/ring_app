@@ -111,7 +111,7 @@ namespace Ring.Presentation
 
         void LateUpdate()
         {
-            if (_runner.World == null) return;
+            if (!_runner.Ready) return; // Task 43: successor to the old `World == null` test
             float dt = Time.unscaledDeltaTime;
             _animator.speed = _runner.Paused ? 0f : 1f;
 
@@ -151,7 +151,7 @@ namespace Ring.Presentation
             float speed01 = 0f;
             if (dt > 1e-6f)
                 speed01 = Mathf.Clamp01(
-                    moveDelta.magnitude / dt / _runner.World.Config.Hero.MaxSpeed);
+                    moveDelta.magnitude / dt / _runner.Config.Hero.MaxSpeed);
             _animator.SetFloat(AnimIds.Speed, speed01, _gameFeel.SpeedDampTime, dt);
 
             Vector3 aimW = SimSpace.ToWorld(_aimProvider.CurrentAimSimPos);

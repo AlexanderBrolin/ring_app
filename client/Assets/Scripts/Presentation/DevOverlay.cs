@@ -83,17 +83,18 @@ namespace Ring.Presentation
 
         void OnGUI()
         {
-            if (_runner == null || _runner.World == null) return;
+            // Task 43: `Ready` is the successor to the old `World == null` test.
+            if (_runner == null || !_runner.Ready) return;
 
             GUILayout.BeginArea(new Rect(10f, 10f, 300f, 560f), GUI.skin.box);
 
             GUILayout.Label($"FPS: {_fps:F0}");
-            GUILayout.Label($"Tick: {_runner.World.CurrentTick}");
+            GUILayout.Label($"Tick: {_runner.CurrentTick}");
             GUILayout.Label($"Mobs: {_runner.Curr.MobCount}  Projectiles: {_runner.Curr.ProjectileCount}");
             // Task 22 (A16): match counters, not "silent loss" — no red highlight.
             GUILayout.Label($"Slides: {_runner.Curr.Stats.SlidesUsed}  Headshots: {_runner.Curr.Stats.HeadshotKills}");
 
-            DrawIntCounter("DroppedEvents", _runner.World.DroppedEvents);
+            DrawIntCounter("DroppedEvents", _runner.DroppedEvents);
             // Stage 2 Task 5: these two moved to WorldStats (world-scoped, not
             // per-player) — Curr.Stats stays the local player's personal counters.
             DrawIntCounter("MobSpawnsSkipped", _runner.Curr.WorldStats.MobSpawnsSkipped);
@@ -101,7 +102,12 @@ namespace Ring.Presentation
             DrawFloatCounter("DroppedTime", _runner.AccumulatorDroppedTime);
 
             GUILayout.Label($"Seed: {_runner.Seed}");
-            GUILayout.Label($"StateHash: {_runner.World.StateHash():X16}");
+            // Task 43: a backend for which the hash is a server-side quantity
+            // (Task 44) reports HasStateHash false — print a dash rather than a
+            // number that would look computed and be wrong.
+            GUILayout.Label(_runner.HasStateHash
+                ? $"StateHash: {_runner.StateHash:X16}"
+                : "StateHash: —");
 
             GUILayout.Space(6f);
             GUILayout.Label("Forced seed:");
@@ -115,8 +121,14 @@ namespace Ring.Presentation
             if (newLogTickHash != _logTickHash) SetLogTickHash(newLogTickHash);
 
             GUILayout.Space(6f);
-            if (GUILayout.Button("Spawn Chaser")) Spawn(MobType.Chaser);
-            if (GUILayout.Button("Spawn Gunner")) Spawn(MobType.Gunner);
+            // Task 43 (CR 3): hidden where the backend cannot spawn into an
+            // authoritative world it does not own — asked before drawing rather
+            // than drawing a button whose only possible answer is a refusal.
+            if (_runner.CanDevSpawnMob)
+            {
+                if (GUILayout.Button("Spawn Chaser")) Spawn(MobType.Chaser);
+                if (GUILayout.Button("Spawn Gunner")) Spawn(MobType.Gunner);
+            }
 
             GUILayout.EndArea();
         }
@@ -144,7 +156,7 @@ namespace Ring.Presentation
                 ? _aimProvider.CurrentAimSimPos
                 : playerPos + new float2(1f, 0f);
             float2 dir = math.normalizesafe(aimPos - playerPos, new float2(1f, 0f));
-            _runner.World.DevSpawnMob(type, playerPos + dir * SpawnDistance);
+            _runner.DevSpawnMob(type, playerPos + dir * SpawnDistance);
         }
 
         void SetLogTickHash(bool enabled)

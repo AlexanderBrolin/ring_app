@@ -74,9 +74,9 @@ namespace Ring.Presentation
         /// below via `e.Pos`), not the hero's center — bursting the prediction
         /// from `player.Pos` was a visible regression once the predicted burst
         /// became the common case (the latch suppresses the real one on every
-        /// ordinary shot). `MuzzleOffset` is read from `_runner.World.Config.
-        /// Weapon` — the already-built `SimConfig` the authoritative path itself
-        /// reads — rather than adding a THIRD `WeaponConfig` SO reference; the
+        /// ordinary shot). `MuzzleOffset` is read from `_runner.Config.Weapon`
+        /// (Task 43) — the already-built `SimConfig` the authoritative path
+        /// itself reads — rather than adding a THIRD `WeaponConfig` SO reference; the
         /// small sub-tick `overshoot` term `WeaponSystem` also folds in is
         /// simulation-internal (depends on the tick that hasn't happened yet)
         /// and skipped here, an imperceptible cosmetic approximation.
@@ -93,7 +93,7 @@ namespace Ring.Presentation
             if (dir.sqrMagnitude < 1e-8f) dir = Vector3.forward; // aim degenerately coincides with Pos
             dir.Normalize();
 
-            float muzzleOffset = _runner.World.Config.Weapon.MuzzleOffset;
+            float muzzleOffset = _runner.Config.Weapon.MuzzleOffset;
             EmitBurst(posW + dir * muzzleOffset, dir, _runner.RenderMuzzleHeight);
             _predicted = true;
             _predictedExpireAt = Time.unscaledTime + SimulationRunner.ImmediatePredictionTtlSeconds;
@@ -137,7 +137,7 @@ namespace Ring.Presentation
             // canonical accessor `SpawnCasing`/`AimRayView` now use.
             float lift = e.Owner == ProjectileOwner.Player
                 ? _runner.RenderMuzzleHeight
-                : _runner.World.Config.Gunner.MuzzleHeight;
+                : _runner.Config.Gunner.MuzzleHeight;
             EmitBurst(SimSpace.ToWorld(e.Pos), dir, lift);
         }
 

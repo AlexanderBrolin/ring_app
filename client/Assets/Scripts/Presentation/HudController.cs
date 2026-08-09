@@ -56,12 +56,16 @@ namespace Ring.Presentation
 
         void LateUpdate()
         {
-            // World is null only for a single frame ordering edge case before the
-            // runner's own Awake has run; skip rendering rather than throw.
-            if (_runner.World == null) return;
+            // The backend has nothing to show only for a single frame ordering
+            // edge case before the runner's own Awake has run; skip rendering
+            // rather than throw. Task 43 renamed the question (`World == null`
+            // -> `!Ready`), not the reason for asking it — and a networked
+            // backend widens that window from one frame to "until the first
+            // snapshot lands".
+            if (!_runner.Ready) return;
 
             var player = _runner.Curr.Player;
-            var hero = _runner.World.Config.Hero;
+            var hero = _runner.Config.Hero;
 
             _hpFill.fillAmount = player.Hp / hero.MaxHp;
             // F-8 fix: user-facing strings are Russian (ADR-003 §9 word list) — the

@@ -1,14 +1,28 @@
 using Ring.Data;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
+using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
 namespace Ring.Presentation
 {
-    /// Sole owner of `SimulationWorld.Tick` (spec §3.2): accumulates
-    /// `Time.unscaledDeltaTime` into fixed 30 Hz ticks via `FixedStepAccumulator`.
-    /// `Time.timeScale` is never touched anywhere in the project — this is the only
-    /// clock source for the sim, so pausing/slow-mo must never route through it.
+    /// The single facade the whole Presentation layer reads the simulation
+    /// through, and the sole driver of one render frame's worth of it (spec
+    /// §3.2/§3.12). Stage 2 Task 43 split this class in two along the line
+    /// between producing state and showing it: `ISimBackend` now owns the
+    /// world, the fixed-step accumulator and the `Prev`/`Curr` pair, while this
+    /// class keeps the balance ScriptableObjects, input sampling, the hitstop
+    /// freeze layer, the pause gate and every event the views subscribe to. The
+    /// backend seam exists because the networked one (Task 44) has no world at
+    /// all — see `ISimBackend`'s own doc; the split is deliberately invisible
+    /// from outside, since seventeen classes hold a `SimulationRunner`
+    /// reference and read it by member name.
+    ///
+    /// `Time.unscaledDeltaTime` is fed to the backend here and nowhere else, and
+    /// `Time.timeScale` is never touched anywhere in the project — this is the
+    /// only clock source for the sim, so pausing/slow-mo must never route
+    /// through it.
     ///
     /// Task 28 fix-round (review #2, Low): `[DefaultExecutionOrder(-50)]` makes
     /// this run its own `Update` before every default-order (0) script's —
@@ -55,13 +69,61 @@ namespace Ring.Presentation
         [SerializeField] InputActionAsset _actionsAsset;
         [SerializeField] AimProvider _aimProvider;
 
-        readonly FixedStepAccumulator _acc = new FixedStepAccumulator();
+        /// The state producer behind the facade (Task 43). Not `readonly`: the
+        /// local backend is the only one this task ships, but which backend a
+        /// session runs on is Task 44's decision, and the field initializer is
+        /// what keeps `Ready` answerable from the very first frame — a view's
+        /// `Awake`/`OnGUI` can run before this component's own `Awake`, and the
+        /// guards it replaced (`World == null`) tolerated exactly that.
+        ISimBackend _backend = new LocalSimBackend();
+
         InputSampler _sampler;
-        SimulationWorld _world;
         bool _pendingApplyConfig;
 
-        public RenderSnapshot Prev, Curr;
-        public float Alpha;
+        /// The raw tick double buffer, straight off the backend (Task 43 turned
+        /// these from fields the loop above wrote into pass-throughs; the names
+        /// are unchanged because the views read them by name). Views read
+        /// `RenderPrev`/`RenderCurr`/`RenderAlpha` below instead — see the П-7
+        /// block there for why the two pairs differ.
+        public RenderSnapshot Prev => _backend.Prev;
+
+        public RenderSnapshot Curr => _backend.Curr;
+
+        public float Alpha => _backend.Alpha;
+
+        /// Whether the backend has state to show (Р66) — what the seven views
+        /// that used to test `World == null` ask now. The world itself is no
+        /// longer exposed: a networked backend has none, so any view holding a
+        /// `SimulationWorld` reference would have been writing code that cannot
+        /// run in the mode this stage is building.
+        public bool Ready => _backend.Ready;
+
+        /// The single config source for the whole Presentation layer (Р87). By
+        /// value, like `SimulationWorld.Config` it forwards to.
+        public SimConfig Config => _backend.Config;
+
+        /// The simulation's own tick counter — dev overlay only.
+        public int CurrentTick => _backend.CurrentTick;
+
+        /// This flush's event buffer, read by `SimEventRouter` inside
+        /// `TicksFlushed` and dropped right after it returns (see `Update`).
+        public int EventCount => _backend.EventCount;
+
+        public SimEvent GetEvent(int index) => _backend.GetEvent(index);
+
+        /// Dev-overlay diagnostics (Приложение П-6/П-9). `HasStateHash` is false
+        /// on a backend for which the hash is a server-side quantity — the
+        /// overlay prints a dash then rather than an invented number.
+        public bool HasStateHash => _backend.HasStateHash;
+
+        public ulong StateHash => _backend.StateHash;
+
+        public int DroppedEvents => _backend.DroppedEvents;
+
+        /// Whether the dev overlay may offer its spawn buttons at all (CR 3).
+        public bool CanDevSpawnMob => _backend.CanDevSpawnMob;
+
+        public void DevSpawnMob(MobType type, float2 pos) => _backend.DevSpawnMob(type, pos);
 
         /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
         /// this render frame's `Update` sampled below — `MuzzleFlashView`/
@@ -114,9 +176,8 @@ namespace Ring.Presentation
         /// off `RenderCurr` — the last COMPLETE tick's state — same
         /// client-boundary rule as `WouldFireThisFrame` below.
         public float RenderMuzzleHeight => RenderCurr.Player.SlideTimer > 0f
-            ? World.Config.Hero.SlideMuzzleHeight : World.Config.Hero.MuzzleHeight;
+            ? Config.Hero.SlideMuzzleHeight : Config.Hero.MuzzleHeight;
 
-        public SimulationWorld World => _world;
         public long Seed { get; private set; }
         public bool ConfigTweaked;
 
@@ -124,45 +185,40 @@ namespace Ring.Presentation
         /// cached input predicts the weapon fires on the NEXT tick — single
         /// source of truth for `MuzzleFlashView`/`AudioDirector`'s per-frame
         /// prediction, so the two components' decisions can never drift apart.
-        /// Mirrors `WeaponSystem.Update`'s own `canFire` gate exactly (`FireHeld
-        /// && Alive && FireCooldown <= 0 && (CanFireWhileDash || DashTimer <= 0)
-        /// && (CanFireWhileSlide || SlideTimer <= 0)` — fix-round review #4: an
-        /// earlier revision of this doc paraphrased the gate without the
-        /// `FireCooldown <= 0` term even though the code below always had it;
-        /// the property itself was correct, only the prose was incomplete;
-        /// Task 21 adds the `CanFireWhileSlide` term, previously missing from
-        /// both the code and this doc), but reads it off
-        /// `RenderCurr` — the last COMPLETE tick's state — instead of any
-        /// Simulation internals, per client/CLAUDE.md's "клиент не решает
-        /// игровые исходы" boundary (this predicts client-local cosmetics only;
-        /// the authoritative shot still comes from the tick's own
-        /// `ProjectileFired` event).
-        public bool WouldFireThisFrame
-        {
-            get
-            {
-                PlayerState p = RenderCurr.Player;
-                return LastFrameInput.FireHeld && p.Alive && p.FireCooldown <= 0f
-                    && (_weapon.CanFireWhileDash || p.DashTimer <= 0f)
-                    && (_weapon.CanFireWhileSlide || p.SlideTimer <= 0f);
-            }
-        }
+        ///
+        /// CALLS the authoritative gate rather than restating it (Task 43): this
+        /// used to be a hand-written copy of `WeaponSystem`'s terms reading
+        /// `_weapon` (the SO) directly, and `WouldFireThisTick`'s own doc had
+        /// already dated the defect that copy carried — it tested
+        /// `FireCooldown <= 0f` where the simulation tests
+        /// `(FireCooldown - TickDt) <= 0f`, so the half-open window
+        /// `(0, TickDt]` predicted "no shot" for a tick that then fired. Both
+        /// halves of this property now come off `Config` (Р87), the same built
+        /// `SimConfig` the authoritative path reads.
+        ///
+        /// Still evaluated against `RenderCurr` — the last COMPLETE tick's state
+        /// — rather than any Simulation internals, per client/CLAUDE.md's
+        /// "клиент не решает игровые исходы" boundary: this predicts
+        /// client-local cosmetics only, and the authoritative shot still arrives
+        /// as the tick's own `ProjectileFired` event. `Ready` leads because
+        /// `Config` reads `default` before the first `Restart`, and a zeroed
+        /// `WeaponSimConfig` is not a state worth asking the gate about.
+        public bool WouldFireThisFrame => Ready
+            && WeaponSystem.WouldFireThisTick(RenderCurr.Player, LastFrameInput, Config.Weapon);
 
         bool _paused;
 
         /// Task 24 (spec Interfaces): the sole pause gate for the whole project —
-        /// `Time.timeScale` is never touched (class doc above). Setting this true
-        /// zeroes only the accumulator's phase (`ResetAccumulatorOnly` — review
-        /// round: plain `Reset()` would also zero `DroppedTime`, silently erasing
-        /// the dropped-time diagnostic DevOverlay surfaces every time the owner
-        /// pauses, which is exactly the "silent loss" spec §3.7 forbids) so no
-        /// backlog of real time is waiting to burst-tick once unpaused; from that
-        /// point on, `Update` skips input sampling and tick advancement entirely
-        /// — `Alpha` is left exactly as it was at the moment pause started, so
+        /// `Time.timeScale` is never touched (class doc above). From the moment
+        /// it goes true, `Update` skips input sampling and tick advancement
+        /// entirely — `Alpha` is left exactly as it was at the moment pause
+        /// started (the backend latches it rather than deriving it live), so
         /// interpolated views hold their last visual position instead of
-        /// snapping toward `Prev`. Setting it back to false does not itself
-        /// resume ticking on the same frame; `Update` simply stops
-        /// early-returning starting next frame.
+        /// snapping toward `Prev`. The backend is told separately
+        /// (`OnPausedChanged`) so it can settle its own clock; what pause MEANS
+        /// for the screen is decided here and only here. Setting it back to
+        /// false does not itself resume ticking on the same frame; `Update`
+        /// simply stops early-returning starting next frame.
         public bool Paused
         {
             get => _paused;
@@ -170,16 +226,15 @@ namespace Ring.Presentation
             {
                 if (_paused == value) return;
                 _paused = value;
-                if (_paused) _acc.ResetAccumulatorOnly();
+                _backend.OnPausedChanged(_paused);
             }
         }
 
-        /// DevOverlay's seam into the accumulator's dropped-time counter (Task 24
-        /// Приложение П-6) — `FixedStepAccumulator` itself has no UnityEngine
-        /// dependency and isn't otherwise exposed outside this class. Survives
-        /// pause (see `Paused` above); only a full match restart (`Restart`'s
-        /// plain `_acc.Reset()`) zeroes it.
-        public float AccumulatorDroppedTime => _acc.DroppedTime;
+        /// DevOverlay's seam into the backend's dropped-time counter (Task 24
+        /// Приложение П-6) — the clock behind it has no UnityEngine dependency
+        /// and isn't otherwise exposed to Presentation. Survives pause (see
+        /// `Paused` above); only a full match restart zeroes it.
+        public float AccumulatorDroppedTime => _backend.DroppedTime;
 
         public event System.Action TicksFlushed;
         public event System.Action WorldRestarted;
@@ -193,9 +248,13 @@ namespace Ring.Presentation
         /// not a new subscriber to it, so it doesn't touch П-1's "sole
         /// `TicksFlushed` subscriber is `SimEventRouter`" invariant.
         /// `StateHash()` walks every live mob/projectile — not free — so the
-        /// call below is guarded on `TickAdvanced != null`: with no subscriber
-        /// (the common case — dev-only, logging toggle off), this costs one
-        /// null check per tick and nothing else.
+        /// hash is only ever computed when this event has a subscriber: `Update`
+        /// passes the event itself into `ISimBackend.Advance` (inside its
+        /// declaring class an event reads as a plain field, hence null with
+        /// nobody subscribed), and the backend skips both the hash and the
+        /// callback on null. With the dev-only logging toggle off — the common
+        /// case — that costs one null check per tick and nothing else. Task 43
+        /// moved the call site, not the rule.
         public event System.Action<int, ulong> TickAdvanced;
 
         void Awake()
@@ -233,7 +292,7 @@ namespace Ring.Presentation
                 SimConfig next = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
                 try
                 {
-                    _world.ApplyConfig(next);
+                    _backend.ApplyConfig(next);
                     ConfigTweaked = true;
                 }
                 catch (System.ArgumentException)
@@ -251,22 +310,22 @@ namespace Ring.Presentation
 
             SimInput frame = _sampler.SampleFrame();
             LastFrameInput = frame; // Task 28 — see the property's own doc above.
-            int ticks = _acc.Advance(Time.unscaledDeltaTime);
-            for (int i = 0; i < ticks; i++)
-            {
-                _world.Tick(SimInputFrame.ForTick(frame, i)); // защёлка — первому тику
-                (Prev, Curr) = (Curr, Prev);
-                _world.CaptureSnapshot(Curr);
-                // Guarded — see TickAdvanced's doc comment: StateHash() is only
-                // ever computed when something is actually subscribed.
-                if (TickAdvanced != null) TickAdvanced.Invoke(_world.CurrentTick, _world.StateHash());
-            }
-            Alpha = _acc.Alpha;
+            // `TickAdvanced` reads as a plain field inside its declaring class,
+            // so this hands the backend null whenever nobody is subscribed —
+            // which is what keeps the per-tick `StateHash()` call from ever
+            // running in the common case (see the event's own doc, and
+            // `ISimBackend.Advance`'s).
+            int ticks = _backend.Advance(frame, Time.unscaledDeltaTime, TickAdvanced);
             UpdateRenderAlpha();
             if (ticks > 0)
             {
+                // ORDER IS THE CONTRACT (Task 43): the fan-out behind
+                // `TicksFlushed` reads this flush's events out of the backend's
+                // buffer, and `EndFrame` is what drops them. Swapping the two
+                // lines costs every casing, corpse, flash and shot sound, and
+                // nothing would fail to compile or to run green.
                 TicksFlushed?.Invoke();
-                _world.ClearEvents();
+                _backend.EndFrame();
                 _sampler.ClearLatches();
             }
         }
@@ -346,13 +405,11 @@ namespace Ring.Presentation
         {
             Seed = seed;
             SimConfig cfg = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
-            _world = new SimulationWorld(seed, cfg);
-            Prev = new RenderSnapshot(cfg.Arena);
-            Curr = new RenderSnapshot(cfg.Arena);
-            _world.CaptureSnapshot(Prev);
-            _world.CaptureSnapshot(Curr);
-            _acc.Reset();
-            Alpha = 0f;
+            // The seven balance SOs stay serialized on THIS component (spec
+            // §3.12 is about whose config is authoritative, not about where the
+            // assets are wired): the backend is handed the finished `SimConfig`
+            // by value and never sees a `ScriptableObject`.
+            _backend.Restart(seed, cfg);
             _renderPrevFrozen = new RenderSnapshot(cfg.Arena);
             _renderCurrFrozen = new RenderSnapshot(cfg.Arena);
             _renderFrozen = false;

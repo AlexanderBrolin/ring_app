@@ -121,8 +121,9 @@ namespace Ring.Presentation
         void LateUpdate()
         {
             // One-frame ordering edge case before the runner's own Awake has run
-            // (mirrors HudController) — skip rather than throw.
-            if (_runner.World == null) return;
+            // (mirrors HudController) — skip rather than throw. Task 43: asks
+            // the backend `Ready` instead of testing `World == null`.
+            if (!_runner.Ready) return;
 
             SyncMobs();
             SyncProjectiles();
@@ -166,9 +167,9 @@ namespace Ring.Presentation
             // L-13 fix-round: read once per frame (not baked into MobView as a
             // duplicated constant) so a balance re-tune of MobConfig.TelegraphSeconds
             // (hot-tweak, spec §3.9) is reflected in the telegraph pulse immediately —
-            // `_runner.World` is guaranteed non-null here, LateUpdate's own guard above
-            // already returned early otherwise.
-            float telegraphSeconds = _runner.World.Config.Chaser.TelegraphSeconds;
+            // the backend is `Ready` here, LateUpdate's own guard above already
+            // returned early otherwise.
+            float telegraphSeconds = _runner.Config.Chaser.TelegraphSeconds;
             // В1/В2 fix-wave 2 (app-n6g item 3b): read once per frame, same
             // shape as telegraphSeconds above — MobView.Sync takes plain
             // values, never a GameFeelConfig/AimProvider reference of its own.

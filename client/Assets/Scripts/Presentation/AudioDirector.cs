@@ -163,8 +163,9 @@ namespace Ring.Presentation
         /// same as `MuzzleFlashView`'s fix — the authoritative `ProjectileHit`/
         /// `PlayClip` position for a real shot is `WeaponSystem`'s spawn point
         /// (`p.Pos + dir * cfg.MuzzleOffset`), not the hero's center; reads
-        /// `MuzzleOffset` off `_runner.World.Config.Weapon` (the built
-        /// `SimConfig`) rather than adding a second `WeaponConfig` reference.
+        /// `MuzzleOffset` off `_runner.Config.Weapon` (the built `SimConfig`
+        /// the facade exposes — Task 43) rather than adding a second
+        /// `WeaponConfig` reference.
         void Update()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
@@ -176,7 +177,7 @@ namespace Ring.Presentation
             float2 aimDir = player.AimPoint - player.Pos;
             float lenSq = aimDir.x * aimDir.x + aimDir.y * aimDir.y;
             float2 dir = lenSq > 1e-8f ? aimDir / Mathf.Sqrt(lenSq) : new float2(1f, 0f);
-            float muzzleOffset = _runner.World.Config.Weapon.MuzzleOffset;
+            float muzzleOffset = _runner.Config.Weapon.MuzzleOffset;
             float2 muzzlePos = player.Pos + dir * muzzleOffset;
 
             if (PlayClip(_shotClip, SimEventKind.ProjectileFired, muzzlePos))

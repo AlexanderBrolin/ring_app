@@ -90,11 +90,12 @@ namespace Ring.Presentation
         void LateUpdate()
         {
             // Г5 review (Minor, same lens as AimRayView's Important — QA18
-            // pattern): UpdateCone below dereferences _runner.World.Config,
-            // same as RenderMuzzleHeight does for AimRayView — hide the cone
-            // and skip it until both exist, rather than crash on the cold
-            // start. Once running, behavior below is unchanged.
-            if (_runner == null || _runner.World == null)
+            // pattern): UpdateCone below reads _runner.Config and the render
+            // pair, same as RenderMuzzleHeight does for AimRayView — hide the
+            // cone and skip it until the backend has something to show, rather
+            // than crash on the cold start. Once running, behavior below is
+            // unchanged. Task 43: was `World == null`, now `Ready`.
+            if (_runner == null || !_runner.Ready)
             {
                 _cone.enabled = false;
                 return;
@@ -203,7 +204,7 @@ namespace Ring.Presentation
         /// `transform.localScale`, so ring width never distorts with radius.
         void UpdateCone(float2 aimSim, Vector3 aimWorld)
         {
-            var cfg = _runner.World.Config;
+            var cfg = _runner.Config;
             var player = _runner.RenderCurr.Player;
             float halfAngle = Spread.HipRadians(cfg.Weapon, player, cfg.Hero);
             float distance = math.distance(player.Pos, aimSim);

@@ -328,7 +328,7 @@ namespace Ring.Presentation
         void SpawnHitSpark(in SimEvent e)
         {
             MobSimConfig archetype = e.MobType == MobType.Chaser
-                ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
+                ? _runner.Config.Chaser : _runner.Config.Gunner;
             float height = ZoneHeight(e.Zone, in archetype);
             PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * height, Quaternion.identity);
         }
@@ -427,7 +427,7 @@ namespace Ring.Presentation
             (Mesh[] parts, Material material) = e.MobType == MobType.Chaser
                 ? (_chaserParts, _chaserPartMaterial) : (_gunnerParts, _gunnerPartMaterial);
             MobSimConfig archetype = e.MobType == MobType.Chaser
-                ? _runner.World.Config.Chaser : _runner.World.Config.Gunner;
+                ? _runner.Config.Chaser : _runner.Config.Gunner;
             Vector3 worldPos = SimSpace.ToWorld(e.Pos);
             float settleSeconds = _gameFeel.GibPhysicsSeconds;
             bool headshot = e.Zone == HitZone.Head;

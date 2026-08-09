@@ -76,11 +76,12 @@ namespace Ring.Presentation
         void LateUpdate()
         {
             // Г5 review (Important): cold-start guard, same shape as
-            // AimProvider's own QA18 pattern — World isn't built yet on the
-            // very first frame(s) before SimulationRunner.Awake's
+            // AimProvider's own QA18 pattern — the backend has nothing to show
+            // on the very first frame(s) before SimulationRunner.Awake's
             // RestartNewSeed completes (or a scene missing the wiring), and
-            // RenderMuzzleHeight below dereferences World.Config.
-            if (_runner == null || _runner.World == null)
+            // RenderMuzzleHeight below reads the render pair and Config.
+            // Task 43: was `World == null`; `Ready` is the successor test.
+            if (_runner == null || !_runner.Ready)
             {
                 _line.enabled = false;
                 return;

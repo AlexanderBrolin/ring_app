@@ -76,10 +76,12 @@ namespace Ring.Presentation
 
         void LateUpdate()
         {
-            // QA18 guard: no runner/world yet (very first frames before Restart
-            // completes, or a scene missing the wiring) — leave the cache exactly
-            // where it was rather than throw.
-            if (_runner == null || _runner.World == null) return;
+            // QA18 guard: no runner, or a backend with nothing to show yet (very
+            // first frames before Restart completes, or a scene missing the
+            // wiring) — leave the cache exactly where it was rather than throw.
+            // Task 43: `Ready` replaced the old `World == null` test, which a
+            // networked backend could never answer with anything but "no".
+            if (_runner == null || !_runner.Ready) return;
 
             float2 planeAimSimPos = ComputePlaneAimSimPos();
             if (!_runner.LastFrameInput.AimHeld)
@@ -191,7 +193,7 @@ namespace Ring.Presentation
             }
 
             Ray ray = _camera.ScreenPointToRay(mouse.position.ReadValue());
-            float maxDistance = _runner.World.Config.Arena.Radius * 2f;
+            float maxDistance = _runner.Config.Arena.Radius * 2f;
             if (!Physics.Raycast(ray, out RaycastHit hit, maxDistance,
                     1 << AimProxyLayer, QueryTriggerInteraction.Collide))
             {

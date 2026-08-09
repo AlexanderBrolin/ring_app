@@ -6,9 +6,11 @@ namespace Ring.Presentation
     /// Sole subscriber of `SimulationRunner.TicksFlushed` in the whole Presentation
     /// layer (П-1) — every class that needs per-event reactions is driven through
     /// this router's `HandleEvent` fan-out instead of subscribing directly. One
-    /// pass over the tick-flush's event buffer (`World.EventCount`/`GetEvent`, read
-    /// before `SimulationRunner` clears it), fanned out per event in a fixed
-    /// relative order:
+    /// pass over the tick-flush's event buffer (`SimulationRunner.EventCount`/
+    /// `GetEvent` — Task 43 moved the read off the world and onto the facade,
+    /// which is what lets a backend without a world of its own feed this
+    /// router; still read before the facade closes the frame and the buffer is
+    /// dropped), fanned out per event in a fixed relative order:
     ///   GameFeelDirector → PersistentPropsDirector → AudioDirector →
     ///   MuzzleFlashView → PlayerVisual (animation retrigger/death, phase B) →
     ///   ViewRegistry (retire only) → DeathOverlayController → HudController.
@@ -40,13 +42,25 @@ namespace Ring.Presentation
 
         void OnDisable() => _runner.TicksFlushed -= OnTicksFlushed;
 
+        /// Readiness guard (Task 43): this class had none, because the only
+        /// backend that existed could not raise `TicksFlushed` before its first
+        /// `Restart` had built a world. That is an ordering contract, not a
+        /// property of this class — a networked backend subscribes here at
+        /// `OnEnable` and becomes ready only once its first snapshot lands, so
+        /// the early exit is what keeps the gap between the two from being read
+        /// as an event buffer.
+        ///
+        /// `count` is read once, before the loop: a fan-out slot may spawn
+        /// objects, so re-reading it per iteration would be asking the backend a
+        /// question about a buffer that is being consumed.
         void OnTicksFlushed()
         {
-            SimulationWorld world = _runner.World;
-            int count = world.EventCount;
+            if (!_runner.Ready) return;
+
+            int count = _runner.EventCount;
             for (int i = 0; i < count; i++)
             {
-                SimEvent e = world.GetEvent(i);
+                SimEvent e = _runner.GetEvent(i);
 
                 _gameFeelDirector.HandleEvent(in e); // hitstop/flash/vignette, first slot (Task 25, П-1)
                 _persistentProps.HandleEvent(in e); // casings/decals/corpses/sparks/dash-glows (Task 27, П-1; app-9av)

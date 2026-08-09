@@ -138,8 +138,9 @@ namespace Ring.Presentation
         /// sole place `ApplyEmission` is invoked from, so there is exactly one
         /// write to the property block per view per frame. `telegraphSeconds`
         /// (L-13 fix-round) is `ViewRegistry`'s own read of
-        /// `_runner.World.Config.Chaser.TelegraphSeconds` — the single source of
-        /// truth the ramp now tracks instead of a locally-duplicated constant.
+        /// `_runner.Config.Chaser.TelegraphSeconds` (Task 43 — the facade's
+        /// single config source, Р87) — the source of truth the ramp tracks
+        /// instead of a locally-duplicated constant.
         /// В1/В2 fix-wave 2 (app-n6g item 3b): `hovered`/`hoverGlowBoost` are
         /// `ViewRegistry.SyncMobs`'s own per-frame read of `AimProvider.
         /// CurrentHoveredMob`/`GameFeelConfig.AimHoverGlowBoost` — passed as
