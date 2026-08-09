@@ -25,18 +25,27 @@ namespace Ring.Networking.Client
     ///     test;
     ///   * an unreset `GhostProjectiles` carries the previous match's tracers
     ///     into the new one;
-    ///   * an unreset `StalePolicy` — the one seam whose failure is NOT a
+    ///   * an unreset `StalePolicy` — the SECOND seam whose failure is not a
     ///     refusal — keeps the finished match's two global clocks, and both
-    ///     of its readings then invert. `GlobalStarvation` is
+    ///     of its readings go wrong. `GlobalStarvation` is
     ///     `renderTick - lastAppliedTick >= staleTicks`, and the new match's
     ///     `renderTick` starts back near zero while `lastAppliedTick` still
-    ///     holds the old match's high value, so the subtraction stays deeply
-    ///     negative and the connection indicator NEVER lights, not even
-    ///     through genuine silence. Meanwhile `ConfirmedAbsent` is
-    ///     `lastNonTruncatedTick > lastSeenTick[id]`, and that stale, enormous
-    ///     left-hand side outranks every fresh sighting, so Р149's gate stands
-    ///     propped open from the new match's first frame and entities begin
-    ///     fading — and reach `Gone` — while they are perfectly alive.
+    ///     holds the old match's high value, so the subtraction stays
+    ///     negative and the connection indicator does not light until this
+    ///     match's own ticks climb past the finished match's last applied one
+    ///     — potentially the whole match, as `StalePolicy`'s own doc puts it.
+    ///     `ConfirmedAbsent` is `lastNonTruncatedTick > lastSeenTick[id]`,
+    ///     and that stale, enormous left-hand side outranks every fresh
+    ///     sighting, so Р149's gate stands propped open from the new match's
+    ///     first frame. What an entity then does depends on whether the
+    ///     FINISHED match ever saw its id, and the two answers fail in
+    ///     OPPOSITE directions: an id that match had seen keeps its high
+    ///     `lastSeenTick` — `OnEntitySeen` refuses to lower a sighting tick
+    ///     it already holds — so that entity's age reads negative and
+    ///     `StateOf` answers `Live` however long it is really absent, a
+    ///     freeze rather than a fade; only an id NEW to this match reaches
+    ///     the propped-open gate carrying a fresh sighting tick, and that one
+    ///     can start fading with no legitimate absence behind it.
     /// Five call sites spread across a receiver would be five chances to
     /// forget one; one call site is one.
     ///

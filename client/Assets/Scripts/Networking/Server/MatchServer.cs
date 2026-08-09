@@ -931,9 +931,14 @@ namespace Ring.Networking.Server
     /// freezes the references, never their contents, and `MatchServer.
     /// LastSummary` hands both to the bootstrap. `PlayerStats` holds COPIES of
     /// the world's structs, so writing into it corrupts only the caller's own
-    /// reading; `ConnectionStats` holds the assembler's LIVE `NetStats`
-    /// objects, so writing into those would corrupt telemetry the rest of the
-    /// process still reads. The caller must treat both as read-only.
+    /// reading; `ConnectionStats` holds the assembler's `NetStats` OBJECTS
+    /// rather than copies. By the time `LastSummary` can be read the
+    /// assembler that owned them is already released and the next match
+    /// allocates its own set, so in the ordinary flow this array is their
+    /// last reader — but a caller that cached a reference from `StatsFor`
+    /// DURING the match shares those same objects, and a write through either
+    /// alias is visible through the other. The caller must treat both as
+    /// read-only.
     ///
     /// `ConnectionStats` EXISTS BECAUSE THERE IS NO OTHER MOMENT TO TAKE IT
     /// (fix-round 1, I-6). Spec §3.11's log line needs the snapshot's dropped
