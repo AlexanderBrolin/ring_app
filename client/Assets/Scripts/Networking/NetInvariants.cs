@@ -65,7 +65,7 @@ namespace Ring.Networking
         ///      (Runtime/Serializing/Helping/Broadcasts.cs:18 →
         ///      Writer.cs:192-195 `WriteUInt16Unpacked`); the width is named
         ///      by `TransportManager.PACKETID_LENGTH = 2`
-        ///      (Runtime/Managing/Transporting/TransportManager.cs:143).
+        ///      (Runtime/Managing/Transporting/TransportManager.cs:144).
         ///   2  the broadcast type key, `typeof(T).FullName.GetStableHashU16()`
         ///      (Broadcasts.cs:19 → Writer.cs:371 → :357, unpacked u16).
         ///   2  the length of the serialized broadcast, written packed
@@ -84,7 +84,7 @@ namespace Ring.Networking
         ///      (Writer.cs:550-551 → :292/:300), same packed encoding as above.
         ///   4  the tick stamped at the head of every datagram buffer:
         ///      `TransportManager.UNPACKED_TICK_LENGTH = 4`
-        ///      (TransportManager.cs:155), reserved in `PacketBundle`'s
+        ///      (TransportManager.cs:156), reserved in `PacketBundle`'s
         ///      constructor (Runtime/Connection/Buffer.cs:151) and written by
         ///      `ByteBuffer.CopySegment` (Buffer.cs:76-80).
         ///   2  FishNet's own MTU reserve, which `TransportManager.
@@ -100,11 +100,39 @@ namespace Ring.Networking
         /// compares the whole serialized broadcast against the channel's MTU
         /// and, if it is larger, splits it and forces the pieces onto
         /// `Channel.Reliable` (TransportManager.cs:576-627, the branch at
-        /// :583-585 being the "no split needed" one). An oversized snapshot is
+        /// :582-584 being the "no split needed" one). An oversized snapshot is
         /// therefore not dropped — it quietly stops being unreliable, which
         /// breaks the "state travels unreliably, events ride redundantly"
         /// model the whole protocol is built on. That silent mode change, not
         /// a packet loss, is what invariant #5 is here to prevent.
+        ///
+        /// THE CONDITION THIS CHECK IS HONEST UNDER: ONE SNAPSHOT TRAVELS AS
+        /// ONE BROADCAST MESSAGE. `SendSplitMessage` decides per MESSAGE, on
+        /// the segment handed to it, and it decides BEFORE any bundling; the
+        /// bundling underneath never changes that verdict, because
+        /// `PacketBundle.Write` responds to a full buffer by opening a NEW
+        /// buffer on the SAME channel (Buffer.cs:243-257) and never by
+        /// switching channels. So a per-message budget is the right budget —
+        /// as long as a message carries one snapshot. A future sender that
+        /// coalesced two ticks into a single `SnapshotBroadcast` would put the
+        /// SUM in front of the per-message comparison, and this constant would
+        /// then be measuring the wrong thing. Treat that as a precondition of
+        /// invariant #5, not as a passing observation.
+        ///
+        /// PRECISION, STATED SO NOBODY "OPTIMIZES" IT LATER. Against a raw
+        /// transport MTU of `raw`, the envelope alone is 15 bytes, and the
+        /// channel MTU the split check uses is `raw - 2`, so the actual
+        /// upgrade-to-Reliable threshold is `N > raw - 17`. This constant is
+        /// 21, i.e. deliberately 4 bytes stricter — exactly the datagram tick
+        /// — and that difference is the point rather than slack: in the band
+        /// `raw - 21 &lt; N &lt;= raw - 17` the message escapes the split, stays
+        /// Unreliable, and still produces a datagram longer than the nominal
+        /// buffer size (`ByteBuffer.Size` is that same `raw - 2`, and
+        /// `PacketBundle.Write` skips its capacity test when the buffer is
+        /// empty). `N &lt;= raw - 21` is therefore the exact boundary of "one
+        /// snapshot fits one clean datagram", which is the property worth
+        /// holding. At the shipped numbers: raw 1282, upgrade at N &gt; 1265,
+        /// this cap at N &lt;= 1261, default `SnapshotMaxBytes` 1000.
         ///
         /// WITHOUT THE DEDUCTION THIS CHECK WOULD BE THEATRE:
         /// `Tugboat.GetMTU(byte channel)` ignores its channel argument and
@@ -163,10 +191,12 @@ namespace Ring.Networking
             }
 
             // #3 (Р72, plan Т41). A predicted tracer must outlive the wait for
-            // its own server confirmation; the confirmation cannot arrive
-            // sooner than the interpolation buffer, so a ghost that expires at
-            // or before the buffer depth is guaranteed to be killed before it
-            // could ever be confirmed. Strictly greater, not >=.
+            // its own server confirmation. As long as the client renders
+            // InterpBufferTicks behind the newest buffered frame — the
+            // contract Т31's render clock and Т32's receive path hold, not
+            // something this file can check — the confirmation cannot arrive
+            // sooner than that depth, so a ghost expiring at or before it dies
+            // before its own confirmation could land. Strictly greater, not >=.
             if (net.GhostConfirmTicks <= net.InterpBufferTicks)
             {
                 errors.Add("Net.GhostConfirmTicks must be > Net.InterpBufferTicks " +
@@ -211,9 +241,17 @@ namespace Ring.Networking
             //     about N * 2^-24, which at NetConfig's own [Range] ceiling of
             //     240 is 1.4e-5 — nearly two orders of magnitude below the
             //     tolerance, so a legitimate 1f/N can never trip it;
-            //   * anything a person would plausibly get wrong — 29, 60, or a
-            //     TickDt that does not denote a whole-number rate at all —
-            //     misses by 0.4 or more.
+            //   * every disagreement worth catching misses by orders of
+            //     magnitude more than that. The realistic mistakes are large:
+            //     TickRate 29 against 1f/30f misses by ~1.0, TickRate 60 by
+            //     ~30. Deliberately near misses stay caught too, though the
+            //     margin shrinks and no single floor covers them all: a TickDt
+            //     of 1f/29.6f leaves ~0.400 and 1f/29.9f only ~0.100 — still a
+            //     hundred times the tolerance, but the earlier claim that any
+            //     non-whole rate misses "by 0.4 or more" was a false
+            //     generalization and is not what makes this safe. What makes
+            //     it safe is the gap between 1e-3 and the 1.4e-5 worst-case
+            //     float error above.
             // A "nearest whole number" form (round 1.0/TickDt, compare) was
             // considered and is weaker: it would accept TickRate = 30 against
             // a TickDt of 1f/29.6f, which is a real disagreement.

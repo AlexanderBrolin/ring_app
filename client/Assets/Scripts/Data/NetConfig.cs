@@ -92,12 +92,26 @@ namespace Ring.Data
         // exception without a cause. It is also a taste knob, and taste is
         // tuned by playtest in the .asset, not by recompiling.
         //
-        // 0.05 IS THE MIDDLE OF §3.9's BAND, AND THE DEFAULT MATTERS MORE THAN
-        // USUAL: default(float) is 0, and RenderClock.SlewFractionOf reads
-        // anything at or below zero as "do not correct at all", so shipping
-        // the C# zero would install the feature switched off. Zero stays LEGAL
-        // (NetInvariants accepts it) because switching slew off deliberately
-        // is a mode, not a mistake — it is only the DEFAULT that must not be 0.
+        // 0.05 IS THE LOW EDGE OF SPEC §3.9's BAND, NOT ITS MIDDLE. §3.9 asks
+        // for "slew of +/-5-10% of clock speed", i.e. 0.05..0.10, whose middle
+        // would be 0.075. Shipping the low edge is the choice: it is the
+        // gentlest legal correction, and a correction that is too soft merely
+        // takes longer to work off a desync, whereas one that is too strong
+        // shows up as a visible change of pace in animation. Raising it is a
+        // matter of taste and belongs to a playtest (milestone В1), which is
+        // exactly why this is an asset field.
+        //
+        // Do not confuse §3.9's TUNING band (0.05..0.10) with the band
+        // NetInvariants enforces ([0, 0.10]) — the invariant additionally
+        // admits 0, and 0.05 IS the midpoint of that wider band, which is
+        // where an earlier draft of this comment got "middle" from.
+        //
+        // THE DEFAULT MATTERS MORE THAN USUAL: default(float) is 0, and
+        // RenderClock.SlewFractionOf reads anything at or below zero as "do
+        // not correct at all", so shipping the C# zero would install the
+        // feature switched off. Zero stays LEGAL (NetInvariants accepts it)
+        // because switching slew off deliberately is a mode, not a mistake —
+        // it is only the DEFAULT that must not be 0.
         [Range(0f, 0.10f)] public float SlewFraction = 0.05f;
 
         // Ticks an event stays redundantly re-sent before being dropped.

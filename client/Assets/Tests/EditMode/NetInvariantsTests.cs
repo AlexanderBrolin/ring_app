@@ -34,15 +34,28 @@ namespace Ring.Simulation.Tests
         static int FittingMtu(NetConfig net) =>
             net.SnapshotMaxBytes + NetInvariants.SnapshotWireOverheadBytes + 1;
 
-        /// Asserts the answer is exactly one violation and that it names
-        /// `fieldName`. Both halves matter: the count catches a validator that
-        /// reports collateral damage, the name catches one that reports the
-        /// wrong field.
+        /// Asserts the answer is exactly one violation and that the violation
+        /// is ABOUT `fieldName`. Both halves matter: the count catches a
+        /// validator that reports collateral damage, the name catches one that
+        /// reports the wrong violation.
+        ///
+        /// THE NAME IS ANCHORED TO THE HEAD OF THE MESSAGE, NOT SEARCHED FOR
+        /// ANYWHERE IN IT (fix-round 1). A plain `Contains` is not
+        /// discriminating here, because several messages mention a field they
+        /// are not about: #3 reads "Net.GhostConfirmTicks must be >
+        /// Net.InterpBufferTicks" and #4 reads "Visibility.LingerTicks must be
+        /// >= Net.InterpBufferTicks + 2", so `Contains("Net.InterpBufferTicks")`
+        /// would be satisfied by a validator that answered #1 with either of
+        /// them. Requiring the field to open the sentence tests what the
+        /// message actually CLAIMS — every message in this validator is
+        /// "&lt;field&gt; must ..." — rather than which words appear in it.
         static void AssertOnly(string[] errors, string fieldName)
         {
             Assert.AreEqual(1, errors.Length,
                 "expected exactly one violation, got: " + string.Join(" | ", errors));
-            StringAssert.Contains(fieldName, errors[0]);
+            Assert.IsTrue(errors[0].StartsWith(fieldName + " "),
+                $"the violation must be ABOUT {fieldName} — it has to be the subject of the " +
+                $"message, not merely mentioned in it. Got: {errors[0]}");
         }
 
         [Test]
@@ -166,6 +179,24 @@ namespace Ring.Simulation.Tests
             // admits, and the floor has to be closed or the check would be
             // one-sided.
             net.SlewFraction = -0.01f;
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)), "Net.SlewFraction");
+        }
+
+        [Test]
+        public void SlewFractionNaN_IsReported()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            // NaN passes BOTH ordinary comparisons — `NaN < 0f` and
+            // `NaN > 0.10f` are each false — so a floor written as `x < 0f`
+            // would wave it through and hand RenderClock a fraction that
+            // poisons the clock arithmetic. The validator is written as
+            // `!(x >= 0f)` precisely to refuse it, and that reasoning is
+            // stated in its doc; without this test the doc would be the only
+            // thing holding it, and a refactor back to `x < 0f` would pass
+            // every other test in the suite (fix-round 1).
+            net.SlewFraction = float.NaN;
+
             AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net)), "Net.SlewFraction");
         }
 
