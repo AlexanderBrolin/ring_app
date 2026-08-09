@@ -13,7 +13,7 @@ namespace Ring.Simulation.Tests
     /// Task 42b split `EventRelevance.ShouldDeliver`'s single `observerIndex`
     /// into `identityIndex`/`viewpointIndex`. The three call sites below pass
     /// the SAME value for both — this file measures allocations, not
-    /// spectating behaviour, so the extra argument pins nothing new.
+    /// spectating behavior, so the extra argument pins nothing new.
     public class AllocationTests
     {
         [Test]

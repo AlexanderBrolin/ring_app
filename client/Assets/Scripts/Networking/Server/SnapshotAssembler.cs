@@ -69,18 +69,22 @@ namespace Ring.Networking.Server
     /// parameters. Spectating (Р70/Р88) is what makes them diverge at all:
     /// Stage 2 Task 42a is the task that first let `MatchServer.
     /// OnSpectateRequest` move a slot's `viewpointIndex` away from its
-    /// `identityIndex`, while the visibility sets this class computes were
-    /// already keyed on `viewpointIndex` from that same task on (`BuildFor`
-    /// below). WAS: until Task 42b, the seam still took a single
-    /// `observerIndex` for both roles, so its `Audible` branch measured
-    /// earshot from the IDENTITY's body (a corpse, while spectating) instead
-    /// of the viewpoint's — a real divergence from Task 42a onward, not merely
-    /// theoretical. NOW: `observerIndex` is folded into the two parameters
-    /// this class's own `identityIndex`/`viewpointIndex` split already
-    /// modeled, and the seam's hearing read takes `viewpointIndex` too (Task
-    /// 42b, one line). Positional semantics still live entirely in the
-    /// visibility SET for the `Visible` channel — only the `Audible` branch's
-    /// own direct position read was ever affected.
+    /// `identityIndex`, while the visibility sets this class computes have
+    /// been keyed on `viewpointIndex` since Task 28, when `BuildFor` first
+    /// took the two as separate parameters. WAS: until Task 42b, the seam
+    /// still took a single `observerIndex` for both roles, so its `Audible`
+    /// branch measured earshot from the IDENTITY's body (a corpse, while
+    /// spectating) instead of the viewpoint's — a real divergence from Task
+    /// 42a onward, not merely theoretical. NOW: `observerIndex` is folded
+    /// into the two parameters this class's own `identityIndex`/
+    /// `viewpointIndex` split already modeled, and hearing is measured from
+    /// the viewpoint in BOTH of the places that measure it — the seam's
+    /// `Audible` branch (Task 42b, one line) AND this class's own direct
+    /// `ShotHeard` route in `RouteEvents`, which bypasses the seam by design
+    /// and previously read the identity's body for the same reason. The
+    /// `Visible` channel needed no change either time: its positional
+    /// semantics live entirely in the visibility SET, which was already
+    /// computed from the viewpoint.
     ///
     /// THE BUDGET IS DECIDED BEFORE THE FIRST BYTE (task-28-brief §2.8). The
     /// header is written first and its `flags` byte cannot be patched

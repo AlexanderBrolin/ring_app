@@ -228,8 +228,13 @@ namespace Ring.Simulation.Visibility
                     // own position (Task 42b) — the SAME position
                     // VisibilitySystem.Compute itself reads to build
                     // `observerSet` (a plain PlayerAt — no Alive gate, so a
-                    // dead observer's viewpoint, e.g. spectating, resolves
-                    // exactly the same way, spec rule Р70). Before Task 42b
+                    // viewpoint that names a DEAD player resolves exactly the
+                    // same way, spec rule Р70). Two cases actually reach that,
+                    // and spectating a live teammate is neither of them: a
+                    // dead player still looking out of its own body (the
+                    // default, where the two indices agree), and a spectated
+                    // target that dies while being watched — nothing returns
+                    // the watcher to its own body automatically, by design. Before Task 42b
                     // this read `identityIndex` instead, which agreed with
                     // `viewpointIndex` for every caller that existed at the
                     // time (spectating did not yet split them) and silently

@@ -41,11 +41,13 @@ namespace Ring.Simulation.Tests
     /// not contract.
     ///
     /// Task 42b split `ShouldDeliver`'s single `observerIndex` into
-    /// `identityIndex`/`viewpointIndex`. Every PRE-EXISTING call site below
-    /// passes the SAME value for both — none of these fixtures involves
-    /// spectating, so nothing here pins new behaviour; only fixtures 19-23
-    /// (added by Task 42b, at the end of this file) pass genuinely different
-    /// indices.
+    /// `identityIndex`/`viewpointIndex`. Every PRE-EXISTING CALL SITE OF
+    /// `ShouldDeliver` below passes the SAME value for both, so none of them
+    /// pins new behavior. The fixtures that DO pass genuinely different
+    /// indices are 19-23 (added by Task 42b, at the end of this file) and,
+    /// already before it, fixture 18 — which reaches the split through
+    /// `SnapshotAssembler.BuildFor`, whose two index parameters predate this
+    /// task, rather than through the seam.
     public class EventDeliveryTests
     {
         // Task 21 fix-round 1 (M-2): Capacity moved to TestWorlds — see its
@@ -73,7 +75,7 @@ namespace Ring.Simulation.Tests
             // routed StaminaDenied through the Visible/Audible machinery
             // instead of a plain ownership check would pass the owner
             // assertion below by coincidence but fail the neighbour one, since
-            // Visible/Audible never consult `observerIndex` at all.
+            // Visible/Audible never consult the identity index at all.
             var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
             observerSet.Add(VisibilityIds.ForPlayer(1));
 
@@ -140,7 +142,7 @@ namespace Ring.Simulation.Tests
             // fields with the SAME value for PlayerDied (KillPlayer passes the
             // victim index to both), and while they agreed in this fixture the
             // owner carve-out below could read either one and still pass:
-            // `observerIndex == ev.PlayerIndex` -> `== ev.EntityId` survived
+            // `identityIndex == ev.PlayerIndex` -> `== ev.EntityId` survived
             // the whole run. Diverging them costs the fixture nothing (nothing
             // in ShouldDeliver reads EntityId for this kind, which is exactly
             // the claim under test) and makes the VICTIM-by-PlayerIndex
@@ -668,17 +670,19 @@ namespace Ring.Simulation.Tests
         [Test]
         public void DeadObserver_ResolvesOwnPositionForAudibility()
         {
-            // Rule 9 (task-21-brief.md): observerIndex may point at a dead
-            // player (post-mortem observation, Р70) — ShouldDeliver must not
-            // special-case that away, and must resolve the observer's own
-            // position the same plain way VisibilitySystem.Compute does
-            // (w.PlayerAt, no Alive gate).
+            // Rule 9 (task-21-brief.md): the viewpoint index may point at a
+            // dead player (post-mortem observation, Р70) — ShouldDeliver must
+            // not special-case that away, and must resolve that viewpoint's
+            // own position the same plain way VisibilitySystem.Compute does
+            // (w.PlayerAt, no Alive gate). This fixture passes the same index
+            // for both roles, which is the ordinary case of a dead player
+            // still looking out of its own body.
             //
             // Task 21 fix-round 1 (I-2): observe from index 1, not 0 — EVERY
-            // call site in this file that reaches `w.PlayerAt(observerIndex)`
-            // happened to pass observerIndex == 0 (lines noted by the
-            // review), so a mutant hardcoding `w.PlayerAt(0)` in place of
-            // `w.PlayerAt(observerIndex)` agreed with the correct code on
+            // call site in this file that reaches `w.PlayerAt(...)` for the
+            // hearing distance happened to pass index 0 (lines noted by the
+            // review), so a mutant hardcoding `w.PlayerAt(0)` in place of the
+            // real lookup agreed with the correct code on
             // every one of them and survived the whole run. Here the ACTOR is
             // player 0 (left at its default two-player spawn-ring position,
             // Geometry.SpawnPosFor — never relocated) and the DEAD OBSERVER
@@ -774,7 +778,7 @@ namespace Ring.Simulation.Tests
         // (Р32, channel `None`), the spawn-subscription set that addresses a
         // round's ending (Р28), the union that carries a mob's death to whoever
         // watched the tracer, the ShotHeard/ProjectileSpawned split of a single
-        // shot, and the identity-versus-viewpoint split of `observerIndex`
+        // shot, and the identity-versus-viewpoint split of the former single index
         // (carryover-t28.md §5). They live in SnapshotAssembler and are observed
         // here through assembled frames.
 
@@ -1103,14 +1107,16 @@ namespace Ring.Simulation.Tests
         [Test]
         public void OwnerChannel_FollowsIdentity_WhileTheVisibilitySetFollowsViewpoint()
         {
-            // carryover-t28.md §5. `observerIndex` carries two roles at once —
-            // WHO this connection is (the Owner channel, the own-death
+            // carryover-t28.md §5. `observerIndex` USED TO carry two roles at
+            // once — WHO this connection is (the Owner channel, the own-death
             // carve-out) and WHERE it looks from (the visibility set). While a
             // player watches its own body the two agree; spectating (Р70/Р88)
             // splits them, and the assembler must not merge them back.
             //
-            // The split is expressed as two parameters: `identityIndex` feeds
-            // ShouldDeliver, `viewpointIndex` feeds Compute. This fixture pins
+            // The split is expressed as two parameters. Since Task 42b BOTH
+            // reach `ShouldDeliver`: `identityIndex` answers its ownership
+            // questions, `viewpointIndex` feeds Compute AND the seam's own
+            // hearing read. This fixture pins
             // the two channels that stay on IDENTITY (Owner, the own-death
             // carve-out); the Audible branch's own earshot fix — the seam's
             // known limit until Task 42b, which measured hearing distance from
@@ -1158,9 +1164,12 @@ namespace Ring.Simulation.Tests
         //
         // Task 42a made `identityIndex`/`viewpointIndex` genuinely diverge for
         // the first time (MatchServer.OnSpectateRequest can move a slot's
-        // viewpoint away from its identity); the four fixtures below are the
-        // ones that could not exist before that split, because ShouldDeliver
-        // only ever took ONE index. Each pins one of the two things that
+        // viewpoint away from its identity); the five fixtures below are the
+        // ones that pin what that split means for event delivery. Four of them
+        // could not exist before it at all, because ShouldDeliver only ever
+        // took ONE index; the fifth (23) goes through the assembler's own
+        // direct ShotHeard route, which never used the seam. Each pins one of
+        // the two things that
         // change (the Audible branch's hearing position) or must NOT change
         // (the Owner channel, the own-death carve-out) under the split.
 
@@ -1169,8 +1178,8 @@ namespace Ring.Simulation.Tests
         [Test]
         public void AudibleChannel_MeasuresFromViewpoint_NotIdentity()
         {
-            // The defect this task closes (SnapshotAssembler's own KNOWN LIMIT
-            // paragraph): a dead observer spectating a teammate across the
+            // The defect this task closes (recorded in SnapshotAssembler's own
+            // class doc, WAS/NOW): a dead observer spectating a teammate across the
             // arena must hear gunfire around the TEAMMATE, not around its own
             // corpse. Distances are fixture expressions off HearRadius (Р56),
             // never literals, so the arithmetic states its own premise instead
@@ -1215,7 +1224,7 @@ namespace Ring.Simulation.Tests
             // instead of viewpointIndex, silently unchanged from before this
             // task) would still pass 19's positive half by reading the CLOSE
             // identity there — both mirrors are required to pin a parameter
-            // swap in both directions (spec §0 of this task's own brief).
+            // swap in both directions (this task's own brief, §2.4).
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 3);
             var closePos = new float2(cfg.Visibility.HearRadius - 1f, 0f); // inside earshot

@@ -37,11 +37,20 @@ namespace Ring.Networking.Server
         /// refusal still stands.
         TargetIsSelf,
 
-        /// The named target is a living player. Spec §3.10 :674 names "a
-        /// living player" as the thing a spectator watches — until Task 42b
-        /// resolves the rest of the split (`SnapshotAssembler`'s own class
-        /// doc, KNOWN LIMIT), a corpse is the only legal viewpoint besides
-        /// one's own.
+        /// The named target is NOT a living player. Spec §3.10 names "a
+        /// living player" as the thing a spectator watches, so a corpse is
+        /// never a legal viewpoint — with one exception that needs no rule
+        /// here, a slot's own body, which is where `viewpointIndex` already
+        /// starts and which `TargetIsSelf` answers for.
+        ///
+        /// THIS PARAGRAPH WAS WRITTEN BACKWARDS UNTIL THE Т42b REVIEW
+        /// (coordinator's own hand): it opened with "the named target IS a
+        /// living player" — the condition under which this refusal does NOT
+        /// fire — and then promised that Task 42b would make a corpse the
+        /// only legal viewpoint, which is the opposite of what both the spec
+        /// and `Evaluate` say. Recorded rather than silently overwritten,
+        /// because a doc that states a predicate inside out is the failure
+        /// mode this phase kept hitting.
         TargetDead,
 
         /// The requester's last ACCEPTED switch was too recent (Р70): "the
