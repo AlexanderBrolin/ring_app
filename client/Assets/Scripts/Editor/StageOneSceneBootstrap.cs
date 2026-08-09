@@ -528,9 +528,20 @@ namespace Ring.Editor
             // own newest/last field) as its marker — brand-new asset on
             // this run, so this call is a one-time onboarding exactly like
             // ArenaConfig/WaveConfig/VisibilityConfig's own first-join
-            // comments above, not a migration of an older asset.
+            // comments above, not a migration of an older asset. Stage 2
+            // Task 41b moves the marker to MatchAbandonGraceSeconds, which
+            // Task 41a appended as the class's new last field: the mechanism
+            // is a text search for the marker's NAME in the committed YAML,
+            // so a marker naming a key the asset already carries can never
+            // dirty anything again — with MatchMaxDurationSeconds still named
+            // here, neither SlewFraction (Task 41a) nor
+            // MatchAbandonGraceSeconds would ever reach NetConfig.asset, and
+            // both would silently fall back to their C# initializers while
+            // EditMode stayed green (the tests read the C# defaults, not the
+            // asset). Same drill as HeroConfig's own marker moves above
+            // (AimSettleSeconds -> LinkRefund -> EdgeRequestMinTicks).
             EditorBootstrapUtils.EnsureAssetHasKey(net, $"{DataDir}/NetConfig.asset",
-                "MatchMaxDurationSeconds"); // Stage 2 Task 23
+                "MatchAbandonGraceSeconds"); // Stage 2 Task 41b (was MatchMaxDurationSeconds, Task 23)
 
             AssetDatabase.SaveAssets();
 

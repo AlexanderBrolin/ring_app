@@ -16,6 +16,7 @@ MonoBehaviour:
   InterpBufferTicks: 3
   InterpMaxStaleTicks: 3
   RenderClockSnapTicks: 10
+  SlewFraction: 0.05
   EventRedundancyTicks: 4
   SnapshotEventBudget: 16
   SnapshotMaxBytes: 1000
@@ -27,3 +28,4 @@ MonoBehaviour:
   JoinTimeoutSeconds: 120
   MatchEndLingerSeconds: 10
   MatchMaxDurationSeconds: 1800
+  MatchAbandonGraceSeconds: 30
