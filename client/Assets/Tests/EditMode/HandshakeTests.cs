@@ -20,9 +20,10 @@ namespace Ring.Simulation.Tests
     ///
     /// Every negative test carries a positive witness beside it (brief
     /// §2.8), so a mutation that always refuses (or always accepts) cannot
-    /// survive unnoticed — see task-39-report.md's mutation table (M-1..M-11,
-    /// M-8..M-11 added fix-round 1) for the full sweep this file was
-    /// written against.
+    /// survive unnoticed — see task-39-report.md's mutation table (M-1..M-12:
+    /// M-8..M-11 added fix-round 1, M-12 added fix-round 2, replacing M-9
+    /// after the fix-round 2 K-1/N-1 ruling deleted the code M-9 targeted)
+    /// for the full sweep this file was written against.
     public class HandshakeTests
     {
         // Two-source-of-numbers convention (Global Constraints): the
@@ -133,15 +134,24 @@ namespace Ring.Simulation.Tests
                     + $"not to {refusal} — a mismatched-but-non-None mapping is still wrong.");
             }
 
-            // Fix-round 1, N-2/N-3: FromJoinRejection no longer THROWS on
-            // an unrecognized code (a thrown exception inside a FishNet
-            // broadcast handler escapes into the transport's own read loop
-            // and hangs the connection with no refusal and no disconnect —
-            // worse than the bug this guards against). It maps to the
-            // dedicated UnrecognizedRejection member instead — still a
-            // loud, distinguishable answer (MatchHandshake.Refuse logs an
-            // error specifically for it), never a silent None. 255 is
-            // outside every current JoinRejection value (0-6).
+            // Fix-round 1, N-2/N-3 (justification corrected fix-round 2,
+            // NF-1): FromJoinRejection no longer THROWS on an unrecognized
+            // code. A thrown exception inside a FishNet broadcast handler
+            // (ServerManager.ParseReceived's dispatch) is caught two
+            // DIFFERENT wrong ways depending on the build: in a DEVELOPMENT
+            // build (Editor/BuildOptions.Development) it escapes with no
+            // catch at all — silence, this handshake never gets to answer;
+            // in the PRODUCTION build this project actually ships
+            // (BuildCommands.BuildLinuxServer, which never sets
+            // BuildOptions.Development) ParseReceived's try/catch turns ANY
+            // exception into an immediate Kick(..., KickReason.
+            // MalformedData, ...) — not silence, but a false accusation
+            // against the client for a bug that is entirely server-side.
+            // Neither is acceptable, so this maps to the dedicated
+            // UnrecognizedRejection member instead — loud in EVERY build
+            // (MatchHandshake.Refuse logs an error specifically for it)
+            // without blaming the client. 255 is outside every current
+            // JoinRejection value (0-6).
             Assert.AreEqual(HandshakeRefusal.UnrecognizedRejection,
                 HandshakeDecision.FromJoinRejection(255),
                 "an unrecognized rejection code must map to UnrecognizedRejection, not silently to None.");
@@ -152,6 +162,40 @@ namespace Ring.Simulation.Tests
         {
             Assert.AreEqual(HandshakeRefusal.None,
                 HandshakeDecision.FromJoinRejection((byte)JoinRejection.None));
+        }
+
+        // ------------------------------------------------------------------
+        // HandshakeDecision.SlotsFitOnTheWire (fix-round 2, K-1/N-1 ruling)
+        // — the ONE-TIME construction-time precondition that replaced
+        // fix-round 1's per-connection runtime guard in MatchHandshake.
+        // OnClientHello. Testing this core function directly is what
+        // closes mutation M-9 (task-39-report.md §4): fix-round 1's guard
+        // lived entirely in untested wiring: this arithmetic does not.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void SlotsFitOnTheWire_BoundaryValues()
+        {
+            // Negative: nonsensical regardless of wire width.
+            Assert.IsFalse(HandshakeDecision.SlotsFitOnTheWire(-1),
+                "a negative maxPlayers can never be a valid match shape.");
+            // Zero: no seats at all — MatchRoster's own constructor already
+            // refuses MaxPlayers < 1 for the same reason (Task 38); this
+            // function cannot see that guard across the assembly boundary
+            // (brief §2.2), so it restates the same bound independently.
+            Assert.IsFalse(HandshakeDecision.SlotsFitOnTheWire(0),
+                "zero seats is not a match this class should be constructed for.");
+            // Witness: the smallest legitimate match — one seat, slot 0,
+            // trivially a byte.
+            Assert.IsTrue(HandshakeDecision.SlotsFitOnTheWire(1),
+                "a one-seat match must be accepted.");
+            // Comfortably inside range — highest slot is 254.
+            Assert.IsTrue(HandshakeDecision.SlotsFitOnTheWire(255),
+                "255 seats (highest slot 254) fits a byte comfortably.");
+            // The exact edge: highest slot is 255, which IS byte.MaxValue —
+            // still valid, this is the last maxPlayers that fits.
+            Assert.IsTrue(HandshakeDecision.SlotsFitOnTheWire(256),
+                "256 seats (highest slot 255 == byte.MaxValue) is the last value that still fits.");
         }
 
         // ------------------------------------------------------------------

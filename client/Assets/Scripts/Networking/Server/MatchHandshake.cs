@@ -45,18 +45,42 @@ namespace Ring.Networking.Server
         ///
         /// FIX-ROUND 1 (N-2/N-3): AN UNRECOGNIZED CODE NO LONGER THROWS.
         /// The original design threw `ArgumentOutOfRangeException` here,
-        /// which — called from inside a FishNet broadcast handler — escapes
-        /// through the package's own dispatch and into the transport's read
-        /// loop; the connection that triggered it gets neither a refusal
-        /// nor a disconnect, just silence, which is a worse failure than
-        /// the one this method exists to prevent. An unrecognized code
-        /// instead maps to the dedicated `HandshakeRefusal.
-        /// UnrecognizedRejection` member — still loud
-        /// (`MatchHandshake.Refuse` logs an error for it specifically) but
-        /// never fatal to the handler. The mapping is still TOTAL in the
-        /// sense that matters: a `JoinRejection` member added later without
-        /// a matching case here lands on `UnrecognizedRejection`, not on
-        /// the silent, wrong `None` — `HandshakeTests.
+        /// called from inside a FishNet broadcast handler
+        /// (`ServerManager.ParseReceived`'s dispatch to `InvokeHandlers`).
+        /// TWO DIFFERENT BUILD CONFIGURATIONS SEND THAT EXCEPTION TWO
+        /// DIFFERENT WAYS, NEITHER ACCEPTABLE (fix-round 2, NF-1 — the
+        /// original one-branch "just silence" justification was verified
+        /// wrong for the build that matters most and is corrected here):
+        /// - In a DEVELOPMENT build (Unity Editor or `BuildOptions.
+        ///   Development`) `ParseReceived`'s parsing loop has NO try/catch
+        ///   around it at all — the exception escapes uncaught, and this
+        ///   handshake's own code never gets a chance to send
+        ///   `MatchRefusedNet` or call `Disconnect`. That is the "silence"
+        ///   this doc originally described.
+        /// - In a PRODUCTION build — specifically `BuildCommands.
+        ///   BuildLinuxServer`, which never sets `BuildOptions.Development`
+        ///   (verified by grep: `BuildOptions` does not appear in
+        ///   `BuildCommands.cs` at all) — `ParseReceived` wraps the same
+        ///   loop in a `try/catch` that is compiled in exactly when
+        ///   `DEVELOPMENT` is NOT defined, and ANY exception, including
+        ///   this one, is caught and turned into an IMMEDIATE
+        ///   `Kick(..., KickReason.MalformedData, ...)`. That is NOT
+        ///   silence — it is a prompt, deterministic disconnect — but it is
+        ///   still the wrong answer: `KickReason.MalformedData` blames the
+        ///   CLIENT for corrupt data over a bug entirely on the SERVER
+        ///   side, in the one build configuration the arena actually ships.
+        /// Neither branch is silence for every build, and neither is
+        /// acceptable on its own terms — one hangs the connection with no
+        /// diagnosis, the other misattributes a server bug to the client.
+        /// An unrecognized code instead maps to the dedicated
+        /// `HandshakeRefusal.UnrecognizedRejection` member — still loud in
+        /// EVERY build (`MatchHandshake.Refuse` logs an error for it
+        /// specifically, from code this class actually controls) but never
+        /// fatal to the handler and never mislabeled as the client's fault.
+        /// The mapping is still TOTAL in the sense that matters: a
+        /// `JoinRejection` member added later without a matching case here
+        /// lands on `UnrecognizedRejection`, not on the silent, wrong
+        /// `None` — `HandshakeTests.
         /// FromJoinRejection_MapsEveryJoinRejectionValue`'s name-equality
         /// assert (fix-round 1, I-2) still catches the drift, just as a
         /// failed assertion instead of an uncaught exception.
@@ -74,6 +98,34 @@ namespace Ring.Networking.Server
                 default: return HandshakeRefusal.UnrecognizedRejection;
             }
         }
+
+        /// Precondition for the `(byte)slot` narrowing cast in
+        /// `MatchHandshake.OnClientHello` — checked ONCE, at `MatchHandshake`
+        /// construction (fix-round 2, K-1/N-1 ruling), replacing fix-round
+        /// 1's per-connection runtime guard entirely.
+        ///
+        /// `MatchRoster.TryJoin` (Task 38) assigns slots DENSELY over
+        /// `[0, maxPlayers)`: `slot = _connectedCount` read BEFORE the
+        /// increment, and no more joins are accepted once `_connectedCount
+        /// >= MaxPlayers` (`JoinRejection.MatchFull` — `MatchRoster`'s own
+        /// "SLOTS ARE ASSIGNED IN ACCEPTANCE ORDER ... AND NEVER CHANGE
+        /// ONCE GIVEN" doc). The highest slot `TryJoin` can EVER produce is
+        /// therefore exactly `maxPlayers - 1` — so if THAT one value fits
+        /// in a `byte`, every slot fits, by construction; there is nothing
+        /// left for a per-join check to catch. `MatchWelcomeNet.
+        /// PlayerIndex` (HandshakeNet.cs) is a `byte`, hence the `<= 256`
+        /// bound (`maxPlayers = 256` -> highest slot `255` -> `byte.
+        /// MaxValue`, the last value that still fits).
+        ///
+        /// `maxPlayers &lt; 1` is refused too — a match with zero or fewer
+        /// seats is not a match `MatchHandshake` should ever be constructed
+        /// for; `MatchRoster`'s own constructor already refuses the same
+        /// range for the same reason (`MatchConfig.MaxPlayers < 1` throws)
+        /// — this function cannot see that guard across the assembly
+        /// boundary (brief §2.2), so it re-states the same bound
+        /// independently rather than trusting a caller who might not go
+        /// through `MatchRoster` at all.
+        public static bool SlotsFitOnTheWire(int maxPlayers) => maxPlayers >= 1 && maxPlayers <= 256;
     }
 
     /// The FishNet wiring around `HandshakeDecision` (Stage 2 Task 39, spec
@@ -244,13 +296,28 @@ namespace Ring.Networking.Server
         readonly Func<double> _nowSeconds;
         readonly Action<int, NetworkConnection> _onAccepted;
 
+        /// `maxPlayers` is checked ONCE here via `HandshakeDecision.
+        /// SlotsFitOnTheWire` (fix-round 2, K-1/N-1 ruling — see that
+        /// method's own doc) instead of on every accepted join; a failing
+        /// precondition throws `ArgumentOutOfRangeException` — this is a
+        /// bootstrap-time configuration error (Task 41 handed in a
+        /// `MatchConfig`/`SimConfig.Arena.MaxPlayers` that could never
+        /// produce a wire-safe `PlayerIndex`), not a per-connection runtime
+        /// condition, so it fails loudly before the server ever opens the
+        /// port rather than on whichever client happens to trigger it.
         public MatchHandshake(NetworkManager networkManager, byte protocolVersion, ulong simConfigHash,
-            ushort epoch, long seed, TryJoinDelegate tryJoin, Func<double> nowSeconds,
+            int maxPlayers, ushort epoch, long seed, TryJoinDelegate tryJoin, Func<double> nowSeconds,
             Action<int, NetworkConnection> onAccepted = null)
         {
             _nm = networkManager ?? throw new ArgumentNullException(nameof(networkManager));
             _tryJoin = tryJoin ?? throw new ArgumentNullException(nameof(tryJoin));
             _nowSeconds = nowSeconds ?? throw new ArgumentNullException(nameof(nowSeconds));
+            if (!HandshakeDecision.SlotsFitOnTheWire(maxPlayers))
+            {
+                throw new ArgumentOutOfRangeException(nameof(maxPlayers), maxPlayers,
+                    "MatchHandshake: maxPlayers must fit MatchWelcomeNet.PlayerIndex (a byte) — "
+                    + "every slot MatchRoster could ever hand out, [0, maxPlayers), must fit in [0, 255].");
+            }
             _protocolVersion = protocolVersion;
             _simConfigHash = simConfigHash;
             _epoch = epoch;
@@ -261,20 +328,36 @@ namespace Ring.Networking.Server
         }
 
         /// Unregisters this instance's handler (fix-round 1, I-6).
-        /// FishNet's broadcast registration is ADDITIVE, not idempotent
-        /// per-instance: `ServerManager.RegisterBroadcast&lt;T&gt;` appends
-        /// to a handler list keyed only by `T`'s wire type, with no
-        /// identity check against the delegate TARGET, so constructing a
-        /// second `MatchHandshake` on the same `NetworkManager` without
-        /// unregistering the first would leave BOTH `OnClientHello`
-        /// methods subscribed — the next `ClientHelloNet` would run
-        /// through both, and the stale instance would answer with its OWN
-        /// (possibly now-wrong) epoch/roster, including sending a second
-        /// `MatchWelcomeNet` carrying a stale `MatchEpoch`. `Unregister`
-        /// must be called before any `MatchHandshake` is discarded (a
-        /// restart, Task 40) — this class does not call it itself on any
-        /// internal event, matching `MatchServer`'s own choice to never
-        /// self-unsubscribe from `OnPostTick`.
+        /// FishNet's broadcast registration is ADDITIVE but NOT blind to
+        /// identity (fix-round 2, NF-2 — corrects the mechanism this doc
+        /// originally claimed): `RegisterBroadcast&lt;T&gt;` stores handlers
+        /// in a `List&lt;Action&lt;...&gt;&gt;` via `AddUnique`, which is
+        /// `if (!list.Contains(item)) list.Add(item)` — and `List&lt;T&gt;.
+        /// Contains` on a delegate compares with `Delegate.Equals`, which
+        /// checks BOTH the method AND the invocation TARGET (the `this` the
+        /// method is bound to). Two `MatchHandshake` INSTANCES both convert
+        /// their own `OnClientHello` to the same METHOD but with two
+        /// DIFFERENT targets, so `Delegate.Equals` correctly says they
+        /// differ and BOTH get added — not because identity goes
+        /// unchecked, but because it is checked and the two instances are,
+        /// correctly, not the same delegate. The practical consequence is
+        /// unchanged from the original claim: constructing a second
+        /// `MatchHandshake` on the same `NetworkManager` without
+        /// unregistering the first leaves BOTH `OnClientHello` methods
+        /// subscribed — the next `ClientHelloNet` runs through both, and
+        /// the stale instance answers with its OWN (possibly now-wrong)
+        /// epoch/roster, including sending a second `MatchWelcomeNet`
+        /// carrying a stale `MatchEpoch`. The SAME mechanism also means
+        /// registering the SAME instance's handler twice is a no-op
+        /// (`Delegate.Equals` says they match, `AddUnique` skips it), and
+        /// `UnregisterHandler`'s own `IndexOf`-then-`RemoveAt` returns
+        /// early on an unknown handler — so calling `Unregister()` more
+        /// than once on the same instance is safe and idempotent, it is
+        /// only the FIRST call that does anything. `Unregister` must be
+        /// called before any `MatchHandshake` is discarded (a restart, Task
+        /// 40) — this class does not call it itself on any internal event,
+        /// matching `MatchServer`'s own choice to never self-unsubscribe
+        /// from `OnPostTick`.
         public void Unregister()
         {
             _nm.ServerManager.UnregisterBroadcast<ClientHelloNet>(OnClientHello);
@@ -291,20 +374,13 @@ namespace Ring.Networking.Server
 
                 if (accepted)
                 {
-                    if (slot < 0 || slot > byte.MaxValue)
-                    {
-                        // Fix-round 1, N-1: MatchRoster caps `slot` at
-                        // MatchConfig.MaxPlayers, not at byte.MaxValue —
-                        // nothing structurally prevents a MatchConfig built
-                        // outside MatchConfigLoader from carrying a
-                        // MaxPlayers value the loader would have refused.
-                        // PlayerIndex on the wire (HandshakeNet.cs) is a
-                        // byte; a silent narrowing cast here would alias
-                        // two different slots onto the same PlayerIndex.
-                        // Refuse loudly instead of casting.
-                        Refuse(connection, HandshakeRefusal.UnrecognizedRejection);
-                        return;
-                    }
+                    // No slot-range check here (fix-round 2, K-1/N-1 ruling
+                    // — fix-round 1 had one). `(byte)slot` below is
+                    // PROVABLY safe: the constructor's `SlotsFitOnTheWire`
+                    // precondition already guarantees every slot `TryJoin`
+                    // could ever produce fits, so a per-join runtime check
+                    // would only re-verify arithmetic that construction
+                    // already settled once for the whole instance.
 
                     // Fix-round 1, I-3: called BEFORE the welcome send —
                     // see the class doc's own paragraph on this callback
