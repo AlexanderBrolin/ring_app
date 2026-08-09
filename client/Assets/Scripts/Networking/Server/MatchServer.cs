@@ -174,10 +174,63 @@ namespace Ring.Networking.Server
     /// NOT one of those instances and is NOT "per connection per match" the
     /// way `NetStats`'s own class doc describes the rest of its fields — see
     /// its own field doc for why.
+    ///
+    /// HOW A MATCH ENDS (Stage 2 Task 40, spec §3.10/§3.11). The decision is
+    /// not made here — `MatchEndPolicy` makes it, this class gathers its two
+    /// inputs and executes the answer, in a fixed order: build the
+    /// `MatchSummary` FIRST (`StopMatch` releases the world and the assembler
+    /// the numbers come from), then send every live connection its OWN
+    /// `MatchEndedNet` over `Reliable`, then `StopMatch`, then record the
+    /// outcome. The whole pass sits between step 2 (`TickAll`) and step 3
+    /// (`BeginTick`) of `OnPostTick`, so the last tick a match plays is a
+    /// complete tick that simply sends no snapshot — and it leaves through the
+    /// same `finally` every other path does, because the event buffer still
+    /// has to be cleared and this tick's own cost still has to be counted.
+    ///
+    /// A DISCONNECT KILLS THE PLAYER, ON THE SAME TICK (spec §3.10). The pass
+    /// above is preceded by one over `MatchEndPolicy.ShouldKillOnDisconnect`,
+    /// for the same placement reason: a player whose connection died during
+    /// this tick's own `Broadcast` must die in THIS frame's world, not the
+    /// next one, or the frame the other players just received shows a body
+    /// that is about to disappear for no visible reason. The `Alive` half of
+    /// that predicate is what makes the pass idempotent across the rest of the
+    /// match.
+    ///
+    /// `Outcome` IS POLLED, NOT EVENTED — the bootstrap asks. An event fired
+    /// from the middle of `OnPostTick` would invite exactly the nested
+    /// re-entrancy two paragraphs of this contract are already written against
+    /// (a subscriber calling `StopMatch`/`StartMatch` from inside this
+    /// handler's own stack), and the bootstrap has a tick of its own to ask
+    /// on: it is a second subscriber to the SAME `OnPostTick` (§6k Р161).
+    /// `StartMatch` puts `Outcome` back to `None`.
+    ///
+    /// THE SUMMARY IS THE ONE SOURCE OF THE MATCH'S NUMBERS. Every
+    /// `MatchEndedNet` this class sends, and the structured per-match log line
+    /// of spec §3.11 that Task 41 assembles (it owns `matchId`, which this
+    /// assembly never sees), are both built from ONE `MatchSummary` captured
+    /// once. Reading the same counters a second time — off a world that
+    /// `StopMatch` has by then released — is the "two copies of one number"
+    /// defect Р151 and the Task 39 ruling were both written against.
+    ///
+    /// RESTART IS A PROCEDURE WITH A MANDATORY ORDER (§6k Р164) — see
+    /// `RestartMatch`'s own doc. The one part worth stating at the class level
+    /// is what a restart does NOT touch: the roster and the handshake are
+    /// objects of the JOIN PHASE and survive an epoch untouched, so nothing
+    /// here recreates them, and the connections of the finished match are the
+    /// connections of the next one.
     public sealed class MatchServer
     {
         readonly NetworkManager _nm;
         readonly NetConfig _netConfig;
+
+        // Stage 2 Task 40: the end-of-match decision, handed in ready-made.
+        // A finished instance rather than the number it was built from,
+        // because the number is a CONVERSION (MatchMaxDurationSeconds *
+        // TickRate) and this class has no business holding an opinion about
+        // it — the bootstrap that reads the asset does the arithmetic once
+        // and this class only asks the question.
+        readonly MatchEndPolicy _endPolicy;
+
         readonly TickTimeAccumulator _tickTime = new TickTimeAccumulator();
         readonly Stopwatch _stopwatch = new Stopwatch();
 
@@ -213,6 +266,14 @@ namespace Ring.Networking.Server
         ushort _epoch;
         bool _running;
 
+        // Stage 2 Task 40. `_outcome` is `None` for as long as a match is
+        // running and for as long as none has run yet; `_lastSummary` is
+        // meaningful only while `_outcome` is not `None` (StartMatch clears
+        // both, so a summary can never outlive the outcome that vouches for
+        // it).
+        MatchEndReason _outcome;
+        MatchSummary _lastSummary;
+
         /// Count/average/max of `OnPostTick`'s own wall-clock cost (spec §3.11)
         /// since the last `StartMatch` — Ф8 reads this to assemble the per-match
         /// log line; this class only keeps the numbers.
@@ -244,10 +305,26 @@ namespace Ring.Networking.Server
             return _assembler.StatsFor(connectionSlot);
         }
 
-        public MatchServer(NetworkManager networkManager, NetConfig netConfig)
+        /// Why a match stopped — `None` while one is running (and before the
+        /// first has ever started). The bootstrap (Task 41) polls this to
+        /// learn a match is over and turns it into the process's exit code
+        /// through `MatchEndPolicy.ExitCodeFor`; see the class doc for why
+        /// this is a property and not an event.
+        public MatchEndReason Outcome => _outcome;
+
+        /// The numbers of the match named by `Outcome` — the ONE capture every
+        /// `MatchEndedNet` was built from, and the same one spec §3.11's log
+        /// line must be built from (see the class doc). Meaningful only while
+        /// `Outcome` is not `None`: `StartMatch` clears it together with the
+        /// outcome, so a caller that checks `Outcome` first can never read a
+        /// previous match's numbers.
+        public MatchSummary LastSummary => _lastSummary;
+
+        public MatchServer(NetworkManager networkManager, NetConfig netConfig, MatchEndPolicy endPolicy)
         {
             _nm = networkManager ?? throw new ArgumentNullException(nameof(networkManager));
             _netConfig = netConfig ?? throw new ArgumentNullException(nameof(netConfig));
+            _endPolicy = endPolicy ?? throw new ArgumentNullException(nameof(endPolicy));
 
             // Fix-round 1, I1 — see the class doc's "SUBSCRIPTION TIMING"
             // paragraph for why this happens exactly once, here, and never
@@ -336,6 +413,12 @@ namespace Ring.Networking.Server
             _lastFreshWorldTick = lastFreshWorldTick;
             _tickTime.Reset();
 
+            // Stage 2 Task 40: a running match has no outcome, and no summary
+            // to answer for one. Cleared together so the pair can never
+            // disagree (see the fields' own note).
+            _outcome = MatchEndReason.None;
+            _lastSummary = default;
+
             // Fix-round 1, I3.1: without this, a match's controllers stay
             // `!_configured` forever (PlayerNetworkController.TimeManager_
             // OnTick/CreateReconcile both early-return on that flag) —
@@ -357,6 +440,80 @@ namespace Ring.Networking.Server
 #endif
 
             _running = true;
+        }
+
+        /// Restarts the RUNNING match under a new epoch (Stage 2 Task 40,
+        /// spec §3.10 Р44/Р60, §6k Р164) — the host-mode restart's single
+        /// entry point. The trigger itself does not exist in Phase Ф8: this
+        /// task ships the mechanism, and the handle that pulls it is Ф9's,
+        /// the same shape of deferred wiring the client half of the handshake
+        /// already carries.
+        ///
+        /// THE ORDER INSIDE IS MANDATORY, AND EVERY STEP OF IT IS LOAD-BEARING:
+        ///   * the connections are captured BEFORE anything else, because
+        ///     `StartMatch` stops the previous match first and `StopMatch`
+        ///     nulls the field they live in. They are the SAME connections:
+        ///     §6k Р164 keeps the roster and the handshake untouched across a
+        ///     restart (there is no join phase to a restart at all — spec
+        ///     §3.10 refuses joining a match in progress, and `MatchRoster`'s
+        ///     started flag is one-way), so there is nothing to rebuild them
+        ///     from and no reason to.
+        ///   * `MatchRestartedNet` goes out BEFORE `StartMatch`, not after.
+        ///     The right to reset the client's per-match state travels on
+        ///     THIS message and on no other: every epoch-aware client seam
+        ///     refuses a frame of an epoch it does not track
+        ///     (`SnapshotQueue.Admit` answers `ForeignEpoch`) and only
+        ///     `Reset`/`ResetForEpoch` switches the tracked epoch over. A
+        ///     snapshot of the new epoch that overtakes this message is
+        ///     therefore discarded — and since snapshots are `Unreliable`
+        ///     while this is `Reliable`, a few of the opening frames can
+        ///     still lose that race. That residual loss is the accepted cost
+        ///     Р164 names (the interpolation buffer absorbs it); sending the
+        ///     message afterwards instead would lose them ALL.
+        ///
+        /// FRESH CONTROLLER OBJECTS ARE THE CALLER'S OBLIGATION, and this
+        /// class cannot check it. `PlayerNetworkController`'s own doc spells
+        /// out why they must be new OBJECTS rather than reused ones ("A new
+        /// match means a new object — and an OBJECT POOL would mean the same
+        /// object with the latch still down"): `PlayerPredictionCore` has no
+        /// reset, and the `NotifyOwnDeath` latch is one-way. Handing the same
+        /// array back in compiles, runs, and silently starts the new match
+        /// with the previous one's prediction state — so this is recorded as
+        /// a contract, honestly, rather than dressed up as something the
+        /// signature enforces.
+        ///
+        /// Throws when no match is running: restarting nothing is a bug in
+        /// the caller, and `StartMatch` is the method for starting a first
+        /// match.
+        public void RestartMatch(long seed, in SimConfig simConfig, ushort newEpoch,
+            PlayerNetworkController[] freshControllers)
+        {
+            if (!_running)
+            {
+                throw new InvalidOperationException(
+                    "MatchServer.RestartMatch: no match is running — a restart needs a match to "
+                    + "restart; call StartMatch for the first one.");
+            }
+
+            // Captured first: StartMatch below stops the running match, and
+            // StopMatch releases this array's field (see this method's doc).
+            NetworkConnection[] connections = _connections;
+
+            var restarted = new MatchRestartedNet
+            {
+                MatchEpoch = newEpoch,
+                Seed = seed,
+            };
+            for (int i = 0; i < connections.Length; i++)
+            {
+                // Same guard, and the same reason, as the per-tick snapshot
+                // send: broadcasting to a dead connection is a LogWarning
+                // FishNet emits itself, not a silent no-op.
+                if (!connections[i].IsActive) continue;
+                _nm.ServerManager.Broadcast(connections[i], restarted, channel: Channel.Reliable);
+            }
+
+            StartMatch(seed, in simConfig, newEpoch, connections, freshControllers);
         }
 
         /// Ends the match without starting another — releases this match's
@@ -434,14 +591,51 @@ namespace Ring.Networking.Server
             var world = _world;
             try
             {
+                // The POST-TickAll reading — "the tick just completed" — is
+                // what the end policy, the outgoing snapshot and the reconcile
+                // all report (steps 2b, 4-5); see the class doc's "TWO
+                // READINGS" paragraph. Read ONCE, here, so those three can
+                // never answer about different ticks.
+                int postTickWorldTick = _world.CurrentTick;
+
+                // 2a. Stage 2 Task 40 (spec §3.10): a player whose connection
+                // is gone dies in THIS frame's world, not the next one — see
+                // the class doc's own paragraph on why the placement matters.
+                // `connections[i]`/`controllers[i]`/player `i` are the same
+                // player by index (the class doc's "what Ф8 must hand in"),
+                // so this loop's bound is also the world's player count.
+                for (int i = 0; i < _connections.Length; i++)
+                {
+                    if (MatchEndPolicy.ShouldKillOnDisconnect(
+                            _connections[i].IsActive, _world.PlayerAt(i).Alive))
+                    {
+                        _world.KillPlayerNoDamage(i);
+                    }
+                }
+
+                // 2b. Stage 2 Task 40 (spec §3.10/§3.11): is the match over?
+                // The decision belongs to MatchEndPolicy — this only gathers
+                // its two inputs, both read AFTER step 2a so a disconnect that
+                // emptied the arena ends the match on the very tick it
+                // happened.
+                int alivePlayers = 0;
+                for (int i = 0; i < _world.PlayerCount; i++)
+                    if (_world.PlayerAt(i).Alive) alivePlayers++;
+
+                MatchEndReason reason = _endPolicy.Evaluate(postTickWorldTick, alivePlayers);
+                if (reason != MatchEndReason.None)
+                {
+                    EndMatch(reason);
+                    // Leaves through the `finally` below, on purpose: this
+                    // tick's events still have to be cleared and its own cost
+                    // still has to be counted, exactly as on every other path
+                    // out of this handler.
+                    return;
+                }
+
                 // 3. One capture + wire-event expansion shared by every
                 // connection this tick (SnapshotAssembler.BeginTick's own doc).
                 _assembler.BeginTick(_world);
-
-                // The POST-TickAll reading — "the tick just completed" — is
-                // what the outgoing snapshot and reconcile both report (steps
-                // 4-5); see the class doc's "TWO READINGS" paragraph.
-                int postTickWorldTick = _world.CurrentTick;
 
                 // 4. Per-connection frame, Unreliable (spec §3.7 table Р27:
                 // state travels unreliably). `identityIndex`/`viewpointIndex`
@@ -498,13 +692,16 @@ namespace Ring.Networking.Server
                 // a later tick's clients events that already went stale.
                 //
                 // `world` (the LOCAL captured above, fix-round 2 W8) — not
-                // `_world` — because a nested `StopMatch` triggered
+                // `_world` — because a `StopMatch` running inside this same
+                // try block nulls the FIELD as part of its own cleanup;
+                // reading the field here would then throw an NRE that MASKS
+                // whatever exception the steps were actually propagating,
+                // instead of letting that real exception surface. Two paths
+                // reach that state: a nested `StopMatch` triggered
                 // synchronously from steps 3-5 (e.g. a disconnect handler
-                // reacting to step 4's own `Broadcast` call) nulls the FIELD
-                // as part of its own cleanup; reading the field here would
-                // then throw an NRE that MASKS whatever exception steps 3-5
-                // were actually propagating, instead of letting that real
-                // exception surface.
+                // reacting to step 4's own `Broadcast` call — the fix-round 2
+                // case), and, since Stage 2 Task 40, the ORDINARY end of a
+                // match at step 2b, which stops it deliberately.
                 world.ClearEvents();
 
                 // Fix-round 2, W8: moved into `finally`, AFTER `ClearEvents`,
@@ -516,6 +713,121 @@ namespace Ring.Networking.Server
                 _stopwatch.Stop();
                 _tickTime.Record(_stopwatch.Elapsed.TotalMilliseconds);
             }
+        }
+
+        /// Ends the running match for `reason` (Stage 2 Task 40) — the order
+        /// below is the class doc's, and it is the order because `StopMatch`
+        /// releases the world and the assembler every number here comes from.
+        void EndMatch(MatchEndReason reason)
+        {
+            MatchSummary summary = BuildSummary(reason);
+
+            // Captured for the same reason `RestartMatch` captures it:
+            // `StopMatch` below nulls the field.
+            NetworkConnection[] connections = _connections;
+            for (int i = 0; i < connections.Length; i++)
+            {
+                // A connection that already left gets nothing — the same
+                // guard, for the same reason, as the per-tick snapshot send.
+                if (!connections[i].IsActive) continue;
+                _nm.ServerManager.Broadcast(connections[i], EndedNetFor(in summary, i),
+                    channel: Channel.Reliable);
+            }
+
+            StopMatch();
+
+            _lastSummary = summary;
+            _outcome = reason;
+        }
+
+        /// The match's numbers, captured ONCE (see the class doc). Called
+        /// while the world is still alive, from `EndMatch` only.
+        MatchSummary BuildSummary(MatchEndReason reason)
+        {
+            int playerCount = _world.PlayerCount;
+            var playerStats = new MatchStats[playerCount];
+            for (int i = 0; i < playerCount; i++) playerStats[i] = _world.StatsAt(i);
+
+            return new MatchSummary(reason, _epoch, (uint)_world.CurrentTick,
+                _world.WorldStats, _world.DroppedEvents, playerStats);
+        }
+
+        /// Player `slot`'s own copy of the end-of-match message: the world's
+        /// numbers, identical in every copy, plus that one player's own. The
+        /// counters are copied across field by field rather than by embedding
+        /// the simulation's own structs — see `MatchEndedNet`'s own doc for
+        /// why the protocol spells its surface out.
+        static MatchEndedNet EndedNetFor(in MatchSummary summary, int slot)
+        {
+            MatchStats stats = summary.PlayerStats[slot];
+            WorldStats world = summary.World;
+
+            return new MatchEndedNet
+            {
+                Reason = (byte)summary.Reason,
+                MatchEpoch = summary.Epoch,
+                FinalTick = summary.FinalTick,
+
+                Kills = stats.Kills,
+                HeadshotKills = stats.HeadshotKills,
+                ShotsFired = stats.ShotsFired,
+                ShotsHit = stats.ShotsHit,
+                DashesUsed = stats.DashesUsed,
+                SlidesUsed = stats.SlidesUsed,
+                DeathTick = stats.DeathTick,
+                DamageTaken = stats.DamageTaken,
+
+                WavesCleared = world.WavesCleared,
+                MobSpawnsSkipped = world.MobSpawnsSkipped,
+                ProjectileSpawnsSkipped = world.ProjectileSpawnsSkipped,
+            };
+        }
+    }
+
+    /// Everything a finished match is worth knowing about, captured in ONE
+    /// place at the ONE moment it is all still readable (Stage 2 Task 40, spec
+    /// §3.10/§3.11) — see `MatchServer`'s own class doc for why a second
+    /// reading of the same counters is the defect this type exists to prevent.
+    ///
+    /// TWO CONSUMERS, ONE CAPTURE: the per-connection `MatchEndedNet` that
+    /// `MatchServer` sends, and the structured per-match log line of spec
+    /// §3.11 that the Task 41 bootstrap assembles — the bootstrap owns
+    /// `matchId` and the process's own wall clock, neither of which this
+    /// assembly can see, which is exactly why the line is built there and the
+    /// numbers are captured here.
+    ///
+    /// `PlayerStats` IS INDEXED BY PLAYER SLOT — the same index `connections`
+    /// and `controllers` use throughout `MatchServer`, and the same one a
+    /// client was given in its `MatchWelcomeNet`. It is a fresh array per
+    /// match end (one allocation at the end of a match is not a per-tick cost)
+    /// and is never handed to anything that mutates it.
+    public readonly struct MatchSummary
+    {
+        public readonly MatchEndReason Reason;
+        public readonly ushort Epoch;
+
+        /// The world tick the match ended on.
+        public readonly uint FinalTick;
+
+        public readonly WorldStats World;
+
+        /// `SimulationWorld.DroppedEvents` — events the world's own buffer
+        /// could not hold, cumulative for the match.
+        public readonly int DroppedEvents;
+
+        /// One entry per player slot; never null for a summary a real match
+        /// end produced.
+        public readonly MatchStats[] PlayerStats;
+
+        public MatchSummary(MatchEndReason reason, ushort epoch, uint finalTick,
+            in WorldStats world, int droppedEvents, MatchStats[] playerStats)
+        {
+            Reason = reason;
+            Epoch = epoch;
+            FinalTick = finalTick;
+            World = world;
+            DroppedEvents = droppedEvents;
+            PlayerStats = playerStats;
         }
     }
 
