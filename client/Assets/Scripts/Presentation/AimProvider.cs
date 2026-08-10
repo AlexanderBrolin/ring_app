@@ -29,7 +29,7 @@ namespace Ring.Presentation
     /// positions, not last frame's stale ones. `[DefaultExecutionOrder]` pins this
     /// class's own `LateUpdate` to run after those default-order writers, which in
     /// turn means every OTHER default-order reader of `CurrentAimSimPos`/
-    /// `CurrentAimHeight` (`PlayerVisual`, `CrosshairView`, `CameraRig` — all read
+    /// `CurrentAimHeight` (`ViewRegistry`, `CrosshairView`, `CameraRig` — all read
     /// in their own `LateUpdate`) sees the value cached last frame: a deliberate,
     /// one-render-frame-old value, imperceptible at any playable framerate.
     [DefaultExecutionOrder(100)]
@@ -188,8 +188,10 @@ namespace Ring.Presentation
         /// bind time) is what makes it "mine" again. A hit on somebody ELSE's
         /// doll now falls through like any other proxy hit: `simPos`/`height`/
         /// `zone` come off it, and `hoveredMob` stays null because no `MobView`
-        /// sits on a player — the same null a mob-less proxy has always
-        /// produced.
+        /// sits on a player — the same null every non-mob proxy hit produces.
+        /// (Before Task 45a that null was reachable only through this very
+        /// self-hit branch, because the player's own doll carried the only
+        /// proxy in the arena that was not a mob's.)
         bool TryAimProxy(out float2 simPos, out float height, out HitZone zone,
             out MobView hoveredMob, out Vector3 worldPoint)
         {

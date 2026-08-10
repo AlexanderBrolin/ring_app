@@ -225,6 +225,22 @@ namespace Ring.Editor
     /// instead of `AimSettleSeconds`, so an already-committed HeroConfig.asset
     /// predating this wave self-heals the new key on this Apply. No new
     /// scene objects/references — this wave is config-shape only.
+    /// Stage 2 Task 45a (spec §3.12) SUPERSEDES THE PHASE-B TASK 8 PARAGRAPH
+    /// ABOVE, which this history keeps verbatim as the record of what that task
+    /// did rather than of what the file does now (append-only, same as every
+    /// entry here): the scene's `Player` object is gone. Every doll in a match
+    /// — this client's own included — is an instance of ONE pooled prefab,
+    /// `GetOrCreatePlayerDollPrefab` below, wired into `ViewRegistry`'s new
+    /// `_playerPrefab` slot; `Apply` now self-heals the scene by DESTROYING a
+    /// leftover `Player` root, exactly the way the retired `PracticeTargets`
+    /// object is destroyed. Consequences for the two paragraphs above: no
+    /// `PlayerView`/`PlayerVisual` reference wiring happens in the scene at all
+    /// (`PlayerVisual` keeps only `_animator`/`_visual`, both prefab-internal),
+    /// `SimEventRouter`'s `_playerVisual` slot is gone with the class's fan-out
+    /// entry (`ViewRegistry.HandlePlayerEvent` took its place), and the gun's
+    /// write-if-different pose reconciliation moved from the scene block into
+    /// `SelfHealGunPoseOnPrefab`, against the same `GameFeelConfig.GunLocalPosition`/
+    /// `GunLocalEuler` numbers, so an owner's Б1 tweak still reaches a build.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";

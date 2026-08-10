@@ -15,16 +15,25 @@ namespace Ring.Presentation
     ///
     /// POOLED SINCE STAGE 2 TASK 45a, AND THAT IS WHY IT HOLDS NO REFERENCES.
     /// Every doll in the match — including this client's own — is an instance of
-    /// one prefab, rented per player slot by `ViewRegistry` (spec §3.12). A
-    /// serialized `SimulationRunner`/`AimProvider`/`GameFeelConfig` on a prefab
-    /// component comes back null on the clone, so the numbers arrive as
-    /// `PlayerVisualParams` and the state as `PlayerState`, exactly the contract
-    /// `MobVisual` already follows next door. `Bind` is the mandatory pool reset
-    /// (SetActive(false) rewinds the state machine — the cache must follow, Б5);
-    /// one-shot triggers land their state the same frame via Update(0f) (ПБ1).
-    /// `WorldRestarted` is no longer subscribed to here either: a match restart
-    /// returns every doll to the pool through `ViewRegistry.Clear`, and the
-    /// re-rent's `Bind` IS the reset that used to be a handler.
+    /// one prefab, rented per player slot by `ViewRegistry` (spec §3.12), so
+    /// the numbers arrive as `PlayerVisualParams` and the state as
+    /// `PlayerState`, exactly the contract `MobVisual` already follows next
+    /// door. TWO DIFFERENT REASONS SIT BEHIND THAT, and they are worth keeping
+    /// apart. `SimulationRunner`/`AimProvider` are SCENE components: a prefab
+    /// asset cannot reference one at all, so the field would simply be null on
+    /// every clone. `GameFeelConfig` is an ASSET and a prefab holds one
+    /// perfectly well — `PlayerGunTuner` on this very doll does — so what
+    /// keeps it out is the rule, not the mechanism: spec §3.12 has the pooled
+    /// views take their numbers from the caller, which is what keeps one
+    /// frame's feel numbers the same for every doll in it.
+    ///
+    /// `Bind` is the mandatory pool reset (SetActive(false) rewinds the state
+    /// machine — the cache must follow, Б5); one-shot triggers land their state
+    /// the same frame via Update(0f) (ПБ1). `WorldRestarted` is no longer
+    /// subscribed to here either: a match restart returns every doll to the pool
+    /// through `ViewRegistry.Clear`, and the re-rent's `Bind` takes over from
+    /// what used to be a handler — see that method's own doc for the one
+    /// behavior delta that came with the swap.
     ///
     /// THE AIM POINT ARRIVES IN THE STATE, WHICH IS NOT WHERE IT ORIGINALLY
     /// LIVED. This class used to read `AimProvider.CurrentAimSimPos` — the local
@@ -32,8 +41,9 @@ namespace Ring.Presentation
     /// resolves the point per slot and hands it in through `PlayerState.AimPoint`
     /// (its own doc): the cursor for this client's own doll, the snapshot's
     /// synthetic aim point for everyone else, and the doll's own position when a
-    /// slot carries no aim at all — which the `aimDir` guards below already read
-    /// as "hold the last facing".
+    /// slot carries no aim at all — which collapses `aimDir` below, so a
+    /// standing doll holds its last facing and a moving one keeps turning along
+    /// its own displacement.
     ///
     /// В1 fix-wave 1 (owner playtest feedback, item 3 "мерцание сборщика"):
     /// the combo-window emission pulse moved to `PlayerView` in Task 45a, where
@@ -64,7 +74,6 @@ namespace Ring.Presentation
         bool _hasPrevPos;
         float _dashLean01;
         float _aimWeight = 1f;
-        bool _dead;
         SlidePhase _slidePhase = SlidePhase.None;
         bool _bonesResolved;
         bool _statesChecked;
@@ -73,10 +82,22 @@ namespace Ring.Presentation
         /// bind-time number `MobVisual.Bind`'s own second parameter is — read
         /// off `GameFeelConfig.PlayerVisualScale` by the caller, never here.
         ///
-        /// A DOLL IS ONLY EVER BOUND FOR A LIVE SLOT (`ViewRegistry`'s presence
-        /// rule): a corpse is a doll that was bound while standing and then
-        /// received `PlayerDied`, so the reset below boots into locomotion
-        /// rather than branching on `m.Alive`.
+        /// A DOLL IS ONLY EVER BOUND FOR A LIVE SLOT (`ViewRegistry.SyncPlayers`
+        /// rents on `Alive` alone): a corpse is a doll that was bound while
+        /// standing and then received `PlayerDied`, so the reset below boots
+        /// into locomotion rather than branching on `m.Alive`.
+        ///
+        /// BEHAVIOR DELTA VS THE PRE-POOL RESTART PATH (Stage 2 Task 45a, named
+        /// so it can be looked at rather than discovered): the component this
+        /// replaced reset its animation state on `WorldRestarted` but kept the
+        /// doll's accumulated facing and its Animator's accumulated state. This
+        /// resets both — `_animator.Rebind()`, `_visual.localRotation` back to
+        /// identity and `_facing` re-read from it — which is `MobVisual.Bind`'s
+        /// own pool-rebind hygiene (Б5/ПБ19) and is required for a doll that
+        /// really does come out of a pool. Visible consequence: after a restart
+        /// the doll faces the model's rest direction for the fraction of a
+        /// second `VisualTurnDegPerSec`/`IdleAimTurnDegPerSec` needs to turn it
+        /// back, instead of continuing to face wherever it stood before.
         public void Bind(in PlayerState m, float visualScale)
         {
             if (_visual.localScale != Vector3.one * visualScale)
@@ -113,7 +134,6 @@ namespace Ring.Presentation
                 _statesChecked = true;
             }
 
-            _dead = false;
             _aimWeight = 1f;
             _dashLean01 = 0f;
             // Task 23: without this reset a mid-slide death-then-restart would
@@ -135,28 +155,22 @@ namespace Ring.Presentation
         }
 
         /// Per-frame pose pass, called once per render frame by
-        /// `ViewRegistry.SyncPlayers` for every live doll (new AND continuing),
+        /// `ViewRegistry.SyncPlayers` for every LIVE doll (new AND continuing),
         /// AFTER that method has written this frame's `transform.position` —
         /// the displacement read below is what makes hitstop/pause read as idle
         /// with no branch of its own (Б7), exactly as in `MobVisual.Sync`.
+        /// A corpse gets `SyncCorpse` below instead; there is no "am I dead"
+        /// branch in here, because which method the registry calls IS that fact.
         public void Sync(in PlayerState m, in PlayerVisualParams p)
         {
             float dt = p.DeltaTime;
-            _animator.speed = p.Paused ? 0f : 1f;
 
             Vector3 pos = transform.position;
             Vector3 moveDelta = _hasPrevPos ? pos - _prevPos : Vector3.zero;
             _prevPos = pos;
             _hasPrevPos = true;
 
-            // Aim layer weight rides one place for both the death fade-out
-            // and the restart fade-in (Б3).
-            float weightTarget = _dead ? 0f : 1f;
-            float weightRate = dt / Mathf.Max(p.LocomotionCrossFadeSeconds, 1e-3f);
-            _aimWeight = Mathf.MoveTowards(_aimWeight, weightTarget, weightRate);
-            _animator.SetLayerWeight(AimLayer, _aimWeight);
-
-            if (_dead) return; // corpse: no speed/facing/yaw/lean writes (Б3)
+            SyncAlways(1f, in p);
 
             float speed01 = 0f;
             if (dt > 1e-6f && p.MaxSpeed > 1e-6f)
@@ -243,6 +257,30 @@ namespace Ring.Presentation
             }
         }
 
+        /// A corpse's entire per-frame budget (Stage 2 Task 45a fix-round 1).
+        /// A detached doll is never `Sync`ed and never repositioned again — that
+        /// is what makes it a corpse — but two things still have to happen to it
+        /// every frame, and neither needs a `PlayerState`:
+        ///  - the Aim layer has to fade OUT (Б3), or the pistol-aim pose stays
+        ///    layered over Death01 and the body dies still holding its gun up;
+        ///  - `_animator.speed` has to keep tracking the pause gate, or a body
+        ///    goes on collapsing while the rest of the frame is frozen.
+        /// Same numbers as the live path, from the same pack the registry
+        /// already built once for this frame.
+        public void SyncCorpse(in PlayerVisualParams p) => SyncAlways(0f, in p);
+
+        /// The part of the frame that is the same for a body and a corpse — the
+        /// pause gate and the Aim-layer weight ride ONE place for the death
+        /// fade-out and the restart fade-in alike (Б3). `aimWeightTarget` is the
+        /// only thing that differs, and the caller is the one that knows it.
+        void SyncAlways(float aimWeightTarget, in PlayerVisualParams p)
+        {
+            _animator.speed = p.Paused ? 0f : 1f;
+            float weightRate = p.DeltaTime / Mathf.Max(p.LocomotionCrossFadeSeconds, 1e-3f);
+            _aimWeight = Mathf.MoveTowards(_aimWeight, aimWeightTarget, weightRate);
+            _animator.SetLayerWeight(AimLayer, _aimWeight);
+        }
+
         /// Task 23 (ADR-002 A10 amendment): steps the slide pose FSM from
         /// SlideTimer alone — SlideTimer > 0 is the sim's own "sliding right
         /// now" predicate (ProjectileSystem/Spread/SimulationRunner already
@@ -299,24 +337,30 @@ namespace Ring.Presentation
         /// own-shot retrigger. The caller has already decided this event belongs
         /// to THIS doll's slot — `PlayerDied` by its VICTIM convention,
         /// `ProjectileFired` by its ACTOR one (`SimEvent.PlayerIndex`'s own doc)
-        /// — so no owner/index test is repeated here. The crossfade durations are
-        /// the ones this doll last saw in `Sync`, because an event arrives in the
-        /// Update phase, before this frame's parameter pack exists.
+        /// — so no owner/index test is repeated here.
+        ///
+        /// `oneShotCrossFadeSeconds` is a PARAMETER because an event arrives in
+        /// the `Update` phase, before this frame's `PlayerVisualParams` has been
+        /// built: `ViewRegistry.DispatchToDoll` reads
+        /// `GameFeelConfig.OneShotCrossFadeSeconds` off the config right there
+        /// and hands it in. Nothing is cached from the last `Sync` — the value
+        /// is this instant's, which is what a PlayMode hot-tweak needs.
+        ///
+        /// `PlayerDied` does not set an "am I dead" flag here: the registry
+        /// detaches this doll into its corpse list on the same event, and from
+        /// then on the only method it calls is `SyncCorpse`. That is the single
+        /// home of the fact, and it is why no branch below tests for it.
         public void HandleEvent(in SimEvent e, float oneShotCrossFadeSeconds)
         {
             switch (e.Kind)
             {
                 case SimEventKind.PlayerDied:
-                    _dead = true;
                     _animator.CrossFadeInFixedTime(AnimIds.Death,
                         oneShotCrossFadeSeconds, BaseLayer, 0f);
                     break;
                 case SimEventKind.ProjectileFired:
-                    if (!_dead)
-                    {
-                        _animator.Play(AnimIds.PistolShoot, AimLayer, 0f);
-                        _animator.Update(0f); // land the state this frame (ПБ1)
-                    }
+                    _animator.Play(AnimIds.PistolShoot, AimLayer, 0f);
+                    _animator.Update(0f); // land the state this frame (ПБ1)
                     break;
             }
         }

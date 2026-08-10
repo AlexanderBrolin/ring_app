@@ -27,16 +27,23 @@ namespace Ring.Networking.Protocol
     /// rendering path of its own, or would simply lose the slide and dash poses
     /// — which is exactly the divergence spec §3.12 pins this table against.
     ///
-    /// THE AIM FIELDS ARE A DIFFERENT CASE, AND NOT PlayerVisual's. The local
-    /// doll never reads `AimSettleTimer` or `PlayerState.AimPoint` for its
-    /// pose — it orients from `AimProvider.CurrentAimSimPos`, the local
-    /// cursor, which a REMOTE player has no equivalent of. `AimPoint` itself is
-    /// read in Presentation by `MuzzleFlashView` and `AudioDirector`, and
-    /// `AimSettleTimer` only by `WeaponSystem`'s spread and by this wire byte's
-    /// own producer (`SnapshotAssembler.PlayerRecordOf`). So the synthetic
-    /// `AimPoint` below is not a copy of what the local path reads — it is the
-    /// stand-in for the aim provider a remote doll does not have, which is
-    /// precisely why the mapping has to invent one.
+    /// THE AIM FIELDS ARE A DIFFERENT CASE. The local doll's own pose still
+    /// comes from `AimProvider.CurrentAimSimPos`, the local cursor, which a
+    /// REMOTE player has no equivalent of — so the synthetic `AimPoint` below is
+    /// not a copy of what the local path reads; it is the stand-in for the aim
+    /// provider a remote doll does not have, which is precisely why the mapping
+    /// has to invent one.
+    ///
+    /// BOTH FIELDS ARE READ BY THE DOLL PIPELINE AS OF STAGE 2 TASK 45a, and
+    /// this paragraph used to say otherwise. `ViewRegistry.SyncPlayers` picks
+    /// the aim point per player slot: the cursor for the local one, and for
+    /// every other one `PlayerState.AimPoint` — gated on `AimSettleTimer > 0f`,
+    /// because these two lines below are what write the pair, off the same wire
+    /// bit, so the timer is the only witness the doll has that an aim point was
+    /// carried at all. (The rest of Presentation reads `AimPoint` in
+    /// `MuzzleFlashView`/`AudioDirector`, and `AimSettleTimer` in
+    /// `WeaponSystem`'s spread and in this wire byte's own producer,
+    /// `SnapshotAssembler.PlayerRecordOf`.)
     ///
     /// ONE WIRE BIT, TWO LOCAL TIMERS. `LinkWindow` drives `LinkWindowTimer`
     /// alone, and that is enough: the pulse's predicate is

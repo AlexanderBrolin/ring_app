@@ -216,12 +216,14 @@ namespace Ring.Data
 
         // В1 fix-wave 1 (owner playtest feedback, item 3 "мерцание сборщика"):
         // the collector's doll pulses while a Dash↔Slide combo window is open
-        // (`PlayerVisual.UpdateLinkWindowFlash` reads `PlayerState.
-        // PostDashSlideTimer`/`LinkWindowTimer`, either > 0f — the same two
-        // timers `PlayerMovementSystem` already uses to gate the link itself).
+        // (`PlayerView.Sync` reads `PlayerState.PostDashSlideTimer`/
+        // `LinkWindowTimer`, either > 0f — the same two timers
+        // `PlayerMovementSystem` already uses to gate the link itself; the
+        // pulse lived in `PlayerVisual.UpdateLinkWindowFlash` until Stage 2
+        // Task 45a moved emission onto the root view, next to the renderers).
         // `LinkWindowFlashHz` is the pulse's oscillation rate; `LinkWindowFlashBoost`
         // scales its peak intensity on top of the fixed accent color
-        // `PlayerVisual` reuses from `PlayerEmissive`/`DashGlowView` (Э1) —
+        // `PlayerView` reuses from `PlayerEmissive`/`DashGlowView` (Э1) —
         // same accent-constant-vs-SO-number split `MobView`'s Gunner glint
         // already makes. `LinkWindowFlashBoost` was the sync-marker key,
         // superseding `SlideDustSize` (Task 22, spec Г6) — see that field's
@@ -310,7 +312,7 @@ namespace Ring.Data
         // rejected). `CrosshairView.LateUpdate` now layers a breathing scale PULSE
         // on top of that boost while the aim-proxy hit is `HitZone.Head`: the same
         // `0.5+0.5*Mathf.Sin(Time.unscaledTime * Hz * 2π)`-shaped oscillation
-        // `PlayerVisual.UpdateLinkWindowFlash`/`MobView`'s telegraph/glint pulses
+        // `PlayerView.Sync`/`MobView`'s telegraph/glint pulses
         // already use (Reuse > duplication — this project has exactly one pulse
         // idiom, not a second one per feature), remapped from that method's [0,1]
         // emission-intensity range to a signed [-1,1] SCALE offset around 1 (a
@@ -325,20 +327,37 @@ namespace Ring.Data
         [Range(0.5f, 15f)] public float HeadHoverPulseHz = 5f;
         [Range(0f, 1f)] public float HeadHoverPulseAmp = 0.25f;
 
-        // Stage 2 Task 45a (spec §3.12 "чужие игроки — пул по индексу, эмиссия
-        // GameFeelConfig.RemotePlayerEmission"; §3.15's new-fields table): the
+        // Stage 2 Task 45a (spec §3.12's "other players — pooled by index,
+        // emission GameFeelConfig.RemotePlayerEmission" bullet; §3.15's
+        // new-fields table): the
         // steady emissive rim every doll but this client's own wears, so a
         // stranger reads as a stranger the instant they come out of the fog.
         // Applied by `PlayerView.Sync` through the SAME MaterialPropertyBlock/
         // `_EmissionColor` write the combo-window pulse already goes through —
         // one emission mechanism per doll, not two — and composed with it
-        // additively, so a remote player in a link window still pulses.
-        // The local doll is handed `Color.black` here by `ViewRegistry`, which
-        // is why "own" needs no branch inside the view.
+        // additively, so a remote player in a link window still pulses. The
+        // local doll is handed `Color.black` by `ViewRegistry`, which is why
+        // "own" needs no branch inside the view; a doll that dies is handed
+        // black once and for good (`PlayerView.DetachAsCorpse`).
+        //
+        // HDR IS NOT DECORATION HERE, IT IS THE FIELD WORKING AT ALL
+        // (fix-round 1). An unattributed `Color` draws with Unity's LDR picker,
+        // which clamps every channel into [0,1] the first time the owner opens
+        // it and presses OK — and this field IS the В1 tuning path for
+        // "свой/чужой", with the `.asset` off-limits to hand editing. Emission
+        // above 1 is what Bloom reacts to, so a clamped value would quietly
+        // turn the rim off. This is the first HDR color the project keeps in an
+        // SO: the existing accent pairs put the HDR part in a CODE constant
+        // (`LinkWindowFlashAccent`, `MobView.TelegraphAccent`/`GunnerGlintAccent`)
+        // and expose only an LDR multiplier, and the existing SO colors
+        // (`AimZoneBodyColor`/`AimZoneHeadColor`, `StaminaBar*`) are LDR because
+        // something else multiplies them. Neither shape fits: the spec asks for
+        // one field, nothing multiplies this one, and a second SO float would be
+        // a knob the owner did not ask for.
         //
         // DEFAULT IS A VIOLET, and the reason is the palette that already
         // exists rather than taste: the player signature is the cyan
-        // `PlayerVisual`/`DashGlowView`/`PlayerEmissive` share (0, 2.5, 3), the
+        // `PlayerView`/`DashGlowView`/`PlayerEmissive` share (0, 2.5, 3), the
         // Chaser telegraph is amber, the Gunner glint cool-white, the headshot
         // cue red and the body cue pale blue — violet is the one direction left
         // that neither argues with the player's own cyan nor imitates a mob
@@ -346,6 +365,7 @@ namespace Ring.Data
         // × LinkWindowFlashBoost reaches ~4.8 on its brightest channel), so it
         // reads as a rim under Bloom rather than a flash, and a remote player's
         // link window still visibly out-shines their resting tint.
+        [ColorUsage(false, true)]
         public Color RemotePlayerEmission = new Color(1.4f, 0.15f, 1.6f); // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.

@@ -105,6 +105,23 @@ namespace Ring.Presentation
             ApplyEmission(emission);
         }
 
+        /// This doll has just become a corpse (Stage 2 Task 45a fix-round 1;
+        /// `ViewRegistry.DispatchToDoll` does the bookkeeping — leaving the slot
+        /// map for `_corpses` — and this is the view's own half of it). It stops
+        /// glowing, once and for good: `Sync` is never called on a corpse again,
+        /// so this single write is the last thing the property block ever
+        /// carries. Owner decision: a body that keeps its remote-player rim, or
+        /// keeps pulsing a combo window it can no longer be in, misreports who
+        /// is still standing at the moment that mistake costs the most.
+        ///
+        /// `IsLocal` is deliberately NOT cleared. This client's own corpse is
+        /// still its own body, and the aim-proxy self-hit guard
+        /// (`AimProvider.TryAimProxy`) must keep excluding it — after death the
+        /// camera sits on that body, so the cursor is over it constantly, and
+        /// letting the proxy cast land there would revive the exact I1 defect
+        /// the guard exists for.
+        public void DetachAsCorpse() => ApplyEmission(Color.black);
+
         void ApplyEmission(Color emission)
         {
             _block.SetColor(EmissionColorId, emission);

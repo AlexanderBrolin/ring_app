@@ -23,7 +23,7 @@ namespace Ring.Presentation
     /// per-frame aim source both the marker and the cone's CENTER read — no tick
     /// quantization. The cone's RADIUS is the one place this class reads the
     /// simulation snapshot at all (`RenderCurr.Player`, the hitstop-consistent
-    /// half of the render pair, the same snapshot `PlayerView`/`CameraRig`
+    /// half of the render pair, the same snapshot `ViewRegistry`/`CameraRig`
     /// already read), fed into `Spread.HipRadians` alongside the runner's
     /// `Config.Weapon`/`Config.Hero` (hot-tweakable via their SOs, never hardcoded
     /// here) — `settleFactor` is deliberately NOT applied (PD15 above): that
@@ -63,7 +63,7 @@ namespace Ring.Presentation
         // В1/В2 fix-wave 2 (app-n6g item 3a): the marker doubles as the
         // zone-colored aim dot while AimHeld — same MaterialPropertyBlock/
         // _EmissionColor idiom every other accent in this project uses
-        // (PlayerVisual/MobView/CorpseView), never a material instance.
+        // (PlayerView/MobView/CorpseView), never a material instance.
         Renderer _markerRenderer;
         MaterialPropertyBlock _block;
         Color _markerBaseEmission;
@@ -142,7 +142,7 @@ namespace Ring.Presentation
             // "unmistakable, not just recolored" rationale.
             // В3 fix-wave 2 (item 3a): a breathing scale PULSE layers on top of
             // that boost while on Head — same `0.5+0.5*sin(...)`-shaped
-            // oscillation idiom as PlayerVisual/MobView's own pulses (class doc
+            // oscillation idiom as PlayerView/MobView's own pulses (class doc
             // above the GameFeelConfig fields), remapped to a signed [-1,1]
             // swing around 1 so the dot visibly grows AND shrinks, not just
             // fades.
