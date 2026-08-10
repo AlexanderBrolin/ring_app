@@ -117,6 +117,11 @@ namespace Ring.Networking.Client
 
             /// The link was closed by a refusal; nothing is applied after it.
             LinkRefused,
+
+            /// The welcome named a seat outside this match's roster (Stage 2
+            /// Task 44c fix-round 1, F-5). See `OnWelcome` for why the byte is
+            /// refused here rather than clamped or repaired downstream.
+            SlotOutOfRange,
         }
 
         /// One message's answer: the verdict, plus the ONE side effect this
@@ -169,6 +174,14 @@ namespace Ring.Networking.Client
         /// NOT reassign it: §6k Р164 keeps the roster untouched across an
         /// epoch, which is why `MatchRestartedNet` carries no `PlayerIndex`
         /// to re-read in the first place.
+        ///
+        /// WITHIN THE ROSTER THE WELCOME WAS CHECKED AGAINST, or zero because
+        /// no welcome was ever applied — `OnWelcome` refuses a seat outside it
+        /// (`LinkVerdict.SlotOutOfRange`) instead of storing it, so a reader
+        /// that indexes an array of that roster's size by this byte cannot be
+        /// handed a number the roster has no room for. Zero before the welcome
+        /// is a LEGAL seat and not a sentinel: "has a seat been assigned" is
+        /// `Phase`, never this.
         public byte PlayerIndex { get; private set; }
 
         /// Why this client is not playing, remembered BEFORE the disconnect
@@ -226,13 +239,34 @@ namespace Ring.Networking.Client
         /// `MatchWelcomeNet` carrying a stale `MatchEpoch`". Letting that
         /// rewrite the tracked epoch would point every seam at a match
         /// nobody is sending frames for.
-        public LinkAction OnWelcome(in MatchWelcomeNet welcome)
+        ///
+        /// `maxPlayers` IS THE ROSTER THIS SEAT HAS TO INDEX, AND IT IS A
+        /// PARAMETER FOR THE REASON EVERY OTHER FACT HERE IS (Stage 2 Task 44c
+        /// fix-round 1, F-5). This class is a decision core with no assets and
+        /// no world of its own — the same discipline `MatchRoster` states as
+        /// "no clock of its own: every method that needs 'now' takes it as a
+        /// parameter" — so the one number this decision needs arrives with the
+        /// message rather than being remembered from a constructor the tests
+        /// call a dozen times.
+        ///
+        /// WHY THE SEAT IS REFUSED RATHER THAN CLAMPED. `PlayerIndex` is not a
+        /// number this client displays; it is the INDEX the render pair is read
+        /// through (`RenderSnapshot.Player` indexes `Players` by it with no
+        /// guard, and neither do the facade properties built on it), so a byte
+        /// past the roster is an exception every frame, in the layer that draws
+        /// rather than the one that parses. Clamping would seat this client in
+        /// somebody else's chair and show another player's health as its own,
+        /// which is a wrong picture rather than a missing one. Refusing leaves
+        /// the phase at `HelloSent`: nothing is adopted, the seams are not
+        /// reset, and the wiring logs a line naming the seat and the roster.
+        public LinkAction OnWelcome(in MatchWelcomeNet welcome, int maxPlayers)
         {
             if (Phase == LinkPhase.Refused) return Refuse(LinkVerdict.LinkRefused);
             if (Phase == LinkPhase.Joined || Phase == LinkPhase.MatchEnded)
                 return Refuse(LinkVerdict.AlreadyJoined);
             if (Phase != LinkPhase.HelloSent) return Refuse(LinkVerdict.Unexpected);
             if (welcome.MatchEpoch == 0) return Refuse(LinkVerdict.ReservedEpoch);
+            if (welcome.PlayerIndex >= maxPlayers) return Refuse(LinkVerdict.SlotOutOfRange);
 
             MatchEpoch = welcome.MatchEpoch;
             Seed = welcome.Seed;
@@ -438,6 +472,7 @@ namespace Ring.Networking.Client
 
         readonly byte _protocolVersion;
         readonly ulong _simConfigHash;
+        readonly int _maxPlayers;
         readonly string _playerId;
         readonly string _joinToken;
 
@@ -461,7 +496,7 @@ namespace Ring.Networking.Client
         public ClientLinkState State => _state;
 
         public ClientMatchLink(NetworkManager networkManager, ClientMatchReset reset, NetConfig netConfig,
-            byte protocolVersion, ulong simConfigHash, string playerId, string joinToken)
+            byte protocolVersion, ulong simConfigHash, int maxPlayers, string playerId, string joinToken)
         {
             _nm = networkManager ?? throw new ArgumentNullException(nameof(networkManager));
             _reset = reset ?? throw new ArgumentNullException(nameof(reset));
@@ -478,6 +513,7 @@ namespace Ring.Networking.Client
 
             _protocolVersion = protocolVersion;
             _simConfigHash = simConfigHash;
+            _maxPlayers = maxPlayers;
             _playerId = playerId;
             _joinToken = joinToken;
 
@@ -504,7 +540,7 @@ namespace Ring.Networking.Client
         // NetworkConnection, because a client has exactly one connection and
         // it is the server's (ClientManager.Broadcast.cs's own signature).
         void OnWelcome(MatchWelcomeNet welcome, Channel channel)
-            => Apply(_state.OnWelcome(in welcome), nameof(MatchWelcomeNet));
+            => Apply(_state.OnWelcome(in welcome, _maxPlayers), nameof(MatchWelcomeNet));
 
         void OnRefused(MatchRefusedNet refused, Channel channel)
             => Apply(_state.OnRefused(in refused), nameof(MatchRefusedNet));

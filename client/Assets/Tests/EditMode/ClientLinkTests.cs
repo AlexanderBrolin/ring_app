@@ -42,6 +42,13 @@ namespace Ring.Simulation.Tests
         /// the asset's 16.
         const int EventBudget = 7;
 
+        /// The test's own roster cap, the number `OnWelcome` validates the
+        /// welcome's seat against. Deliberately NOT `ArenaConfig`'s shipped 3,
+        /// for the same reason `EventBudget` above is not the asset's 16: a
+        /// fixture that happens to match the asset cannot show whether the code
+        /// read the argument or reached for a number of its own.
+        const int RosterCap = 5;
+
         // ------------------------------------------------------------------
         // Fixtures.
         // ------------------------------------------------------------------
@@ -88,7 +95,7 @@ namespace Ring.Simulation.Tests
             var state = new ClientLinkState();
             Assert.IsTrue(state.TryBeginHello(), "fixture premise: the first hello is allowed");
             Assert.AreEqual(ClientLinkState.LinkVerdict.Applied,
-                state.OnWelcome(Welcome(FirstEpoch)).Verdict,
+                state.OnWelcome(Welcome(FirstEpoch), RosterCap).Verdict,
                 "fixture premise: the opening welcome is accepted");
             return state;
         }
@@ -132,7 +139,7 @@ namespace Ring.Simulation.Tests
             var state = new ClientLinkState();
             state.TryBeginHello();
 
-            ClientLinkState.LinkAction action = state.OnWelcome(Welcome(FirstEpoch));
+            ClientLinkState.LinkAction action = state.OnWelcome(Welcome(FirstEpoch), RosterCap);
 
             Assert.AreEqual(ClientLinkState.LinkVerdict.Applied, action.Verdict,
                 "the opening welcome must be applied");
@@ -154,7 +161,7 @@ namespace Ring.Simulation.Tests
             ClientLinkState state = Joined();
 
             ClientLinkState.LinkAction second =
-                state.OnWelcome(Welcome(SecondEpoch, seed: SecondSeed, playerIndex: 1));
+                state.OnWelcome(Welcome(SecondEpoch, seed: SecondSeed, playerIndex: 1), RosterCap);
 
             Assert.AreEqual(ClientLinkState.LinkVerdict.AlreadyJoined, second.Verdict,
                 "a second welcome must be refused by VALUE — a stale handshake instance answering "
@@ -174,7 +181,7 @@ namespace Ring.Simulation.Tests
             var state = new ClientLinkState();
 
             Assert.AreEqual(ClientLinkState.LinkVerdict.Unexpected,
-                state.OnWelcome(Welcome(FirstEpoch)).Verdict,
+                state.OnWelcome(Welcome(FirstEpoch), RosterCap).Verdict,
                 "the server only ever welcomes an answer to a hello — a welcome to a client that "
                 + "never greeted anyone belongs to no exchange this object took part in");
             Assert.AreEqual(ClientLinkState.LinkPhase.Connecting, state.Phase,
@@ -186,7 +193,7 @@ namespace Ring.Simulation.Tests
             var witness = new ClientLinkState();
             witness.TryBeginHello();
             Assert.AreEqual(ClientLinkState.LinkVerdict.Applied,
-                witness.OnWelcome(Welcome(FirstEpoch)).Verdict,
+                witness.OnWelcome(Welcome(FirstEpoch), RosterCap).Verdict,
                 "witness: after the hello, that same welcome is applied");
         }
 
@@ -197,7 +204,7 @@ namespace Ring.Simulation.Tests
             state.TryBeginHello();
 
             Assert.AreEqual(ClientLinkState.LinkVerdict.ReservedEpoch,
-                state.OnWelcome(Welcome(0)).Verdict,
+                state.OnWelcome(Welcome(0), RosterCap).Verdict,
                 "epoch 0 is reserved for 'there is no epoch' (MatchEpochCounter never mints it), "
                 + "and adopting it would leave every seam tracking an epoch the server never sends");
             Assert.AreEqual(ClientLinkState.LinkPhase.HelloSent, state.Phase,
@@ -209,8 +216,54 @@ namespace Ring.Simulation.Tests
             var witness = new ClientLinkState();
             witness.TryBeginHello();
             Assert.AreEqual(ClientLinkState.LinkVerdict.Applied,
-                witness.OnWelcome(Welcome(1)).Verdict,
+                witness.OnWelcome(Welcome(1), RosterCap).Verdict,
                 "witness: epoch 1, the first the counter ever mints, is accepted");
+        }
+
+        // ------------------------------------------------------------------
+        // Rule 2b (Stage 2 Task 44c fix-round 1, F-5): the seat the welcome
+        // assigns is validated against the roster it has to index. The byte is
+        // the only field of the handshake nothing downstream can survive being
+        // wrong about — `RenderSnapshot.Player` indexes `Players` by it with no
+        // guard of its own — so it is refused where it ENTERS rather than
+        // patched where it hurts.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void Welcome_WithASeatOutsideTheRosterIsRefused()
+        {
+            var state = new ClientLinkState();
+            state.TryBeginHello();
+
+            ClientLinkState.LinkAction action =
+                state.OnWelcome(Welcome(FirstEpoch, playerIndex: RosterCap), RosterCap);
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.SlotOutOfRange, action.Verdict,
+                "a welcome naming seat " + RosterCap + " in a roster of " + RosterCap + " seats "
+                + "must be refused by VALUE — the seat is the index every reader of the render "
+                + "pair uses, and no reader of it carries a range check of its own");
+            Assert.IsFalse(action.ResetSeams,
+                "a refused welcome must not carry the right to reset the seams");
+            Assert.AreEqual(ClientLinkState.LinkPhase.HelloSent, state.Phase,
+                "ClientLinkState.Phase must not advance to Joined on a refused welcome");
+            Assert.AreEqual(0, state.MatchEpoch,
+                "ClientLinkState.MatchEpoch must not adopt the epoch of a welcome that was refused");
+            Assert.AreEqual((byte)0, state.PlayerIndex,
+                "ClientLinkState.PlayerIndex must stay at its unassigned zero — storing the "
+                + "out-of-range byte and refusing the verdict would leave the very number the "
+                + "refusal is about readable by everyone");
+
+            // Positive witness: the LARGEST legal seat is accepted, so the
+            // refusal above is about the boundary and not about big numbers —
+            // and it is what makes an off-by-one in the comparison observable.
+            var witness = new ClientLinkState();
+            witness.TryBeginHello();
+            Assert.AreEqual(ClientLinkState.LinkVerdict.Applied,
+                witness.OnWelcome(Welcome(FirstEpoch, playerIndex: RosterCap - 1), RosterCap).Verdict,
+                "witness: seat " + (RosterCap - 1) + ", the last one a roster of " + RosterCap
+                + " seats has, is accepted");
+            Assert.AreEqual((byte)(RosterCap - 1), witness.PlayerIndex,
+                "ClientLinkState.PlayerIndex must be the seat the accepted welcome named");
         }
 
         // ------------------------------------------------------------------
@@ -243,7 +296,7 @@ namespace Ring.Simulation.Tests
 
             // Terminal: nothing that arrives afterwards is applied.
             Assert.AreEqual(ClientLinkState.LinkVerdict.LinkRefused,
-                state.OnWelcome(Welcome(SecondEpoch)).Verdict,
+                state.OnWelcome(Welcome(SecondEpoch), RosterCap).Verdict,
                 "a welcome arriving after a refusal must be refused by value");
             Assert.AreEqual(ClientLinkState.LinkVerdict.LinkRefused,
                 state.OnRestarted(Restarted(SecondEpoch)).Verdict,

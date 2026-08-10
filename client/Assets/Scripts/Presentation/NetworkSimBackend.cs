@@ -78,7 +78,7 @@ namespace Ring.Presentation
     /// WHAT IS DELIBERATELY NOT HERE. `ObservedIndex` and spectating (Task
     /// 47), the player dolls and their pool (Task 45), the dev overlay's
     /// network section (Task 48) and the walls (Task 46). Two further gaps are
-    /// this task's own findings rather than its neighbours' scope, and both
+    /// this task's own findings rather than its neighbors' scope, and both
     /// are recorded where they bite: the projectile picture (see `Curr`) and
     /// the match statistics (see `Restart`).
     public sealed class NetworkSimBackend : ISimBackend
@@ -98,6 +98,28 @@ namespace Ring.Presentation
             (byte)SnapshotBlockKind.Wave,
             (byte)SnapshotBlockKind.Events,
         };
+
+        /// The same five kinds as a bit per kind — the set a COMPLETE frame
+        /// carries, which `ReadFrame` tests the walk against (fix-round 1,
+        /// F-1). Every one of them is required because the SENDER sends every
+        /// one of them: `SnapshotAssembler` writes all five on every frame,
+        /// empty or not, and says why in its own comment — a receiver cannot
+        /// tell an absent block from an empty one, because a datagram cut on a
+        /// block boundary parses as a shorter, valid snapshot. So a kind
+        /// missing here is not "the server had nothing to say"; it is the tail
+        /// of the frame missing, and everything the walk did not re-decode is
+        /// still `BeginSlot`'s zeros.
+        ///
+        /// A BIT PER KIND RATHER THAN A COUNT: two copies of one kind and one
+        /// each of two kinds are different frames, and a count cannot tell
+        /// them apart. The shift is safe because `TryReadBlock` only ever
+        /// delivers a kind out of `KnownBlockKinds` above.
+        const int RequiredBlockKinds =
+            (1 << (byte)SnapshotBlockKind.Players)
+            | (1 << (byte)SnapshotBlockKind.Liveness)
+            | (1 << (byte)SnapshotBlockKind.Mobs)
+            | (1 << (byte)SnapshotBlockKind.Wave)
+            | (1 << (byte)SnapshotBlockKind.Events);
 
         /// How long a ghost that was confirmed but never ended may stay in the
         /// registry, expressed as `GhostProjectiles`' own `maxTrackTicks`.
@@ -135,9 +157,17 @@ namespace Ring.Presentation
         readonly NetStats _stats = new NetStats();
 
         // The six per-match seams, plus the two objects that own their reset
-        // and their epoch. All built by the first `Restart`, because every one
-        // of them is sized from `SimConfig` and the facade does not hand that
-        // over until then.
+        // and their epoch. All built by the first `Restart`, because the
+        // facade does not hand `SimConfig` over until then and four of the
+        // eight cannot be built without it: `SnapshotQueue` (the arena sizes
+        // its ring of `RenderSnapshot`s), `EventDedup`, `GhostProjectiles`
+        // (the projectile cap) and `StalePolicy` (the player cap). Of the
+        // other four, `ClientEventQueue` is sized from `NetTimings`/
+        // `NetConfig`, `ClientMatchLink` needs the config's HASH and its
+        // roster size rather than its dimensions, and `RenderClock` and
+        // `ClientMatchReset` are sized from nothing at all — they are built
+        // here because the objects they are handed are, not because a number
+        // of the config reaches them.
         SnapshotQueue _snapshots;
         RenderClock _clock;
         EventDedup _dedup;
@@ -163,8 +193,18 @@ namespace Ring.Presentation
         bool _ready;
         int _lastRenderTick;
 
-        // Decode scratch, sized once from the arena caps. Nothing on the
-        // receive path allocates after `Restart` returns.
+        // Decode scratch, sized once from the arena caps.
+        //
+        // NOTHING ON THE RECEIVE PATH ALLOCATES AFTER `Restart` RETURNS,
+        // EXCEPT A REFUSAL LOG — the exception named rather than left to be
+        // measured (fix-round 1, F-8). Every `_nm.Log` call below builds its
+        // interpolated string BEFORE the logger's own level filter ever sees
+        // it, so a refusal costs garbage whether or not the line is printed.
+        // What keeps that off the ordinary path is where the calls sit: one
+        // per refused FRAME or per refused BLOCK, never one per record — and
+        // the one refusal a healthy connection produces in bulk, the Р29
+        // forward-compatibility skip of an event kind this build has never
+        // heard of, is not logged at all (see `ReadEvents`).
         SnapshotBlocks.PlayerRecord[] _playerScratch;
         SnapshotBlocks.MobRecord[] _mobScratch;
         SnapshotBlocks.EventRecord[] _eventScratch;
@@ -218,6 +258,14 @@ namespace Ring.Presentation
         /// holds data and `Curr` still holds nothing. The seven views whose
         /// `World == null` test this member replaced would read that empty
         /// pair as a world at the origin.
+        ///
+        /// AND IT GOES BACK TO FALSE ON AN EPOCH CHANGE (fix-round 1, F-6).
+        /// A new match empties the ring, stops the clock and leaves the render
+        /// pair holding the LAST PICTURE OF THE MATCH THAT ENDED — see
+        /// `SyncMatchEpoch`, which is where the change is observed. Answering
+        /// true across that gap would not merely be early; it would be a
+        /// backend vouching for a picture it knows is of another match, with
+        /// `CurrentTick` naming that match's tick beside it.
         public bool Ready => _ready;
 
         /// The balance numbers the facade built from its own ScriptableObjects
@@ -225,6 +273,16 @@ namespace Ring.Presentation
         /// which is what makes the interface's "answers at any time" clause
         /// true here — the facade's `RenderMuzzleHeight` reads it with no
         /// guard of its own.
+        ///
+        /// THE NUMBERS OF THE FIRST `Restart`, FOR THE LIFE OF THIS BACKEND
+        /// (fix-round 1, F-4). A later `Restart` does not replace them, and
+        /// that is what keeps the sentence below literally true: everything
+        /// this class sized from the config — the ring's snapshots, the three
+        /// decode scratches, the dedup, the ghosts, the stale policy, the
+        /// render pair — was sized from THIS struct, and so was the hash the
+        /// hello carried. A backend that recorded a second config while
+        /// keeping the first one's arrays would be indexing one arena's
+        /// buffers with another arena's caps.
         ///
         /// This client does not take the server's word for these numbers and
         /// never did: `ClientMatchLink` sends `SimConfigHash.Compute` of this
@@ -267,8 +325,15 @@ namespace Ring.Presentation
         public RenderSnapshot Curr => _curr;
 
         /// `RenderClock.Phase`: the blend between the render pair's two halves
-        /// (Р38), latched here every `Advance` exactly as the interface asks,
-        /// so a paused facade keeps showing the phase it stopped at.
+        /// (Р38), latched rather than derived live exactly as the interface
+        /// asks, so a paused facade keeps showing the phase it stopped at.
+        ///
+        /// LATCHED WITH THE PAIR, NOT MERELY EVERY `Advance` (fix-round 1,
+        /// F-2). A phase belongs to the two halves it blends; when the ring
+        /// holds neither half of `RenderTick`'s pair, this class leaves the
+        /// pair alone and therefore leaves the phase alone with it. See
+        /// `Advance` for what advancing one without the other looks like on
+        /// screen.
         public float Alpha => _alpha;
 
         public int EventCount => _frameEventCount;
@@ -303,9 +368,10 @@ namespace Ring.Presentation
         /// on a long frame; the render clock corrects by changing PACE
         /// (`RenderClock`'s slew) and discards nothing, so there is no
         /// quantity here to report. A zero is therefore the true answer and
-        /// not a missing measurement — but the dev overlay's line reads
-        /// "0.000 s dropped" either way, which is worth knowing before it is
-        /// read as evidence of a healthy clock.
+        /// not a missing measurement — but the dev overlay prints this number
+        /// through the same `DroppedTime: 0.000` counter line it prints for a
+        /// local backend, red only above zero, which is worth knowing before a
+        /// permanent zero there is read as evidence of a healthy clock.
         public float DroppedTime => 0f;
 
         /// False (CR 3). A networked client putting a mob into an
@@ -314,7 +380,7 @@ namespace Ring.Presentation
         public bool CanDevSpawnMob => false;
 
         /// Refused, in the one way a refusal can still be seen. `CanDevSpawnMob`
-        /// above is the real gate and the overlay honours it; this is the
+        /// above is the real gate and the overlay honors it; this is the
         /// second line of defence for any future caller that does not, and it
         /// logs rather than throws because a dev convenience must not be able
         /// to take a match down.
@@ -364,11 +430,10 @@ namespace Ring.Presentation
             // because a cache with no reader is a field that only looks like a
             // solution.
 
-            SyncPendingPoolEpoch();
+            SyncMatchEpoch();
 
             _clock.Advance(unscaledDeltaTime, in _timings);
             int renderTick = _clock.RenderTick;
-            _alpha = _clock.Phase;
 
             // `RenderTick - 1`, which is the argument `SnapshotQueue`'s own doc
             // names: the pair being shown is `RenderTick` and the tick after
@@ -377,7 +442,23 @@ namespace Ring.Presentation
             // name a moment before it began.
             _snapshots.DiscardBelow((uint)math.max(0, renderTick - 1));
 
-            if (ResolveRenderPair(renderTick)) _ready = true;
+            // THE PHASE MOVES ONLY WITH THE PAIR IT BLENDS (fix-round 1, F-2).
+            // Latching `RenderClock.Phase` unconditionally was the one way this
+            // class could make a freeze visibly WORSE than a stall: with the
+            // ring starved, `ResolveRenderPair` leaves `_prev`/`_curr` exactly
+            // as they were — two poses one tick apart — while `Phase` keeps
+            // sawing 0->1 every world tick off local time, and every consumer
+            // blends the two frozen halves by it. The picture would not hold
+            // still; it would oscillate across one tick of motion, at the
+            // render rate, for as long as the hole lasts. Holding the phase
+            // instead holds the pose actually on screen: the frame the pair
+            // resolves again is the one that moves the picture, which is what
+            // the interpolation buffer exists to make ordinary.
+            if (ResolveRenderPair(renderTick))
+            {
+                _alpha = _clock.Phase;
+                _ready = true;
+            }
 
             _stale.Advance(renderTick);
 
@@ -405,10 +486,28 @@ namespace Ring.Presentation
         /// because nothing clears the window except this method.
         public void EndFrame() => _frameEventCount = 0;
 
-        /// Records the match's balance numbers and, on the FIRST call, builds
-        /// everything this backend runs on.
+        /// Records the match's balance numbers and builds everything this
+        /// backend runs on — ON THE FIRST CALL, and on no other.
         ///
-        /// THE FIRST CALL IS THE ONLY ONE THAT BUILDS. `ClientLinkState` is the
+        /// THE FIRST CALL IS THE ONLY ONE THAT RECORDS ANYTHING EITHER
+        /// (fix-round 1, F-4). The earlier shape wrote `_cfg` above the guard
+        /// and returned, which read as harmless bookkeeping and was not: every
+        /// buffer this class indexes is sized from the config of the FIRST
+        /// call — `RenderSnapshot.Players`/`PlayerStats` in each of the ring's
+        /// slots, the three decode scratches, the stale policy's capacity —
+        /// while `BeginSlot` clears `_cfg.Arena.MaxPlayers` of them and
+        /// `ReadPlayers` writes the record index the decoder validated against
+        /// `_cfg`. A second `Restart` at a larger `Arena.MaxPlayers` (the dev
+        /// overlay's forced-seed restart, the death overlay's R, the pause
+        /// controller — the facade rebuilds `SimConfig` from its assets on
+        /// every one of them) therefore put an index past the end of an array
+        /// built for the old cap, inside the broadcast handler, on every frame
+        /// that arrived afterwards. Keeping the numbers of the first call is
+        /// not a workaround for that: it is the only reading under which
+        /// `Config`'s own doc — "the hash of THIS very struct went out in the
+        /// hello" — stays true.
+        ///
+        /// NOR MAY THE SEAMS BE REBUILT. `ClientLinkState` is the
         /// memory of this CONNECTION — one hello, one epoch, one seat, and
         /// reconnection deliberately unimplemented until Э5 — so rebuilding it
         /// because the facade restarted would send a second hello the server
@@ -452,17 +551,21 @@ namespace Ring.Presentation
         /// need a protocol change.
         public void Restart(long seed, in SimConfig cfg)
         {
-            _cfg = cfg;
-
             if (_hasConfig)
             {
                 _nm.Log("NetworkSimBackend: Restart ignored — a networked client does not start "
                     + "matches. The server's own MatchRestartedNet is what begins the next one, and "
                     + "it is the only message that clears this client's per-match seams. The "
-                    + "balance numbers of this call were recorded; nothing else happened.");
+                    + "balance numbers of this call were NOT recorded either: every buffer on the "
+                    + "receive path is sized from the config of the first Restart, and the hello's "
+                    + "SimConfigHash was computed from it, so adopting a second set of numbers "
+                    + "would index this arena's arrays with another arena's caps and would make "
+                    + "the handshake's own agreement a statement about a struct the server never "
+                    + "saw. Retune the assets and restart the match on both ends.");
                 return;
             }
 
+            _cfg = cfg;
             _hasConfig = true;
             _timings = new NetTimings
             {
@@ -524,7 +627,7 @@ namespace Ring.Presentation
             // client connection is the bootstrap's, exactly as it is for
             // `MatchHandshake` on the server.
             _link = new ClientMatchLink(_nm, _reset, _net, ProtocolVersion.Current,
-                SimConfigHash.Compute(in cfg), _playerId, _joinToken);
+                SimConfigHash.Compute(in cfg), cfg.Arena.MaxPlayers, _playerId, _joinToken);
         }
 
         /// Refused with a log. Hot-tweak is a dev workflow over a world this
@@ -577,6 +680,15 @@ namespace Ring.Presentation
         /// handlers per delegate identity, so a second backend on the same
         /// `NetworkManager` would leave both subscribed and the stale one
         /// would keep decoding into a ring nobody reads.
+        ///
+        /// NOBODY IS OBLIGED TO CALL IT YET, AND THAT IS SAID HERE RATHER THAN
+        /// LEFT TO BE FOUND. `ISimBackend` has no member for it, so the facade
+        /// cannot call it even in principle, and nothing else in the project
+        /// constructs this class — the open end is the same one as "no code
+        /// path installs this backend" in the class doc, seen from the other
+        /// side. Whoever closes that one takes this obligation with it: the
+        /// code that INSTALLS a backend is the code that must unregister the
+        /// one it replaces, and must do so before dropping the reference.
         public void Unregister()
         {
             if (_registered)
@@ -602,7 +714,7 @@ namespace Ring.Presentation
             _stats.BytesDown += msg.Payload.Count;
             if (msg.Payload.Array == null) return;
 
-            SyncPendingPoolEpoch();
+            SyncMatchEpoch();
 
             ReadFrame(new System.ReadOnlySpan<byte>(msg.Payload.Array, msg.Payload.Offset,
                 msg.Payload.Count));
@@ -610,32 +722,69 @@ namespace Ring.Presentation
 
         /// The frame, from its first byte to its last.
         ///
-        /// ORDER IS THE WHOLE DESIGN HERE, and each step is somebody's
-        /// documented obligation:
-        ///   * the header first, because `SnapshotReader` refuses a block read
-        ///     before it and because the version check has to happen before any
-        ///     byte whose meaning depends on the version is decoded;
-        ///   * `SnapshotQueue.Admit` second, because Р150е makes THIS caller
-        ///     the gate that keeps a frame from the absurd future out of
-        ///     `EventDedup` — a `FutureRejected` frame's events are never
-        ///     offered to the dedup at all, which is the exact path that would
-        ///     otherwise drag its window forward and eat every real event
-        ///     behind it until the next `Reset`;
-        ///   * the blocks third, decoded into the reserved slot;
-        ///   * `Commit` only after decoding finished, so `TryGet` can never
-        ///     hand a consumer a half-decoded frame under a tick that was
-        ///     never filled;
-        ///   * `RenderClock.OnSnapshot` after that, because the clock's target
-        ///     is a maximum over frames that really landed;
-        ///   * `EventDedup.TryAcceptState` last, because it RECORDS as well as
-        ///     answers and must only be asked when the answer is going to be
-        ///     acted on.
+        /// ORDER IS THE WHOLE DESIGN HERE, and this list is the body's order
+        /// rather than a plan for it (fix-round 1, F-7 — the earlier version
+        /// named `EventDedup.TryAcceptState` LAST, which the code has never
+        /// done and could not do). Each step is somebody's documented
+        /// obligation:
+        ///   1. the header, because `SnapshotReader` refuses a block read
+        ///      before it and because the version check has to happen before
+        ///      any byte whose meaning depends on the version is decoded;
+        ///   2. `SnapshotQueue.Admit`, because Р150е makes THIS caller the gate
+        ///      that keeps a frame from the absurd future out of `EventDedup` —
+        ///      a `FutureRejected` frame's events are never offered to the
+        ///      dedup at all, which is the exact path that would otherwise drag
+        ///      its window forward and eat every real event behind it until the
+        ///      next `Reset`;
+        ///   3. `EventDedup.TryAcceptState`, because its answer is an ARGUMENT
+        ///      of step 5: `ReadPlayers` takes it and gates `OnEntitySeen` on
+        ///      it, so asking later would mean asking twice, and this call
+        ///      RECORDS as well as answers. It is asked for the slotless
+        ///      verdicts (`Stale`, `Duplicate`) too — nothing is decoded for
+        ///      those, and the dedup refuses their ticks by its own gate
+        ///      anyway, so the question costs nothing and the branch that would
+        ///      skip it would be a second place to keep in step with the queue;
+        ///   4. `BeginSlot`, clearing the recycled slot before a byte lands in
+        ///      it, and only when `Admit` handed one back;
+        ///   5. the block walk, decoding into that slot;
+        ///   6. the completeness test — see the next paragraph;
+        ///   7. `Commit`, only for a COMPLETE frame that has a slot, so `TryGet`
+        ///      can never hand a consumer a half-decoded frame under a tick that
+        ///      was never filled; and `RenderClock.OnSnapshot` beside it,
+        ///      because the clock's target is a maximum over frames that really
+        ///      landed and a frame that was not published did not land;
+        ///   8. `StalePolicy.OnFrameApplied`, last, because it is the one call
+        ///      whose argument depends on how the walk went.
+        ///
+        /// A FRAME IS COMPLETE ONLY IF THE WALK NEITHER FAILED NOR CAME UP
+        /// SHORT (fix-round 1, F-1), and BOTH halves of that are load-bearing.
+        /// `SnapshotReader`'s own doc hands this receiver the obligation in as
+        /// many words — a cut exactly on a block boundary parses as a shorter,
+        /// perfectly valid snapshot with `Failed` and `Truncated` both false,
+        /// so "no failure" is not "nothing missing" and the receiver has to
+        /// check that the kinds it requires actually arrived. All five kinds
+        /// are required, and that is the SENDER's fact rather than a choice
+        /// made here: `SnapshotAssembler` writes Players, Liveness, Mobs, Wave
+        /// and Events on every frame, empty or not, with its own comment giving
+        /// this exact reason. An incomplete frame is not committed, is not
+        /// shown to the clock, and is reported to `StalePolicy` as TRUNCATED —
+        /// which is the honest word for it even though the header bit is clear:
+        /// that bit means the SENDER dropped entities for room, while this
+        /// means the frame arrived without the blocks that would have carried
+        /// them, and the consequence is identical — absence proves nothing.
+        /// Reporting it as a clean applied frame is what would move Р149's
+        /// confirmation clock and start every doll fading at once.
         ///
         /// A FRAME WHOSE STATE IS REFUSED STILL DELIVERS ITS EVENTS, and that
         /// asymmetry is deliberate (spec §3.7's refinement of Р31): a packet
         /// that merely overtook another would otherwise swallow a death that
-        /// was never shown. Only `ForeignEpoch` and `FutureRejected` refuse a
-        /// frame whole.
+        /// was never shown. What `applyState` actually gates is narrower than
+        /// "the state": the blocks are decoded into the slot and the slot is
+        /// committed whatever it says, and the two calls that answer to it are
+        /// `StalePolicy.OnEntitySeen` and `OnFrameApplied` — the liveness facts,
+        /// which are monotonic maxima a reordered frame has nothing newer to
+        /// say about. Only `ForeignEpoch` and `FutureRejected` refuse a frame
+        /// whole.
         void ReadFrame(System.ReadOnlySpan<byte> source)
         {
             var reader = new SnapshotReader(source);
@@ -670,9 +819,11 @@ namespace Ring.Presentation
             bool applyState = _dedup.TryAcceptState(epoch, tick);
             if (slot != null) BeginSlot(slot, tick);
 
+            int kindsSeen = 0;
             while (reader.TryReadBlock(KnownBlockKinds, out byte kind,
                        out System.ReadOnlySpan<byte> payload))
             {
+                kindsSeen |= 1 << kind;
                 switch ((SnapshotBlockKind)kind)
                 {
                     case SnapshotBlockKind.Players:
@@ -703,14 +854,28 @@ namespace Ring.Presentation
                 }
             }
 
-            if (slot != null)
+            bool complete = !reader.Failed && (kindsSeen & RequiredBlockKinds) == RequiredBlockKinds;
+            if (!complete)
+            {
+                // Not counted, for the reason the header refusal above gives:
+                // `NetStats`' composition is closed and has no field an
+                // incomplete frame belongs in. One line per FRAME, never per
+                // block — see the receive-path allocation note on the scratch
+                // fields.
+                _nm.Log($"NetworkSimBackend: snapshot {tick} incomplete — failed={reader.Failed} "
+                    + $"truncated={reader.Truncated} kinds=0x{kindsSeen:X2} of "
+                    + $"0x{RequiredBlockKinds:X2}. The frame is not published and the render pair "
+                    + "keeps the moment it was already showing; the events this frame did carry "
+                    + "were accepted and stay accepted. Nothing on this side counts it.");
+            }
+            else if (slot != null)
             {
                 _snapshots.Commit(tick);
                 _clock.OnSnapshot(tick, epoch);
             }
 
             if (applyState)
-                _stale.OnFrameApplied(tick, (flags & SnapshotHeaderFlags.Truncated) != 0);
+                _stale.OnFrameApplied(tick, !complete || (flags & SnapshotHeaderFlags.Truncated) != 0);
         }
 
         /// Clears the reserved slot before a byte of this frame is decoded into
@@ -858,6 +1023,15 @@ namespace Ring.Presentation
         /// would put two derivations behind one key, and the value has to match
         /// exactly or the event is shown on the wrong frame. It means something
         /// ONLY when the call returned true.
+        ///
+        /// THE PER-RECORD REFUSALS ARE COUNTED AND REPORTED ONCE, FOR THE BLOCK
+        /// (fix-round 1, F-8). A record whose payload does not decode is
+        /// ordinary traffic on an untrusted path, and there can be up to
+        /// `NetConfig.SnapshotEventBudget` of them in one block, thirty times a
+        /// second; a line each would be a log flood and — because the line is
+        /// built before the logger's level filter sees it — garbage on the
+        /// receive path with it. One line per block says the same thing at
+        /// 1/16th to 1/128th the cost.
         void ReadEvents(ushort epoch, uint frameTick, System.ReadOnlySpan<byte> payload)
         {
             if (!SnapshotBlocks.TryReadEventsBlock(payload, in _cfg,
@@ -871,14 +1045,32 @@ namespace Ring.Presentation
                 LogBlockRefusal(SnapshotBlockKind.Events, error);
             }
 
+            int refusedRecords = 0;
+            SnapshotBlockError lastRefusal = SnapshotBlockError.None;
             for (int i = 0; i < count; i++)
             {
                 SnapshotBlocks.EventRecord record = _eventScratch[i];
                 if (!_dedup.TryAcceptEvent(epoch, frameTick, in record, out uint originTick))
                     continue;
-                if (!TryDecodeEvent(originTick, in record, payload, out SimEvent decoded)) continue;
+                if (!TryDecodeEvent(originTick, in record, payload, out SimEvent decoded,
+                        out SnapshotBlockError recordError))
+                {
+                    if (recordError != SnapshotBlockError.None)
+                    {
+                        refusedRecords++;
+                        lastRefusal = recordError;
+                    }
+                    continue;
+                }
                 EnqueueEvent(originTick, in record, in decoded);
             }
+
+            if (refusedRecords > 0)
+                _nm.Log($"NetworkSimBackend: {refusedRecords} of {count} event records refused — "
+                    + $"last {lastRefusal}. The rest of the frame is still walked; a refusal here "
+                    + "is ordinary traffic on an untrusted path (Р82), not a reason to abandon the "
+                    + "datagram. Records of a kind this build has never heard of are NOT among "
+                    + "these — that is Р29 forward compatibility and not a refusal at all.");
         }
 
         /// One wire event, turned into the `SimEvent` the whole Presentation
@@ -897,40 +1089,79 @@ namespace Ring.Presentation
         /// for a given shot and the audible variant's whole purpose is to be
         /// heard as a shot.
         ///
+        /// A KIND THIS BUILD DOES NOT MAP IS NOT A REFUSAL (Р29), AND IT IS
+        /// ANSWERED BEFORE THE PAYLOAD IS EVEN LOOKED AT (fix-round 1, F-8).
+        /// `SnapshotEvents.TryReadPayload` folds "I have never heard of this
+        /// kind" into the same `MalformedContent` it gives a known kind whose
+        /// bytes are wrong, so asking it first made a newer server's ordinary
+        /// forward compatibility indistinguishable from hostile input — and
+        /// logged it, per record. `IsMappedEventKind` below is asked first
+        /// instead, and `refusal` comes back `None` for that path: nothing
+        /// happened that anybody needs to hear about.
+        ///
         /// WHAT THE WIRE CANNOT GIVE BACK, named rather than guessed:
-        ///   * a `HitMob`/`HitPlayer` ending carries the ROUND's id and not the
-        ///     victim's, so `EntityId` stays 0 — `SimEvent.SecondaryEntityId`'s
-        ///     own doc establishes 0 as "none", and the round's id goes there,
-        ///     which is exactly the convention the simulation itself uses for
-        ///     these two kinds. The cost is that `GameFeelDirector`'s
-        ///     per-mob hit flash has no view to look up on a networked client;
-        ///     the round's own end still retires its tracer.
+        ///   * a `HitMob` ending carries the ROUND's id and not the victim's,
+        ///     so `EntityId` — the mob's id for `SimEventKind.ProjectileHit` —
+        ///     stays 0. 0 IS SAFE THERE and only there: entity ids are minted
+        ///     from a counter that starts at 1, so no mob can ever be 0. The
+        ///     round's id goes to `SecondaryEntityId`, which is the convention
+        ///     the simulation itself uses for this kind. The cost is that
+        ///     `GameFeelDirector`'s per-mob hit flash has no view to look up on
+        ///     a networked client; the round's own end still retires its tracer.
+        ///   * a `HitPlayer` ending is the SAME shortfall with a WORSE zero
+        ///     (fix-round 1, M-3 — the earlier text carried the reasoning above
+        ///     over to this branch, where it does not hold).
+        ///     `SimEventKind.ProjectileHitPlayer`'s `EntityId` is the victim's
+        ///     PLAYER SLOT, and slot 0 is a real seat — the same trap
+        ///     `LocalPlayerIndex`'s own doc names. So `EntityId` on this kind
+        ///     MUST NOT BE READ on a networked client: it is not "no victim",
+        ///     it is "seat 0", and the victim is simply not on the wire.
+        ///     `Amount` (the damage), `HitDir` (the round's travel direction)
+        ///     and `PlayerIndex` (the shooter) are missing for the same reason
+        ///     — the whole payload of a projectile ending is the round's id,
+        ///     the ending kind, the zone and the contact height.
         ///   * `StaminaDenied` carries no slot at all (it reaches its owner and
         ///     nobody else), so the local slot is the only honest answer.
         ///   * `PlayerSlideStarted` carries no direction, and `DashRicocheted`
         ///     carries the surface normal that the simulation puts in `HitDir`.
         ///   * a `ShotHeard` carries no direction either, so the fire angle
-        ///     `SimEvent.Amount` means for `ProjectileFired` reads zero. Its
-        ///     position has already been coarsened by the server (Task 20), and
-        ///     a client that draws a muzzle flash from it will draw one through
-        ///     a wall — the flash's own branch is Task 45's, and this is where
-        ///     it is written down.
+        ///     `SimEvent.Amount` means for `ProjectileFired` reads zero, and its
+        ///     position has already been coarsened by the server (Task 20).
+        ///
+        /// AND THAT COARSENED POSITION IS DRAWN TODAY — A DEFECT THIS TASK
+        /// CANNOT CLOSE FROM THIS SIDE (fix-round 1, F-3; the earlier text said
+        /// "the flash's own branch is Task 45's", which was false the day it
+        /// was written). The muzzle-flash view and the persistent-props
+        /// director are BOTH subscribed to the event fan-out now, and a
+        /// `ShotHeard` reaches both as an ordinary `ProjectileFired`: the flash
+        /// decides on `Kind` alone and bursts at angle 0, the casing decides on
+        /// `Kind` plus `Owner == Player` and drops a shell that game feel keeps
+        /// on the floor for the rest of the match — at a position the server
+        /// coarsened precisely so it would not give the shooter away. The
+        /// producer side has no third field to say "audible only" with: the
+        /// sound this event exists for is played by the audio director on the
+        /// same `Kind` plus `Owner == Player`, so any change that hides the
+        /// event from the first two hides it from the third as well. The fix
+        /// therefore belongs where the flash and the casing are ANCHORED, not
+        /// where the event is built — Task 45 moves both onto the weapon
+        /// model's muzzle, and a shooter nobody can see has no doll and no
+        /// barrel to fire from. Recorded here because here is where it shows.
         bool TryDecodeEvent(uint originTick, in SnapshotBlocks.EventRecord record,
-            System.ReadOnlySpan<byte> blockPayload, out SimEvent e)
+            System.ReadOnlySpan<byte> blockPayload, out SimEvent e,
+            out SnapshotBlockError refusal)
         {
             e = default;
+            refusal = SnapshotBlockError.None;
 
             var kind = (SnapshotEventKind)record.Kind;
+            if (!IsMappedEventKind(kind)) return false;
+
             System.ReadOnlySpan<byte> slice = blockPayload.Slice(record.PayloadOffset,
                 record.PayloadLength);
             if (!SnapshotEvents.TryReadPayload(kind, slice, in _cfg,
                     out SnapshotEventPayload p, out SnapshotBlockError error))
             {
-                // An unknown kind lands here too, and it is NOT an error (Р29):
-                // Task 27's own walk already skipped past its bytes correctly,
-                // and a receiver of an older build simply has nothing to show
-                // for it.
-                LogBlockRefusal(SnapshotBlockKind.Events, error);
+                refusal = error;
                 return false;
             }
 
@@ -984,6 +1215,13 @@ namespace Ring.Presentation
                             e.Zone = p.Zone;
                             break;
                         default:
+                            // Unreachable through `TryReadPayload`, which
+                            // refuses `None` and anything past `HitPlayer`
+                            // before this method ever sees `p` — so reaching
+                            // it means the catalog and this switch disagree
+                            // about the ending vocabulary, which is a defect
+                            // of this file and IS worth the line.
+                            refusal = SnapshotBlockError.MalformedContent;
                             return false;
                     }
                     break;
@@ -1055,11 +1293,55 @@ namespace Ring.Presentation
                     break;
 
                 default:
+                    // `IsMappedEventKind` above admitted a kind this switch
+                    // does not map: the two are one list seen twice, and this
+                    // is where they are caught disagreeing. Р29 skips are not
+                    // here — they never got past the predicate.
+                    refusal = SnapshotBlockError.MalformedContent;
                     return false;
             }
 
             RouteToGhosts(kind, in p);
             return true;
+        }
+
+        /// Whether the switch above has a `SimEvent` for this wire kind — the
+        /// Р29 frontier of THIS receiver (fix-round 1, F-8), and the one
+        /// question that tells an ordinary forward-compatibility skip from a
+        /// refusal worth a log line.
+        ///
+        /// IT IS THE SWITCH'S OWN CASE LIST, ASKED WITHOUT A PAYLOAD, and it is
+        /// written out rather than derived because both cheaper forms are
+        /// wrong. `SnapshotEvents`' equivalent is private to that class and
+        /// answers a DIFFERENT question — "can the catalog decode it" — which
+        /// happens to coincide today and need not tomorrow. Testing the byte
+        /// against the enum's last member would be that same question copied,
+        /// and it would start calling a kind this project adds to the catalog
+        /// but not to the switch a refusal, which is exactly the Р29 case. The
+        /// two lists are kept in step by the switch's `default` above, which
+        /// logs: a kind admitted here and unmapped there is a defect of this
+        /// file, and a defect should be loud.
+        static bool IsMappedEventKind(SnapshotEventKind kind)
+        {
+            switch (kind)
+            {
+                case SnapshotEventKind.ProjectileSpawned:
+                case SnapshotEventKind.ShotHeard:
+                case SnapshotEventKind.ProjectileEnded:
+                case SnapshotEventKind.MobSpawned:
+                case SnapshotEventKind.MobDied:
+                case SnapshotEventKind.PlayerDamaged:
+                case SnapshotEventKind.PlayerDied:
+                case SnapshotEventKind.PlayerDashed:
+                case SnapshotEventKind.PlayerSlideStarted:
+                case SnapshotEventKind.DashRicocheted:
+                case SnapshotEventKind.StaminaDenied:
+                case SnapshotEventKind.WaveStarted:
+                case SnapshotEventKind.WaveCleared:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         /// The two wire events the ghost registry answers to, and nothing else.
@@ -1074,6 +1356,25 @@ namespace Ring.Presentation
         /// caused here rather than merely tolerated. The end event needs no
         /// such gate: it is looked up by a server id this registry either holds
         /// or does not.
+        ///
+        /// THE ZERO TICK HANDED TO `Confirm` IS A DOMAIN GAP, NOT A LAZY
+        /// LITERAL (fix-round 1, M-6 — read the registry's body before reading
+        /// the parameter's name). `Confirm` does not read that argument at all:
+        /// it scans for a duplicate server id, then pairs the oldest
+        /// unconfirmed ghost, and touches no tick. Nothing ages by it — the age
+        /// of a record is measured from the BIRTH tick `TrySpawnFromPrediction`
+        /// stored, against the PREDICTED tick `Advance` is fed (Р67). And that
+        /// is exactly why the confirmation's own tick is not supplied from
+        /// here: the only tick this path has is the frame's WORLD tick, from
+        /// the wire, and the two counters have no fixed offset between them.
+        /// The registry's doc invites a future consumer (telemetry, latency
+        /// measurement) to start reading the parameter without a signature
+        /// change — and such a consumer would subtract it from a prediction
+        /// tick. A zero it can see is nothing; a world tick it cannot tell from
+        /// a prediction tick is a plausible wrong number. When a prediction-
+        /// domain tick becomes available on this path (it does when the
+        /// prediction seams open — see the class doc), that is the value to
+        /// pass, and nothing else.
         void RouteToGhosts(SnapshotEventKind kind, in SnapshotEventPayload p)
         {
             switch (kind)
@@ -1144,9 +1445,26 @@ namespace Ring.Presentation
             }
         }
 
+        /// EVERYTHING THIS CLASS OWNS THAT A NEW MATCH INVALIDATES, cleared the
+        /// moment the epoch it is keyed to changes. Two things qualify, and
+        /// they are here together because they are one fact: the pending pool
+        /// (with the frame's event window) and this backend's own readiness.
+        ///
         /// The pool has to be emptied exactly when `ClientEventQueue.Reset`
         /// empties the queue, or its slots leak — every event still waiting
         /// when a match ends never comes back to hand its slot over.
+        ///
+        /// `Ready` HAS TO GO WITH IT (fix-round 1, F-6). `ClientMatchReset`
+        /// empties the ring and stops the clock, so the next `Advance` resolves
+        /// no pair at all — and `_prev`/`_curr` are then, by
+        /// `ResolveRenderPair`'s own rule, left holding the last picture of the
+        /// match that ENDED, with `CurrentTick` naming its tick. Readiness is
+        /// this class's promise that what the pair holds is worth drawing, so
+        /// the promise ends where the match does. It is re-armed by the first
+        /// pair of the new epoch that actually resolves, which is the same
+        /// event that armed it the first time. The opening welcome takes this
+        /// branch too and costs nothing there: nothing has been drawn yet, so
+        /// the clear is a no-op on a flag that is already false.
         ///
         /// IT IS OBSERVED RATHER THAN CALLED, and deliberately so.
         /// `ClientMatchReset` is the ONE handler that clears the per-match
@@ -1156,8 +1474,11 @@ namespace Ring.Presentation
         /// closed task and would owe a test in `MatchLifecycleTests` besides.
         /// The epoch the link tracks moves on exactly the two messages that
         /// reset — the opening welcome and `MatchRestartedNet` — so watching it
-        /// is watching the same fact, one step removed.
-        void SyncPendingPoolEpoch()
+        /// is watching the same fact, one step removed. Both entry points of
+        /// this backend ask FIRST — the render frame and the broadcast handler
+        /// — so nothing is decoded into, or drawn out of, a state belonging to
+        /// an epoch that has already been left.
+        void SyncMatchEpoch()
         {
             if (_link == null) return;
             ushort epoch = _link.State.MatchEpoch;
@@ -1165,6 +1486,7 @@ namespace Ring.Presentation
             _poolEpoch = epoch;
             ReleaseEveryPendingSlot();
             _frameEventCount = 0;
+            _ready = false;
         }
 
         void ReleaseEveryPendingSlot()
@@ -1182,10 +1504,24 @@ namespace Ring.Presentation
         /// A MISSING HALF IS NOT A REASON TO SHOW NOTHING. With one half
         /// resident both ends of the blend are that one, so the picture holds
         /// still instead of interpolating toward a moment nobody sent; with
-        /// neither, the previous pair is left exactly as it was, which is the
-        /// freeze `StalePolicy` then has an opinion about. A hole in the ring
-        /// is ordinary at the 5% loss every playtest build must survive, and
-        /// the buffer exists to absorb it.
+        /// neither, the previous pair is left exactly as it was, and `false`
+        /// says so — which is what keeps the PHASE still as well (fix-round 1,
+        /// F-2: `Advance` latches it only on `true`, because a phase without
+        /// its pair blends two frozen poses by a coefficient that keeps
+        /// running, and a picture that oscillates across one tick of motion is
+        /// worse than one that waits). That wait is the freeze `StalePolicy`
+        /// then has an opinion about. A hole in the ring is ordinary at the 5%
+        /// loss every playtest build must survive, and the buffer exists to
+        /// absorb it.
+        ///
+        /// COLLAPSING THE PAIR INSTEAD — copying `_curr` over `_prev` so the
+        /// blend degenerates — was the other way to make the doc true, and it
+        /// is the worse one on the consumers' own terms: every one of them
+        /// interpolates (the facade's own player position, the camera rig,
+        /// the mob and projectile registries), so a collapse would jump the
+        /// whole picture forward by the remainder of a tick on the first
+        /// starved frame and hold it there, where holding the phase moves
+        /// nothing at all. It would also make `_prev` claim `_curr`'s tick.
         bool ResolveRenderPair(int renderTick)
         {
             if (renderTick < 0) return false;
@@ -1263,6 +1599,19 @@ namespace Ring.Presentation
         /// harmless only because nothing reads the render pair before `Ready`,
         /// and `Ready` cannot be true before a frame of the tracked epoch has
         /// been decoded.
+        ///
+        /// IT IS WITHIN THE ROSTER, AND NOT BECAUSE THIS LINE CHECKS IT
+        /// (fix-round 1, F-5). `ClientLinkState.OnWelcome` is handed this
+        /// match's player cap and refuses a welcome naming a seat outside it,
+        /// so the byte is stopped where it ENTERS the process rather than
+        /// patched where it lands. That placement is the point: `BeginSlot`
+        /// copies this number into `RenderSnapshot.LocalPlayerIndex`, and
+        /// `RenderSnapshot.Player` indexes `Players` by it with no guard —
+        /// so does everything the facade builds on that property, every frame,
+        /// in `Update` rather than in a broadcast handler. A guard here would
+        /// have to invent a substitute seat, which is a wrong picture in place
+        /// of an exception; a refusal there means the client never joins a
+        /// match whose seat it cannot occupy, and says why in the log.
         byte LocalPlayerIndex => _link != null ? _link.State.PlayerIndex : (byte)0;
 
         /// `GhostProjectiles`' registry-hygiene ceiling, in ticks — see
