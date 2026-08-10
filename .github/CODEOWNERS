@@ -4,6 +4,7 @@
 # Авторитетная симуляция, сеть, серверный bootstrap, упаковка game-сервера
 /client/Assets/Scripts/Simulation/ @AlexanderBrolin
 /client/Assets/Scripts/Networking/ @AlexanderBrolin
+/client/Assets/Scripts/PresentationNet/ @AlexanderBrolin
 /client/Assets/Scripts/Server/     @AlexanderBrolin
 /client/Assets/Tests/              @AlexanderBrolin
 /client/docker/                    @AlexanderBrolin

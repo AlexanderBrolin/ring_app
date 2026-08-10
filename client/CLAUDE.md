@@ -25,6 +25,12 @@ game feel). Server-трек (владелец проекта) работает �
 
 - `Assets/Scripts/Simulation/` (включая Core, Movement, Combat, Abilities, AI, Objectives);
 - `Assets/Scripts/Networking/`, `Assets/Scripts/Server/`, `docker/`, `../server/`;
+- `Assets/Scripts/PresentationNet/` — сетевой бэкенд презентации (сборка
+  `Ring.Presentation.Net`): единственная клиентская сборка, которой открыт
+  FishNet. Заведена отдельной ровно ради этой границы — `Assets/Scripts/
+  Presentation/` сетевых зависимостей не имеет и иметь не должен, поэтому
+  ссылки на FishNet или `Ring.Networking` в `Presentation.asmdef` не
+  добавляются: нужен сетевой доступ — он живёт здесь;
 - `Assets/Data/` (ScriptableObjects баланса) — правки возможны, но ТОЛЬКО отдельным PR
   с ревью владельца, не вперемешку с визуальными изменениями.
 
