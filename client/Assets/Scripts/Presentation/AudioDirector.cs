@@ -75,7 +75,7 @@ namespace Ring.Presentation
 
         // Task 28 (ImmediateMuzzleFeedback): holds a predicted shot-sound play
         // until either the matching real ProjectileFired event consumes it
-        // (HandleEvent) or SimulationRunner.ImmediatePredictionTtlSeconds
+        // (HandleEvent) or SimulationRunner.ImmediatePredictionWindowSeconds
         // elapses unconfirmed — see the class doc above and MuzzleFlashView's
         // for the full rationale. Stage 2 Task 45b (bd app-id9) replaced the
         // `bool`/`float` pair here and its twin in MuzzleFlashView with ONE
@@ -172,11 +172,11 @@ namespace Ring.Presentation
         void Update()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
-            // Stage 2 Task 45b: one predicted sound per SHOT is the rising edge
-            // of the shared gate, not "is something already pending" — see
-            // `ImmediatePredictionLatch`. Evaluated every frame this method
+            // Stage 2 Task 45b: one predicted sound per SHOT — the rising edge
+            // of the shared gate AND nothing already waiting for its event (see
+            // `ImmediatePredictionLatch`). Evaluated every frame this method
             // reaches, because the edge is a function of the previous frame.
-            if (!_latch.RisingEdge(_runner.WouldFireThisFrame)) return;
+            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime)) return;
 
             PlayerState player = _runner.RenderCurr.Player;
             float2 aimDir = player.AimPoint - player.Pos;
@@ -186,11 +186,17 @@ namespace Ring.Presentation
             float2 muzzlePos = player.Pos + dir * muzzleOffset;
 
             if (PlayClip(_shotClip, SimEventKind.ProjectileFired, muzzlePos))
-                _latch.Arm(Time.unscaledTime);
+                _latch.Arm(Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds);
             // PlayClip returning false (MinSfxInterval/VoicesPerSfx gated the
             // predicted attempt out) leaves the latch unarmed — the real event
             // still gets its own ordinary chance at HandleEvent below instead of
             // being wrongly suppressed for a sound that never actually played.
+            // Fix-round 1 (G-4): the EDGE is spent either way, and with a single
+            // outstanding prediction that costs nothing — an unarmed latch has
+            // no record for the arriving event to consume, so the shot is heard
+            // once, from the event. It could only have lost a sound while the
+            // latch held a QUEUE of predictions, where one shot's event could
+            // consume a record another shot had left behind.
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer

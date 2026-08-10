@@ -26,12 +26,13 @@ namespace Ring.Presentation
     /// order — every proxy collider in the arena, the player dolls' own included
     /// since Stage 2 Task 45a, lives on an object THAT class positions) plus an
     /// explicit `Physics.SyncTransforms()`, so the proxy raycast sees this frame's
-    /// positions, not last frame's stale ones. `[DefaultExecutionOrder]` pins this
-    /// class's own `LateUpdate` to run after those default-order writers, which in
-    /// turn means every OTHER default-order reader of `CurrentAimSimPos`/
-    /// `CurrentAimHeight` (`ViewRegistry`, `CrosshairView`, `CameraRig` — all read
-    /// in their own `LateUpdate`) sees the value cached last frame: a deliberate,
-    /// one-render-frame-old value, imperceptible at any playable framerate.
+    /// positions, not last frame's stale ones. `[DefaultExecutionOrder(100)]` pins
+    /// this class's own `LateUpdate` behind every one of those writers — `ViewRegistry`
+    /// moved to −10 in Stage 2 Task 45b's fix-round 1 and is still far ahead of this
+    /// number — which in turn means every OTHER reader of `CurrentAimSimPos`/
+    /// `CurrentAimHeight` (`ViewRegistry`, `CrosshairView`, `CameraRig`, `AimRayView`
+    /// — all read in their own `LateUpdate`, none of them pinned this late) sees the
+    /// value cached last frame: a deliberate, one-render-frame-old value.
     [DefaultExecutionOrder(100)]
     public sealed class AimProvider : MonoBehaviour
     {

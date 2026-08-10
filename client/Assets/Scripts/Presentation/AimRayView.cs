@@ -53,6 +53,16 @@ namespace Ring.Presentation
     /// number. No doll (the opening frames, or after this player dies) means no
     /// ray, switched off exactly the way `!Ready`/`!AimHeld` already switch it
     /// off. The ray's far END is untouched by that task (`app-bej`).
+    ///
+    /// `[DefaultExecutionOrder(10)]` IS WHAT MAKES THAT ORIGIN THIS FRAME'S
+    /// (fix-round 1, G-1). The socket rides a hand bone the Animator writes in
+    /// `PreLateUpdate`, on a doll root `ViewRegistry` (pinned at −10) moves in
+    /// its own `LateUpdate`; this class reads it in `LateUpdate` too, and Unity
+    /// orders equal-order `LateUpdate`s arbitrarily — with no
+    /// `ProjectSettings/MonoManager.asset` in the project, the ray's start could
+    /// otherwise come from this frame or the previous one, and which of the two
+    /// could differ between runs.
+    [DefaultExecutionOrder(10)]
     [RequireComponent(typeof(LineRenderer))]
     public sealed class AimRayView : MonoBehaviour
     {
@@ -93,9 +103,12 @@ namespace Ring.Presentation
             // Г5 review (Important): cold-start guard, same shape as
             // AimProvider's own QA18 pattern — the backend has nothing to show
             // on the very first frame(s) before SimulationRunner.Awake's
-            // RestartNewSeed completes (or a scene missing the wiring), and
-            // RenderMuzzleHeight below reads the render pair and Config.
+            // RestartNewSeed completes (or a scene missing the wiring).
             // Task 43: was `World == null`; `Ready` is the successor test.
+            // Fix-round 1 (G-6): the guard's REASON changed with Task 45b and
+            // this comment kept the old one — `RenderMuzzleHeight` is read
+            // nowhere below any more. What needs the guard now is
+            // `TryGetMuzzle`, which reads the render pair for the local slot.
             if (_runner == null || !_runner.Ready)
             {
                 _line.enabled = false;

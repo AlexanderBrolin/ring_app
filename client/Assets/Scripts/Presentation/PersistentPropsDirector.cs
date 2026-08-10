@@ -21,19 +21,26 @@ namespace Ring.Presentation
     /// гильзы/трупы от позиций событий, никаких привязок к мешам вьюх" — a
     /// future model swap changes nothing here).
     ///
-    /// THE SHELL CASING IS NOW THE ONE EXCEPTION, BY A LATER DECISION OF THE
-    /// SAME OWNER (2026-08-10, bd `app-e2n`; Stage 2 Task 45b). Brass belongs to
-    /// the WEAPON, not to the shot: the rule above put it at the simulation's
-    /// muzzle point, and the owner's smoke test found it landing in front of the
-    /// pistol rather than beside it. `SpawnCasing` therefore asks
-    /// `ViewRegistry.TryGetPlayerView` for the shooter's doll and spawns from
-    /// its ejection-port socket — and gets a second property for free that the
-    /// rule above could not give it: a shot whose position the server coarsened
-    /// on purpose (`ShotHeard`, from a shooter this client cannot see) leaves no
-    /// shell at all, because there is no doll to ask (F-3, `app-aq9`). Every
-    /// other cosmetic here — decals, sparks, corpses, gibs, dash glows — still
-    /// follows the rule verbatim, and none of them has a model-mounted origin to
-    /// move to.
+    /// THE OWNER SPLIT THAT RULE IN TWO ON 2026-08-10, and the shell casing
+    /// falls on the other side of the split (bd `app-e2n`; Stage 2 Task 45b, the
+    /// wording is the owner's own, recorded in fix-round 1): **the TRACE of an
+    /// event** — the spark, the decal, the corpse, the dash mark — is born at
+    /// the point of the event; **the EMISSION of a weapon** — the muzzle flash,
+    /// the brass, the start of the aim ray — is born from the weapon's model,
+    /// because that is physically where it leaves. This is not an exception to
+    /// the rule above and not its repeal: it is which of the two kinds each
+    /// cosmetic is. Everything in this class except the casing is a trace, and
+    /// every one of them still takes its position from the event verbatim.
+    ///
+    /// For the casing that means `SpawnCasing` asks `ViewRegistry.
+    /// TryGetPlayerView` for the shooter's doll and spawns from its
+    /// ejection-port socket — the owner's smoke test found brass landing in
+    /// FRONT of the pistol, because the simulation's muzzle point is a point
+    /// ahead of the hero rather than a part of the gun. It also gets a property
+    /// the trace rule could not give it: a shot whose position the server
+    /// coarsened on purpose (`ShotHeard`, from a shooter this client cannot see)
+    /// leaves no shell at all, because there is no doll to ask (F-3,
+    /// `app-aq9`).
     ///
     /// Б1 milestone fix-wave 2 (app-9av, owner request) adds a fourth
     /// `RingBuffer&lt;T&gt;` kind, `DashGlowView` — a glowing floor mark at the
@@ -132,6 +139,7 @@ namespace Ring.Presentation
     /// the normal analytically against `ArenaConfig.Obstacles`/the ring wall
     /// the way the pre-Task-21 `ComputeBlockNormal` had to (back when the
     /// event carried neither a normal nor a height).
+    [DefaultExecutionOrder(10)]
     public sealed class PersistentPropsDirector : MonoBehaviour
     {
         /// User layer 9 — "Casings" in `ProjectSettings/TagManager.asset`
@@ -180,6 +188,16 @@ namespace Ring.Presentation
         // class doc already gives for DeathBurstPoolCapacity above.
         const int SlideDustPoolCapacity = 16;
 
+        // Stage 2 Task 45b fix-round 1 (G-1): shots recorded by the event
+        // fan-out and turned into brass in `LateUpdate`, once `ViewRegistry`
+        // (pinned at -10, this class at 10) has placed the dolls this frame's
+        // snapshot describes — an ejection port is a child of a hand bone on a
+        // root that moves every frame, so at fan-out time it still stands where
+        // the PREVIOUS frame left it. Same sizing reasoning as
+        // `MuzzleFlashView`'s own buffer, and the same drop-rather-than-grow
+        // rule on overflow.
+        const int PendingCasingCapacity = 16;
+
         // T24-2 (app-nco vision, owner-approved Blender split): fraction of
         // kills that get the "mech explodes into every part" variant instead
         // of a whole corpse (+ at most one head gib on a headshot). Kept a
@@ -212,6 +230,9 @@ namespace Ring.Presentation
         [SerializeField] ParticleSystem _blockSparkPrefab;
         [SerializeField] ParticleSystem _deathBurstPrefab;
         [SerializeField] ParticleSystem _slideDustPrefab; // Task 22
+
+        readonly int[] _pendingCasingSlots = new int[PendingCasingCapacity];
+        int _pendingCasingCount;
 
         RingBuffer<CasingView> _casings;
         RingBuffer<DecalProjector> _decals;
@@ -268,6 +289,11 @@ namespace Ring.Presentation
             _corpses.Clear(corpse => corpse.gameObject.SetActive(false));
             _dashGlows.Clear(glow => glow.gameObject.SetActive(false));
             _gibs.Clear(gib => gib.gameObject.SetActive(false)); // Task 24 (D10)
+            // Fix-round 1 (G-1): a shot recorded this frame names a slot of the
+            // match that just ended — `ViewRegistry` has handed that doll back
+            // to its pool by the time this returns, so the record can only
+            // describe somebody else.
+            _pendingCasingCount = 0;
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's
@@ -282,7 +308,7 @@ namespace Ring.Presentation
                     // Gunner's gunfire from spawning the PLAYER's shell casing at
                     // its own muzzle, which is what an owner-blind event let
                     // through before this field existed.
-                    if (e.Owner == ProjectileOwner.Player) SpawnCasing(in e);
+                    if (e.Owner == ProjectileOwner.Player) RecordCasing(in e);
                     break;
                 case SimEventKind.ProjectileHit:
                     SpawnHitSpark(in e);
@@ -337,14 +363,52 @@ namespace Ring.Presentation
         /// the rest of the match: a permanent marker over a player this client
         /// was never allowed to locate. The `Owner == Player` gate in
         /// `HandleEvent` above is unchanged — a mob's round still has no brass.
-        void SpawnCasing(in SimEvent e)
+        ///
+        /// Fix-round 1 (G-1): the event only RECORDS the shooter's slot. The
+        /// port is a child of a hand bone on a doll `ViewRegistry` has not yet
+        /// moved this frame, so reading its world pose here would spawn the
+        /// shell off the previous frame's gun.
+        void RecordCasing(in SimEvent e)
         {
-            if (!_viewRegistry.TryGetPlayerView(e.PlayerIndex, out PlayerView doll)) return;
+            if (_pendingCasingCount == PendingCasingCapacity) return;
+            _pendingCasingSlots[_pendingCasingCount++] = e.PlayerIndex;
+        }
+
+        /// The frame's recorded shots, turned into brass now that every doll
+        /// stands where this frame's snapshot puts it (fix-round 1, G-1).
+        void LateUpdate()
+        {
+            for (int i = 0; i < _pendingCasingCount; i++) SpawnCasing(_pendingCasingSlots[i]);
+            _pendingCasingCount = 0;
+        }
+
+        /// THE EJECTION DIRECTION IS HORIZONTAL, AND ONLY ITS HEADING COMES FROM
+        /// THE MODEL (fix-round 1, G-5). The port's forward axis is a full 3D
+        /// vector on a gun that hangs off a hand bone at a composite angle
+        /// (`GameFeelConfig.GunLocalEuler` is `{344.7, 97.6, 82.9}` in the
+        /// shipped asset), so using it whole would put an arbitrary vertical
+        /// component into the impulse — and the shipped `CasingImpulseUp` pair
+        /// (0.2/0.5 m/s) is small enough that a downward component of the eject
+        /// speed (0.8–1.4 m/s) would simply drive the shell into the floor.
+        /// Flattening it keeps what the socket is FOR — "which way, sideways,
+        /// does this weapon throw brass" — and leaves the height where the owner
+        /// tunes it, in the SO, exactly as the pre-Task-45b formula did. A port
+        /// aimed straight up or down has no heading to give; the shell then
+        /// simply drops, which is visible and tunable rather than silently
+        /// normalized into a random direction.
+        void SpawnCasing(int slot)
+        {
+            if (!_viewRegistry.TryGetPlayerView(slot, out PlayerView doll)) return;
             Transform port = doll.EjectSocket;
             if (port == null) return;
 
+            Vector3 sideways = port.forward;
+            sideways.y = 0f;
+            float sidewaysSqr = sideways.sqrMagnitude;
+            sideways = sidewaysSqr > 1e-6f ? sideways / Mathf.Sqrt(sidewaysSqr) : Vector3.zero;
+
             Vector3 impulse =
-                port.forward * Random.Range(_gameFeel.CasingEjectSpeedMin, _gameFeel.CasingEjectSpeedMax)
+                sideways * Random.Range(_gameFeel.CasingEjectSpeedMin, _gameFeel.CasingEjectSpeedMax)
                 + Vector3.up * Random.Range(_gameFeel.CasingImpulseUpMin, _gameFeel.CasingImpulseUpMax);
             Vector3 torque = Random.insideUnitSphere * _gameFeel.CasingTorqueScale;
 

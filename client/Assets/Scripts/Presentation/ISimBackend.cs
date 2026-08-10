@@ -91,6 +91,27 @@ namespace Ring.Presentation
         /// as `Curr.Tick` for a backend whose snapshots arrive late.
         int CurrentTick { get; }
 
+        /// How long a shown-but-unconfirmed ImmediateMuzzleFeedback prediction
+        /// may wait for the event that confirms it (Stage 2 Task 45b fix-round
+        /// 1) — `ImmediatePredictionLatch`'s window, and the answer belongs
+        /// HERE because it is a property of how fast a backend's own events come
+        /// back, which is the one thing the two implementations differ in by
+        /// orders of magnitude: the local one flushes a tick's events inside the
+        /// same `SimulationRunner.Update` that produced them, while a networked
+        /// one holds every event until the render clock has waited out the
+        /// interpolation buffer. Both consumers read this ONE number through the
+        /// facade; neither keeps a window of its own.
+        ///
+        /// THE DEFAULT IS THE PATIENT ONE, deliberately. A backend that says
+        /// nothing is assumed to confirm slowly, because the two mistakes are
+        /// not symmetric: too long a window costs one round its PREDICTED
+        /// feedback (it is still shown, with its event), while too short a
+        /// window shows one round TWICE — which is the defect `app-id9` was
+        /// opened about. It is also what lets this member be added without
+        /// touching an implementation in an assembly this task may not edit.
+        float ImmediatePredictionWindowSeconds
+            => ImmediatePredictionLatch.BufferedWindowSeconds;
+
         /// The tick double buffer every interpolating view reads through the
         /// facade's freeze layer. Recycled objects, not values — a backend swaps
         /// the pair and overwrites the older half on every tick, so anything

@@ -34,7 +34,10 @@ namespace Ring.Presentation
     /// makes at most one burst be predicted per SHOT, not one per render frame
     /// while `RenderCurr` is stale between two ticks, and what makes the
     /// matching `ProjectileFired` in `HandleEvent` suppress its own burst rather
-    /// than double it. Across a
+    /// than double it. Its fix-round-1 shape holds ONE unconfirmed prediction at
+    /// a time, which is what keeps a reconciliation from showing one round
+    /// twice — that class's own doc has the mechanism and what the choice
+    /// costs. Across a
     /// held burst that is one prediction per ROUND, not one per press: Task 43
     /// put this gate on `WeaponSystem.WouldFireThisTick`, whose cooldown term is
     /// `(FireCooldown - TickDt) <= 0f`, and `WeaponSystem.Advance` leaves
@@ -46,10 +49,13 @@ namespace Ring.Presentation
     /// `FireCooldown <= 0f` against that same always-positive value, so it was
     /// true practically only for the FIRST shot after a press/dash/start — that
     /// is what the old "ONCE per press" wording here described, and it no longer
-    /// holds. The timeout is `SimulationRunner.ImmediatePredictionTtlSeconds`, a
-    /// single shared constant (fix-round review #3) so this component and
-    /// `AudioDirector` can never drift onto two different windows — and since
-    /// Stage 2 Task 45b they share the mechanism itself, not merely the number.
+    /// holds. The timeout is `SimulationRunner.ImmediatePredictionWindowSeconds`,
+    /// one number for this component and `AudioDirector` (fix-round review #3's
+    /// rule, kept) — since Stage 2 Task 45b they share the mechanism itself, and
+    /// since its fix-round 1 the number comes from the BACKEND, because a
+    /// prediction is confirmed in the next frame on one of them and only after
+    /// the wire and the interpolation buffer on the other
+    /// (`ISimBackend.ImmediatePredictionWindowSeconds`).
     /// A false prediction (e.g. `CanFireWhileDash=false` and a dash starts the
     /// same frame, or the player releases Fire between the predicting frame and
     /// the confirming tick) is never confirmed and simply times out: one extra
@@ -102,9 +108,43 @@ namespace Ring.Presentation
     /// kind, so `e.Amount` reads 0 and the cone points due east while the burst
     /// itself sits correctly on their barrel. That is a smaller lie than the
     /// position was, and it is the shooter's cone, not their location.
+    ///
+    /// EVERY BURST OFF A DOLL IS DRAWN IN `LateUpdate`, AND THAT IS AN ORDERING
+    /// FACT, NOT A STYLE (fix-round 1, G-1). A doll's gun rides a hand bone the
+    /// Animator writes in `PreLateUpdate`, on a root `ViewRegistry` positions in
+    /// its own `LateUpdate` — so the socket's world pose is only this frame's
+    /// after that class has run. The event fan-out that used to draw these
+    /// bursts arrives in the `Update` phase (`SimulationRunner` raises
+    /// `TicksFlushed` inside its own `Update`, pinned at −50), which is BEFORE
+    /// either write: bursting there put this frame's flash on last frame's
+    /// barrel, a lag that reads as a lead on a running or turning collector and
+    /// which did not exist before Task 45b, when flash and doll came out of the
+    /// same `RenderCurr`. So a player-owned event now only RECORDS its shot
+    /// (`HandleEvent`), and `LateUpdate` draws it after `ViewRegistry` — this
+    /// class is pinned at `[DefaultExecutionOrder(10)]`, that one at −10, which
+    /// is what makes "after" a guarantee rather than a hope (Unity orders
+    /// equal-order `LateUpdate`s arbitrarily and this project ships no
+    /// `ProjectSettings/MonoManager.asset`).
+    /// A MOB's burst is drawn on the spot, still in the fan-out: it is placed
+    /// from the event's own position and there is no transform for it to wait
+    /// on. The PREDICTED burst moves to `LateUpdate` with the rest and stays in
+    /// the frame the player pressed Fire — the same frame, a later phase of it,
+    /// which is what Task 28's game feel asks for.
+    [DefaultExecutionOrder(10)]
     public sealed class MuzzleFlashView : MonoBehaviour
     {
         const int BurstCount = 8;
+
+        /// Player-owned bursts recorded in the fan-out and drawn in
+        /// `LateUpdate` (class doc). Sized well past what one flush can carry —
+        /// a flush holds the events of every tick the frame advanced, and each
+        /// tick can fire at most one round per player (`WeaponSystem`'s own
+        /// cooldown), so filling this would take a five-tick catch-up with three
+        /// players firing every tick of it. A record that would overflow is
+        /// dropped rather than allowed to grow the buffer: the cost is one
+        /// missing eight-particle burst in a frame that was already stuttering,
+        /// and the alternative is an allocation during a firefight.
+        const int PendingCapacity = 16;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
@@ -115,6 +155,18 @@ namespace Ring.Presentation
 
         ParticleSystem _particles;
         readonly ImmediatePredictionLatch _latch = new ImmediatePredictionLatch();
+        readonly PendingBurst[] _pending = new PendingBurst[PendingCapacity];
+        int _pendingCount;
+
+        /// One recorded shot: whose doll to fire it from, and which way its cone
+        /// points. The direction is resolved at EVENT time on purpose — it comes
+        /// off `SimEvent.Amount`, which is tick-exact, and nothing about it
+        /// improves by waiting for the dolls to move.
+        struct PendingBurst
+        {
+            public int Slot;
+            public Vector3 Dir;
+        }
 
         void Awake() => _particles = GetComponent<ParticleSystem>();
 
@@ -129,21 +181,46 @@ namespace Ring.Presentation
         /// used to approximate here — is no longer read by this class at all.
         ///
         /// THE ONE-PER-SHOT GATE IS THE RISING EDGE OF `WouldFireThisFrame`
-        /// (`ImmediatePredictionLatch.RisingEdge`), evaluated on EVERY frame
+        /// (`ImmediatePredictionLatch.ShouldPredict`), evaluated on EVERY frame
         /// this method reaches, edge or not — it is a function of the previous
         /// frame's answer. It replaced "is the latch already armed?", which
         /// silently doubled as the matching test and could not tell a second
         /// frame of the same shot from a second shot whose predecessor was
         /// still unconfirmed (bd `app-id9`).
-        void Update()
+        ///
+        /// Fix-round 1 (G-1): drawn in `LateUpdate`, after the recorded
+        /// authoritative bursts and after `ViewRegistry` has placed the dolls —
+        /// still the frame the player pressed Fire (class doc).
+        void LateUpdate()
+        {
+            FlushRecordedBursts();
+            PredictBurst();
+        }
+
+        /// The shots recorded by `HandleEvent` this frame, now that every doll
+        /// stands where this frame's snapshot says. A record whose shooter has
+        /// no doll by the time the buffer is drained draws nothing, exactly as
+        /// it would have at event time — the doll is what F-3 turns on.
+        void FlushRecordedBursts()
+        {
+            for (int i = 0; i < _pendingCount; i++)
+            {
+                if (!TryGetMuzzle(_pending[i].Slot, out Vector3 muzzle)) continue;
+                EmitBurst(muzzle, _pending[i].Dir);
+            }
+            _pendingCount = 0;
+        }
+
+        void PredictBurst()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
-            if (!_latch.RisingEdge(_runner.WouldFireThisFrame)) return;
+            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime)) return;
 
             RenderSnapshot curr = _runner.RenderCurr;
             // No doll yet (the opening frames of a match), or none any more
             // (this player is dead) — nothing to fire from, and nowhere else to
-            // fire from either (class doc).
+            // fire from either (class doc). The latch is left unarmed, so the
+            // real event will show this shot itself.
             if (!TryGetMuzzle(curr.LocalPlayerIndex, out Vector3 muzzle)) return;
 
             PlayerState player = curr.Player;
@@ -152,7 +229,7 @@ namespace Ring.Presentation
             dir.Normalize();
 
             EmitBurst(muzzle, dir);
-            _latch.Arm(Time.unscaledTime);
+            _latch.Arm(Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds);
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer
@@ -201,9 +278,11 @@ namespace Ring.Presentation
             }
 
             // The shooter's own barrel, or nothing at all (class doc — this is
-            // where F-3 closes).
-            if (!TryGetMuzzle(e.PlayerIndex, out Vector3 muzzle)) return;
-            EmitBurst(muzzle, dir);
+            // where F-3 closes). Recorded, not drawn: the barrel is not where
+            // this frame says it is until `ViewRegistry` has run (class doc,
+            // fix-round 1 G-1).
+            if (_pendingCount == PendingCapacity) return;
+            _pending[_pendingCount++] = new PendingBurst { Slot = e.PlayerIndex, Dir = dir };
         }
 
         /// The world point a player's flash leaves from (Stage 2 Task 45b): the

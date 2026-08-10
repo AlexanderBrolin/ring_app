@@ -91,10 +91,14 @@ namespace Ring.Presentation
         {
             // Г5 review (Minor, same lens as AimRayView's Important — QA18
             // pattern): UpdateCone below reads _runner.Config and the render
-            // pair, same as RenderMuzzleHeight does for AimRayView — hide the
+            // pair, the same pair AimRayView's own guard protects — hide the
             // cone and skip it until the backend has something to show, rather
             // than crash on the cold start. Once running, behavior below is
             // unchanged. Task 43: was `World == null`, now `Ready`.
+            // (Stage 2 Task 45b fix-round 1, G-6: this comment used to name
+            // `RenderMuzzleHeight` as what AimRayView reads. That task moved
+            // that view onto the doll's muzzle socket, and nothing reads the
+            // property any more — the guard, and the reason for it, stayed.)
             if (_runner == null || !_runner.Ready)
             {
                 _cone.enabled = false;

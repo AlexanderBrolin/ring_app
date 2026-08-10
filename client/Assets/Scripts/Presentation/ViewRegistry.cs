@@ -45,7 +45,9 @@ namespace Ring.Presentation
     /// fix-round 1; owner's own wording: "труп игрока = труп моба — где упал,
     /// там и лежит"). A slot gets a live doll for exactly as long as
     /// `Players[slot].Alive` — one rule, the same one that retires a mob whose
-    /// Id left `Curr`. `PlayerDied` DETACHES that doll: it leaves
+    /// Id left `Curr`. `PlayerDied` DETACHES that doll — **where it arrives in
+    /// time to, which on the networked backend is never; see the two paragraphs
+    /// below** — it leaves
     /// `_activePlayers` for `_corpses`, freeing the slot, and from that moment
     /// it is never `Sync`ed and never repositioned again. That is what makes it
     /// a corpse — the snapshot can no longer move it — and it is the whole fix
@@ -62,9 +64,10 @@ namespace Ring.Presentation
     /// the mistake is highest.
     ///
     /// ON THE NETWORKED BACKEND NO DEATH LEAVES A CORPSE AT ALL — not merely
-    /// the ones this client did not watch (Stage 2 Task 45b corrected the two
-    /// paragraphs that used to claim otherwise; the mechanism is `app-2rf`, P1,
-    /// and Task 47 is where it is closed). THE PICTURE LEADS THE EVENTS BY A
+    /// the ones this client did not watch (Stage 2 Task 45b rewrote the
+    /// paragraph that used to claim otherwise and its fix-round 1 qualified the
+    /// detach sentence above; the mechanism is `app-2rf`, P1, and Task 47 is
+    /// where it is closed). THE PICTURE LEADS THE EVENTS BY A
     /// TICK, by that backend's own construction: `NetworkSimBackend.
     /// ResolveRenderPair` copies the snapshot at `renderTick + 1` into `Curr`,
     /// while `ClientEventQueue.TryDequeue` refuses to hand out any event whose
@@ -76,6 +79,21 @@ namespace Ring.Presentation
     /// corpse, not the position: a retired doll is simply gone, never left
     /// standing at the arena origin.
     ///
+    /// IT POSITIONS EVERY DOLL BEFORE ANYTHING READS ONE (Stage 2 Task 45b
+    /// fix-round 1, G-1) — hence `[DefaultExecutionOrder(-10)]` on this class.
+    /// Three views now take a world point off a doll's gun in their own
+    /// `LateUpdate` (`MuzzleFlashView`, `PersistentPropsDirector`,
+    /// `AimRayView`, all pinned at 10), and the socket's world pose is only
+    /// this frame's after two writes have happened: the Animator's, which puts
+    /// the hand bone in place during `PreLateUpdate`, and this class's, which
+    /// puts the doll's root where the snapshot says. Unity orders `LateUpdate`
+    /// among equal-order scripts arbitrarily and this project ships no
+    /// `ProjectSettings/MonoManager.asset`, so before the two pins the ray's
+    /// origin could come from this frame or the previous one depending on the
+    /// run. The number is negative rather than zero so that ordinary
+    /// default-order readers (`CameraRig`, `CrosshairView`, `HudController`)
+    /// keep seeing this frame's dolls without needing a pin of their own.
+    ///
     /// ON THE LOCAL BACKEND THE MECHANISM ABOVE IS EXACTLY AS DESCRIBED,
     /// because there the tick's events are flushed in the same `Update` that
     /// produced the tick and `Curr` IS that tick — `PlayerDied` therefore
@@ -83,6 +101,7 @@ namespace Ring.Presentation
     /// quiet, which is the ordering the whole corpse path was written against.
     /// Nothing here branches on the backend; the difference is entirely in when
     /// the two facts arrive.
+    [DefaultExecutionOrder(-10)]
     public sealed class ViewRegistry : MonoBehaviour
     {
         // Mech pivots sit at the feet (Task 10, assets phase B) — the old

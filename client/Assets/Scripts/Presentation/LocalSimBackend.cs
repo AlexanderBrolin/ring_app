@@ -35,6 +35,17 @@ namespace Ring.Presentation
 
         public int CurrentTick => _world.CurrentTick;
 
+        /// The short window (Stage 2 Task 45b fix-round 1): this backend
+        /// advances the tick and flushes its events inside the facade's own
+        /// `Update`, which is pinned ahead of every view, so a prediction made
+        /// in one frame is confirmed in the next one. Taking the interface's
+        /// patient default here would leave a prediction that will never be
+        /// confirmed blocking the next round's prediction ten times longer than
+        /// this backend can possibly need — and solo play is where every
+        /// playtest before milestone В1 happens.
+        public float ImmediatePredictionWindowSeconds
+            => ImmediatePredictionLatch.SameFrameWindowSeconds;
+
         public RenderSnapshot Prev => _prev;
 
         public RenderSnapshot Curr => _curr;

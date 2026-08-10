@@ -26,10 +26,16 @@ namespace Ring.Presentation
     ///
     /// Task 28 fix-round (review #2, Low): `[DefaultExecutionOrder(-50)]` makes
     /// this run its own `Update` before every default-order (0) script's —
-    /// `MuzzleFlashView`/`AudioDirector`'s `Update` read `LastFrameInput`/
-    /// `RenderCurr` (below) and need THIS frame's values, not whatever was left
-    /// over from last frame; Unity does not otherwise guarantee `Update` order
-    /// among same-order scripts. Verified safe for every other `Update`-phase
+    /// `AudioDirector`'s `Update` reads `LastFrameInput`/`RenderCurr` (below)
+    /// and needs THIS frame's values, not whatever was left over from last
+    /// frame; Unity does not otherwise guarantee `Update` order among
+    /// same-order scripts. (Stage 2 Task 45b fix-round 1 moved
+    /// `MuzzleFlashView`'s half of that pair into `LateUpdate`, because a burst
+    /// placed on the doll's gun cannot be drawn before `ViewRegistry` has put
+    /// the doll where this frame's snapshot says it stands — that class's own
+    /// `[DefaultExecutionOrder]` block has the ordering story. This pin is what
+    /// keeps the tick advance and its event fan-out ahead of both phases
+    /// either way.) Verified safe for every other `Update`-phase
     /// reader of this runner: `GameFeelDirector.Update` only decays its own
     /// unscaledDeltaTime-driven timers (hitstop/trauma/shake/vignette), never
     /// reads `_runner`'s per-frame state; `ViewRegistry`/`CameraRig`/
@@ -43,33 +49,6 @@ namespace Ring.Presentation
     [DefaultExecutionOrder(-50)]
     public sealed class SimulationRunner : MonoBehaviour
     {
-        /// Task 28 fix-round (review #3, Minor): the shared window both
-        /// `MuzzleFlashView` and `AudioDirector`'s ImmediateMuzzleFeedback
-        /// prediction latches use — was two separate `PredictedTtlSeconds`
-        /// constants (one per class) that could silently drift apart; lives
-        /// here (not `GameFeelConfig`) because it is a tick-timing correctness
-        /// constant tied to this class's own 30Hz accumulator (spec §3.2), not
-        /// a game-feel number the owner would hot-tweak on a playtest.
-        ///
-        /// IT NO LONGER MATCHES A PREDICTION TO ITS EVENT — Stage 2 Task 45b
-        /// (bd `app-id9`) moved that job to `ImmediatePredictionLatch`, which
-        /// pairs the two by ORDER — and the value moved with the job: 0.05 s
-        /// (~1.5 ticks) was the window inside which the confirming event had to
-        /// land, and an event a few milliseconds later than that drew a second
-        /// flash for a shot the player had already seen, on roughly every tenth
-        /// round of a burst. What is left here is a TIMEOUT on a prediction
-        /// nobody will ever confirm, and it has to outlast the longest HONEST
-        /// confirmation instead of the shortest: on the networked backend a
-        /// shot predicted locally is confirmed only after the input reaches the
-        /// server (~RTT/2), the tick is simulated and sent back (~RTT/2 + a
-        /// tick), the render clock waits out `NetConfig.InterpBufferTicks` (3 =
-        /// 0.1 s) and, on a lost packet, the redundant re-send arrives up to
-        /// `EventRedundancyTicks` (4 = 0.13 s) later — about 0.35 s all told at
-        /// the 80 ms RTT + 5% loss every playtest build must survive. 0.5 s is
-        /// that with margin; the local backend confirms within one frame and
-        /// never approaches it.
-        public const float ImmediatePredictionTtlSeconds = 0.5f;
-
         [SerializeField] HeroConfig _hero;
         [SerializeField] WeaponConfig _weapon;
         [SerializeField] MobConfig _chaser;
@@ -130,6 +109,18 @@ namespace Ring.Presentation
 
         /// The simulation's own tick counter — dev overlay only.
         public int CurrentTick => _backend.CurrentTick;
+
+        /// The ImmediateMuzzleFeedback prediction window both `MuzzleFlashView`
+        /// and `AudioDirector` wait out (Stage 2 Task 45b fix-round 1, G-3) —
+        /// forwarded from the backend, which is where the answer lives
+        /// (`ISimBackend.ImmediatePredictionWindowSeconds` has the why). Task 28
+        /// put a shared `ImmediatePredictionTtlSeconds` CONSTANT here so the two
+        /// views could never drift onto different windows; forwarding one
+        /// property keeps that guarantee and drops the part that was wrong —
+        /// that one number could describe both a backend confirming inside the
+        /// frame and one confirming across a wire.
+        public float ImmediatePredictionWindowSeconds
+            => _backend.ImmediatePredictionWindowSeconds;
 
         /// This flush's event buffer, read by `SimEventRouter` inside
         /// `TicksFlushed` and dropped right after it returns (see `Update`).
@@ -222,10 +213,14 @@ namespace Ring.Presentation
         /// the ray all leave the barrel OF THE MODEL, so their height is now
         /// wherever the doll's muzzle socket actually is: a number the animated
         /// hand supplies, which no formula over `PlayerState` can restate.
-        /// Deleting it would strand `LocalSimBackend`/`NetworkSimBackend`, whose
-        /// own docs cite this property as the reader that obliges them to fill
-        /// `SlideTimer` — and one of those two lives in an assembly this task
-        /// must not touch.
+        /// Deleting it would strand `LocalSimBackend`/`NetworkSimBackend`: both
+        /// of their `Config` docs name this property as the reader that makes
+        /// the interface's "`Config` answers at any time" clause matter — it
+        /// reads `Config` with no `Ready` guard of its own — and one of those
+        /// two lives in an assembly this task must not touch. (Fix-round 1,
+        /// G-6: an earlier wording of this paragraph said the two docs cite it
+        /// over `SlideTimer`. Neither of them mentions `SlideTimer` at all; the
+        /// conclusion was right and the mechanism behind it was invented.)
         public float RenderMuzzleHeight => RenderCurr.Player.SlideTimer > 0f
             ? Config.Hero.SlideMuzzleHeight : Config.Hero.MuzzleHeight;
 
