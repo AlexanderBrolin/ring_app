@@ -47,8 +47,33 @@ namespace Ring.Editor
             Build(BuildTarget.StandaloneLinux64, StandaloneBuildSubtarget.Server,
                 "linux-server/RingServer", new[] { ServerScene });
 
+        /// The same client, built WITH `BuildOptions.Development` (Stage 2
+        /// Task 44d, owner's playtest of Ф9). Separate entry point rather than
+        /// a flag on the three above: those produce the artifacts the stage
+        /// gates and milestones В2/В3 are measured on, and a build that
+        /// silently gained a define would invalidate exactly the measurements
+        /// they exist for.
+        ///
+        /// WHAT THE DEFINE BUYS, AND WHY A RELEASE CLIENT CANNOT BE SMOKE-
+        /// TESTED WITHOUT IT. `DEVELOPMENT_BUILD` is what compiles in every
+        /// dev surface this project guards with `UNITY_EDITOR ||
+        /// DEVELOPMENT_BUILD`: the whole of `DevOverlay` (state hash, tick,
+        /// the "no silent loss" counters, forced-seed restart, mob spawn
+        /// buttons), `PauseController`'s Escape key, the death overlay's
+        /// R/Shift+R reseed — and, from Task 44b on, the CLIENT half of the
+        /// latency simulator. Critical Rule 7 (80 ms RTT, 5% loss) is
+        /// therefore unmeasurable on a release player by construction, so
+        /// milestone В1 needs this build too, not only today's smoke.
+        ///
+        /// Hot-tweak is NOT among them and cannot be: `RingDataChanged` is
+        /// raised from `OnValidate`, which Unity never calls outside the
+        /// Editor. Balance tuning stays an Editor workflow.
+        public static void BuildLinuxClientDev() =>
+            Build(BuildTarget.StandaloneLinux64, StandaloneBuildSubtarget.Player,
+                "linux-client-dev/Ring", new[] { ClientScene }, BuildOptions.Development);
+
         static void Build(BuildTarget target, StandaloneBuildSubtarget subtarget, string relPath,
-            string[] scenes)
+            string[] scenes, BuildOptions buildOptions = BuildOptions.None)
         {
             string root = Environment.GetEnvironmentVariable("RING_BUILD_ROOT");
             if (string.IsNullOrEmpty(root))
@@ -80,6 +105,7 @@ namespace Ring.Editor
                 target = target,
                 subtarget = (int)subtarget,
                 locationPathName = Path.Combine(root, relPath),
+                options = buildOptions,
             };
 
             BuildReport report = BuildPipeline.BuildPlayer(options);
