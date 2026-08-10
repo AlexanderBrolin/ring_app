@@ -10,7 +10,11 @@ namespace Ring.Presentation
     /// the Э1 baseline, still the whole story whenever `!AimHeld`. Task 19 (spec
     /// QA7/QD1) adds a second mode for `AimHeld`: a raycast against the `AimProxy`
     /// layer's capsule colliders (bootstrap-placed belts on `MobChaserView`/
-    /// `MobGunnerView`/the player doll). On a hit, BOTH `CurrentAimSimPos` AND
+    /// `MobGunnerView`/the player doll) — joined, since Stage 2 Task 46, by the
+    /// arena's own greybox geometry on `GreyboxBuilder.CosmeticsLayer`, which is
+    /// in the cast only to SCREEN: a hit on it is reported as a miss, so a mob
+    /// standing behind a wall can no longer be hovered through it (bd `app-1ru`,
+    /// `TryAimProxy`'s own doc). On a hit, BOTH `CurrentAimSimPos` AND
     /// `CurrentAimHeight` are read from the SAME `hit.point` of that ONE cast —
     /// never two independent casts — because a plane-XY + proxy-height mismatch
     /// would put the shot's XY behind the target mob (still on the floor) while its
@@ -80,7 +84,11 @@ namespace Ring.Presentation
             // (B3 precedent: PersistentPropsDirector.Awake's casing self-collision
             // guard) — but unlike casings, which still need to collide with the
             // arena, a proxy must never collide with ANYTHING, so every layer
-            // pairing is disabled here, not just self-collision.
+            // pairing is disabled here, not just self-collision. This does not
+            // touch the cast below, including the arena-geometry layer Stage 2
+            // Task 46 added to its mask: IgnoreLayerCollision suppresses CONTACT
+            // generation between colliders, and scene queries answer off the
+            // layer mask they are handed.
             for (int i = 0; i < 32; i++)
                 Physics.IgnoreLayerCollision(AimProxyLayer, i, true);
         }
@@ -164,11 +172,13 @@ namespace Ring.Presentation
         /// body, and the player dolls, and nothing else — and the fraction is 1,
         /// so this returns `CurrentAimWorldPoint` unchanged. A WALL IS NOT IN
         /// THAT LIST (fix-round 1, G-5 item 8, correcting this paragraph's own
-        /// earlier claim): arena geometry carries no collider on
-        /// `AimProxyLayer`, so a cursor over a wall is a cast MISS, reads height
-        /// 0 through the plane fallback, and gets the floor's own fraction. That
+        /// earlier claim): a cursor over a wall is a cast MISS, reads height 0
+        /// through the plane fallback, and gets the floor's own fraction. That
         /// is the honest answer for it too — the round really does come down
         /// short of the wall's foot — but it is not the "nothing moves" case.
+        /// Stage 2 Task 46 changed WHY that is a miss without changing THAT it
+        /// is one: arena geometry used to be outside the cast's mask entirely,
+        /// and is now inside it and deliberately reported as a miss.
         ///
         /// ONE HEIGHT, READ ONCE. The aim height handed to the helper and the
         /// `y` of the far endpoint it interpolates toward must be the same
@@ -232,6 +242,25 @@ namespace Ring.Presentation
         /// (`GetComponentInParent` — the proxy is a direct child of the same
         /// root `MobView` sits on, `EnsureAimProxyChildren`'s own call sites).
         ///
+        /// ARENA GEOMETRY IS IN THE CAST, AND EVERY HIT ON IT IS A MISS (Stage
+        /// 2 Task 46, bd `app-1ru`). The mask covers `GreyboxBuilder.
+        /// CosmeticsLayer` as well as the proxies, and `Physics.Raycast`
+        /// returns the NEAREST hit, so the three cases fall out of that one
+        /// fact: cursor over bare floor — the floor is the nearest hit, miss,
+        /// Э1 plane fallback, exactly as before this task, since a miss was
+        /// already the answer there; cursor on a mob — its proxy sits above the
+        /// floor and therefore nearer along a descending camera ray, hover;
+        /// cursor on a mob standing BEHIND a wall — the wall is nearer, miss,
+        /// and the head pulse and red ray stop promising a target the round
+        /// cannot reach. The bug this closes was never that the cast hit walls
+        /// (it never did — that is what `app-1ru`'s own description got wrong);
+        /// it was that walls were invisible to it while the mob behind them was
+        /// not. Layer 8 carries the arena greybox and nothing else — casings
+        /// have their own layer 9 precisely so a layer-pair toggle could tell
+        /// them apart (`PersistentPropsDirector`), and corpses/decals carry no
+        /// collider on it — so no cosmetic prop can flicker the aim by drifting
+        /// through the cursor line.
+        ///
         /// I1 (final review wave, app-n6g): a hit on the PLAYER's own proxy
         /// (also on this layer, Task 19 — `StageOneSceneBootstrap` wires the
         /// SAME `EnsureAimProxyChildren` onto the player doll as onto every
@@ -276,8 +305,28 @@ namespace Ring.Presentation
 
             Ray ray = _camera.ScreenPointToRay(mouse.position.ReadValue());
             float maxDistance = _runner.Config.Arena.Radius * 2f;
+            // Stage 2 Task 46: proxies AND arena geometry, one cast. Adding the
+            // geometry layer is what lets a wall SCREEN a mob behind it; the
+            // proxies still answer everything else, and QueryTriggerInteraction
+            // .Collide stays required for them alone (every proxy capsule is a
+            // trigger, the greybox primitives are not).
+            const int geometryMask = (1 << AimProxyLayer) | (1 << GreyboxBuilder.CosmeticsLayer);
             if (!Physics.Raycast(ray, out RaycastHit hit, maxDistance,
-                    1 << AimProxyLayer, QueryTriggerInteraction.Collide))
+                    geometryMask, QueryTriggerInteraction.Collide))
+            {
+                simPos = default;
+                height = default;
+                zone = HitZone.None;
+                hoveredMob = null;
+                worldPoint = default;
+                return false;
+            }
+
+            // Arena geometry screens whatever stands behind it: report a miss,
+            // which sends the caller to the Э1 plane fallback — the same answer
+            // the cursor already got over bare floor, and the honest one for a
+            // point the round cannot reach (method doc).
+            if (hit.collider.gameObject.layer == GreyboxBuilder.CosmeticsLayer)
             {
                 simPos = default;
                 height = default;

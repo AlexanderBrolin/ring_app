@@ -62,6 +62,13 @@ namespace Ring.Simulation.Core
         // the array carries one slot of slack rather than being tight; sizing
         // it to the union keeps the bound obvious instead of depending on
         // which branch of the damage matrix a given round took.
+        // Stage 2 Task 46: + 3 rather than + 2 — the barrier is TWO slots now
+        // (interior obstacles/walls, and the ring boundary separately, since
+        // only the interior ones have a modelled top). The true worst case rose
+        // by exactly one candidate too, so this is not the difference between
+        // fitting and throwing: at + 2 the worst-case gather would fill the
+        // array to its last slot and still not overflow. It is the one slot of
+        // slack described above, kept rather than quietly spent.
         readonly (float t, int kind, int index)[] _projCandidates;
         WaveState _wave;
         int _nextEntityId = 1;
@@ -156,7 +163,7 @@ namespace Ring.Simulation.Core
             _sepForces = new float2[config.Arena.MaxMobs];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
             _projCandidates = new (float t, int kind, int index)[
-                config.Arena.MaxMobs + config.Arena.MaxPlayers + 2];
+                config.Arena.MaxMobs + config.Arena.MaxPlayers + 3];
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
         }
 
@@ -406,6 +413,15 @@ namespace Ring.Simulation.Core
             if (a.MaxMobs != b.MaxMobs || a.MaxProjectiles != b.MaxProjectiles
                 || a.MaxEventsPerFrame != b.MaxEventsPerFrame)
                 return false;
+            // Stage 2 Task 46 (bd app-r8x): the interior barriers' modelled
+            // height is topology for the same reason WallHalfWidth is — it
+            // decides which shots the geometry stops, and there is nothing for
+            // ApplyConfig to migrate: rounds already in flight were gathered
+            // and gated against the OLD height, and the greybox draws its
+            // barriers at it. Letting it through as a hot-tweak would put the
+            // picture and the collision out of step silently, which is exactly
+            // the mine Task 14 closed one field over.
+            if (a.BarrierTop != b.BarrierTop) return false;
             return true;
         }
 
@@ -496,9 +512,12 @@ namespace Ring.Simulation.Core
         internal float2[] SepForces => _sepForces;
 
         /// ProjectileSystem's seam into its preallocated per-tick candidate
-        /// scratch (Task 5) — sized to Arena.MaxMobs + Arena.MaxPlayers + 2
-        /// since Stage 2 Task 17, recomputed every tick, never grown. See the
-        /// field's own doc above for where that bound comes from.
+        /// scratch (Task 5) — sized to Arena.MaxMobs + Arena.MaxPlayers + 3
+        /// since Stage 2 Task 46 (was + 2 from Stage 2 Task 17, before the
+        /// barrier became two slots: interior barriers and the ring boundary),
+        /// recomputed every tick, never grown. See the field's own doc above
+        /// for where that bound comes from and for why the extra slot is slack
+        /// rather than the difference between fitting and throwing.
         internal (float t, int kind, int index)[] ProjCandidates => _projCandidates;
 
         /// WaveSystem's seam into the wave director's live state (Task 22) — same

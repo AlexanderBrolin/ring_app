@@ -158,6 +158,29 @@ namespace Ring.Simulation.Core
         public float2[] WallA;
         public float2[] WallB;
         public float[] WallHalfWidth;
+
+        /// Stage 2 Task 46 (bd app-r8x): height of every INTERIOR barrier —
+        /// the obstacle circles and the stadium walls above share this one
+        /// number, in metres above the floor (y = 0). A round whose whole
+        /// remaining step sits above it passes over the barrier instead of
+        /// being stopped by it (ProjectileSystem.AcceptCandidate).
+        ///
+        /// 0 (or any non-positive value) means NO MODELLED TOP: the barrier
+        /// stops a shot at any height, which is what every barrier did before
+        /// this field existed. That is the C# default of this struct, so every
+        /// hand-built fixture — and with it the golden scenarios — keeps the
+        /// pre-Task-46 behaviour without stating anything.
+        ///
+        /// ONE NUMBER, NOT ONE PER BARRIER (owner decision 2026-08-11): with a
+        /// shared height "cleared one interior barrier" means "cleared them
+        /// all", which is what lets the projectile gather keep a single
+        /// candidate slot for the nearest interior barrier instead of one slot
+        /// per barrier.
+        ///
+        /// The arena's outer ring boundary is NOT covered by this: it holds the
+        /// edge of the world, and a shot flying over it would leave the arena
+        /// altogether — see ProjectileSystem's HitRingWall candidate.
+        public float BarrierTop;
     }
 
     /// Server-side visibility filter numbers (Stage 2 Task 19, spec §3.5,

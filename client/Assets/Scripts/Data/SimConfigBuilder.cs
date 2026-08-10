@@ -183,7 +183,10 @@ namespace Ring.Data
                 WallCount = wn,
                 WallA = wallA,
                 WallB = wallB,
-                WallHalfWidth = wallHalfWidth
+                WallHalfWidth = wallHalfWidth,
+                // Stage 2 Task 46 (bd app-r8x): the one height every interior
+                // barrier — circles and walls alike — is simulated and drawn at.
+                BarrierTop = a.BarrierTop
             };
         }
 
@@ -373,6 +376,15 @@ namespace Ring.Data
             // ValidateMob's SwingLeadFactor check below).
             ReqInRange(errors, "Arena.MaxPlayers", cfg.Arena.MaxPlayers, 1, 3);
             ReqInRange(errors, "Arena.PlayerSpawnRingFrac", cfg.Arena.PlayerSpawnRingFrac, 0.1f, 0.95f);
+            // Stage 2 Task 46: ReqInRange rather than ReqPositive — ZERO is a
+            // legal authoring choice here, it is the "no modelled top" reading
+            // the field defaults to in every hand-built fixture, exactly like
+            // MobSimConfig.AvoidMargin's own 0 spends a guarantee instead of
+            // breaking a rule. A NEGATIVE height is not a quieter way of saying
+            // the same thing — it is a number with no meaning — and the bounds
+            // mirror ArenaConfig's own [Range(0, 20)] hint, which is never
+            // enforced on a value reaching the builder from code or a test.
+            ReqInRange(errors, "Arena.BarrierTop", cfg.Arena.BarrierTop, 0f, 20f);
 
             for (int i = 0; i < cfg.Arena.ObstacleCount; i++)
             {

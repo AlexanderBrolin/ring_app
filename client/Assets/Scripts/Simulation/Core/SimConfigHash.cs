@@ -139,6 +139,9 @@ namespace Ring.Simulation.Core
             h = HashFloat2Array(h, c.WallA);
             h = HashFloat2Array(h, c.WallB);
             h = HashFloatArray(h, c.WallHalfWidth);
+            // Stage 2 Task 46: last, because ArenaSimConfig declares it last —
+            // this method's contract is the struct's own field order.
+            h = StateHash64.Add(h, c.BarrierTop);
             return h;
         }
 

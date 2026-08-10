@@ -793,14 +793,21 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SaturatedWorld_CandidateScratchDoesNotOverflow()
         {
-            // Upper bound on ONE round's candidate gather: barrier + every live
-            // mob + every live player but the owner + floor, which is what sizes
-            // the scratch to MaxMobs + MaxPlayers + 2. This fixture packs all
-            // four groups on a single tick — a full mob roster, three players, a
-            // sweep radius wide enough to overlap every body at t = 0
-            // (Geometry.SegmentCircle's start-inside branch), an obstacle within
-            // that radius for the barrier slot, and a descending flight whose
-            // ground crossing falls inside this very step for the floor slot.
+            // Upper bound on ONE round's candidate gather: interior barrier +
+            // ring boundary + every live mob + every live player but the owner +
+            // floor, which is what sizes the scratch to MaxMobs + MaxPlayers + 3.
+            // This fixture packs all five groups on a single tick — a full mob
+            // roster, three players, a sweep radius wide enough to overlap every
+            // body at t = 0 (Geometry.SegmentCircle's start-inside branch), an
+            // obstacle within that radius for the interior barrier slot, a
+            // launch point close enough to the padded rim that the boundary
+            // crossing falls inside this very step, and a descending flight
+            // whose ground crossing does too.
+            //
+            // Stage 2 Task 46 widened both the bound and this fixture: the
+            // barrier used to be ONE slot standing for obstacles, walls and the
+            // rim together, and the pre-46 version of this test launched from
+            // the origin, where the rim is far out of reach for a single step.
             var c = TestConfigs.Quiet(); // Default arena (obstacles + walls), waves out of reach
             var w = new SimulationWorld(1, c, playerCount: 3);
             TestWorlds.SpawnMobsToCap(w);
@@ -810,29 +817,48 @@ namespace Ring.Simulation.Tests
             TestWorlds.RelocatePlayerForTest(w, 1, new float2(TargetX, 0f)); // victim of the aimed round below
             TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, TargetX)); // bystander, still inside the wide sweep
 
-            const float sweepRadius = 40f;  // SpawnMobsToCap tops out near 32 m from the origin
-            const float plungeVelZ = -60f;  // tFloor = (Radius - Height) / (VelZ * TickDt) = 0.25
+            // Wide enough to swallow the whole crowd from the launch point
+            // below, which sits ~8 m out rather than at the origin.
+            const float sweepRadius = 57f;
+            const float plungeVelZ = -60f;  // tFloor = (Radius - Height) / (VelZ * TickDt) = 0.5
             const float launchHeight = sweepRadius + 0.5f;
+            // Just inside the boundary's own padded rim (Arena.Radius -
+            // sweepRadius), moving outward, so SegmentRingWall's crossing lands
+            // inside this step instead of dozens of steps away.
+            const float launchBack = 0.3f;
+            float ringLimit = c.Arena.Radius - sweepRadius;
+            var launchPos = new float2(ringLimit - launchBack, 0f);
+            Assert.Less(launchBack, c.Weapon.ProjectileSpeed * SimulationWorld.TickDt,
+                "fixture premise: the boundary crossing falls inside this one step — otherwise the "
+                + "ring candidate is never gathered and the worst case is one slot short");
 
-            // Ф4 fix-wave: the worst case this test exists to size the scratch
-            // against is 1 barrier + MaxMobs + 2 other players + 1 floor = 100
-            // candidates against 101 slots, so the mutation it must catch —
-            // scratch narrowed back to the pre-Task-17 MaxMobs + 3 = 99 — fails
-            // by a margin of exactly one candidate. Two mobs short of the full
-            // roster and that margin is gone: candCount drops to 98 and the
-            // too-small scratch passes for free. What keeps every mob in the
-            // sweep is the round starting at the origin (a mob nearer than
-            // sweepRadius is inside the start circle, which is
-            // Geometry.SegmentCircle's start-inside branch, t = 0) together
-            // with SpawnMobsToCap's own radius spread — and that spread lives
-            // in another file and can move without this one noticing. So it is
-            // asserted here, not merely narrated by the comment above.
+            // Ф4 fix-wave, rescaled by Stage 2 Task 46: the worst case this test
+            // exists to size the scratch against is 2 barrier slots + MaxMobs +
+            // 2 other players + 1 floor = 101 candidates. What keeps every mob
+            // in the sweep is the round starting inside each of their padded
+            // circles (Geometry.SegmentCircle's start-inside branch, t = 0)
+            // together with SpawnMobsToCap's own radius spread — and that
+            // spread lives in another file and can move without this one
+            // noticing. So it is asserted here, not merely narrated above.
             for (int m = 0; m < w.MobCount; m++)
-                Assert.Less(math.length(w.Mobs[m].Pos), sweepRadius,
+                Assert.Less(math.distance(w.Mobs[m].Pos, launchPos), sweepRadius,
                     "fixture premise: every mob must fall inside the sweep — otherwise the worst-case "
                     + "candidate count is never actually reached and a too-small scratch passes for free");
+            for (int p = 1; p < w.PlayerCount; p++)
+                Assert.Less(math.distance(w.PlayerAt(p).Pos, launchPos), sweepRadius,
+                    "fixture premise: every non-owner player is inside the sweep too");
 
-            w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
+            // The bound itself, not just its symptom. An overflow throws only
+            // once the count passes the LENGTH, so a scratch sized exactly to
+            // the worst case would survive the tick below in silence — this is
+            // what pins the one slot of slack the field's own doc promises,
+            // and it is stated as the arithmetic rather than as a literal.
+            int worstCase = c.Arena.MaxMobs + (c.Arena.MaxPlayers - 1) + 3;
+            Assert.Greater(w.ProjCandidates.Length, worstCase,
+                "the candidate scratch must hold the worst-case gather with room to spare — "
+                + "2 barrier slots + every mob + every non-owner player + floor");
+
+            w.SpawnProjectileForTest(ProjectileOwner.Player, launchPos,
                 new float2(c.Weapon.ProjectileSpeed, 0f), launchHeight, plungeVelZ,
                 c.Weapon.Damage, sweepRadius, c.Weapon.ProjectileLifetime, ownerIndex: 0);
             // A second, ordinary round on the same tick: the players really are

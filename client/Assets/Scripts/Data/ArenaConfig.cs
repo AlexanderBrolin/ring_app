@@ -82,7 +82,34 @@ namespace Ring.Data
         // Stage 2 Task 9 — for now this is a plain SO field mirrored by
         // TestConfigs.DefaultArena().
         [Range(1, 3)] public int MaxPlayers = 3;
-        [Range(0.1f, 0.95f)] public float PlayerSpawnRingFrac = 0.8f; // sync-marker key — keep LAST
+        [Range(0.1f, 0.95f)] public float PlayerSpawnRingFrac = 0.8f;
+
+        /// Stage 2 Task 46 (bd app-r8x, owner decision 2026-08-11): the height
+        /// every INTERIOR barrier is built and simulated at — the eight obstacle
+        /// circles and the six walls above share this one number, in metres
+        /// above the floor. A round whose whole remaining step sits above it
+        /// flies over the barrier; below it, the barrier stops the shot exactly
+        /// as it always did.
+        ///
+        /// 0 means NO MODELLED TOP — the barrier stops a shot at any height,
+        /// which is what the arena did before this field existed. The value is
+        /// not a synonym for "very low": nothing is drawn at zero height, so the
+        /// greybox falls back to the ring wall's own height for a barrier
+        /// without a top, because "no top" reads honestly as "up to the ceiling
+        /// of the world" (GreyboxBuilder).
+        ///
+        /// THE OUTER RING WALL IS NOT INCLUDED, and not by omission: it holds
+        /// the edge of the world, so a shot flying over it would leave the arena
+        /// for good rather than land anywhere.
+        ///
+        /// 3 m is the height the ring wall is already drawn at, and it sits
+        /// above every muzzle in the game (the hero's 1.0 standing / 0.45
+        /// sliding, the Gunner's 0.95): a horizontal shot cannot clear a
+        /// barrier, so this is honest geometry rather than a new mechanic. The
+        /// [Range] ceiling of 20 is the arena's own aim-height scale (the hero's
+        /// MaxAimHeight is 3.8) with room for a tall future structure, not a
+        /// balance statement.
+        [Range(0f, 20f)] public float BarrierTop = 3f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // Arena topology (Radius/Obstacles) is a special case: SimulationRunner's

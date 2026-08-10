@@ -99,7 +99,20 @@ namespace Ring.Simulation.Tests
                 WallB = new[] { new float2(-8f, 10f), new float2(-8f, 17.6f),
                     new float2(34f, -6f), new float2(34f, -13.6f),
                     new float2(2f, 44f), new float2(-16f, -34f) },
-                WallHalfWidth = new[] { 0.8f, 0.8f, 0.8f, 0.8f, 0.6f, 0.6f }
+                WallHalfWidth = new[] { 0.8f, 0.8f, 0.8f, 0.8f, 0.6f, 0.6f },
+                // Stage 2 Task 46 — THE ONE FIELD WHERE THIS MIRROR IS BROKEN
+                // ON PURPOSE. ArenaConfig's own C# default is 3 m (the height
+                // the game plays at); this baseline stays at 0, "no modelled
+                // top", which is what every barrier did before Task 46.
+                // The reason is the golden scenarios above this comment: they
+                // run off THIS struct, a projectile's Height and VelZ both feed
+                // StateHash, and any climbing shot that passed over a barrier
+                // would change its own trajectory and with it the pinned hash.
+                // Keeping the test side on the pre-Task-46 branch means the new
+                // branch is not merely expected to leave the goldens alone — it
+                // is never executed by them at all. Tests that need a real
+                // height state it themselves, in the fixture, and say so.
+                BarrierTop = 0f
             };
         }
 

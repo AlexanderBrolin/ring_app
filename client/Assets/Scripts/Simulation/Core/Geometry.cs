@@ -437,10 +437,27 @@ namespace Ring.Simulation.Core
                 && tw < t)
             {
                 t = tw; hit = true;
-                normal = -math.normalizesafe(math.lerp(p0, p1, tw), new float2(1f, 0f));
+                normal = RingWallNormal(math.lerp(p0, p1, tw));
             }
             return hit;
         }
+
+        /// Surface normal of the arena's outer ring boundary at `contact` —
+        /// inward, because the only side a body can touch that boundary from is
+        /// the inside. The ring is centred on the sim origin, so the outward
+        /// radial IS the normalized contact point and the inward one is its
+        /// negation; the (1,0) fallback covers a contact exactly at the centre,
+        /// which a real ring contact cannot be (SweepArena's own branch above
+        /// only reaches this for a sweep that crossed |p| = Radius - padR) but
+        /// which normalizesafe must be told what to do about anyway.
+        ///
+        /// Public and shared rather than restated (Stage 2 Task 46): the
+        /// projectile gather packs the ring boundary as a candidate of its own
+        /// now, and the ProjectileBlocked event it emits has to carry the SAME
+        /// normal SweepArena's own ring branch above computes — one home for
+        /// the formula is what keeps the two identical instead of promising it.
+        public static float2 RingWallNormal(float2 contact)
+            => -math.normalizesafe(contact, new float2(1f, 0f));
 
         /// Iterative depenetration from obstacles, walls, and the ring; slides velocity.
         public static void Depenetrate(ref float2 pos, ref float2 vel, float radius,

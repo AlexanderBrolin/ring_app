@@ -60,6 +60,25 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Build_NegativeBarrierTop_Throws()
+        {
+            // Stage 2 Task 46: zero is legal — it is the "no modelled top"
+            // reading the whole feature defaults to — but a negative height is
+            // not a quieter way of saying it, it is a number with no meaning,
+            // and the [Range(0, 20)] hint on the SO is never enforced on a
+            // value reaching the builder from code or a test fixture (same I3
+            // rationale as Arena.MaxPlayers).
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            a.BarrierTop = -1f;
+            Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+
+            a.BarrierTop = 0f;
+            Assert.DoesNotThrow(() => SimConfigBuilder.Build(h, w, c, g, wv, a, vis),
+                "zero means 'no modelled top' and must stay a legal authoring choice");
+        }
+
+        [Test]
         public void Build_ObstacleOverSpawnPoint_Throws()
         {
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
@@ -116,6 +135,23 @@ namespace Ring.Simulation.Tests
             AssertMobEqual(expected.Gunner, cfg.Gunner);
             AssertWaveEqual(expected.Wave, cfg.Wave);
             AssertArenaEqual(expected.Arena, cfg.Arena);
+            // Stage 2 Task 46 (bd app-r8x): BarrierTop is the ONE arena field
+            // where the two number sources disagree on purpose, so it cannot
+            // live inside AssertArenaEqual above — and leaving it out silently
+            // is exactly how a field drops out of this test's coverage (the
+            // Task 4 and Task 16 notes in that method say so about their own
+            // fields). Both sides are pinned against their OWN source instead:
+            // the SO's C# default has to reach the builder untouched, and the
+            // shared test baseline has to stay at "no modelled top" so the
+            // golden scenarios never execute the new branch (TestConfigs.
+            // DefaultArena's own comment).
+            Assert.AreEqual(a.BarrierTop, cfg.Arena.BarrierTop, Eps,
+                "ArenaConfig.BarrierTop must reach ArenaSimConfig through the builder");
+            Assert.AreEqual(0f, expected.Arena.BarrierTop, Eps,
+                "the TestConfigs baseline must stay on 'no modelled top'");
+            Assert.AreNotEqual(expected.Arena.BarrierTop, cfg.Arena.BarrierTop,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
             // Stage 2 Task 22 (carryover-t22 §2): without this the five
             // VisibilityConfig C# DEFAULTS vs TestConfigs' own baseline are
             // pinned by no test at all — same documented-deviation category as

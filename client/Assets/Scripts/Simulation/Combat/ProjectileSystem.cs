@@ -14,7 +14,17 @@ namespace Ring.Simulation.Combat
     /// piercing.
     internal static class ProjectileSystem
     {
-        const int HitNone = 0, HitBarrier = 1, HitMob = 2, HitPlayer = 3, HitFloor = 4;
+        // HitRingWall (Stage 2 Task 46) splits off the arena's outer boundary,
+        // which HitBarrier used to cover together with the interior obstacles
+        // and walls. The two are gathered separately because only the interior
+        // ones have a modelled top (Arena.BarrierTop): rejecting a candidate
+        // that stood for both would throw the ring boundary away along with the
+        // obstacle the round actually cleared. Its number is appended rather
+        // than inserted so the existing kinds keep their values — nothing
+        // serializes these, but the packing order below reads as a table and a
+        // renumbering would make every neighbouring comment lie.
+        const int HitNone = 0, HitBarrier = 1, HitMob = 2, HitPlayer = 3, HitFloor = 4,
+            HitRingWall = 5;
 
         /// Iterates back-to-front so RemoveProjectileAt's swap-remove never skips
         /// or re-visits a slot within this same pass (spec §3.13 item 11).
@@ -39,16 +49,34 @@ namespace Ring.Simulation.Combat
                 MobState[] mobs = w.Mobs;
 
                 // Gather phase (Task 5 refactor): pack every actual geometry
-                // hit into the scratch in canonical slot order — 0 = barrier,
-                // then mobs by index, then players by index, then floor (Task
-                // 7) — so the packed array's index order doubles as the
-                // tie-break order below, matching Task 1's original
-                // streaming-min bit-for-bit.
+                // hit into the scratch in canonical slot order — 0 = interior
+                // barrier, 1 = ring boundary (Stage 2 Task 46), then mobs by
+                // index, then players by index, then floor (Task 7) — so the
+                // packed array's index order doubles as the tie-break order
+                // below, matching Task 1's original streaming-min bit-for-bit.
+                //
+                // Stage 2 Task 46 splits Task 5's single barrier slot in two,
+                // and the split is arithmetically identical to the one call it
+                // replaces: SweepArena consults the interior circles and walls
+                // first and only then lets the ring boundary win with a strict
+                // `tw < t` (its own doc), so packing the interior sweep FIRST
+                // and the ring SECOND reproduces both the same minimum and the
+                // same "interior takes an exact tie" rule through the min-scan
+                // below, which also breaks ties by lowest packed slot. The ring
+                // is asked with the same Geometry.SegmentRingWall call and the
+                // same arguments SweepArena itself would have used, so the `t`
+                // is the same number, not merely the same rule.
                 int candCount = 0;
-                if (Geometry.SweepArena(startPos, target, proj.Radius, in arena, true,
-                        out float tArena, out float2 arenaNormal))
+                if (Geometry.SweepArena(startPos, target, proj.Radius, in arena, false,
+                        out float tBarrier, out float2 barrierNormal))
                 {
-                    candidates[candCount++] = (tArena, HitBarrier, -1);
+                    candidates[candCount++] = (tBarrier, HitBarrier, -1);
+                }
+
+                if (Geometry.SegmentRingWall(startPos, target, proj.Radius, arena.Radius,
+                        out float tRing))
+                {
+                    candidates[candCount++] = (tRing, HitRingWall, -1);
                 }
 
                 if (proj.Owner == ProjectileOwner.Player)
@@ -151,7 +179,7 @@ namespace Ring.Simulation.Combat
                     hitKind = candidates[bestSlot].kind;
                     hitTargetIndex = candidates[bestSlot].index;
 
-                    if (AcceptCandidate(w, in config, in proj, startPos, target,
+                    if (AcceptCandidate(w, in config, in proj, startPos, target, bestT,
                             hitKind, hitTargetIndex, out hitZone, out hitMult))
                     {
                         break;
@@ -168,13 +196,26 @@ namespace Ring.Simulation.Combat
                 switch (hitKind)
                 {
                     case HitBarrier:
+                    case HitRingWall:
                     {
                         float2 contact = math.lerp(startPos, target, bestT);
                         float contactHeight = proj.Height + proj.VelZ * dt * bestT;
                         // Wall/obstacle: HitDir is the real SweepArena surface
-                        // normal (Task 7 — D12/C5, no "≈0" heuristic).
+                        // normal (Task 7 — D12/C5, no "≈0" heuristic). Stage 2
+                        // Task 46: the ring boundary answers the same question
+                        // through Geometry.RingWallNormal, which is the very
+                        // formula SweepArena's own ring branch used to inline —
+                        // fed the same contact point, so the event carries the
+                        // same direction it carried before the split. Both
+                        // kinds share this branch because the ENDING is the
+                        // same event either way: only the normal's source
+                        // differs, and Presentation never had a way to tell an
+                        // obstacle from the rim to begin with.
+                        float2 blockedNormal = hitKind == HitRingWall
+                            ? Geometry.RingWallNormal(contact)
+                            : barrierNormal;
                         w.Emit(SimEventKind.ProjectileBlocked, contact, proj.Id, default,
-                            contactHeight, hitDir: arenaNormal);
+                            contactHeight, hitDir: blockedNormal);
                         w.RemoveProjectileAt(i);
                         break;
                     }
@@ -286,8 +327,13 @@ namespace Ring.Simulation.Combat
         /// `targetIndex` (Stage 2 Task 17: was `mobIndex`) is the winning
         /// candidate's own index — a mob index under HitMob, a player index under
         /// HitPlayer, unused for the index-less barrier/floor kinds.
+        ///
+        /// `t` (Stage 2 Task 46) is the winning candidate's own hit fraction,
+        /// handed down from the min-scan rather than re-solved here: the
+        /// interior-barrier gate needs the round's height AT the contact, and
+        /// the scan already knows where that contact is.
         static bool AcceptCandidate(SimulationWorld w, in SimConfig config, in ProjectileState proj,
-            float2 p0, float2 p1, int kind, int targetIndex, out HitZone zone, out float mult)
+            float2 p0, float2 p1, float t, int kind, int targetIndex, out HitZone zone, out float mult)
         {
             zone = HitZone.None;
             mult = 1f;
@@ -332,11 +378,50 @@ namespace Ring.Simulation.Combat
                 bodyMult = cfg.BodyDamageMult;
                 headMult = cfg.HeadDamageMult;
             }
+            else if (kind == HitRingWall)
+            {
+                // The arena's outer boundary holds the edge of the world
+                // (owner decision 2026-08-11, bd app-r8x): it is the one
+                // barrier with no modelled top, because a round flying over it
+                // would leave the arena for good — there is nothing out there
+                // to reach, and nothing to come back down onto.
+                return true;
+            }
             else if (kind == HitBarrier)
             {
-                // Barrier (obstacle or ring wall): no modelled top — stops a
-                // shot at any height.
-                return true;
+                // Interior barrier — an obstacle circle or a stadium wall
+                // (Stage 2 Task 46, bd app-r8x). They share one modelled top,
+                // Arena.BarrierTop; a non-positive value means there is none,
+                // which is what every barrier did before this task and what
+                // every hand-built fixture still gets by default.
+                float barrierTop = config.Arena.BarrierTop;
+                if (barrierTop <= 0f) return true;
+
+                // THE WHOLE REMAINING STEP, NOT THE CONTACT POINT. A round
+                // descends inside a tick, so judging the contact alone would
+                // hand back a shot that is above the crown where it MEETS the
+                // barrier and inside its body a fraction of a tick later — and
+                // the next tick would start behind the barrier, through solid
+                // geometry. The pair (height at the contact, height at the end
+                // of the step) covers everything that is left of the step, so a
+                // rejection means "clear of the crown for the whole rest of the
+                // step", never "clear just at the moment of contact".
+                //
+                // That same span is what lets the gather phase keep ONE slot
+                // for the nearest interior barrier: the lower end of this pair
+                // never decreases with `t` (it is the step's end height for a
+                // descending round, and the contact height itself for a
+                // climbing one), so a barrier further along the same step is
+                // cleared whenever the nearest one is.
+                //
+                // The bias is deliberately toward "the barrier stopped it":
+                // Overlaps grows the column by the round's own radius at both
+                // ends, so the shot that pays for this is one that visually
+                // grazed the crown and is stopped anyway — never one that
+                // passes through a wall.
+                float hContact = proj.Height + proj.VelZ * SimulationWorld.TickDt * t;
+                float hStepEnd = proj.Height + proj.VelZ * SimulationWorld.TickDt;
+                return HitZones.Overlaps(hContact, hStepEnd, proj.Radius, barrierTop);
             }
             else // HitFloor
             {

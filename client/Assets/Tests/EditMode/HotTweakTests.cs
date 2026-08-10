@@ -199,6 +199,23 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void HotTweak_BarrierTopChange_Throws()
+        {
+            // Stage 2 Task 46 (bd app-r8x): the interior barriers' modelled
+            // height is arena topology exactly like WallHalfWidth above is.
+            // Raising or lowering it mid-match changes which shots the geometry
+            // stops, and ApplyConfig has no way to reconcile rounds already in
+            // flight against the old height — the same mine Task 14 closed for
+            // corridor width, one field over.
+            var c = TestConfigs.Default();
+            c.Arena.BarrierTop = 3f;
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.BarrierTop = 1.5f;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
         public void HotTweak_CapChange_Throws()
         {
             // Coordinator addition: one of the three per-match entity caps

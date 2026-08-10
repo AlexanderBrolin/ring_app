@@ -55,3 +55,4 @@ MonoBehaviour:
   SpawnClearance: 1
   MaxPlayers: 3
   PlayerSpawnRingFrac: 0.8
+  BarrierTop: 3
