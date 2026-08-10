@@ -1,3 +1,4 @@
+using Ring.Simulation.AI;
 using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
@@ -14,7 +15,11 @@ namespace Ring.Presentation
     /// arena's own greybox geometry on `GreyboxBuilder.CosmeticsLayer`, which is
     /// in the cast only to SCREEN: a hit on it is reported as a miss, so a mob
     /// standing behind a wall can no longer be hovered through it (bd `app-1ru`,
-    /// `TryAimProxy`'s own doc). On a hit, BOTH `CurrentAimSimPos` AND
+    /// `TryAimProxy`'s own doc). That task's fix-round finished the screen along
+    /// the shot's own line rather than the camera's, so a proxy the camera can
+    /// see past a barrier but the round cannot get to is a miss as well — same
+    /// doc, which also names the flat-plan limit of the gate doing it. On a
+    /// surviving hit, BOTH `CurrentAimSimPos` AND
     /// `CurrentAimHeight` are read from the SAME `hit.point` of that ONE cast —
     /// never two independent casts — because a plane-XY + proxy-height mismatch
     /// would put the shot's XY behind the target mob (still on the floor) while its
@@ -261,6 +266,64 @@ namespace Ring.Presentation
         /// collider on it — so no cosmetic prop can flicker the aim by drifting
         /// through the cursor line.
         ///
+        /// AND THE SCREEN IS FINISHED ALONG THE LINE OF FIRE, NOT THE CAMERA'S
+        /// (fix-round 1, Ф-2, the remainder of `app-1ru`'s second half). The
+        /// cast above screens what the CAMERA cannot see past, and this camera
+        /// is a rigid frame — `CameraRig` builds its offset from `CameraConfig`
+        /// alone (pitch 55°, distance 18, no yaw), so a 3 m barrier throws a
+        /// screen shadow of only 3/tan(55°) ≈ 2.1 m at frame centre. A mob
+        /// standing further behind a barrier than that is unshadowed on screen,
+        /// the cast reaches its proxy, and the head pulse, the zone tint and the
+        /// marker would go back to promising a target a shot from a 1.0 m muzzle
+        /// cannot reach through a 3 m barrier. So a proxy hit is accepted only
+        /// when `Ring.Simulation.AI.Targeting.HasLineOfFire` — the simulation's
+        /// own "can a round get from here to there" gate, already the one the
+        /// gunner AI fires off and the server's fog of war sees by — agrees,
+        /// measured from the SIMULATION's muzzle (`SimulationRunner.
+        /// RenderMuzzleSimPos`, the point `WeaponSystem`'s aimed branch really
+        /// launches from) to the proxy point, padded by the round's own
+        /// `ProjectileRadius`, exactly as the projectile's own gather phase pads
+        /// its sweep. A refusal takes the same early exit a hit on arena
+        /// geometry takes: a miss, the Э1 plane fallback, `CurrentAimZone` back
+        /// to `None`, `CurrentHoveredMob` back to null, the marker on the floor.
+        /// Nothing else moves — the `!AimHeld` branch, the plane fallback
+        /// itself, the local-doll guard and every path that never reaches a
+        /// proxy are untouched, and another PLAYER's doll is screened by this
+        /// same rule (it is behind the guard, not in front of it), which is the
+        /// PvP half of the same bug.
+        ///
+        /// THAT GATE IS FLAT, AND TODAY THAT COSTS A NAMED BAND, NOT NOTHING.
+        /// `HasLineOfFire` knows obstacle circles and interior wall stadiums in
+        /// plan only; it has no height and no `Arena.BarrierTop`, and it does
+        /// not consult the outer ring boundary at all (its own doc says so) —
+        /// harmless here, because a target beyond the rim is not a target. For
+        /// every aim point at or below the barrier column the round's own radius
+        /// grows `BarrierTop` into, the flat answer is not merely conservative
+        /// but exact: the round flies a straight line from the muzzle to that
+        /// point (`ProjectileSystem` adds no gravity), so its whole height stays
+        /// between the two, inside the column, and any barrier on the plan line
+        /// really does stop it. Above that column the flat answer starts
+        /// refusing shots that would land — with the shipped numbers that band
+        /// is the top 0.42 m of a Gunner's head belt (`MobGunnerConfig` head top
+        /// 3.5 against a grown column of 3.08), and only when the barrier also
+        /// sits in the last sixth or so of the muzzle→aim line, which is what it
+        /// takes for a climbing round to be over the crown by the time it gets
+        /// there. The refusal is the deliberate direction of that error, the
+        /// same one `ProjectileSystem`'s own gate chose: this bug is about the
+        /// picture promising what the round cannot do, so the picture stays on
+        /// the cautious side of it. When the owner's post-MVP low cover lands
+        /// (0.8–1.0 m, with the crouch), the flat answer stops being cautious
+        /// and starts being wrong, and height has to arrive here as well.
+        ///
+        /// WHAT THE OWNER WILL SEE FROM THE RIGID FRAME, both halves of it: near
+        /// the arena's southern rim the camera itself sits BEHIND the ring wall,
+        /// the cast lands on its outer face, and the cursor stops hovering
+        /// anything in that strip; and any barrier within ~2.1 m south of a
+        /// target takes its hover away too. Both agree with what is drawn (the
+        /// barrier is between the eye and the target), but "the cursor stopped
+        /// picking things up at the south edge" is a bug report waiting to be
+        /// filed, so it is named here first.
+        ///
         /// I1 (final review wave, app-n6g): a hit on the PLAYER's own proxy
         /// (also on this layer, Task 19 — `StageOneSceneBootstrap` wires the
         /// SAME `EnsureAimProxyChildren` onto the player doll as onto every
@@ -303,8 +366,13 @@ namespace Ring.Presentation
                 return false;
             }
 
+            // One copy of the built config for the whole method — the cast's
+            // reach, the round's radius and the arena the line-of-fire gate
+            // walks all come off it, and `Config` is a by-value property over a
+            // struct this size.
+            SimConfig config = _runner.Config;
             Ray ray = _camera.ScreenPointToRay(mouse.position.ReadValue());
-            float maxDistance = _runner.Config.Arena.Radius * 2f;
+            float maxDistance = config.Arena.Radius * 2f;
             // Stage 2 Task 46: proxies AND arena geometry, one cast. Adding the
             // geometry layer is what lets a wall SCREEN a mob behind it; the
             // proxies still answer everything else, and QueryTriggerInteraction
@@ -350,7 +418,25 @@ namespace Ring.Presentation
                 return false;
             }
 
-            simPos = SimSpace.ToSim(hit.point);
+            // Fix-round 1 (Ф-2): the camera screened this hit, now the shot
+            // does. Both ends are the SIMULATION's — the muzzle the aimed
+            // branch of `WeaponSystem` launches from, and the point the round
+            // is being sent to — so this asks the authoritative question rather
+            // than a picture-shaped approximation of it (method doc for the
+            // gate's flat-plan limit and for the band it costs).
+            float2 aimSimPos = SimSpace.ToSim(hit.point);
+            if (!Targeting.HasLineOfFire(_runner.RenderMuzzleSimPos(aimSimPos), aimSimPos,
+                    config.Weapon.ProjectileRadius, in config.Arena))
+            {
+                simPos = default;
+                height = default;
+                zone = HitZone.None;
+                hoveredMob = null;
+                worldPoint = default;
+                return false;
+            }
+
+            simPos = aimSimPos;
             height = hit.point.y;
             zone = ClassifyProxyZone(hit.collider);
             hoveredMob = hit.collider.GetComponentInParent<MobView>();

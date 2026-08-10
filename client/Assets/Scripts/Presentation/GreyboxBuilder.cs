@@ -9,8 +9,18 @@ namespace Ring.Presentation
     /// parented under this transform. Presentation-only:
     /// this never touches Simulation state, it just visualizes the same
     /// `ArenaConfig`/`ArenaSimConfig` numbers Simulation collides against
-    /// (`Geometry.cs`), so the visible surface matches sim collision by
-    /// construction (same radius, same center at world/sim origin per `SimSpace`).
+    /// (`Geometry.cs`), so the visible surface follows sim collision by
+    /// construction (same radius, same center at world/sim origin per `SimSpace`)
+    /// — down to two approximations worth naming rather than leaving to be
+    /// discovered (fix-round 1, Ф-5). A primitive cylinder is a polygonal prism
+    /// inscribed in its circle, not a circle: its drawn face lies inside the
+    /// simulated one by R·(1 − cos(π/sides)), centimetres on this arena's radii.
+    /// And the ring wall is drawn as 0.5 m thick boxes CENTRED on the radius,
+    /// while Simulation stops a round when its centre reaches `Radius` minus the
+    /// round's own radius — so at the rim a round buries up to ~0.17 m into the
+    /// drawn wall before it ends. Both are pre-Task-46 and neither is a defect
+    /// — they are what "the picture matches the collision" costs, said out loud
+    /// rather than left under an absolute.
     ///
     /// PhysX colliders on the generated primitives are intentionally kept (they
     /// come free with `CreatePrimitive`) and moved to the `Cosmetics` layer
@@ -20,7 +30,22 @@ namespace Ring.Presentation
     /// whether the cursor is standing behind a barrier (bd app-1ru). Simulation
     /// still never queries PhysX — it has its own analytic collision
     /// (`Geometry.SweepArena`/`Depenetrate`) against the same `ArenaConfig`
-    /// numbers, and no game outcome is ever decided by a collider here.
+    /// numbers.
+    ///
+    /// WHAT THAT SECOND CONSUMER DECIDES, AND WHAT IT DOES NOT (fix-round 1,
+    /// Ф-3, replacing this paragraph's earlier "no game outcome is ever decided
+    /// by a collider here" — an absolute the same task stopped holding). The
+    /// cast shapes the local player's aim INPUT: its result is what `AimProvider`
+    /// caches, `InputSampler` copies that into the frame's `SimInput`, and the
+    /// authoritative server resolves the shot from that input alone (CR 3
+    /// intact — an input is not an outcome). So nothing is decided here; but
+    /// moving or resizing one of these colliders is not cosmetic either, because
+    /// it silently changes where the player is ABLE to aim, and `Presentation/`
+    /// is the client track's own zone by CODEOWNERS. One fact that would
+    /// otherwise be guessed the wrong way: these colliders live on the CLIENT
+    /// scene only — this component is placed in `Main.unity` and in neither
+    /// `Server.unity` nor `AssetPreview.unity` — so the headless server has no
+    /// greybox and no PhysX arena at all, and never asks one anything.
     ///
     /// `BuildFloor` swaps its `CreatePrimitive`-default `CapsuleCollider` for a
     /// `BoxCollider` (app-4qc, Б1 milestone find): under the floor's
@@ -34,12 +59,17 @@ namespace Ring.Presentation
     /// DEFAULT CAPSULE (Stage 2 Task 46, replacing this paragraph's earlier
     /// claim). The obstacles used to keep the default capsule on the argument
     /// that its degenerate sphere was "visually indistinguishable from a true
-    /// cylinder for casing bounce purposes". Measured on the shipped arena that
-    /// argument was already generous — an obstacle of radius 3.2 drawn 3 m tall
-    /// scales its capsule to radius 3.2 / height 3, i.e. height &lt; 2×radius, so
-    /// PhysX collapses it to a sphere of radius 3.2 centred at y = 1.5, which
-    /// reaches ~1.7 m ABOVE the visible crown and ~1.7 m below the floor — but
-    /// bounce was the only consumer, so it stood. It stopped standing when
+    /// cylinder for casing bounce purposes". That argument was already generous
+    /// when it was made, measured against the arena of ITS day (fix-round 1,
+    /// Ф-5: this passage used to measure it against today's): obstacles were
+    /// drawn a flat 2 m then, which scales the capsule to radius 3.2 / height 2
+    /// — height &lt; 2×radius — so PhysX collapsed it to a sphere of radius 3.2
+    /// centred at y = 1, reaching 4.2 m, i.e. 2.2 m over a 2 m crown. At this
+    /// task's 3 m the same collapse puts the sphere's centre at y = 1.5, its top
+    /// at 4.7 and its bottom at −1.7: ~1.7 m over the crown and as far under the
+    /// floor — a smaller overhang for a taller barrier, and still an overhang
+    /// either way. Bounce was the only consumer of it, so it stood. It stopped
+    /// standing when
     /// `AimProvider` began casting against this layer to decide whether the
     /// cursor sits behind a barrier: the collider now decides where the player
     /// is ALLOWED to aim, and a bulge over the crown refuses hover on a mob
@@ -127,9 +157,11 @@ namespace Ring.Presentation
 
         /// Height every INTERIOR barrier is drawn at — obstacle cylinders and
         /// wall stadiums alike, from the one `ArenaConfig.BarrierTop` number
-        /// Simulation gates shots against (Stage 2 Task 46), so the picture and
-        /// the collision cannot drift apart. The outer ring wall keeps its own
-        /// `WallHeight`: it has no modelled top at all.
+        /// Simulation gates shots against (Stage 2 Task 46), so the drawn height
+        /// and the gated height are the same number and cannot be tuned apart.
+        /// (The class doc names what the two still approximate in PLAN.) The
+        /// outer ring wall keeps its own `WallHeight`: it has no modelled top
+        /// at all.
         ///
         /// READING SOMEBODY ELSE'S NUMBER, SAID OUT LOUD. A non-positive
         /// `BarrierTop` means "no modelled top" — Simulation stops a shot there
@@ -228,6 +260,15 @@ namespace Ring.Presentation
         /// the player saw an empty floor. Named apart from `BuildWall` above,
         /// which builds the outer RING.
         ///
+        /// THE OBJECTS IT CREATES ARE NAMED "InteriorWall_*" UNDER AN
+        /// "InteriorWalls" ROOT, not after this method (fix-round 1, Ф-4). The
+        /// METHOD name is the spec's (§3.3) and stays, but "WallSegment" already
+        /// belongs to the RING — `BuildWall` names its 48 children that, and the
+        /// `WallSegments` constant above counts them — so naming these objects
+        /// the same way would put a hierarchy in front of the owner in which
+        /// "Wall" holds the ring and "WallSegments" holds the interior walls,
+        /// each reading as the other.
+        ///
         /// A wall is a STADIUM in Simulation — the segment A→B inflated by
         /// HalfWidth, so its ends are ROUND (`Geometry.SegmentStadium`) — and it
         /// is drawn as one: a box spanning the two end centres, plus a cylinder
@@ -241,7 +282,7 @@ namespace Ring.Presentation
         {
             if (_arena.Walls == null || _arena.Walls.Length == 0) return;
 
-            var wallsRoot = new GameObject("WallSegments");
+            var wallsRoot = new GameObject("InteriorWalls");
             wallsRoot.transform.SetParent(transform, false);
 
             float height = BarrierHeight;
@@ -253,7 +294,7 @@ namespace Ring.Presentation
                 Vector3 axis = b - a;
 
                 GameObject body = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                body.name = $"Wall_{i:00}_Body";
+                body.name = $"InteriorWall_{i:00}_Body";
                 body.layer = CosmeticsLayer;
                 body.transform.SetParent(wallsRoot.transform, false);
                 body.transform.localPosition = 0.5f * (a + b) + Vector3.up * (height * 0.5f);
@@ -266,14 +307,29 @@ namespace Ring.Presentation
                 // config is ever built: the substitute heading keeps a bad asset
                 // from spraying "look rotation viewing vector is zero" instead of
                 // failing where it is actually diagnosed.
+                //
+                // The threshold is this builder's OWN and deliberately coarser
+                // than the validator's (fix-round 1, Ф-5 — the sentence above
+                // used to point at that rule as if the number came from it).
+                // ValidateWalls rejects |A−B|² under 1e-12 because that is where
+                // Geometry's degenerate-axis branch changes what a wall MEANS to
+                // Simulation; the question here is only whether LookRotation has
+                // a usable forward, and mirroring 1e-12 would let a wall a
+                // micrometre long through to a rotation with nothing to derive
+                // it from. 1e-8 on the square is a tenth of a millimetre of
+                // length: everything under it is invisible at any camera
+                // distance, so substituting a heading there costs no picture
+                // anyone could have seen.
                 Vector3 heading = axis.sqrMagnitude > 1e-8f ? axis : Vector3.forward;
                 body.transform.localRotation = Quaternion.LookRotation(heading, Vector3.up);
                 body.transform.localScale =
                     new Vector3(wall.HalfWidth * 2f, height, axis.magnitude);
                 body.GetComponent<MeshRenderer>().sharedMaterial = _wall;
 
-                BuildWallCap($"Wall_{i:00}_CapA", wallsRoot.transform, a, wall.HalfWidth, height);
-                BuildWallCap($"Wall_{i:00}_CapB", wallsRoot.transform, b, wall.HalfWidth, height);
+                BuildWallCap($"InteriorWall_{i:00}_CapA", wallsRoot.transform, a,
+                    wall.HalfWidth, height);
+                BuildWallCap($"InteriorWall_{i:00}_CapB", wallsRoot.transform, b,
+                    wall.HalfWidth, height);
             }
         }
 

@@ -53,9 +53,9 @@ namespace Ring.Simulation.Core
         // (Task 5) — preallocated here so the hot path never allocates; every
         // slot is overwritten before being read each tick, so like _sepForces
         // above it carries no state across ticks and is deliberately excluded
-        // from SaveState/RestoreState and StateHash. Stage 2 Task 17: sized to
-        // MaxMobs + MaxPlayers + 2, the exact worst case now that the gather
-        // fans out over every live player instead of packing a single one —
+        // from SaveState/RestoreState and StateHash. Stage 2 Task 17 sized it
+        // to MaxMobs + MaxPlayers + 2 — the exact worst case once the gather
+        // fanned out over every live player instead of packing a single one:
         // one slot per live mob, one per live player, plus barrier and floor.
         // Neither owner can reach that bound on its own (a Player-owned round
         // skips its own shooter, a Mob-owned one gathers no mobs at all), so

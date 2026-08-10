@@ -820,7 +820,7 @@ namespace Ring.Simulation.Tests
             // Wide enough to swallow the whole crowd from the launch point
             // below, which sits ~8 m out rather than at the origin.
             const float sweepRadius = 57f;
-            const float plungeVelZ = -60f;  // tFloor = (Radius - Height) / (VelZ * TickDt) = 0.5
+            const float plungeVelZ = -60f;  // tFloor = (Radius - Height) / (VelZ * TickDt) = 0.25
             const float launchHeight = sweepRadius + 0.5f;
             // Just inside the boundary's own padded rim (Arena.Radius -
             // sweepRadius), moving outward, so SegmentRingWall's crossing lands

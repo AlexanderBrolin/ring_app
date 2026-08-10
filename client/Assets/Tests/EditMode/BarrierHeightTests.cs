@@ -334,6 +334,72 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, w.ProjectileCount);
         }
 
+        /// The pair below pins the gate's THIRD argument, the round's own
+        /// radius (fix-round 1, Ф-1). Every other fixture in this file clears
+        /// or misses the crown by whole metres, so substituting `0f` for
+        /// `proj.Radius` there changes no verdict at all: the suite stays green
+        /// while a band `ProjectileRadius` tall opens over the crown of every
+        /// interior barrier and rounds start passing through it. These two sit
+        /// on either lip of that band, stated as fixture expressions.
+        [Test]
+        public void GrazingTheCrown_IsStoppedByTheRoundsOwnRadius()
+        {
+            SimConfig c = Field(3f);
+            const float obstacleX = 5f, obstacleRadius = 1.5f;
+            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            var start = new float2(obstacleX - 0.5f, 0f);
+            // Over the barrier's own top, under the column Overlaps grows by the
+            // round's radius — the only band where that argument is what decides.
+            float grazing = c.Arena.BarrierTop + 0.5f * c.Weapon.ProjectileRadius;
+
+            Assert.Less(math.abs(start.x - obstacleX), obstacleRadius + c.Weapon.ProjectileRadius,
+                "fixture premise: the round starts inside the obstacle's padded circle (t = 0)");
+            Assert.Greater(grazing, c.Arena.BarrierTop,
+                "fixture premise: the flight is ABOVE the modelled top itself");
+            Assert.Less(grazing, CrownReach(in c),
+                "fixture premise: and still inside the column the round's own radius grows "
+                + "that top into");
+
+            SimulationWorld w = Fire(in c, start, grazing, velZ: 0f);
+            Tick(w);
+
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked),
+                "a round grazing the crown is stopped — the gate pads the column by the "
+                + "round's own radius, which is this task's deliberate bias toward 'the "
+                + "barrier stopped it'");
+            Assert.AreEqual(0, w.ProjectileCount);
+        }
+
+        [Test]
+        public void JustClearOfTheGrownColumn_TheRoundPassesOver()
+        {
+            // The far lip of the same band: a millimetre past the grown column
+            // and the barrier lets go. Paired with the test above, this pins
+            // where the padding ENDS as well as that it exists — a pad widened
+            // to twice the radius fails here, a pad removed fails there.
+            SimConfig c = Field(3f);
+            const float obstacleX = 5f, obstacleRadius = 1.5f;
+            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            var start = new float2(obstacleX - 0.5f, 0f);
+            float clear = CrownReach(in c) + 1e-3f;
+
+            Assert.Less(math.abs(start.x - obstacleX), obstacleRadius + c.Weapon.ProjectileRadius,
+                "fixture premise: the round starts inside the obstacle's padded circle (t = 0)");
+            Assert.Greater(clear, CrownReach(in c),
+                "fixture premise: the flight is past the grown column");
+            Assert.Less(clear - c.Arena.BarrierTop, 2f * c.Weapon.ProjectileRadius,
+                "fixture premise: and past it by less than a second radius' worth, so a pad "
+                + "twice as generous would still catch this round");
+
+            SimulationWorld w = Fire(in c, start, clear, velZ: 0f);
+            Tick(w);
+
+            Assert.AreEqual(0, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked));
+            Assert.AreEqual(1, w.ProjectileCount, "the round flew on");
+            Assert.Greater(w.GetProjectileForTest(0).Pos.x, start.x,
+                "and it moved, rather than being frozen where it started");
+        }
+
         [Test]
         public void InteriorBarrierTakesAnExactTieAgainstTheRingBoundary()
         {

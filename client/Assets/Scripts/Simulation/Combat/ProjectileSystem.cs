@@ -408,11 +408,21 @@ namespace Ring.Simulation.Combat
                 // step", never "clear just at the moment of contact".
                 //
                 // That same span is what lets the gather phase keep ONE slot
-                // for the nearest interior barrier: the lower end of this pair
-                // never decreases with `t` (it is the step's end height for a
-                // descending round, and the contact height itself for a
-                // climbing one), so a barrier further along the same step is
-                // cleared whenever the nearest one is.
+                // for the nearest interior barrier, and Overlaps refuses in
+                // BOTH directions, so both have to be monotone in `t` for that
+                // to hold (fix-round 1, Ф-5: this passage used to argue only
+                // the first). Over the crown: the LOWER end of this pair never
+                // decreases with `t` — it is the step's end height for a
+                // descending round and the contact height itself for a climbing
+                // one — so a barrier further along the same step is cleared
+                // whenever the nearest one is. Under the floor line: the UPPER
+                // end never increases with `t`, by the mirror of the same case
+                // split, so a round already below −radius at the nearest
+                // barrier is still below it at every later one. Practically the
+                // second branch is dead today (WeaponSystem launches from a
+                // muzzle at or above 0.45 m and a round that sinks that far is
+                // taken by the floor candidate first), which is why it is worth
+                // writing down rather than leaving to be re-derived.
                 //
                 // The bias is deliberately toward "the barrier stopped it":
                 // Overlaps grows the column by the round's own radius at both
