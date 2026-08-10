@@ -8,6 +8,8 @@ using FishNet.Object;
 using FishNet.Transporting.Tugboat;
 using Ring.Data;
 using Ring.Networking;
+using Ring.Presentation;
+using Ring.Presentation.Net;
 using Ring.Server;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -23,6 +25,15 @@ namespace Ring.Editor
     /// it actually changed, so a second `Apply()` leaves an empty `git diff`.
     /// Scenes and prefabs in this project are never hand-authored — this file
     /// is the only definition of `Server.unity` and of `NetworkPlayer.prefab`.
+    ///
+    /// TWO ENTRY POINTS AS OF TASK 44e. `Apply` is the server scene above;
+    /// `ApplyClientNetworking` puts the SAME network stack — one shared
+    /// helper, not a copy — plus the client's own bootstrap object onto
+    /// `Assets/Scenes/Main.unity`, whose every other object belongs to
+    /// `StageOneSceneBootstrap`. Ownership of that scene is therefore split
+    /// by OBJECT rather than by file, and the split holds only because
+    /// neither bootstrap removes a root it did not create; see
+    /// `ApplyClientNetworking`'s own doc.
     ///
     /// WHAT THE SCENE MAY CONTAIN, AND WHY SO LITTLE. Spec §3.11 asks for a
     /// server scene "with no camera, HUD, views or particles": the headless
@@ -78,6 +89,7 @@ namespace Ring.Editor
 
         const string NetworkManagerObjectName = "NetworkManager";
         const string BootstrapObjectName = "ServerBootstrap";
+        const string ClientBootstrapObjectName = "ClientNetworkBootstrap";
         const string PlayerPrefabName = "NetworkPlayer";
         const string GraphicalChildName = "Visual";
 
@@ -112,42 +124,7 @@ namespace Ring.Editor
                 throw new System.InvalidOperationException(
                     $"StageTwoSceneBootstrap: no DefaultPrefabObjects at '{SpawnablePrefabsPath}'.");
 
-            GameObject managerGo = GetOrCreateRoot(scene, NetworkManagerObjectName, ref sceneDirty);
-            NetworkManager manager = EnsureComponent<NetworkManager>(managerGo, ref sceneDirty);
-            // Added explicitly even though NetworkManager would create the
-            // missing ones itself at run time (its own GetOrCreateComponent
-            // pass): a manager that exists only after Awake cannot be
-            // inspected, cannot be pre-configured in the scene, and — for
-            // TimeManager below — cannot carry a scene-authored tick rate.
-            EnsureComponent<TransportManager>(managerGo, ref sceneDirty);
-            EnsureComponent<Tugboat>(managerGo, ref sceneDirty);
-            TimeManager timeManager = EnsureComponent<TimeManager>(managerGo, ref sceneDirty);
-            EnsureComponent<PredictionManager>(managerGo, ref sceneDirty);
-
-            // The transport's port stays at the package default here on
-            // purpose: the real port arrives per match from MatchConfig and is
-            // applied with Tugboat.SetPort before the connection is started
-            // (Task 41c). A port authored into the scene would be a second
-            // source of that number, and the deployed one would silently be
-            // whichever of the two ran last.
-
-            var managerSo = new SerializedObject(manager);
-            // Wired explicitly rather than left to the Editor-only auto-fill in
-            // NetworkManager.ValidateSpawnablePrefabs: that path exists only
-            // under UNITY_EDITOR, so a built headless player with an unassigned
-            // field would log "SpawnablePrefabs is null" and fail to spawn.
-            if (EditorBootstrapUtils.SetRef(managerSo, "_spawnablePrefabs", spawnablePrefabs))
-            {
-                managerSo.ApplyModifiedPropertiesWithoutUndo();
-                sceneDirty = true;
-            }
-
-            var timeSo = new SerializedObject(timeManager);
-            if (SetInt(timeSo, "_tickRate", net.TickRate))
-            {
-                timeSo.ApplyModifiedPropertiesWithoutUndo();
-                sceneDirty = true;
-            }
+            EnsureNetworkStack(scene, net, spawnablePrefabs, ref sceneDirty);
 
             GameObject bootstrapGo = GetOrCreateRoot(scene, BootstrapObjectName, ref sceneDirty);
             ServerBootstrap bootstrap = EnsureComponent<ServerBootstrap>(bootstrapGo, ref sceneDirty);
@@ -180,6 +157,145 @@ namespace Ring.Editor
 
             Debug.Log($"StageTwoSceneBootstrap: scene {(sceneDirty ? "updated" : "already up to date")} " +
                 $"at {ScenePath}, build scenes {(buildScenesChanged ? "updated" : "already up to date")}.");
+        }
+
+        /// Adds the client half of Stage 2 to `Assets/Scenes/Main.unity`
+        /// (Task 44e): the same network stack `Apply` puts on the server
+        /// scene, plus the `ClientNetworkBootstrap` object that installs the
+        /// networked backend and dials the server when the launch asks for
+        /// it. Idempotent by the same existence guards, so a second run
+        /// leaves an empty `git diff`.
+        ///
+        /// A SECOND ENTRY POINT RATHER THAN A BRANCH OF `Apply`. The two
+        /// scenes have nothing in common past the stack itself — no player
+        /// prefab, no `ServerBootstrap`, no build-scene list on this side —
+        /// and the batch runbook drives bootstraps by method name, so a
+        /// caller that wants the client scene should not have to rebuild the
+        /// server one to get it.
+        ///
+        /// IT LIVES HERE, NOT IN `StageOneSceneBootstrap`, THOUGH THAT FILE
+        /// OWNS THE SCENE. The code that places a `NetworkManager` is already
+        /// written in this file and is now shared by both methods rather than
+        /// copied; the objects it writes are Stage 2's, not Stage 1's; and
+        /// this file already knew the path. The two bootstraps therefore
+        /// write into ONE scene, which is safe only because their objects are
+        /// disjoint: each one creates what it does not find and neither
+        /// removes a root it does not own, so re-running either leaves the
+        /// other's work standing. A future step that starts deleting unknown
+        /// roots from `Main.unity` breaks that, and this paragraph is where
+        /// it should be found out.
+        ///
+        /// WHY THE STACK IS ADDED AT ALL WHEN SOLO IS THE DEFAULT. A client
+        /// cannot dial a server without a transport, and the transport cannot
+        /// be added at run time in a form the Inspector can be trusted to
+        /// show. `ClientNetworkBootstrap` is inert without its command-line
+        /// switch — see its own doc — and the manager it leaves idle changes
+        /// nothing a solo session reads: FishNet's headless auto-start is
+        /// compiled out of a non-server build, and `TimeManager`'s physics
+        /// mode stays the package default, which is Unity's own.
+        [MenuItem("Ring/Bootstrap/Stage 2 Client Networking")]
+        public static void ApplyClientNetworking()
+        {
+            // The scene first, for the fake-null reason `Apply` states above.
+            Scene scene = EditorSceneManager.OpenScene(MainScenePath, OpenSceneMode.Single);
+
+            NetConfig net = Load<NetConfig>("NetConfig");
+            var spawnablePrefabs =
+                AssetDatabase.LoadAssetAtPath<DefaultPrefabObjects>(SpawnablePrefabsPath);
+            if (spawnablePrefabs == null)
+                throw new System.InvalidOperationException(
+                    $"StageTwoSceneBootstrap: no DefaultPrefabObjects at '{SpawnablePrefabsPath}'.");
+
+            // The client resolves a spawn by prefab id against this very
+            // registry, so it is as load-bearing here as on the server: an
+            // unassigned field would mean the player objects the server
+            // spawns never appear on this side.
+            bool sceneDirty = false;
+            EnsureNetworkStack(scene, net, spawnablePrefabs, ref sceneDirty);
+
+            SimulationRunner runner =
+                EditorBootstrapUtils.FindComponentInScene<SimulationRunner>(scene);
+            if (runner == null)
+                throw new System.InvalidOperationException(
+                    "StageTwoSceneBootstrap: no SimulationRunner in " + MainScenePath +
+                    " — run Ring/Bootstrap/Stage 1 Scene first.");
+
+            // Its own root, the way `ServerBootstrap` has one: the manager
+            // object is marked DontDestroyOnLoad by FishNet and outlives the
+            // scene, while this component's life is meant to BE the scene's —
+            // that is what makes its OnDestroy the right place to drop the
+            // subscriptions the manager would otherwise keep.
+            GameObject bootstrapGo = GetOrCreateRoot(scene, ClientBootstrapObjectName, ref sceneDirty);
+            ClientNetworkBootstrap clientBootstrap =
+                EnsureComponent<ClientNetworkBootstrap>(bootstrapGo, ref sceneDirty);
+
+            var clientSo = new SerializedObject(clientBootstrap);
+            bool clientChanged = false;
+            clientChanged |= EditorBootstrapUtils.SetRef(clientSo, "_runner", runner);
+            clientChanged |= EditorBootstrapUtils.SetRef(clientSo, "_net", net);
+            if (clientChanged)
+            {
+                clientSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            if (sceneDirty)
+            {
+                EditorSceneManager.MarkSceneDirty(scene);
+                EditorSceneManager.SaveScene(scene);
+            }
+
+            Debug.Log($"StageTwoSceneBootstrap: client networking " +
+                $"{(sceneDirty ? "updated" : "already up to date")} at {MainScenePath}.");
+        }
+
+        /// The network stack itself — `NetworkManager` and the four managers
+        /// beside it — on a root object of `scene`. Shared by both entry
+        /// points rather than written twice: the client and the server need
+        /// the same components, the same prefab registry and the same tick
+        /// rate, and two copies of that list would be two places for the next
+        /// component to be added to and one place for it to be forgotten.
+        ///
+        /// The components are added explicitly even though `NetworkManager`
+        /// would create the missing ones itself at run time (its own
+        /// `GetOrCreateComponent` pass): a manager that exists only after
+        /// `Awake` cannot be inspected, cannot be pre-configured in the scene
+        /// and — for `TimeManager` — cannot carry a scene-authored tick rate.
+        ///
+        /// THE TRANSPORT'S ADDRESS AND PORT ARE LEFT AT THE PACKAGE DEFAULTS
+        /// ON BOTH SCENES. The server's real port arrives per match from
+        /// `MatchConfig` and is applied by the `StartConnection` overload that
+        /// takes one (Task 41c); the client's arrives from the command line
+        /// and is applied by the client overload of the same shape. A value
+        /// authored here would be a second source of that number, and the
+        /// effective one would silently be whichever of the two ran last.
+        static void EnsureNetworkStack(Scene scene, NetConfig net,
+            DefaultPrefabObjects spawnablePrefabs, ref bool sceneDirty)
+        {
+            GameObject managerGo = GetOrCreateRoot(scene, NetworkManagerObjectName, ref sceneDirty);
+            NetworkManager manager = EnsureComponent<NetworkManager>(managerGo, ref sceneDirty);
+            EnsureComponent<TransportManager>(managerGo, ref sceneDirty);
+            EnsureComponent<Tugboat>(managerGo, ref sceneDirty);
+            TimeManager timeManager = EnsureComponent<TimeManager>(managerGo, ref sceneDirty);
+            EnsureComponent<PredictionManager>(managerGo, ref sceneDirty);
+
+            var managerSo = new SerializedObject(manager);
+            // Wired explicitly rather than left to the Editor-only auto-fill in
+            // NetworkManager.ValidateSpawnablePrefabs: that path exists only
+            // under UNITY_EDITOR, so a built player with an unassigned field
+            // would log "SpawnablePrefabs is null" and fail to spawn.
+            if (EditorBootstrapUtils.SetRef(managerSo, "_spawnablePrefabs", spawnablePrefabs))
+            {
+                managerSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            var timeSo = new SerializedObject(timeManager);
+            if (SetInt(timeSo, "_tickRate", net.TickRate))
+            {
+                timeSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
         }
 
         static Scene OpenOrCreateScene(out bool created)

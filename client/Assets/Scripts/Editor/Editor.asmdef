@@ -1,7 +1,8 @@
 {
     "name": "Ring.Editor",
     "rootNamespace": "Ring.Editor",
-    "references": ["Ring.Simulation", "Ring.Data", "Ring.Presentation", "Ring.Networking",
+    "references": ["Ring.Simulation", "Ring.Data", "Ring.Presentation", "Ring.Presentation.Net",
+                   "Ring.Networking",
                    "Ring.Server", "FishNet.Runtime", "Unity.InputSystem",
                    "Unity.Mathematics", "UnityEngine.UI", "Unity.TextMeshPro",
                    "Unity.RenderPipelines.Universal.Runtime"],

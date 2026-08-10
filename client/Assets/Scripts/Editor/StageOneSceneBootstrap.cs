@@ -570,7 +570,8 @@ namespace Ring.Editor
             // via EnsureUserLayer (QC14).
             bool aimProxyLayerChanged = EnsureAimProxyLayer();
 
-            SimulationRunner runner = FindRunner(scene);
+            SimulationRunner runner =
+                EditorBootstrapUtils.FindComponentInScene<SimulationRunner>(scene);
             bool sceneDirty = false;
             if (runner == null)
             {
@@ -2844,15 +2845,10 @@ namespace Ring.Editor
             return mat;
         }
 
-        static SimulationRunner FindRunner(Scene scene)
-        {
-            foreach (GameObject root in scene.GetRootGameObjects())
-            {
-                var runner = root.GetComponentInChildren<SimulationRunner>(true);
-                if (runner != null) return runner;
-            }
-            return null;
-        }
+        // FindRunner lived here until Stage 2 Task 44e; it is
+        // `EditorBootstrapUtils.FindComponentInScene<SimulationRunner>` now,
+        // because StageTwoSceneBootstrap needs the very same runner to wire
+        // the client's network bootstrap to.
 
         static Camera FindMainCamera(Scene scene)
         {
