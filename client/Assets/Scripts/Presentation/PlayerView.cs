@@ -10,7 +10,11 @@ namespace Ring.Presentation
     /// reference of its own (the `SimulationRunner` it used to read
     /// `RenderPlayerWorldPos` from went with the move — the registry
     /// interpolates every slot's own `PlayerState.Pos` instead, the same way it
-    /// already does for mobs). The root does not rotate and carries no renderer
+    /// already does for mobs). Stage 2 Task 45b's two socket fields do not
+    /// break that: they point INSIDE this same prefab, at children of the doll's
+    /// own gun, which travel with a pooled instance the way `Visual` does and
+    /// the way a scene or an asset reference never could. The root does not
+    /// rotate and carries no renderer
     /// of its own: the doll lives on the "Visual" child and `PlayerVisual` owns
     /// facing/animation (spec §3.2). Root pivot sits on the ground.
     ///
@@ -44,8 +48,30 @@ namespace Ring.Presentation
         // = PlayerEmissive/DashGlowView's own accent (Э1) — reused, not reinvented.
         static readonly Color LinkWindowFlashAccent = new Color(0f, 2.5f, 3f);
 
+        // Stage 2 Task 45b: the two empty children `StageOneSceneBootstrap`
+        // parents under this doll's `Gun`, posed from `GameFeelConfig`. They are
+        // SERIALIZED references rather than a runtime name lookup because the
+        // gun hangs off a humanoid bone whose path inside the doll rig belongs
+        // to the asset pack, not to us — the same reason the bootstrap reaches
+        // the gun itself with a depth-first search instead of a fixed path, and
+        // a search this class would otherwise have to repeat on every pooled
+        // rebind.
+        //
+        // `PlayerGunTuner` cannot stand in for them: its whole body, the `_gun`
+        // field included, lives under `#if UNITY_EDITOR`, so in a player build
+        // that component holds nothing at all. The runtime path is this one.
+        [SerializeField] Transform _muzzleSocket;
+        [SerializeField] Transform _ejectSocket;
+
         Renderer[] _renderers;
         MaterialPropertyBlock _block;
+        // Stage 2 Task 45b: this doll's own `AimProxy_*` trigger colliders,
+        // switched off when it becomes a corpse — see `DetachAsCorpse`.
+        // Collected by LAYER, not by component type: the doll also carries the
+        // gun model, and a model's own collider (should an import ever bring
+        // one) is not an aim proxy and must not be switched with them.
+        Collider[] _aimProxies;
+        int _aimProxyCount;
 
         /// Whether the slot this doll is bound to is this client's own
         /// (`RenderSnapshot.LocalPlayerIndex` — the registry decides, this class
@@ -58,6 +84,30 @@ namespace Ring.Presentation
         /// Cached in `Awake` — the pose half of this pair (see the class doc).
         public PlayerVisual Visual { get; private set; }
 
+        /// Where this doll's weapon actually points from (Stage 2 Task 45b):
+        /// the mouth of the barrel, riding the hand bone through the gun. The
+        /// muzzle flash bursts here and the aim ray starts here, so that both
+        /// come off the WEAPON THE PLAYER SEES rather than off a point the
+        /// simulation computes in front of the hero (`WeaponConfig.MuzzleOffset`
+        /// along the aim), which is where they used to sit and which is visibly
+        /// not the gun once the doll carries a real model.
+        ///
+        /// A CONSUMER MUST TREAT NULL AS "NO MUZZLE", not as a reason to fall
+        /// back on the event's position. That fallback is exactly the F-3 defect
+        /// (`app-aq9`): a `ShotHeard` — a shot from someone this client cannot
+        /// see — arrives as an ordinary `ProjectileFired` at a position the
+        /// server deliberately coarsened, and drawing anything there hands the
+        /// shooter's location to a player who was never told it.
+        public Transform MuzzleSocket => _muzzleSocket;
+
+        /// Where this doll's weapon throws its brass (Stage 2 Task 45b) —
+        /// position AND direction, unlike `MuzzleSocket` above: the casing's
+        /// impulse is this transform's own forward (bd `app-e2n`: "импульс
+        /// вбок-назад от ориентации оружия"), so the port's rotation is a real
+        /// consumer of the owner's gizmo tuning, not decoration. Same null
+        /// contract as `MuzzleSocket`.
+        public Transform EjectSocket => _ejectSocket;
+
         void Awake()
         {
             _renderers = GetComponentsInChildren<Renderer>(true);
@@ -65,6 +115,34 @@ namespace Ring.Presentation
             Visual = GetComponent<PlayerVisual>();
             if (Visual == null)
                 Debug.LogError("PlayerView: no PlayerVisual on the doll — it will not animate.");
+            CacheAimProxies();
+        }
+
+        /// The doll's aim-proxy colliders, found once (Stage 2 Task 45b). They
+        /// are bootstrap-created children of this root and nothing adds or
+        /// removes one during a match, so one pass in `Awake` is the whole
+        /// story — same "cache the children once" rule `_renderers` above
+        /// already follows. `includeInactive: true` for the same reason that
+        /// call does: a pooled doll spends its time between lives disabled.
+        void CacheAimProxies()
+        {
+            Collider[] all = GetComponentsInChildren<Collider>(true);
+            _aimProxies = all;
+            _aimProxyCount = 0;
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i].gameObject.layer != AimProvider.AimProxyLayer) continue;
+                _aimProxies[_aimProxyCount++] = all[i];
+            }
+        }
+
+        /// Turns this doll's aim proxies on or off (Stage 2 Task 45b). `enabled`
+        /// on the collider, not `SetActive` on its GameObject: the proxy child
+        /// carries nothing else, and leaving the object itself alive keeps the
+        /// cached array valid and the hierarchy readable in the Inspector.
+        void SetAimProxiesEnabled(bool value)
+        {
+            for (int i = 0; i < _aimProxyCount; i++) _aimProxies[i].enabled = value;
         }
 
         /// Rebinds this (pooled) doll to a player slot: records whose slot it is
@@ -81,6 +159,14 @@ namespace Ring.Presentation
         {
             IsLocal = isLocal;
             ApplyEmission(Color.black);
+            // Stage 2 Task 45b: the other half of `DetachAsCorpse`'s proxy
+            // switch-off. A doll only ever reaches this method by being rented
+            // from the pool, and the pool is fed both by a slot leaving the
+            // frame and — via `ViewRegistry.Clear` — by corpses at a match
+            // restart, so the previous life's last act can be "proxies off".
+            // Renting one back without this line would put a live player behind
+            // a silhouette nothing can aim at.
+            SetAimProxiesEnabled(true);
         }
 
         /// Per-frame accent pass, called once per render frame by
@@ -120,7 +206,20 @@ namespace Ring.Presentation
         /// camera sits on that body, so the cursor is over it constantly, and
         /// letting the proxy cast land there would revive the exact I1 defect
         /// the guard exists for.
-        public void DetachAsCorpse() => ApplyEmission(Color.black);
+        ///
+        /// IT ALSO STOPS BEING AIMABLE AT (Stage 2 Task 45b, the Task 45a debt
+        /// this closes). The self-hit guard above only ever excluded THIS
+        /// client's own doll; a stranger's corpse kept three live `AimProxy_*`
+        /// triggers, so the aim ray, the zone tint and the head-hover cue all
+        /// went on reporting a target that is already dead — and a mob's corpse
+        /// has no such thing by construction (`CorpseMechView.prefab` carries no
+        /// proxy at all), which is the asymmetry the owner's "труп игрока = труп
+        /// моба" rules out. Switched off here, switched back on by `Bind`.
+        public void DetachAsCorpse()
+        {
+            ApplyEmission(Color.black);
+            SetAimProxiesEnabled(false);
+        }
 
         void ApplyEmission(Color emission)
         {

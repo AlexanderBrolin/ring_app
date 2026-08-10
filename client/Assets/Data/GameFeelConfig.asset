@@ -108,3 +108,6 @@ MonoBehaviour:
   HeadHoverPulseHz: 5
   HeadHoverPulseAmp: 0.25
   RemotePlayerEmission: {r: 1.4, g: 0.15, b: 1.6, a: 1}
+  GunMuzzleLocalPosition: {x: 0, y: 0, z: 0.18}
+  GunEjectLocalPosition: {x: 0.03, y: 0.04, z: 0.16}
+  GunEjectLocalEuler: {x: 0, y: 100, z: 0}

@@ -43,18 +43,32 @@ namespace Ring.Presentation
     [DefaultExecutionOrder(-50)]
     public sealed class SimulationRunner : MonoBehaviour
     {
-        /// Task 28 fix-round (review #3, Minor): the shared TTL both
+        /// Task 28 fix-round (review #3, Minor): the shared window both
         /// `MuzzleFlashView` and `AudioDirector`'s ImmediateMuzzleFeedback
         /// prediction latches use — was two separate `PredictedTtlSeconds`
         /// constants (one per class) that could silently drift apart; lives
         /// here (not `GameFeelConfig`) because it is a tick-timing correctness
         /// constant tied to this class's own 30Hz accumulator (spec §3.2), not
-        /// a game-feel number the owner would hot-tweak on the milestone-4
-        /// playtest. ~1.5 tick periods (33ms/tick @ 30Hz): long enough for the
-        /// matching real tick to land and flush even under a slightly-late
-        /// accumulator crossing, short enough to bound how long a false
-        /// prediction lingers (see the two consumers' own docs for specifics).
-        public const float ImmediatePredictionTtlSeconds = 0.05f;
+        /// a game-feel number the owner would hot-tweak on a playtest.
+        ///
+        /// IT NO LONGER MATCHES A PREDICTION TO ITS EVENT — Stage 2 Task 45b
+        /// (bd `app-id9`) moved that job to `ImmediatePredictionLatch`, which
+        /// pairs the two by ORDER — and the value moved with the job: 0.05 s
+        /// (~1.5 ticks) was the window inside which the confirming event had to
+        /// land, and an event a few milliseconds later than that drew a second
+        /// flash for a shot the player had already seen, on roughly every tenth
+        /// round of a burst. What is left here is a TIMEOUT on a prediction
+        /// nobody will ever confirm, and it has to outlast the longest HONEST
+        /// confirmation instead of the shortest: on the networked backend a
+        /// shot predicted locally is confirmed only after the input reaches the
+        /// server (~RTT/2), the tick is simulated and sent back (~RTT/2 + a
+        /// tick), the render clock waits out `NetConfig.InterpBufferTicks` (3 =
+        /// 0.1 s) and, on a lost packet, the redundant re-send arrives up to
+        /// `EventRedundancyTicks` (4 = 0.13 s) later — about 0.35 s all told at
+        /// the 80 ms RTT + 5% loss every playtest build must survive. 0.5 s is
+        /// that with margin; the local backend confirms within one frame and
+        /// never approaches it.
+        public const float ImmediatePredictionTtlSeconds = 0.5f;
 
         [SerializeField] HeroConfig _hero;
         [SerializeField] WeaponConfig _weapon;
@@ -195,11 +209,23 @@ namespace Ring.Presentation
         /// MuzzleHeight`). Every Presentation-layer consumer of the hero's
         /// muzzle height (`MuzzleFlashView`'s prediction and player-branch
         /// burst, `PersistentPropsDirector.SpawnCasing`, `AimRayView`'s ray
-        /// origin) reads THIS instead of re-deriving the ternary locally —
+        /// origin) read THIS instead of re-deriving the ternary locally —
         /// previously each one duplicated it ad hoc (`AimRayView`'s own,
         /// pre-Task-21 doc explicitly flagged this as a placeholder). Reads
         /// off `RenderCurr` — the last COMPLETE tick's state — same
         /// client-boundary rule as `WouldFireThisFrame` below.
+        ///
+        /// ALL THREE OF THEM STOPPED READING IT IN STAGE 2 TASK 45b, and the
+        /// property is kept rather than deleted — the same treatment
+        /// `GameFeelConfig.MuzzleLiftY` got when THIS property replaced it. The
+        /// owner's requirement of 2026-08-10 is that the flash, the brass and
+        /// the ray all leave the barrel OF THE MODEL, so their height is now
+        /// wherever the doll's muzzle socket actually is: a number the animated
+        /// hand supplies, which no formula over `PlayerState` can restate.
+        /// Deleting it would strand `LocalSimBackend`/`NetworkSimBackend`, whose
+        /// own docs cite this property as the reader that obliges them to fill
+        /// `SlideTimer` — and one of those two lives in an assembly this task
+        /// must not touch.
         public float RenderMuzzleHeight => RenderCurr.Player.SlideTimer > 0f
             ? Config.Hero.SlideMuzzleHeight : Config.Hero.MuzzleHeight;
 

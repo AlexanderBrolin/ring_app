@@ -35,9 +35,9 @@ namespace Ring.Presentation
     /// frame the player presses Fire, ahead of the authoritative tick's
     /// `ProjectileFired` event, which can land up to one 30Hz tick later (spec
     /// §3.2). See `MuzzleFlashView`'s class doc — same
-    /// `SimulationRunner.WouldFireThisFrame` heuristic, same
-    /// predicted-latch-with-TTL suppression shape, independent state (each
-    /// component owns its own latch) so the two never interfere with each
+    /// `SimulationRunner.WouldFireThisFrame` heuristic, and — since Stage 2 Task
+    /// 45b — literally the same suppression mechanism (`ImmediatePredictionLatch`),
+    /// held as an independent instance here so the two never interfere with each
     /// other's bookkeeping. `PlayClip` below is shared by both paths so
     /// `MinSfxInterval`/`VoicesPerSfx` gate the predicted attempt exactly like
     /// a real one — and its `bool` return means the latch is only armed when a
@@ -73,13 +73,16 @@ namespace Ring.Presentation
         float[] _lastPlayTime;
         int _nextVoice;
 
-        // Task 28 (ImmediateMuzzleFeedback): latches a predicted shot-sound
-        // play until either the matching real ProjectileFired event consumes
-        // it (HandleEvent) or SimulationRunner.ImmediatePredictionTtlSeconds
+        // Task 28 (ImmediateMuzzleFeedback): holds a predicted shot-sound play
+        // until either the matching real ProjectileFired event consumes it
+        // (HandleEvent) or SimulationRunner.ImmediatePredictionTtlSeconds
         // elapses unconfirmed — see the class doc above and MuzzleFlashView's
-        // for the full rationale.
-        bool _predicted;
-        float _predictedExpireAt;
+        // for the full rationale. Stage 2 Task 45b (bd app-id9) replaced the
+        // `bool`/`float` pair here and its twin in MuzzleFlashView with ONE
+        // shared class: the two had to agree, and two copies of a rule are two
+        // rules. Still an independent INSTANCE per component (each owns its own
+        // predictions), exactly as before.
+        readonly ImmediatePredictionLatch _latch = new ImmediatePredictionLatch();
 
         // В3 fix-wave 2 (item 3c): last-play timestamp for the head-hover tick,
         // parallel to `_lastPlayTime` above but NOT indexed by `SimEventKind` —
@@ -169,9 +172,11 @@ namespace Ring.Presentation
         void Update()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
-            if (_predicted && Time.unscaledTime > _predictedExpireAt) _predicted = false;
-            if (_predicted) return;
-            if (!_runner.WouldFireThisFrame) return;
+            // Stage 2 Task 45b: one predicted sound per SHOT is the rising edge
+            // of the shared gate, not "is something already pending" — see
+            // `ImmediatePredictionLatch`. Evaluated every frame this method
+            // reaches, because the edge is a function of the previous frame.
+            if (!_latch.RisingEdge(_runner.WouldFireThisFrame)) return;
 
             PlayerState player = _runner.RenderCurr.Player;
             float2 aimDir = player.AimPoint - player.Pos;
@@ -181,12 +186,9 @@ namespace Ring.Presentation
             float2 muzzlePos = player.Pos + dir * muzzleOffset;
 
             if (PlayClip(_shotClip, SimEventKind.ProjectileFired, muzzlePos))
-            {
-                _predicted = true;
-                _predictedExpireAt = Time.unscaledTime + SimulationRunner.ImmediatePredictionTtlSeconds;
-            }
+                _latch.Arm(Time.unscaledTime);
             // PlayClip returning false (MinSfxInterval/VoicesPerSfx gated the
-            // predicted attempt out) leaves `_predicted` false — the real event
+            // predicted attempt out) leaves the latch unarmed — the real event
             // still gets its own ordinary chance at HandleEvent below instead of
             // being wrongly suppressed for a sound that never actually played.
         }
@@ -211,12 +213,20 @@ namespace Ring.Presentation
                 // MuzzleFlashView.HandleEvent gets the matching fix).
                 return;
             }
+            // Stage 2 Task 45b: only the LOCAL player's own shot may consume a
+            // prediction. `Owner == Player` was the whole test while it meant
+            // "mine" — on a networked client every other player's round decodes
+            // to that same owner (`ClientEventDecoder`), so a stranger's gunfire
+            // would swallow my predicted shot's confirmation and then lose its
+            // own sound on the way out: the app-ai2 defect one participant
+            // further out. The matching fix is in `MuzzleFlashView.HandleEvent`.
             if (e.Kind == SimEventKind.ProjectileFired
-                && _predicted && Time.unscaledTime <= _predictedExpireAt)
+                && e.PlayerIndex == _runner.RenderCurr.LocalPlayerIndex
+                && _latch.TryConsume(Time.unscaledTime))
             {
                 // Already played this shot's sound ahead of time (Update above)
-                // — consume the latch instead of a duplicate PlayOneShot (Task 28).
-                _predicted = false;
+                // — consume the prediction instead of a duplicate PlayOneShot
+                // (Task 28).
                 return;
             }
 

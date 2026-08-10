@@ -36,11 +36,23 @@ namespace Ring.Presentation
     /// convention-consistent simplification; a real transparent surface is a
     /// separate scope decision for whoever wants it later.
     ///
-    /// Muzzle height: reads `SimulationRunner.RenderMuzzleHeight` (Task 21,
+    /// Muzzle height: read `SimulationRunner.RenderMuzzleHeight` (Task 21,
     /// PC7's single home of the `SlideTimer > 0 ? SlideMuzzleHeight :
     /// MuzzleHeight` ternary `WeaponSystem.Update` itself uses for the
-    /// authoritative shot) so the ray's visible origin never disagrees with
+    /// authoritative shot) so the ray's visible origin never disagreed with
     /// where the server actually spawns the round.
+    ///
+    /// STAGE 2 TASK 45b MOVED THE ORIGIN ONTO THE MODEL (bd `app-60c`). The ray
+    /// started at the hero's own centre lifted to that height — a point inside
+    /// the collector's chest, which reads as a laser growing out of his sternum
+    /// once the doll carries a real pistol. It now starts at the muzzle socket
+    /// of the LOCAL player's doll (`ViewRegistry.TryGetPlayerView` on
+    /// `RenderSnapshot.LocalPlayerIndex`), so the ray leaves the barrel the
+    /// player is looking at, at whatever height the animated hand is holding it
+    /// — including mid-slide, which the ternary above approximated with a second
+    /// number. No doll (the opening frames, or after this player dies) means no
+    /// ray, switched off exactly the way `!Ready`/`!AimHeld` already switch it
+    /// off. The ray's far END is untouched by that task (`app-bej`).
     [RequireComponent(typeof(LineRenderer))]
     public sealed class AimRayView : MonoBehaviour
     {
@@ -48,6 +60,9 @@ namespace Ring.Presentation
         [SerializeField] AimProvider _aimProvider;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] Material _rayMaterial;
+        // Stage 2 Task 45b: asked per frame, never cached — the local player's
+        // doll is one pooled instance among several (`TryGetPlayerView`'s doc).
+        [SerializeField] ViewRegistry _viewRegistry;
 
         LineRenderer _line;
         MaterialPropertyBlock _block;
@@ -88,11 +103,23 @@ namespace Ring.Presentation
             }
 
             bool aimHeld = _runner.LastFrameInput.AimHeld;
-            _line.enabled = aimHeld;
-            if (!aimHeld) return;
+            if (!aimHeld)
+            {
+                _line.enabled = false;
+                return;
+            }
 
-            var player = _runner.RenderCurr.Player;
-            Vector3 muzzle = SimSpace.ToWorld(player.Pos) + Vector3.up * _runner.RenderMuzzleHeight;
+            // Stage 2 Task 45b: a ray with no barrel to leave is not drawn from
+            // somewhere else — same rule the flash and the casing follow (class
+            // doc). `_line.enabled` is written on both paths so a doll that
+            // disappears mid-aim takes the ray with it.
+            if (!TryGetMuzzle(out Vector3 muzzle))
+            {
+                _line.enabled = false;
+                return;
+            }
+            _line.enabled = true;
+
             Vector3 aimPoint = SimSpace.ToWorld(_aimProvider.CurrentAimSimPos)
                 + Vector3.up * _aimProvider.CurrentAimHeight;
 
@@ -117,6 +144,23 @@ namespace Ring.Presentation
             Color dimmed = zoneColor * (_gameFeel.AimRayAlpha * alphaBoost);
             _block.SetColor("_BaseColor", new Color(dimmed.r, dimmed.g, dimmed.b, 1f));
             _line.SetPropertyBlock(_block);
+        }
+
+        /// The local player's own barrel mouth (Stage 2 Task 45b) — false when
+        /// this client has no live doll, which the caller answers by hiding the
+        /// ray. The socket's own null check has the same meaning it has in
+        /// `MuzzleFlashView`: a doll prefab older than this task carries no
+        /// socket, and that must read as "no ray", not as an exception per
+        /// frame.
+        bool TryGetMuzzle(out Vector3 worldPos)
+        {
+            worldPos = default;
+            int slot = _runner.RenderCurr.LocalPlayerIndex;
+            if (!_viewRegistry.TryGetPlayerView(slot, out PlayerView doll)) return false;
+            Transform muzzle = doll.MuzzleSocket;
+            if (muzzle == null) return false;
+            worldPos = muzzle.position;
+            return true;
         }
     }
 }

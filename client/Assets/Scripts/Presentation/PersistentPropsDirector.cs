@@ -21,6 +21,20 @@ namespace Ring.Presentation
     /// гильзы/трупы от позиций событий, никаких привязок к мешам вьюх" — a
     /// future model swap changes nothing here).
     ///
+    /// THE SHELL CASING IS NOW THE ONE EXCEPTION, BY A LATER DECISION OF THE
+    /// SAME OWNER (2026-08-10, bd `app-e2n`; Stage 2 Task 45b). Brass belongs to
+    /// the WEAPON, not to the shot: the rule above put it at the simulation's
+    /// muzzle point, and the owner's smoke test found it landing in front of the
+    /// pistol rather than beside it. `SpawnCasing` therefore asks
+    /// `ViewRegistry.TryGetPlayerView` for the shooter's doll and spawns from
+    /// its ejection-port socket — and gets a second property for free that the
+    /// rule above could not give it: a shot whose position the server coarsened
+    /// on purpose (`ShotHeard`, from a shooter this client cannot see) leaves no
+    /// shell at all, because there is no doll to ask (F-3, `app-aq9`). Every
+    /// other cosmetic here — decals, sparks, corpses, gibs, dash glows — still
+    /// follows the rule verbatim, and none of them has a model-mounted origin to
+    /// move to.
+    ///
     /// Б1 milestone fix-wave 2 (app-9av, owner request) adds a fourth
     /// `RingBuffer&lt;T&gt;` kind, `DashGlowView` — a glowing floor mark at the
     /// dash start point that fades out over `GameFeelConfig.DashGlowSeconds`,
@@ -130,11 +144,10 @@ namespace Ring.Presentation
         // Structural spawn-positioning offsets — NOT feel numbers (owner
         // guidance, review fix-round: these stay code constants, only the
         // actual game-feel numbers below moved into GameFeelConfig).
-        // Casing spawn height rides SimulationRunner.RenderMuzzleHeight (Task
-        // 21, PC7 — was GameFeelConfig.MuzzleLiftY; the muzzle height is a
-        // single source, Б1-веха fix: casings were born at ankle height
-        // inside the doll mesh).
-        const float CasingLateralOffset = 0.15f;
+        // The casing's own pair (`CasingLateralOffset`, and the spawn height
+        // that rode `SimulationRunner.RenderMuzzleHeight`) is gone in Stage 2
+        // Task 45b — the shell now leaves a socket on the model, which is a
+        // real point and needs neither an offset nor a lift (`SpawnCasing`).
         const float DecalNearOffset = 0.1f;
 
         // Mech pivot sits at the feet (same convention as MobVisual/ViewRegistry's
@@ -177,6 +190,9 @@ namespace Ring.Presentation
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
+        // Stage 2 Task 45b: the shooter's doll, asked per event and never
+        // cached — see `SpawnCasing` and `ViewRegistry.TryGetPlayerView`.
+        [SerializeField] ViewRegistry _viewRegistry;
         [SerializeField] CasingView _casingPrefab;
         [SerializeField] DecalProjector _decalPrefab;
         [SerializeField] CorpseView _corpsePrefab;
@@ -292,24 +308,49 @@ namespace Ring.Presentation
             }
         }
 
+        /// Stage 2 Task 45b (bd `app-e2n`, owner smoke test #1: "гильзы падают
+        /// ПЕРЕД пистолетом"): the brass leaves the shooter's own EJECTION PORT
+        /// — the socket on that doll's gun — instead of the simulation's muzzle
+        /// point, which is the hero's centre plus `WeaponConfig.MuzzleOffset`
+        /// along the aim and therefore lands the shell a barrel's length in
+        /// front of the model.
+        ///
+        /// THE RANDOM LATERAL SCATTER IS GONE WITH IT, and it is not a tuning
+        /// loss: `CasingLateralOffset` jittered the spawn point by ±0.15 m in X
+        /// and Z, which never modelled anything — it smeared a point that was in
+        /// the wrong place to begin with. The living randomness stays exactly as
+        /// it was, in the eject SPEED, the upward impulse and the torque, all
+        /// three read from `GameFeelConfig` per shot.
+        ///
+        /// THE IMPULSE COMES OFF THE WEAPON, NOT OFF THE SHOT. It used to be the
+        /// shot direction rotated -90°, i.e. a guess at where a pistol throws
+        /// brass, derived from a number that describes where the ROUND went. The
+        /// port's own forward axis is the direction now (`GameFeelConfig.
+        /// GunEjectLocalEuler`, owner-tunable with the scene gizmo), so "вбок-
+        /// назад" is a pose the owner can see and adjust rather than an angle
+        /// baked in here.
+        ///
+        /// NO DOLL, NO CASING — the same rule, and the same F-3 reason, as the
+        /// muzzle flash (`MuzzleFlashView`'s class doc). A `ShotHeard` from a
+        /// shooter behind the fog used to drop a shell at the position the
+        /// server coarsened, and game feel then kept that shell on the floor for
+        /// the rest of the match: a permanent marker over a player this client
+        /// was never allowed to locate. The `Owner == Player` gate in
+        /// `HandleEvent` above is unchanged — a mob's round still has no brass.
         void SpawnCasing(in SimEvent e)
         {
-            Vector3 lateral = new Vector3(
-                Random.Range(-CasingLateralOffset, CasingLateralOffset),
-                _runner.RenderMuzzleHeight,
-                Random.Range(-CasingLateralOffset, CasingLateralOffset));
-            Vector3 pos = SimSpace.ToWorld(e.Pos) + lateral;
-            // Eject to the shooter's RIGHT of the shot direction (e.Amount is the
-            // projectile's sim-plane velocity angle, tick-exact — MuzzleFlashView's
-            // contract): right = shot direction rotated -90° about world up.
-            Vector3 right = new Vector3(Mathf.Sin(e.Amount), 0f, -Mathf.Cos(e.Amount));
+            if (!_viewRegistry.TryGetPlayerView(e.PlayerIndex, out PlayerView doll)) return;
+            Transform port = doll.EjectSocket;
+            if (port == null) return;
+
             Vector3 impulse =
-                right * Random.Range(_gameFeel.CasingEjectSpeedMin, _gameFeel.CasingEjectSpeedMax)
+                port.forward * Random.Range(_gameFeel.CasingEjectSpeedMin, _gameFeel.CasingEjectSpeedMax)
                 + Vector3.up * Random.Range(_gameFeel.CasingImpulseUpMin, _gameFeel.CasingImpulseUpMax);
             Vector3 torque = Random.insideUnitSphere * _gameFeel.CasingTorqueScale;
 
             CasingView view = _casings.Rent();
-            view.Spawn(pos, impulse, torque, _gameFeel.CasingPhysicsSeconds, _gameFeel.CasingScale);
+            view.Spawn(port.position, impulse, torque,
+                _gameFeel.CasingPhysicsSeconds, _gameFeel.CasingScale);
         }
 
         /// В3 fix-wave 1 (app-n6g item 3c, owner playtest feedback: hit

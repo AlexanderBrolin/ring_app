@@ -241,6 +241,18 @@ namespace Ring.Editor
     /// write-if-different pose reconciliation moved from the scene block into
     /// `SelfHealGunPoseOnPrefab`, against the same `GameFeelConfig.GunLocalPosition`/
     /// `GunLocalEuler` numbers, so an owner's Б1 tweak still reaches a build.
+    /// Stage 2 Task 45b (owner requirement 2026-08-10) gives that gun two empty
+    /// children — `Muzzle` and `EjectPort`, `EnsureGunSockets` — posed from
+    /// three new `GameFeelConfig` fields and reconciled on every `Apply` by
+    /// `SelfHealGunSocketsOnPrefab`, which also wires them into `PlayerView`
+    /// (the runtime read) and `PlayerGunTuner` (the owner's PlayMode gizmo
+    /// loop). Three scene references follow them: `MuzzleFlashView` and
+    /// `PersistentPropsDirector` gain a `_viewRegistry` slot in their existing
+    /// wiring blocks, and `AimRayView` gains one in a second pass of its own,
+    /// because its object is built long before `ViewRegistry` exists — the same
+    /// shape, and the same reason, as `GameFeelDirector`'s second pass. The
+    /// sync-marker key moves with the new fields, `RemotePlayerEmission` →
+    /// `GunEjectLocalEuler`.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -328,6 +340,11 @@ namespace Ring.Editor
 
         // Task 8 (assets phase B plan, spec §3.2): the pistol in the doll's hand.
         const string GunObjectName = "Gun";
+        // Stage 2 Task 45b: the pistol's own two anchor points — the mouth of
+        // the barrel and the ejection port. Empty children of the gun, posed
+        // from GameFeelConfig (EnsureGunSockets).
+        const string MuzzleSocketObjectName = "Muzzle";
+        const string EjectSocketObjectName = "EjectPort";
         // 8a: swapping the gun = this one id.
         const string GunModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Gun_Pistol.fbx";
 
@@ -528,7 +545,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "RemotePlayerEmission"); // Stage 2 Task 45a
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "GunEjectLocalEuler"); // Stage 2 Task 45b
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "PlayerSpawnRingFrac"); // Stage 2 Task 9
             // WaveConfig joins the marker mechanism for the first time in Stage 2
             // Task 16, with PerPlayerCountFrac (the class's newest field) as its
@@ -1232,6 +1249,18 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // Stage 2 Task 45b: second `AimRayView` wiring pass, and it exists
+            // for exactly the reason `GameFeelDirector`'s does — the ray's
+            // object is built with the rest of the aiming UI, well before
+            // `ViewRegistry`, and the ray now starts at the local doll's own
+            // muzzle socket instead of at the hero's center + a muzzle height.
+            var aimRaySo2 = new SerializedObject(aimRayView);
+            if (EditorBootstrapUtils.SetRef(aimRaySo2, "_viewRegistry", viewRegistry))
+            {
+                aimRaySo2.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
             AudioClip shotClip = LoadAudioClip("shot.wav");
             AudioClip hitClip = LoadAudioClip("hit.wav");
             AudioClip mobDeathClip = LoadAudioClip("mob_death.wav");
@@ -1324,6 +1353,12 @@ namespace Ring.Editor
             bool muzzleRefsChanged = false;
             muzzleRefsChanged |= EditorBootstrapUtils.SetRef(muzzleSo, "_runner", runner);
             muzzleRefsChanged |= EditorBootstrapUtils.SetRef(muzzleSo, "_gameFeel", gameFeel);
+            // Stage 2 Task 45b: the flash is anchored to the shooter's own doll
+            // now (`ViewRegistry.TryGetPlayerView`), so this view asks the
+            // registry per event/frame — the same `_viewRegistry` slot
+            // `GameFeelDirector` already carries for `TryGetMobView`, not a
+            // second way in.
+            muzzleRefsChanged |= EditorBootstrapUtils.SetRef(muzzleSo, "_viewRegistry", viewRegistry);
             if (muzzleRefsChanged)
             {
                 muzzleSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1442,6 +1477,10 @@ namespace Ring.Editor
             bool persistentPropsRefsChanged = false;
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_runner", runner);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gameFeel", gameFeel);
+            // Stage 2 Task 45b: the shell casing leaves the shooter's own
+            // ejection port now — same registry seam the muzzle flash above
+            // uses (`SpawnCasing`'s own doc).
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_viewRegistry", viewRegistry);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_casingPrefab", casingPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpseMechPrefab);
@@ -1838,6 +1877,7 @@ namespace Ring.Editor
                         bodyRadius, headRadiusFrac);
                     SelfHealVisualScaleOnPrefab(prefabPath, "Visual", visualScale);
                     SelfHealGunPoseOnPrefab(prefabPath, gameFeel);
+                    SelfHealGunSocketsOnPrefab(prefabPath, gameFeel); // Stage 2 Task 45b
                     return AssetDatabase.LoadAssetAtPath<PlayerView>(prefabPath);
                 }
                 AssetDatabase.DeleteAsset(prefabPath); // doll swapped: rebuild; SetRef re-wires
@@ -1876,11 +1916,24 @@ namespace Ring.Editor
                 gun.transform.SetParent(hand, false);
                 gun.transform.localPosition = gameFeel.GunLocalPosition;
                 gun.transform.localEulerAngles = gameFeel.GunLocalEuler;
+                // Stage 2 Task 45b: the barrel's mouth and the ejection port,
+                // the two points every weapon cosmetic is anchored to from now
+                // on. The model carries no sockets of its own (its only nodes
+                // are the mesh), so they are ours to place.
+                EnsureGunSockets(gun.transform, gameFeel,
+                    out Transform muzzleSocket, out Transform ejectSocket);
+
+                var viewSo = new SerializedObject(go.GetComponent<PlayerView>());
+                EditorBootstrapUtils.SetRef(viewSo, "_muzzleSocket", muzzleSocket);
+                EditorBootstrapUtils.SetRef(viewSo, "_ejectSocket", ejectSocket);
+                viewSo.ApplyModifiedPropertiesWithoutUndo();
 
                 PlayerGunTuner tuner = go.AddComponent<PlayerGunTuner>();
                 var tunerSo = new SerializedObject(tuner);
                 EditorBootstrapUtils.SetRef(tunerSo, "_gameFeel", gameFeel);
                 EditorBootstrapUtils.SetRef(tunerSo, "_gun", gun.transform);
+                EditorBootstrapUtils.SetRef(tunerSo, "_muzzleSocket", muzzleSocket);
+                EditorBootstrapUtils.SetRef(tunerSo, "_ejectSocket", ejectSocket);
                 tunerSo.ApplyModifiedPropertiesWithoutUndo();
                 return go;
             });
@@ -1917,6 +1970,103 @@ namespace Ring.Editor
                     gun.localEulerAngles = gameFeel.GunLocalEuler;
                     changed = true;
                 }
+                if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        /// Stage 2 Task 45b: the two empty sockets under the doll's `Gun` —
+        /// created if missing, reconciled write-if-different otherwise, and
+        /// handed back either way so the caller can wire the references that
+        /// make them reachable at runtime. Same find-or-create + per-field diff
+        /// shape as `EnsureAimProxyCapsule` above; returns whether anything
+        /// changed, like every other `Ensure*` in this file.
+        ///
+        /// UNDER THE GUN, NOT UNDER THE HAND. The gun's own pose inside the hand
+        /// is itself owner-tuned (`GameFeelConfig.GunLocalPosition/Euler`), so a
+        /// socket parented to the hand would silently drift off the barrel the
+        /// next time the grip is re-tuned. Parented to the gun, the barrel's
+        /// mouth stays the barrel's mouth.
+        ///
+        /// ONLY THE PORT'S ROTATION IS RECONCILED. The muzzle socket is a POINT
+        /// for the flash and the aim ray — nothing reads its forward axis — and
+        /// writing a rotation nobody reads would give the owner a knob whose
+        /// effect is invisible. `GameFeelConfig.GunEjectLocalEuler`'s own doc
+        /// has the split.
+        static bool EnsureGunSockets(Transform gun, GameFeelConfig gameFeel,
+            out Transform muzzle, out Transform eject)
+        {
+            bool changed = EnsureSocketChild(gun, MuzzleSocketObjectName, out muzzle);
+            changed |= EnsureSocketChild(gun, EjectSocketObjectName, out eject);
+            if (muzzle.localPosition != gameFeel.GunMuzzleLocalPosition)
+            {
+                muzzle.localPosition = gameFeel.GunMuzzleLocalPosition;
+                changed = true;
+            }
+            if (eject.localPosition != gameFeel.GunEjectLocalPosition)
+            {
+                eject.localPosition = gameFeel.GunEjectLocalPosition;
+                changed = true;
+            }
+            // Rotations compared as rotations, never as euler read-backs — the
+            // ПБ19 audit fix `SelfHealGunPoseOnPrefab` above documents in full.
+            if (Quaternion.Angle(eject.localRotation,
+                    Quaternion.Euler(gameFeel.GunEjectLocalEuler)) > 1e-3f)
+            {
+                eject.localEulerAngles = gameFeel.GunEjectLocalEuler;
+                changed = true;
+            }
+            return changed;
+        }
+
+        static bool EnsureSocketChild(Transform gun, string childName, out Transform socket)
+        {
+            socket = gun.Find(childName);
+            if (socket != null) return false;
+            var go = new GameObject(childName);
+            go.transform.SetParent(gun, false);
+            socket = go.transform;
+            return true;
+        }
+
+        /// Stage 2 Task 45b: the socket half of the doll prefab's self-heal.
+        /// Separate from `SelfHealGunPoseOnPrefab` above for the reason this
+        /// file's own convention gives — one self-heal, one concern — and it
+        /// carries something that one does not: the two REFERENCES into the
+        /// sockets. An already-committed prefab predates both the objects and
+        /// the fields that point at them, so creating the children without
+        /// rewiring `PlayerView`/`PlayerGunTuner` would leave a doll whose gun
+        /// has a muzzle nothing can find.
+        static void SelfHealGunSocketsOnPrefab(string prefabPath, GameFeelConfig gameFeel)
+        {
+            GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                Transform gun = FindDescendant(contents.transform, GunObjectName);
+                if (gun == null) return;
+                bool changed = EnsureGunSockets(gun, gameFeel,
+                    out Transform muzzle, out Transform eject);
+
+                var viewSo = new SerializedObject(contents.GetComponent<PlayerView>());
+                bool refsChanged = EditorBootstrapUtils.SetRef(viewSo, "_muzzleSocket", muzzle);
+                refsChanged |= EditorBootstrapUtils.SetRef(viewSo, "_ejectSocket", eject);
+                if (refsChanged) viewSo.ApplyModifiedPropertiesWithoutUndo();
+                changed |= refsChanged;
+
+                PlayerGunTuner tuner = contents.GetComponent<PlayerGunTuner>();
+                if (tuner != null)
+                {
+                    var tunerSo = new SerializedObject(tuner);
+                    bool tunerRefsChanged =
+                        EditorBootstrapUtils.SetRef(tunerSo, "_muzzleSocket", muzzle);
+                    tunerRefsChanged |= EditorBootstrapUtils.SetRef(tunerSo, "_ejectSocket", eject);
+                    if (tunerRefsChanged) tunerSo.ApplyModifiedPropertiesWithoutUndo();
+                    changed |= tunerRefsChanged;
+                }
+
                 if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
             }
             finally

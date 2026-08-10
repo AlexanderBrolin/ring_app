@@ -99,8 +99,9 @@ namespace Ring.Data
         // (Task 17), then `SlideDustSize` (Task 22, spec Г6), then
         // `LinkWindowFlashBoost` (В1 fix-wave 1), then `AimHoverGlowBoost`
         // (В1/В2 fix-wave 2), then `AimRayHeadAlphaBoost` (В3 fix-wave 1), then
-        // `HeadHoverPulseAmp` (В3 fix-wave 2) — `RemotePlayerEmission` is the
-        // current marker (Stage 2 Task 45a), see its own doc.
+        // `HeadHoverPulseAmp` (В3 fix-wave 2), then `RemotePlayerEmission`
+        // (Stage 2 Task 45a) — `GunEjectLocalEuler` is the current marker
+        // (Stage 2 Task 45b), see its own doc.
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
         // I5 reviewer rec #5 (final review wave, app-n6g): this scale is NOT
@@ -147,8 +148,9 @@ namespace Ring.Data
         // (Task 17), then `SlideDustSize` (Task 22, spec Г6), then
         // `LinkWindowFlashBoost` (В1 fix-wave 1), then `AimHoverGlowBoost`
         // (В1/В2 fix-wave 2), then `AimRayHeadAlphaBoost` (В3 fix-wave 1), then
-        // `HeadHoverPulseAmp` (В3 fix-wave 2) — `RemotePlayerEmission` is the
-        // current marker (Stage 2 Task 45a), see its own doc.
+        // `HeadHoverPulseAmp` (В3 fix-wave 2), then `RemotePlayerEmission`
+        // (Stage 2 Task 45a) — `GunEjectLocalEuler` is the current marker
+        // (Stage 2 Task 45b), see its own doc.
         [Range(1, 32)] public int MaxDashGlows = 8;
         [Range(0.1f, 10f)] public float DashGlowSeconds = 2.5f;
         [Range(0.1f, 3f)] public float DashGlowSize = 0.9f;
@@ -365,8 +367,46 @@ namespace Ring.Data
         // × LinkWindowFlashBoost reaches ~4.8 on its brightest channel), so it
         // reads as a rim under Bloom rather than a flash, and a remote player's
         // link window still visibly out-shines their resting tint.
+        //
+        // Was the sync-marker key, superseding `HeadHoverPulseAmp` above, until
+        // `GunEjectLocalEuler` below superseded it in turn (Stage 2 Task 45b).
         [ColorUsage(false, true)]
-        public Color RemotePlayerEmission = new Color(1.4f, 0.15f, 1.6f); // sync-marker key — keep LAST
+        public Color RemotePlayerEmission = new Color(1.4f, 0.15f, 1.6f);
+
+        // Stage 2 Task 45b (owner requirement 2026-08-10: the flash, the brass
+        // and the aim ray all leave the BARREL OF THE MODEL, not a point in
+        // front of the hero — bd app-fl3/app-e2n/app-60c): the local poses of
+        // the two empty sockets `StageOneSceneBootstrap` parents under the
+        // doll's `Gun`, reconciled write-if-different on every `Apply` exactly
+        // like `GunLocalPosition`/`GunLocalEuler` above already are.
+        //
+        // SOCKETS RATHER THAN A COMPUTED OFFSET, because the owner's tuning
+        // loop is "drag it with the scene gizmo in PlayMode → Capture → the
+        // numbers land here" (`PlayerGunTuner`), and a GameObject is what a
+        // gizmo can drag. Both are read at runtime through `PlayerView`'s own
+        // serialized references, never by name lookup.
+        //
+        // WHY THE MUZZLE HAS NO EULER AND THE EJECTION PORT DOES. The flash and
+        // the ray need a POINT: the shot's direction is already carried
+        // tick-exactly by the event itself (`SimEvent.Amount`) and by the aim
+        // for the predicted burst, and re-deriving it from an untuned socket's
+        // forward axis would replace a measured number with a guess. The brass
+        // needs a point AND a direction — bd app-e2n asks for an impulse
+        // "вбок-назад от ориентации оружия" outright, and the only home for
+        // that direction is the port's own rotation.
+        //
+        // DEFAULTS. Muzzle: 0.18 m along the pistol's own local forward, i.e.
+        // about the length of the slide ahead of the model's pivot — the
+        // barrel's mouth for a model authored facing +Z. Ejection port: 3 cm to
+        // the right of the pistol's centerline and 4 cm above it (the top-right
+        // of the slide, where a real pistol throws brass), 2 cm behind the
+        // muzzle's own offset. Its euler yaws the port's forward 100° right of
+        // the barrel, which is "sideways and slightly back". Each is a starting
+        // pose for the owner's gizmo pass on the smoke test, not a measurement:
+        // the model carries no sockets of its own to take them from.
+        public Vector3 GunMuzzleLocalPosition = new Vector3(0f, 0f, 0.18f);
+        public Vector3 GunEjectLocalPosition = new Vector3(0.03f, 0.04f, 0.16f);
+        public Vector3 GunEjectLocalEuler = new Vector3(0f, 100f, 0f); // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

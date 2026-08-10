@@ -28,13 +28,13 @@ namespace Ring.Presentation
     /// high render framerates, where several render frames elapse per sim tick.
     /// `SimulationRunner.WouldFireThisFrame` is the single source of truth for
     /// the heuristic (shared with `AudioDirector`, so the two components' guesses
-    /// can never disagree). `_predicted`/`_predictedExpireAt` latch the
-    /// prediction so at most one burst is predicted per SHOT, not one per render
-    /// frame while `RenderCurr` is stale between two ticks: `Update` arms the
-    /// latch on the first frame the gate is satisfied and early-returns on every
-    /// frame after that while it holds, the matching PLAYER-owned
-    /// `ProjectileFired` in `HandleEvent` consumes it (which is what avoids a
-    /// visible double burst), and the next satisfied gate re-arms it. Across a
+    /// can never disagree). `_latch` (`ImmediatePredictionLatch`, Stage 2 Task
+    /// 45b — it was a `_predicted`/`_predictedExpireAt` pair of fields here and
+    /// a second copy of the same pair in `AudioDirector` until then) is what
+    /// makes at most one burst be predicted per SHOT, not one per render frame
+    /// while `RenderCurr` is stale between two ticks, and what makes the
+    /// matching `ProjectileFired` in `HandleEvent` suppress its own burst rather
+    /// than double it. Across a
     /// held burst that is one prediction per ROUND, not one per press: Task 43
     /// put this gate on `WeaponSystem.WouldFireThisTick`, whose cooldown term is
     /// `(FireCooldown - TickDt) <= 0f`, and `WeaponSystem.Advance` leaves
@@ -46,14 +46,15 @@ namespace Ring.Presentation
     /// `FireCooldown <= 0f` against that same always-positive value, so it was
     /// true practically only for the FIRST shot after a press/dash/start — that
     /// is what the old "ONCE per press" wording here described, and it no longer
-    /// holds. The TTL itself is `SimulationRunner.ImmediatePredictionTtlSeconds`,
-    /// a single shared constant (fix-round review #3) so this component and
-    /// `AudioDirector` can never drift onto two different windows. If no
-    /// matching event arrives within it (a false prediction — e.g.
-    /// `CanFireWhileDash=false` and a dash starts the same frame, or the player
-    /// releases Fire between the predicting frame and the confirming tick), the
-    /// latch just times out: one extra burst with no matching shot, an accepted
-    /// rare cosmetic artifact (spec-acknowledged, task-28-report.md). The
+    /// holds. The timeout is `SimulationRunner.ImmediatePredictionTtlSeconds`, a
+    /// single shared constant (fix-round review #3) so this component and
+    /// `AudioDirector` can never drift onto two different windows — and since
+    /// Stage 2 Task 45b they share the mechanism itself, not merely the number.
+    /// A false prediction (e.g. `CanFireWhileDash=false` and a dash starts the
+    /// same frame, or the player releases Fire between the predicting frame and
+    /// the confirming tick) is never confirmed and simply times out: one extra
+    /// burst with no matching shot, an accepted rare cosmetic artifact
+    /// (spec-acknowledged, task-28-report.md). The
     /// suppression originally could not distinguish a player shot from a
     /// mob's (this component already shares one flash prop across both,
     /// pre-Task-28 — `HandleEvent` never filtered by owner, `SimEvent` carried
@@ -68,49 +69,90 @@ namespace Ring.Presentation
     /// fix-round: `SimEvent` now carries `Owner`
     /// (`SimulationWorld.SpawnProjectile`), and `HandleEvent` below only lets
     /// a PLAYER-owned event consume the latch — a mob's shot always bursts,
-    /// unconditionally, and never touches `_predicted`.
+    /// unconditionally, and never touches the latch.
+    ///
+    /// STAGE 2 TASK 45b — THE FLASH LEAVES THE BARREL OF THE MODEL. Owner
+    /// requirement of 2026-08-10 (bd `app-fl3`): a player's burst is placed at
+    /// the muzzle socket of THAT PLAYER'S DOLL — `ViewRegistry.TryGetPlayerView`
+    /// on `SimEvent.PlayerIndex`, or on `RenderSnapshot.LocalPlayerIndex` for
+    /// the predicted burst — instead of at the simulation's own muzzle point
+    /// (the hero's centre plus `WeaponConfig.MuzzleOffset` along the aim, lifted
+    /// to `SimulationRunner.RenderMuzzleHeight`), which is a point in front of
+    /// the collector and visibly not the pistol in his hand.
+    ///
+    /// NO DOLL, NO FLASH — THERE IS NO FALLBACK, AND THAT IS THE POINT (F-3,
+    /// `app-aq9`). A shot from someone this client cannot see arrives as
+    /// `SnapshotEventKind.ShotHeard` and is decoded into an ordinary
+    /// `ProjectileFired` (`ClientEventDecoder`) whose position the server
+    /// coarsened on purpose and whose direction it did not send at all. Bursting
+    /// at that position — which is what this class did until now — draws a flash
+    /// where a hidden shooter roughly is, handing away the one thing interest
+    /// management exists to withhold. A hidden shooter has no doll, so this
+    /// class now has nothing to draw from and draws nothing; the SOUND of that
+    /// shot, which is the whole reason the event is sent, is `AudioDirector`'s
+    /// and is untouched. A visible shooter has a doll and keeps their flash.
+    ///
+    /// THE DIRECTION IS STILL THE SHOT'S, NOT THE SOCKET'S FORWARD. `e.Amount`
+    /// is tick-exact by construction (two fix-rounds went into making it the
+    /// source, see above) and the aim supplies the predicted burst's; a socket's
+    /// forward axis is only as good as its tuned rotation, and the muzzle socket
+    /// is deliberately a POINT (`GameFeelConfig.GunMuzzleLocalPosition` has no
+    /// euler beside it). The one place that costs something is a `ShotHeard`
+    /// from a shooter this client CAN see: the wire carries no angle for that
+    /// kind, so `e.Amount` reads 0 and the cone points due east while the burst
+    /// itself sits correctly on their barrel. That is a smaller lie than the
+    /// position was, and it is the shooter's cone, not their location.
     public sealed class MuzzleFlashView : MonoBehaviour
     {
         const int BurstCount = 8;
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
+        // Stage 2 Task 45b: asked per event and per frame, never cached — a
+        // doll is pooled and the slot it serves can change (`TryGetPlayerView`'s
+        // own doc).
+        [SerializeField] ViewRegistry _viewRegistry;
 
         ParticleSystem _particles;
-        bool _predicted;
-        float _predictedExpireAt;
+        readonly ImmediatePredictionLatch _latch = new ImmediatePredictionLatch();
 
         void Awake() => _particles = GetComponent<ParticleSystem>();
 
         /// Task 28: per-frame prediction — see the class doc above. Fix-round
-        /// (review #1, Medium): the authoritative burst spawns at the MUZZLE
-        /// (`WeaponSystem`'s `p.Pos + dir * cfg.MuzzleOffset`, `HandleEvent`
-        /// below via `e.Pos`), not the hero's center — bursting the prediction
-        /// from `player.Pos` was a visible regression once the predicted burst
-        /// became the common case (the latch suppresses the real one on every
-        /// ordinary shot). `MuzzleOffset` is read from `_runner.Config.Weapon`
-        /// (Task 43) — the already-built `SimConfig` the authoritative path
-        /// itself reads — rather than adding a THIRD `WeaponConfig` SO reference; the
-        /// small sub-tick `overshoot` term `WeaponSystem` also folds in is
-        /// simulation-internal (depends on the tick that hasn't happened yet)
-        /// and skipped here, an imperceptible cosmetic approximation.
+        /// (review #1, Medium): the authoritative burst spawns at the MUZZLE,
+        /// not the hero's center — bursting the prediction from `player.Pos`
+        /// was a visible regression once the predicted burst became the common
+        /// case (the latch suppresses the real one on every ordinary shot).
+        /// Stage 2 Task 45b: BOTH bursts now come off the doll's own muzzle
+        /// socket, so the two agree on a point neither of them computes, and
+        /// `WeaponConfig.MuzzleOffset` — the sim's own muzzle, which the burst
+        /// used to approximate here — is no longer read by this class at all.
+        ///
+        /// THE ONE-PER-SHOT GATE IS THE RISING EDGE OF `WouldFireThisFrame`
+        /// (`ImmediatePredictionLatch.RisingEdge`), evaluated on EVERY frame
+        /// this method reaches, edge or not — it is a function of the previous
+        /// frame's answer. It replaced "is the latch already armed?", which
+        /// silently doubled as the matching test and could not tell a second
+        /// frame of the same shot from a second shot whose predecessor was
+        /// still unconfirmed (bd `app-id9`).
         void Update()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
-            if (_predicted && Time.unscaledTime > _predictedExpireAt) _predicted = false;
-            if (_predicted) return;
-            if (!_runner.WouldFireThisFrame) return;
+            if (!_latch.RisingEdge(_runner.WouldFireThisFrame)) return;
 
-            PlayerState player = _runner.RenderCurr.Player;
-            Vector3 posW = SimSpace.ToWorld(player.Pos);
-            Vector3 dir = SimSpace.ToWorld(player.AimPoint) - posW;
+            RenderSnapshot curr = _runner.RenderCurr;
+            // No doll yet (the opening frames of a match), or none any more
+            // (this player is dead) — nothing to fire from, and nowhere else to
+            // fire from either (class doc).
+            if (!TryGetMuzzle(curr.LocalPlayerIndex, out Vector3 muzzle)) return;
+
+            PlayerState player = curr.Player;
+            Vector3 dir = SimSpace.ToWorld(player.AimPoint) - SimSpace.ToWorld(player.Pos);
             if (dir.sqrMagnitude < 1e-8f) dir = Vector3.forward; // aim degenerately coincides with Pos
             dir.Normalize();
 
-            float muzzleOffset = _runner.Config.Weapon.MuzzleOffset;
-            EmitBurst(posW + dir * muzzleOffset, dir, _runner.RenderMuzzleHeight);
-            _predicted = true;
-            _predictedExpireAt = Time.unscaledTime + SimulationRunner.ImmediatePredictionTtlSeconds;
+            EmitBurst(muzzle, dir);
+            _latch.Arm(Time.unscaledTime);
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer
@@ -119,22 +161,6 @@ namespace Ring.Presentation
         {
             if (e.Kind != SimEventKind.ProjectileFired) return;
 
-            // F-3 fix-round (bd app-ai2): the predicted latch is only ever armed
-            // from the PLAYER's own state (Update above reads `_runner.RenderCurr.
-            // Player`), so only a player-owned event may consume it — a mob's shot
-            // landing inside the TTL window must always burst on its own instead of
-            // being wrongly swallowed as "the" confirmation (see the class doc above
-            // for the double-burst-plus-missing-burst bug this used to cause).
-            if (e.Owner == ProjectileOwner.Player
-                && _predicted && Time.unscaledTime <= _predictedExpireAt)
-            {
-                // Already shown this shot's feedback ahead of time (Update above)
-                // — consume the latch instead of bursting a visible duplicate
-                // (Task 28).
-                _predicted = false;
-                return;
-            }
-
             // `e.Amount` is the shot's sim-plane velocity angle in radians
             // (`atan2(vel.y, vel.x)`, tick-exact). `SimSpace.ToWorld` maps sim
             // (x, y) to world (x, 0, z=y) linearly, so a sim-plane direction
@@ -142,25 +168,72 @@ namespace Ring.Presentation
             // position — always unit-length, never the degenerate zero-vector
             // case a position difference could hit.
             Vector3 dir = new Vector3(Mathf.Cos(e.Amount), 0f, Mathf.Sin(e.Amount));
+
             // Task 21 (QC9): a Gunner mob fires from `MobConfig.MuzzleHeight`
             // (0.95, Task 4/Task 17) in the sim — the flash must match that
             // exact height, not the old flat ground-anchor `lift = 0`, or the
             // burst would visibly float below/above the Gunner's own muzzle.
-            // The player branch reads `_runner.RenderMuzzleHeight` (PC7's
-            // single home) instead of `GameFeelConfig.MuzzleLiftY`, same
-            // canonical accessor `SpawnCasing`/`AimRayView` now use.
-            float lift = e.Owner == ProjectileOwner.Player
-                ? _runner.RenderMuzzleHeight
-                : _runner.Config.Gunner.MuzzleHeight;
-            EmitBurst(SimSpace.ToWorld(e.Pos), dir, lift);
+            // Stage 2 Task 45b leaves this branch alone on purpose: a mob has
+            // no doll and never will (its model carries no weapon socket), so
+            // the event's own position plus that height stays the honest
+            // answer for it.
+            if (e.Owner != ProjectileOwner.Player)
+            {
+                EmitBurst(SimSpace.ToWorld(e.Pos)
+                    + Vector3.up * _runner.Config.Gunner.MuzzleHeight, dir);
+                return;
+            }
+
+            // F-3 fix-round (bd app-ai2), narrowed by Stage 2 Task 45b: only
+            // the LOCAL player's own shot may consume the predicted latch. Owner
+            // alone was enough while `ProjectileOwner.Player` meant "me" — it no
+            // longer does, because every other player's rounds decode to that
+            // same owner on a networked client (`ClientEventDecoder`), and a
+            // stranger's shot swallowing my prediction is the very bug the Owner
+            // check was added to stop, one participant further out.
+            if (e.PlayerIndex == _runner.RenderCurr.LocalPlayerIndex
+                && _latch.TryConsume(Time.unscaledTime))
+            {
+                // Already shown this shot's feedback ahead of time (Update above)
+                // — consume the prediction instead of bursting a visible
+                // duplicate (Task 28).
+                return;
+            }
+
+            // The shooter's own barrel, or nothing at all (class doc — this is
+            // where F-3 closes).
+            if (!TryGetMuzzle(e.PlayerIndex, out Vector3 muzzle)) return;
+            EmitBurst(muzzle, dir);
         }
 
-        /// Phase B: lift raises the burst to the shooter's muzzle height (Task
-        /// 21 — both branches now read a real muzzle height instead of the
-        /// player-only doll lift / flat mob `0`, see `HandleEvent` above).
-        void EmitBurst(Vector3 worldPos, Vector3 dir, float lift)
+        /// The world point a player's flash leaves from (Stage 2 Task 45b): the
+        /// muzzle socket of the doll bound to `slot`, if there is one. False
+        /// means "this player has no visible weapon right now" — behind the fog,
+        /// dead, or not yet drawn — and every caller answers it by drawing
+        /// nothing (class doc).
+        ///
+        /// The socket's own null check is not defensive noise: a doll prefab
+        /// built before Task 45b has no socket child, and a stale one in a
+        /// working copy must fail as "no flash" rather than as an exception per
+        /// shot. `StageOneSceneBootstrap.SelfHealGunSocketsOnPrefab` is what
+        /// fixes it, on the next Apply.
+        bool TryGetMuzzle(int slot, out Vector3 worldPos)
         {
-            transform.position = worldPos + Vector3.up * lift;
+            worldPos = default;
+            if (!_viewRegistry.TryGetPlayerView(slot, out PlayerView doll)) return false;
+            Transform muzzle = doll.MuzzleSocket;
+            if (muzzle == null) return false;
+            worldPos = muzzle.position;
+            return true;
+        }
+
+        /// Stage 2 Task 45b: the caller supplies the finished world point — the
+        /// `lift` parameter went with the muzzle height, which for a player is
+        /// now wherever the animated hand is holding the gun and for a mob is
+        /// still `MobConfig.MuzzleHeight` above the event.
+        void EmitBurst(Vector3 worldPos, Vector3 dir)
+        {
+            transform.position = worldPos;
             transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
             _particles.Emit(BurstCount);
         }

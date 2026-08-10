@@ -61,12 +61,28 @@ namespace Ring.Presentation
     /// misreports who is still standing, and it does so exactly when the cost of
     /// the mistake is highest.
     ///
-    /// A DEATH THIS CLIENT DID NOT WATCH LEAVES NO CORPSE, and that is a known
-    /// hole rather than a decision (`app-2rf`, P1, closed by Task 47 together
-    /// with the liveness-mask decode): `PlayerDied` is what detaches, so a slot
-    /// that died out of view is simply retired, and there is no "a record for
-    /// this slot arrived" fact in `RenderSnapshot` to tell that case from an
-    /// empty seat.
+    /// ON THE NETWORKED BACKEND NO DEATH LEAVES A CORPSE AT ALL — not merely
+    /// the ones this client did not watch (Stage 2 Task 45b corrected the two
+    /// paragraphs that used to claim otherwise; the mechanism is `app-2rf`, P1,
+    /// and Task 47 is where it is closed). THE PICTURE LEADS THE EVENTS BY A
+    /// TICK, by that backend's own construction: `NetworkSimBackend.
+    /// ResolveRenderPair` copies the snapshot at `renderTick + 1` into `Curr`,
+    /// while `ClientEventQueue.TryDequeue` refuses to hand out any event whose
+    /// tick is still ahead of `renderTick`. So the frame that first shows the
+    /// victim's slot as not-alive runs a whole render tick BEFORE `PlayerDied`
+    /// is due — the diff below has already retired the doll into the pool, and
+    /// the event, when it does arrive, finds no entry in `_activePlayers`,
+    /// plays no Death01 and detaches nothing. What that backend loses is the
+    /// corpse, not the position: a retired doll is simply gone, never left
+    /// standing at the arena origin.
+    ///
+    /// ON THE LOCAL BACKEND THE MECHANISM ABOVE IS EXACTLY AS DESCRIBED,
+    /// because there the tick's events are flushed in the same `Update` that
+    /// produced the tick and `Curr` IS that tick — `PlayerDied` therefore
+    /// reaches the doll before `LateUpdate`'s diff can notice the slot went
+    /// quiet, which is the ordering the whole corpse path was written against.
+    /// Nothing here branches on the backend; the difference is entirely in when
+    /// the two facts arrive.
     public sealed class ViewRegistry : MonoBehaviour
     {
         // Mech pivots sit at the feet (Task 10, assets phase B) — the old
@@ -253,8 +269,9 @@ namespace Ring.Presentation
         ///    ProjectileFired, … / SpawnProjectile's ownerIndex"), i.e. the
         ///    shooter, which is the doll that must replay Pistol_Shoot. A mob's
         ///    round carries `ProjectileIds.NoOwner` and names no doll at all.
-        /// An event naming a slot with no live doll is ignored — including a
-        /// death this client never saw standing (`app-2rf`, class doc).
+        /// An event naming a slot with no live doll is ignored — which on the
+        /// networked backend is every `PlayerDied` there is, the picture being
+        /// a tick ahead of the events that explain it (`app-2rf`, class doc).
         public void HandlePlayerEvent(in SimEvent e)
         {
             switch (e.Kind)
@@ -296,6 +313,33 @@ namespace Ring.Presentation
         /// hit mob without this class needing to know anything about hitstop
         /// itself (П-1: no hitstop-specific branching lives here).
         public bool TryGetMobView(int id, out MobView view) => _activeMobs.TryGetValue(id, out view);
+
+        /// The same seam for a player SLOT (Stage 2 Task 45b) — how the muzzle
+        /// flash, the shell casing and the aim ray reach the doll whose barrel
+        /// they must come off (`app-fl3`/`app-e2n`/`app-60c`). Modelled on
+        /// `TryGetMobView` above deliberately: one shape for "ask the registry
+        /// for a live view", not a second mechanism.
+        ///
+        /// IT ANSWERS FOR LIVE DOLLS ONLY, and every "no" it gives is
+        /// load-bearing rather than defensive:
+        ///  - a shooter behind the fog has no doll here, so a `ShotHeard` —
+        ///    which reaches Presentation as an ordinary `ProjectileFired` at a
+        ///    position the server coarsened on purpose — has nothing to draw
+        ///    from, and the cosmetics that used to give that shooter away stop
+        ///    being drawn at all (F-3);
+        ///  - a corpse is not in `_activePlayers` (class doc), so a dead
+        ///    player's gun cannot flash;
+        ///  - the opening frames of a match, before the first snapshot, answer
+        ///    "no" for every slot.
+        /// A caller must therefore treat the false as "nothing to show", never
+        /// as "show it somewhere else".
+        ///
+        /// NOBODY MAY KEEP WHAT THIS HANDS BACK. The doll is pooled: the same
+        /// instance serves a different slot after a retire/rent, so a consumer
+        /// that cached one would eventually decorate a stranger. Ask again for
+        /// every event and every frame — the lookup is a dictionary probe.
+        public bool TryGetPlayerView(int slot, out PlayerView view)
+            => _activePlayers.TryGetValue(slot, out view);
 
         /// One doll per LIVE player slot (Stage 2 Task 45a, spec §3.12; corpses
         /// are objects, not slots — class doc). Same shape as `SyncMobs` below —

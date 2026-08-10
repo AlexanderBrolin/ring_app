@@ -1108,6 +1108,7 @@ MonoBehaviour:
   _aimProvider: {fileID: 1959383182}
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
   _rayMaterial: {fileID: 2100000, guid: 6af887913204307e1a3f7996638ed97b, type: 2}
+  _viewRegistry: {fileID: 1795406096}
 --- !u!120 &673512235
 LineRenderer:
   serializedVersion: 3
@@ -1264,6 +1265,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Ring.Presentation::Ring.Presentation.PersistentPropsDirector
   _runner: {fileID: 1959383180}
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
+  _viewRegistry: {fileID: 1795406096}
   _casingPrefab: {fileID: 7521136148588205193, guid: 6299663238cb293e095dc842650a3587, type: 3}
   _decalPrefab: {fileID: 6084807468969330963, guid: c256b7427e75671e68ff2afcfcb29eff, type: 3}
   _corpsePrefab: {fileID: 563010563106822884, guid: bfa36846e880d0a1bad03fc676bc476f, type: 3}
@@ -3597,6 +3599,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Ring.Presentation::Ring.Presentation.MuzzleFlashView
   _runner: {fileID: 1959383180}
   _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
+  _viewRegistry: {fileID: 1795406096}
 --- !u!199 &1828108799
 ParticleSystemRenderer:
   serializedVersion: 7
