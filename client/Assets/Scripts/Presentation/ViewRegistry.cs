@@ -362,11 +362,18 @@ namespace Ring.Presentation
         /// The same seam for a player SLOT (Stage 2 Task 45b) — how the muzzle
         /// flash, the shell casing and the aim ray reach the doll whose barrel
         /// they must come off (`app-fl3`/`app-e2n`/`app-60c`), and since Stage 2
-        /// Task 45c how `GameFeelDirector` reaches the doll a round just landed
-        /// on (`ProjectileHitPlayer`, the exact counterpart of `TryGetMobView`'s
-        /// own hit-flash lookup above). Modelled on
-        /// `TryGetMobView` above deliberately: one shape for "ask the registry
-        /// for a live view", not a second mechanism.
+        /// Task 45c how `GameFeelDirector` reaches the doll that was just hit.
+        /// Modelled on `TryGetMobView` above deliberately: one shape for "ask
+        /// the registry for a live view", not a second mechanism.
+        ///
+        /// THE HIT LOOKUP IS KEYED OFF `PlayerDamaged`, NOT OFF
+        /// `ProjectileHitPlayer`, and the difference is not a preference
+        /// (Task 45c fix-round 1). The round-ending kind carries the victim's
+        /// slot only inside the simulation: on a networked client the decoder
+        /// leaves that field at its default, and zero there is not "no victim"
+        /// — it is seat 0, a real seat, so every hit would decorate whoever
+        /// sits in it. `PlayerDamaged` carries the victim's slot on the wire,
+        /// which is why the victim-addressed half of the feedback lives there.
         ///
         /// IT ANSWERS FOR LIVE DOLLS ONLY, and every "no" it gives is
         /// load-bearing rather than defensive:
