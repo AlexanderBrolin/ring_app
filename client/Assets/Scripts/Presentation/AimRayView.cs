@@ -36,11 +36,13 @@ namespace Ring.Presentation
     /// convention-consistent simplification; a real transparent surface is a
     /// separate scope decision for whoever wants it later.
     ///
-    /// Muzzle height: read `SimulationRunner.RenderMuzzleHeight` (Task 21,
-    /// PC7's single home of the `SlideTimer > 0 ? SlideMuzzleHeight :
-    /// MuzzleHeight` ternary `WeaponSystem.Update` itself uses for the
-    /// authoritative shot) so the ray's visible origin never disagreed with
-    /// where the server actually spawns the round.
+    /// Muzzle height: Task 21 read `SimulationRunner.RenderMuzzleHeight` (PC7's
+    /// single home of the `SlideTimer > 0 ? SlideMuzzleHeight : MuzzleHeight`
+    /// ternary `WeaponSystem.Update` itself uses for the authoritative shot), so
+    /// that the ray's visible origin did not disagree with where the server
+    /// spawns the round. This class reads neither that property nor any other
+    /// muzzle height today — see the next paragraph for where the origin came
+    /// from instead.
     ///
     /// STAGE 2 TASK 45b MOVED THE ORIGIN ONTO THE MODEL (bd `app-60c`). The ray
     /// started at the hero's own centre lifted to that height — a point inside
@@ -52,7 +54,18 @@ namespace Ring.Presentation
     /// — including mid-slide, which the ternary above approximated with a second
     /// number. No doll (the opening frames, or after this player dies) means no
     /// ray, switched off exactly the way `!Ready`/`!AimHeld` already switch it
-    /// off. The ray's far END is untouched by that task (`app-bej`).
+    /// off. The ray's far END was untouched by that task and is Stage 2 Task
+    /// 45c's own subject (`app-bej`).
+    ///
+    /// THE TWO ENDS ANSWER DIFFERENT QUESTIONS, AND THAT IS DELIBERATE (Stage 2
+    /// Task 45c). The start is the barrel the player is looking at — a point on
+    /// the model, put there by Task 45b. The end is where the simulation's round
+    /// comes down, measured from the simulation's own muzzle
+    /// (`AimProvider.CurrentImpactWorldPoint`). The line between them is
+    /// therefore not the round's own line: the two origins sit a fraction of a
+    /// metre apart, so the drawn ray is a hair off parallel to the shot. What it
+    /// gets right is the thing the player actually reads off it — the point at
+    /// the far end.
     ///
     /// `[DefaultExecutionOrder(10)]` IS WHAT MAKES THAT ORIGIN THIS FRAME'S
     /// (fix-round 1, G-1). The socket rides a hand bone the Animator writes in
@@ -133,8 +146,15 @@ namespace Ring.Presentation
             }
             _line.enabled = true;
 
-            Vector3 aimPoint = SimSpace.ToWorld(_aimProvider.CurrentAimSimPos)
-                + Vector3.up * _aimProvider.CurrentAimHeight;
+            // Stage 2 Task 45c (bd app-bej): the far end is where the round
+            // COMES DOWN, not where the cursor points — the two part company
+            // whenever the aim is low enough for the ground to take the round
+            // first (`AimProvider.CurrentImpactWorldPoint`). The ray used to end
+            // at `ToWorld(CurrentAimSimPos) + up * CurrentAimHeight`, which is
+            // that provider's `CurrentAimWorldPoint` by another name, and which
+            // for a shot at the floor promised a point 8% of the way further out
+            // than the round reaches at the shipped balance.
+            Vector3 aimPoint = _aimProvider.CurrentImpactWorldPoint;
 
             _line.SetPosition(0, muzzle);
             _line.SetPosition(1, aimPoint);

@@ -136,6 +136,18 @@ namespace Ring.Data
         // muzzle height (PC7) — instead of this flat guessed lift. Field kept
         // rather than deleted so an already-authored .asset doesn't silently
         // lose a serialized value; no code path reads it anymore.
+        //
+        // AND THOSE CONSUMERS MOVED AGAIN, off RenderMuzzleHeight too (Stage 2
+        // Task 45b): the flash and the brass now leave sockets on the doll's
+        // gun, at whatever height the animated hand holds it, so neither this
+        // field nor the property that replaced it describes them any more.
+        // RenderMuzzleHeight itself sat with zero readers between that task and
+        // Stage 2 Task 45c, which gave it one of a different kind — AimProvider
+        // asks where the SIMULATION's round leaves from in order to work out
+        // where it lands (app-bej). Recorded here because "this field's
+        // successor" is the only thing this paragraph is for, and a successor
+        // that had stopped being read would have made it a dead pointer to a
+        // dead pointer.
         [Range(0f, 2f)] public float MuzzleLiftY = 1.1f;
         public Vector3 GunLocalPosition = Vector3.zero;
         public Vector3 GunLocalEuler = Vector3.zero;
@@ -166,9 +178,17 @@ namespace Ring.Data
         // random left/right scatter — CasingView.Spawn now switched from
         // ForceMode.Impulse to ForceMode.VelocityChange (see its own doc),
         // so these are direct meters-per-second along a *directed* eject
-        // vector (PersistentPropsDirector.SpawnCasing ejects to the
-        // shooter's right of the shot, like a real pistol's ejection port)
-        // rather than an undirected impulse.
+        // vector rather than an undirected impulse.
+        //
+        // WHICH DIRECTION THAT IS CHANGED IN STAGE 2 TASK 45b, and this doc
+        // named the old one until Task 45c: the shell no longer leaves "to the
+        // shooter's right of the shot" (the shot direction rotated -90°, a
+        // guess about a pistol derived from where the ROUND went). It leaves
+        // along the ejection-port socket's own forward axis, flattened to
+        // horizontal — GunEjectLocalEuler below is what aims it, and
+        // CasingImpulseUpMin/Max above supply the vertical part these two
+        // fields deliberately do not (PersistentPropsDirector.SpawnCasing's own
+        // doc has the reason the axis is flattened rather than used whole).
         [Range(0f, 5f)] public float CasingEjectSpeedMin = 0.8f;
         [Range(0f, 5f)] public float CasingEjectSpeedMax = 1.4f;
 

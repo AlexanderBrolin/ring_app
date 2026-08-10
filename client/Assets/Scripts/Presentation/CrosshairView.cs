@@ -16,8 +16,8 @@ namespace Ring.Presentation
     /// `AimHeld` the cone is hidden (PD15: a spread CONE only ever describes hip
     /// fire — aimed fire draws a genuine 3D ray instead, `AimRayView`) and this
     /// same marker doubles as the aim-point dot, scaled by `GameFeelConfig.
-    /// AimDotScale` — no second marker is ever created for that (PC8). Hides the
-    /// OS cursor while active.
+    /// AimDotScale` — no second marker is ever created for that (PC8). Sole
+    /// owner of the OS cursor's visibility (`UpdateCursor`, Stage 2 Task 45c).
     ///
     /// П-3 (Task 19's resolution): `AimProvider.CurrentAimSimPos` is the sole
     /// per-frame aim source both the marker and the cone's CENTER read — no tick
@@ -83,12 +83,52 @@ namespace Ring.Presentation
             _markerBaseEmission = _markerRenderer.sharedMaterial.GetColor(EmissionColorId);
         }
 
-        void OnEnable() => Cursor.visible = false;
-
+        /// The safety net, and only that (Stage 2 Task 45c): whoever switches
+        /// this component off — leaving Play mode included — gets the OS cursor
+        /// back rather than a machine with no pointer. The matching `OnEnable`
+        /// that used to hide it is gone: hiding on enable and revealing on
+        /// disable made the cursor a function of THIS COMPONENT's lifetime,
+        /// which is why it stayed hidden through the pause menu and the death
+        /// screen (bd `app-10j`) — `UpdateCursor` below decides per frame
+        /// instead, and an enable while paused must not overrule it.
         void OnDisable() => Cursor.visible = true;
+
+        /// SOLE OWNER OF `Cursor.visible` IN THE PROJECT (owner decision 6а,
+        /// Stage 2 Task 45c, bd `app-10j`): one class writes it, every frame,
+        /// from the state of the game rather than from any event. Written
+        /// unconditionally rather than on change — the write is what makes the
+        /// ownership real, and a component that only wrote on its own edges
+        /// could be overruled by anything else and never notice.
+        ///
+        /// SHOWN WHENEVER THE GAME IS NOT ASKING FOR AIM: while paused
+        /// (`SimulationRunner.Paused`, the project's sole pause gate, which
+        /// `PauseController.Open`/`Resume` flip around the menu) and while this
+        /// client's own player is not alive, which covers the death screen and
+        /// the frames before a match has described the player at all. Both are
+        /// read off state that already exists — no new subscription and no
+        /// mirror of either fact is kept here.
+        ///
+        /// THE DEATH SIGNAL IS "NOT ALIVE", NOT "THE PANEL IS UP", and the
+        /// difference matters on the networked backend: `PlayerDied` is a tick
+        /// behind the snapshot there, so `DeathOverlayController` never even
+        /// shows (`ViewRegistry`'s class doc, bd `app-2rf`) while
+        /// `RenderCurr.Player.Alive` goes false exactly on time. Reading the
+        /// overlay would also mean holding a reference to it purely to ask a
+        /// question the snapshot already answers.
+        void UpdateCursor()
+        {
+            bool aiming = _runner != null && _runner.Ready
+                && !_runner.Paused && _runner.RenderCurr.Player.Alive;
+            Cursor.visible = !aiming;
+        }
 
         void LateUpdate()
         {
+            // Ahead of the readiness guard below on purpose: a frame with
+            // nothing to show is a frame with nothing to aim at, and the cursor
+            // is the player's only way out of it.
+            UpdateCursor();
+
             // Г5 review (Minor, same lens as AimRayView's Important — QA18
             // pattern): UpdateCone below reads _runner.Config and the render
             // pair, the same pair AimRayView's own guard protects — hide the
@@ -122,7 +162,15 @@ namespace Ring.Presentation
                 // marker's local Y axis is its flat disc's cap normal) so it
                 // always reads as a coin facing the viewer, not a decal
                 // lying on whatever surface it currently touches.
-                aimWorld = _aimProvider.CurrentAimWorldPoint;
+                // Stage 2 Task 45c (bd app-bej): the point is now the round's
+                // own landing point rather than the cursor's
+                // (`AimProvider.CurrentImpactWorldPoint` vs the
+                // `CurrentAimWorldPoint` this line used to read). The two are
+                // the same point for any aim at or above the round's
+                // ground-contact height — every shot at a mob's body included —
+                // and part company on a shot at the FLOOR, where the marker used
+                // to stand 8% of the range beyond where the round comes down.
+                aimWorld = _aimProvider.CurrentImpactWorldPoint;
                 _marker.position = aimWorld + GroundOffset;
                 Vector3 toCamera = _camera != null
                     ? _camera.transform.position - _marker.position : Vector3.up;

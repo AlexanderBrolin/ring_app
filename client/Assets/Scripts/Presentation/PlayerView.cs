@@ -22,7 +22,7 @@ namespace Ring.Presentation
     /// `MobView`/`MobVisual` split this pair mirrors. `Bind` sets the
     /// pool-rebind baseline; `Sync` composes every per-frame accent and is the
     /// sole caller of `ApplyEmission`, so there is exactly one property-block
-    /// write per doll per frame. Two accents compose here:
+    /// write per doll per frame. Three accents compose here:
     ///  - the Dash↔Slide combo-window pulse (В1 fix-wave 1, owner playtest item
     ///    3 "мерцание сборщика"): a sine at `GameFeelConfig.LinkWindowFlashHz`
     ///    on unscaled time (hitstop/slow-mo never touch it) while
@@ -33,7 +33,10 @@ namespace Ring.Presentation
     ///  - the remote-player rim (`GameFeelConfig.RemotePlayerEmission`, Stage 2
     ///    Task 45a): a steady tint every doll but this client's own wears, so a
     ///    stranger reads as a stranger at a glance. The registry decides which
-    ///    doll is "own" and passes black for it — this class never asks.
+    ///    doll is "own" and passes black for it — this class never asks;
+    ///  - the hit flash (`Flash`, Stage 2 Task 45c): the decaying white a struck
+    ///    body wears, the same one `MobView` gives a struck mech, layered last
+    ///    so it reads on top of both accents above rather than instead of them.
     /// `_renderers` is cached once here the same way `MobView`/`CorpseView`
     /// cache theirs (`GetComponentsInChildren&lt;Renderer&gt;(true)`, one shared
     /// `MaterialPropertyBlock`, never a material instance, П-2).
@@ -47,6 +50,13 @@ namespace Ring.Presentation
         static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
         // = PlayerEmissive/DashGlowView's own accent (Э1) — reused, not reinvented.
         static readonly Color LinkWindowFlashAccent = new Color(0f, 2.5f, 3f);
+        // = MobView.FlashAccent, the project's one hit-flash white (Stage 2 Task
+        // 45c): a round landing on a collector has to read as the same event as
+        // a round landing on a mech, or the player learns two vocabularies for
+        // one thing. A shared constant would have to live in a third type that
+        // neither view owns; the pair of literals is the smaller cost, and this
+        // comment is what keeps them tied.
+        static readonly Color FlashAccent = new Color(4f, 4f, 4f);
 
         // Stage 2 Task 45b: the two empty children `StageOneSceneBootstrap`
         // parents under this doll's `Gun`, posed from `GameFeelConfig`. They are
@@ -72,6 +82,13 @@ namespace Ring.Presentation
         // one) is not an aim proxy and must not be switched with them.
         Collider[] _aimProxies;
         int _aimProxyCount;
+        // Stage 2 Task 45c: the hit-flash pair, same shape and same unscaled
+        // clock as `MobView`'s own — `Update` counts the timer down, `Sync`
+        // composes the resulting colour on top of whatever accent the frame
+        // already has, so a flash never races the other accents for the last
+        // property-block write.
+        float _flashTimer;
+        float _flashDuration;
 
         /// Whether the slot this doll is bound to is this client's own
         /// (`RenderSnapshot.LocalPlayerIndex` — the registry decides, this class
@@ -158,6 +175,9 @@ namespace Ring.Presentation
         public void Bind(bool isLocal)
         {
             IsLocal = isLocal;
+            // Pool-rebind hygiene, same line `MobView.Bind` carries: a doll must
+            // not open its new life mid-flash from the previous slot's last hit.
+            _flashTimer = 0f;
             ApplyEmission(Color.black);
             // Stage 2 Task 45b: the other half of `DetachAsCorpse`'s proxy
             // switch-off. A doll only ever reaches this method by being rented
@@ -188,7 +208,40 @@ namespace Ring.Presentation
                 emission += LinkWindowFlashAccent * wave * linkWindowFlashBoost;
             }
 
+            // Stage 2 Task 45c: layered last, exactly as `MobView.Sync` layers
+            // its own — a hit reads on top of whatever the doll was already
+            // doing rather than replacing it.
+            if (_flashTimer > 0f) emission += FlashAccent * Mathf.Clamp01(_flashTimer / _flashDuration);
+
             ApplyEmission(emission);
+        }
+
+        /// A round landed on this player (Stage 2 Task 45c, bd `app-aq9`, ADR-001
+        /// §10's per-hit checklist): the same decaying white flash `MobView.Flash`
+        /// gives a struck mech, driven by `GameFeelDirector`'s
+        /// `ProjectileHitPlayer` handler on the VICTIM's doll — the shooter's
+        /// doll gets nothing, since the checklist is about the body that was hit.
+        /// Reentrant like its twin: a second hit mid-flash restamps the timer
+        /// rather than stacking brightness.
+        ///
+        /// FIRED WHETHER OR NOT THE BLOW LANDED. The event behind it reports that
+        /// a ROUND ENDED on this player, and dash i-frames can refuse the damage
+        /// while the round is consumed all the same (`SimEventKind.
+        /// ProjectileHitPlayer`'s own doc) — so this flash means "a round reached
+        /// you", not "you took damage". The damage cue is the vignette, which
+        /// rides `PlayerDamaged` and is not emitted for a refused blow.
+        public void Flash(float duration)
+        {
+            _flashDuration = Mathf.Max(duration, 1e-4f);
+            _flashTimer = _flashDuration;
+        }
+
+        /// Only the flash timer runs here — everything else about this doll is
+        /// written by `ViewRegistry` from the snapshot. Unscaled, so the hitstop
+        /// the same hit may have triggered never freezes the flash it belongs to.
+        void Update()
+        {
+            if (_flashTimer > 0f) _flashTimer -= Time.unscaledDeltaTime;
         }
 
         /// This doll has just become a corpse (Stage 2 Task 45a fix-round 1;

@@ -313,6 +313,9 @@ namespace Ring.Presentation
                 case SimEventKind.ProjectileHit:
                     SpawnHitSpark(in e);
                     break;
+                case SimEventKind.ProjectileHitPlayer:
+                    SpawnPlayerHitSpark(in e);
+                    break;
                 case SimEventKind.ProjectileBlocked:
                     HandleBlocked(in e);
                     break;
@@ -348,13 +351,16 @@ namespace Ring.Presentation
         /// it was, in the eject SPEED, the upward impulse and the torque, all
         /// three read from `GameFeelConfig` per shot.
         ///
-        /// THE IMPULSE COMES OFF THE WEAPON, NOT OFF THE SHOT. It used to be the
-        /// shot direction rotated -90°, i.e. a guess at where a pistol throws
-        /// brass, derived from a number that describes where the ROUND went. The
-        /// port's own forward axis is the direction now (`GameFeelConfig.
+        /// THE IMPULSE'S HEADING COMES OFF THE WEAPON, NOT OFF THE SHOT. It used
+        /// to be the shot direction rotated -90°, i.e. a guess at where a pistol
+        /// throws brass, derived from a number that describes where the ROUND
+        /// went. The port's own forward axis supplies it now (`GameFeelConfig.
         /// GunEjectLocalEuler`, owner-tunable with the scene gizmo), so "вбок-
         /// назад" is a pose the owner can see and adjust rather than an angle
-        /// baked in here.
+        /// baked in here. Only the HEADING: `SpawnCasing` flattens that axis to
+        /// horizontal and takes the vertical component from `GameFeelConfig.
+        /// CasingImpulseUpMin`/`Max` as it always did — that method's own doc
+        /// (fix-round 1, G-5) has the measurement behind the split.
         ///
         /// NO DOLL, NO CASING — the same rule, and the same F-3 reason, as the
         /// muzzle flash (`MuzzleFlashView`'s class doc). A `ShotHeard` from a
@@ -434,7 +440,35 @@ namespace Ring.Presentation
         {
             MobSimConfig archetype = e.MobType == MobType.Chaser
                 ? _runner.Config.Chaser : _runner.Config.Gunner;
-            float height = ZoneHeight(e.Zone, in archetype);
+            float height = ZoneHeight(e.Zone, archetype.LegsTop, archetype.BodyTop, archetype.HeadTop);
+            PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * height, Quaternion.identity);
+        }
+
+        /// The same spark, off a collector instead of a mech (Stage 2 Task 45c,
+        /// bd `app-aq9`, ADR-001 §10's per-hit checklist): `ProjectileHitPlayer`
+        /// had no consumer anywhere in Presentation until this task, so a round
+        /// landing on a player produced no particle at all while a round landing
+        /// on a mob produced one.
+        ///
+        /// The belts come from `Config.Hero` because the victim is a hero —
+        /// `SpawnHitSpark` above reads the dying mob's own archetype for exactly
+        /// the same reason, and `ZoneHeight` takes the three tops rather than a
+        /// `MobSimConfig` so the one band split serves both bodies (the hero's
+        /// and the mob's zone tables are different numbers, not different rules).
+        ///
+        /// `e.MobType` is deliberately not read: it is unused for this kind and
+        /// reads as its zero value, `Chaser`, which would have quietly put a hit
+        /// on a player at a mech's belt heights.
+        ///
+        /// NO DECAL. A decal marks the SURFACE a round stopped against and lives
+        /// to the end of the match (`HandleBlocked`); a body is not a surface,
+        /// and a permanent scorch mark hanging in the air where a player was
+        /// standing is a lie about geometry as well as a giveaway about where
+        /// somebody fought.
+        void SpawnPlayerHitSpark(in SimEvent e)
+        {
+            HeroSimConfig hero = _runner.Config.Hero;
+            float height = ZoneHeight(e.Zone, hero.LegsTop, hero.BodyTop, hero.HeadTop);
             PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * height, Quaternion.identity);
         }
 
@@ -584,19 +618,26 @@ namespace Ring.Presentation
         /// above already draws for gib parts, just keyed off `HitZone`
         /// (`ProjectileSystem`'s hit-zone classification, `SimEvent.Zone`)
         /// instead of `GibPartKind`. `HitZone.None` is defensive only — a
-        /// live `ProjectileHit` always carries a real zone (`SpawnHitSpark`'s
+        /// live `ProjectileHit` carries a real zone (`SpawnHitSpark`'s
         /// own doc) — and falls back to floor height (Y=0, the spark's
         /// previous behavior) rather than guessing.
-        static float ZoneHeight(HitZone zone, in MobSimConfig archetype)
+        ///
+        /// Stage 2 Task 45c: takes the three belt tops instead of a
+        /// `MobSimConfig`, so the hero's own table can be handed to it for a
+        /// round that landed on a PLAYER (`SpawnPlayerHitSpark`). The two
+        /// bodies differ in their numbers, not in how a zone maps to a height,
+        /// and a second copy of this switch keyed off `HeroSimConfig` would be
+        /// the same rule written twice.
+        static float ZoneHeight(HitZone zone, float legsTop, float bodyTop, float headTop)
         {
             switch (zone)
             {
                 case HitZone.Head:
-                    return (archetype.BodyTop + archetype.HeadTop) * 0.5f;
+                    return (bodyTop + headTop) * 0.5f;
                 case HitZone.Body:
-                    return (archetype.LegsTop + archetype.BodyTop) * 0.5f;
+                    return (legsTop + bodyTop) * 0.5f;
                 case HitZone.Legs:
-                    return archetype.LegsTop * 0.5f;
+                    return legsTop * 0.5f;
                 default:
                     return 0f;
             }

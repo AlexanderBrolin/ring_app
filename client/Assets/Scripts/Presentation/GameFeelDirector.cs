@@ -43,9 +43,11 @@ namespace Ring.Presentation
     /// the instant a death screen is about to cover the whole frame anyway.
     ///
     /// Budget (spec Interfaces): a trailing 1-second window tracks each
-    /// ACCEPTED trigger's own `(timestamp, seconds)` pair; a new
-    /// `ProjectileHit` is only granted hitstop if the window's summed seconds
-    /// plus this trigger's own duration stay under `MaxHitstopRatio` (a
+    /// ACCEPTED trigger's own `(timestamp, seconds)` pair; a new hit — a
+    /// `ProjectileHit` on a mob, or (Stage 2 Task 45c) a `ProjectileHitPlayer`
+    /// on this client's own player — is only granted hitstop if the window's
+    /// summed seconds plus this trigger's own duration stay under
+    /// `MaxHitstopRatio` (a
     /// fraction of that 1s window — e.g. 0.35 == 350ms of hitstop per real
     /// second) — otherwise the freeze/target-freeze step is skipped outright,
     /// so hold-fire through a wave doesn't turn into a slideshow. The
@@ -154,6 +156,9 @@ namespace Ring.Presentation
                 case SimEventKind.ProjectileHit:
                     HandleProjectileHit(in e);
                     break;
+                case SimEventKind.ProjectileHitPlayer:
+                    HandleProjectileHitPlayer(in e);
+                    break;
                 case SimEventKind.MobDied:
                     AddTrauma(_gameFeel.TraumaDeath);
                     break;
@@ -213,6 +218,58 @@ namespace Ring.Presentation
                     _hitstopTargetView = targetView;
                 }
             }
+
+            AddTrauma(_gameFeel.TraumaHit);
+        }
+
+        /// A round ended ON A PLAYER (Stage 2 Task 45c, bd `app-aq9`). The event
+        /// has been arriving from the server since Stage 2 Task 44a and had no
+        /// consumer anywhere in Presentation at all — ADR-001 §10 asks for
+        /// feedback on EVERY hit, and this was the half of the arena that got
+        /// none.
+        ///
+        /// THE FEEDBACK GOES ON THE VICTIM. `EntityId` is the victim's PLAYER
+        /// SLOT for this kind (`SimEventKind.ProjectileHitPlayer`'s own doc);
+        /// `PlayerIndex` is the shooter, and putting a flash there would light up
+        /// whoever pulled the trigger instead of whoever was hit.
+        ///
+        /// FLASH FOR EVERYONE, FRAME-FREEZE AND SHAKE ONLY WHEN IT IS ME. A
+        /// stranger's duel across the arena is something I watch; freezing my
+        /// frame and shaking my camera for it would make somebody else's fight
+        /// jerk my aim. `RenderCurr.LocalPlayerIndex` is the whole test, and it
+        /// is the same seam `AudioDirector`/`MuzzleFlashView` use to tell my own
+        /// shot from a stranger's. Everything visible without owning it — the
+        /// doll's flash here, the sparks and the sound in the two directors after
+        /// this one in the fan-out — fires for any hit this client received at
+        /// all, and the server has already decided which those are (a round's
+        /// end reaches whoever received its spawn — `EventRelevance`).
+        ///
+        /// NO `TargetOnly` FREEZE. That scope pins the struck MobView's
+        /// transform; a player's doll has no such hook, and inventing one would
+        /// freeze a body the snapshot is still moving. `TriggerHitstop` reads the
+        /// scope itself, so under `TargetOnly` this hit costs budget and freezes
+        /// nothing, exactly like a mob hit whose view has already been retired.
+        ///
+        /// IT SAYS "A ROUND REACHED YOU", NOT "YOU TOOK DAMAGE". The event fires
+        /// even when dash i-frames refuse the blow (the round is consumed either
+        /// way — that kind's own doc), and `e.Amount` is what the round CARRIED.
+        /// Nothing here reads `Amount`, and the damage-side cue stays where it
+        /// belongs: the vignette on `PlayerDamaged`, which is not emitted for a
+        /// refused blow.
+        void HandleProjectileHitPlayer(in SimEvent e)
+        {
+            if (_viewRegistry.TryGetPlayerView(e.EntityId, out PlayerView victim))
+                victim.Flash(_gameFeel.FlashDuration);
+
+            if (e.EntityId != _runner.RenderCurr.LocalPlayerIndex) return;
+
+            // Same head-scaling and the same 1-second budget a mob hit is
+            // priced against (`HandleProjectileHit` above) — one hitstop
+            // economy for the whole match, not a second one for PvP.
+            float hitstopSeconds = e.Zone == HitZone.Head
+                ? _gameFeel.HitstopSeconds * _gameFeel.HeadHitstopScale
+                : _gameFeel.HitstopSeconds;
+            if (TryConsumeHitstopBudget(hitstopSeconds)) TriggerHitstop(hitstopSeconds);
 
             AddTrauma(_gameFeel.TraumaHit);
         }

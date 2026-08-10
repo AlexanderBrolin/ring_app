@@ -24,11 +24,11 @@ namespace Ring.Presentation
     ///  - `HandleEvent` (called by `SimEventRouter`, П-1's ordered fan-out — never
     ///    subscribed directly to any runner event): retires a view the instant its
     ///    entity's terminal event fires (MobDied for mobs; ProjectileBlocked /
-    ///    ProjectileExpired for projectiles — NOT ProjectileHit: that event's
-    ///    `EntityId` is the hit mob's Id, not the consumed projectile's, per
-    ///    `ProjectileSystem`'s emit contract, so it can never match a live entry in
-    ///    `_activeProjectiles`; a projectile's on-hit retirement is left to the
-    ///    ordinary `LateUpdate` diff below), ahead of that frame's `LateUpdate`
+    ///    ProjectileExpired and — Stage 2 Task 45c — ProjectileHitPlayer for
+    ///    projectiles, the last one off `SecondaryEntityId` because its
+    ///    `EntityId` is the victim's slot; NOT ProjectileHit, see that method's
+    ///    own doc for why, which is not the reason this paragraph used to
+    ///    give), ahead of that frame's `LateUpdate`
     ///    diff. This is redundant with the diff on a normal frame (the Id is
     ///    already gone from `Curr` by then too) — it exists so retirement is
     ///    explicit and immediate rather than only an incidental side effect of
@@ -239,10 +239,30 @@ namespace Ring.Presentation
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer
-        /// (П-1 fan-out) — retirement only, see class doc. `ProjectileHit` is
-        /// deliberately absent: its `EntityId` names the hit mob, not the
-        /// projectile (that Id is still surfaced here for a future flash-hook,
-        /// Phase 8's Task 25 — just not for retirement).
+        /// (П-1 fan-out) — retirement only, see class doc.
+        ///
+        /// TWO KINDS PUT THE ROUND IN `EntityId` AND ONE PUTS IT ELSEWHERE.
+        /// `ProjectileBlocked`/`ProjectileExpired` name the round directly, so
+        /// they retire off `EntityId`. `ProjectileHitPlayer` (Stage 2 Task 45c)
+        /// spends `EntityId` on the VICTIM's player slot and carries the round's
+        /// own id in `SecondaryEntityId` instead (`SimEvent.SecondaryEntityId`'s
+        /// own doc) — so it retires off THAT field, and retiring it off
+        /// `EntityId` would delete whichever projectile view happens to share a
+        /// number with a player slot.
+        ///
+        /// `ProjectileHit` stays absent, and the reason is no longer the one
+        /// this doc used to give. It said the round's id is simply not on the
+        /// event; that stopped being true in Stage 2 Task 28, which added
+        /// `SecondaryEntityId` and wrote it from BOTH hit branches — a precise
+        /// retirement is available there too. What is actually true is that
+        /// nothing needs it: this whole method is an early, explicit version of
+        /// a retirement the next `LateUpdate` diff performs anyway (class doc),
+        /// and a round that ended on a mob leaves `Curr` on the same tick as one
+        /// that ended on a player. `ProjectileHitPlayer` is wired here because
+        /// this task was already opening the PvP hit's whole feedback path
+        /// (`app-aq9`) and the immediacy is worth having on the one hit a player
+        /// watches most closely; extending the same line to `ProjectileHit` is a
+        /// change of behavior for PvE and belongs to whoever wants it.
         public void HandleEvent(in SimEvent e)
         {
             switch (e.Kind)
@@ -253,6 +273,9 @@ namespace Ring.Presentation
                 case SimEventKind.ProjectileBlocked:
                 case SimEventKind.ProjectileExpired:
                     RetireProjectile(e.EntityId);
+                    break;
+                case SimEventKind.ProjectileHitPlayer:
+                    RetireProjectile(e.SecondaryEntityId);
                     break;
             }
         }
@@ -335,7 +358,10 @@ namespace Ring.Presentation
 
         /// The same seam for a player SLOT (Stage 2 Task 45b) — how the muzzle
         /// flash, the shell casing and the aim ray reach the doll whose barrel
-        /// they must come off (`app-fl3`/`app-e2n`/`app-60c`). Modelled on
+        /// they must come off (`app-fl3`/`app-e2n`/`app-60c`), and since Stage 2
+        /// Task 45c how `GameFeelDirector` reaches the doll a round just landed
+        /// on (`ProjectileHitPlayer`, the exact counterpart of `TryGetMobView`'s
+        /// own hit-flash lookup above). Modelled on
         /// `TryGetMobView` above deliberately: one shape for "ask the registry
         /// for a live view", not a second mechanism.
         ///

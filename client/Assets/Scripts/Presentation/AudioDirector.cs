@@ -161,14 +161,22 @@ namespace Ring.Presentation
         }
 
         /// Task 28: per-frame prediction — see the class doc above and
-        /// `MuzzleFlashView.Update`'s doc for the shared heuristic's full
-        /// rationale. Fix-round (review #1, Medium): positioned at the MUZZLE,
-        /// same as `MuzzleFlashView`'s fix — the authoritative `ProjectileHit`/
-        /// `PlayClip` position for a real shot is `WeaponSystem`'s spawn point
-        /// (`p.Pos + dir * cfg.MuzzleOffset`), not the hero's center; reads
-        /// `MuzzleOffset` off `_runner.Config.Weapon` (the built `SimConfig`
-        /// the facade exposes — Task 43) rather than adding a second
-        /// `WeaponConfig` reference.
+        /// `MuzzleFlashView.PredictBurst`'s doc for the shared heuristic's full
+        /// rationale. (Stage 2 Task 45c: this used to cite a
+        /// `MuzzleFlashView.Update`; that class has had no `Update` since Task
+        /// 45b's fix-round 1 moved its whole per-frame path into `LateUpdate`,
+        /// behind `ViewRegistry`'s doll placement.) Fix-round (review #1,
+        /// Medium): positioned at the MUZZLE, same as `MuzzleFlashView`'s fix —
+        /// the authoritative `ProjectileHit`/`PlayClip` position for a real shot
+        /// is `WeaponSystem`'s spawn point (`p.Pos + dir * cfg.MuzzleOffset`),
+        /// not the hero's center.
+        ///
+        /// Stage 2 Task 45c: that spawn point is `SimulationRunner.
+        /// RenderMuzzleSimPos` now — this method held the only restatement of it
+        /// in Presentation, and `AimProvider` needed the same point to work out
+        /// where a round comes down (`app-bej`). One formula, asked with this
+        /// path's own aim: the last complete tick's `PlayerState.AimPoint`,
+        /// exactly the value the hand-written version read.
         void Update()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
@@ -178,12 +186,7 @@ namespace Ring.Presentation
             // reaches, because the edge is a function of the previous frame.
             if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime)) return;
 
-            PlayerState player = _runner.RenderCurr.Player;
-            float2 aimDir = player.AimPoint - player.Pos;
-            float lenSq = aimDir.x * aimDir.x + aimDir.y * aimDir.y;
-            float2 dir = lenSq > 1e-8f ? aimDir / Mathf.Sqrt(lenSq) : new float2(1f, 0f);
-            float muzzleOffset = _runner.Config.Weapon.MuzzleOffset;
-            float2 muzzlePos = player.Pos + dir * muzzleOffset;
+            float2 muzzlePos = _runner.RenderMuzzleSimPos(_runner.RenderCurr.Player.AimPoint);
 
             if (PlayClip(_shotClip, SimEventKind.ProjectileFired, muzzlePos))
                 _latch.Arm(Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds);
@@ -298,12 +301,22 @@ namespace Ring.Presentation
             return count;
         }
 
+        /// Stage 2 Task 45c: `ProjectileHitPlayer` shares `_hitClip` with
+        /// `ProjectileHit` rather than getting a clip of its own. It IS the same
+        /// event acoustically — a round ending on a body — and the two are told
+        /// apart by what else fires around them: a landed blow adds the victim's
+        /// own `_playerHitClip` on `PlayerDamaged`, and a blow refused by dash
+        /// i-frames does not, which is exactly the difference worth hearing.
+        /// Sharing the clip does NOT share the anti-spam budget: `PlayClip` keys
+        /// `MinSfxInterval`/`VoicesPerSfx` on the KIND, so a PvP hit can never
+        /// silence a PvE one or the reverse.
         AudioClip ClipFor(SimEventKind kind)
         {
             switch (kind)
             {
                 case SimEventKind.ProjectileFired: return _shotClip;
                 case SimEventKind.ProjectileHit: return _hitClip;
+                case SimEventKind.ProjectileHitPlayer: return _hitClip;
                 case SimEventKind.MobDied: return _mobDeathClip;
                 case SimEventKind.PlayerDashed: return _dashClip;
                 case SimEventKind.PlayerDamaged: return _playerHitClip;

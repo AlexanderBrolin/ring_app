@@ -221,8 +221,40 @@ namespace Ring.Presentation
         /// G-6: an earlier wording of this paragraph said the two docs cite it
         /// over `SlideTimer`. Neither of them mentions `SlideTimer` at all; the
         /// conclusion was right and the mechanism behind it was invented.)
+        ///
+        /// STAGE 2 TASK 45c GAVE IT A READER AGAIN, and a different kind of
+        /// one: `AimProvider` asks where the SIMULATION's round leaves from in
+        /// order to work out where it comes down (`Trajectory.FloorCutFraction`,
+        /// bd `app-bej`). That question is about the authoritative shot, not
+        /// about the picture, so the doll's socket is the wrong answer for it
+        /// and this pair — height here, ground point below — is the right one.
         public float RenderMuzzleHeight => RenderCurr.Player.SlideTimer > 0f
             ? Config.Hero.SlideMuzzleHeight : Config.Hero.MuzzleHeight;
+
+        /// The ground half of the same muzzle `RenderMuzzleHeight` above gives
+        /// the height of (Stage 2 Task 45c): where `WeaponSystem`'s aimed branch
+        /// puts the round — the hero's own position pushed `WeaponConfig.
+        /// MuzzleOffset` along the line to `aimSimPos`.
+        ///
+        /// A METHOD RATHER THAN A PROPERTY because the aim it is measured from
+        /// is the caller's: `AudioDirector`'s predicted shot places itself off
+        /// the last complete tick's `PlayerState.AimPoint`, while `AimProvider`
+        /// works from THIS render frame's cursor, and neither is wrong for its
+        /// own job. Handing the aim in is what lets both share one formula
+        /// instead of restating it — `AudioDirector` carried the only such
+        /// restatement in Presentation until this task lifted it onto here.
+        ///
+        /// NOT THE POINT ANY COSMETIC IS DRAWN FROM. Stage 2 Task 45b moved the
+        /// flash, the brass and the aim ray's origin onto the doll's own sockets
+        /// precisely because this point is a bare offset ahead of the hero and
+        /// visibly not the gun in his hand. What it is still good for is the
+        /// question the simulation itself answers from it.
+        public float2 RenderMuzzleSimPos(float2 aimSimPos)
+        {
+            float2 pos = RenderCurr.Player.Pos;
+            return pos + math.normalizesafe(aimSimPos - pos, new float2(1f, 0f))
+                * Config.Weapon.MuzzleOffset;
+        }
 
         public long Seed { get; private set; }
         public bool ConfigTweaked;

@@ -1,3 +1,4 @@
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 using UnityEngine;
@@ -64,6 +65,14 @@ namespace Ring.Presentation
         // on the mob's silhouette instead of a floor-projected XY plus a
         // flat height guess.
         Vector3 _cachedAimWorldPoint;
+        // Stage 2 Task 45c (bd app-bej): where the round fired at the current
+        // aim would actually come down — `_cachedAimWorldPoint` pulled back
+        // along the shot's own line by `Trajectory.FloorCutFraction`. Cached
+        // here, alongside every other per-frame aim value, because the marker
+        // and the ray END have to name the SAME point (PC8: the marker doubles
+        // as the ray's dot) and two independent restatements of one flight
+        // would eventually disagree.
+        Vector3 _cachedImpactWorldPoint;
 
         void Awake()
         {
@@ -97,6 +106,11 @@ namespace Ring.Presentation
                 _cachedAimZone = HitZone.None;
                 _cachedHoveredMob = null;
                 _cachedAimWorldPoint = SimSpace.ToWorld(planeAimSimPos); // floor point, y=0
+                // Hip fire is flat (WeaponSystem's own `!AimHeld` branch spawns
+                // the round with no climb rate at all), so it never descends
+                // and the ground never cuts it — there is no correction to make
+                // and the two points coincide.
+                _cachedImpactWorldPoint = _cachedAimWorldPoint;
                 return;
             }
 
@@ -123,6 +137,44 @@ namespace Ring.Presentation
                 _cachedHoveredMob = null;
                 _cachedAimWorldPoint = SimSpace.ToWorld(planeAimSimPos); // same floor fallback
             }
+
+            _cachedImpactWorldPoint = ResolveImpactWorldPoint();
+        }
+
+        /// Stage 2 Task 45c (bd `app-bej`, owner smoke test #1): the aimed point
+        /// pulled back to where the round actually ends up. The share of the
+        /// muzzle→aim line the round covers is `Ring.Simulation.Combat.
+        /// Trajectory.FloorCutFraction`'s answer and nothing is re-derived here
+        /// — a shot aimed at the floor stops one projectile radius' worth of
+        /// the descent early, because `ProjectileSystem` resolves the ground
+        /// contact at the round's CENTRE height (that method's own doc has the
+        /// measured numbers).
+        ///
+        /// THE LINE IS THE SIMULATION'S, NOT THE PICTURE'S. Both endpoints come
+        /// off the authoritative shot — `SimulationRunner.RenderMuzzleSimPos`/
+        /// `RenderMuzzleHeight` are the ground point and the height
+        /// `WeaponSystem`'s aimed branch fires from — rather than off the doll's
+        /// muzzle socket, which is where Stage 2 Task 45b moved the DRAWN origin
+        /// of the ray. So `AimRayView` draws from the barrel of the model to a
+        /// point measured from the simulation's own muzzle: the two ends answer
+        /// different questions on purpose, "where does the player see the gun"
+        /// and "where does the round land".
+        ///
+        /// Aim at anything at or above the contact height — which is every mob
+        /// body and every wall — and the fraction is 1, so this returns
+        /// `CurrentAimWorldPoint` unchanged. The correction is visible only
+        /// where the aim is on the ground, which is exactly the case the owner
+        /// found.
+        Vector3 ResolveImpactWorldPoint()
+        {
+            float muzzleHeight = _runner.RenderMuzzleHeight;
+            float cut = Trajectory.FloorCutFraction(muzzleHeight, _cachedAimHeight,
+                _runner.Config.Weapon.ProjectileRadius);
+            if (cut >= 1f) return _cachedAimWorldPoint;
+
+            Vector3 muzzleWorld = SimSpace.ToWorld(_runner.RenderMuzzleSimPos(_cachedAimSimPos))
+                + Vector3.up * muzzleHeight;
+            return Vector3.LerpUnclamped(muzzleWorld, _cachedAimWorldPoint, cut);
         }
 
         /// The Э1 plane cast (spec §3.8 invariant): never NaN, never
@@ -283,6 +335,24 @@ namespace Ring.Presentation
         /// silhouette, not a floor projection), or the Э1 floor-plane point
         /// (y=0) otherwise (`!AimHeld`, or a miss — class doc above). Cached
         /// once per render frame alongside every other field here (K15).
+        ///
+        /// WHERE THE CURSOR POINTS, WHICH IS NOT WHERE THE ROUND LANDS (Stage 2
+        /// Task 45c). `CurrentImpactWorldPoint` below is what a view showing
+        /// the player a promise must draw; this one stayed because it is the
+        /// input that promise is built from, and because "what is under the
+        /// cursor" is a question of its own that the observation work (Т47) will
+        /// have to ask again.
         public Vector3 CurrentAimWorldPoint => _cachedAimWorldPoint;
+
+        /// Stage 2 Task 45c (bd `app-bej`): where a round fired at the current
+        /// aim actually comes down — `CurrentAimWorldPoint` above, cut short by
+        /// the ground when the aim is low enough for the ground to be in the
+        /// way (`ResolveImpactWorldPoint`'s own doc for the full rule and for
+        /// which line it is measured along). The aim ray's far end and the
+        /// crosshair marker both read THIS, so the picture stops promising a
+        /// point the round cannot reach; the two coincide for every aim at or
+        /// above the round's ground-contact height, which is every shot at a
+        /// body. Cached once per render frame like everything else here (K15).
+        public Vector3 CurrentImpactWorldPoint => _cachedImpactWorldPoint;
     }
 }
