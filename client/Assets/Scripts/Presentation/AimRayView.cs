@@ -117,12 +117,20 @@ namespace Ring.Presentation
             // AimProvider's own QA18 pattern — the backend has nothing to show
             // on the very first frame(s) before SimulationRunner.Awake's
             // RestartNewSeed completes (or a scene missing the wiring).
-            // Task 43: was `World == null`; `Ready` is the successor test.
-            // Fix-round 1 (G-6): the guard's REASON changed with Task 45b and
-            // this comment kept the old one — `RenderMuzzleHeight` is read
-            // nowhere below any more. What needs the guard now is
+            // Task 43: was `World == null`, then `Ready`.
+            // Task 45b fix-round 1 (G-6): the guard's REASON changed with that
+            // task and this comment kept the old one — `RenderMuzzleHeight` is
+            // read nowhere below any more. What needs the guard is
             // `TryGetMuzzle`, which reads the render pair for the local slot.
-            if (_runner == null || !_runner.Ready)
+            // Stage 2 Task 45c fix-round 1 (G-4): and the test is `AimActive`
+            // now — `Ready` plus "not paused" plus "my player is standing", the
+            // SAME signal that decides the OS cursor and the ground marker
+            // (`SimulationRunner.AimActive`, `CrosshairView.UpdateCursor`).
+            // Without it the ray outlived the pause menu: `Update` stops
+            // sampling input while paused, so a right button held when Escape
+            // was pressed leaves `AimHeld` true and the check below passes
+            // forever.
+            if (_runner == null || !_runner.AimActive)
             {
                 _line.enabled = false;
                 return;

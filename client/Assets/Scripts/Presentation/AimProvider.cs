@@ -161,20 +161,35 @@ namespace Ring.Presentation
         /// and "where does the round land".
         ///
         /// Aim at anything at or above the contact height — which is every mob
-        /// body and every wall — and the fraction is 1, so this returns
-        /// `CurrentAimWorldPoint` unchanged. The correction is visible only
-        /// where the aim is on the ground, which is exactly the case the owner
-        /// found.
+        /// body, and the player dolls, and nothing else — and the fraction is 1,
+        /// so this returns `CurrentAimWorldPoint` unchanged. A WALL IS NOT IN
+        /// THAT LIST (fix-round 1, G-5 item 8, correcting this paragraph's own
+        /// earlier claim): arena geometry carries no collider on
+        /// `AimProxyLayer`, so a cursor over a wall is a cast MISS, reads height
+        /// 0 through the plane fallback, and gets the floor's own fraction. That
+        /// is the honest answer for it too — the round really does come down
+        /// short of the wall's foot — but it is not the "nothing moves" case.
+        ///
+        /// ONE HEIGHT, READ ONCE. The aim height handed to the helper and the
+        /// `y` of the far endpoint it interpolates toward must be the same
+        /// number, or the cut is measured along one line and applied to another.
+        /// Both come off `_cachedAimWorldPoint` here rather than one off it and
+        /// one off `_cachedAimHeight` — the two are equal in every branch of
+        /// `LateUpdate` above, and taking them from one place is what keeps them
+        /// equal without a comment having to promise it.
         Vector3 ResolveImpactWorldPoint()
         {
             float muzzleHeight = _runner.RenderMuzzleHeight;
-            float cut = Trajectory.FloorCutFraction(muzzleHeight, _cachedAimHeight,
+            float cut = Trajectory.FloorCutFraction(muzzleHeight, _cachedAimWorldPoint.y,
                 _runner.Config.Weapon.ProjectileRadius);
             if (cut >= 1f) return _cachedAimWorldPoint;
 
             Vector3 muzzleWorld = SimSpace.ToWorld(_runner.RenderMuzzleSimPos(_cachedAimSimPos))
                 + Vector3.up * muzzleHeight;
-            return Vector3.LerpUnclamped(muzzleWorld, _cachedAimWorldPoint, cut);
+            // `Lerp`, not `LerpUnclamped`: the helper's answer is in [0, 1] by
+            // construction (its own doc's three branches), and the clamped call
+            // is what says so at the call site.
+            return Vector3.Lerp(muzzleWorld, _cachedAimWorldPoint, cut);
         }
 
         /// The Э1 plane cast (spec §3.8 invariant): never NaN, never

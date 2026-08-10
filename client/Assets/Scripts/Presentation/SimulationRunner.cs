@@ -287,6 +287,31 @@ namespace Ring.Presentation
         public bool WouldFireThisFrame => Ready
             && WeaponSystem.WouldFireThisTick(RenderCurr.Player, LastFrameInput, Config.Weapon);
 
+        /// Whether the game is asking this client to AIM right now (Stage 2 Task
+        /// 45c fix-round 1, G-4) — the single signal three surfaces key off, so
+        /// they can never disagree about whether the player is in the fight: the
+        /// OS cursor (`CrosshairView.UpdateCursor`), the ground marker and its
+        /// spread cone (`CrosshairView.LateUpdate`) and the aim ray
+        /// (`AimRayView.LateUpdate`). One rule, one home, three readers — none
+        /// of them keeps a copy of the state.
+        ///
+        /// THREE TERMS, EACH FOR ITS OWN REASON:
+        ///  - `Ready` — the backend has a picture at all. Every reader below
+        ///    also touches `Config`/the render pair, which is what that guard
+        ///    has always protected;
+        ///  - `!Paused` — the pause menu is up. `Update` above returns before it
+        ///    samples input while paused, so `LastFrameInput` is FROZEN: a right
+        ///    button still held when Escape was pressed keeps `AimHeld` true
+        ///    forever, and the aim ray drew straight through the menu until this
+        ///    property existed;
+        ///  - `RenderCurr.Player.Alive` — this client's own player is standing.
+        ///    Covers the death screen and the opening frames alike, on both
+        ///    backends, which asking the death overlay would not: on the
+        ///    networked one the overlay shows a tick LATE (its `PlayerDied`
+        ///    waits for `renderTick`), while this slot stops being written as
+        ///    soon as prediction stops.
+        public bool AimActive => Ready && !Paused && RenderCurr.Player.Alive;
+
         bool _paused;
 
         /// Task 24 (spec Interfaces): the sole pause gate for the whole project —

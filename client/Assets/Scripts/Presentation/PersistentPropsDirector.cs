@@ -451,8 +451,9 @@ namespace Ring.Presentation
         /// on a mob produced one.
         ///
         /// The belts come from `Config.Hero` because the victim is a hero —
-        /// `SpawnHitSpark` above reads the dying mob's own archetype for exactly
-        /// the same reason, and `ZoneHeight` takes the three tops rather than a
+        /// `SpawnHitSpark` above reads the STRUCK mob's own archetype for exactly
+        /// the same reason (it handles a hit, not a death; the dying-mob reader
+        /// is `HandleMobDied`), and `ZoneHeight` takes the three tops rather than a
         /// `MobSimConfig` so the one band split serves both bodies (the hero's
         /// and the mob's zone tables are different numbers, not different rules).
         ///

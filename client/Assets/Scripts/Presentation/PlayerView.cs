@@ -216,20 +216,25 @@ namespace Ring.Presentation
             ApplyEmission(emission);
         }
 
-        /// A round landed on this player (Stage 2 Task 45c, bd `app-aq9`, ADR-001
+        /// A blow landed on this player (Stage 2 Task 45c, bd `app-aq9`, ADR-001
         /// §10's per-hit checklist): the same decaying white flash `MobView.Flash`
-        /// gives a struck mech, driven by `GameFeelDirector`'s
-        /// `ProjectileHitPlayer` handler on the VICTIM's doll — the shooter's
-        /// doll gets nothing, since the checklist is about the body that was hit.
-        /// Reentrant like its twin: a second hit mid-flash restamps the timer
-        /// rather than stacking brightness.
+        /// gives a struck mech, driven by `GameFeelDirector`'s `PlayerDamaged`
+        /// handler on the VICTIM's doll — the attacker's doll gets nothing, since
+        /// the checklist is about the body that was hit. Reentrant like its twin:
+        /// a second hit mid-flash restamps the timer rather than stacking
+        /// brightness.
         ///
-        /// FIRED WHETHER OR NOT THE BLOW LANDED. The event behind it reports that
-        /// a ROUND ENDED on this player, and dash i-frames can refuse the damage
-        /// while the round is consumed all the same (`SimEventKind.
-        /// ProjectileHitPlayer`'s own doc) — so this flash means "a round reached
-        /// you", not "you took damage". The damage cue is the vignette, which
-        /// rides `PlayerDamaged` and is not emitted for a refused blow.
+        /// IT MEANS DAMAGE WAS TAKEN, and that is the point of the kind it rides
+        /// (fix-round 1, G-1). `PlayerDamaged` is not emitted when dash i-frames
+        /// refuse a blow, so a round absorbed mid-dash lights nothing here — its
+        /// spark and its sound still fire, off the round's own ending. The
+        /// earlier wiring hung this off that ending instead and could not tell
+        /// the two apart at all; worse, the victim's slot is not on the wire
+        /// there (`ClientEventDecoder`'s class doc), so on a networked client the
+        /// flash landed on whoever sat in slot 0.
+        ///
+        /// A FIST COUNTS TOO: `MobAiSystem` drives the same `DamagePlayer`, so a
+        /// Chaser's strike flashes its victim exactly like a round does.
         public void Flash(float duration)
         {
             _flashDuration = Mathf.Max(duration, 1e-4f);

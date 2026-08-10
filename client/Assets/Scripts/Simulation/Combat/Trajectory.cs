@@ -47,12 +47,25 @@ namespace Ring.Simulation.Combat
         ///  - a level or climbing shot returns 1. `ProjectileSystem` gathers a
         ///    floor candidate only while `VelZ` is strictly negative, so such a
         ///    round has no ground contact to report at all;
-        ///  - a muzzle already at or under the contact height returns 0: there
-        ///    is no line left to cover, and the round is retired where it was
-        ///    fired. Unreachable at the shipped balance (both the standing and
-        ///    the sliding muzzle sit well above the radius) and answered
-        ///    explicitly anyway, because the alternative is a ratio that walks
-        ///    backwards past the shooter;
+        ///  - a muzzle EXACTLY at the contact height returns 0, and only that
+        ///    exact case: `tFloor` there is `-0.0f`, which passes the gate's own
+        ///    `>= 0f`, so the round genuinely is retired on the tick it was
+        ///    fired;
+        ///  - a muzzle STRICTLY BELOW the contact height returns 1, which reads
+        ///    backwards until the gate is read with it (Т45c fix-round 1, G-2).
+        ///    The numerator `Radius - Height` is then positive while `VelZ` is
+        ///    negative, so `tFloor` is negative on every tick, the [0,1] gate
+        ///    rejects the floor candidate every time, and the round is never
+        ///    taken by the ground at all — it flies PAST the aimed point.
+        ///    Returning 0 here (which this method did until that round) claimed
+        ///    the exact opposite: the round snapped onto the shooter's own feet
+        ///    while the real one kept going. Not reachable at the shipped
+        ///    balance and reachable by DATA ALONE — `WeaponConfig.
+        ///    ProjectileRadius` is declared over [0.01, 2] against a 0.45 m
+        ///    sliding muzzle, so one balance pass on the slider gets there with
+        ///    no code change. `TrajectoryTests.RadiusAboveTheMuzzle_TheFloor
+        ///    NeverTakesTheRound` measures it off a real round rather than
+        ///    arguing it;
         ///  - an aimed point at or above the contact height returns 1 — the
         ///    round passes through it before the ground is in question. This is
         ///    the ordinary case for a shot at a mob, which is why aiming at a
@@ -64,8 +77,11 @@ namespace Ring.Simulation.Combat
             if (drop <= 0f) return 1f;
 
             float toContact = muzzleHeight - projectileRadius;
-            if (toContact <= 0f) return 0f;
+            if (toContact < 0f) return 1f;
 
+            // `toContact == 0f` needs no branch of its own: the ratio is 0 there,
+            // which is the "retired at the muzzle" answer the gate's `-0.0f`
+            // actually produces.
             return math.min(toContact / drop, 1f);
         }
     }

@@ -253,7 +253,10 @@ namespace Ring.Presentation
         /// `ProjectileHit` stays absent, and the reason is no longer the one
         /// this doc used to give. It said the round's id is simply not on the
         /// event; that stopped being true in Stage 2 Task 28, which added
-        /// `SecondaryEntityId` and wrote it from BOTH hit branches — a precise
+        /// `SecondaryEntityId` and wrote it from the ONE hit branch that existed
+        /// then — the second branch, and the kind it belongs to, arrived in
+        /// Stage 2 Task 44a (fix-round 1, G-5 item 7: the earlier wording here
+        /// credited Task 28 with both). Either way a precise
         /// retirement is available there too. What is actually true is that
         /// nothing needs it: this whole method is an early, explicit version of
         /// a retirement the next `LateUpdate` diff performs anyway (class doc),

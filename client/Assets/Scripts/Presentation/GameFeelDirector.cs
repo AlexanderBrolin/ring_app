@@ -44,8 +44,9 @@ namespace Ring.Presentation
     ///
     /// Budget (spec Interfaces): a trailing 1-second window tracks each
     /// ACCEPTED trigger's own `(timestamp, seconds)` pair; a new hit — a
-    /// `ProjectileHit` on a mob, or (Stage 2 Task 45c) a `ProjectileHitPlayer`
-    /// on this client's own player — is only granted hitstop if the window's
+    /// `ProjectileHit` on a mob, or (Stage 2 Task 45c, moved onto this kind by
+    /// its fix-round 1) a `PlayerDamaged` naming this client's own player — is
+    /// only granted hitstop if the window's
     /// summed seconds plus this trigger's own duration stay under
     /// `MaxHitstopRatio` (a
     /// fraction of that 1s window — e.g. 0.35 == 350ms of hitstop per real
@@ -156,22 +157,11 @@ namespace Ring.Presentation
                 case SimEventKind.ProjectileHit:
                     HandleProjectileHit(in e);
                     break;
-                case SimEventKind.ProjectileHitPlayer:
-                    HandleProjectileHitPlayer(in e);
+                case SimEventKind.PlayerDamaged:
+                    HandlePlayerDamaged(in e);
                     break;
                 case SimEventKind.MobDied:
                     AddTrauma(_gameFeel.TraumaDeath);
-                    break;
-                case SimEventKind.PlayerDamaged:
-                    AddTrauma(_gameFeel.TraumaPlayerHit);
-                    // Vignette pulse: jumps up to the hit's severity (never below
-                    // whatever's already fading out from a prior hit) and decays
-                    // linearly in `UpdateVignette`, reusing `TraumaDecayPerSec` —
-                    // no separate `GameFeelConfig` field for this, see class/Task
-                    // 25 report: the vignette piggybacks the same trauma numbers
-                    // rather than growing the SO for a second, near-identical pulse
-                    // curve.
-                    _vignetteAlpha = Mathf.Max(_vignetteAlpha, _gameFeel.TraumaPlayerHit);
                     break;
                 case SimEventKind.PlayerDied:
                     ForceEndHitstop();
@@ -222,41 +212,54 @@ namespace Ring.Presentation
             AddTrauma(_gameFeel.TraumaHit);
         }
 
-        /// A round ended ON A PLAYER (Stage 2 Task 45c, bd `app-aq9`). The event
-        /// has been arriving from the server since Stage 2 Task 44a and had no
-        /// consumer anywhere in Presentation at all — ADR-001 §10 asks for
-        /// feedback on EVERY hit, and this was the half of the arena that got
-        /// none.
+        /// A BLOW LANDED ON A PLAYER — the whole victim half of ADR-001 §10's
+        /// per-hit checklist (Stage 2 Task 45c fix-round 1, G-1). Until that
+        /// round this handler was two lines that shook the camera and lit the
+        /// vignette for ANY victim, and the flash/hitstop hung off
+        /// `ProjectileHitPlayer` instead.
         ///
-        /// THE FEEDBACK GOES ON THE VICTIM. `EntityId` is the victim's PLAYER
-        /// SLOT for this kind (`SimEventKind.ProjectileHitPlayer`'s own doc);
-        /// `PlayerIndex` is the shooter, and putting a flash there would light up
-        /// whoever pulled the trigger instead of whoever was hit.
+        /// WHY THIS KIND AND NOT `ProjectileHitPlayer`, WHICH IS THE ONE THAT
+        /// NAMES THE HIT. Because the victim is not on the wire there.
+        /// `ClientEventDecoder`'s `HitPlayer` branch fills exactly `Kind`,
+        /// `SecondaryEntityId` and `Zone`; `EntityId` keeps the zero it was
+        /// initialized with, and that class's own doc spells out the trap: "it
+        /// is not 'no victim', it is 'seat 0', and the victim is simply not on
+        /// the wire". Addressing anything by that field would give every hit in
+        /// the match to whoever sits in slot 0 and nothing at all to everybody
+        /// else — invisible in solo, wrong for every networked match. On THIS
+        /// kind the decoder writes `e.EntityId = e.PlayerIndex = p.PlayerIndex`,
+        /// the victim, which is also what `SimulationWorld.DamagePlayer` emits
+        /// locally: one field, one meaning, both backends.
         ///
-        /// FLASH FOR EVERYONE, FRAME-FREEZE AND SHAKE ONLY WHEN IT IS ME. A
-        /// stranger's duel across the arena is something I watch; freezing my
-        /// frame and shaking my camera for it would make somebody else's fight
-        /// jerk my aim. `RenderCurr.LocalPlayerIndex` is the whole test, and it
-        /// is the same seam `AudioDirector`/`MuzzleFlashView` use to tell my own
-        /// shot from a stranger's. Everything visible without owning it — the
-        /// doll's flash here, the sparks and the sound in the two directors after
-        /// this one in the fan-out — fires for any hit this client received at
-        /// all, and the server has already decided which those are (a round's
-        /// end reaches whoever received its spawn — `EventRelevance`).
+        /// WHAT IT COSTS, SAID PLAINLY: a round refused by dash i-frames emits
+        /// no `PlayerDamaged` at all, so it draws no flash and no shake. That is
+        /// the more honest of the two — the cue now means damage was taken, not
+        /// that something flew close. The round's own end still reports itself
+        /// through `ProjectileHitPlayer`: spark, sound and tracer retirement,
+        /// none of which needs to know who was hit.
         ///
-        /// NO `TargetOnly` FREEZE. That scope pins the struck MobView's
+        /// WHAT IT GAINS: a Chaser's fist arrives here too (`MobAiSystem` calls
+        /// the same `DamagePlayer`), so melee finally gets the checklist it
+        /// never had while this hung off a projectile kind.
+        ///
+        /// FLASH FOR ANY VICTIM, FRAME-FREEZE/SHAKE/VIGNETTE ONLY WHEN IT IS ME.
+        /// A stranger being shot across the arena is something I watch; freezing
+        /// my frame, shaking my camera and reddening my screen for it would make
+        /// somebody else's fight jerk my aim. That filter is new in fix-round 1
+        /// and closes a defect older than this task: the two lines this method
+        /// replaced ran for every `PlayerDamaged` that reached this client,
+        /// whoever it named. Which of them reach me is the server's decision,
+        /// not this class's — `SnapshotAssembler` delivers this kind on the
+        /// Visible channel, keyed on the VICTIM's own visibility
+        /// (`EventRelevance.VisibleSubjectId`).
+        ///
+        /// NO `TargetOnly` FREEZE. That scope pins the struck `MobView`'s
         /// transform; a player's doll has no such hook, and inventing one would
-        /// freeze a body the snapshot is still moving. `TriggerHitstop` reads the
-        /// scope itself, so under `TargetOnly` this hit costs budget and freezes
-        /// nothing, exactly like a mob hit whose view has already been retired.
-        ///
-        /// IT SAYS "A ROUND REACHED YOU", NOT "YOU TOOK DAMAGE". The event fires
-        /// even when dash i-frames refuse the blow (the round is consumed either
-        /// way — that kind's own doc), and `e.Amount` is what the round CARRIED.
-        /// Nothing here reads `Amount`, and the damage-side cue stays where it
-        /// belongs: the vignette on `PlayerDamaged`, which is not emitted for a
-        /// refused blow.
-        void HandleProjectileHitPlayer(in SimEvent e)
+        /// freeze a body the snapshot is still moving. `TriggerHitstop` reads
+        /// the scope itself, so under `TargetOnly` this hit costs budget and
+        /// freezes nothing, exactly like a mob hit whose view has already been
+        /// retired.
+        void HandlePlayerDamaged(in SimEvent e)
         {
             if (_viewRegistry.TryGetPlayerView(e.EntityId, out PlayerView victim))
                 victim.Flash(_gameFeel.FlashDuration);
@@ -265,13 +268,25 @@ namespace Ring.Presentation
 
             // Same head-scaling and the same 1-second budget a mob hit is
             // priced against (`HandleProjectileHit` above) — one hitstop
-            // economy for the whole match, not a second one for PvP.
+            // economy for the whole match, not a second one for the receiving end.
             float hitstopSeconds = e.Zone == HitZone.Head
                 ? _gameFeel.HitstopSeconds * _gameFeel.HeadHitstopScale
                 : _gameFeel.HitstopSeconds;
             if (TryConsumeHitstopBudget(hitstopSeconds)) TriggerHitstop(hitstopSeconds);
 
-            AddTrauma(_gameFeel.TraumaHit);
+            // ONE trauma call for a blow taken, not two. `AddTrauma` is a `Max`,
+            // so the 0.2 `TraumaHit` this method also used to add through the
+            // `ProjectileHitPlayer` path was invisible next to this 0.45 on every
+            // landed hit and visible only on a refused one — the exact inverse of
+            // what either cue meant (fix-round 1, G-3).
+            AddTrauma(_gameFeel.TraumaPlayerHit);
+            // Vignette pulse: jumps up to the hit's severity (never below
+            // whatever's already fading out from a prior hit) and decays
+            // linearly in `UpdateVignette`, reusing `TraumaDecayPerSec` — no
+            // separate `GameFeelConfig` field for this, see class/Task 25
+            // report: the vignette piggybacks the same trauma numbers rather
+            // than growing the SO for a second, near-identical pulse curve.
+            _vignetteAlpha = Mathf.Max(_vignetteAlpha, _gameFeel.TraumaPlayerHit);
         }
 
         /// Resets (never sums, spec Interfaces: "таймер переустанавливается, не

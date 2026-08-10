@@ -124,15 +124,44 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void MuzzleAtOrBelowTheCutHeight_GroundsAtTheMuzzle()
+        public void MuzzleExactlyAtTheCutHeight_GroundsAtTheMuzzle()
         {
             var c = Range();
             float r = c.Weapon.ProjectileRadius;
 
             Assert.AreEqual(0f, Trajectory.FloorCutFraction(r, 0f, r), 1e-6f,
-                "a muzzle already at the contact height has no line left to travel");
-            Assert.AreEqual(0f, Trajectory.FloorCutFraction(r * 0.5f, 0f, r), 1e-6f,
-                "a muzzle below it is grounded on the spot rather than sent backwards");
+                "`tFloor` is exactly -0.0f there, which passes ProjectileSystem's own `>= 0f` "
+                + "gate — the round IS retired on the tick it was fired, at the muzzle");
+        }
+
+        /// Т45c фикс-раунд 1, G-2 (ось А): the one case where the two forms used
+        /// to disagree outright, and the disagreement was reachable by a balance
+        /// pass alone — `WeaponConfig.ProjectileRadius` is declared over
+        /// [0.01, 2] and the hero fires from 0.45 m mid-slide. Sim-anchored on
+        /// purpose: the claim is about what `ProjectileSystem` DOES, so it is
+        /// measured off a real round rather than argued from the inequality.
+        [Test]
+        public void RadiusAboveTheMuzzle_TheFloorNeverTakesTheRound()
+        {
+            var c = Range();
+            c.Weapon.ProjectileRadius = c.Hero.MuzzleHeight * 1.5f;
+            Assert.Greater(c.Weapon.ProjectileRadius, c.Hero.MuzzleHeight,
+                "fixture premise: the round is fatter than the muzzle is high");
+
+            var w = new SimulationWorld(1, c);
+            TestWorlds.FireAimed3D(w, float2.zero, c.Hero.MuzzleHeight, new float2(10f, 0f), 0f);
+            w.ClearEvents();
+            int ticks = TestWorlds.RunUntilProjectilesDie(w);
+
+            Assert.Less(ticks, 120, "fixture premise: the round ends inside the stall guard");
+            Assert.IsFalse(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked, out _),
+                "the numerator `Radius - Height` is positive and `VelZ` negative, so `tFloor` is "
+                + "negative on every tick and the [0,1] gate rejects the floor candidate outright");
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileExpired, out _),
+                "the round flies PAST the aimed point and ends on its own lifetime");
+            Assert.AreEqual(1f,
+                Trajectory.FloorCutFraction(c.Hero.MuzzleHeight, 0f, c.Weapon.ProjectileRadius), 1e-6f,
+                "the helper must say the same — the ground is not in this round's way at all");
         }
 
         [Test]

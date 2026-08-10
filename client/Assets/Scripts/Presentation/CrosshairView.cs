@@ -100,33 +100,20 @@ namespace Ring.Presentation
         /// ownership real, and a component that only wrote on its own edges
         /// could be overruled by anything else and never notice.
         ///
-        /// SHOWN WHENEVER THE GAME IS NOT ASKING FOR AIM: while paused
-        /// (`SimulationRunner.Paused`, the project's sole pause gate, which
-        /// `PauseController.Open`/`Resume` flip around the menu) and while this
-        /// client's own player is not alive, which covers the death screen and
-        /// the frames before a match has described the player at all. Both are
-        /// read off state that already exists — no new subscription and no
-        /// mirror of either fact is kept here.
-        ///
-        /// THE DEATH SIGNAL IS "NOT ALIVE", NOT "THE PANEL IS UP", and the
-        /// difference matters on the networked backend: `PlayerDied` is a tick
-        /// behind the snapshot there, so `DeathOverlayController` never even
-        /// shows (`ViewRegistry`'s class doc, bd `app-2rf`) while
-        /// `RenderCurr.Player.Alive` goes false exactly on time. Reading the
-        /// overlay would also mean holding a reference to it purely to ask a
-        /// question the snapshot already answers.
-        void UpdateCursor()
-        {
-            bool aiming = _runner != null && _runner.Ready
-                && !_runner.Paused && _runner.RenderCurr.Player.Alive;
-            Cursor.visible = !aiming;
-        }
+        /// SHOWN WHENEVER THE GAME IS NOT ASKING FOR AIM, and "asking for aim"
+        /// is `SimulationRunner.AimActive` — not a test assembled here. That
+        /// property's own doc has the three terms and why each is in it; what
+        /// matters at this call site is that the pointer, the ground marker
+        /// below and `AimRayView`'s ray all obey the SAME signal, so the cursor
+        /// can never appear over a crosshair that is still tracking the mouse
+        /// (fix-round 1, G-4).
+        void UpdateCursor() => Cursor.visible = !(_runner != null && _runner.AimActive);
 
         void LateUpdate()
         {
-            // Ahead of the readiness guard below on purpose: a frame with
-            // nothing to show is a frame with nothing to aim at, and the cursor
-            // is the player's only way out of it.
+            // Ahead of everything else on purpose: a frame with nothing to show
+            // is a frame with nothing to aim at, and the cursor is the player's
+            // only way out of it.
             UpdateCursor();
 
             // Г5 review (Minor, same lens as AimRayView's Important — QA18
@@ -134,16 +121,26 @@ namespace Ring.Presentation
             // pair, the same pair AimRayView's own guard protects — hide the
             // cone and skip it until the backend has something to show, rather
             // than crash on the cold start. Once running, behavior below is
-            // unchanged. Task 43: was `World == null`, now `Ready`.
+            // unchanged. Task 43: was `World == null`, then `Ready`.
             // (Stage 2 Task 45b fix-round 1, G-6: this comment used to name
             // `RenderMuzzleHeight` as what AimRayView reads. That task moved
-            // that view onto the doll's muzzle socket, and nothing reads the
-            // property any more — the guard, and the reason for it, stayed.)
-            if (_runner == null || !_runner.Ready)
+            // that view onto the doll's muzzle socket. Stage 2 Task 45c
+            // fix-round 1, G-5 item 6: nor is the property unread — `AimProvider`
+            // has read it since that task, for the simulation's own muzzle
+            // rather than for a drawn one.)
+            //
+            // Fix-round 1 (G-4): the guard is `AimActive` now, not `Ready` — a
+            // strictly narrower condition that also covers the pause menu and
+            // the death screen. The MARKER goes down with the cone here: it used
+            // to keep tracking the mouse across the menu buttons the cursor was
+            // finally being shown for.
+            if (_runner == null || !_runner.AimActive)
             {
                 _cone.enabled = false;
+                _markerRenderer.enabled = false;
                 return;
             }
+            _markerRenderer.enabled = true;
 
             bool aimHeld = _runner.LastFrameInput.AimHeld;
 
