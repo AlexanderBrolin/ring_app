@@ -257,8 +257,11 @@ namespace Ring.Networking.Client
         /// rather than the one that parses. Clamping would seat this client in
         /// somebody else's chair and show another player's health as its own,
         /// which is a wrong picture rather than a missing one. Refusing leaves
-        /// the phase at `HelloSent`: nothing is adopted, the seams are not
-        /// reset, and the wiring logs a line naming the seat and the roster.
+        /// the phase at `HelloSent`: nothing is adopted and the seams are not
+        /// reset. The wiring around this core logs a line naming the seat and
+        /// the roster — see `ClientMatchLink.OnWelcome`, which is where both
+        /// numbers are in scope; the generic refusal line carries neither, and
+        /// this refusal is the one they are needed for (Stage 2 Task 44d).
         public LinkAction OnWelcome(in MatchWelcomeNet welcome, int maxPlayers)
         {
             if (Phase == LinkPhase.Refused) return Refuse(LinkVerdict.LinkRefused);
@@ -539,8 +542,30 @@ namespace Ring.Networking.Client
         // The client-side broadcast handler shape is `(T, Channel)` — no
         // NetworkConnection, because a client has exactly one connection and
         // it is the server's (ClientManager.Broadcast.cs's own signature).
+        /// The one handler with a line of its own, and the reason is
+        /// diagnostic rather than decorative (Stage 2 Task 44d). `Apply` below
+        /// prints the verdict, the phase and the tracked epoch, which is
+        /// everything a `LinkAction` carries — and a `SlotOutOfRange` is
+        /// exactly the refusal those three numbers cannot explain. The
+        /// handshake ends here permanently when it happens (the phase stays at
+        /// `HelloSent`, and a second welcome is answered `AlreadyJoined` or
+        /// `Unexpected`), and the two readings are far apart: a corrupted byte
+        /// on the wire, or a client and a server built against different
+        /// `Arena.MaxPlayers`. Only the pair "seat, roster" tells them apart,
+        /// and both numbers are in scope here and nowhere downstream.
         void OnWelcome(MatchWelcomeNet welcome, Channel channel)
-            => Apply(_state.OnWelcome(in welcome, _maxPlayers), nameof(MatchWelcomeNet));
+        {
+            ClientLinkState.LinkAction action = _state.OnWelcome(in welcome, _maxPlayers);
+            if (action.Verdict == ClientLinkState.LinkVerdict.SlotOutOfRange)
+            {
+                _nm.Log($"ClientMatchLink: the welcome named seat {welcome.PlayerIndex} in a roster "
+                    + $"of {_maxPlayers}. Either the byte is damaged, or this build and the "
+                    + "server's disagree about Arena.MaxPlayers — the handshake does not recover "
+                    + "from this one, so the two configurations are the first thing to compare.");
+            }
+
+            Apply(action, nameof(MatchWelcomeNet));
+        }
 
         void OnRefused(MatchRefusedNet refused, Channel channel)
             => Apply(_state.OnRefused(in refused), nameof(MatchRefusedNet));

@@ -111,13 +111,16 @@ namespace Ring.Simulation.Tests
             return new ClientEventQueue(in timings, snapshotEventBudget: 1);
         }
 
-        /// One accepted event record, identified by its `seq`. The payload
-        /// fields are left at zero: this file never decodes one, it only
-        /// watches whether records survive a restart.
-        static SnapshotBlocks.EventRecord EventAt(ushort seq) => new SnapshotBlocks.EventRecord
+        /// One accepted, already-decoded event on `tick`, identified by its
+        /// `EntityId`. The queue holds finished `SimEvent`s as of Task 44d —
+        /// the wire record it used to hold pointed into a receive buffer that
+        /// is gone by delivery time. This file never inspects the payload; it
+        /// only watches whether events survive a restart.
+        static SimEvent EventAt(uint tick, int id) => new SimEvent
         {
-            Kind = 1,
-            Seq = seq,
+            Kind = SimEventKind.MobDied,
+            Tick = (int)tick,
+            EntityId = id,
         };
 
         /// Spawns `count` unconfirmed ghosts born on tick 0. The gate is
@@ -517,16 +520,16 @@ namespace Ring.Simulation.Tests
             // really is still deliverable. Without it the assertion below
             // would also pass on a queue that never delivers anything at all.
             var witness = NewEventQueue();
-            Assert.IsTrue(witness.Enqueue(OldMatchTick, EventAt(seq: 1)),
+            Assert.IsTrue(witness.Enqueue(EventAt(OldMatchTick, id: 1)),
                 "fixture premise: the old match's event is queued");
-            Assert.IsTrue(witness.TryDequeue((int)OldMatchTick, out ClientEventQueue.PendingEvent stale),
+            Assert.IsTrue(witness.TryDequeue((int)OldMatchTick, out SimEvent stale),
                 "witness: an unreset queue still hands the previous match's event out when the "
                 + "next match's clock reaches that tick number");
-            Assert.AreEqual(OldMatchTick, stale.Tick,
-                "witness: and it is the OLD match's record, on the old match's own tick");
+            Assert.AreEqual((int)OldMatchTick, stale.Tick,
+                "witness: and it is the OLD match's event, on the old match's own tick");
 
             var events = NewEventQueue();
-            events.Enqueue(OldMatchTick, EventAt(seq: 1));
+            events.Enqueue(EventAt(OldMatchTick, id: 1));
 
             var reset = NewReset(NewDedup(), NewQueue(), new RenderClock(), NewGhosts(),
                 NewStalePolicy(), events);

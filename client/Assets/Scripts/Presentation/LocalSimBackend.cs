@@ -51,6 +51,10 @@ namespace Ring.Presentation
 
         public ulong StateHash => _world.StateHash();
 
+        /// True: `CaptureSnapshot` fills both halves of the statistics from the
+        /// world it just ticked, so every counter on the pair is a real one.
+        public bool HasMatchStats => true;
+
         public int DroppedEvents => _world.DroppedEvents;
 
         public float DroppedTime => _acc.DroppedTime;
@@ -85,7 +89,11 @@ namespace Ring.Presentation
 
         public void EndFrame() => _world.ClearEvents();
 
-        public void Restart(long seed, in SimConfig cfg)
+        /// Always accepts, and therefore always answers `true`: this backend's
+        /// world is nobody else's, so the facade asking for a fresh match is
+        /// the whole of the decision. The networked twin is the one that has a
+        /// second party to disagree with — see `ISimBackend.Restart`.
+        public bool Restart(long seed, in SimConfig cfg)
         {
             _world = new SimulationWorld(seed, cfg);
             _prev = new RenderSnapshot(cfg.Arena);
@@ -94,7 +102,25 @@ namespace Ring.Presentation
             _world.CaptureSnapshot(_curr);
             _acc.Reset();
             _alpha = 0f;
+            return true;
         }
+
+        /// Never raised here — see `ISimBackend.MatchRestarted` for why a local
+        /// match's restart is announced by the facade instead. The member exists
+        /// because the interface has it; a subscriber is accepted and simply
+        /// never called, which is the same thing a backend that could raise it
+        /// but never does would do.
+        ///
+        /// The suppression below is CS0067 ("the event is never used"), which
+        /// is exactly the true statement this doc makes, measured by the
+        /// compiler. It is scoped to this one member rather than to the file,
+        /// and an empty `add`/`remove` pair was the alternative — rejected
+        /// because a member that silently swallows subscriptions reads as a
+        /// defect, while a suppressed warning with a reason beside it reads as
+        /// the decision it is.
+#pragma warning disable 0067
+        public event System.Action MatchRestarted;
+#pragma warning restore 0067
 
         public void ApplyConfig(in SimConfig next) => _world.ApplyConfig(next);
 

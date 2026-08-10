@@ -69,14 +69,20 @@ namespace Ring.Simulation.Tests
             return new ClientEventQueue(in timings, eventBudget);
         }
 
-        static SnapshotBlocks.EventRecord Record(ushort seq) => new SnapshotBlocks.EventRecord
+        /// One already-decoded event on `tick`, labelled by its `EntityId`.
+        /// As of Task 44d the queue holds finished `SimEvent`s rather than
+        /// wire records — the record's payload fields point into a FishNet
+        /// receive buffer that is gone by the time an event is due — and the
+        /// tick it is filed under is the event's own `Tick` field, which is
+        /// where `ClientEventDecoder` puts the dedup's `out originTick`.
+        /// `EntityId` carries the label because nothing else in the struct is
+        /// free of meaning for the kind below.
+        static SimEvent Event(uint tick, int label) => new SimEvent
         {
-            Kind = 1,
-            Seq = seq,
-            TickDelta = 0,
+            Kind = SimEventKind.MobDied,
+            Tick = (int)tick,
             Pos = new float2(1f, 2f),
-            PayloadOffset = 0,
-            PayloadLength = 0,
+            EntityId = label,
         };
 
         static MatchWelcomeNet Welcome(ushort epoch, long seed = FirstSeed, byte playerIndex = Slot)
@@ -585,19 +591,19 @@ namespace Ring.Simulation.Tests
             // Deliberately out of tick order on the way in: a reordered
             // datagram is an everyday event at 5% loss, and the queue is
             // fed in arrival order, not in tick order.
-            Assert.IsTrue(queue.Enqueue(12u, Record(seq: 30)), "fixture premise: enqueued");
-            Assert.IsTrue(queue.Enqueue(10u, Record(seq: 10)), "fixture premise: enqueued");
-            Assert.IsTrue(queue.Enqueue(11u, Record(seq: 20)), "fixture premise: enqueued");
+            Assert.IsTrue(queue.Enqueue(Event(12u, label: 30)), "fixture premise: enqueued");
+            Assert.IsTrue(queue.Enqueue(Event(10u, label: 10)), "fixture premise: enqueued");
+            Assert.IsTrue(queue.Enqueue(Event(11u, label: 20)), "fixture premise: enqueued");
 
-            Assert.IsTrue(queue.TryDequeue(renderTick: 11, out ClientEventQueue.PendingEvent first));
-            Assert.AreEqual(10u, first.Tick, "PendingEvent.Tick of the first delivery");
-            Assert.AreEqual(10, first.Record.Seq,
-                "PendingEvent.Record.Seq of the first delivery — the record delivered first must "
+            Assert.IsTrue(queue.TryDequeue(renderTick: 11, out SimEvent first));
+            Assert.AreEqual(10, first.Tick, "SimEvent.Tick of the first delivery");
+            Assert.AreEqual(10, first.EntityId,
+                "SimEvent.EntityId of the first delivery — the event delivered first must "
                 + "be the one born on the earliest tick, not the one that arrived first");
 
-            Assert.IsTrue(queue.TryDequeue(renderTick: 11, out ClientEventQueue.PendingEvent second));
-            Assert.AreEqual(11u, second.Tick, "PendingEvent.Tick of the second delivery");
-            Assert.AreEqual(20, second.Record.Seq, "PendingEvent.Record.Seq of the second delivery");
+            Assert.IsTrue(queue.TryDequeue(renderTick: 11, out SimEvent second));
+            Assert.AreEqual(11, second.Tick, "SimEvent.Tick of the second delivery");
+            Assert.AreEqual(20, second.EntityId, "SimEvent.EntityId of the second delivery");
 
             Assert.IsFalse(queue.TryDequeue(renderTick: 11, out _),
                 "the event born on tick 12 must NOT be handed out while the render clock is on "
@@ -606,10 +612,10 @@ namespace Ring.Simulation.Tests
 
             // Positive witness: it is withheld, not lost. One more tick of
             // render time and it comes out.
-            Assert.IsTrue(queue.TryDequeue(renderTick: 12, out ClientEventQueue.PendingEvent third),
+            Assert.IsTrue(queue.TryDequeue(renderTick: 12, out SimEvent third),
                 "witness: the withheld event is delivered once its tick is reached");
-            Assert.AreEqual(12u, third.Tick, "PendingEvent.Tick of the third delivery");
-            Assert.AreEqual(30, third.Record.Seq, "PendingEvent.Record.Seq of the third delivery");
+            Assert.AreEqual(12, third.Tick, "SimEvent.Tick of the third delivery");
+            Assert.AreEqual(30, third.EntityId, "SimEvent.EntityId of the third delivery");
         }
 
         [Test]
@@ -618,17 +624,17 @@ namespace Ring.Simulation.Tests
             // Two events of the SAME tick: the server assigned their seq in
             // BeginTick, in order, and nothing downstream may shuffle them.
             var queue = NewQueue();
-            queue.Enqueue(5u, Record(seq: 1));
-            queue.Enqueue(5u, Record(seq: 2));
-            queue.Enqueue(5u, Record(seq: 3));
+            queue.Enqueue(Event(5u, label: 1));
+            queue.Enqueue(Event(5u, label: 2));
+            queue.Enqueue(Event(5u, label: 3));
 
-            Assert.IsTrue(queue.TryDequeue(renderTick: 5, out ClientEventQueue.PendingEvent a));
-            Assert.IsTrue(queue.TryDequeue(renderTick: 5, out ClientEventQueue.PendingEvent b));
-            Assert.IsTrue(queue.TryDequeue(renderTick: 5, out ClientEventQueue.PendingEvent c));
+            Assert.IsTrue(queue.TryDequeue(renderTick: 5, out SimEvent a));
+            Assert.IsTrue(queue.TryDequeue(renderTick: 5, out SimEvent b));
+            Assert.IsTrue(queue.TryDequeue(renderTick: 5, out SimEvent c));
 
-            Assert.AreEqual(1, a.Record.Seq, "PendingEvent.Record.Seq, first out");
-            Assert.AreEqual(2, b.Record.Seq, "PendingEvent.Record.Seq, second out");
-            Assert.AreEqual(3, c.Record.Seq, "PendingEvent.Record.Seq, third out");
+            Assert.AreEqual(1, a.EntityId, "SimEvent.EntityId, first out");
+            Assert.AreEqual(2, b.EntityId, "SimEvent.EntityId, second out");
+            Assert.AreEqual(3, c.EntityId, "SimEvent.EntityId, third out");
         }
 
         [Test]
@@ -644,13 +650,13 @@ namespace Ring.Simulation.Tests
 
             for (int i = 0; i < capacity; i++)
             {
-                Assert.IsTrue(queue.Enqueue(1u, Record(seq: (ushort)i)),
+                Assert.IsTrue(queue.Enqueue(Event(1u, label: i)),
                     $"fixture premise: event {i} fits inside the capacity");
             }
             Assert.AreEqual(0, queue.OverflowDroppedEvents,
                 "witness: filling the queue exactly to capacity drops nothing");
 
-            Assert.IsFalse(queue.Enqueue(1u, Record(seq: 999)),
+            Assert.IsFalse(queue.Enqueue(Event(1u, label: 999)),
                 "an event past the capacity must be refused BY VALUE — the dedup has already "
                 + "marked it seen, so the redundant resends will never bring it back");
             Assert.AreEqual(1, queue.OverflowDroppedEvents,
@@ -662,10 +668,10 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(capacity, queue.Count, "ClientEventQueue.Count after the refusal");
             for (int i = 0; i < capacity; i++)
             {
-                Assert.IsTrue(queue.TryDequeue(renderTick: 1, out ClientEventQueue.PendingEvent e),
+                Assert.IsTrue(queue.TryDequeue(renderTick: 1, out SimEvent e),
                     $"resident {i} must still be deliverable");
-                Assert.AreEqual(i, e.Record.Seq,
-                    "PendingEvent.Record.Seq — the residents keep their arrival order");
+                Assert.AreEqual(i, e.EntityId,
+                    "SimEvent.EntityId — the residents keep their arrival order");
             }
         }
 
@@ -676,8 +682,8 @@ namespace Ring.Simulation.Tests
             var queue = new ClientEventQueue(in timings, snapshotEventBudget: 1);
             int capacity = queue.Capacity;
 
-            for (int i = 0; i < capacity; i++) queue.Enqueue(1u, Record(seq: (ushort)i));
-            queue.Enqueue(1u, Record(seq: 999));
+            for (int i = 0; i < capacity; i++) queue.Enqueue(Event(1u, label: i));
+            queue.Enqueue(Event(1u, label: 999));
             Assert.AreEqual(1, queue.OverflowDroppedEvents, "fixture premise: one refusal counted");
 
             queue.Reset();
@@ -693,11 +699,11 @@ namespace Ring.Simulation.Tests
                 + "that cleared itself every restart would hide the pattern it exists to surface");
 
             // Positive witness: the queue still works after the reset.
-            Assert.IsTrue(queue.Enqueue(2u, Record(seq: 4)),
+            Assert.IsTrue(queue.Enqueue(Event(2u, label: 4)),
                 "witness: a reset queue accepts the new match's events");
-            Assert.IsTrue(queue.TryDequeue(renderTick: 2, out ClientEventQueue.PendingEvent fresh),
+            Assert.IsTrue(queue.TryDequeue(renderTick: 2, out SimEvent fresh),
                 "witness: and hands them out");
-            Assert.AreEqual(4, fresh.Record.Seq, "PendingEvent.Record.Seq after the reset");
+            Assert.AreEqual(4, fresh.EntityId, "SimEvent.EntityId after the reset");
         }
 
         [Test]
@@ -716,7 +722,7 @@ namespace Ring.Simulation.Tests
             // RenderClock (its own SetTime floors at zero), but this class
             // takes the number from a caller and refuses rather than throws
             // (Р82).
-            queue.Enqueue(0u, Record(seq: 1));
+            queue.Enqueue(Event(0u, label: 1));
             Assert.IsFalse(queue.TryDequeue(renderTick: -1, out _),
                 "a negative render tick names no moment and must deliver nothing");
             Assert.IsTrue(queue.TryDequeue(renderTick: 0, out _),

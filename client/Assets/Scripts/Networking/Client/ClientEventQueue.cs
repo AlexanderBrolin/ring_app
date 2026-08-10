@@ -1,4 +1,4 @@
-using Ring.Networking.Protocol;
+using Ring.Simulation.Core;
 using Unity.Mathematics;
 
 namespace Ring.Networking.Client
@@ -9,7 +9,22 @@ namespace Ring.Networking.Client
     /// frame that carried it and the render tick it belongs to — the SIXTH
     /// per-match seam, and the one that did not exist until this task.
     ///
-    /// WHY IT HAD TO EXIST AT ALL. The two neighbours it sits between each
+    /// WHAT IT HOLDS IS A DECODED `SimEvent`, NOT THE WIRE RECORD (Stage 2
+    /// Task 44d). Task 44b stored `SnapshotBlocks.EventRecord` by value and
+    /// called it self-contained because the struct has no reference fields —
+    /// but two of those fields, `PayloadOffset`/`PayloadLength`, ARE a
+    /// reference: on the READ side they index into the block payload span
+    /// passed to `TryReadEventsBlock`, and that span is a slice of FishNet's
+    /// receive buffer, valid only for the duration of the broadcast handler.
+    /// By the time the render clock reaches an event's tick those bytes are
+    /// long gone, so a queue of records could never deliver a payload at all.
+    /// The fix that costs nothing on either side is to decode while the bytes
+    /// are still there and carry the RESULT — which also means this class's
+    /// capacity IS the pool: no slot bookkeeping, no borrowed field, and the
+    /// mapping itself lands next door in `ClientEventDecoder`, where a unit
+    /// test can finally reach it.
+    ///
+    /// WHY IT HAD TO EXIST AT ALL. The two neighbors it sits between each
     /// answer a different question and neither holds an event:
     ///   * `EventDedup.TryAcceptEvent` returns a VERDICT — "is this the first
     ///     sight of this event" — plus the absolute tick of the one it
@@ -39,10 +54,12 @@ namespace Ring.Networking.Client
     /// `EventDedup.TryAcceptEvent` has to perform anyway to build its key.
     /// That method hands the result out through `out originTick` (fix round 1,
     /// F-2, which is what makes this paragraph true rather than aspirational),
-    /// and THAT is the number to pass here. This class takes the RESULT rather
-    /// than the pair because nothing downstream has any business re-deriving a
-    /// number the dedup has already derived and answered for: two derivations
-    /// of one key are two chances to disagree.
+    /// `ClientEventDecoder` stamps it into `SimEvent.Tick`, and THAT one field
+    /// is what this class sorts and delivers by. It is deliberately not also a
+    /// parameter of `Enqueue`: nothing downstream has any business re-deriving
+    /// a number the dedup has already derived and answered for, and a second
+    /// copy of it beside the event would be two chances to disagree over a
+    /// value that must match exactly or the event surfaces on the wrong frame.
     ///
     /// DELIVERY ORDER IS BY TICK FIRST, ARRIVAL SECOND. Frames arrive
     /// reordered as a matter of course at the 5% loss Critical Rule 7
@@ -88,20 +105,10 @@ namespace Ring.Networking.Client
     /// constructor returns.
     public sealed class ClientEventQueue
     {
-        /// One accepted event and the ABSOLUTE tick it belongs to. Held by
-        /// value: `EventRecord` is a plain struct with no reference fields
-        /// (`SnapshotBlocks`' own doc), so the ring costs one allocation in
-        /// the constructor and none afterwards.
-        public struct PendingEvent
-        {
-            /// The absolute world tick this event happened on — NOT the tick
-            /// of the frame that carried it. See the class doc.
-            public uint Tick;
-
-            public SnapshotBlocks.EventRecord Record;
-        }
-
-        readonly PendingEvent[] _pending;
+        // Held by value: `SimEvent` is a plain struct with no reference
+        // fields, so the ring costs one allocation in the constructor and
+        // none afterwards.
+        readonly SimEvent[] _pending;
         readonly int _capacity;
         int _count;
 
@@ -146,23 +153,25 @@ namespace Ring.Networking.Client
             int perFrame = math.max(1, snapshotEventBudget);
             int ticksPending = math.max(1, timings.InterpBufferTicks + 2);
             _capacity = perFrame * ticksPending;
-            _pending = new PendingEvent[_capacity];
+            _pending = new SimEvent[_capacity];
         }
 
-        /// Takes an event the dedup has ALREADY approved, together with its
-        /// absolute tick — the `out originTick` of the call that approved it,
-        /// not a second subtraction — and holds it until that tick is on
-        /// screen. `false`
-        /// means the queue was full and this record was refused — counted in
-        /// `OverflowDroppedEvents` and gone for good (see the class doc);
-        /// the residents are left exactly as they were.
+        /// Takes an event the dedup has ALREADY approved and `ClientEventDecoder`
+        /// has already decoded, and holds it until `e.Tick` is on screen.
+        /// `false` means the queue was full and this event was refused —
+        /// counted in `OverflowDroppedEvents` and gone for good (see the class
+        /// doc); the residents are left exactly as they were.
+        ///
+        /// `e.Tick` IS READ AS THE ABSOLUTE WORLD TICK, and the decoder is what
+        /// puts the dedup's `out originTick` there. See the class doc for why
+        /// it is not a second parameter.
         ///
         /// Insertion is a stable, ordered insert rather than an append plus a
         /// sort at delivery time: the queue is short by construction, the
         /// walk is bounded by `Capacity`, and keeping the array ordered is
         /// what makes "is anything due" a single comparison in `TryDequeue`
         /// instead of a scan on every render frame.
-        public bool Enqueue(uint tick, in SnapshotBlocks.EventRecord record)
+        public bool Enqueue(in SimEvent e)
         {
             if (_count == _capacity)
             {
@@ -170,41 +179,40 @@ namespace Ring.Networking.Client
                 return false;
             }
 
-            // Strictly `>`: an existing record of the SAME tick is left ahead
+            // Strictly `>`: an existing event of the SAME tick is left ahead
             // of the newcomer, which is what keeps arrival order inside a
             // tick.
             int i = _count;
-            while (i > 0 && _pending[i - 1].Tick > tick)
+            while (i > 0 && _pending[i - 1].Tick > e.Tick)
             {
                 _pending[i] = _pending[i - 1];
                 i--;
             }
 
-            _pending[i].Tick = tick;
-            _pending[i].Record = record;
+            _pending[i] = e;
             _count++;
             return true;
         }
 
         /// Hands back the oldest event whose tick `renderTick` has reached,
         /// removing it. `false` means nothing is due — either the queue is
-        /// empty or its earliest record still belongs to the future. Call it
+        /// empty or its earliest event still belongs to the future. Call it
         /// in a loop until it answers `false`; every call that answers `true`
-        /// has consumed exactly one record.
+        /// has consumed exactly one event.
         ///
-        /// `renderTick` is an `int` because `RenderClock.RenderTick` is one
-        /// by contract, while an event's tick is the `uint` the wire carries;
-        /// a negative value names no moment of any match and delivers
-        /// nothing rather than wrapping into an enormous unsigned one (Р82).
-        public bool TryDequeue(int renderTick, out PendingEvent pending)
+        /// `renderTick` is an `int` because `RenderClock.RenderTick` is one by
+        /// contract, and so is `SimEvent.Tick` — the whole simulation counts
+        /// ticks in `int`. A negative value names no moment of any match and
+        /// delivers nothing rather than being taken at face value (Р82).
+        public bool TryDequeue(int renderTick, out SimEvent e)
         {
-            pending = default;
+            e = default;
 
             if (_count == 0) return false;
             if (renderTick < 0) return false;
-            if (_pending[0].Tick > (uint)renderTick) return false;
+            if (_pending[0].Tick > renderTick) return false;
 
-            pending = _pending[0];
+            e = _pending[0];
 
             _count--;
             for (int i = 0; i < _count; i++) _pending[i] = _pending[i + 1];

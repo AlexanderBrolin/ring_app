@@ -1,0 +1,15 @@
+{
+    "name": "Ring.Presentation.Net",
+    "rootNamespace": "Ring.Presentation.Net",
+    "references": ["Ring.Presentation", "Ring.Networking", "Ring.Simulation", "Ring.Data",
+                   "FishNet.Runtime", "Unity.Mathematics"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

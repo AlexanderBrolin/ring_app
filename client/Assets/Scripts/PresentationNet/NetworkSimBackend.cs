@@ -8,7 +8,7 @@ using Ring.Networking.Protocol;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
-namespace Ring.Presentation
+namespace Ring.Presentation.Net
 {
     /// The `ISimBackend` WITH NO WORLD (Stage 2 Task 44c, spec §3.12): the one
     /// that receives snapshots instead of ticking a `SimulationWorld`. Task 43
@@ -16,6 +16,24 @@ namespace Ring.Presentation
     /// exist; `LocalSimBackend` is its twin on the other side of that seam, and
     /// every member below answers the same question its counterpart there does,
     /// from a frame off the wire rather than from a world in memory.
+    ///
+    /// IT LIVES IN AN ASSEMBLY OF ITS OWN, ABOVE BOTH (Stage 2 Task 44d, the
+    /// owner's decision of 2026-08-10). `Ring.Presentation.Net` references
+    /// `Ring.Presentation`, `Ring.Networking` and `FishNet.Runtime`; the
+    /// alternatives were both worse. Leaving the class in `Ring.Presentation`
+    /// meant leaving that assembly's reference to FishNet in place, and
+    /// `Presentation/` is the client track's own folder — its agents read
+    /// `client/CLAUDE.md`, which has no network stack in it, so the reference
+    /// made that document false for everybody working there. Moving the class
+    /// into `Ring.Networking` instead was impossible rather than merely
+    /// unattractive: `ISimBackend` lives in `Ring.Presentation`, and a
+    /// `Ring.Networking` -> `Ring.Presentation` reference closes the assembly
+    /// cycle Р35 exists to prevent. A third assembly ON TOP of both closes
+    /// neither door. The folder is a new root, `Assets/Scripts/PresentationNet/`,
+    /// rather than a subfolder of `Presentation/`, because ownership in
+    /// `.github/CODEOWNERS` is handed out BY PATH: a subfolder of a
+    /// colleague-owned path stays colleague-owned however its assembly is
+    /// drawn.
     ///
     /// A plain class, not a `MonoBehaviour`, for the same reason its twin is:
     /// it holds no scene reference and no `ScriptableObject` the facade could
@@ -49,38 +67,35 @@ namespace Ring.Presentation
     /// unit and a different origin, exactly as `StalePolicy`'s own doc
     /// describes; nothing below mixes them except by subtraction.
     ///
-    /// THREE SEAMS THIS CLASS CANNOT REACH, AND THEY ARE NOT OVERSIGHTS —
-    /// see the report of this task for the one-line fix each of them wants.
-    ///   * `PlayerNetworkController.Configure`, `SetPendingInput` and
-    ///     `NotifyOwnDeath` are `internal` to `Ring.Networking`, whose
-    ///     `AssemblyInfo.cs` opens its internals to `Ring.Simulation.Tests`
-    ///     and to nothing else. This assembly therefore cannot push a
-    ///     `SimInput` into prediction, cannot hand the controller its
-    ///     `SimConfig`, and cannot report the local player's own death — even
-    ///     though that controller's own class doc names `Ring.Presentation` as
-    ///     where its input comes FROM. Until that changes the client's
-    ///     prediction path is inert: `Core.Predicted` never leaves
-    ///     `default(PlayerState)`, `IsPredicting` reads false, and the branch
-    ///     below that would show the local player from the predicted copy
-    ///     never runs.
-    ///   * `SimulationRunner` has no way to be given a backend at all — its
-    ///     `_backend` field is private, initialized in place with a
-    ///     `LocalSimBackend`, and written nowhere else. This class compiles,
-    ///     registers and runs, and no code path installs it.
-    ///   * `SimulationRunner.WorldRestarted` is raised only from the facade's
-    ///     own `Restart`. A backend told by `MatchRestartedNet` that a new
-    ///     match has begun has no seam to say so, so the ten Presentation
-    ///     subscribers of that event are not reached on a network restart.
-    ///     The seams `ClientMatchReset` clears ARE cleared (that path runs
-    ///     inside `ClientMatchLink`); it is only the facade-side event that
-    ///     has no route.
+    /// THE THREE SEAMS TASK 44c COULD NOT REACH ARE REACHED NOW (Task 44d).
+    /// `PlayerNetworkController.Configure`, `SetPendingInput` and
+    /// `NotifyOwnDeath` are still `internal` to `Ring.Networking` — that is
+    /// what keeps Р34 structural — but `Networking/AssemblyInfo.cs` now names
+    /// this assembly beside the test one, which is what the owner chose over
+    /// widening the three to `public`. All three are called below, and each
+    /// says at its call site why it is called from there:
+    /// `Configure` the moment the controller is found, `SetPendingInput` with
+    /// the frame the facade already sampled, `NotifyOwnDeath` off the decoded
+    /// `PlayerDied` that names this client's own seat.
+    ///
+    /// NOTHING INSTALLS THIS BACKEND YET, AND THAT IS A RECORDED DEBT RATHER
+    /// THAN AN OVERSIGHT. `SimulationRunner.TryUseBackend` is the seam and it
+    /// exists as of Task 44d; the caller — the scene wiring, the mode choice
+    /// and `ClientManager.StartConnection` — is Task 44e, the task
+    /// immediately after this one, by the owner's decision. Contract before
+    /// consumer is the order this phase has already used three times (Task
+    /// 44a's protocol before 44b's link, 44b's link before 44c's backend).
+    /// Whoever writes that caller inherits two obligations named elsewhere in
+    /// this file: construct and `Restart` this backend BEFORE starting the
+    /// client connection (see `Restart`), and `Unregister` any instance it
+    /// discards (see `Unregister`).
     ///
     /// WHAT IS DELIBERATELY NOT HERE. `ObservedIndex` and spectating (Task
     /// 47), the player dolls and their pool (Task 45), the dev overlay's
     /// network section (Task 48) and the walls (Task 46). Two further gaps are
     /// this task's own findings rather than its neighbors' scope, and both
     /// are recorded where they bite: the projectile picture (see `Curr`) and
-    /// the match statistics (see `Restart`).
+    /// the match statistics (see `HasMatchStats`).
     public sealed class NetworkSimBackend : ISimBackend
     {
         /// The block kinds this receiver understands. A kind absent from this
@@ -193,6 +208,16 @@ namespace Ring.Presentation
         bool _ready;
         int _lastRenderTick;
 
+        // An epoch change has been observed and `MatchRestarted` has not been
+        // raised for it yet. See `Advance` for why the raise waits.
+        bool _matchRestartedPending;
+
+        // The local player's own predicted copy, as of the last two PREDICTION
+        // ticks. See `SampleOwnPlayer`.
+        PlayerState _ownPrev, _ownCurr;
+        uint _ownTick;
+        bool _hasOwnSample;
+
         // Decode scratch, sized once from the arena caps.
         //
         // NOTHING ON THE RECEIVE PATH ALLOCATES AFTER `Restart` RETURNS,
@@ -214,12 +239,9 @@ namespace Ring.Presentation
         SimEvent[] _frameEvents;
         int _frameEventCount;
 
-        // The decoded events waiting for their tick, and the pool the queue
-        // itself cannot hold. See `EnqueueEvent`.
-        SimEvent[] _pendingPool;
-        int[] _freeSlots;
-        int _freeCount;
-        ushort _poolEpoch;
+        // The epoch everything above is keyed to, as last observed on the link.
+        // See `SyncMatchEpoch`.
+        ushort _matchEpoch;
 
         /// This client's own player object once FishNet has spawned it.
         /// Found rather than injected: the object is spawned by the server
@@ -351,6 +373,25 @@ namespace Ring.Presentation
         /// is no value a hash cannot legitimately take.
         public ulong StateHash => 0UL;
 
+        /// False, and permanently — the same answer as `HasStateHash` and for
+        /// a closely related reason (Stage 2 Task 44d, the owner's decision of
+        /// 2026-08-10). `RenderSnapshot.WorldStats` and `PlayerStats` are
+        /// counted by the world, and the frame has no block for either of them:
+        /// Players, Liveness, Mobs, Wave and Events are the whole protocol,
+        /// and a sixth block is deliberately not being added — these are not
+        /// per-frame quantities and the per-frame budget (Р146) is spent on
+        /// the ones that are. `BeginSlot` clears both before decoding, so
+        /// without this member every consumer would read a permanent zero as a
+        /// measurement: no kills, no waves cleared, and — worse, because the
+        /// dev overlay colors them red above zero — no skipped spawns.
+        ///
+        /// THE NUMBERS DO ARRIVE, ONCE, AT THE END. `MatchEndedNet` carries
+        /// eleven of them and `ClientLinkState.EndedNet` holds the message
+        /// whole. What is missing is a consumer: the end-of-match screen reads
+        /// the render pair today, and pointing it at the link's summary is not
+        /// this task's.
+        public bool HasMatchStats => false;
+
         /// Events this CLIENT lost, which is a different number from the
         /// server-side `NetStats.DroppedEvents` the brief for this task names.
         /// That counter belongs to the assembler's per-connection statistics
@@ -381,7 +422,7 @@ namespace Ring.Presentation
 
         /// Refused, in the one way a refusal can still be seen. `CanDevSpawnMob`
         /// above is the real gate and the overlay honors it; this is the
-        /// second line of defence for any future caller that does not, and it
+        /// second line of defense for any future caller that does not, and it
         /// logs rather than throws because a dev convenience must not be able
         /// to take a match down.
         public void DevSpawnMob(MobType type, float2 pos)
@@ -416,21 +457,49 @@ namespace Ring.Presentation
         {
             if (_snapshots == null) return 0;
 
-            // WHERE THE INPUT WOULD GO, AND WHY IT DOES NOT.
-            // `PlayerNetworkController.SetPendingInput(in frame)` is the seam
-            // the frame the facade already sampled belongs in — the direction
-            // chosen so `Ring.Networking` never references `Ring.Presentation`
-            // back (Р35) — and it is `internal` to an assembly that does not
-            // open its internals to this one. Until it does, `frame` reaches
-            // nothing: prediction sends no replicate, the server sees no input,
-            // and the local player has no predicted copy to draw. The frame is
-            // NOT re-sampled here in any case — a second
-            // `InputSampler.SampleFrame` would consume the dash edge the facade
-            // has already latched (spec §3.8) — and it is not cached either,
-            // because a cache with no reader is a field that only looks like a
-            // solution.
-
             SyncMatchEpoch();
+
+            // RAISED HERE AND NOWHERE ELSE, THOUGH THE EPOCH CHANGE IS USUALLY
+            // NOTICED IN THE BROADCAST HANDLER. Behind this event sit ten
+            // ordinary Presentation components, and a throw out of any of them
+            // inside FishNet's batched parsing loop abandons every message
+            // behind this one in the same datagram. Deferring the raise to the
+            // facade's own call stack costs at most one render frame and
+            // removes that whole class of failure — the same "a refusal is a
+            // value, never an exception" rule the receive path keeps, applied
+            // to a notification.
+            if (_matchRestartedPending)
+            {
+                _matchRestartedPending = false;
+                MatchRestarted?.Invoke();
+            }
+
+            // ONE LOOKUP PER FRAME, SHARED BY EVERYTHING BELOW THAT NEEDS THE
+            // CONTROLLER. It used to run twice — once per half of the render
+            // pair — with the same answer both times.
+            EnsureController();
+
+            // THE FRAME THE FACADE ALREADY SAMPLED, HANDED STRAIGHT TO
+            // PREDICTION (Р35, spec §3.8). `SetPendingInput` is the seam
+            // `PlayerNetworkController`'s own doc names for this, and the
+            // direction is what keeps `Ring.Networking` from ever referencing
+            // a Presentation assembly back. Nothing is re-sampled here: a
+            // second `InputSampler.SampleFrame` would consume the dash edge the
+            // facade has already latched, and the facade clears that latch only
+            // after a flush.
+            //
+            // AS EARLY IN THE FRAME AS THIS CLASS IS REACHED, because the
+            // controller's own tick — `TimeManager_OnTick` -> `BuildReplicate`
+            // -> `_core.PendingInput` — is what turns it into a replicate.
+            // `SimulationRunner` is pinned at `DefaultExecutionOrder(-50)` and
+            // `NetworkManager` runs at the default 0, so this call precedes
+            // FishNet's own tick within a frame; that is an ordering the scene
+            // arranges, not something this class can assert.
+            if (_controller != null) _controller.SetPendingInput(in frame);
+
+            // The predicted pair for the local slot, sampled once per
+            // PREDICTION tick — see `SampleOwnPlayer`.
+            SampleOwnPlayer();
 
             _clock.Advance(unscaledDeltaTime, in _timings);
             int renderTick = _clock.RenderTick;
@@ -486,6 +555,16 @@ namespace Ring.Presentation
         /// because nothing clears the window except this method.
         public void EndFrame() => _frameEventCount = 0;
 
+        /// The server started a new match. See `ISimBackend.MatchRestarted` for
+        /// the whole contract; what is this class's own is WHEN it fires:
+        /// `ClientMatchLink` moves the epoch it tracks on exactly two messages,
+        /// the opening welcome and `MatchRestartedNet`, and only the second of
+        /// them is a RESTART — the first begins the only match this connection
+        /// has had, which the facade has already announced from its own
+        /// `Restart`. `SyncMatchEpoch` therefore arms this for an epoch change
+        /// away from a non-zero epoch and for nothing else.
+        public event System.Action MatchRestarted;
+
         /// Records the match's balance numbers and builds everything this
         /// backend runs on — ON THE FIRST CALL, and on no other.
         ///
@@ -515,18 +594,21 @@ namespace Ring.Presentation
         /// and would re-register four broadcast handlers beside the four
         /// already subscribed.
         ///
-        /// A LATER CALL DOES NOT RESTART ANYTHING, AND CANNOT. On this backend
-        /// a match begins and ends on the server's say-so
+        /// A LATER CALL DOES NOT RESTART ANYTHING, AND SAYS SO IN ITS ANSWER.
+        /// On this backend a match begins and ends on the server's say-so
         /// (`MatchWelcomeNet`/`MatchRestartedNet`, the only two messages
         /// `ClientMatchReset` is ever called on); spec §3.12 lists
         /// `Restart`/`RestartNewSeed` as unavailable on a networked client for
-        /// exactly that reason. The facade nonetheless raises its own
-        /// `WorldRestarted` on every one of these calls, and this class has no
-        /// way to stop it — the dev overlay's forced-seed restart and the death
-        /// overlay's R therefore clear every Presentation-side registry
-        /// mid-match while the server keeps sending the same match. Disabling
-        /// those controls belongs to whoever wires this backend into a scene;
-        /// it is recorded here because here is where it is visible.
+        /// exactly that reason. Until Task 44d the facade nonetheless raised
+        /// its own `WorldRestarted` on every one of these calls, so the dev
+        /// overlay's forced-seed restart and the death overlay's R cleared
+        /// every Presentation-side registry mid-match while the server kept
+        /// sending the same match — and rebuilt the frozen hitstop pair from a
+        /// config this backend had refused, leaving those buffers a different
+        /// size from the pair they deep-copy. `false` is what stops both:
+        /// the facade now does nothing at all on a refused restart. Hiding the
+        /// dev controls themselves still belongs to whoever wires this backend
+        /// into a scene.
         ///
         /// `seed` IS IGNORED, AND NOT MERELY UNUSED. Nothing on this side is
         /// seeded from it: the authoritative seed is the server's, arrives in
@@ -537,19 +619,8 @@ namespace Ring.Presentation
         /// match's seed on a networked client.
         ///
         /// THE MATCH STATISTICS ARE NOT BUILT HERE AND CANNOT BE FILLED AT ALL
-        /// (this task's finding). Spec §3.12 and this task's brief both list
-        /// `WorldStats` as coming "from the snapshot"; the frame has no block
-        /// for it and none for `MatchStats` either — Players, Liveness, Mobs,
-        /// Wave and Events are the whole protocol. So `RenderSnapshot.
-        /// WorldStats` and `PlayerStats` read zeros on a networked client, and
-        /// every consumer of them (the dev overlay's counters, the death
-        /// overlay's summary, the HUD) shows zeros with them. The numbers DO
-        /// exist on the wire, once, at the end: `MatchEndedNet` carries eleven
-        /// of them and `ClientLinkState.EndedNet` holds the message whole.
-        /// Routing them into the end-of-match screen needs a consumer that
-        /// does not exist yet; filling the per-tick snapshot from them would
-        /// need a protocol change.
-        public void Restart(long seed, in SimConfig cfg)
+        /// — see `HasMatchStats`, which is how a reader is told so.
+        public bool Restart(long seed, in SimConfig cfg)
         {
             if (_hasConfig)
             {
@@ -562,7 +633,7 @@ namespace Ring.Presentation
                     + "would index this arena's arrays with another arena's caps and would make "
                     + "the handshake's own agreement a statement about a struct the server never "
                     + "saw. Retune the assets and restart the match on both ends.");
-                return;
+                return false;
             }
 
             _cfg = cfg;
@@ -608,9 +679,6 @@ namespace Ring.Presentation
             _eventScratch = new SnapshotBlocks.EventRecord[math.max(1, _net.SnapshotEventBudget)];
 
             _frameEvents = new SimEvent[_events.Capacity];
-            _pendingPool = new SimEvent[_events.Capacity];
-            _freeSlots = new int[_events.Capacity];
-            ReleaseEveryPendingSlot();
 
             // The snapshot channel is registered HERE and not in
             // `ClientMatchLink`: that class owns the match's IDENTITY — epoch,
@@ -628,6 +696,7 @@ namespace Ring.Presentation
             // `MatchHandshake` on the server.
             _link = new ClientMatchLink(_nm, _reset, _net, ProtocolVersion.Current,
                 SimConfigHash.Compute(in cfg), cfg.Arena.MaxPlayers, _playerId, _joinToken);
+            return true;
         }
 
         /// Refused with a log. Hot-tweak is a dev workflow over a world this
@@ -683,12 +752,15 @@ namespace Ring.Presentation
         ///
         /// NOBODY IS OBLIGED TO CALL IT YET, AND THAT IS SAID HERE RATHER THAN
         /// LEFT TO BE FOUND. `ISimBackend` has no member for it, so the facade
-        /// cannot call it even in principle, and nothing else in the project
-        /// constructs this class — the open end is the same one as "no code
-        /// path installs this backend" in the class doc, seen from the other
-        /// side. Whoever closes that one takes this obligation with it: the
-        /// code that INSTALLS a backend is the code that must unregister the
-        /// one it replaces, and must do so before dropping the reference.
+        /// cannot call it even in principle, and nothing in the project
+        /// constructs this class — that caller is Task 44e's. The install seam
+        /// itself exists as of Task 44d and is written so this obligation
+        /// cannot arise by accident: `SimulationRunner.TryUseBackend` refuses a
+        /// second install, so the only backend a successful call replaces is a
+        /// `LocalSimBackend` holding no subscription. What is left for a caller
+        /// that ever does discard an instance of THIS class — a scene teardown,
+        /// a future reconnect — is the plain rule: unregister before dropping
+        /// the reference, because FishNet keys handlers by delegate identity.
         public void Unregister()
         {
             if (_registered)
@@ -756,8 +828,33 @@ namespace Ring.Presentation
         ///   8. `StalePolicy.OnFrameApplied`, last, because it is the one call
         ///      whose argument depends on how the walk went.
         ///
-        /// A FRAME IS COMPLETE ONLY IF THE WALK NEITHER FAILED NOR CAME UP
-        /// SHORT (fix-round 1, F-1), and BOTH halves of that are load-bearing.
+        /// A FRAME IS COMPLETE ONLY IF THE WALK NEITHER FAILED, NOR CAME UP
+        /// SHORT, NOR CARRIED A BLOCK ITS OWN DECODER REFUSED (fix-round 1,
+        /// F-1; the third term is Task 44d's). All three are load-bearing, and
+        /// the third is the one the first two cannot stand in for: a frame can
+        /// arrive whole, parse cleanly and still have a Players payload the
+        /// decoder rejects — a record index outside this match's roster, a
+        /// length that is not a multiple of the record size, the untrusted-input
+        /// path Р82 is about. `SnapshotReader` knows nothing of that by
+        /// construction: it hands out a slice and never looks inside it. Without
+        /// the third term such a frame committed a slot whose players were
+        /// still `BeginSlot`'s zeros — nobody alive, everybody at the origin —
+        /// and reported itself to `StalePolicy` as a CLEAN applied frame, which
+        /// moves Р149's confirmation clock and opens `ConfirmedAbsent` for every
+        /// id at once. That is the same price the two earlier terms were added
+        /// to avoid, reached through a block that came rather than one that
+        /// did not.
+        ///
+        /// THE EVENTS BLOCK IS DELIBERATELY NOT IN THE CONJUNCTION. Its
+        /// contract is a different one: `TryReadEventsBlock` leaves the records
+        /// it decoded BEFORE a refusal in the scratch and counts them (the
+        /// `DestinationTooSmall` doc's own "Read `count` in both cases"), and
+        /// this class walks them and accepts them either way. A partially
+        /// decoded events block is therefore a frame that delivered some of its
+        /// events, not a frame whose STATE is unknown — and `DestinationTooSmall`
+        /// specifically is the ordinary shape of a server whose event budget
+        /// exceeds this build's scratch, not damage. Folding it in would throw
+        /// away a perfectly good picture over an event that did not fit.
         /// `SnapshotReader`'s own doc hands this receiver the obligation in as
         /// many words — a cut exactly on a block boundary parses as a shorter,
         /// perfectly valid snapshot with `Failed` and `Truncated` both false,
@@ -820,6 +917,7 @@ namespace Ring.Presentation
             if (slot != null) BeginSlot(slot, tick);
 
             int kindsSeen = 0;
+            bool stateDecoded = true;
             while (reader.TryReadBlock(KnownBlockKinds, out byte kind,
                        out System.ReadOnlySpan<byte> payload))
             {
@@ -827,7 +925,7 @@ namespace Ring.Presentation
                 switch ((SnapshotBlockKind)kind)
                 {
                     case SnapshotBlockKind.Players:
-                        ReadPlayers(slot, payload, tick, applyState);
+                        stateDecoded &= ReadPlayers(slot, payload, tick, applyState);
                         break;
                     case SnapshotBlockKind.Liveness:
                         // KNOWN, DECODED BY NOBODY, AND SAID OUT LOUD. The mask
@@ -843,10 +941,10 @@ namespace Ring.Presentation
                         // VISIBLE.
                         break;
                     case SnapshotBlockKind.Mobs:
-                        ReadMobs(slot, payload);
+                        stateDecoded &= ReadMobs(slot, payload);
                         break;
                     case SnapshotBlockKind.Wave:
-                        ReadWave(slot, payload);
+                        stateDecoded &= ReadWave(slot, payload);
                         break;
                     case SnapshotBlockKind.Events:
                         ReadEvents(epoch, tick, payload);
@@ -854,7 +952,8 @@ namespace Ring.Presentation
                 }
             }
 
-            bool complete = !reader.Failed && (kindsSeen & RequiredBlockKinds) == RequiredBlockKinds;
+            bool complete = !reader.Failed && stateDecoded
+                && (kindsSeen & RequiredBlockKinds) == RequiredBlockKinds;
             if (!complete)
             {
                 // Not counted, for the reason the header refusal above gives:
@@ -863,10 +962,11 @@ namespace Ring.Presentation
                 // block — see the receive-path allocation note on the scratch
                 // fields.
                 _nm.Log($"NetworkSimBackend: snapshot {tick} incomplete — failed={reader.Failed} "
-                    + $"truncated={reader.Truncated} kinds=0x{kindsSeen:X2} of "
-                    + $"0x{RequiredBlockKinds:X2}. The frame is not published and the render pair "
-                    + "keeps the moment it was already showing; the events this frame did carry "
-                    + "were accepted and stay accepted. Nothing on this side counts it.");
+                    + $"truncated={reader.Truncated} stateDecoded={stateDecoded} "
+                    + $"kinds=0x{kindsSeen:X2} of 0x{RequiredBlockKinds:X2}. The frame is not "
+                    + "published and the render pair keeps the moment it was already showing; the "
+                    + "events this frame did carry were accepted and stay accepted. Nothing on "
+                    + "this side counts it.");
             }
             else if (slot != null)
             {
@@ -923,7 +1023,7 @@ namespace Ring.Presentation
         /// the same number; dividing here re-normalizes the value the decoder
         /// just built rather than re-deriving it from the wire, so the two
         /// scalings cannot disagree about which `MaxHp` was meant.
-        void ReadPlayers(RenderSnapshot slot, System.ReadOnlySpan<byte> payload, uint tick,
+        bool ReadPlayers(RenderSnapshot slot, System.ReadOnlySpan<byte> payload, uint tick,
             bool applyState)
         {
             if (!SnapshotBlocks.TryReadPlayersBlock(payload, in _cfg,
@@ -931,7 +1031,7 @@ namespace Ring.Presentation
                     out int count, out SnapshotBlockError error))
             {
                 LogBlockRefusal(SnapshotBlockKind.Players, error);
-                return;
+                return false;
             }
 
             float maxHp = _cfg.Hero.MaxHp;
@@ -950,6 +1050,8 @@ namespace Ring.Presentation
                 slot.Players[r.Index] = PlayerFlags.ToSyntheticState(r.Flags, r.Pos, r.Dir, hp01,
                     in _cfg);
             }
+
+            return true;
         }
 
         /// The mobs this client may see, as a DENSE list keyed by id — which is
@@ -965,17 +1067,17 @@ namespace Ring.Presentation
         /// delta, so the honest zero costs nothing today and would cost a
         /// wrong number tomorrow. `StateTimer`/`FireCooldown`/`StrafeSign` are
         /// simply not on the wire.
-        void ReadMobs(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        bool ReadMobs(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
         {
             if (!SnapshotBlocks.TryReadMobsBlock(payload, in _cfg,
                     new System.Span<SnapshotBlocks.MobRecord>(_mobScratch),
                     out int count, out SnapshotBlockError error))
             {
                 LogBlockRefusal(SnapshotBlockKind.Mobs, error);
-                return;
+                return false;
             }
 
-            if (slot == null) return;
+            if (slot == null) return true;
             for (int i = 0; i < count; i++)
             {
                 SnapshotBlocks.MobRecord r = _mobScratch[i];
@@ -989,28 +1091,30 @@ namespace Ring.Presentation
                 };
             }
             slot.MobCount = count;
+            return true;
         }
 
         /// The wave director's public face. `PendingChasers`/`PendingGunners`/
         /// `PhaseTimer` are not on the wire — they are the director's own
         /// bookkeeping and no client draws them — so they stay at zero rather
         /// than being guessed from the counts that are.
-        void ReadWave(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        bool ReadWave(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
         {
             if (!SnapshotBlocks.TryReadWaveBlock(payload, out WavePhase phase, out ushort waveIndex,
                     out byte aliveCount, out SnapshotBlockError error))
             {
                 LogBlockRefusal(SnapshotBlockKind.Wave, error);
-                return;
+                return false;
             }
 
-            if (slot == null) return;
+            if (slot == null) return true;
             slot.Wave = new WaveState
             {
                 Phase = phase,
                 WaveIndex = waveIndex,
                 AliveCount = aliveCount,
             };
+            return true;
         }
 
         /// This frame's events, each asked about exactly once.
@@ -1052,7 +1156,8 @@ namespace Ring.Presentation
                 SnapshotBlocks.EventRecord record = _eventScratch[i];
                 if (!_dedup.TryAcceptEvent(epoch, frameTick, in record, out uint originTick))
                     continue;
-                if (!TryDecodeEvent(originTick, in record, payload, out SimEvent decoded,
+                if (!ClientEventDecoder.TryDecode(originTick, in record, payload, in _cfg,
+                        LocalPlayerIndex, out SimEvent decoded, out SnapshotEventPayload p,
                         out SnapshotBlockError recordError))
                 {
                     if (recordError != SnapshotBlockError.None)
@@ -1062,7 +1167,22 @@ namespace Ring.Presentation
                     }
                     continue;
                 }
-                EnqueueEvent(originTick, in record, in decoded);
+
+                // THE ROUTING IS THE CALLER'S, NOT THE DECODER'S, and the split
+                // is the point of moving the mapping out (Task 44d): turning
+                // bytes into a `SimEvent` needs nothing but bytes, while both
+                // calls below reach a live FishNet object. Keeping them here
+                // is what leaves the decode a pure function a unit test can
+                // reach.
+                RouteToGhosts((SnapshotEventKind)record.Kind, in p);
+                RouteOwnDeath(in decoded);
+
+                // The answer is deliberately not read: a refused event is one
+                // the queue had no room for, and the queue counts that loss
+                // itself in `OverflowDroppedEvents` — which is the number
+                // `DroppedEvents` above reports. There is nothing this side
+                // could do with a second copy of it.
+                _events.Enqueue(in decoded);
             }
 
             if (refusedRecords > 0)
@@ -1073,275 +1193,41 @@ namespace Ring.Presentation
                     + "these — that is Р29 forward compatibility and not a refusal at all.");
         }
 
-        /// One wire event, turned into the `SimEvent` the whole Presentation
-        /// fan-out already speaks. This is the INVERSE of the mapping
-        /// `SnapshotAssembler` applies on the way out, and it is written here
-        /// because there is no inverse anywhere else — the assembler's own
-        /// switch is a one-way function over types this assembly cannot reach.
+        /// Stops this client predicting its own corpse (Р41/Р59, Stage 2 Task
+        /// 44d). `PlayerPredictionCore` needs BOTH triggers — the event and the
+        /// authoritative state — because the event travels unreliably and the
+        /// state arrives only with a reconcile; this is the event half, and
+        /// until Task 44d nothing could deliver it.
         ///
-        /// THE TWO ENUMERATIONS DO NOT LINE UP, and the shape of the mismatch
-        /// is the assembler's, not this method's: one `ProjectileFired`
-        /// becomes `ProjectileSpawned` for whoever the round flies near and
-        /// `ShotHeard` for whoever merely hears it, and four projectile endings
-        /// collapse into one `ProjectileEnded` discriminated by
-        /// `ProjectileEndKind`. Both halves of the first split map back to
-        /// `ProjectileFired`, because a connection receives one or the other
-        /// for a given shot and the audible variant's whole purpose is to be
-        /// heard as a shot.
+        /// ON ARRIVAL, NOT ON DELIVERY. The decoded event still has to WAIT in
+        /// the queue until the render clock reaches its tick, because the
+        /// picture it belongs to is `InterpBufferTicks` behind — but prediction
+        /// is not in that domain at all, it is ahead of it, and a corpse
+        /// predicted for the length of the interpolation buffer rolls back by
+        /// up to a dash's worth of distance when the truth catches up. So the
+        /// latch is set the moment the frame is decoded and the doll keeps
+        /// dying on screen at its own moment.
         ///
-        /// A KIND THIS BUILD DOES NOT MAP IS NOT A REFUSAL (Р29), AND IT IS
-        /// ANSWERED BEFORE THE PAYLOAD IS EVEN LOOKED AT (fix-round 1, F-8).
-        /// `SnapshotEvents.TryReadPayload` folds "I have never heard of this
-        /// kind" into the same `MalformedContent` it gives a known kind whose
-        /// bytes are wrong, so asking it first made a newer server's ordinary
-        /// forward compatibility indistinguishable from hostile input — and
-        /// logged it, per record. `IsMappedEventKind` below is asked first
-        /// instead, and `refusal` comes back `None` for that path: nothing
-        /// happened that anybody needs to hear about.
+        /// THE VICTIM IS READ OUT OF `PlayerIndex`, WHICH IS THIS KIND'S
+        /// CONVENTION. `SimEvent`'s own doc puts `PlayerDamaged`/`PlayerDied`
+        /// under the VICTIM convention for both `EntityId` and `PlayerIndex`,
+        /// and the server sends a player's own death to that player
+        /// unconditionally (Р28's own-death carve-out in `EventRelevance`), so
+        /// this arrives even when nobody could see it happen.
         ///
-        /// WHAT THE WIRE CANNOT GIVE BACK, named rather than guessed:
-        ///   * a `HitMob` ending carries the ROUND's id and not the victim's,
-        ///     so `EntityId` — the mob's id for `SimEventKind.ProjectileHit` —
-        ///     stays 0. 0 IS SAFE THERE and only there: entity ids are minted
-        ///     from a counter that starts at 1, so no mob can ever be 0. The
-        ///     round's id goes to `SecondaryEntityId`, which is the convention
-        ///     the simulation itself uses for this kind. The cost is that
-        ///     `GameFeelDirector`'s per-mob hit flash has no view to look up on
-        ///     a networked client; the round's own end still retires its tracer.
-        ///   * a `HitPlayer` ending is the SAME shortfall with a WORSE zero
-        ///     (fix-round 1, M-3 — the earlier text carried the reasoning above
-        ///     over to this branch, where it does not hold).
-        ///     `SimEventKind.ProjectileHitPlayer`'s `EntityId` is the victim's
-        ///     PLAYER SLOT, and slot 0 is a real seat — the same trap
-        ///     `LocalPlayerIndex`'s own doc names. So `EntityId` on this kind
-        ///     MUST NOT BE READ on a networked client: it is not "no victim",
-        ///     it is "seat 0", and the victim is simply not on the wire.
-        ///     `Amount` (the damage), `HitDir` (the round's travel direction)
-        ///     and `PlayerIndex` (the shooter) are missing for the same reason
-        ///     — the whole payload of a projectile ending is the round's id,
-        ///     the ending kind, the zone and the contact height.
-        ///   * `StaminaDenied` carries no slot at all (it reaches its owner and
-        ///     nobody else), so the local slot is the only honest answer.
-        ///   * `PlayerSlideStarted` carries no direction, and `DashRicocheted`
-        ///     carries the surface normal that the simulation puts in `HitDir`.
-        ///   * a `ShotHeard` carries no direction either, so the fire angle
-        ///     `SimEvent.Amount` means for `ProjectileFired` reads zero, and its
-        ///     position has already been coarsened by the server (Task 20).
-        ///
-        /// AND THAT COARSENED POSITION IS DRAWN TODAY — A DEFECT THIS TASK
-        /// CANNOT CLOSE FROM THIS SIDE (fix-round 1, F-3; the earlier text said
-        /// "the flash's own branch is Task 45's", which was false the day it
-        /// was written). The muzzle-flash view and the persistent-props
-        /// director are BOTH subscribed to the event fan-out now, and a
-        /// `ShotHeard` reaches both as an ordinary `ProjectileFired`: the flash
-        /// decides on `Kind` alone and bursts at angle 0, the casing decides on
-        /// `Kind` plus `Owner == Player` and drops a shell that game feel keeps
-        /// on the floor for the rest of the match — at a position the server
-        /// coarsened precisely so it would not give the shooter away. The
-        /// producer side has no third field to say "audible only" with: the
-        /// sound this event exists for is played by the audio director on the
-        /// same `Kind` plus `Owner == Player`, so any change that hides the
-        /// event from the first two hides it from the third as well. The fix
-        /// therefore belongs where the flash and the casing are ANCHORED, not
-        /// where the event is built — Task 45 moves both onto the weapon
-        /// model's muzzle, and a shooter nobody can see has no doll and no
-        /// barrel to fire from. Recorded here because here is where it shows.
-        bool TryDecodeEvent(uint originTick, in SnapshotBlocks.EventRecord record,
-            System.ReadOnlySpan<byte> blockPayload, out SimEvent e,
-            out SnapshotBlockError refusal)
+        /// A DEATH THAT ARRIVES BEFORE THE OBJECT DOES IS NOT LOST WORK. If
+        /// FishNet has not spawned this client's player yet there is no core to
+        /// latch, and there is also nothing to stop: a core created later
+        /// starts with `Predicted` at `default`, whose `Alive` is false, and
+        /// `ShouldPredict` reads the two triggers together — the missing latch
+        /// only matters while the authoritative state still says alive, which
+        /// is a window that cannot exist before the first reconcile.
+        void RouteOwnDeath(in SimEvent e)
         {
-            e = default;
-            refusal = SnapshotBlockError.None;
+            if (e.Kind != SimEventKind.PlayerDied || e.PlayerIndex != LocalPlayerIndex) return;
 
-            var kind = (SnapshotEventKind)record.Kind;
-            if (!IsMappedEventKind(kind)) return false;
-
-            System.ReadOnlySpan<byte> slice = blockPayload.Slice(record.PayloadOffset,
-                record.PayloadLength);
-            if (!SnapshotEvents.TryReadPayload(kind, slice, in _cfg,
-                    out SnapshotEventPayload p, out SnapshotBlockError error))
-            {
-                refusal = error;
-                return false;
-            }
-
-            e.Tick = (int)originTick;
-            e.Pos = record.Pos;
-            e.PlayerIndex = ProjectileIds.NoOwner;
-
-            switch (kind)
-            {
-                case SnapshotEventKind.ProjectileSpawned:
-                    e.Kind = SimEventKind.ProjectileFired;
-                    e.EntityId = p.Id;
-                    e.PlayerIndex = p.PlayerIndex;
-                    e.Owner = p.PlayerIndex == ProjectileIds.NoOwner
-                        ? ProjectileOwner.Mob : ProjectileOwner.Player;
-                    // `Amount` is the shot's sim-plane velocity angle for this
-                    // kind (the field's own doc); the wire carries the unit
-                    // direction the angle is of.
-                    e.Amount = math.atan2(p.Dir.y, p.Dir.x);
-                    break;
-
-                case SnapshotEventKind.ShotHeard:
-                    e.Kind = SimEventKind.ProjectileFired;
-                    e.PlayerIndex = p.PlayerIndex;
-                    e.Owner = p.PlayerIndex == ProjectileIds.NoOwner
-                        ? ProjectileOwner.Mob : ProjectileOwner.Player;
-                    break;
-
-                case SnapshotEventKind.ProjectileEnded:
-                    switch (p.EndKind)
-                    {
-                        case ProjectileEndKind.Blocked:
-                            e.Kind = SimEventKind.ProjectileBlocked;
-                            e.EntityId = p.Id;
-                            // `Amount` carries the contact HEIGHT for this kind
-                            // — the same field the sending side read it out of.
-                            e.Amount = p.Height;
-                            break;
-                        case ProjectileEndKind.Expired:
-                            e.Kind = SimEventKind.ProjectileExpired;
-                            e.EntityId = p.Id;
-                            break;
-                        case ProjectileEndKind.HitMob:
-                            e.Kind = SimEventKind.ProjectileHit;
-                            e.SecondaryEntityId = p.Id;
-                            e.Zone = p.Zone;
-                            break;
-                        case ProjectileEndKind.HitPlayer:
-                            e.Kind = SimEventKind.ProjectileHitPlayer;
-                            e.SecondaryEntityId = p.Id;
-                            e.Zone = p.Zone;
-                            break;
-                        default:
-                            // Unreachable through `TryReadPayload`, which
-                            // refuses `None` and anything past `HitPlayer`
-                            // before this method ever sees `p` — so reaching
-                            // it means the catalog and this switch disagree
-                            // about the ending vocabulary, which is a defect
-                            // of this file and IS worth the line.
-                            refusal = SnapshotBlockError.MalformedContent;
-                            return false;
-                    }
-                    break;
-
-                case SnapshotEventKind.MobSpawned:
-                    e.Kind = SimEventKind.MobSpawned;
-                    e.EntityId = p.Id;
-                    e.MobType = p.MobType;
-                    break;
-
-                case SnapshotEventKind.MobDied:
-                    e.Kind = SimEventKind.MobDied;
-                    e.EntityId = p.Id;
-                    e.PlayerIndex = p.PlayerIndex;
-                    e.Zone = p.Zone;
-                    break;
-
-                case SnapshotEventKind.PlayerDamaged:
-                    e.Kind = SimEventKind.PlayerDamaged;
-                    // VICTIM in both fields, which is this kind's own
-                    // convention on the simulation side (`SimEvent.PlayerIndex`
-                    // mirrors `EntityId` for the two player-victim kinds).
-                    e.EntityId = p.PlayerIndex;
-                    e.PlayerIndex = p.PlayerIndex;
-                    e.Zone = p.Zone;
-                    e.Amount = p.Amount;
-                    e.HitDir = p.Dir;
-                    break;
-
-                case SnapshotEventKind.PlayerDied:
-                    e.Kind = SimEventKind.PlayerDied;
-                    e.EntityId = p.PlayerIndex;
-                    e.PlayerIndex = p.PlayerIndex;
-                    e.Zone = p.Zone;
-                    break;
-
-                case SnapshotEventKind.PlayerDashed:
-                    e.Kind = SimEventKind.PlayerDashed;
-                    e.PlayerIndex = p.PlayerIndex;
-                    break;
-
-                case SnapshotEventKind.PlayerSlideStarted:
-                    e.Kind = SimEventKind.PlayerSlideStarted;
-                    e.PlayerIndex = p.PlayerIndex;
-                    break;
-
-                case SnapshotEventKind.DashRicocheted:
-                    e.Kind = SimEventKind.DashRicocheted;
-                    e.PlayerIndex = p.PlayerIndex;
-                    e.HitDir = p.Dir;
-                    break;
-
-                case SnapshotEventKind.StaminaDenied:
-                    e.Kind = SimEventKind.StaminaDenied;
-                    e.PlayerIndex = LocalPlayerIndex;
-                    e.Amount = p.Amount;
-                    break;
-
-                case SnapshotEventKind.WaveStarted:
-                    e.Kind = SimEventKind.WaveStarted;
-                    // `EntityId` is the wave index for these two kinds
-                    // (`WaveSystem`'s own emit sites).
-                    e.EntityId = p.WaveIndex;
-                    break;
-
-                case SnapshotEventKind.WaveCleared:
-                    e.Kind = SimEventKind.WaveCleared;
-                    e.EntityId = p.WaveIndex;
-                    break;
-
-                default:
-                    // `IsMappedEventKind` above admitted a kind this switch
-                    // does not map: the two are one list seen twice, and this
-                    // is where they are caught disagreeing. Р29 skips are not
-                    // here — they never got past the predicate.
-                    refusal = SnapshotBlockError.MalformedContent;
-                    return false;
-            }
-
-            RouteToGhosts(kind, in p);
-            return true;
-        }
-
-        /// Whether the switch above has a `SimEvent` for this wire kind — the
-        /// Р29 frontier of THIS receiver (fix-round 1, F-8), and the one
-        /// question that tells an ordinary forward-compatibility skip from a
-        /// refusal worth a log line.
-        ///
-        /// IT IS THE SWITCH'S OWN CASE LIST, ASKED WITHOUT A PAYLOAD, and it is
-        /// written out rather than derived because both cheaper forms are
-        /// wrong. `SnapshotEvents`' equivalent is private to that class and
-        /// answers a DIFFERENT question — "can the catalog decode it" — which
-        /// happens to coincide today and need not tomorrow. Testing the byte
-        /// against the enum's last member would be that same question copied,
-        /// and it would start calling a kind this project adds to the catalog
-        /// but not to the switch a refusal, which is exactly the Р29 case. The
-        /// two lists are kept in step by the switch's `default` above, which
-        /// logs: a kind admitted here and unmapped there is a defect of this
-        /// file, and a defect should be loud.
-        static bool IsMappedEventKind(SnapshotEventKind kind)
-        {
-            switch (kind)
-            {
-                case SnapshotEventKind.ProjectileSpawned:
-                case SnapshotEventKind.ShotHeard:
-                case SnapshotEventKind.ProjectileEnded:
-                case SnapshotEventKind.MobSpawned:
-                case SnapshotEventKind.MobDied:
-                case SnapshotEventKind.PlayerDamaged:
-                case SnapshotEventKind.PlayerDied:
-                case SnapshotEventKind.PlayerDashed:
-                case SnapshotEventKind.PlayerSlideStarted:
-                case SnapshotEventKind.DashRicocheted:
-                case SnapshotEventKind.StaminaDenied:
-                case SnapshotEventKind.WaveStarted:
-                case SnapshotEventKind.WaveCleared:
-                    return true;
-                default:
-                    return false;
-            }
+            EnsureController();
+            if (_controller != null) _controller.NotifyOwnDeath();
         }
 
         /// The two wire events the ghost registry answers to, and nothing else.
@@ -1371,10 +1257,12 @@ namespace Ring.Presentation
         /// measurement) to start reading the parameter without a signature
         /// change — and such a consumer would subtract it from a prediction
         /// tick. A zero it can see is nothing; a world tick it cannot tell from
-        /// a prediction tick is a plausible wrong number. When a prediction-
-        /// domain tick becomes available on this path (it does when the
-        /// prediction seams open — see the class doc), that is the value to
-        /// pass, and nothing else.
+        /// a prediction tick is a plausible wrong number. Opening the
+        /// prediction seams (Task 44d) did not change this: what is missing is
+        /// not access to `TimeManager.LocalTick` — the render frame reads it
+        /// already — but a ghost BORN in the prediction domain to measure
+        /// against, and `TrySpawnFromPrediction` still has no caller (see the
+        /// task's report). The tick to pass is the one that spawn records.
         void RouteToGhosts(SnapshotEventKind kind, in SnapshotEventPayload p)
         {
             switch (kind)
@@ -1390,40 +1278,6 @@ namespace Ring.Presentation
 
         // ---- the pending window --------------------------------------------
 
-        /// Files a decoded event under the absolute tick it happened on.
-        ///
-        /// WHY THE DECODED EVENT IS HELD HERE AND NOT IN THE QUEUE (this task's
-        /// finding about `ClientEventQueue`). That class stores an
-        /// `EventRecord` by value and calls it self-contained because the
-        /// struct has no reference fields — but two of its fields,
-        /// `PayloadOffset`/`PayloadLength`, ARE a reference: they index into
-        /// the block payload span that was passed to `TryReadEventsBlock`, and
-        /// that span is a slice of FishNet's receive buffer, valid only for the
-        /// duration of the broadcast handler. By the time the render clock
-        /// reaches the event's tick those bytes are long gone, so the queue
-        /// alone can never deliver an event's payload. The fix that costs
-        /// nothing on either side is to decode while the bytes are still there
-        /// and carry the RESULT: this pool holds the finished `SimEvent`, and
-        /// the record filed in the queue keeps the pool slot in
-        /// `PayloadOffset`, which is the one field of it this class reads back.
-        ///
-        /// The pool is exactly the queue's own capacity, so a slot is available
-        /// whenever the queue has room, and a refused enqueue hands its slot
-        /// straight back.
-        void EnqueueEvent(uint originTick, in SnapshotBlocks.EventRecord record, in SimEvent decoded)
-        {
-            if (_freeCount == 0) return;
-
-            int slot = _freeSlots[--_freeCount];
-            _pendingPool[slot] = decoded;
-
-            SnapshotBlocks.EventRecord filed = record;
-            filed.PayloadOffset = (ushort)slot;
-            filed.PayloadLength = 0;
-
-            if (!_events.Enqueue(originTick, in filed)) _freeSlots[_freeCount++] = slot;
-        }
-
         /// Moves every event whose tick the render clock has reached into this
         /// frame's window. `ClientEventQueue.TryDequeue` answers only for
         /// records that are actually due, which is the whole reason the wait
@@ -1434,25 +1288,28 @@ namespace Ring.Presentation
         /// The window is bounded by the queue's own capacity, so an event that
         /// does not fit this frame is LEFT in the queue rather than dropped —
         /// it is due, and it will be first out on the next frame.
+        ///
+        /// WHAT THE QUEUE HANDS BACK IS THE FINISHED EVENT (Task 44d). Until
+        /// then it held the wire RECORD, whose payload fields point into a
+        /// FishNet receive buffer that is gone by the time an event is due —
+        /// so this class kept a pool of decoded events beside it and smuggled
+        /// the pool slot through the record's `PayloadOffset`. The queue's own
+        /// capacity IS that pool now, and the borrowed field, the free list
+        /// and the epoch-time slot release went with it.
         void DrainDueEvents(int renderTick)
         {
             while (_frameEventCount < _frameEvents.Length
-                   && _events.TryDequeue(renderTick, out ClientEventQueue.PendingEvent pending))
+                   && _events.TryDequeue(renderTick, out SimEvent due))
             {
-                int slot = pending.Record.PayloadOffset;
-                _frameEvents[_frameEventCount++] = _pendingPool[slot];
-                _freeSlots[_freeCount++] = slot;
+                _frameEvents[_frameEventCount++] = due;
             }
         }
 
         /// EVERYTHING THIS CLASS OWNS THAT A NEW MATCH INVALIDATES, cleared the
-        /// moment the epoch it is keyed to changes. Two things qualify, and
-        /// they are here together because they are one fact: the pending pool
-        /// (with the frame's event window) and this backend's own readiness.
-        ///
-        /// The pool has to be emptied exactly when `ClientEventQueue.Reset`
-        /// empties the queue, or its slots leak — every event still waiting
-        /// when a match ends never comes back to hand its slot over.
+        /// moment the epoch it is keyed to changes. Two things qualify: the
+        /// frame's own event window — which may hold events of the match that
+        /// just ended, already drained out of the queue `ClientMatchReset`
+        /// clears — and this backend's own readiness.
         ///
         /// `Ready` HAS TO GO WITH IT (fix-round 1, F-6). `ClientMatchReset`
         /// empties the ring and stops the clock, so the next `Advance` resolves
@@ -1476,23 +1333,32 @@ namespace Ring.Presentation
         /// reset — the opening welcome and `MatchRestartedNet` — so watching it
         /// is watching the same fact, one step removed. Both entry points of
         /// this backend ask FIRST — the render frame and the broadcast handler
-        /// — so nothing is decoded into, or drawn out of, a state belonging to
-        /// an epoch that has already been left.
+        /// — so nothing is DECODED INTO a state belonging to an epoch that has
+        /// already been left. It says nothing about what is DRAWN, and cannot:
+        /// `Ready`, `Prev`, `Curr` and `CurrentTick` are plain properties read
+        /// from outside both entry points, and the reset itself runs inside
+        /// `ClientMatchLink`'s own handler. Between that handler and the next
+        /// `Advance` the pair still holds the previous frame's picture and
+        /// `Ready` still answers for it — a window one frame wide, showing
+        /// exactly what it showed a frame earlier, which is why the readiness
+        /// clear below is where it is rather than in the handler.
+        ///
+        /// IT ALSO ARMS `MatchRestarted`, FOR A CHANGE AWAY FROM A REAL EPOCH
+        /// ONLY (Stage 2 Task 44d). `_matchEpoch` starts at 0, which
+        /// `ClientLinkState` reserves for "there is no epoch", so the first
+        /// change — the opening welcome — is this connection's first match
+        /// rather than a restart of one, and the facade has already told its
+        /// subscribers about that from its own `Restart`.
         void SyncMatchEpoch()
         {
             if (_link == null) return;
             ushort epoch = _link.State.MatchEpoch;
-            if (epoch == _poolEpoch) return;
-            _poolEpoch = epoch;
-            ReleaseEveryPendingSlot();
+            if (epoch == _matchEpoch) return;
+            bool restarted = _matchEpoch != 0;
+            _matchEpoch = epoch;
             _frameEventCount = 0;
             _ready = false;
-        }
-
-        void ReleaseEveryPendingSlot()
-        {
-            _freeCount = _freeSlots.Length;
-            for (int i = 0; i < _freeCount; i++) _freeSlots[i] = i;
+            if (restarted) _matchRestartedPending = true;
         }
 
         // ---- the render pair -----------------------------------------------
@@ -1534,13 +1400,69 @@ namespace Ring.Presentation
 
             _prev.CopyFrom(older);
             _curr.CopyFrom(newer);
-            ApplyOwnPlayer(_prev);
-            ApplyOwnPlayer(_curr);
+            ApplyOwnPlayer(_prev, in _ownPrev);
+            ApplyOwnPlayer(_curr, in _ownCurr);
             return true;
         }
 
+        /// Takes the local player's own predicted copy, ONCE PER PREDICTION
+        /// TICK, and keeps the last two (Stage 2 Task 44d).
+        ///
+        /// WHY TWO AND NOT ONE. The snapshot leaves this client's own slot out
+        /// by the assembler's own rule, so the slot is filled from prediction —
+        /// and the pair's two halves are then blended by `Alpha` like every
+        /// other entity's. Writing ONE predicted state into both halves makes
+        /// that blend degenerate (`Lerp(P, P, a) == P`), so the local player
+        /// alone would step at the tick rate while every mob and every other
+        /// doll slid between ticks. Two consecutive predicted poses restore the
+        /// same in-between motion the rest of the picture has.
+        ///
+        /// THE SAMPLE IS TAKEN AGAINST THE PREDICTION TICK, NOT THE RENDER
+        /// FRAME, and that distinction is the whole of the method. Prediction
+        /// advances in `TimeManager.LocalTick`; a "previous" latched per render
+        /// frame would be microseconds old at a high frame rate and the blend
+        /// would jitter across a distance the player never travelled. Two poses
+        /// exactly one prediction tick apart, blended by a coefficient that
+        /// sweeps 0..1 once per world tick, move at the right speed — the two
+        /// clocks share a rate and differ in phase, so what the offset costs is
+        /// a fraction of a tick of latency on one's own doll and nothing else.
+        /// Mixing them further than that would be mixing domains outright, so
+        /// nothing here subtracts one tick number from the other.
+        ///
+        /// A FRAME LONGER THAN A TICK LEAVES THE HALVES MORE THAN ONE TICK
+        /// APART, and that is accepted rather than corrected: the picture then
+        /// interpolates across the whole gap instead of jumping it, and the
+        /// next sample puts the pair back on one tick.
+        ///
+        /// NOT VERIFIABLE BY A UNIT TEST, and said so plainly: this assembly is
+        /// outside the EditMode test assembly's references, and the quantity in
+        /// question is what motion looks like. The milestone В1 playtest is what
+        /// answers it.
+        void SampleOwnPlayer()
+        {
+            if (_controller == null || !_controller.Core.IsPredicting)
+            {
+                _hasOwnSample = false;
+                return;
+            }
+
+            uint tick = _nm.TimeManager.LocalTick;
+            PlayerState predicted = _controller.Core.Predicted;
+            // The opening sample has no predecessor, so the pair starts
+            // collapsed for exactly one tick — the same still picture the
+            // render pair itself shows before its second half lands. Within
+            // one tick the newer half is refreshed and the older one is left
+            // alone: a reconcile can move the predicted copy several times
+            // between ticks, and the pair must stay one tick wide.
+            if (!_hasOwnSample) _ownPrev = predicted;
+            else if (tick != _ownTick) _ownPrev = _ownCurr;
+            _ownCurr = predicted;
+            _ownTick = tick;
+            _hasOwnSample = true;
+        }
+
         /// Puts this client's own player back into the picture the snapshot
-        /// deliberately left it out of.
+        /// deliberately left it out of, one half of the render pair at a time.
         ///
         /// FROM THE PREDICTED COPY, AND ONLY WHILE IT IS PREDICTING.
         /// `PlayerPredictionCore.IsPredicting` is exactly "this client may
@@ -1550,22 +1472,15 @@ namespace Ring.Presentation
         /// better answer. The catch is that the record does not exist: the
         /// assembler never puts a connection's own slot in its own frame, so
         /// while prediction is not running this slot reads `default`.
-        ///
-        /// TODAY IT NEVER RUNS AT ALL. `Configure` and `SetPendingInput` are
-        /// `internal` to `Ring.Networking` (see the class doc), so the
-        /// controller stays inert, its predicted copy stays `default`,
-        /// `IsPredicting` stays false, and the local player is absent from the
-        /// picture. That is the single most visible consequence of the three
-        /// unreachable seams, and it is why they are reported as a blocker
-        /// rather than as a rough edge.
-        void ApplyOwnPlayer(RenderSnapshot snapshot)
+        /// `SampleOwnPlayer` above holds that gate; by the time this runs, the
+        /// only question left is whether the seat is in range.
+        void ApplyOwnPlayer(RenderSnapshot snapshot, in PlayerState predicted)
         {
-            EnsureController();
-            if (_controller == null || !_controller.Core.IsPredicting) return;
+            if (!_hasOwnSample) return;
 
             int index = snapshot.LocalPlayerIndex;
             if (index < 0 || index >= snapshot.PlayerCount) return;
-            snapshot.Players[index] = _controller.Core.Predicted;
+            snapshot.Players[index] = predicted;
         }
 
         /// Finds this client's own player object once FishNet has spawned it.
@@ -1574,6 +1489,19 @@ namespace Ring.Presentation
         /// nothing here has to know how the object was spawned or by whom. A
         /// match restart spawns NEW objects on the same slots (Р164), so the
         /// cached reference is dropped as soon as it stops being spawned.
+        ///
+        /// FINDING ONE IS ALSO CONFIGURING IT (Stage 2 Task 44d). Until
+        /// `Configure` has been called the component is inert by its own
+        /// design — `TimeManager_OnTick` and `TimeManager_OnPostTick` both
+        /// return on `!_configured`, because every codec mapping is a function
+        /// of the config and a zeroed one would encode garbage. The moment this
+        /// method decides an object is ours is the earliest moment the numbers
+        /// can be handed over, and it is also the only moment: a new object
+        /// after a restart comes through here again, and re-configuring the
+        /// same instance is not possible because the reference is only replaced
+        /// when the old one stops being spawned. The numbers are this backend's
+        /// first `Restart`'s, which is the struct whose `SimConfigHash` the
+        /// handshake agreed on.
         void EnsureController()
         {
             if (_controller != null && _controller.IsSpawned) return;
@@ -1587,6 +1515,7 @@ namespace Ring.Presentation
                 if (nob.TryGetComponent(out PlayerNetworkController controller))
                 {
                     _controller = controller;
+                    _controller.Configure(in _cfg);
                     return;
                 }
             }

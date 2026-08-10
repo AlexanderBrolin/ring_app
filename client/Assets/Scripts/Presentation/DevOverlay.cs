@@ -91,15 +91,40 @@ namespace Ring.Presentation
             GUILayout.Label($"FPS: {_fps:F0}");
             GUILayout.Label($"Tick: {_runner.CurrentTick}");
             GUILayout.Label($"Mobs: {_runner.Curr.MobCount}  Projectiles: {_runner.Curr.ProjectileCount}");
-            // Task 22 (A16): match counters, not "silent loss" — no red highlight.
-            GUILayout.Label($"Slides: {_runner.Curr.Stats.SlidesUsed}  Headshots: {_runner.Curr.Stats.HeadshotKills}");
-
+            // Task 44d: a backend whose world counts these on another machine
+            // reports HasMatchStats false, and the protocol carries no block
+            // for them — so print a dash for the same reason StateHash below
+            // prints one. A zero here is otherwise indistinguishable from a
+            // count, and for the two red-above-zero counters it reads as a
+            // permanent all-clear on a diagnostic nobody is feeding.
+            // DroppedEvents is NOT one of the match statistics below and is
+            // drawn either way: on a networked backend it reports what THIS
+            // client lost out of its own receive queue, which is a real
+            // measurement of this process.
             DrawIntCounter("DroppedEvents", _runner.DroppedEvents);
-            // Stage 2 Task 5: these two moved to WorldStats (world-scoped, not
-            // per-player) — Curr.Stats stays the local player's personal counters.
-            DrawIntCounter("MobSpawnsSkipped", _runner.Curr.WorldStats.MobSpawnsSkipped);
-            DrawIntCounter("ProjectileSpawnsSkipped", _runner.Curr.WorldStats.ProjectileSpawnsSkipped);
             DrawFloatCounter("DroppedTime", _runner.AccumulatorDroppedTime);
+
+            // Task 44d: a backend whose world counts these on another machine
+            // reports HasMatchStats false, and the protocol carries no block
+            // for them — so print a dash for the same reason StateHash below
+            // prints one. A zero here is otherwise indistinguishable from a
+            // count, and for the two red-above-zero counters it reads as a
+            // permanent all-clear on a diagnostic nobody is feeding.
+            if (_runner.HasMatchStats)
+            {
+                // Task 22 (A16): match counters, not "silent loss" — no red highlight.
+                GUILayout.Label($"Slides: {_runner.Curr.Stats.SlidesUsed}  Headshots: {_runner.Curr.Stats.HeadshotKills}");
+                // Stage 2 Task 5: these two moved to WorldStats (world-scoped, not
+                // per-player) — Curr.Stats stays the local player's personal counters.
+                DrawIntCounter("MobSpawnsSkipped", _runner.Curr.WorldStats.MobSpawnsSkipped);
+                DrawIntCounter("ProjectileSpawnsSkipped", _runner.Curr.WorldStats.ProjectileSpawnsSkipped);
+            }
+            else
+            {
+                GUILayout.Label("Slides: —  Headshots: —");
+                GUILayout.Label("MobSpawnsSkipped: —");
+                GUILayout.Label("ProjectileSpawnsSkipped: —");
+            }
 
             GUILayout.Label($"Seed: {_runner.Seed}");
             // Task 43: a backend for which the hash is a server-side quantity

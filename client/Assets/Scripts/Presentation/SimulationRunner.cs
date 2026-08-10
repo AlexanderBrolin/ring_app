@@ -74,8 +74,20 @@ namespace Ring.Presentation
         /// session runs on is Task 44's decision, and the field initializer is
         /// what keeps `Ready` answerable from the very first frame — a view's
         /// `Awake`/`OnGUI` can run before this component's own `Awake`, and the
-        /// guards it replaced (`World == null`) tolerated exactly that.
+        /// guards it replaced (`World == null`) tolerated exactly that. Task 44d
+        /// added `TryUseBackend` below without disturbing that initializer, for
+        /// exactly the reason it was written.
         ISimBackend _backend = new LocalSimBackend();
+
+        /// Whether `Awake` has already built this session — the fact
+        /// `TryUseBackend` refuses on. A separate flag rather than a test on
+        /// some other field that happens to be set there, so the refusal names
+        /// the thing it is actually about.
+        bool _sessionStarted;
+
+        /// Whether a backend was handed in from outside. See `TryUseBackend`
+        /// for why the second call is refused rather than honored.
+        bool _backendInstalled;
 
         InputSampler _sampler;
         bool _pendingApplyConfig;
@@ -117,6 +129,14 @@ namespace Ring.Presentation
         public bool HasStateHash => _backend.HasStateHash;
 
         public ulong StateHash => _backend.StateHash;
+
+        /// Whether `Curr.Stats`/`Curr.WorldStats` are measurements at all
+        /// (Stage 2 Task 44d) — false on a backend whose world counts them on
+        /// another machine and whose protocol does not carry them, exactly as
+        /// `HasStateHash` above is false where the hash is the server's. A
+        /// reader that skips this test does not get an exception; it gets a
+        /// zero it cannot tell from a count.
+        public bool HasMatchStats => _backend.HasMatchStats;
 
         public int DroppedEvents => _backend.DroppedEvents;
 
@@ -240,6 +260,18 @@ namespace Ring.Presentation
         public float AccumulatorDroppedTime => _backend.DroppedTime;
 
         public event System.Action TicksFlushed;
+
+        /// A fresh match has begun and everything Presentation remembers about
+        /// the previous one must go — ten registries listen for it.
+        ///
+        /// TWO RAISE SITES AS OF TASK 44d, AND BOTH MEAN THE SAME THING. The
+        /// first is `Restart` below, for a match this facade started, and it
+        /// now fires only when the backend actually STARTED one. The second is
+        /// `OnBackendMatchRestarted` above, for a match the SERVER started —
+        /// which the facade cannot see and, before that seam existed, never
+        /// announced, so a networked restart left every view holding the
+        /// previous match's entities. The pair is what makes this event mean
+        /// "a new match", rather than "somebody called `Restart`".
         public event System.Action WorldRestarted;
 
         /// Fires once per individual tick (tick number, `StateHash()` at that
@@ -260,10 +292,102 @@ namespace Ring.Presentation
         /// moved the call site, not the rule.
         public event System.Action<int, ulong> TickAdvanced;
 
+        /// Hands this facade the backend a session is to run on (Stage 2 Task
+        /// 44d). `true` means it was accepted and is the one every member above
+        /// now reads through.
+        ///
+        /// IT HAS TO BE CALLED BEFORE THIS COMPONENT'S `Awake`, AND NOTHING
+        /// HERE CAN MAKE THAT HAPPEN. `Awake` builds the session outright —
+        /// `RestartNewSeed()` -> `Restart(seed)` -> `_backend.Restart(...)` —
+        /// so a backend arriving afterwards would be installed behind a facade
+        /// that has already started a match on the previous one and already
+        /// told ten subscribers about it. The only mechanism that orders one
+        /// component's `Awake` against another's is Unity's own script
+        /// execution order, which the caller owns and this class cannot reach:
+        /// this component is pinned at `[DefaultExecutionOrder(-50)]` (see the
+        /// class doc), so an installer has to sit below that number. What this
+        /// method can do is refuse to be part of the failure, and it does — the
+        /// wrong order becomes a red line in the console instead of a networked
+        /// session silently running on the local backend.
+        ///
+        /// A REFUSAL IS A VALUE, NOT A THROW. The caller is a bootstrap wiring
+        /// a scene up; an exception out of here would abandon the rest of that
+        /// wiring half-built, which is a worse scene than one that logged and
+        /// carried on. The three refusals are distinct lines on purpose, so the
+        /// console says WHICH mistake was made.
+        ///
+        /// A SECOND CALL IS REFUSED, and that keeps an obligation from ever
+        /// arising. `NetworkSimBackend.Unregister`'s own doc puts it on
+        /// whoever installs a backend to unregister the one it replaces —
+        /// FishNet keys broadcast handlers by delegate identity, so a discarded
+        /// instance that stayed subscribed would keep decoding into a ring
+        /// nobody reads. With the second call refused, the only backend a
+        /// successful call ever replaces is the field initializer's
+        /// `LocalSimBackend`, which holds no subscription at all.
+        public bool TryUseBackend(ISimBackend backend)
+        {
+            if (backend == null)
+            {
+                Debug.LogError("SimulationRunner.TryUseBackend: no backend was passed. The facade "
+                    + "keeps the local backend it started with; nothing is replaced by null.");
+                return false;
+            }
+
+            if (_sessionStarted)
+            {
+                Debug.LogError("SimulationRunner.TryUseBackend: too late — this component's Awake has "
+                    + "already started a match on the backend it had. Install one before Awake runs: "
+                    + "SimulationRunner is pinned at DefaultExecutionOrder(-50), so the installer "
+                    + "needs a lower number than that.");
+                return false;
+            }
+
+            if (_backendInstalled)
+            {
+                Debug.LogError("SimulationRunner.TryUseBackend: a backend was already installed and is "
+                    + "kept. Replacing one means unregistering whatever the discarded instance "
+                    + "subscribed to, and nothing here can know what that was.");
+                return false;
+            }
+
+            _backend = backend;
+            _backendInstalled = true;
+            return true;
+        }
+
         void Awake()
         {
+            _sessionStarted = true;
+            // Subscribed here rather than in `OnEnable`, and to whichever
+            // backend is installed by now — including the field initializer's
+            // local one, which never raises it. A match restart decided on the
+            // server does not wait for this component to be enabled, and the
+            // network seams behind it are cleared either way; a subscription
+            // that came and went with `enabled` would leave the ten registries
+            // behind `WorldRestarted` holding the previous match's entities for
+            // as long as the gap lasted.
+            _backend.MatchRestarted += OnBackendMatchRestarted;
             _sampler = new InputSampler(_actionsAsset, _aimProvider);
             RestartNewSeed();
+        }
+
+        void OnDestroy() => _backend.MatchRestarted -= OnBackendMatchRestarted;
+
+        /// The backend says the server started a new match (Stage 2 Task 44d).
+        ///
+        /// This is the OTHER half of `Restart` below, not a smaller version of
+        /// it: nothing here rebuilds a buffer or touches `Seed`, because a
+        /// networked restart changes neither the arena caps the buffers are
+        /// sized from nor the seed this facade invented. What it does do is end
+        /// any hitstop in flight — a freeze is a deep copy of the PREVIOUS
+        /// match's render pair, and the views must not be handed it once the
+        /// registries behind `WorldRestarted` have been cleared. `UnfreezeRender`
+        /// with no catch-up window is a no-op when nothing is frozen, and a
+        /// snap back to the live pair when something is.
+        void OnBackendMatchRestarted()
+        {
+            UnfreezeRender(0f);
+            WorldRestarted?.Invoke();
         }
 
         void OnEnable()
@@ -404,15 +528,38 @@ namespace Ring.Presentation
             }
         }
 
+        /// Starts a fresh match — IF THE BACKEND STARTS ONE (Stage 2 Task 44d
+        /// widened this from an unconditional command to a request).
+        ///
+        /// EVERY LINE BELOW THE GATE DESCRIBES A RESTART THAT HAPPENED, which
+        /// is why they are all behind it. On a backend whose matches begin on
+        /// the server's say-so this method is reachable from three dev
+        /// controls — the overlay's forced-seed button, the death overlay's R,
+        /// the pause controller — and before the gate existed each of them
+        /// raised `WorldRestarted` in the middle of a match the server was
+        /// still sending, clearing ten Presentation registries under a picture
+        /// that kept arriving. The same gate settles a second disagreement the
+        /// backend cannot fix from its side: the networked backend keeps the
+        /// arena caps of the FIRST config for the life of the connection, so
+        /// rebuilding the frozen pair below from a second one would leave the
+        /// hitstop buffers a different size from the pair they deep-copy —
+        /// `RenderSnapshot.CopyFrom`'s own contract is that both sides come off
+        /// the same `ArenaSimConfig`.
+        ///
+        /// `Seed` MOVES ONLY WITH THE MATCH. It is what the dev overlay prints
+        /// and what the death overlay's Shift+R reuses, so recording a seed the
+        /// backend refused would make both of them describe a match nobody is
+        /// playing.
         public void Restart(long seed)
         {
-            Seed = seed;
             SimConfig cfg = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
             // The seven balance SOs stay serialized on THIS component (spec
             // §3.12 is about whose config is authoritative, not about where the
             // assets are wired): the backend is handed the finished `SimConfig`
             // by value and never sees a `ScriptableObject`.
-            _backend.Restart(seed, cfg);
+            if (!_backend.Restart(seed, cfg)) return;
+
+            Seed = seed;
             _renderPrevFrozen = new RenderSnapshot(cfg.Arena);
             _renderCurrFrozen = new RenderSnapshot(cfg.Arena);
             _renderFrozen = false;
