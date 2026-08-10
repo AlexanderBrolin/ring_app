@@ -316,14 +316,25 @@ namespace Ring.Presentation
         /// carried on. The three refusals are distinct lines on purpose, so the
         /// console says WHICH mistake was made.
         ///
-        /// A SECOND CALL IS REFUSED, and that keeps an obligation from ever
-        /// arising. `NetworkSimBackend.Unregister`'s own doc puts it on
-        /// whoever installs a backend to unregister the one it replaces —
-        /// FishNet keys broadcast handlers by delegate identity, so a discarded
-        /// instance that stayed subscribed would keep decoding into a ring
-        /// nobody reads. With the second call refused, the only backend a
-        /// successful call ever replaces is the field initializer's
-        /// `LocalSimBackend`, which holds no subscription at all.
+        /// A SECOND CALL IS REFUSED, and no `Unregister` obligation arises
+        /// from anything this method does. `NetworkSimBackend.Unregister`'s own
+        /// doc puts it on whoever installs a backend to unregister the one it
+        /// replaces — FishNet keys broadcast handlers by delegate identity, so
+        /// a discarded instance that stayed subscribed would keep decoding
+        /// into a ring nobody reads. Two sides, and they close for two
+        /// different reasons (fix-round 1, M-2). The REPLACED side: with the
+        /// second call refused, the only backend a successful call ever
+        /// replaces is the field initializer's `LocalSimBackend`, which holds
+        /// no subscription at all. The REFUSED side — an instance the caller
+        /// built and this method turned down — is the one the sentence above
+        /// does not cover, and what closes it is not this method at all:
+        /// `NetworkSimBackend` registers nothing in its constructor, its
+        /// subscriptions are all made by its `Restart`. A caller that follows
+        /// that class's other instruction and RESTARTS a backend before
+        /// installing it therefore holds a fully subscribed instance the
+        /// moment this method refuses, and owes it an `Unregister` — the
+        /// obligation is the caller's either way, and this method can only
+        /// avoid creating it.
         public bool TryUseBackend(ISimBackend backend)
         {
             if (backend == null)
@@ -381,13 +392,32 @@ namespace Ring.Presentation
         /// sized from nor the seed this facade invented. What it does do is end
         /// any hitstop in flight — a freeze is a deep copy of the PREVIOUS
         /// match's render pair, and the views must not be handed it once the
-        /// registries behind `WorldRestarted` have been cleared. `UnfreezeRender`
-        /// with no catch-up window is a no-op when nothing is frozen, and a
-        /// snap back to the live pair when something is.
+        /// registries behind `WorldRestarted` have been cleared.
         void OnBackendMatchRestarted()
         {
-            UnfreezeRender(0f);
+            EndHitstop();
             WorldRestarted?.Invoke();
+        }
+
+        /// Ends a hitstop in BOTH of the states it has, which is the whole
+        /// reason this is a method and not two lines at each of its two call
+        /// sites (Stage 2 Task 44d fix-round 1). `UnfreezeRender(0f)` was the
+        /// obvious spelling and it is the wrong one: it returns early on
+        /// `!_renderFrozen` and never touches the catch-up window, while
+        /// `RenderPrev` above hands out `_renderPrevFrozen` — the PREVIOUS
+        /// match's deep copy — for as long as that window is open. A player
+        /// hit shortly before a restart lands exactly there: the freeze is
+        /// already over, the ease back is not, and `CameraRig`/`PlayerView`
+        /// read the render pair with no `Ready` gate of their own.
+        ///
+        /// It is deliberately not `UnfreezeRender`'s own job: that method is
+        /// `GameFeelDirector`'s hook and its early return is correct there —
+        /// a director ending a freeze it never started must not cancel a
+        /// catch-up somebody else is running.
+        void EndHitstop()
+        {
+            _renderFrozen = false;
+            _catchUpRemaining = 0f;
         }
 
         void OnEnable()
@@ -562,8 +592,7 @@ namespace Ring.Presentation
             Seed = seed;
             _renderPrevFrozen = new RenderSnapshot(cfg.Arena);
             _renderCurrFrozen = new RenderSnapshot(cfg.Arena);
-            _renderFrozen = false;
-            _catchUpRemaining = 0f;
+            EndHitstop();
             RenderAlpha = 0f;
             ConfigTweaked = false;
             _pendingApplyConfig = false;

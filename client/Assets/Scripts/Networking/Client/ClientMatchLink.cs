@@ -546,22 +546,36 @@ namespace Ring.Networking.Client
         /// diagnostic rather than decorative (Stage 2 Task 44d). `Apply` below
         /// prints the verdict, the phase and the tracked epoch, which is
         /// everything a `LinkAction` carries — and a `SlotOutOfRange` is
-        /// exactly the refusal those three numbers cannot explain. The
-        /// handshake ends here permanently when it happens (the phase stays at
-        /// `HelloSent`, and a second welcome is answered `AlreadyJoined` or
-        /// `Unexpected`), and the two readings are far apart: a corrupted byte
-        /// on the wire, or a client and a server built against different
-        /// `Arena.MaxPlayers`. Only the pair "seat, roster" tells them apart,
-        /// and both numbers are in scope here and nowhere downstream.
+        /// exactly the refusal those three numbers cannot explain. The two
+        /// readings are far apart — a corrupted byte on the wire, or a client
+        /// and a server built against different `Arena.MaxPlayers` — and only
+        /// the pair "seat, roster" tells them apart; both numbers are in scope
+        /// here and nowhere downstream.
+        ///
+        /// THE REFUSAL IS NOT TERMINAL, AND THE FIRST VERSION OF THIS LINE
+        /// SAID IT WAS (fix-round 1, G-5). `ClientLinkState.Refuse` builds a
+        /// verdict and touches no field, so the phase stays at `HelloSent` —
+        /// which is precisely the phase a welcome is ACCEPTED from. A next
+        /// welcome naming a seat inside the roster is therefore applied
+        /// normally, and a second welcome is a real possibility rather than a
+        /// hypothetical (`ClientLinkState.OnWelcome`'s own doc names the stale
+        /// `MatchHandshake` that sends one). So a damaged byte costs one
+        /// message and recovers; it is SILENCE after this line, or a repeat
+        /// naming the same seat, that points at the configurations. The line
+        /// says which of the two the next message would settle instead of
+        /// declaring the handshake over.
         void OnWelcome(MatchWelcomeNet welcome, Channel channel)
         {
             ClientLinkState.LinkAction action = _state.OnWelcome(in welcome, _maxPlayers);
             if (action.Verdict == ClientLinkState.LinkVerdict.SlotOutOfRange)
             {
                 _nm.Log($"ClientMatchLink: the welcome named seat {welcome.PlayerIndex} in a roster "
-                    + $"of {_maxPlayers}. Either the byte is damaged, or this build and the "
-                    + "server's disagree about Arena.MaxPlayers — the handshake does not recover "
-                    + "from this one, so the two configurations are the first thing to compare.");
+                    + $"of {_maxPlayers}. Nothing was adopted and the link stays at HelloSent, so a "
+                    + "later welcome naming a seat inside the roster is still accepted — a damaged "
+                    + "byte costs this one message. If no welcome follows, or the next one names "
+                    + "the same seat, the reading is the other one: this build and the server's "
+                    + "disagree about Arena.MaxPlayers, and the two configurations are what to "
+                    + "compare.");
             }
 
             Apply(action, nameof(MatchWelcomeNet));

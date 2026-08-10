@@ -49,6 +49,14 @@ namespace Ring.Presentation
     /// to say so before the facade's own `Awake` runs. See that method's doc
     /// for why the ordering cannot be enforced from in here.
     ///
+    /// ONE MEMBER RUNS THE OTHER WAY and is therefore in none of the three
+    /// groups (Stage 2 Task 44d fix-round 1 — it was added to the interface
+    /// and left out of this list): `MatchRestarted` is RAISED BY an
+    /// implementation rather than called on it. The facade subscribes before
+    /// the first `Restart` and unsubscribes on teardown, so an implementation
+    /// may raise it from its very first call onwards; where it may raise it
+    /// from is the one real constraint, and that is the event's own doc.
+    ///
     /// OUTSIDE THAT RULE — the lifecycle mutators, called on the facade's own
     /// schedule: `Restart`, `ApplyConfig`, `OnPausedChanged`, `Advance`,
     /// `EndFrame`. `Restart` is what MAKES an implementation ready and is

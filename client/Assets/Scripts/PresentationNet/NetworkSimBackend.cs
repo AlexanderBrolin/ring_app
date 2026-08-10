@@ -56,7 +56,11 @@ namespace Ring.Presentation.Net
     /// which events are new, `ClientEventQueue` holds them until their tick
     /// arrives, `GhostProjectiles` tracks the client's own predicted rounds,
     /// `StalePolicy` decides what a silence means, `ClientMatchReset` clears
-    /// all six on an epoch change and `ClientMatchLink` says when that is.
+    /// all six on an epoch change and `ClientMatchLink` says when that is. A
+    /// tenth was written for the job in fix-round 1 rather than found:
+    /// `MobTypeMemory`, because the death event arrives without the archetype
+    /// the simulation put in it and the Mobs block is the only place that
+    /// survives on this side.
     ///
     /// TWO TICK DOMAINS, AND THE MEMBERS ARE SPLIT ALONG THEM. `Advance` runs
     /// in the RENDER domain — `RenderClock.RenderTick`, continuous local time,
@@ -191,6 +195,14 @@ namespace Ring.Presentation.Net
         StalePolicy _stale;
         ClientMatchReset _reset;
         ClientMatchLink _link;
+
+        /// Which archetype each recently-seen mob id was — NOT a seventh seam
+        /// (Stage 2 Task 44d fix-round 1). It is this class's own memory of a
+        /// block this class decodes, `ClientMatchReset` is a closed task whose
+        /// own doc argues for one call site rather than six, and the epoch
+        /// change is already observed here (`SyncMatchEpoch`) for two other
+        /// things that have to go with a match.
+        MobTypeMemory _mobTypes;
 
         NetTimings _timings;
         SimConfig _cfg;
@@ -668,6 +680,10 @@ namespace Ring.Presentation.Net
             // same time, or the fade will never start for them.
             _stale = new StalePolicy(cfg.Arena.MaxPlayers, _net.InterpMaxStaleTicks, EntityFadeTicks);
             _reset = new ClientMatchReset(_dedup, _snapshots, _clock, _ghosts, _stale, _events);
+            // Sized from the same cap as `_mobScratch` below, which is what
+            // makes "a frame can never carry more records than one generation
+            // holds" true rather than hoped for.
+            _mobTypes = new MobTypeMemory(cfg.Arena.MaxMobs);
 
             _prev = new RenderSnapshot(in cfg.Arena);
             _curr = new RenderSnapshot(in cfg.Arena);
@@ -1078,6 +1094,17 @@ namespace Ring.Presentation.Net
             }
 
             if (slot == null) return true;
+
+            // THE ARCHETYPES GO INTO THE MEMORY BEFORE THE PICTURE GOES INTO
+            // THE SLOT (fix-round 1, G-2). `MobDied` names a mob the wire has
+            // already dropped from this very block, so the answer has to
+            // outlive the frame — see `MobTypeMemory`, and `RestoreMobType`
+            // for what asks it. Only frames the ring gave a slot to are fed:
+            // a duplicate or an out-of-window frame carries nothing newer than
+            // what is remembered already.
+            _mobTypes.OnMobsDecoded(new System.ReadOnlySpan<SnapshotBlocks.MobRecord>(
+                _mobScratch, 0, count));
+
             for (int i = 0; i < count; i++)
             {
                 SnapshotBlocks.MobRecord r = _mobScratch[i];
@@ -1168,6 +1195,10 @@ namespace Ring.Presentation.Net
                     continue;
                 }
 
+                // Filled here rather than by the decoder, and before anything
+                // reads the event — see `RestoreMobType`.
+                RestoreMobType(ref decoded);
+
                 // THE ROUTING IS THE CALLER'S, NOT THE DECODER'S, and the split
                 // is the point of moving the mapping out (Task 44d): turning
                 // bytes into a `SimEvent` needs nothing but bytes, while both
@@ -1191,6 +1222,34 @@ namespace Ring.Presentation.Net
                     + "is ordinary traffic on an untrusted path (Р82), not a reason to abandon the "
                     + "datagram. Records of a kind this build has never heard of are NOT among "
                     + "these — that is Р29 forward compatibility and not a refusal at all.");
+        }
+
+        /// Puts back the one field the wire drops that this side can still
+        /// answer for: the archetype of the mob a `MobDied` names (Stage 2
+        /// Task 44d fix-round 1, G-2).
+        ///
+        /// NOT IN THE DECODER, BECAUSE THE DECODER CANNOT SEE IT. That class
+        /// is handed one record and the bytes it points at; the archetype
+        /// lives in the Mobs block of the frames around it, which is state
+        /// this class owns. Moving the lookup there would mean handing a pure
+        /// function a table it would then have to be kept in step with.
+        ///
+        /// `MobDied` AND NOT `ProjectileHit`, and the difference is not a
+        /// choice. The wire's projectile-ending payload names the ROUND and
+        /// never its victim, so a hit on a mob arrives with no mob in it at
+        /// all — what is missing there is the identity, and no table can be
+        /// asked about a mob nobody named. `MobDied` carries the id, so the
+        /// type is a lookup away.
+        ///
+        /// A MISS LEAVES THE EVENT EXACTLY AS DECODED, zero included. The
+        /// memory holds the last two frames' rosters (`MobTypeMemory`), and a
+        /// mob absent from both — killed the instant it came into view, by
+        /// somebody else — has no honest answer here. `ClientEventDecoder`'s
+        /// own list of what the wire cannot give back names the residue.
+        void RestoreMobType(ref SimEvent e)
+        {
+            if (e.Kind != SimEventKind.MobDied) return;
+            if (_mobTypes.TryGetType(e.EntityId, out MobType type)) e.MobType = type;
         }
 
         /// Stops this client predicting its own corpse (Р41/Р59, Stage 2 Task
@@ -1306,10 +1365,12 @@ namespace Ring.Presentation.Net
         }
 
         /// EVERYTHING THIS CLASS OWNS THAT A NEW MATCH INVALIDATES, cleared the
-        /// moment the epoch it is keyed to changes. Two things qualify: the
+        /// moment the epoch it is keyed to changes. Three things qualify: the
         /// frame's own event window — which may hold events of the match that
         /// just ended, already drained out of the queue `ClientMatchReset`
-        /// clears — and this backend's own readiness.
+        /// clears — this backend's own readiness, and the mob-archetype memory
+        /// (fix-round 1, G-2), whose keys are entity ids a new match starts
+        /// minting over.
         ///
         /// `Ready` HAS TO GO WITH IT (fix-round 1, F-6). `ClientMatchReset`
         /// empties the ring and stops the clock, so the next `Advance` resolves
@@ -1358,6 +1419,10 @@ namespace Ring.Presentation.Net
             _matchEpoch = epoch;
             _frameEventCount = 0;
             _ready = false;
+            // The third thing that cannot survive a match: a new one mints its
+            // entity ids from 1 again, so a remembered id would answer with
+            // the archetype of a mob from the match before (fix-round 1, G-2).
+            _mobTypes.Reset();
             if (restarted) _matchRestartedPending = true;
         }
 

@@ -91,16 +91,10 @@ namespace Ring.Presentation
             GUILayout.Label($"FPS: {_fps:F0}");
             GUILayout.Label($"Tick: {_runner.CurrentTick}");
             GUILayout.Label($"Mobs: {_runner.Curr.MobCount}  Projectiles: {_runner.Curr.ProjectileCount}");
-            // Task 44d: a backend whose world counts these on another machine
-            // reports HasMatchStats false, and the protocol carries no block
-            // for them — so print a dash for the same reason StateHash below
-            // prints one. A zero here is otherwise indistinguishable from a
-            // count, and for the two red-above-zero counters it reads as a
-            // permanent all-clear on a diagnostic nobody is feeding.
-            // DroppedEvents is NOT one of the match statistics below and is
-            // drawn either way: on a networked backend it reports what THIS
-            // client lost out of its own receive queue, which is a real
-            // measurement of this process.
+            // Task 44d: DroppedEvents is NOT one of the match statistics below
+            // and is drawn either way, HasMatchStats or not — on a networked
+            // backend it reports what THIS client lost out of its own receive
+            // queue, which is a real measurement of this process.
             DrawIntCounter("DroppedEvents", _runner.DroppedEvents);
             DrawFloatCounter("DroppedTime", _runner.AccumulatorDroppedTime);
 

@@ -32,7 +32,13 @@ namespace Ring.Networking.Client
     /// receives one or the other for a given shot and the audible variant's
     /// whole purpose is to be heard as a shot.
     ///
-    /// WHAT THE WIRE CANNOT GIVE BACK, named rather than guessed:
+    /// WHAT THE WIRE CANNOT GIVE BACK. This list was NOT complete when it was
+    /// written and is complete as of Stage 2 Task 44d fix-round 1: it was
+    /// rebuilt by reading every emit site of the kinds below in the simulation
+    /// and asking, field by field, whether the payload carries what was put
+    /// there. Four fields with three live consumers in `Presentation` had been
+    /// missing from it. A field a consumer reads as a fact and this side fills
+    /// with a zero belongs here whether or not anything can be done about it.
     ///   * a `HitMob` ending carries the ROUND's id and not the victim's, so
     ///     `EntityId` — the mob's id for `SimEventKind.ProjectileHit` — stays
     ///     0. 0 IS SAFE THERE and only there: entity ids are minted from a
@@ -40,7 +46,14 @@ namespace Ring.Networking.Client
     ///     goes to `SecondaryEntityId`, which is the convention the simulation
     ///     itself uses for this kind. The cost is that a per-mob hit flash has
     ///     no view to look up on a networked client; the round's own end still
-    ///     retires its tracer.
+    ///     retires its tracer. THE VICTIM'S ARCHETYPE GOES WITH ITS IDENTITY:
+    ///     the simulation puts `mob.Type` in this event too, so `MobType`
+    ///     reads the enum's zero — which is `Chaser`, a real archetype — and
+    ///     the hit spark's height is picked from it against belts that differ
+    ///     by a factor of two between the two archetypes. It cannot be
+    ///     restored the way `MobDied`'s is below: what is missing here is not
+    ///     the type but the identity, and no table can be asked about a mob
+    ///     nobody named.
     ///   * a `HitPlayer` ending is the SAME shortfall with a WORSE zero.
     ///     `SimEventKind.ProjectileHitPlayer`'s `EntityId` is the victim's
     ///     PLAYER SLOT, and slot 0 is a real seat. So `EntityId` on this kind
@@ -50,6 +63,33 @@ namespace Ring.Networking.Client
     ///     `PlayerIndex` (the shooter) are missing for the same reason — the
     ///     whole payload of a projectile ending is the round's id, the ending
     ///     kind, the zone and the contact height.
+    ///   * a `Blocked` ending carries no SURFACE NORMAL, and the zero it
+    ///     leaves behind is read as a fact today. The simulation puts the
+    ///     arena's normal in `HitDir` for a wall or an obstacle and exactly
+    ///     `float2.zero` for the floor — the same payload again, and no field
+    ///     in it for a direction. The persistent-props director tells the two
+    ///     contacts apart by testing that field against exact zero (its own
+    ///     comment calls it the simulation's gate rather than an epsilon
+    ///     check), so on a networked client EVERY wall hit draws as a floor
+    ///     hit: a decal flat on the ground at the foot of the wall and a spark
+    ///     firing straight up. Nothing here can close it — the normal is not
+    ///     on the wire at all — and putting it there is a protocol change, so
+    ///     it is recorded rather than worked around.
+    ///   * `MobDied` carries the mob, the killer and the zone, and drops
+    ///     everything else the simulation put in it: `MobType`, `Amount` (the
+    ///     killing blow's damage) and `HitDir` (the blow's direction). Of the
+    ///     three, `MobType` is answerable from elsewhere on this side and IS
+    ///     answered — not here: `NetworkSimBackend.RestoreMobType` fills it
+    ///     from the Mobs block through `MobTypeMemory`, because that is state
+    ///     the decoder does not see and must not be handed. The field
+    ///     therefore leaves this class at the enum's zero by design; the
+    ///     residue, a mob absent from both remembered frames, keeps it.
+    ///     `HitDir` is the head gib's impulse on a headshot kill and stays
+    ///     zero, so that gib drops instead of flying; `Amount` has no consumer
+    ///     in `Presentation` at all today.
+    ///   * `PlayerDied` carries the victim and the zone; the blow's `HitDir`
+    ///     is not on the wire. No consumer reads it on this kind today, which
+    ///     is the only reason it costs nothing.
     ///   * `StaminaDenied` carries no slot at all (it reaches its owner and
     ///     nobody else), so `localPlayerIndex` is the only honest answer, and
     ///     that is why the seat is a PARAMETER of this call.

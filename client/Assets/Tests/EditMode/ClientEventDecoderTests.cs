@@ -80,6 +80,28 @@ namespace Ring.Simulation.Tests
             return e;
         }
 
+        /// The same decode, keeping the SECOND output — the decoded payload
+        /// the caller routes by. Separate from `Decode` above so the tests
+        /// that are about the `SimEvent` are not made to mention it (fix-round
+        /// 1, G-3).
+        static SimEvent DecodeWithPayload(SnapshotEventKind kind, byte[] bytes, in SimConfig cfg,
+            out SnapshotEventPayload payload)
+        {
+            Assert.IsTrue(ClientEventDecoder.TryDecode(OriginTick, Record(kind), bytes, in cfg,
+                    LocalSlot, out SimEvent e, out payload, out SnapshotBlockError refusal),
+                $"fixture premise: a well-formed {kind} payload decodes; refusal was {refusal}");
+            return e;
+        }
+
+        /// Half a `Quantize.Unit` step against the same `max` the codec was
+        /// given — the most a round trip through that codec can be off by
+        /// (`Quantize`'s own doc: round-to-nearest never exceeds half its own
+        /// cell). An expression rather than a hand-picked number, so a change
+        /// to the fixture's `MaxHp`/`MaxAimHeight`/`StaminaMax` moves the
+        /// tolerance with it instead of leaving it silently loose or silently
+        /// impossible (fix-round 1, M-8).
+        static float UnitTolerance(float max) => max / 255f / 2f;
+
         // ------------------------------------------------------------------
         // The two wire kinds one ProjectileFired leaves as.
         // ------------------------------------------------------------------
@@ -111,6 +133,11 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(ProjectileOwner.Player, e.Owner,
                 "SimEvent.Owner must be Player for a round a player fired — the casing and the "
                 + "shot clip are gated on exactly this field");
+            // The tolerance here is float noise and deliberately far TIGHTER
+            // than `Quantize.Dir`'s own step (2*pi/256 ~ 0.0245 rad): the
+            // fixture's `(0, 1)` is exactly `pi/2`, which lands on code 192
+            // and decodes back to exactly `pi/2`, so a whole step of slack
+            // would accept the neighboring code as well (M-8).
             Assert.AreEqual(math.PI / 2f, e.Amount, 1e-3f,
                 "SimEvent.Amount must be the fire ANGLE in radians (atan2 of the direction the "
                 + "wire carried), not the speed and not zero");
@@ -162,6 +189,37 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0f, e.Amount, 0f,
                 "SimEvent.Amount must be exactly zero — the wire carries no direction for a shot "
                 + "that was only heard, and any angle here would be invented");
+            Assert.AreEqual(ProjectileOwner.Player, e.Owner,
+                "SimEvent.Owner must be Player for a shot a player fired — the positive witness "
+                + "for the mob case beside it (fix-round 1, G-4), and the field the casing and "
+                + "the shot clip are gated on");
+        }
+
+        [Test]
+        public void ShotHeard_FromAGunnersRound_IsOwnedByTheMob()
+        {
+            // A SEPARATE LINE OF THE DECODER from the ProjectileSpawned case
+            // above, and that is the whole point of this test: the audible
+            // variant derives `Owner` in its own branch, so the covered branch
+            // next door proves nothing about it (fix-round 1, G-4). What the
+            // wrong answer costs is bd app-ai2, reached from the other side: a
+            // gunner's shot that this client only HEARD, read as the player's,
+            // drops the player's shell casing on the floor for the rest of the
+            // match, plays the player's own shot clip out of its
+            // MinSfxInterval budget, and can eat the predicted-shot latch.
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.ShotHeard);
+            SnapshotEvents.WriteShotHeard(bytes, ProjectileIds.NoOwner, in cfg);
+
+            SimEvent e = Decode(SnapshotEventKind.ShotHeard, bytes, in cfg);
+
+            Assert.AreEqual(ProjectileOwner.Mob, e.Owner,
+                "SimEvent.Owner must be Mob when the one payload byte named no player — "
+                + "ProjectileOwner.Player is the enum's zero, so a branch that forgot this line "
+                + "would report every heard gunshot as the player's own");
+            Assert.AreEqual(ProjectileIds.NoOwner, e.PlayerIndex,
+                "SimEvent.PlayerIndex must stay the no-owner sentinel rather than becoming a real "
+                + "seat");
         }
 
         // ------------------------------------------------------------------
@@ -187,7 +245,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(RoundId, e.EntityId,
                 "SimEvent.EntityId must be the ROUND for this ending — ProjectileBlocked has no "
                 + "victim, so the round keeps the primary field");
-            Assert.AreEqual(1.5f, e.Amount, 0.05f,
+            Assert.AreEqual(1.5f, e.Amount, UnitTolerance(cfg.Hero.MaxAimHeight),
                 "SimEvent.Amount must be the contact HEIGHT for this ending, which is what the "
                 + "spark is placed at");
         }
@@ -324,7 +382,7 @@ namespace Ring.Simulation.Tests
                 "SimEvent.PlayerIndex must be the VICTIM's slot too — the attacker is deliberately "
                 + "not reported for a damage/death pair");
             Assert.AreEqual(HitZone.Legs, e.Zone, "SimEvent.Zone");
-            Assert.AreEqual(25f, e.Amount, 1f,
+            Assert.AreEqual(25f, e.Amount, UnitTolerance(cfg.Hero.MaxHp),
                 "SimEvent.Amount must be the damage dealt, quantized against MaxHp");
             Assert.AreEqual(math.PI / 2f, math.atan2(e.HitDir.y, e.HitDir.x), 1e-3f,
                 "SimEvent.HitDir must be the blow's own direction — directional feedback reads it "
@@ -420,7 +478,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(LocalSlot, e.PlayerIndex,
                 "SimEvent.PlayerIndex must be THIS CLIENT's own seat — the payload carries no "
                 + "slot, so a decoder reading one out of it would report seat 0 for everybody");
-            Assert.AreEqual(20f, e.Amount, 1f,
+            Assert.AreEqual(20f, e.Amount, UnitTolerance(cfg.Hero.StaminaMax),
                 "SimEvent.Amount must be the stamina that was missing, quantized against StaminaMax");
         }
 
@@ -476,8 +534,75 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual((int)OriginTick, e.Tick,
                 "SimEvent.Tick must be the origin tick the caller passed in");
-            Assert.AreEqual(EventPos.x, e.Pos.x, 1e-4f, "SimEvent.Pos.x must be the RECORD's own");
-            Assert.AreEqual(EventPos.y, e.Pos.y, 1e-4f, "SimEvent.Pos.y must be the RECORD's own");
+            // Exactly, with no tolerance at all: the position is a struct copy
+            // out of the record and no codec stands between the two — the
+            // record's own `Pos` was decoded by `TryReadEventsBlock` long
+            // before this method saw it (M-8: there is no quantizer step here
+            // to express a tolerance in).
+            Assert.AreEqual(EventPos.x, e.Pos.x, 0f, "SimEvent.Pos.x must be the RECORD's own");
+            Assert.AreEqual(EventPos.y, e.Pos.y, 0f, "SimEvent.Pos.y must be the RECORD's own");
+        }
+
+        // ------------------------------------------------------------------
+        // The SECOND output: the decoded payload the caller routes by.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void ProjectileSpawned_HandsBackTheRoundAndTheShooterInThePayload()
+        {
+            // `out payload` is not a second copy of the event, and it is not
+            // decoration: `NetworkSimBackend.RouteToGhosts` confirms this
+            // client's own predicted tracer with `payload.Id` and gates that
+            // confirmation on `payload.PlayerIndex`. Both fields are zero in a
+            // `default` payload — and `GhostProjectiles.Confirm` matches
+            // POSITIONALLY against the oldest unconfirmed ghost, so a zeroed
+            // seat would pair another player's round with this client's tracer
+            // for every client sitting in seat 0 (fix-round 1, G-3).
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.ProjectileSpawned);
+            SnapshotEvents.WriteProjectileSpawned(bytes, RoundId, OtherSlot,
+                new float2(0f, 1f), horizSpeed: 20f, velZ: 0f, height: 1.2f, in cfg);
+
+            SimEvent e = DecodeWithPayload(SnapshotEventKind.ProjectileSpawned, bytes, in cfg,
+                out SnapshotEventPayload payload);
+
+            Assert.AreEqual(RoundId, payload.Id,
+                "SnapshotEventPayload.Id must be the ROUND's id — the ghost registry is keyed by "
+                + "it, and a zero confirms a ghost against a round that does not exist");
+            Assert.AreEqual(OtherSlot, payload.PlayerIndex,
+                "SnapshotEventPayload.PlayerIndex must be the SHOOTER — it is the whole gate on "
+                + "confirming a tracer as this client's own");
+            Assert.AreEqual(RoundId, e.EntityId,
+                "witness: the SimEvent is filled as well, so the two assertions above are about "
+                + "the second output rather than about a decode that failed");
+        }
+
+        [Test]
+        public void ProjectileEnded_HandsBackTheRoundInThePayloadWhereTheSimEventCannot()
+        {
+            // The same output, for the ending — and here it is the only place
+            // the round survives in a shape the caller can use without knowing
+            // which ending arrived: `SimEvent.EntityId` is 0 for a HitMob
+            // ending (the victim is not on the wire) and the round has moved
+            // to `SecondaryEntityId`. `RouteToGhosts` retires the tracer by
+            // `payload.Id` for all four endings alike.
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.ProjectileEnded);
+            SnapshotEvents.WriteProjectileEnded(bytes, RoundId, ProjectileEndKind.HitMob,
+                HitZone.Head, height: 0f, in cfg);
+
+            SimEvent e = DecodeWithPayload(SnapshotEventKind.ProjectileEnded, bytes, in cfg,
+                out SnapshotEventPayload payload);
+
+            Assert.AreEqual(RoundId, payload.Id,
+                "SnapshotEventPayload.Id must be the ROUND's id for an ending too — it is what "
+                + "the tracer is retired by, and a zero leaves it burning until its own timeout");
+            Assert.AreEqual(ProjectileEndKind.HitMob, payload.EndKind,
+                "SnapshotEventPayload.EndKind must survive into the payload: it is the "
+                + "discriminator four sim kinds arrive under");
+            Assert.AreEqual(0, e.EntityId,
+                "witness: the SimEvent's own primary field IS 0 for this ending, which is exactly "
+                + "why the caller reads the payload instead of the event");
         }
 
         // ------------------------------------------------------------------
