@@ -500,13 +500,36 @@ namespace Ring.Presentation.Net
             // facade has already latched, and the facade clears that latch only
             // after a flush.
             //
-            // AS EARLY IN THE FRAME AS THIS CLASS IS REACHED, because the
+            // AS EARLY IN THE FRAME AS THIS CLASS IS REACHED — AND STILL ONE
+            // FRAME BEHIND THE TICK THAT READS IT (Stage 2 Task 44e fix-round
+            // 1, G-2, correcting what these lines used to claim). The
             // controller's own tick — `TimeManager_OnTick` -> `BuildReplicate`
-            // -> `_core.PendingInput` — is what turns it into a replicate.
-            // `SimulationRunner` is pinned at `DefaultExecutionOrder(-50)` and
-            // `NetworkManager` runs at the default 0, so this call precedes
-            // FishNet's own tick within a frame; that is an ordering the scene
-            // arranges, not something this class can assert.
+            // -> `_core.PendingInput` — is what turns this frame into a
+            // replicate, and on any frame that ticks, that tick has already
+            // run by the time this line does. The earlier text said
+            // `NetworkManager` sat at the default order of 0 and that the
+            // scene therefore placed this call ahead of FishNet's tick; both
+            // halves were wrong. `NetworkManager`, and the reader loop
+            // FishNet's own `TimeManager` adds beside itself to drive the tick,
+            // are each declared `[DefaultExecutionOrder(short.MinValue)]` — the
+            // floor of the scale — while `SimulationRunner`, whose `Update`
+            // reaches this method, is pinned at -50. FishNet's tick loop
+            // therefore runs BEFORE the facade every frame, and no scene
+            // arranges otherwise: the floor cannot be undercut, and the
+            // per-script order table lives in `ProjectSettings`.
+            //
+            // WHAT IT COSTS, AND WHERE IT IS FIXED. `BuildReplicate` reads what
+            // this line wrote on the PREVIOUS render frame, so the local
+            // player's own input reaches the server one render frame late —
+            // about 16 ms at 60 fps, up to a whole tick once the frame rate
+            // falls to the tick rate — on top of the network's own delay, and
+            // under the 80 ms RTT of Critical Rule 7 the two read the same on a
+            // playtest. The cure is not an ordering but a feed point: task
+            // `app-b3z` moves this call to FishNet's `TimeManager.OnPreTick`,
+            // raised inside the tick loop immediately before `OnTick`, after
+            // which the execution-order table stops meaning anything here at
+            // all. Until that task lands the line below stands, and so does the
+            // frame of lag.
             if (_controller != null) _controller.SetPendingInput(in frame);
 
             // The predicted pair for the local slot, sampled once per
@@ -576,6 +599,33 @@ namespace Ring.Presentation.Net
         /// `Restart`. `SyncMatchEpoch` therefore arms this for an epoch change
         /// away from a non-zero epoch and for nothing else.
         public event System.Action MatchRestarted;
+
+        /// Whether `Restart` below has run to completion on THIS instance —
+        /// which is to say whether the things it builds exist: the per-match
+        /// seams, the registered snapshot channel, and the `ClientMatchLink`
+        /// that sends the hello.
+        ///
+        /// IT IS HERE FOR THE BOOTSTRAP THAT OPENS THE CONNECTION (Stage 2 Task
+        /// 44e fix-round 1, G-1). That component installs this backend from its
+        /// `Awake` and dials the server from its `Start`, and between the two
+        /// the facade's own `Awake` is supposed to have restarted this
+        /// instance. "Supposed to" is the part worth asking about: the facade's
+        /// `Awake` does not run at all on a deactivated object and does not
+        /// finish if anything it builds first throws, and a connection opened
+        /// with no link behind it sends no hello — after which the server waits
+        /// out its join timeout and exits. This member is how that is checked
+        /// instead of assumed.
+        ///
+        /// IT READS THE LINK, NOT THE CONFIG LATCH, though the same method sets
+        /// that latch a few lines earlier. The link is built LAST, so its
+        /// existence is the narrower answer and the one the caller is actually
+        /// asking for: a `Restart` that threw partway through would leave the
+        /// latch set and the link null.
+        ///
+        /// IT IS NOT A SEAT AT THE SERVER AND NOT A MATCH. On this backend a
+        /// match begins on the server's welcome; true here says only that this
+        /// side has been assembled and may now dial.
+        public bool HasRestarted => _link != null;
 
         /// Records the match's balance numbers and builds everything this
         /// backend runs on — ON THE FIRST CALL, and on no other.
@@ -766,17 +816,20 @@ namespace Ring.Presentation.Net
         /// `NetworkManager` would leave both subscribed and the stale one
         /// would keep decoding into a ring nobody reads.
         ///
-        /// NOBODY IS OBLIGED TO CALL IT YET, AND THAT IS SAID HERE RATHER THAN
-        /// LEFT TO BE FOUND. `ISimBackend` has no member for it, so the facade
-        /// cannot call it even in principle, and nothing in the project
-        /// constructs this class — that caller is Task 44e's. The install seam
-        /// itself exists as of Task 44d and is written so this obligation
-        /// cannot arise by accident: `SimulationRunner.TryUseBackend` refuses a
-        /// second install, so the only backend a successful call replaces is a
-        /// `LocalSimBackend` holding no subscription. What is left for a caller
-        /// that ever does discard an instance of THIS class — a scene teardown,
-        /// a future reconnect — is the plain rule: unregister before dropping
-        /// the reference, because FishNet keys handlers by delegate identity.
+        /// THE CALLER EXISTS AS OF TASK 44e, AND IT IS THE ONLY ONE (Stage 2
+        /// Task 44e fix-round 1: this paragraph used to say that nothing in the
+        /// project constructed this class, which stopped being true the moment
+        /// that task's bootstrap did). `ClientNetworkBootstrap` calls this on
+        /// both of its exits — a backend the facade refused, and its own
+        /// teardown — while `ISimBackend` still has no member for it, so the
+        /// facade cannot call it even in principle. The install seam is written
+        /// so the obligation cannot arise by accident:
+        /// `SimulationRunner.TryUseBackend` refuses a second install, so the
+        /// only backend a successful call replaces is a `LocalSimBackend`
+        /// holding no subscription. What is left for any caller that discards
+        /// an instance of THIS class — a scene teardown, a future reconnect —
+        /// is the plain rule: unregister before dropping the reference, because
+        /// FishNet keys handlers by delegate identity.
         public void Unregister()
         {
             if (_registered)

@@ -190,9 +190,34 @@ namespace Ring.Editor
         /// be added at run time in a form the Inspector can be trusted to
         /// show. `ClientNetworkBootstrap` is inert without its command-line
         /// switch — see its own doc — and the manager it leaves idle changes
-        /// nothing a solo session reads: FishNet's headless auto-start is
-        /// compiled out of a non-server build, and `TimeManager`'s physics
+        /// ALMOST nothing a solo session reads: FishNet's headless auto-start
+        /// is compiled out of a non-server build, and `TimeManager`'s physics
         /// mode stays the package default, which is Unity's own.
+        ///
+        /// ALMOST. THE EXCEPTION IS `Application.runInBackground` (Task 44e
+        /// fix-round 1, correcting this paragraph's own earlier claim that a
+        /// solo session read nothing at all differently). `NetworkManager`
+        /// ships with its own run-in-background field ON and writes that field
+        /// into `Application.runInBackground` from `Awake` and again from every
+        /// `LateUpdate` — the package's comment there says the repetition is
+        /// deliberate. This project's `ProjectSettings` has the setting OFF, so
+        /// on any build carrying this scene the setting is effectively on
+        /// instead: a solo session keeps stepping while its window is out of
+        /// focus, where before it stopped. Run-time code cannot take that back,
+        /// because the next `LateUpdate` writes it again; the field in the
+        /// scene is the only place the answer lives.
+        ///
+        /// IT IS LEFT ON BY THE OWNER'S DECISION (2026-08-10), AND THE PRICE IS
+        /// NAMED HERE RATHER THAN FOUND LATER. Milestone В1 runs two clients
+        /// out of one build on one desktop, where at most one of them has
+        /// focus; an unfocused client that stopped stepping would stop
+        /// answering the server and be dropped on its timeout, so for В1 this
+        /// value is a requirement and not a side effect. What it costs: solo no
+        /// longer pauses when the window is minimized, and the dev overlay's
+        /// `DroppedTime` — which recorded a whole idle stretch as one enormous
+        /// frame the moment focus came back — stops seeing window idle on this
+        /// scene at all. That counter is task `app-c3m`'s subject, and this is
+        /// one of the two sources it used to add up.
         [MenuItem("Ring/Bootstrap/Stage 2 Client Networking")]
         public static void ApplyClientNetworking()
         {

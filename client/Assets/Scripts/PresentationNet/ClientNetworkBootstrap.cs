@@ -23,14 +23,18 @@ namespace Ring.Presentation.Net
     /// and the component returns before it touches `ClientManager`,
     /// `NetworkSimBackend` or the console.
     ///
-    /// A MALFORMED VALUE REFUSES THE NETWORKED LAUNCH RATHER THAN GUESSING
-    /// (Р82: a refusal is a value and a log, never a throw). The alternative
-    /// — keep the switch, substitute a default for the part that did not
-    /// parse — would connect somewhere other than where the operator typed,
-    /// which is the one outcome nobody can diagnose from a screenshot of the
-    /// game. Refusing leaves a solo session, exactly as if the switch had not
-    /// been passed, plus one line naming the argument and what was wrong with
-    /// it.
+    /// A MALFORMED VALUE — OR A SWITCH GIVEN TWICE — REFUSES THE NETWORKED
+    /// LAUNCH RATHER THAN GUESSING (Р82: a refusal is a value and a log, never
+    /// a throw). The alternative — keep the switch, substitute a default for
+    /// the part that did not parse — would connect somewhere other than where
+    /// the operator typed, which is the one outcome nobody can diagnose from a
+    /// screenshot of the game. A repeated switch reached that same outcome by
+    /// another road until this round (Stage 2 Task 44e fix-round 1, M-1): the
+    /// last copy won in silence, so `-ring-connect 10.0.0.5:7778
+    /// -ring-connect` dialed the default and said nothing about the address it
+    /// dropped. Refusing leaves a solo session, exactly as if the switch had
+    /// not been passed, plus one line naming the argument and what was wrong
+    /// with it.
     ///
     /// WHY A COMMAND-LINE SWITCH AND NOT A CHECKBOX IN THE SCENE. Milestone
     /// В1 is "two clients locally": both come out of ONE build, and a scene
@@ -92,14 +96,24 @@ namespace Ring.Presentation.Net
         /// address explicitly instead of leaving the transport's field alone.
         public const string DefaultHost = "127.0.0.1";
 
-        /// The port the dev server binds. It is a second home of a number
-        /// that already has one — `MatchConfigLoader`'s dev default, which
-        /// the container runbook's `-p 7777:7777/udp` also copies — and the
-        /// duplication is deliberate rather than overlooked: that constant is
-        /// private to `Ring.Server`, an assembly the client must not
-        /// reference, and widening it would be a change in a path this task
-        /// may not touch. Changing the dev port therefore means changing it
-        /// here too, and this sentence is the only warning there is.
+        /// The port the dev server binds. It is one home of a number that has
+        /// several, and the list is given in full because a partial one reads
+        /// as a promise (Stage 2 Task 44e fix-round 1, M-5). Besides this
+        /// constant: `MatchConfigLoader`'s private dev-default, which is the
+        /// original; the container runbook's `-p 7777:7777/udp`, which copies
+        /// it; and the server-side test in `MatchConfigTests` that pins the dev
+        /// default's port, which would fail if only the loader moved. That same
+        /// test file also passes the number as a sample value in JSON fixtures
+        /// — those are not homes, but a grep for the digits will list them
+        /// beside the ones that are.
+        ///
+        /// The duplication is deliberate rather than overlooked: the server's
+        /// constant is private to `Ring.Server`, an assembly the client must
+        /// not reference, and widening it is a change in a path Task 44e may
+        /// not touch. One real home would take a public constant in an assembly
+        /// both sides already see plus an edit on the server side — the owner's
+        /// call, not this file's. Until then, changing the dev port means
+        /// changing every place named above.
         ///
         /// NOT `Tugboat`'s OWN DEFAULT, WHICH IS A DIFFERENT NUMBER. The
         /// transport ships `7770`. A client that let the transport keep its
@@ -153,32 +167,64 @@ namespace Ring.Presentation.Net
             if (commandLine == null) return default;
 
             bool networked = false;
+            bool sawPlayerId = false;
+            bool sawJoinToken = false;
             string endpoint = null;
             string playerId = null;
             string joinToken = null;
+            // The FIRST switch seen twice, or null. A name rather than a count,
+            // because the name is what the refusal prints and what the operator
+            // has to go and find in the launch script.
+            string repeated = null;
 
             for (int i = 0; i < commandLine.Length; i++)
             {
                 string arg = commandLine[i];
                 if (arg == ConnectArgument)
                 {
+                    if (networked && repeated == null) repeated = ConnectArgument;
                     networked = true;
                     endpoint = ValueAt(commandLine, i);
                 }
                 else if (arg == PlayerIdArgument)
                 {
+                    if (sawPlayerId && repeated == null) repeated = PlayerIdArgument;
+                    sawPlayerId = true;
                     playerId = ValueAt(commandLine, i);
                 }
                 else if (arg == JoinTokenArgument)
                 {
+                    if (sawJoinToken && repeated == null) repeated = JoinTokenArgument;
+                    sawJoinToken = true;
                     joinToken = ValueAt(commandLine, i);
                 }
             }
 
             // The other two switches are meaningless without this one, and
             // saying so would mean printing a line on a launch that asked for
-            // nothing. Silence is the contract of a solo start.
+            // nothing. Silence is the contract of a solo start — and it holds
+            // even when one of those two was the switch given twice, which is
+            // why this stands above the refusal below.
             if (!networked) return default;
+
+            // A REPEATED SWITCH IS REFUSED, NOT RESOLVED (Stage 2 Task 44e
+            // fix-round 1, M-1). Letting the last copy win is what the loop
+            // above does by itself, and it was the quiet form of the exact
+            // substitution this type's doc refuses: `-ring-connect
+            // 10.0.0.5:7778 -ring-connect` leaves a null endpoint, takes both
+            // defaults and dials the loopback, with the operator's address
+            // gone and no line about it anywhere. Letting the FIRST copy win —
+            // the shape `MatchConfigLoader` uses to order its sources — would
+            // still be this function choosing between two things the command
+            // line asked for. Milestone В1 is where the shape arises: a launch
+            // script assembled from a shared tail and a per-machine profile can
+            // carry the switch in both halves, and the price of guessing there
+            // is a client quietly connected to the wrong host.
+            if (repeated != null)
+            {
+                return Refuse($"{repeated} was given more than once, and which copy should win is "
+                    + "not something this parse invents. Pass it exactly once.");
+            }
 
             string host = DefaultHost;
             ushort port = DefaultPort;
@@ -354,6 +400,28 @@ namespace Ring.Presentation.Net
                 return;
             }
 
+            // A DISABLED COMPONENT STILL RECEIVES `Awake`, AND ITS `Start`
+            // WAITS FOR SOMEONE TO ENABLE IT (Stage 2 Task 44e fix-round 1,
+            // M-4). Installing from here and never reaching step 4 is the one
+            // shape of this class that fails in silence: the facade would run
+            // its match on a networked backend nobody dialed a server for, and
+            // the player would sit in front of an empty world with a clean
+            // console. The mirror case — a facade that never started — is
+            // caught by the gate in `Start`; this is the same guard for this
+            // side, and the asymmetry is the whole reason it is here. Nothing
+            // in the project disables this component (`StageTwoSceneBootstrap`
+            // writes it enabled), so what this catches is a hand-edited scene,
+            // which the stage's own rule forbids anyway.
+            if (!enabled)
+            {
+                Debug.LogError("ClientNetworkBootstrap: this component is disabled, so the Start "
+                    + "that opens the connection does not run and the networked backend would sit "
+                    + "behind the facade with no server on the other end. Nothing was installed; "
+                    + "this launch runs solo. Re-run Ring/Bootstrap/Stage 2 Client Networking, "
+                    + "which writes the component enabled.");
+                return;
+            }
+
             _nm = InstanceFinder.NetworkManager;
             if (_nm == null)
             {
@@ -404,21 +472,40 @@ namespace Ring.Presentation.Net
             if (_backend == null) return; // solo, or the install was refused
 
             // Step 4, with the ordering obligation checked rather than
-            // narrated. `SimulationRunner.Restart` records `Seed` only after
-            // the backend accepted the restart, and `RestartNewSeed` seeds it
-            // from the wall clock, so a non-zero `Seed` is this side's
-            // evidence that `NetworkSimBackend.Restart` has run — which is
-            // what built `ClientMatchLink` and registered the snapshot
-            // channel. A zero here means the facade's `Awake` never happened
-            // (a deactivated object is the way that occurs), and opening the
-            // connection then would send a hello nobody assembled, leaving
-            // the server to wait out `JoinTimeoutSeconds` and exit.
-            if (_runner.Seed == 0)
+            // narrated. `NetworkSimBackend.HasRestarted` is the backend's own
+            // answer about the backend's own state — its `Restart` ran to the
+            // end, which is what built `ClientMatchLink` and registered the
+            // snapshot channel — asked of the very instance this component
+            // installed in `Awake`. Nothing in the question belongs to anyone
+            // else.
+            //
+            // NOT `SimulationRunner.Seed`, THOUGH THAT ANSWERED IT TODAY
+            // (Stage 2 Task 44e fix-round 1, G-1). The facade records `Seed`
+            // only after the backend accepts a restart and `RestartNewSeed`
+            // takes it from the wall clock, so a non-zero seed did follow — but
+            // it followed from a number that is not this component's business
+            // and is on its way to changing hands. Zero is a legal match seed
+            // (Р42), and spec §3.12 has the networked client take `Seed` from
+            // the server's welcome; on the day that lands, the seed is zero
+            // here by construction, this gate refuses EVERY networked launch,
+            // and the welcome that would have set it cannot arrive, because the
+            // connection it arrives over is the one being refused.
+            //
+            // FALSE HERE HAS MORE THAN ONE CAUSE, AND THE LINE SAYS SO. The
+            // facade's `Awake` does not run on a deactivated object; it also
+            // does not finish if what it builds first throws — an unassigned
+            // input-actions asset, an incomplete set of balance assets — and
+            // that throw leaves its own line in the console just above this
+            // one. Opening the connection either way would send a hello nobody
+            // assembled and leave the server to wait out `JoinTimeoutSeconds`
+            // and exit.
+            if (!_backend.HasRestarted)
             {
-                Debug.LogError("ClientNetworkBootstrap: the facade has not started a match yet, so "
+                Debug.LogError("ClientNetworkBootstrap: the facade never restarted this backend, so "
                     + "the link that sends the hello does not exist. Not opening the connection — "
                     + "a connection without it would be silence the server can only answer with a "
-                    + "join timeout. Check that the Simulation object is active in the scene.");
+                    + "join timeout. Look just above for an exception out of SimulationRunner.Awake, "
+                    + "and check that the Simulation object is active in the scene.");
                 return;
             }
 
@@ -476,15 +563,32 @@ namespace Ring.Presentation.Net
             _tornDown = true;
 
             if (_backend == null) return;
+
+            // Unity's fake-null, and ABOVE BOTH USES RATHER THAN IN FRONT OF
+            // THE SECOND (Stage 2 Task 44e fix-round 1, M-3). The manager can
+            // in principle already be gone on a scene teardown that destroyed
+            // it first, and asking a destroyed object to stop a connection is a
+            // NullReferenceException rather than a no-op — but `Unregister`
+            // below reaches through the same reference first (the backend drops
+            // its snapshot handler, and the `ClientMatchLink` it owns drops
+            // four broadcasts and a connection-state subscription), so a guard
+            // in front of `StopConnection` alone covered the LAST dereference
+            // and not the earliest. With the manager gone there is nothing to
+            // unsubscribe from either: its handler tables went with it.
+            //
+            // The scenario is close to unreachable, which is why this is one
+            // guard and not a rescue: FishNet marks the manager
+            // `DontDestroyOnLoad`, so unloading the scene does not take it, and
+            // quitting the player raises `OnApplicationQuit` first — with
+            // everything still alive — which latches `_tornDown` and makes the
+            // later `OnDestroy` a no-op.
+            if (_nm == null) return;
+
             _backend.Unregister();
 
             if (!_connectionOpen) return;
             _connectionOpen = false;
-            // Unity's fake-null: the manager can already be gone on a scene
-            // teardown that destroyed it first, and asking a destroyed object
-            // to stop a connection is a NullReferenceException rather than a
-            // no-op.
-            if (_nm != null) _nm.ClientManager.StopConnection();
+            _nm.ClientManager.StopConnection();
         }
     }
 }
