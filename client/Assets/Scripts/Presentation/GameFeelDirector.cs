@@ -12,7 +12,7 @@ namespace Ring.Presentation
     /// class in Presentation.
     ///
     /// Architecture (П-7): `SimulationRunner.RenderPrev`/`RenderCurr`/
-    /// `RenderAlpha` are the SOLE point `ViewRegistry`/`PlayerView`/`CameraRig`
+    /// `RenderAlpha` are the SOLE point `ViewRegistry`/`CameraRig`
     /// read for interpolation — none of them ever check `HitstopActive` or
     /// branch on hitstop at all. This class is the only thing that ever calls
     /// `SimulationRunner.FreezeRender`/`UnfreezeRender`, so "does hitstop affect
@@ -73,12 +73,6 @@ namespace Ring.Presentation
     /// hitstop or paused by anything — so a shake already in flight when a
     /// hitstop freeze or the death overlay hits keeps reading live instead of
     /// stalling with the rest of the frame.
-    ///
-    /// `GameFeelConfig.ExtrapolateLocalPlayer` is deliberately left unconsumed
-    /// here: no spec text ties it to a concrete mechanic, and inventing one
-    /// risks contradicting the one hard rule above (`PlayerView` reads ONLY
-    /// `RenderAlpha`, no per-class special casing) — left documented as still
-    /// reserved rather than guessed at.
     public sealed class GameFeelDirector : MonoBehaviour
     {
         const float BudgetWindowSeconds = 1f;

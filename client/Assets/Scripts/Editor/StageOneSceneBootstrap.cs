@@ -322,6 +322,10 @@ namespace Ring.Editor
         // this is the SOLE place the pair is chosen.
         const string ChaserModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/George.fbx";
         const string GunnerModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/Leela.fbx";
+        // Stage 2 Task 45a (spec §3.12): the collector doll is a pooled prefab
+        // now, one instance per player slot, rented by `ViewRegistry` — the
+        // scene's own `Player` object is retired in `Apply`.
+        const string PlayerDollPrefabPath = PrefabsDir + "/PlayerDollView.prefab";
         const string MobChaserPrefabPath = PrefabsDir + "/MobChaserView.prefab";
         const string MobGunnerPrefabPath = PrefabsDir + "/MobGunnerView.prefab";
         const string CorpseMechPrefabPath = PrefabsDir + "/CorpseMechView.prefab";
@@ -488,8 +492,9 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `HeadHoverPulseAmp` as of В3 fix-wave 2 —
-            // was `AimRayHeadAlphaBoost` (В3 fix-wave 1) before that,
+            // field (GameFeelConfig: `RemotePlayerEmission` as of Stage 2 Task
+            // 45a — was `HeadHoverPulseAmp` (В3 fix-wave 2) before that,
+            // `AimRayHeadAlphaBoost` (В3 fix-wave 1) before THAT,
             // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
             // field's own doc for the fuller history; HeroConfig's marker is
@@ -507,7 +512,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "HeadHoverPulseAmp"); // В3 fix-wave 2
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "RemotePlayerEmission"); // Stage 2 Task 45a
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "PlayerSpawnRingFrac"); // Stage 2 Task 9
             // WaveConfig joins the marker mechanism for the first time in Stage 2
             // Task 16, with PerPlayerCountFrac (the class's newest field) as its
@@ -687,133 +692,20 @@ namespace Ring.Editor
             // the base emissive color those numbers scale.
             Material aimRayMat = GetOrCreateUnlitMaterial("AimRayEmissive", new Color(0.6f, 2.4f, 3.2f));
 
-            GameObject playerGo = EditorBootstrapUtils.FindRootObject(scene, PlayerObjectName);
-            if (playerGo == null)
+            // Stage 2 Task 45a (spec §3.12): the scene's `Player` object is
+            // retired outright — every doll in the match, this client's own
+            // included, is now rented from ONE pooled prefab by `ViewRegistry`
+            // (GetOrCreatePlayerDollPrefab below). Keeping a scene-resident doll
+            // for slot 0 would mean two homes for one concept: a doll wired to
+            // `SimulationRunner`/`AimProvider`/`GameFeelConfig` for the local
+            // player and a reference-free clone for everybody else. The
+            // existence-guard is inverted here, exactly like the retired
+            // `PracticeTargets` object below: PRESENCE, not absence, is what
+            // makes the scene dirty.
+            GameObject stalePlayerGo = EditorBootstrapUtils.FindRootObject(scene, PlayerObjectName);
+            if (stalePlayerGo != null)
             {
-                playerGo = new GameObject(PlayerObjectName);
-                sceneDirty = true;
-            }
-            // Self-heal an already-committed E1 capsule: since assets phase B
-            // (spec §3.2) the root carries no renderer of its own — the doll
-            // lives on the "Visual" child instead (EnsureVisual below).
-            MeshRenderer playerMeshRenderer = playerGo.GetComponent<MeshRenderer>();
-            if (playerMeshRenderer != null)
-            {
-                Object.DestroyImmediate(playerMeshRenderer);
-                sceneDirty = true;
-            }
-            MeshFilter playerMeshFilter = playerGo.GetComponent<MeshFilter>();
-            if (playerMeshFilter != null)
-            {
-                Object.DestroyImmediate(playerMeshFilter);
-                sceneDirty = true;
-            }
-            PlayerView playerView = playerGo.GetComponent<PlayerView>();
-            if (playerView == null)
-            {
-                playerView = playerGo.AddComponent<PlayerView>();
-                sceneDirty = true;
-            }
-            var playerSo = new SerializedObject(playerView);
-            bool playerRefsChanged = false;
-            playerRefsChanged |= EditorBootstrapUtils.SetRef(playerSo, "_runner", runner);
-            if (playerRefsChanged)
-            {
-                playerSo.ApplyModifiedPropertiesWithoutUndo();
-                sceneDirty = true;
-            }
-
-            // Task 19 (spec QA7/QD1): the player doll carries the same
-            // AimProxy_Legs/Body/Head belts as the mob archetypes, sized from
-            // HeroConfig's own zone-geometry fields — spec Interfaces treats
-            // every hittable actor's proxy the same way; this task wires only
-            // the local player's own AimProvider, but the layer/geometry
-            // contract itself is symmetric across player and mobs.
-            sceneDirty |= EnsureAimProxyChildren(playerGo.transform,
-                hero.LegsTop, hero.BodyTop, hero.HeadTop, hero.Radius, gameFeel.AimProxyHeadRadiusFrac);
-
-            // Assets phase B (spec §3.2, task 8): the collector doll — a named
-            // "Visual" child instantiated from the UAL1 doll FBX, driven by
-            // PlayerVisual (facing/animation) instead of the root transform
-            // itself (PlayerView doc).
-            bool playerVisualChanged = false;
-            GameObject playerVisualGo = EditorBootstrapUtils.EnsureVisual(playerGo,
-                ThirdPartyAssetPostprocessor.DollPath,
-                ThirdPartyAnimatorBootstrap.PlayerControllerPath,
-                gameFeel.PlayerVisualScale, ref playerVisualChanged);
-            sceneDirty |= playerVisualChanged;
-
-            PlayerVisual playerVisual = playerGo.GetComponent<PlayerVisual>();
-            if (playerVisual == null)
-            {
-                playerVisual = playerGo.AddComponent<PlayerVisual>();
-                sceneDirty = true;
-            }
-            var playerVisualSo = new SerializedObject(playerVisual);
-            bool playerVisualRefsChanged = false;
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_runner", runner);
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_aimProvider", aimProvider);
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_gameFeel", gameFeel);
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_animator",
-                playerVisualGo.GetComponent<Animator>());
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_visual",
-                playerVisualGo.transform);
-            if (playerVisualRefsChanged)
-            {
-                playerVisualSo.ApplyModifiedPropertiesWithoutUndo();
-                sceneDirty = true;
-            }
-
-            // The gun: instantiated once as a child of the doll's RightHand
-            // bone, then write-if-different reconciled against
-            // GameFeelConfig's local transform every Apply — an owner's
-            // number tweak on the milestone Б1 playtest applies without
-            // tearing the object down and rebuilding it.
-            Animator dollAnimator = playerVisualGo.GetComponent<Animator>();
-            Transform hand = dollAnimator.GetBoneTransform(HumanBodyBones.RightHand);
-            if (hand == null)
-                throw new System.InvalidOperationException(
-                    "StageOneSceneBootstrap: doll has no RightHand bone.");
-            Transform gunTf = hand.Find(GunObjectName);
-            if (gunTf == null)
-            {
-                GameObject gunModel = AssetDatabase.LoadAssetAtPath<GameObject>(GunModelPath);
-                if (gunModel == null)
-                    throw new System.InvalidOperationException(
-                        "StageOneSceneBootstrap: no gun model at " + GunModelPath);
-                var gun = (GameObject)PrefabUtility.InstantiatePrefab(gunModel);
-                gun.name = GunObjectName;
-                gun.transform.SetParent(hand, false);
-                gunTf = gun.transform;
-                sceneDirty = true;
-            }
-
-            // playerVisual's _gun slot needs gunTf, which doesn't exist until
-            // here (this gun-block runs after the playerVisual wiring block
-            // above) — wired in its own mini-block rather than reordering
-            // either block, same |=/ApplyModifiedPropertiesWithoutUndo/
-            // sceneDirty shape as every other ref-wiring block in this method.
-            var playerVisualGunSo = new SerializedObject(playerVisual);
-            if (EditorBootstrapUtils.SetRef(playerVisualGunSo, "_gun", gunTf))
-            {
-                playerVisualGunSo.ApplyModifiedPropertiesWithoutUndo();
-                sceneDirty = true;
-            }
-
-            if (gunTf.localPosition != gameFeel.GunLocalPosition)
-            {
-                gunTf.localPosition = gameFeel.GunLocalPosition;
-                sceneDirty = true;
-            }
-            // Compare ROTATIONS, not euler read-backs: localEulerAngles returns values
-            // re-derived from the quaternion (normalized to [0;360)), so e.g. (0,-90,0)
-            // reads back as (0,270,0) and a naive != would re-dirty the scene on every
-            // Apply (audit fix ПБ19). Writing via localEulerAngles keeps the serialized
-            // euler hint consistent.
-            Quaternion gunTargetRotation = Quaternion.Euler(gameFeel.GunLocalEuler);
-            if (Quaternion.Angle(gunTf.localRotation, gunTargetRotation) > 1e-3f)
-            {
-                gunTf.localEulerAngles = gameFeel.GunLocalEuler;
+                Object.DestroyImmediate(stalePlayerGo);
                 sceneDirty = true;
             }
 
@@ -1268,6 +1160,13 @@ namespace Ring.Editor
                 gameFeel.AimProxyHeadRadiusFrac);
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
+            // Stage 2 Task 45a: the collector doll, same factory shape as the
+            // two mech archetypes above — it is a POOLED prefab now, one
+            // instance per player slot, and no longer a scene object.
+            PlayerView playerDollPrefab = GetOrCreatePlayerDollPrefab(
+                PlayerDollPrefabPath, gameFeel.PlayerVisualScale,
+                hero.LegsTop, hero.BodyTop, hero.HeadTop, hero.Radius,
+                gameFeel.AimProxyHeadRadiusFrac, gameFeel);
 
             GameObject viewsGo = EditorBootstrapUtils.FindRootObject(scene, ViewsObjectName);
             if (viewsGo == null)
@@ -1291,6 +1190,9 @@ namespace Ring.Editor
             // boost — same reference already wired into CrosshairView/AimRayView
             // above (`aimProvider` local var, still in scope).
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_aimProvider", aimProvider);
+            // Stage 2 Task 45a: the doll pool's own prefab slot, alongside the
+            // two mech archetypes and the projectile.
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_playerPrefab", playerDollPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_chaserPrefab", chaserPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gunnerPrefab", gunnerPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
@@ -1563,7 +1465,9 @@ namespace Ring.Editor
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_persistentProps", persistentProps);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_audioDirector", audioDirector);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_muzzleFlash", muzzleFlash);
-            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_playerVisual", playerVisual);
+            // Stage 2 Task 45a: the `_playerVisual` slot is gone — the doll's
+            // own fan-out place is now `ViewRegistry.HandlePlayerEvent`, which
+            // needs no second reference (`_viewRegistry` already wired below).
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_viewRegistry", viewRegistry);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_deathOverlay", deathOverlay);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_hud", hud); // Task 22
@@ -1887,6 +1791,138 @@ namespace Ring.Editor
                     bodyRadius, headRadiusFrac);
                 return go;
             });
+        }
+
+        /// Stage 2 Task 45a (spec §3.12): the collector doll prefab — the same
+        /// hierarchy the scene's retired `Player` object carried
+        /// (`PlayerView`/`PlayerVisual` on the root, a named `Visual` child off
+        /// the UAL1 doll FBX with its generated controller, the
+        /// `AimProxy_Legs/Body/Head` belts sized from `HeroConfig`'s own
+        /// zone geometry, and the pistol parented into the doll's `RightHand`
+        /// bone), plus the editor-only `PlayerGunTuner` that inherited the
+        /// owner's PlayMode gun workflow (Р97).
+        ///
+        /// Guarded by `PrefabVisualsMatch` (Б11) and self-healed on the
+        /// early-return path exactly like `GetOrCreateMobArchetypePrefab` above,
+        /// with ONE extra self-heal of its own: the gun's local pose. That is
+        /// the write-if-different reconciliation the scene block used to do on
+        /// every `Apply` (audit anchor A14) — it has to keep happening, because
+        /// what a BUILD ships is the pose baked into this prefab, while
+        /// `PlayerGunTuner`'s live push only exists in the Editor.
+        static PlayerView GetOrCreatePlayerDollPrefab(string prefabPath, float visualScale,
+            float legsTop, float bodyTop, float headTop, float bodyRadius,
+            float headRadiusFrac, GameFeelConfig gameFeel)
+        {
+            if (AssetDatabase.LoadAssetAtPath<PlayerView>(prefabPath) != null)
+            {
+                if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath,
+                        ("Visual", ThirdPartyAssetPostprocessor.DollPath)))
+                {
+                    SelfHealAimProxyOnPrefab(prefabPath, legsTop, bodyTop, headTop,
+                        bodyRadius, headRadiusFrac);
+                    SelfHealVisualScaleOnPrefab(prefabPath, "Visual", visualScale);
+                    SelfHealGunPoseOnPrefab(prefabPath, gameFeel);
+                    return AssetDatabase.LoadAssetAtPath<PlayerView>(prefabPath);
+                }
+                AssetDatabase.DeleteAsset(prefabPath); // doll swapped: rebuild; SetRef re-wires
+            }
+            return EditorBootstrapUtils.BuildPrefab<PlayerView>(prefabPath, () =>
+            {
+                var go = new GameObject(System.IO.Path.GetFileNameWithoutExtension(prefabPath));
+                bool changed = false;
+                GameObject visual = EditorBootstrapUtils.EnsureVisual(go,
+                    ThirdPartyAssetPostprocessor.DollPath,
+                    ThirdPartyAnimatorBootstrap.PlayerControllerPath, visualScale, ref changed);
+                go.AddComponent<PlayerView>();
+                PlayerVisual playerVisual = go.AddComponent<PlayerVisual>();
+                var visualSo = new SerializedObject(playerVisual);
+                EditorBootstrapUtils.SetRef(visualSo, "_animator", visual.GetComponent<Animator>());
+                EditorBootstrapUtils.SetRef(visualSo, "_visual", visual.transform);
+                visualSo.ApplyModifiedPropertiesWithoutUndo();
+                // Task 19: AimProxy_Legs/Body/Head siblings of Visual, at
+                // prefab-root local space (EnsureAimProxyChildren's own doc).
+                // Every doll carries them now, which is what lets a player be
+                // aimed AT — see AimProvider.TryAimProxy's own doc.
+                EnsureAimProxyChildren(go.transform, legsTop, bodyTop, headTop,
+                    bodyRadius, headRadiusFrac);
+
+                Transform hand = visual.GetComponent<Animator>()
+                    .GetBoneTransform(HumanBodyBones.RightHand);
+                if (hand == null)
+                    throw new System.InvalidOperationException(
+                        "StageOneSceneBootstrap: doll has no RightHand bone.");
+                GameObject gunModel = AssetDatabase.LoadAssetAtPath<GameObject>(GunModelPath);
+                if (gunModel == null)
+                    throw new System.InvalidOperationException(
+                        "StageOneSceneBootstrap: no gun model at " + GunModelPath);
+                var gun = (GameObject)PrefabUtility.InstantiatePrefab(gunModel);
+                gun.name = GunObjectName;
+                gun.transform.SetParent(hand, false);
+                gun.transform.localPosition = gameFeel.GunLocalPosition;
+                gun.transform.localEulerAngles = gameFeel.GunLocalEuler;
+
+                PlayerGunTuner tuner = go.AddComponent<PlayerGunTuner>();
+                var tunerSo = new SerializedObject(tuner);
+                EditorBootstrapUtils.SetRef(tunerSo, "_gameFeel", gameFeel);
+                EditorBootstrapUtils.SetRef(tunerSo, "_gun", gun.transform);
+                tunerSo.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
+
+        /// Stage 2 Task 45a: the gun-pose half of the doll prefab's self-heal —
+        /// the write-if-different reconciliation the scene block did on every
+        /// `Apply` before the doll became a prefab, moved here unchanged in
+        /// substance. Same `LoadPrefabContents`/`SaveAsPrefabAsset` shape as
+        /// `SelfHealAimProxyOnPrefab`/`SelfHealVisualScaleOnPrefab` next door,
+        /// and kept a separate method for the same reason those two are: one
+        /// self-heal, one concern.
+        static void SelfHealGunPoseOnPrefab(string prefabPath, GameFeelConfig gameFeel)
+        {
+            GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                Transform gun = FindDescendant(contents.transform, GunObjectName);
+                if (gun == null) return;
+                bool changed = false;
+                if (gun.localPosition != gameFeel.GunLocalPosition)
+                {
+                    gun.localPosition = gameFeel.GunLocalPosition;
+                    changed = true;
+                }
+                // Compare ROTATIONS, not euler read-backs: localEulerAngles returns values
+                // re-derived from the quaternion (normalized to [0;360)), so e.g. (0,-90,0)
+                // reads back as (0,270,0) and a naive != would re-dirty the prefab on every
+                // Apply (audit fix ПБ19). Writing via localEulerAngles keeps the serialized
+                // euler hint consistent.
+                if (Quaternion.Angle(gun.localRotation,
+                        Quaternion.Euler(gameFeel.GunLocalEuler)) > 1e-3f)
+                {
+                    gun.localEulerAngles = gameFeel.GunLocalEuler;
+                    changed = true;
+                }
+                if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        /// Depth-first search by name — the gun hangs off a humanoid bone whose
+        /// path inside the doll rig is the pack's business, not this file's, so
+        /// it cannot be reached by a fixed `Transform.Find` path the way every
+        /// other child in this file can.
+        static Transform FindDescendant(Transform root, string name)
+        {
+            for (int i = 0; i < root.childCount; i++)
+            {
+                Transform child = root.GetChild(i);
+                if (child.name == name) return child;
+                Transform found = FindDescendant(child, name);
+                if (found != null) return found;
+            }
+            return null;
         }
 
         /// Task 12 (assets phase B plan, spec §3.7/§3.11): the shared mech

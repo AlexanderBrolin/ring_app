@@ -32,7 +32,7 @@ namespace Ring.Presentation
     /// among same-order scripts. Verified safe for every other `Update`-phase
     /// reader of this runner: `GameFeelDirector.Update` only decays its own
     /// unscaledDeltaTime-driven timers (hitstop/trauma/shake/vignette), never
-    /// reads `_runner`'s per-frame state; `ViewRegistry`/`PlayerView`/`CameraRig`/
+    /// reads `_runner`'s per-frame state; `ViewRegistry`/`CameraRig`/
     /// `HudController`/`CrosshairView` all read via `LateUpdate` (already
     /// guaranteed to run after every `Update`, order or no); `DevOverlay`/
     /// `PauseController`/`DeathOverlayController`'s own `Update`s only poll
@@ -155,7 +155,7 @@ namespace Ring.Presentation
         public SimInput LastFrameInput { get; private set; }
 
         // Task 25 (Приложение П-7): the SOLE point every interpolating view
-        // (ViewRegistry, PlayerView, CameraRig) reads — `Prev`/`Curr`/`Alpha`
+        // (ViewRegistry, CameraRig) reads — `Prev`/`Curr`/`Alpha`
         // above are the raw double-buffer this class itself owns and keeps
         // advancing every tick no matter what (the simulation is never paused
         // for hitstop, spec §3.2/§3.11); `RenderPrev`/`RenderCurr`/`RenderAlpha`
@@ -178,8 +178,13 @@ namespace Ring.Presentation
         public float RenderAlpha { get; private set; }
 
         /// Interpolated player ground position of the RENDER pair (П-7): the single
-        /// shared formula for PlayerView/PlayerVisual/ViewRegistry — screen-space
-        /// consumers never re-derive it and never read each other's transforms.
+        /// shared formula every screen-space consumer of the local player's ground
+        /// position reads instead of re-deriving it or reading another view's
+        /// transform. Stage 2 Task 45a left it with one reader — `ViewRegistry`,
+        /// for `MobVisualParams.PlayerPos`: the player's own doll is pooled per
+        /// slot now and is positioned off `Players[i].Pos` by the same per-slot
+        /// lerp every other doll gets, which for `LocalPlayerIndex` is this exact
+        /// expression (`RenderSnapshot.Player` IS `Players[LocalPlayerIndex]`).
         public Vector3 RenderPlayerWorldPos => Vector3.Lerp(
             SimSpace.ToWorld(RenderPrev.Player.Pos),
             SimSpace.ToWorld(RenderCurr.Player.Pos), RenderAlpha);
@@ -407,8 +412,8 @@ namespace Ring.Presentation
         /// `RenderPrev` above hands out `_renderPrevFrozen` — the PREVIOUS
         /// match's deep copy — for as long as that window is open. A player
         /// hit shortly before a restart lands exactly there: the freeze is
-        /// already over, the ease back is not, and `CameraRig`/`PlayerView`
-        /// read the render pair with no `Ready` gate of their own.
+        /// already over, the ease back is not, and `CameraRig` reads the render
+        /// pair with no `Ready` gate of its own.
         ///
         /// It is deliberately not `UnfreezeRender`'s own job: that method is
         /// `GameFeelDirector`'s hook and its early return is correct there —

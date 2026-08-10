@@ -88,7 +88,6 @@ namespace Ring.Data
         [Range(1, 64)] public int BlockSparkBurstCount = 18;
 
         public bool ImmediateMuzzleFeedback = true;
-        public bool ExtrapolateLocalPlayer = false;
 
         // Assets phase B (spec §3.7): character-visual numbers. Scale fields are
         // bind-time (re-run the bootstrap / rebuild prefabs to apply); the rest are
@@ -98,8 +97,10 @@ namespace Ring.Data
         // `DashGlowSize` in turn until the Б1 fix-wave-3 field below superseded
         // THAT, and `CasingEjectSpeedMax` after that, then `AimDotScale`
         // (Task 17), then `SlideDustSize` (Task 22, spec Г6), then
-        // `LinkWindowFlashBoost` (В1 fix-wave 1) — `AimHoverGlowBoost` is the
-        // current marker (В1/В2 fix-wave 2), see its own doc.
+        // `LinkWindowFlashBoost` (В1 fix-wave 1), then `AimHoverGlowBoost`
+        // (В1/В2 fix-wave 2), then `AimRayHeadAlphaBoost` (В3 fix-wave 1), then
+        // `HeadHoverPulseAmp` (В3 fix-wave 2) — `RemotePlayerEmission` is the
+        // current marker (Stage 2 Task 45a), see its own doc.
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
         // I5 reviewer rec #5 (final review wave, app-n6g): this scale is NOT
@@ -144,8 +145,10 @@ namespace Ring.Data
         // bootstrap sync-marker key until the Б1 fix-wave-3 field below
         // superseded it, then `CasingEjectSpeedMax`, then `AimDotScale`
         // (Task 17), then `SlideDustSize` (Task 22, spec Г6), then
-        // `LinkWindowFlashBoost` (В1 fix-wave 1) — `AimHoverGlowBoost` is the
-        // current marker (В1/В2 fix-wave 2), see its own doc.
+        // `LinkWindowFlashBoost` (В1 fix-wave 1), then `AimHoverGlowBoost`
+        // (В1/В2 fix-wave 2), then `AimRayHeadAlphaBoost` (В3 fix-wave 1), then
+        // `HeadHoverPulseAmp` (В3 fix-wave 2) — `RemotePlayerEmission` is the
+        // current marker (Stage 2 Task 45a), see its own doc.
         [Range(1, 32)] public int MaxDashGlows = 8;
         [Range(0.1f, 10f)] public float DashGlowSeconds = 2.5f;
         [Range(0.1f, 3f)] public float DashGlowSize = 0.9f;
@@ -253,7 +256,8 @@ namespace Ring.Data
         // from `LinkWindowFlashAccent`/`LinkWindowFlashBoost` above. Range
         // floors at 1x (never DIMS an already-visible accent, only adds to
         // it) and caps at 3x; "keep subtle" per owner guidance, default 1.35.
-        // New sync-marker key, superseding `LinkWindowFlashBoost` above.
+        // Was the sync-marker key, superseding `LinkWindowFlashBoost` above,
+        // until `AimRayHeadAlphaBoost` below superseded it (В3 fix-wave 1).
         [Range(1f, 3f)] public float AimHoverGlowBoost = 1.35f;
 
         // В3 fix-wave 1 (app-n6g item 3, owner playtest feedback: "не видно,
@@ -315,9 +319,34 @@ namespace Ring.Data
         // oscillation rate; `HeadHoverPulseAmp` is the peak deviation from 1 —
         // default 0.25 swings the marker between 0.75x and 1.25x of its existing
         // `AimMarkerHeadScaleBoost`-boosted size, never zero/negative (amp capped
-        // at 1). New sync-marker key, superseding `AimRayHeadAlphaBoost` above.
+        // at 1). Was the sync-marker key, superseding `AimRayHeadAlphaBoost`
+        // above, until `RemotePlayerEmission` below superseded it in turn
+        // (Stage 2 Task 45a).
         [Range(0.5f, 15f)] public float HeadHoverPulseHz = 5f;
-        [Range(0f, 1f)] public float HeadHoverPulseAmp = 0.25f; // sync-marker key — keep LAST
+        [Range(0f, 1f)] public float HeadHoverPulseAmp = 0.25f;
+
+        // Stage 2 Task 45a (spec §3.12 "чужие игроки — пул по индексу, эмиссия
+        // GameFeelConfig.RemotePlayerEmission"; §3.15's new-fields table): the
+        // steady emissive rim every doll but this client's own wears, so a
+        // stranger reads as a stranger the instant they come out of the fog.
+        // Applied by `PlayerView.Sync` through the SAME MaterialPropertyBlock/
+        // `_EmissionColor` write the combo-window pulse already goes through —
+        // one emission mechanism per doll, not two — and composed with it
+        // additively, so a remote player in a link window still pulses.
+        // The local doll is handed `Color.black` here by `ViewRegistry`, which
+        // is why "own" needs no branch inside the view.
+        //
+        // DEFAULT IS A VIOLET, and the reason is the palette that already
+        // exists rather than taste: the player signature is the cyan
+        // `PlayerVisual`/`DashGlowView`/`PlayerEmissive` share (0, 2.5, 3), the
+        // Chaser telegraph is amber, the Gunner glint cool-white, the headshot
+        // cue red and the body cue pale blue — violet is the one direction left
+        // that neither argues with the player's own cyan nor imitates a mob
+        // tell. Intensity sits well under the pulse's own peak (the cyan accent
+        // × LinkWindowFlashBoost reaches ~4.8 on its brightest channel), so it
+        // reads as a rim under Bloom rather than a flash, and a remote player's
+        // link window still visibly out-shines their resting tint.
+        public Color RemotePlayerEmission = new Color(1.4f, 0.15f, 1.6f); // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

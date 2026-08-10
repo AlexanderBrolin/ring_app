@@ -12,7 +12,11 @@ namespace Ring.Presentation
     /// router; still read before the facade closes the frame and the buffer is
     /// dropped), fanned out per event in a fixed relative order:
     ///   GameFeelDirector → PersistentPropsDirector → AudioDirector →
-    ///   MuzzleFlashView → PlayerVisual (animation retrigger/death, phase B) →
+    ///   MuzzleFlashView → ViewRegistry.HandlePlayerEvent (doll animation
+    ///   retrigger/death, phase B; Stage 2 Task 45a moved it off a direct
+    ///   `PlayerVisual` reference — the doll is pooled per slot now, so the
+    ///   event has to be routed to ONE of several dolls, and Р98 requires the
+    ///   relative order of every other slot to stay exactly as it was) →
     ///   ViewRegistry (retire only) → DeathOverlayController → HudController.
     /// `AudioDirector`, `MuzzleFlashView` and `ViewRegistry` exist as of Task 17;
     /// `DeathOverlayController` (Task 24) slots in last; `GameFeelDirector`
@@ -33,7 +37,6 @@ namespace Ring.Presentation
         [SerializeField] PersistentPropsDirector _persistentProps;
         [SerializeField] AudioDirector _audioDirector;
         [SerializeField] MuzzleFlashView _muzzleFlash;
-        [SerializeField] PlayerVisual _playerVisual;
         [SerializeField] ViewRegistry _viewRegistry;
         [SerializeField] DeathOverlayController _deathOverlay;
         [SerializeField] HudController _hud;
@@ -68,7 +71,7 @@ namespace Ring.Presentation
                 _persistentProps.HandleEvent(in e); // casings/decals/corpses/sparks/dash-glows (Task 27, П-1; app-9av)
                 _audioDirector.HandleEvent(in e);
                 _muzzleFlash.HandleEvent(in e); // shot feedback, same pass (П-2)
-                _playerVisual.HandleEvent(in e); // animation retrigger/death (phase B)
+                _viewRegistry.HandlePlayerEvent(in e); // doll animation retrigger/death (phase B; per slot since Task 45a)
                 _viewRegistry.HandleEvent(in e); // retire only — mapping/lerp is ViewRegistry's own LateUpdate
                 _deathOverlay.HandleEvent(in e); // death-screen show, last slot (Task 24, П-1)
                 _hud.HandleEvent(in e); // stamina-denied pulse, last slot (Task 22)

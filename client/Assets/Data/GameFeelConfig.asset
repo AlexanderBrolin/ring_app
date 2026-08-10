@@ -48,7 +48,6 @@ MonoBehaviour:
   HitSparkBurstCount: 30
   BlockSparkBurstCount: 18
   ImmediateMuzzleFeedback: 1
-  ExtrapolateLocalPlayer: 0
   PlayerVisualScale: 1
   ChaserVisualScale: 0.4
   GunnerVisualScale: 0.76
@@ -108,3 +107,4 @@ MonoBehaviour:
   ProjectileBallScale: 1
   HeadHoverPulseHz: 5
   HeadHoverPulseAmp: 0.25
+  RemotePlayerEmission: {r: 1.4, g: 0.15, b: 1.6, a: 1}

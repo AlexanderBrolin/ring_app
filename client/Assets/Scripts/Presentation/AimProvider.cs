@@ -22,8 +22,9 @@ namespace Ring.Presentation
     /// consumes `SimSpace.ToSim`, it does not redefine it.
     ///
     /// K15: both values are cached exactly once per render frame, in `LateUpdate`,
-    /// AFTER this frame's view-position writes (`ViewRegistry`/`PlayerView`, both
-    /// default script order — the proxy colliders live on THEIR objects) plus an
+    /// AFTER this frame's view-position writes (`ViewRegistry`, default script
+    /// order — every proxy collider in the arena, the player dolls' own included
+    /// since Stage 2 Task 45a, lives on an object THAT class positions) plus an
     /// explicit `Physics.SyncTransforms()`, so the proxy raycast sees this frame's
     /// positions, not last frame's stale ones. `[DefaultExecutionOrder]` pins this
     /// class's own `LateUpdate` to run after those default-order writers, which in
@@ -98,10 +99,11 @@ namespace Ring.Presentation
                 return;
             }
 
-            // This frame's view-position writes (ViewRegistry/PlayerView) already
-            // ran this LateUpdate phase before this one (execution-order doc
-            // above) — SyncTransforms flushes those Transform writes into PhysX
-            // so the cast below sees THIS frame's proxy positions (C15).
+            // This frame's view-position writes (ViewRegistry — dolls, mobs and
+            // projectiles alike since Task 45a) already ran this LateUpdate
+            // phase before this one (execution-order doc above) — SyncTransforms
+            // flushes those Transform writes into PhysX so the cast below sees
+            // THIS frame's proxy positions (C15).
             Physics.SyncTransforms();
             if (TryAimProxy(out float2 proxySimPos, out float proxyHeight,
                     out HitZone zone, out MobView hoveredMob, out Vector3 worldPoint))
@@ -174,10 +176,20 @@ namespace Ring.Presentation
         /// directly, not `CurrentHoveredMob`: `CrosshairView`/`AimRayView`)
         /// and collapsed `CurrentAimSimPos` onto the player's own position
         /// (the aimed shot then degenerates to `WeaponSystem`'s zero-length
-        /// fallback direction). `GetComponentInParent&lt;PlayerView&gt;` only
-        /// ever resolves on the player's own doll (`StageOneSceneBootstrap`'s
-        /// `playerGo` carries it, no mob prefab does) — a pure self-hit
-        /// check, not a "which player" one.
+        /// fallback direction).
+        ///
+        /// THE CHECK ASKS WHICH DOLL, NOT WHETHER IT IS A DOLL (Stage 2 Task
+        /// 45a). `GetComponentInParent&lt;PlayerView&gt;() != null` used to be a
+        /// pure self-hit test only because the local player was the only player
+        /// with a doll at all; every player is pooled off one prefab now, so the
+        /// bare presence test would have excluded EVERY player from being aimed
+        /// at — a PvP arena in which nobody can aim at anybody. `IsLocal`
+        /// (`ViewRegistry` sets it from `RenderSnapshot.LocalPlayerIndex` at
+        /// bind time) is what makes it "mine" again. A hit on somebody ELSE's
+        /// doll now falls through like any other proxy hit: `simPos`/`height`/
+        /// `zone` come off it, and `hoveredMob` stays null because no `MobView`
+        /// sits on a player — the same null a mob-less proxy has always
+        /// produced.
         bool TryAimProxy(out float2 simPos, out float height, out HitZone zone,
             out MobView hoveredMob, out Vector3 worldPoint)
         {
@@ -206,8 +218,10 @@ namespace Ring.Presentation
             }
 
             // I1: self-hit — behave exactly like the miss branch above (the
-            // caller (LateUpdate) falls through to the Э1 plane cast).
-            if (hit.collider.GetComponentInParent<PlayerView>() != null)
+            // caller (LateUpdate) falls through to the Э1 plane cast). Task 45a:
+            // MY doll, not any doll — see the method doc.
+            PlayerView struckDoll = hit.collider.GetComponentInParent<PlayerView>();
+            if (struckDoll != null && struckDoll.IsLocal)
             {
                 simPos = default;
                 height = default;
