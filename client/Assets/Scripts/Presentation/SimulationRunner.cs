@@ -219,10 +219,26 @@ namespace Ring.Presentation
         /// the sample is normally taken in FishNet's tick domain — earlier in
         /// the same frame, immediately before the tick that replicates it — and
         /// `Update` then reuses it rather than taking a second one. "Normally"
-        /// and not "always": a frame that produces no tick, one before the
-        /// backend has found this client's object, and one the tick path
-        /// refused are all sampled by `Update` exactly as solo is. See
-        /// `SampleFrameInputOnce` and `TrySampleFrameInput` below. No reader
+        /// and not "always": a frame that produces no tick, and one before the
+        /// backend has found this client's object, are sampled by `Update`
+        /// exactly as solo is. See `SampleFrameInputOnce` and
+        /// `TrySampleFrameInput` below.
+        ///
+        /// A FRAME THE TICK PATH REFUSED IS NOT ONE OF THOSE, AND THE
+        /// DIFFERENCE CARRIES THE PAUSE INVARIANT (fix-round 1 re-review,
+        /// correcting the sentence above, which had listed a refused frame
+        /// among them). `Update` does not step in behind a refusal: while
+        /// paused it returns above the sample, with no sampler yet or with this
+        /// component disabled it does not run at all, and with `_aimProvider`
+        /// missing it runs and raises the very exception the tick path refused
+        /// in order not to raise. A refused frame therefore leaves this
+        /// property HELD at its last value — which is the whole mechanism
+        /// `TrySampleFrameInput`'s own doc names as what keeps a muzzle flash
+        /// and a gunshot from firing behind the pause menu. Reading the
+        /// corrected sentence as "`Update` always covers it" and dropping the
+        /// pause term as redundant is what would restore that defect.
+        ///
+        /// No reader
         /// can tell the two paths apart: every one of them runs at the default
         /// order or later and this facade is pinned at -50, so whichever path
         /// filled this property, it was filled before the first reader of the
@@ -822,7 +838,12 @@ namespace Ring.Presentation
         ///    disabled facade produced before this seam existed;
         ///  - `_aimProvider == null` — the ONE dereference `InputSampler.
         ///    SampleFrame` makes without a guard of its own, and the only way
-        ///    this method could still throw (fix-round 1, Ф-3). The sampler's
+        ///    the SAMPLER can make this method throw (fix-round 1, Ф-3;
+        ///    narrowed by the re-review from "the only way this method could
+        ///    throw", which the code does not hold — `isActiveAndEnabled`
+        ///    raises on a DESTROYED component, and it stands EARLIER in this
+        ///    chain than this term, so a term added here could not cover it).
+        ///    The sampler's
         ///    actions cannot be null — `FindAction(..., true)` throws in the
         ///    constructor instead, which leaves `_sampler` null and trips the
         ///    term above — but the provider is stored unchecked, so a scene
