@@ -72,6 +72,29 @@ namespace Ring.Editor
             Build(BuildTarget.StandaloneLinux64, StandaloneBuildSubtarget.Player,
                 "linux-client-dev/Ring", new[] { ClientScene }, BuildOptions.Development);
 
+        /// The headless server, built WITH `BuildOptions.Development` (bd
+        /// `app-p63`). Separate output path for the same reason the dev client
+        /// has one: `linux-server` is the artifact the stage gates and
+        /// milestones В2/В3 measure, and a build that silently gained a define
+        /// would invalidate exactly those measurements.
+        ///
+        /// WITHOUT IT MILESTONE В1 MEASURES HALF A LINK, AND THE OVERLAY STILL
+        /// LOOKS RIGHT. The latency simulator delays only the OUTGOING side of
+        /// whichever process applies it (`DevLatencySetup`'s own doc), which is
+        /// why both ends call `Apply` — the server in `MatchServer.StartMatch`
+        /// and the client in `ClientMatchLink`. BOTH calls sit behind
+        /// `UNITY_EDITOR || DEVELOPMENT_BUILD`, so a release server pairs 40 ms
+        /// and 5% loss going up with 0 ms and no loss coming down: RTT reads
+        /// half of Critical Rule 7's 80 ms, and the loss is one-directional.
+        /// The dev overlay would not give that away — it prints the facts the
+        /// CLIENT applied, and those are correct. The doc on
+        /// `BuildLinuxClientDev` above already made this argument for the
+        /// player half and stopped there; this is the other half of the same
+        /// sentence.
+        public static void BuildLinuxServerDev() =>
+            Build(BuildTarget.StandaloneLinux64, StandaloneBuildSubtarget.Server,
+                "linux-server-dev/RingServer", new[] { ServerScene }, BuildOptions.Development);
+
         static void Build(BuildTarget target, StandaloneBuildSubtarget subtarget, string relPath,
             string[] scenes, BuildOptions buildOptions = BuildOptions.None)
         {
