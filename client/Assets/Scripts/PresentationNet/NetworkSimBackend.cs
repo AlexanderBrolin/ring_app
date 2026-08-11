@@ -117,6 +117,13 @@ namespace Ring.Presentation.Net
         /// know. All five are decoded as of Stage 2 Task 47a — `Liveness` was
         /// the one that was listed here and read by nobody, for want of a field
         /// to write it into (see `ReadLiveness`).
+        /// How often the dev diagnostics line is written, in seconds of facade
+        /// frame time (`LogDiagnosticsTick`). A STRUCTURAL CONSTANT, not
+        /// balance: it tunes how coarse a log a playtest leaves behind, not
+        /// anything the game plays with (CR 6 is about the numbers a match is
+        /// decided by).
+        const float DiagnosticsLogIntervalSeconds = 1f;
+
         static readonly byte[] KnownBlockKinds =
         {
             (byte)SnapshotBlockKind.Players,
@@ -292,6 +299,11 @@ namespace Ring.Presentation.Net
         // per rendered frame and has no interval it could honestly divide by.
         long _bytesDownAtWindowStart;
         float _bytesRateWindowSeconds;
+
+        /// Seconds of facade frame time since the last diagnostics line
+        /// (`LogDiagnosticsTick`, bd `app-0h0`). Counted in the same clock the
+        /// bytes-rate window uses, so a paused client logs nothing.
+        float _diagLogSeconds;
         float _bytesDownPerSecond;
 
         // The NEXT frame's length is not an interval this client spent
@@ -931,6 +943,8 @@ namespace Ring.Presentation.Net
             _clock.Advance(unscaledDeltaTime, in _timings);
             int renderTick = _clock.RenderTick;
 
+            LogDiagnosticsTick(unscaledDeltaTime, renderTick);
+
             // `RenderTick - 1`, which is the argument `SnapshotQueue`'s own doc
             // names: the pair being shown is `RenderTick` and the tick after
             // it, and the tick before is the headroom an ordinary reordering
@@ -969,6 +983,55 @@ namespace Ring.Presentation.Net
             int ticks = math.max(0, renderTick - _lastRenderTick);
             _lastRenderTick = renderTick;
             return ticks;
+        }
+
+        /// One line of network diagnostics per second, into the player log
+        /// (bd `app-0h0`). Dev builds only, by the same `#if` every other dev
+        /// surface in this project uses.
+        ///
+        /// WHY IT EXISTS. Task 48 built the dev overlay, and milestone В1's
+        /// whole output is "the numbers from the overlay" — but the overlay
+        /// draws to a SCREEN, and nothing on this side ever wrote those numbers
+        /// anywhere they survive the session. The first playtest ran, produced
+        /// symptoms nobody could quantify afterwards, and the player log had
+        /// not one line about the wire in it. A milestone measured in numbers
+        /// needs those numbers recorded, not photographed.
+        ///
+        /// ONE LINE PER SECOND, NOT PER FRAME. At 300 fps a per-frame line is
+        /// twenty thousand lines a minute and a log nobody opens twice; at one
+        /// per second a twenty-minute playtest is twelve hundred lines and a
+        /// time series that can be read with `grep`. The cadence is counted in
+        /// the frame time the facade already hands over, exactly as the
+        /// bytes-per-second window is (see `UpdateBytesRate`), so a paused
+        /// client writes nothing rather than filling the log with the same
+        /// frozen row.
+        ///
+        /// THE FIELDS ARE THE PANEL'S OWN, THROUGH THE PANEL'S OWN SEAM —
+        /// `TryGetNetDiagnostics`, not a second gathering of the same numbers
+        /// (rule 2). What the panel shows and what the log records can
+        /// therefore never disagree.
+        void LogDiagnosticsTick(float unscaledDeltaTime, int renderTick)
+        {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            _diagLogSeconds += unscaledDeltaTime;
+            if (_diagLogSeconds < DiagnosticsLogIntervalSeconds) return;
+            _diagLogSeconds = 0f;
+
+            if (!TryGetNetDiagnostics(out NetDiagnostics d)) return;
+
+            _nm.Log("NetDiag "
+                + $"render={(d.HasRenderTick ? d.RenderTick.ToString() : "-")} "
+                + $"newest={(d.HasNewestServerTick ? d.NewestServerTick.ToString() : "-")} "
+                + $"behind={(d.HasRenderTick && d.HasNewestServerTick ? (d.NewestServerTick - d.RenderTick).ToString() : "-")} "
+                + $"localTick={_nm.TimeManager.LocalTick} "
+                + $"rttMs={d.RoundTripMs} "
+                + $"slewSign={d.ClockSlewSign} snaps={d.ClockSnaps} "
+                + $"queue={d.SnapshotQueueCount}/{d.SnapshotQueueDepth} "
+                + $"dropped={d.DroppedSnapshots} stale={d.StaleSnapshots} dup={d.DuplicateSnapshots} "
+                + $"corrections={d.CorrectionCount} medianM={d.CorrectionMedianMeters:F3} "
+                + $"bytesDownPerSec={d.BytesDownPerSecond} "
+                + $"latSim={(d.LatencySimActive ? $"{d.LatencySimRttMs}ms/{d.LatencySimLossPercent:F1}%" : "off")}");
+#endif
         }
 
         /// Closes the window `Advance` opened, AFTER the facade has raised
