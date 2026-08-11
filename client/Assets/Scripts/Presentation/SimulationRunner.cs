@@ -380,10 +380,48 @@ namespace Ring.Presentation
         /// (`ISimBackend.CanRestartMatch`).
         public bool CanRestartMatch => _backend.CanRestartMatch;
 
-        /// The seat a `SpectateRequestNet` has gone out for and the picture has
-        /// not confirmed yet, or -1. See `UpdateObservation` for the one place
-        /// it is armed and the one place it is cleared.
+        /// The seat a `SpectateRequestNet` has gone out for and the window it
+        /// could be answered in has not closed on yet, or -1. See
+        /// `UpdateObservation` for the one place it is armed and the one place
+        /// it is decided.
         int _requestedIndex = -1;
+
+        /// What every frame since `_requestedIndex` was armed has said about
+        /// that seat (Stage 2 Task 47b fix-round 1) — four states because the
+        /// question has four answers, and a pile of bools would have
+        /// combinations that mean nothing.
+        enum RequestedPicture
+        {
+            /// No frame has carried the seat yet. The ordinary state of the
+            /// first frames after a press: the request is still climbing the
+            /// wire, and a switch that was accepted has not come back down it.
+            NeverArrived,
+
+            /// The frame carries the seat and has carried it on every frame
+            /// since the first one that did. This is what an ACCEPTED switch
+            /// looks like — the server builds the frame from the watched
+            /// player's viewpoint and an observer is unconditionally visible to
+            /// itself — and it confirms.
+            Holding,
+
+            /// A frame after that first one did not carry the seat. The target
+            /// was in sight of this client's own body and moved out of it; a
+            /// switch would not have flickered.
+            Broken,
+
+            /// A frame carried the target and NOT this client's own seat, which
+            /// is proof rather than evidence: a dead client that is still its
+            /// own viewpoint always receives its own body (the assembler sends
+            /// a dead recipient its record, and own visibility is
+            /// unconditional), so a frame without it is a frame built from
+            /// somebody else's eyes. STICKY, and rightly — it is a fact about a
+            /// frame that has already arrived, and it outranks a run broken
+            /// earlier by the target crossing the corpse's field of view before
+            /// the switch landed.
+            Proven,
+        }
+
+        RequestedPicture _requestedPicture;
 
         /// Last frame's input, for the two button EDGES spectating reads. A
         /// second `InputSampler.SampleFrame()` is what this avoids — it would
@@ -660,18 +698,20 @@ namespace Ring.Presentation
         /// for an answer that is never coming.
         ///
         /// THE ORDER OF THE FOUR STEPS IS THE RULE ITSELF:
-        ///   1. a standing player watches its own body, ALWAYS. This is the
-        ///      whole of solo (`LocalSimBackend` has one player, who is alive
-        ///      until the match ends) and the whole of being alive anywhere
-        ///      else, and it is what makes `Players[ObservedIndex]` identical to
-        ///      `RenderSnapshot.Player` for every frame that has ever been drawn
-        ///      before this task;
-        ///   2. a request already sent is resolved — by the PICTURE, the only
-        ///      thing this wire answers with (`SpectateRequestNet`: no reply
-        ///      message exists, and a refusal is indistinguishable from a switch
-        ///      whose effects have not arrived). It is confirmed when the frame
-        ///      starts carrying the seat, and abandoned when the window it could
-        ///      be answered in closes — the backend's own
+        ///   1. a standing player watches its own body, ALWAYS — and "standing"
+        ///      is read off the frame's ROSTER MASK (fix-round 1, Ф-1). This is
+        ///      the whole of solo (`LocalSimBackend` has one player, who is
+        ///      alive until the match ends) and the whole of being alive
+        ///      anywhere else, and it is what makes `Players[ObservedIndex]`
+        ///      identical to `RenderSnapshot.Player` for every frame that has
+        ///      ever been drawn before this task;
+        ///   2. a request already sent is resolved — ONCE, AT THE CLOSE OF ITS
+        ///      WINDOW, and by the PICTURE, the only thing this wire answers
+        ///      with (`SpectateRequestNet`: no reply message exists, and a
+        ///      refusal is indistinguishable from a switch whose effects have
+        ///      not arrived). While the window is open the request WAITS and
+        ///      the viewpoint does not move; when it closes, one read decides
+        ///      it both ways. The window is the backend's own
         ///      `SpectateRequestInFlight`, which is the same interval that
         ///      permits the next request, so this facade holds no timer and no
         ///      copy of the number;
@@ -684,6 +724,52 @@ namespace Ring.Presentation
         ///      knows nothing about, because such a seat reads
         ///      `default(PlayerState)` — the arena origin — and that is the
         ///      defect this whole task exists to remove.
+        ///
+        /// WHAT COUNTS AS AN ANSWER, AND WHAT THAT COSTS (fix-round 1, Ф-3).
+        /// After an accepted switch the server builds this connection's frames
+        /// from the WATCHED player's viewpoint, and an observer is
+        /// unconditionally visible to itself (`VisibilitySystem.Compute`'s
+        /// own-observer branch: `if (i == observerIndex) { result.Add(id, 0);
+        /// continue; }`), so the target's record then rides EVERY frame.
+        /// Before acceptance the same record arrives only while the target is
+        /// visible from this client's own corpse, which is by nature
+        /// intermittent. So the evidence of acceptance is not a sighting but a
+        /// RUN: the seat arrived at some point inside the window and has been
+        /// in every frame since. A single sighting is what the first version of
+        /// this step took, and a stranger crossing the corpse's field of view
+        /// for one frame answered it.
+        ///
+        /// THE RUN IS MEASURED FROM THE FIRST SIGHTING, NOT FROM THE SEND, and
+        /// that is arithmetic rather than leniency. The switched picture cannot
+        /// arrive before half an RTT up, up to one server tick, half an RTT
+        /// down and `NetConfig.InterpBufferTicks` of interpolation buffer —
+        /// about 213 ms at Critical Rule 7's 80 ms RTT and the shipped
+        /// `TickRate`, against a window of 350 ms at the shipped
+        /// `SpectatorSwitchCooldownSeconds`. A run required to start at the
+        /// send is therefore broken by the latency of the very answer it waits
+        /// for, and would reject every accepted switch there is.
+        ///
+        /// ONE FRAME CAN SETTLE IT WITHOUT A RUN, and the step takes that too:
+        /// a frame that carries the TARGET and not this client's OWN seat can
+        /// only have been built from somebody else's eyes, because a dead
+        /// client that is still its own viewpoint always receives its own body
+        /// (`SnapshotAssembler.WriteFrame` sends a dead recipient its record,
+        /// and the visibility set it is drawn from contains the viewpoint
+        /// unconditionally). Without that proof, an accepted switch would be
+        /// thrown away in one real case: a target visible from the corpse at
+        /// the moment of the press, gone from its sight before the switch
+        /// arrives, breaks the run and would be refused at the close of a
+        /// window the server had already honoured. The proof is only recorded
+        /// while the window runs — the picture still does not move until it
+        /// closes.
+        ///
+        /// THE FALSE POSITIVE THAT REMAINS IS NAMED, NOT CURED: a target that
+        /// stays visible from one's own body for the whole window confirms
+        /// without the server having accepted anything. What that costs is a
+        /// camera on a player this client can already see, with the fog still
+        /// computed from the corpse, until the next press — and it is the price
+        /// of the owner's decision 1b (confirm by the picture, do not grow the
+        /// protocol a reply), paid deliberately.
         ///
         /// THE RESIDUAL CASE, NAMED RATHER THAN PROMISED AWAY. Step 4 can only
         /// fall back to one's own body while the FRAME carries it, and the
@@ -712,7 +798,7 @@ namespace Ring.Presentation
             // already do with a seat they have no picture of.
             if (!Ready)
             {
-                _requestedIndex = -1;
+                ClearRequest();
                 IsSpectating = false;
                 return;
             }
@@ -722,16 +808,30 @@ namespace Ring.Presentation
             if (local < 0 || local >= curr.PlayerCount)
             {
                 ObservedIndex = local;
-                _requestedIndex = -1;
+                ClearRequest();
                 IsSpectating = false;
                 return;
             }
 
-            // 1. Alive: one's own body, and nothing pending.
-            if (curr.Players[local].Alive)
+            // 1. Alive: one's own body, and nothing pending. THE ROSTER MASK
+            // ANSWERS THIS, NOT `Players[local].Alive` (fix-round 1, Ф-1).
+            // The two are one and the same read in solo, where the world
+            // captures its whole roster into both; on a networked client they
+            // are not. `Players[local]` is `default(PlayerState)` — not alive,
+            // at the origin — on every frame that does not carry this seat, and
+            // there are such frames while this player is very much standing:
+            // before the first reconcile of a match or a restart, and whenever
+            // the controller is being replaced (`NetworkSimBackend.
+            // ApplyOwnPlayer` writes the seat only under `_hasOwnSample`).
+            // Answering "dead" there put a LIVING player into the branch below,
+            // where a click sends a `SpectateRequestNet` the server can only
+            // refuse and the picture could confirm it off a visible stranger.
+            // `PlayerAliveInMatch` is the authoritative fact, and it is the
+            // same one `ApplyOwnPlayer` itself gates on — one home, not two.
+            if (curr.PlayerAliveInMatch[local])
             {
                 ObservedIndex = local;
-                _requestedIndex = -1;
+                ClearRequest();
             }
             else
             {
@@ -740,12 +840,37 @@ namespace Ring.Presentation
                 // one of them.
                 if (ObservedIndex < 0 || ObservedIndex >= curr.PlayerCount) ObservedIndex = local;
 
-                // 2. THE ONE PLACE A REQUEST IS RESOLVED — both ways.
+                // 2. THE ONE PLACE A REQUEST IS RESOLVED — once, when its
+                // window closes, and both ways. Everything before that moment
+                // only records what the frames said; nothing moves.
                 if (_requestedIndex >= 0)
                 {
-                    bool confirmed = curr.PlayerKnown[_requestedIndex];
-                    if (confirmed) ObservedIndex = _requestedIndex;
-                    if (confirmed || !_backend.SpectateRequestInFlight) _requestedIndex = -1;
+                    if (curr.PlayerKnown[_requestedIndex])
+                    {
+                        // The frame that settles it outright: the target is
+                        // here and this client's own body is not.
+                        if (!curr.PlayerKnown[local])
+                            _requestedPicture = RequestedPicture.Proven;
+                        else if (_requestedPicture == RequestedPicture.NeverArrived)
+                            _requestedPicture = RequestedPicture.Holding;
+                    }
+                    else if (_requestedPicture == RequestedPicture.Holding)
+                    {
+                        _requestedPicture = RequestedPicture.Broken;
+                    }
+
+                    if (!_backend.SpectateRequestInFlight)
+                    {
+                        // `Holding` means both halves at once — the frame in
+                        // hand carries the seat, and no frame since the first
+                        // one that did has failed to; `Proven` needs no run at
+                        // all. Everything else is a request that was never
+                        // answered, and it goes without moving the picture.
+                        if (_requestedPicture == RequestedPicture.Holding
+                            || _requestedPicture == RequestedPicture.Proven)
+                            ObservedIndex = _requestedIndex;
+                        ClearRequest();
+                    }
                 }
 
                 // 3. The two buttons, as edges of this frame's own input.
@@ -759,7 +884,13 @@ namespace Ring.Presentation
                     {
                         int target = NextSpectateCandidate(curr, local, ObservedIndex, step);
                         if (target >= 0 && _backend.TryRequestSpectate(target))
+                        {
+                            // Armed as a pair and cleared as a pair — the seat
+                            // asked about, and what the frames have said about
+                            // it since. Nothing has been said yet.
                             _requestedIndex = target;
+                            _requestedPicture = RequestedPicture.NeverArrived;
+                        }
                     }
                 }
 
@@ -769,6 +900,18 @@ namespace Ring.Presentation
 
             IsSpectating = ObservedIndex != local;
             UpdateObservedWorldPos();
+        }
+
+        /// Drops a pending request and everything remembered about its picture.
+        /// NOT A DECISION — the one place a request is DECIDED is step 2 of
+        /// `UpdateObservation`, which calls this once it has. The other callers
+        /// are the frames on which the question stops existing rather than
+        /// getting an answer: this client is standing again, its seat is
+        /// outside the frame's roster, or the backend has no picture at all.
+        void ClearRequest()
+        {
+            _requestedIndex = -1;
+            _requestedPicture = RequestedPicture.NeverArrived;
         }
 
         /// The next seat after `from`, walking `step` (+1 or -1) with wrap, that

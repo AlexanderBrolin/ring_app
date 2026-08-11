@@ -256,8 +256,11 @@ namespace Ring.Editor
     /// Stage 2 Task 47b (spec §3.10, the owner's decisions 4a/4b of
     /// 2026-08-11) adds the two objects a spectator needs and nothing else.
     /// `HUD/SpectateLabel` is a `TMP_Text` on the HUD canvas, top-centre,
-    /// wired into `HudController._spectateLabel` and shown only while this
-    /// client is watching somebody else; the same block wires the STAMINA
+    /// wired into `HudController._spectateLabel`, LEFT DISABLED IN THE SCENE
+    /// (fix-round 1) and shown only while this client is watching somebody
+    /// else — the object's shipped state has to be the state the game loads
+    /// in, because a run-time rule cannot run before the game is running;
+    /// the same block wires the STAMINA
     /// BAR'S ROOT into `_staminaBar`, because that bar is HIDDEN while
     /// spectating rather than drawn empty (no stamina of anyone else exists on
     /// the wire, and an empty bar claims one). `DeathPanel/SpectateButton` is a
@@ -1087,6 +1090,23 @@ namespace Ring.Editor
                 "НАБЛЮДЕНИЕ", anchor: new Vector2(0.5f, 1f), anchoredPos: new Vector2(0f, -24f),
                 size: new Vector2(640f, 40f), fontSize: 26f,
                 alignment: TextAlignmentOptions.Top, ref sceneDirty);
+            // AND IT SHIPS DISABLED (fix-round 1, Ф-2). `GetOrCreateHudLabel`
+            // hands back a live object — right for the wave counter, which is
+            // always on screen, wrong for a label that belongs to a state the
+            // game is not in when it loads. `HudController` switching it off at
+            // run time is not enough on its own: the committed scene is what a
+            // build starts from, and this one was committed with
+            // `m_IsActive: 1`, so the word hung over the connect screen of
+            // every networked client. Checked unconditionally rather than only
+            // on creation, exactly like `GetOrCreateWaveText`'s "WAVE" heal
+            // below — a scene saved by the previous run of this bootstrap
+            // picks the fix up, and being ALREADY disabled raises no flag, so
+            // a second run of this method changes nothing (А6).
+            if (spectateLabel != null && spectateLabel.gameObject.activeSelf)
+            {
+                spectateLabel.gameObject.SetActive(false);
+                sceneDirty = true;
+            }
             // The bar's ROOT, which is what gets hidden — see HudController's
             // `_staminaBar`. Found rather than returned by `GetOrCreateBar`,
             // whose one job is the Fill every caller wires to.

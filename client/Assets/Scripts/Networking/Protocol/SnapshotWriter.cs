@@ -49,14 +49,15 @@ namespace Ring.Networking.Protocol
     /// is the one right below, not the 1052 B this paragraph used to end on.
     /// The spec line goes to the Task 57 amendments.
     ///
-    /// WORST-CASE FRAME SIZE — 1180 B, RECOMPUTED BY TASK 28 FROM THE REAL
-    /// EVENT CATALOG (phase gate fix wave; this paragraph's own earlier
-    /// figures 1043, 1052 and 1116 each predated something — the format
-    /// overhead, the event record, the actual payload widths — and each was
-    /// corrected by the first task that owned the missing piece; the running
-    /// history lives in spec §6i Р146). At the shipped caps (`MaxPlayers` 3,
-    /// so 2 OTHER players; `MaxMobs` 96; a 16-event `SnapshotEventBudget` at
-    /// the catalog's widest payload — `ProjectileSpawned`, 8 B):
+    /// WORST-CASE FRAME SIZE — 1180 B TO A LIVING RECIPIENT, RECOMPUTED BY
+    /// TASK 28 FROM THE REAL EVENT CATALOG (phase gate fix wave; this
+    /// paragraph's own earlier figures 1043, 1052 and 1116 each predated
+    /// something — the format overhead, the event record, the actual payload
+    /// widths — and each was corrected by the first task that owned the
+    /// missing piece; the running history lives in spec §6i Р146). At the
+    /// shipped caps (`MaxPlayers` 3, so 2 OTHER players; `MaxMobs` 96; a
+    /// 16-event `SnapshotEventBudget` at the catalog's widest payload —
+    /// `ProjectileSpawned`, 8 B):
     ///
     ///   HeaderBytes                                    8
     ///   PlayersBlockBytes(2)                          19
@@ -67,16 +68,37 @@ namespace Ring.Networking.Protocol
     ///   -----------------------------------------------
     ///   total                                       1180
     ///
-    /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 180 B over the
-    /// cap ON PAPER. What actually gives at the defaults is the EVENT budget,
-    /// never the entity list: the assembler spends the fixed part and the
-    /// mobs first (956 B of record room after the 44 B fixed part with all
-    /// five tags, 864 B of mob RECORDS needed), so entity truncation is NOT
-    /// reachable at the shipped numbers — events are squeezed instead and
-    /// carry over (Р61), and the truncation branch is exercised by tests
-    /// through a fixture cap (spec §6i Р147). Pinned by
-    /// SnapshotCodecTests.WorstCaseFrame_RecomputedFromTheCalculators_
-    /// WithTheRealCatalog.
+    /// AND 1188 B TO A DEAD ONE — the next link of that same history, added by
+    /// Stage 2 Task 47b (the owner's decision 2a) and NOT a correction of the
+    /// figure above, which stays true of the frame it describes. A frame used
+    /// to carry at most `MaxPlayers - 1` player records, because a connection
+    /// was never sent its own; a DEAD connection is now sent its own body,
+    /// since prediction has stopped and the snapshot is the only thing that
+    /// can say where it lies (`SnapshotAssembler.WriteFrame`'s candidate
+    /// phase). So the widest Players block is the whole roster, and the two
+    /// cases differ by exactly one `PlayerRecordBytes`:
+    ///
+    ///                            live recipient   dead recipient
+    ///   PlayersBlockBytes         19 (2 records)   27 (3 records)
+    ///   total                           1180             1188
+    ///   fixed part, five tags             44               52
+    ///   record room at cap 1000          956              948
+    ///
+    /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 180 or 188 B over
+    /// the cap ON PAPER. What actually gives at the defaults is the EVENT
+    /// budget, never the entity list, and that survives the wider case: the
+    /// assembler spends the fixed part and the mobs first, and 864 B of mob
+    /// RECORDS still fit in the 948 B of room a dead recipient's fixed part
+    /// leaves (84 B to spare, where a living one leaves 92). Entity truncation
+    /// is therefore NOT reachable at the shipped numbers for either recipient
+    /// — events are squeezed instead and carry over (Р61), and the truncation
+    /// branch is exercised by tests through a fixture cap (spec §6i Р147).
+    /// Pinned by SnapshotCodecTests.WorstCaseFrame_RecomputedFromTheCalculators_
+    /// WithTheRealCatalog, whose numbers are the LIVE column throughout
+    /// (`int others = shipped.Arena.MaxPlayers - 1;`) and are right for it; the
+    /// dead column is `SnapshotAssembler`'s constructor ceiling, which is sized
+    /// from `PlayersBlockBytes(MaxPlayers)` for this reason and refuses a cap
+    /// that could not hold it.
     ///
     /// THE 4 B/EVENT PAYLOAD IS AN ASSUMPTION, NOT A MEASUREMENT — the event
     /// catalog is Task 28's (Task 27 leaves the payload opaque), so a

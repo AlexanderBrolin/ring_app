@@ -601,11 +601,18 @@ namespace Ring.Presentation
         /// per slot, and while the local player is alive it produces the same
         /// number, because `RenderSnapshot.Player` IS `Players[LocalPlayerIndex]`.
         /// The two part company once that player dies — `RenderPlayerWorldPos`
-        /// keeps evaluating a slot nothing is drawn from any more, and on a
-        /// networked client that slot stops being written at all
-        /// (`NetworkSimBackend.ApplyOwnPlayer` returns on `!_hasOwnSample`), so
-        /// it reads the origin. The corpse does not care: it was detached from
-        /// its slot at death and is never positioned again.
+        /// keeps evaluating a slot nothing is DRAWN from any more, while the
+        /// slot itself goes on being written: on a networked client the server
+        /// sends a dead connection its own record (the owner's decision 2a),
+        /// `ReadPlayers` lays it down by index, and prediction stands aside for
+        /// it because `NetworkSimBackend.ApplyOwnPlayer` is gated on the
+        /// FRAME'S ROSTER MASK (`PlayerAliveInMatch`) rather than on the
+        /// predicted pose outliving the player. So that expression reads the
+        /// pose of the BODY from the tick of death onwards, not the origin —
+        /// which is the whole difference this task made, and the sentence that
+        /// used to stand here described the defect rather than the fix
+        /// (fix-round 1, Ф-4). The corpse does not care either way: it was
+        /// detached from its slot at death and is never positioned again.
         void SyncPlayers()
         {
             RenderSnapshot curr = _runner.RenderCurr;

@@ -73,14 +73,6 @@ namespace Ring.Presentation
 
         void LateUpdate()
         {
-            // The backend has nothing to show only for a single frame ordering
-            // edge case before the runner's own Awake has run; skip rendering
-            // rather than throw. Task 43 renamed the question (`World == null`
-            // -> `!Ready`), not the reason for asking it — and a networked
-            // backend widens that window from one frame to "until the first
-            // snapshot lands".
-            if (!_runner.Ready) return;
-
             // Stage 2 Task 47b: the bars belong to whoever is being WATCHED,
             // which is this client's own player for the whole of solo and for
             // as long as that player is standing (`SimulationRunner.
@@ -89,20 +81,37 @@ namespace Ring.Presentation
             // two can only disagree inside a hitstop freeze, which moves a pose
             // and never a seat's existence (QC10: the bar must not freeze with
             // the picture).
-            RenderSnapshot curr = _runner.Curr;
             int observed = _runner.ObservedIndex;
-            var hero = _runner.Config.Hero;
             bool spectating = _runner.IsSpectating;
 
-            // F-8 fix: user-facing strings are Russian (ADR-003 §9 word list) — the
-            // old "WAVE " placeholder predates the settled world vocabulary.
-            _waveText.text = "ВОЛНА " + curr.Wave.WaveIndex;
-
+            // WHAT SPECTATING HIDES AND SHOWS IS DECIDED ABOVE THE PICTURE
+            // GUARD (fix-round 1, Ф-2), and that is the whole of the fix: the
+            // guard below returns for the entire connect and handshake of a
+            // networked client, so a surface switched off only underneath it is
+            // a surface that ships in whatever state the scene was saved in.
+            // The spectate label was saved enabled, and the word "НАБЛЮДЕНИЕ"
+            // therefore hung over an empty screen until the first snapshot
+            // landed. THE RULE ITSELF IS UNCHANGED AND STILL THE ONLY ONE — the
+            // label is up exactly while `SimulationRunner.IsSpectating`, which
+            // is false before that runner has run at all and false again on the
+            // first frame its `UpdateObservation` finds no picture. (A client
+            // PAUSED at the moment the picture goes away keeps the previous
+            // answer until it unpauses, the facade having stopped calling that
+            // method — which is what every other HUD surface does in a pause
+            // too: it holds the screen it was drawn on.) Nothing here reads the
+            // snapshot or `Config`, which is what makes the two lines safe this
+            // side of the guard. `StageOneSceneBootstrap` ships the object
+            // disabled as well; one half without the other lets the defect back
+            // in, from either side.
+            //
             // THE STAMINA BAR IS HIDDEN, NOT EMPTIED, WHILE SPECTATING (the
             // owner's decision 4a). Stamina is not on the wire in any form — no
             // block carries it and no flag proxies it — so a bar drawn for
             // somebody else could only ever be a painted zero, and a painted
             // zero is a claim about their Буст rather than an absence of one.
+            // It rides above the guard with the label for symmetry rather than
+            // for a defect of its own: `!spectating` is exactly the state it is
+            // shipped in, so a picture-less frame asks for what it already has.
             if (_staminaBar != null) _staminaBar.SetActive(!spectating);
             if (_spectateLabel != null)
             {
@@ -112,6 +121,21 @@ namespace Ring.Presentation
                 // not an index.
                 if (spectating) _spectateLabel.text = "НАБЛЮДЕНИЕ · СБОРЩИК " + (observed + 1);
             }
+
+            // The backend has nothing to show only for a single frame ordering
+            // edge case before the runner's own Awake has run; skip rendering
+            // rather than throw. Task 43 renamed the question (`World == null`
+            // -> `!Ready`), not the reason for asking it — and a networked
+            // backend widens that window from one frame to "until the first
+            // snapshot lands".
+            if (!_runner.Ready) return;
+
+            RenderSnapshot curr = _runner.Curr;
+            var hero = _runner.Config.Hero;
+
+            // F-8 fix: user-facing strings are Russian (ADR-003 §9 word list) — the
+            // old "WAVE " placeholder predates the settled world vocabulary.
+            _waveText.text = "ВОЛНА " + curr.Wave.WaveIndex;
 
             // A frame that says nothing about the watched seat moves nothing:
             // its `PlayerState` would be `default` — full-health-less zero at
