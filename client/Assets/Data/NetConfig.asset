@@ -30,3 +30,4 @@ MonoBehaviour:
   MatchMaxDurationSeconds: 1800
   MatchAbandonGraceSeconds: 30
   SpectatorSwitchCooldownSeconds: 0.35
+  EntityFadeTicks: 15

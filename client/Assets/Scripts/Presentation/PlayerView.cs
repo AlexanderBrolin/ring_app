@@ -89,6 +89,17 @@ namespace Ring.Presentation
         // property-block write.
         float _flashTimer;
         float _flashDuration;
+        // Stage 2 Task 47c: what `Sync` last COMPOSED, before the fade
+        // multiplier was applied to it — the one thing `FadeEmission` needs in
+        // order to dim a doll it cannot recompose, because the frame carries no
+        // state for that slot any more (see `FadeEmission`).
+        //
+        // EXACTLY TWO WRITERS, `Bind` AND `Sync`. `DetachAsCorpse` deliberately
+        // is not a third: it writes black straight to the property block and a
+        // corpse never receives `Sync` or `FadeEmission` again (its own doc), so
+        // a third write here would be a line whose effect nothing can observe.
+        // The next `Bind` — the only way that doll comes back — resets it.
+        Color _composedEmission = Color.black;
 
         /// Whether the slot this doll is bound to is this client's own
         /// (`RenderSnapshot.LocalPlayerIndex` — the registry decides, this class
@@ -178,7 +189,11 @@ namespace Ring.Presentation
             // Pool-rebind hygiene, same line `MobView.Bind` carries: a doll must
             // not open its new life mid-flash from the previous slot's last hit.
             _flashTimer = 0f;
-            ApplyEmission(Color.black);
+            // Stage 2 Task 47c: and not mid-fade from the previous slot's last
+            // moments either — a doll that went into the pool half dimmed must
+            // not hand its remainder to whoever rents it next.
+            _composedEmission = Color.black;
+            ApplyEmission(_composedEmission);
             // Stage 2 Task 45b: the other half of `DetachAsCorpse`'s proxy
             // switch-off. A doll only ever reaches this method by being rented
             // from the pool, and the pool is fed both by a slot leaving the
@@ -196,8 +211,22 @@ namespace Ring.Presentation
         /// class a config reference of its own, the same "caller pre-reads the
         /// config, callee takes scalars" shape `MobView.Sync` already follows.
         /// `remoteAccent` is `Color.black` for this client's own doll.
+        ///
+        /// `fadeRemaining` (Stage 2 Task 47c) IS A MULTIPLIER ON THE FINISHED
+        /// COMPOSITION, NOT A FOURTH ACCENT: `1` leaves the three accents above
+        /// exactly as they were, `0` puts the doll out. It is the last thing
+        /// applied because a fade is not something the doll is doing — it is how
+        /// much of whatever it is doing still reaches the screen. In ordinary
+        /// play a slot the frame carries has a remainder of exactly `1` (the
+        /// policy resets its counter on every sighting, and the frame on screen
+        /// is one the policy has already been told about), so the live path is
+        /// unchanged for it; the value that arrives here below `1` is the
+        /// reordered-frame corner, where a frame carrying a slot lands behind a
+        /// sighting the policy already has and the doll is visible while its
+        /// fade has begun. `StalePolicy`'s CALLER CONTRACT is explicit that the
+        /// remainder is applied whenever it says so, whatever else is true.
         public void Sync(in PlayerState m, float linkWindowFlashHz,
-            float linkWindowFlashBoost, Color remoteAccent)
+            float linkWindowFlashBoost, Color remoteAccent, float fadeRemaining)
         {
             Color emission = remoteAccent;
 
@@ -213,8 +242,31 @@ namespace Ring.Presentation
             // doing rather than replacing it.
             if (_flashTimer > 0f) emission += FlashAccent * Mathf.Clamp01(_flashTimer / _flashDuration);
 
-            ApplyEmission(emission);
+            _composedEmission = emission;
+            ApplyEmission(emission * fadeRemaining);
         }
+
+        /// Dims a doll the frame has stopped carrying (Stage 2 Task 47c, bd
+        /// `app-wcy`) — `fadeRemaining` from `1` (untouched) down to `0` (out).
+        /// The narrow member `ViewRegistry`'s held path needs, and the reason it
+        /// is narrow: a slot the frame is silent about has NO state, so `Sync`
+        /// cannot be called for it at all (`default(PlayerState)` reads as the
+        /// arena origin and as dead — both lies). This re-applies what `Sync`
+        /// last composed instead of composing anything, so emission keeps its
+        /// single home and this method can never become a second one.
+        ///
+        /// WHAT ACTUALLY FADES IS THE NEON, AND THE OWNER CHOSE THAT KNOWING
+        /// (decision 2a, session 14). Every material in the project is opaque —
+        /// there is not one transparent material to fade an alpha on — so
+        /// turning a doll translucent would mean a new material contract in the
+        /// art track's zone. What goes out here is the emissive rim that marks a
+        /// stranger; the grey silhouette underneath stays lit by the scene until
+        /// the doll is retired. So the pop is not abolished, it is made quieter
+        /// and later: the thing that reads as "a player is there" dims away over
+        /// half a second, and what vanishes at the end is an unlit shape the eye
+        /// was no longer tracking.
+        public void FadeEmission(float fadeRemaining)
+            => ApplyEmission(_composedEmission * fadeRemaining);
 
         /// A blow landed on this player (Stage 2 Task 45c, bd `app-aq9`, ADR-001
         /// §10's per-hit checklist): the same decaying white flash `MobView.Flash`

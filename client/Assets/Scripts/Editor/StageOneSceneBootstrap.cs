@@ -605,9 +605,16 @@ namespace Ring.Editor
             // SpectatorSwitchCooldownSeconds, which it appended as the
             // class's new last field — same drill, same reason: with
             // MatchAbandonGraceSeconds still named here the new field would
-            // never reach NetConfig.asset either.
+            // never reach NetConfig.asset either. Stage 2 Task 47c moves it
+            // once more, to EntityFadeTicks — the stranger-doll fade duration
+            // that stopped being a NetworkSimBackend constant the moment
+            // ViewRegistry became its reader. Same drill: with
+            // SpectatorSwitchCooldownSeconds still named here the new key
+            // would never reach NetConfig.asset, the owner's В1 fade knob
+            // would silently be the C# initializer, and EditMode would stay
+            // green throughout (the tests read C# defaults, not the asset).
             EditorBootstrapUtils.EnsureAssetHasKey(net, $"{DataDir}/NetConfig.asset",
-                "SpectatorSwitchCooldownSeconds"); // Stage 2 Task 42a (was MatchAbandonGraceSeconds, Task 41b; MatchMaxDurationSeconds, Task 23)
+                "EntityFadeTicks"); // Stage 2 Task 47c (was SpectatorSwitchCooldownSeconds, Task 42a; MatchAbandonGraceSeconds, Task 41b; MatchMaxDurationSeconds, Task 23)
 
             AssetDatabase.SaveAssets();
 

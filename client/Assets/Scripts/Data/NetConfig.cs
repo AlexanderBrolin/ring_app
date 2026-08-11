@@ -174,19 +174,41 @@ namespace Ring.Data
         // `SimulationWorld.CurrentTick` does, and the one
         // `MatchEndPolicy`'s own constructor already reads its limit in.
         //
+        [Range(0.05f, 2f)] public float SpectatorSwitchCooldownSeconds = 0.35f;
+
+        // Stage 2 Task 47c (spec §3.9, Р39/Р77): how many render ticks a
+        // stranger's doll takes to fade out once it is eligible — StalePolicy's
+        // own `fadeTicks`, the budget its FadeProgress reports the spent
+        // fraction of. In TICKS, like InterpMaxStaleTicks above and for the same
+        // reason: the policy counts in ticks, and a second seconds-to-ticks
+        // conversion would be a second answer to a question that already has
+        // one. Default 15 = 500 ms at 30 Hz — long enough to read as a fade
+        // rather than a blink, short enough that a departed stranger does not
+        // linger past the moment the player stops believing in them; the Range
+        // ceiling of 60 is two seconds. > 0 is required by NetInvariants
+        // (#9) — see there for why the floor is enforced and no ceiling is.
+        //
+        // IT BECAME A FIELD ONLY WHEN A READER FOR IT DID. Task 37 wrote the
+        // policy and Task 44 fed it, but nothing read StateOf/FadeProgress, so
+        // the number lived as a NetworkSimBackend constant whose own doc said
+        // an asset field would be "a number nobody could see the effect of
+        // tuning" (CR 6 is about numbers the game plays by). Task 47c is the
+        // reader — ViewRegistry holds a doll the frame has gone silent about and
+        // dims it by this budget — so the constant moved here, unchanged at 15.
+        //
         // MARKER FIELD. The backfill mechanism is
         // EditorBootstrapUtils.EnsureAssetHasKey(so, path, markerField),
         // which is a text search for the marker's name in the committed YAML:
         // if the marker names a field the .asset already carries, the search
         // succeeds, nothing is dirtied, and NO new key is ever written. So the
         // marker has to be the LAST field added, and the call site has to name
-        // THIS field — Task 42a moved it here, in the same commit that added
-        // this field, and the R-APPLY that commit's own report cites already
-        // wrote the key into NetConfig.asset. `MatchAbandonGraceSeconds`
-        // above carried the marker before this field existed (Task 41b) —
-        // its own field comment no longer mentions the mechanism now that
-        // the marker has moved off it.
-        [Range(0.05f, 2f)] public float SpectatorSwitchCooldownSeconds = 0.35f; // sync-marker key — keep LAST
+        // THIS field — Task 47c moved it here, in the same commit that added
+        // this field. The chain so far: MatchMaxDurationSeconds (Task 23, the
+        // first join) -> MatchAbandonGraceSeconds (Task 41b) ->
+        // SpectatorSwitchCooldownSeconds (Task 42a) -> here. Each predecessor's
+        // own field comment stops mentioning the mechanism once the marker
+        // leaves it, so exactly one field in this class ever claims to be it.
+        [Range(1, 60)] public int EntityFadeTicks = 15; // sync-marker key — keep LAST
 
 #if UNITY_EDITOR
         void OnValidate() => RingDataChanged.Raise();

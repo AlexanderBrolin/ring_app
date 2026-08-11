@@ -150,6 +150,15 @@ namespace Ring.Presentation
 
         public void DevSpawnMob(MobType type, float2 pos) => _backend.DevSpawnMob(type, pos);
 
+        /// The stranger-doll fade pair (Stage 2 Task 47c, bd `app-wcy`),
+        /// forwarded from the backend, which is where the answers live —
+        /// `ISimBackend.PlayerFadeProgress`/`ShouldKeepPlayerDoll` carry the
+        /// contract, including why they are primitives and why `false` is the
+        /// safe half of the second one. `ViewRegistry` is the only reader.
+        public float PlayerFadeProgress(int slot) => _backend.PlayerFadeProgress(slot);
+
+        public bool ShouldKeepPlayerDoll(int slot) => _backend.ShouldKeepPlayerDoll(slot);
+
         /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
         /// this render frame's `Update` sampled below — `MuzzleFlashView`/
         /// `AudioDirector`'s per-frame prediction reads `FireHeld` off THIS

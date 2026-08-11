@@ -146,6 +146,18 @@ namespace Ring.Presentation
         // question has no answer and the second fact makes a SECOND body.
         Dictionary<int, PlayerView> _corpses;
 
+        // Stage 2 Task 47c: the slots whose doll is being HELD through its
+        // fade-out — still in `_activePlayers` (it is still that slot's doll and
+        // still returns to the pool through `RetirePlayer`), but no longer the
+        // slot's LIVE doll in the sense the rest of this class means. The
+        // distinction is the same one `_corpses` draws and it earns its keep at
+        // three read sites, each of which would otherwise draw a fact at a place
+        // that has stopped being true: `TryGetPlayerView`, `DispatchToDoll` and
+        // `EnsureCorpse`. Every one of the three restores exactly the behaviour
+        // that predates this task, where the doll was already in the pool by
+        // then and each of those lookups simply found nothing.
+        HashSet<int> _fadingPlayerSlots;
+
         // Per-frame scratch buffers, cleared and reused every call — no allocation
         // once warmed up.
         HashSet<int> _seenPlayerSlots;
@@ -170,6 +182,7 @@ namespace Ring.Presentation
             _playerPool = new Stack<PlayerView>(playerCap * 2);
             _corpses = new Dictionary<int, PlayerView>(playerCap);
             _seenPlayerSlots = new HashSet<int>(playerCap);
+            _fadingPlayerSlots = new HashSet<int>(playerCap);
             _activeMobs = new Dictionary<int, MobView>(mobCap);
             _activeProjectiles = new Dictionary<int, ProjectileView>(projCap);
             // Both pools capped at mobCap (Б6 — not split by archetype ratio):
@@ -222,6 +235,10 @@ namespace Ring.Presentation
                 _playerPool.Push(kv.Value);
             }
             _corpses.Clear();
+            // Stage 2 Task 47c: both loops above have already pooled whatever
+            // dolls were held mid-fade, so the marks they carried describe
+            // nothing any more.
+            _fadingPlayerSlots.Clear();
 
             foreach (KeyValuePair<int, MobView> kv in _activeMobs)
             {
@@ -389,9 +406,21 @@ namespace Ring.Presentation
         /// already fallen. What must NOT happen is making a second corpse for
         /// the slot, which is why the body is registered under its slot and not
         /// merely appended (see `_corpses`).
+        /// A DOLL FADING OUT RECEIVES NOTHING (Stage 2 Task 47c). Its slot has
+        /// stopped being described by the frame, so it stands where it was last
+        /// SEEN: replaying `Pistol_Shoot` on it draws a shot at a place that is
+        /// no longer true, and — the heavier half — turning it into a corpse
+        /// would lay the body down at the last-seen spot instead of where the
+        /// frame says the player fell, breaking the owner's own "где упал, там и
+        /// лежит". The body is made by the FRAME instead, in `EnsureCorpse`,
+        /// where a position actually exists; if the frame never carries that
+        /// slot again, no body is drawn at all, which is right — this client
+        /// never saw it. Before this task the doll was already pooled by then
+        /// and the lookup below simply failed, so this restores that exactly.
         void DispatchToDoll(byte playerIndex, in SimEvent e, bool death)
         {
             if (playerIndex == ProjectileIds.NoOwner) return;
+            if (_fadingPlayerSlots.Contains(playerIndex)) return;
             if (!_activePlayers.TryGetValue(playerIndex, out PlayerView view)) return;
             view.Visual?.HandleEvent(in e, _gameFeel.OneShotCrossFadeSeconds);
             if (!death) return;
@@ -492,6 +521,18 @@ namespace Ring.Presentation
         {
             if (_corpses.ContainsKey(slot)) return;
 
+            // Stage 2 Task 47c: a doll being held through its fade is standing
+            // where its slot was last SEEN, not where this frame says the body
+            // is — so it goes back to the pool here and the branch below rents
+            // one and places it properly. Detaching the held doll in place
+            // instead would lay the body down as far from the truth as the
+            // player travelled between the last sighting and the death, which
+            // is up to the whole fade budget's worth of running. This is also
+            // exactly what happened before the hold existed: the doll had
+            // already been retired, so `standing` read false and a body was
+            // rented. `RetirePlayer` clears the mark as it pools.
+            if (_fadingPlayerSlots.Contains(slot)) RetirePlayer(slot);
+
             bool standing = _activePlayers.TryGetValue(slot, out PlayerView view);
             if (!standing)
             {
@@ -554,8 +595,31 @@ namespace Ring.Presentation
         /// instance serves a different slot after a retire/rent, so a consumer
         /// that cached one would eventually decorate a stranger. Ask again for
         /// every event and every frame — the lookup is a dictionary probe.
+        /// A DOLL FADING OUT ANSWERS "NO" TOO (Stage 2 Task 47c), which is the
+        /// fourth load-bearing refusal and the one this task had to add rather
+        /// than inherit. A held doll stands at the last position the picture
+        /// ever showed for its slot, and two of the callers above spawn world
+        /// props off its GUN: a `ShotHeard` — a shot from someone this client
+        /// cannot see, arriving as an ordinary `ProjectileFired` at a
+        /// deliberately coarsened position — would otherwise light a muzzle
+        /// flash and throw brass at the exact spot that player was last seen
+        /// standing, for as long as the fade lasts. That is the F-3 defect in a
+        /// narrower window, and the narrower window is not a defence. Before
+        /// this task the doll was already pooled by then and this lookup found
+        /// nothing; the line below is what keeps that true.
         public bool TryGetPlayerView(int slot, out PlayerView view)
-            => _activePlayers.TryGetValue(slot, out view);
+        {
+            // `view` is cleared rather than left holding the doll on the
+            // refusal: a `false` from a Try- method must not hand back an
+            // object, or a caller that reads the out parameter first gets
+            // exactly the doll this refusal exists to withhold.
+            if (_fadingPlayerSlots.Contains(slot))
+            {
+                view = null;
+                return false;
+            }
+            return _activePlayers.TryGetValue(slot, out view);
+        }
 
         /// One doll per LIVE player slot (Stage 2 Task 45a, spec §3.12; corpses
         /// are objects, not slots — class doc). Same shape as `SyncMobs` below —
@@ -570,6 +634,15 @@ namespace Ring.Presentation
         /// knows it and it is not. The third is a corpse and the first is an
         /// absence, and telling them apart is the whole of `app-2rf` — see the
         /// class doc and `EnsureCorpse`.
+        ///
+        /// AND THE FIRST READING IS NO LONGER ONE OUTCOME (Stage 2 Task 47c, bd
+        /// `app-wcy`). An absence used to retire the doll on the spot; now it
+        /// asks `HoldFadingDoll` whether anything is still going out there, and
+        /// only a "no" reaches the retirement pass. That is what turns a
+        /// stranger stepping behind a wall from a pop into a freeze and a fade —
+        /// and it is also why the fade could not be delivered by the seam alone:
+        /// with the doll pooled in the same frame its slot went quiet, there
+        /// was nothing left on screen for a fade to act on.
         ///
         /// ONE'S OWN BODY IS AMONG THEM AS OF STAGE 2 TASK 47b, and this method
         /// needed no branch for it — which was the point of fixing it where it
@@ -656,9 +729,20 @@ namespace Ring.Presentation
                 // states rather than one inferred from `Alive`. A slot this
                 // frame knows nothing about may be reading
                 // `default(PlayerState)`, i.e. the arena origin (class doc), so
-                // nothing may be drawn or positioned from it; the retirement
-                // pass below is what takes its doll away.
-                if (!curr.PlayerKnown[i]) continue;
+                // nothing may be drawn or positioned from it; since Stage 2
+                // Task 47c its doll may nevertheless be KEPT, untouched and
+                // dimming, until the fade behind `HoldFadingDoll` has run out —
+                // and the retirement pass below is still what takes it away
+                // when it has.
+                if (!curr.PlayerKnown[i])
+                {
+                    // Stage 2 Task 47c: a doll the frame has gone quiet about
+                    // survives this frame's retirement pass while it is still
+                    // fading out — being in `_seenPlayerSlots` is exactly what
+                    // "do not retire me" means to the pass below.
+                    if (HoldFadingDoll(i, local)) _seenPlayerSlots.Add(i);
+                    continue;
+                }
                 // Known and not alive is a BODY, and it is the frame that says
                 // so — see `EnsureCorpse`. The slot is deliberately left out of
                 // `_seenPlayerSlots`: a corpse is not a live doll, and the pass
@@ -670,6 +754,12 @@ namespace Ring.Presentation
                     continue;
                 }
                 _seenPlayerSlots.Add(i);
+                // Stage 2 Task 47c: the frame carries this slot again, so
+                // whatever was fading here is a live doll once more. The policy
+                // has already zeroed its own progress off the fresh sighting —
+                // this is the view-side half of the same fact, and it is what
+                // makes coming back need no other code at all.
+                _fadingPlayerSlots.Remove(i);
 
                 // THE AIM POINT IS RESOLVED HERE, AND ONLY HERE — the doll must
                 // not be able to tell whose slot it is (spec §3.12: a stranger's
@@ -696,6 +786,13 @@ namespace Ring.Presentation
                     ? (hasAimProvider ? localAimSimPos : state.AimPoint)
                     : (state.AimSettleTimer > 0f ? state.AimPoint : state.Pos);
                 Color accent = local ? Color.black : remoteEmission;
+                // Stage 2 Task 47c. One's own doll never dims — see
+                // `HoldFadingDoll` for the whole of why, and note that the
+                // literal below is the exception itself rather than a
+                // shortcut: a local doll is NOT uniformly black (the combo
+                // window pulses on it and a hit flashes it), so multiplying it
+                // by a remainder would be visible.
+                float fadeRemaining = local ? 1f : 1f - _runner.PlayerFadeProgress(i);
 
                 if (!_activePlayers.TryGetValue(i, out PlayerView view))
                 {
@@ -706,7 +803,7 @@ namespace Ring.Presentation
                     view.transform.position = SimSpace.ToWorld(state.Pos);
                     view.Bind(local);
                     view.Visual?.Bind(in state, _gameFeel.PlayerVisualScale);
-                    view.Sync(in state, linkHz, linkBoost, accent);
+                    view.Sync(in state, linkHz, linkBoost, accent, fadeRemaining);
                     view.Visual?.Sync(in state, in visualParams);
                     _activePlayers.Add(i, view);
                     continue;
@@ -715,7 +812,7 @@ namespace Ring.Presentation
                 float2 prevPos = FindPlayerPrevPos(prev, i, state.Pos);
                 view.transform.position = Vector3.Lerp(
                     SimSpace.ToWorld(prevPos), SimSpace.ToWorld(state.Pos), alpha);
-                view.Sync(in state, linkHz, linkBoost, accent);
+                view.Sync(in state, linkHz, linkBoost, accent, fadeRemaining);
                 view.Visual?.Sync(in state, in visualParams);
             }
 
@@ -732,6 +829,79 @@ namespace Ring.Presentation
             // else when the game is paused. `PlayerVisual.SyncCorpse`'s own doc.
             foreach (KeyValuePair<int, PlayerView> kv in _corpses)
                 kv.Value.Visual?.SyncCorpse(in visualParams);
+        }
+
+        /// A slot THIS FRAME SAYS NOTHING ABOUT, whose doll is still standing
+        /// (Stage 2 Task 47c, bd `app-wcy`, spec §3.9 Р39/Р77): keep it where it
+        /// is and let it dim, instead of pooling it the instant the records
+        /// stop. Answers whether the doll must survive this frame's retirement
+        /// pass. Before this task the branch was one `continue` and every
+        /// stranger who stepped behind a wall was deleted between two frames —
+        /// which reads as a network glitch rather than as fog of war, and which
+        /// is what `app-wcy` was opened about.
+        ///
+        /// HELD MEANS NOT TOUCHED, NOT "SYNCED WITH ZEROES". A slot the frame is
+        /// silent about reads `default(PlayerState)` — the arena origin, and not
+        /// alive (`NetworkSimBackend.BeginSlot`'s own doc) — so BOTH of the
+        /// writes the live path makes are refused here: the transform is not
+        /// positioned (the doll stands where the last frame it appeared in left
+        /// it, which is the "freezes" half of Р39/Р77), and neither `Sync` nor
+        /// `PlayerVisual.Sync` is called, because each takes the state that does
+        /// not exist. Only the emission is written, through the one member that
+        /// dims what was ALREADY composed rather than composing it again
+        /// (`PlayerView.FadeEmission`). What still moves is the Animator, which
+        /// runs on its own and keeps playing whatever clip the doll was last
+        /// put into — a residual, named rather than promised away, and a
+        /// smaller lie than a doll that snaps to the origin.
+        ///
+        /// THREE THINGS ARE NEVER HELD, each for its own reason:
+        ///  - ONE'S OWN DOLL. Own visibility is unconditional, and the branch
+        ///    returns before it can reach the policy at all. It matters more
+        ///    since Stage 2 Task 47b than it would have before: the server now
+        ///    sends a DEAD connection its own record, so one's own slot feeds
+        ///    the policy too and could genuinely report a fade — while the local
+        ///    seat's silence has an entirely different cause (`ApplyOwnPlayer`
+        ///    stops writing it once the roster says that player is down), and
+        ///    holding on it would keep a doll standing over one's own corpse;
+        ///  - A CORPSE. Bodies are not in `_activePlayers` at all (class doc),
+        ///    so the lookup below simply does not find one — which is what keeps
+        ///    "трупы не исчезают до конца матча" (client/CLAUDE.md) true through
+        ///    this task: a body is not a doll whose records stopped, it is an
+        ///    object that has left the slot system, and only `Clear` pools it;
+        ///  - A MOB. Nothing registers mobs with the policy (the owner's
+        ///    decision 3a leaves them to a task with numbers of its own), and
+        ///    this method is only ever reached from the player loop.
+        ///
+        /// A HELD DOLL IS NOT THE SLOT'S LIVE DOLL, and that is one rule with
+        /// three enforcement points rather than three special cases. It keeps
+        /// its entry in `_activePlayers` — it is still that slot's doll and
+        /// still returns to the pool through `RetirePlayer` — but it is marked
+        /// in `_fadingPlayerSlots`, and `TryGetPlayerView`, `DispatchToDoll` and
+        /// `EnsureCorpse` each refuse it there. All three refusals restore
+        /// exactly what happened before this task, when the doll was already
+        /// pooled and each lookup found nothing; without them the hold would
+        /// have quietly bought two regressions with the fade — a muzzle flash
+        /// and brass thrown at a vanished player's last known position, and a
+        /// body laid down where that player was last SEEN rather than where the
+        /// frame says they fell.
+        ///
+        /// COMING BACK NEEDS NO CODE AT ALL. The policy zeroes a slot's fade the
+        /// instant a fresh sighting arrives, and a slot the frame carries again
+        /// takes the ordinary live path — which snaps rather than streaks,
+        /// because `FindPlayerPrevPos` refuses a `prev` half that does not have
+        /// the slot alive. A doll that was half out therefore comes back to full
+        /// brightness where it stands and then resumes moving, in that order:
+        /// the policy hears of the return at DECODE time while the picture
+        /// reaches it `InterpBufferTicks` later, so the light returns first.
+        bool HoldFadingDoll(int slot, bool local)
+        {
+            if (local) return false;
+            if (!_activePlayers.TryGetValue(slot, out PlayerView view)) return false;
+            if (!_runner.ShouldKeepPlayerDoll(slot)) return false;
+
+            _fadingPlayerSlots.Add(slot);
+            view.FadeEmission(1f - _runner.PlayerFadeProgress(slot));
+            return true;
         }
 
         /// The previous render half's position for one player slot. Unlike the
@@ -963,6 +1133,7 @@ namespace Ring.Presentation
         {
             if (!_activePlayers.TryGetValue(slot, out PlayerView view)) return;
             _activePlayers.Remove(slot);
+            _fadingPlayerSlots.Remove(slot); // Stage 2 Task 47c — the doll is gone, the mark with it.
             view.gameObject.SetActive(false);
             _playerPool.Push(view);
         }

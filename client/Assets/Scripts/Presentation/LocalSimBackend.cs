@@ -99,6 +99,27 @@ namespace Ring.Presentation
         /// Never: nothing was ever sent, so nothing is waiting to be answered.
         public bool SpectateRequestInFlight => false;
 
+        /// Zero for every slot, always (Stage 2 Task 47c): this backend owns no
+        /// stale policy and there is no fog between a world in memory and the
+        /// frame it captures itself into, so no slot's records ever stop
+        /// arriving and nothing has a fade to be part of the way through.
+        public float PlayerFadeProgress(int slot) => 0f;
+
+        /// False for every slot, always — and that is what makes solo
+        /// UNCHANGED BY CONSTRUCTION rather than by inspection. A doll is kept
+        /// past a frame that is silent about its slot only while a fade is
+        /// running, and none ever is here; a doll therefore leaves the moment
+        /// the frame stops carrying its slot, which is exactly what every solo
+        /// playtest before this task saw.
+        ///
+        /// AND THE CALLER NEVER EVEN ASKS. `SimulationWorld.CaptureSnapshot`
+        /// writes `PlayerKnown` true for every seat of its roster and
+        /// `PlayerCount` is that same roster, so the branch in
+        /// `ViewRegistry.SyncPlayers` that reaches this member is unreachable on
+        /// this backend. The answer above is what it would be if that ever
+        /// changed — the conservative one, not a placeholder.
+        public bool ShouldKeepPlayerDoll(int slot) => false;
+
         public int Advance(in SimInput frame, float unscaledDeltaTime,
             System.Action<int, ulong> onTick)
         {

@@ -320,5 +320,58 @@ namespace Ring.Simulation.Tests
                 NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "the scene's TimeManager.TickRate agreeing with Net.TickRate must report nothing");
         }
+
+        // ==================================================================
+        // Invariant #9 (Stage 2 Task 47c): NetConfig.EntityFadeTicks — the
+        // duration of a stranger's doll fade, which moved out of a
+        // NetworkSimBackend constant and into the asset the moment a reader
+        // for it existed.
+        // ==================================================================
+
+        [Test]
+        public void EntityFadeTicksZero_IsReported()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            // Zero does not mean "fade instantly" anywhere it is read:
+            // `StalePolicy` floors its own `fadeTicks` at 1 (its fix-round-1
+            // finding I-1), so a zero here is silently retuned to one tick
+            // rather than honored — and the operator who asked for it never
+            // learns that the asset said something the policy refused.
+            net.EntityFadeTicks = 0;
+
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "Net.EntityFadeTicks");
+        }
+
+        [Test]
+        public void EntityFadeTicksNegative_IsReported()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            // The floor has to be closed on both sides of zero: a hand-edited
+            // YAML never passes through the `[Range]` slider (this class's own
+            // type doc, Р115), so the only thing standing between a negative
+            // tick count and `StalePolicy`'s clamp is this rule.
+            net.EntityFadeTicks = -1;
+
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "Net.EntityFadeTicks");
+        }
+
+        [Test]
+        public void EntityFadeTicksOne_IsLegal()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            // Positive witness (lesson 129): one tick is the shortest fade
+            // `StalePolicy` can actually run, and the rule is `> 0` rather than
+            // some larger minimum — without this line a validator that demanded
+            // any floor at all would pass the two negatives above.
+            net.EntityFadeTicks = 1;
+
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "one tick is a legal, if extreme, fade duration — the rule is > 0");
+        }
     }
 }

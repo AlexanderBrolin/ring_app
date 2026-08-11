@@ -226,6 +226,64 @@ namespace Ring.Presentation
         /// moment, and it is the same one that permits the next request.
         bool SpectateRequestInFlight { get; }
 
+        /// How much of player slot `slot`'s fade-out is already spent, in
+        /// `[0, 1]` (Stage 2 Task 47c, bd `app-wcy`, spec §3.9 Р39/Р77) — `0`
+        /// while the slot's records keep arriving, climbing to `1` once the
+        /// whole budget (`NetConfig.EntityFadeTicks`) has gone by on a slot
+        /// whose records stopped. A caller multiplies what it draws by the
+        /// REMAINDER, so a stranger who walks behind the fog freezes where the
+        /// last frame left them and then goes out, instead of being deleted
+        /// between two frames.
+        ///
+        /// APPLY IT WHENEVER IT IS `> 0`, whatever else is known about the slot.
+        /// That is the decision class's own caller contract, and it is repeated
+        /// here because ignoring it produces exactly the artifact the whole
+        /// mechanism exists to remove: the progress reported here deliberately
+        /// FREEZES while the connection itself is starving, so a reader that
+        /// re-derived "am I supposed to be fading" from any other signal would
+        /// snap a part-faded doll back to full brightness and then dim it a
+        /// second time.
+        ///
+        /// PRIMITIVES BECAUSE THE SEAM IS AN ASSEMBLY BOUNDARY, not because a
+        /// float reads more nicely. `Ring.Presentation` holds no reference to
+        /// `Ring.Networking` and must never acquire one (`client/CLAUDE.md`;
+        /// `Ring.Presentation.Net` was split off as its own assembly for
+        /// precisely this border), so the decision class's own state enum
+        /// cannot appear in this signature — a `float` and a `bool` cross
+        /// instead.
+        ///
+        /// `slot` IS THE PLAYER SLOT — the dense index `RenderSnapshot.Players`
+        /// is keyed by and `ViewRegistry` rents dolls by — never a wire entity
+        /// id. Mobs are outside this member entirely: nothing registers them
+        /// with the policy behind it (the owner's decision 3a leaves their fade
+        /// to a task of its own, with numbers of its own), so nothing asks it
+        /// about them.
+        float PlayerFadeProgress(int slot);
+
+        /// Whether a doll standing in slot `slot` must be KEPT when this frame
+        /// says nothing about that slot (Stage 2 Task 47c) — the terminal
+        /// answer, ASKED rather than inferred from `PlayerFadeProgress(slot) >=
+        /// 1f`. Whether a fade has finished is the decision class's own
+        /// knowledge, and a view comparing floats against a threshold would be a
+        /// second, weaker copy of a rule that already has exactly one home.
+        ///
+        /// IT IS PHRASED AS "KEEP IT", NOT AS "IT IS GONE", AND THAT IS WHAT
+        /// MAKES `false` THE SAFE ANSWER — the same shape `CanDevSpawnMob`,
+        /// `CanRestartMatch` and `CanRequestSpectate` above already have, where
+        /// `false` is what a backend that does not have the mechanism at all
+        /// says. `false` here reproduces the behaviour that predates this task
+        /// exactly: the doll is retired the moment the frame goes quiet about
+        /// its slot. Stated the other way round, a backend with no fade to
+        /// report would have to answer "it has not gone" — an assertion about a
+        /// mechanism it does not have, and one that would hold a doll on screen
+        /// forever if the branch were ever reached.
+        ///
+        /// A SLOT NOTHING IS TRACKING THEREFORE ANSWERS `false` TOO, which is
+        /// what makes this safe to ask about any slot at all: "never seen" and
+        /// "finished fading" want the same thing from the caller — let the doll
+        /// go — and neither can strand one.
+        bool ShouldKeepPlayerDoll(int slot);
+
         /// One render frame of simulation; returns how many ticks it produced
         /// (0 = the frame landed inside the current tick).
         ///

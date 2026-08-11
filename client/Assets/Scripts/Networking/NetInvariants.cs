@@ -307,6 +307,32 @@ namespace Ring.Networking
                     $"(got Net.TickRate={net.TickRate}, TimeManager.TickRate={timeManagerTickRate}).");
             }
 
+            // #9 (Stage 2 Task 47c). A fade has to last at least one tick to be
+            // a fade at all. `StalePolicy` already CLAMPS its own `fadeTicks` up
+            // to 1 (its fix-round-1 finding I-1, which floored it there rather
+            // than at 0 so that every `Gone` transition goes through `Advance`
+            // and honors the starvation and truncation guards) — so a
+            // zero-or-negative number here is not refused downstream, it is
+            // silently retuned, and the operator who wrote it never learns the
+            // asset said something nothing honored. Catching it here is what
+            // turns a quiet disagreement between the asset and the policy into
+            // a line the reader can act on.
+            //
+            // NO CEILING, DELIBERATELY, unlike #7's band. `SlewFraction` has an
+            // upper rule because spec §3.9 STATES a band and nothing enforces it
+            // at run time; there is no spec band for a fade duration and no
+            // threshold past which anything breaks — a long fade holds a
+            // stranger's doll in the registry for longer, which the pool is
+            // sized for either way (`ViewRegistry` allocates twice the roster),
+            // and how long a fade should read as is taste, settled by playtest
+            // at milestone В1. Adding a ceiling here would be the duplicate of
+            // the `[Range]` hint this class's own type doc refuses to become.
+            if (net.EntityFadeTicks <= 0)
+            {
+                errors.Add("Net.EntityFadeTicks must be > 0 " +
+                    $"(got EntityFadeTicks={net.EntityFadeTicks}).");
+            }
+
             return errors.ToArray();
         }
     }

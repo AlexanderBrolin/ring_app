@@ -166,23 +166,6 @@ namespace Ring.Presentation.Net
         /// while being stingy retires a round that is still flying.
         const int GhostTrackMarginTicks = 15;
 
-        /// How many render ticks a stale entity takes to fade out once it is
-        /// eligible (`StalePolicy`'s `fadeTicks`). `NetConfig` carries no field
-        /// for it — `StalePolicy`'s own doc records that as an open end for
-        /// this task — and it is still a constant here rather than an asset
-        /// field because the number STILL has no consumer that draws it.
-        /// The earlier wording named the dolls of Task 45 as the consumer that
-        /// would arrive; Task 45 shipped whole (a, b and c) and reads neither
-        /// `StaleState` nor `FadeProgress`. The real address is Task 47b and bd
-        /// `app-wcy` — the fade of a stranger's doll whose records stopped
-        /// coming — and until that reader exists a balance-asset field would be
-        /// a number nobody could see the effect of tuning (CR 6 is about
-        /// numbers the game plays by).
-        /// Half a second at 30 Hz: long enough to read as a fade rather than a
-        /// blink, short enough that a genuinely departed entity does not
-        /// linger past the moment the player stops believing in it.
-        const int EntityFadeTicks = 15;
-
         readonly NetworkManager _nm;
         readonly NetConfig _net;
         readonly string _playerId;
@@ -518,6 +501,37 @@ namespace Ring.Presentation.Net
 
         public bool SpectateRequestInFlight => _spectateRequestWindow > 0f;
 
+        /// `StalePolicy.FadeProgress` for the player slot, and nothing else
+        /// (Stage 2 Task 47c, bd `app-wcy`). The decision is the policy's — how
+        /// long a slot may go unheard before it freezes, when the fade may start
+        /// at all, and when it must hold still because the whole connection is
+        /// quiet — and this member is the wire out of it, which is the one thing
+        /// the policy has lacked since Task 37 wrote it. Zero before the first
+        /// `Restart` has built one: there is no picture then either.
+        public float PlayerFadeProgress(int slot)
+            => _stale != null ? _stale.FadeProgress(slot) : 0f;
+
+        /// True while the policy still has something to show for the slot.
+        /// `Gone` is its terminal reading — permanent until a fresh sighting,
+        /// and also what a slot the policy was never told about reads — so it is
+        /// the one answer that means "let the doll go", and this member is that
+        /// test and no other. A doll therefore cannot be stranded by a seat
+        /// nothing is tracking, and before the first `Restart` there is no
+        /// policy at all and the answer is the same `false`.
+        ///
+        /// IT STAYS TRUE THROUGH A CONNECTION STALL, DELIBERATELY. While the
+        /// policy reports global starvation it hands out no fade progress and
+        /// reaches no terminal state, so a stranger's doll is held, frozen and
+        /// at whatever brightness it had reached, for as long as the silence
+        /// lasts. That is the intended reading of Р39/Р77 and not a leak: the
+        /// dolls held this way are bounded by the roster, they stay in
+        /// `_activePlayers` where `ViewRegistry.Clear` reaches them, and a
+        /// connection that is genuinely down is what the connection indicator is
+        /// for — killing the picture on top of it would say "everyone left"
+        /// where the truth is "nobody is being heard".
+        public bool ShouldKeepPlayerDoll(int slot)
+            => _stale != null && _stale.StateOf(slot) != StalePolicy.StaleState.Gone;
+
         /// One render frame. Everything that has to happen every frame happens
         /// here, INCLUDING the two discharges — and that placement is the
         /// point, not an implementation detail.
@@ -810,7 +824,13 @@ namespace Ring.Presentation.Net
             // every id that is not a slot. Whoever introduces that mapping
             // must start calling `OnEntitySeen` for mobs in `ReadMobs` at the
             // same time, or the fade will never start for them.
-            _stale = new StalePolicy(cfg.Arena.MaxPlayers, _net.InterpMaxStaleTicks, EntityFadeTicks);
+            // Both tick counts come off the asset, one line apart, because they
+            // are the same policy's two halves — how long before a slot freezes
+            // and how long it then takes to go out (Stage 2 Task 47c moved the
+            // second one here from a constant of this class; `NetConfig.
+            // EntityFadeTicks` has the why).
+            _stale = new StalePolicy(cfg.Arena.MaxPlayers, _net.InterpMaxStaleTicks,
+                _net.EntityFadeTicks);
             _reset = new ClientMatchReset(_dedup, _snapshots, _clock, _ghosts, _stale, _events);
             // Sized from the same cap as `_mobScratch` below, which is what
             // makes "a frame can never carry more records than one generation
