@@ -118,7 +118,10 @@ namespace Ring.Networking.Client
     /// `ShotHeard` ever produced one, at the honest position of their own
     /// ejection port, and that is unchanged by app-p7t. The sound this event
     /// exists for is still played by the audio director on `Kind` plus
-    /// `Owner == Player`, unconditionally, at `e.Pos` — the coarsened position
+    /// `Owner == Player`, with no condition on visibility or a doll — though
+    /// `AudioDirector`'s own predicted-shot latch and its
+    /// `MinSfxInterval`/`VoicesPerSfx` gates can still drop a given attempt
+    /// for reasons that have nothing to do with this kind — at `e.Pos`, which
     /// is exactly what a SOUND is allowed to give away, and the whole reason
     /// this wire kind is sent at all. No consumer reads `EntityId` on this
     /// kind for anything but that zero.

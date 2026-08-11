@@ -616,7 +616,13 @@ namespace Ring.Presentation
         /// cannot see, arriving as an ordinary `ProjectileFired` at a
         /// deliberately coarsened position — would otherwise light a muzzle
         /// flash and throw brass at the exact spot that player was last seen
-        /// standing, for as long as the fade lasts. That is the F-3 defect in a
+        /// standing, for as long as the fade lasts. Since bd `app-p7t`,
+        /// `MuzzleFlashView.HandleEvent`'s own guard returns before a
+        /// `ShotHeard` ever reaches this lookup, so the flash half of that
+        /// clause is moot — but `PersistentPropsDirector.SpawnCasing` still
+        /// calls this same method unconditionally for any player-owned shot,
+        /// and this refusal remains the only thing keeping a `ShotHeard` from
+        /// throwing brass at a stale spot. That is the F-3 defect in a
         /// narrower window, and the narrower window is not a defence. Before
         /// this task the doll was already pooled by then and this lookup found
         /// nothing; the line below is what keeps that true.
