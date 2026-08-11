@@ -7,6 +7,21 @@ using UnityEngine.InputSystem;
 
 namespace Ring.Presentation
 {
+    /// A backend asking the facade for THIS render frame's input, from outside
+    /// the facade's own `Update` (Stage 2 app-b3z). `SimulationRunner.
+    /// TrySampleFrameInput` is the only implementation and its doc carries the
+    /// contract; this type exists so the ONE thing a backend needs from the
+    /// facade can be handed over as one call, instead of a facade reference
+    /// that would close a reference cycle and open every other member with it.
+    ///
+    /// A REFUSAL IS A VALUE. The caller is FishNet's pre-tick, which runs
+    /// inside the package's own tick loop, and a throw from there abandons the
+    /// rest of the loop's pass — the same rule the receive path keeps for
+    /// exactly the same reason. `false` means "this frame has no input of
+    /// mine", and the caller's only correct answer is to leave whatever
+    /// prediction already holds alone.
+    public delegate bool FrameInputRequest(out SimInput input);
+
     /// The single facade the whole Presentation layer reads the simulation
     /// through, and the sole driver of one render frame's worth of it (spec
     /// §3.2/§3.12). Stage 2 Task 43 split this class in two along the line
@@ -42,10 +57,32 @@ namespace Ring.Presentation
     /// `HudController`/`CrosshairView` all read via `LateUpdate` (already
     /// guaranteed to run after every `Update`, order or no); `DevOverlay`/
     /// `PauseController`/`DeathOverlayController`'s own `Update`s only poll
-    /// keyboard/dev state and call `Restart`/toggle `Paused` — nothing in the
-    /// project currently depends on running BEFORE this class's `Update` within
-    /// the same frame, so pinning this one earlier is a strict improvement, not
-    /// a trade-off.
+    /// keyboard/dev state and call `Restart`/toggle `Paused`. Among
+    /// PRESENTATION scripts, then, nothing needs to run ahead of this one.
+    ///
+    /// AND THAT IS THE WHOLE OF WHAT THE PIN CLAIMS (Stage 2 app-b3z). The
+    /// sentence this paragraph used to end on — "nothing in the project
+    /// currently depends on running BEFORE this class's `Update` within the
+    /// same frame, so pinning this one earlier is a strict improvement, not a
+    /// trade-off" — stopped being true the day a network stack arrived, and
+    /// the cost was paid by the local player's own input. FishNet's
+    /// `NetworkManager`, and the reader loop its `TimeManager` adds beside
+    /// itself to drive the tick, are each declared
+    /// `[DefaultExecutionOrder(short.MinValue)]`, and the entire tick cycle
+    /// runs out of that loop's `Update`: the pre-tick, this client's
+    /// replicate (`PlayerNetworkController`'s own tick handler), the post-tick
+    /// and the state send. The floor of the scale cannot be undercut by any
+    /// number this attribute could carry, so on every frame that ticks, the
+    /// tick that puts this client's input on the wire has already run by the
+    /// time this component's `Update` does — which is exactly why that input
+    /// used to be the PREVIOUS frame's.
+    ///
+    /// THE CURE WAS NOT AN ORDERING BUT A FEED POINT, and it is
+    /// `TrySampleFrameInput` below: the tick domain now takes the sample
+    /// itself, immediately before the tick that replicates it. Where this pin
+    /// sits therefore decides nothing about input latency in either direction,
+    /// and the reasoning above is once again about `AudioDirector` and the
+    /// Presentation fan-out alone.
     [DefaultExecutionOrder(-50)]
     public sealed class SimulationRunner : MonoBehaviour
     {
@@ -83,6 +120,16 @@ namespace Ring.Presentation
         bool _backendInstalled;
 
         InputSampler _sampler;
+
+        /// The render frame `LastFrameInput` was last sampled on, or -1 for
+        /// "never" — which cannot be 0, because `Time.frameCount` itself is 0
+        /// over the opening frames of a session. Р35 in one field: the sample
+        /// is taken by whichever path asks first this frame — FishNet's
+        /// pre-tick on a networked client (`TrySampleFrameInput`), this
+        /// component's own `Update` otherwise — and every later asker of the
+        /// same frame is handed what the first one took.
+        int _inputSampledFrame = -1;
+
         bool _pendingApplyConfig;
 
         /// The raw tick double buffer, straight off the backend (Task 43 turned
@@ -160,12 +207,23 @@ namespace Ring.Presentation
         public bool ShouldKeepPlayerDoll(int slot) => _backend.ShouldKeepPlayerDoll(slot);
 
         /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
-        /// this render frame's `Update` sampled below — `MuzzleFlashView`/
+        /// this render frame was sampled with — `MuzzleFlashView`/
         /// `AudioDirector`'s per-frame prediction reads `FireHeld` off THIS
         /// instead of calling `InputSampler.SampleFrame()` a second time, which
         /// would double-sample Input System and could double-latch the dash edge
         /// (`InputSampler._dashLatch`, spec §3.8 — a same-frame dash press must
         /// only ever be consumed once).
+        ///
+        /// STILL THE ONLY HOME OF "THIS FRAME'S INPUT", THOUGH `Update` IS NO
+        /// LONGER ALWAYS WHAT FILLS IT (Stage 2 app-b3z). On a networked client
+        /// the sample is taken in FishNet's tick domain — earlier in the same
+        /// frame, immediately before the tick that replicates it — and `Update`
+        /// then reuses it rather than taking a second one; see
+        /// `SampleFrameInputOnce` and `TrySampleFrameInput` below. No reader
+        /// can tell the two paths apart: every one of them runs at the default
+        /// order or later and this facade is pinned at -50, so whichever path
+        /// filled this property, it was filled before the first reader of the
+        /// frame ran, with the value that path would also have read.
         public SimInput LastFrameInput { get; private set; }
 
         // Task 25 (Приложение П-7): the SOLE point every interpolating view
@@ -698,6 +756,88 @@ namespace Ring.Presentation
 #endif
         }
 
+        /// This render frame's input, sampled AT MOST ONCE no matter how many
+        /// callers ask for it (Р35, Stage 2 app-b3z). `InputSampler.SampleFrame`
+        /// is a pure read, so a second call would not fail — it would produce a
+        /// SECOND "input of this frame", and the dash edge is the proof that
+        /// there can only be one: the latch is cleared once per flush, so two
+        /// samples of one frame can hand the same press to two different
+        /// consumers as two presses.
+        ///
+        /// KEYED ON `Time.frameCount` AND NOT ON A FLAG SOMEBODY HAS TO CLEAR.
+        /// The two askers sit in different phases of the frame and neither owns
+        /// the other's lifetime — the pre-tick may run once, twice or not at
+        /// all before `Update`, and on a frame with no tick `Update` is the
+        /// only asker. A frame number answers all of those cases with no reset
+        /// path to forget.
+        SimInput SampleFrameInputOnce()
+        {
+            if (_inputSampledFrame == Time.frameCount) return LastFrameInput;
+
+            _inputSampledFrame = Time.frameCount;
+            LastFrameInput = _sampler.SampleFrame(); // Task 28 — see the property's own doc.
+            return LastFrameInput;
+        }
+
+        /// The tick domain asking for this frame's input (Stage 2 app-b3z,
+        /// `FrameInputRequest`). `NetworkSimBackend` calls it from FishNet's
+        /// `TimeManager.OnPreTick` and hands the answer to
+        /// `PlayerNetworkController.SetPendingInput`, so the replicate built by
+        /// the `OnTick` that follows a few lines later carries the input of the
+        /// frame the player is looking at — instead of the previous frame's,
+        /// which is what it carried while this facade was the only sampler (see
+        /// the class doc's ordering block).
+        ///
+        /// IT IS THE SAME SAMPLE `Update` WILL USE, not a second one for the
+        /// wire. Whichever of the two runs first takes it; `LastFrameInput` is
+        /// where it lands either way, and on a frame that produces several
+        /// ticks every one of them replicates that one value — exactly as they
+        /// all did before, when the one value was the previous frame's.
+        ///
+        /// THREE REFUSALS, AND THE FIRST ONE IS LOAD-BEARING:
+        ///  - `_paused` — the pause gate must keep freezing input, and not
+        ///    merely to stop the world. `WouldFireThisFrame` above has no pause
+        ///    term of its own; `MuzzleFlashView` and `AudioDirector` fire on
+        ///    that property's RISING EDGE, and what keeps the edge from ever
+        ///    rising behind the pause menu is that `Update` returns before it
+        ///    samples, leaving `LastFrameInput` frozen (`AimActive`'s doc
+        ///    records the same mechanism for the aim ray). A tick path that
+        ///    sampled through a pause would put a muzzle flash and a gunshot on
+        ///    top of the menu on the click that resumes the game. The wire is
+        ///    not starved by the refusal: prediction keeps replicating the last
+        ///    pre-pause input, which is what it does today;
+        ///  - `_sampler == null` — `Awake` builds the sampler, and the tick
+        ///    loop belongs to a `NetworkManager` pinned at `short.MinValue`
+        ///    with a bootstrap at -100 in front of it. A tick that arrives
+        ///    before this component has woken must cost nothing, and a throw
+        ///    from a FishNet pre-tick would cost the whole pass;
+        ///  - `!isActiveAndEnabled` — a facade that is not running a frame has
+        ///    no "input of this frame" to offer. `OnDisable` disables the
+        ///    sampler's actions, so a sample taken then would be a zeroed frame
+        ///    that no `ClearLatches` would ever follow; refusing leaves
+        ///    prediction on its last real input, which is exactly what a
+        ///    disabled facade produced before this seam existed.
+        ///
+        /// `_restartedThisUpdate` IS DELIBERATELY NOT A FOURTH REFUSAL. That
+        /// flag means "a restart happened inside the `Update` now running", and
+        /// this method runs BEFORE the `Update` that would clear it — so from
+        /// here it reads the PREVIOUS frame's answer, which is the one thing
+        /// its own doc promises it never means. It is also moot where it could
+        /// be read: it is set only below `Restart`'s gate, and the networked
+        /// backend — the only one with a tick domain — refuses every `Restart`
+        /// after the first, which is itself made from `Awake`.
+        public bool TrySampleFrameInput(out SimInput input)
+        {
+            if (_paused || _sampler == null || !isActiveAndEnabled)
+            {
+                input = default;
+                return false;
+            }
+
+            input = SampleFrameInputOnce();
+            return true;
+        }
+
         void Update()
         {
             // Only a restart performed BELOW, by this very call, may set it —
@@ -753,8 +893,12 @@ namespace Ring.Presentation
 
             if (_paused) return;
 
-            SimInput frame = _sampler.SampleFrame();
-            LastFrameInput = frame; // Task 28 — see the property's own doc above.
+            // The tick domain may already have taken this frame's sample a few
+            // hundred microseconds ago (Stage 2 app-b3z): `SampleFrameInputOnce`
+            // hands back what it took, and takes the sample here on the frames
+            // — every frame in solo, and every tickless frame anywhere — where
+            // nobody asked first.
+            SimInput frame = SampleFrameInputOnce();
             // `TickAdvanced` reads as a plain field inside its declaring class,
             // so this hands the backend null whenever nobody is subscribed —
             // which is what keeps the per-tick `StateHash()` call from ever

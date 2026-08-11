@@ -310,17 +310,32 @@ namespace Ring.Presentation.Net
         /// live.
         PlayerNetworkController _controller;
 
+        /// The facade's offer of this render frame's input (Stage 2 app-b3z).
+        /// Injected rather than reached for: this assembly is the only one in
+        /// Presentation with FishNet on its references, and the boundary holds
+        /// precisely because it runs one way — `Ring.Presentation` must not
+        /// learn what a `TimeManager` is, so the facade cannot subscribe to the
+        /// tick itself, and a reference to the facade held here would open all
+        /// of it for the sake of one question. See `TimeManager_OnPreTick`.
+        readonly FrameInputRequest _requestFrameInput;
+
         /// `netConfig` is required in every build even though only some of its
         /// numbers are read here — the same guard `ClientMatchLink`'s own
         /// constructor keeps, for the same reason: a bootstrap that forgot it
-        /// is a wiring bug wherever it happens.
+        /// is a wiring bug wherever it happens. `requestFrameInput` is guarded
+        /// the same way and for a sharper reason: without it this backend has
+        /// no input path AT ALL after app-b3z (`Advance` no longer reads the
+        /// frame the facade hands it), so a caller that omitted it would get a
+        /// client that connects, renders and never moves.
         public NetworkSimBackend(NetworkManager networkManager, NetConfig netConfig,
-            string playerId, string joinToken)
+            string playerId, string joinToken, FrameInputRequest requestFrameInput)
         {
             _nm = networkManager ?? throw new System.ArgumentNullException(nameof(networkManager));
             _net = netConfig != null
                 ? netConfig
                 : throw new System.ArgumentNullException(nameof(netConfig));
+            _requestFrameInput = requestFrameInput
+                ?? throw new System.ArgumentNullException(nameof(requestFrameInput));
             _playerId = playerId;
             _joinToken = joinToken;
         }
@@ -775,6 +790,57 @@ namespace Ring.Presentation.Net
             _bytesRateWindowSeconds = 0f;
         }
 
+        /// THIS CLIENT'S OWN INPUT, TAKEN AND HANDED TO PREDICTION INSIDE THE
+        /// TICK THAT REPLICATES IT (Stage 2 app-b3z, Р35, spec §3.8).
+        ///
+        /// FishNet raises `OnPreTick` from inside `TimeManager.IncreaseTick`'s
+        /// tick loop, and the rest of that same pass is what turns the answer
+        /// into a datagram: `OnTick` a few statements later is
+        /// `PlayerNetworkController.TimeManager_OnTick` ->
+        /// `BuildReplicate` -> `PlayerPredictionCore.PendingInput`, and
+        /// `PredictionManager.SendStateUpdate` closes the pass. So the input a
+        /// player gives on a frame leaves the process on that frame.
+        ///
+        /// WHAT THIS REPLACED, AND WHY IT COULD NOT BE FIXED WHERE IT STOOD.
+        /// The call used to sit in `Advance`, which the facade reaches from its
+        /// own `Update`. `NetworkManager` and the reader loop that drives the
+        /// tick are each `[DefaultExecutionOrder(short.MinValue)]` while
+        /// `SimulationRunner` is pinned at -50, so on every frame that ticked,
+        /// the tick had already read `PendingInput` before the facade wrote it
+        /// — the replicate carried the PREVIOUS frame's input, about 16 ms at
+        /// 60 fps and up to a whole tick once the frame rate falls to the tick
+        /// rate, on top of the network's own delay. No number in the execution
+        /// order table could have closed that: `short.MinValue` is the floor.
+        /// Moving the SAMPLE was the only cure, and moving only the delivery
+        /// would have been the worse outcome of the two — the facade's
+        /// `LastFrameInput` holds the sample of frame N-1 at this moment, so
+        /// reading it here would have sent the very same bytes and looked
+        /// repaired.
+        ///
+        /// IT SAMPLES NOTHING ITSELF, and asks a facade that is free to say no.
+        /// `SimulationRunner.TrySampleFrameInput` owns both halves of Р35 — one
+        /// sample per render frame whoever asks first, and no sample at all
+        /// while the pause gate is closed — and its doc carries the reasons,
+        /// including the muzzle flash a pause-blind sample would draw over the
+        /// menu. A refusal leaves `PendingInput` alone, so prediction keeps
+        /// replicating the last input it was given, which is what a paused
+        /// client did before this method existed.
+        ///
+        /// `_controller` IS NOT LOOKED UP HERE. `EnsureController` runs once
+        /// per frame in `Advance` and is the single owner of that search
+        /// (its own doc says so); this method uses whatever that left behind.
+        /// The whole cost is one tick at the start of a match — the tick
+        /// between the frame `Advance` first finds the spawned object and the
+        /// next pre-tick — against which the alternative is a second home for
+        /// a per-frame search, on the hottest path this class has.
+        void TimeManager_OnPreTick()
+        {
+            if (_controller == null) return;
+            if (!_requestFrameInput(out SimInput frame)) return;
+
+            _controller.SetPendingInput(in frame);
+        }
+
         /// One render frame. Everything that has to happen every frame happens
         /// here, INCLUDING the two discharges — and that placement is the
         /// point, not an implementation detail.
@@ -795,6 +861,20 @@ namespace Ring.Presentation.Net
         /// log, and this backend has no hash (`HasStateHash`); calling it with
         /// a zero would put an invented number into the one log a determinism
         /// divergence would be found in.
+        ///
+        /// `frame` IS NEVER READ EITHER, AND THAT IS A DECISION RATHER THAN AN
+        /// OVERSIGHT (Stage 2 app-b3z). It used to feed exactly one line —
+        /// `_controller.SetPendingInput` — and that line moved to
+        /// `TimeManager_OnPreTick` above, where the tick that replicates the
+        /// input is the one that samples it. This implementation therefore
+        /// takes nothing from the facade's render frame; it asks the facade for
+        /// the input itself, in the tick domain, and the facade answers with
+        /// the same single sample its own `Update` will use. The parameter
+        /// stays in the signature because the INTERFACE needs it: on
+        /// `LocalSimBackend` this argument is not a message, it is the
+        /// simulation — `_world.Tick(SimInputFrame.ForTick(frame, i))` — and a
+        /// seam shaped around the one implementation that has no world would
+        /// be the wrong seam.
         public int Advance(in SimInput frame, float unscaledDeltaTime,
             System.Action<int, ulong> onTick)
         {
@@ -821,47 +901,6 @@ namespace Ring.Presentation.Net
             // CONTROLLER. It used to run twice — once per half of the render
             // pair — with the same answer both times.
             EnsureController();
-
-            // THE FRAME THE FACADE ALREADY SAMPLED, HANDED STRAIGHT TO
-            // PREDICTION (Р35, spec §3.8). `SetPendingInput` is the seam
-            // `PlayerNetworkController`'s own doc names for this, and the
-            // direction is what keeps `Ring.Networking` from ever referencing
-            // a Presentation assembly back. Nothing is re-sampled here: a
-            // second `InputSampler.SampleFrame` would consume the dash edge the
-            // facade has already latched, and the facade clears that latch only
-            // after a flush.
-            //
-            // AS EARLY IN THE FRAME AS THIS CLASS IS REACHED — AND STILL ONE
-            // FRAME BEHIND THE TICK THAT READS IT (Stage 2 Task 44e fix-round
-            // 1, G-2, correcting what these lines used to claim). The
-            // controller's own tick — `TimeManager_OnTick` -> `BuildReplicate`
-            // -> `_core.PendingInput` — is what turns this frame into a
-            // replicate, and on any frame that ticks, that tick has already
-            // run by the time this line does. The earlier text said
-            // `NetworkManager` sat at the default order of 0 and that the
-            // scene therefore placed this call ahead of FishNet's tick; both
-            // halves were wrong. `NetworkManager`, and the reader loop
-            // FishNet's own `TimeManager` adds beside itself to drive the tick,
-            // are each declared `[DefaultExecutionOrder(short.MinValue)]` — the
-            // floor of the scale — while `SimulationRunner`, whose `Update`
-            // reaches this method, is pinned at -50. FishNet's tick loop
-            // therefore runs BEFORE the facade every frame, and no scene
-            // arranges otherwise: the floor cannot be undercut, and the
-            // per-script order table lives in `ProjectSettings`.
-            //
-            // WHAT IT COSTS, AND WHERE IT IS FIXED. `BuildReplicate` reads what
-            // this line wrote on the PREVIOUS render frame, so the local
-            // player's own input reaches the server one render frame late —
-            // about 16 ms at 60 fps, up to a whole tick once the frame rate
-            // falls to the tick rate — on top of the network's own delay, and
-            // under the 80 ms RTT of Critical Rule 7 the two read the same on a
-            // playtest. The cure is not an ordering but a feed point: task
-            // `app-b3z` moves this call to FishNet's `TimeManager.OnPreTick`,
-            // raised inside the tick loop immediately before `OnTick`, after
-            // which the execution-order table stops meaning anything here at
-            // all. Until that task lands the line below stands, and so does the
-            // frame of lag.
-            if (_controller != null) _controller.SetPendingInput(in frame);
 
             // The predicted pair for the local slot, sampled once per
             // PREDICTION tick — see `SampleOwnPlayer`.
@@ -1098,7 +1137,21 @@ namespace Ring.Presentation.Net
             // seed, seat — and its own doc lists "decoding snapshot frames" as
             // this task's, explicitly. It is also the reason this class touches
             // `ClientManager` at all.
+            //
+            // THE PRE-TICK GOES UP BESIDE IT, UNDER THE SAME FLAG (Stage 2
+            // app-b3z). Both are subscriptions this class makes on the
+            // manager's own tables, both are dropped by `Unregister`, and one
+            // flag rather than two is what keeps that promise checkable: a
+            // second flag could be false while the first was true only if some
+            // future line put the two subscriptions in different places, which
+            // is the arrangement this file must not have. Registering from
+            // `Restart` rather than from the constructor is also a promise
+            // already made elsewhere — `SimulationRunner.TryUseBackend` and
+            // `ClientNetworkBootstrap`'s refusal path both state that an
+            // un-restarted instance holds no subscription, and both are right
+            // only while this stays the single place.
             _nm.ClientManager.RegisterBroadcast<SnapshotBroadcast>(OnSnapshotBroadcast);
+            _nm.TimeManager.OnPreTick += TimeManager_OnPreTick;
             _registered = true;
 
             // Registering the link LAST means every seam it may be told to
@@ -1171,6 +1224,14 @@ namespace Ring.Presentation.Net
         /// `NetworkManager` would leave both subscribed and the stale one
         /// would keep decoding into a ring nobody reads.
         ///
+        /// THAT MECHANISM IS WHY THE PRE-TICK IS DROPPED HERE TOO (Stage 2
+        /// app-b3z). `TimeManager.OnPreTick` is a plain `System.Action`, so it
+        /// too keeps handlers by delegate identity and outlives this instance
+        /// with the manager. A discarded backend left on it would go on asking
+        /// a facade for input every tick and writing the answer into the
+        /// prediction core of whichever controller it last cached — feeding
+        /// the wire from an object nobody else still reads.
+        ///
         /// THE CALLER EXISTS AS OF TASK 44e, AND IT IS THE ONLY ONE (Stage 2
         /// Task 44e fix-round 1: this paragraph used to say that nothing in the
         /// project constructed this class, which stopped being true the moment
@@ -1190,6 +1251,7 @@ namespace Ring.Presentation.Net
             if (_registered)
             {
                 _nm.ClientManager.UnregisterBroadcast<SnapshotBroadcast>(OnSnapshotBroadcast);
+                _nm.TimeManager.OnPreTick -= TimeManager_OnPreTick;
                 _registered = false;
             }
             _link?.Unregister();

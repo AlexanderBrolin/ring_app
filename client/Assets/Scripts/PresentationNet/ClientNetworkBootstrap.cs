@@ -440,8 +440,18 @@ namespace Ring.Presentation.Net
                 return;
             }
 
-            // Step 2.
-            var backend = new NetworkSimBackend(_nm, _net, _options.PlayerId, _options.JoinToken);
+            // Step 2. The facade's input seam is handed over as a method group
+            // and nothing else of the facade is (Stage 2 app-b3z): this is the
+            // one place in the project that already holds both the runner and
+            // the `NetworkManager`, which is exactly what the backend needs and
+            // cannot obtain — `Ring.Presentation` has no FishNet reference and
+            // must not grow one, so the facade cannot subscribe to the tick,
+            // while a facade reference held by the backend would close a cycle
+            // for the sake of one call. `NetworkSimBackend.TimeManager_OnPreTick`
+            // has the whole story; the null check above is what makes this line
+            // safe, and the constructor refuses the delegate-less form anyway.
+            var backend = new NetworkSimBackend(_nm, _net, _options.PlayerId, _options.JoinToken,
+                _runner.TrySampleFrameInput);
 
             // Step 3. The answer is read, never assumed: a refusal means the
             // order this class exists to keep was broken, and the facade has
