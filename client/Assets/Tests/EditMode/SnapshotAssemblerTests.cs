@@ -290,6 +290,46 @@ namespace Ring.Simulation.Tests
                 "the liveness mask is the registry of the whole match (Р70) — slot 1 clear, 0 and 2 set");
         }
 
+        [Test]
+        public void DeadOtherPlayer_RecordCarriesTheAimHeadingItDiedWith()
+        {
+            // Stage 2 Task 47a fix-round 1. The corpse record's POSITION was
+            // already pinned above; this is its other half. `PlayerRecordOf`
+            // has no liveness branch, so `Dir` is written for a dead seat by
+            // the same `normalizesafe(AimPoint - Pos)` a live one gets — and
+            // that is the only direction a client which never saw the death
+            // can lay the body along (`ViewRegistry.EnsureCorpse`, which faces
+            // a rented body by the aim point of the very record it takes the
+            // position from). A liveness guard added here, or an `AimPoint`
+            // cleared by `KillPlayer`, would leave every body on the arena
+            // lying the same way with nothing failing.
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            var aimedAt = new float2(6f, -20f);
+            var inputs = new SimInput[3];
+            inputs[1] = new SimInput { AimPoint = aimedAt };
+            w.TickAll(inputs);
+            float2 fellAt = w.PlayerAt(1).Pos;
+            w.KillPlayerNoDamage(1);
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.IsTrue(f.TryPlayer(1, out SnapshotBlocks.PlayerRecord corpse));
+            Assert.AreEqual(0, corpse.Flags & PlayerWireFlags.Alive, "test setup: seat 1 is down");
+            Assert.AreEqual(0, corpse.Flags & PlayerWireFlags.AimHeld,
+                "and the pose bits are all clear on it — which is why the DIRECTION, not the flags, "
+                + "is what a corpse's facing has to come off");
+
+            // `Quantize.Dir` spends 256 codes on the full turn — 1.40625 deg a
+            // step, so at most 0.703125 deg of error, which is 0.0123 of chord
+            // between two unit vectors. The 0.02 bound is that, rounded up.
+            float2 expected = math.normalizesafe(aimedAt - fellAt, new float2(1f, 0f));
+            Assert.That(math.distance(corpse.Dir, expected), Is.LessThan(0.02f),
+                "the body's record points where the player was aiming when it died");
+            Assert.That(math.distance(corpse.Dir, new float2(1f, 0f)), Is.GreaterThan(0.5f),
+                "and that is a real heading, not `normalizesafe`'s +X fallback");
+        }
+
         // ---- T28.A3. Liveness covers EVERY slot, visible or not ----
 
         [Test]

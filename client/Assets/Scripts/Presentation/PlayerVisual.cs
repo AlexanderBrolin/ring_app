@@ -189,17 +189,16 @@ namespace Ring.Presentation
 
             // Facing tracked in a FIELD; the transform gets facing+lean as a
             // one-shot composition below — lean never accumulates (ПБ8).
-            Quaternion yawOffset = Quaternion.AngleAxis(p.YawOffsetDeg, Vector3.up);
             if (speed01 > p.MoveThreshold01 && moveDelta.sqrMagnitude > 1e-10f)
             {
-                Quaternion target = Quaternion.LookRotation(moveDelta.normalized, Vector3.up) * yawOffset;
+                Quaternion target = FacingAlong(moveDelta.normalized, p.YawOffsetDeg);
                 _facing = Quaternion.RotateTowards(_facing, target, p.VisualTurnDegPerSec * dt);
             }
             else if (aimDir.sqrMagnitude > 1e-8f)
             {
                 // Idle turn-in toward the aim (Б8): the doll never stays
                 // back-to-cursor while shooting on the spot.
-                Quaternion target = Quaternion.LookRotation(aimDir.normalized, Vector3.up) * yawOffset;
+                Quaternion target = FacingAlong(aimDir.normalized, p.YawOffsetDeg);
                 _facing = Quaternion.RotateTowards(_facing, target, p.IdleAimTurnDegPerSec * dt);
             }
 
@@ -407,5 +406,51 @@ namespace Ring.Presentation
             _animator.SetLayerWeight(AimLayer, 0f);
             _animator.Update(0f); // land the pose this frame (ПБ1)
         }
+
+        /// The FACING half of a body found after the fact (Stage 2 Task 47a
+        /// fix-round 1), and the only caller is the one branch that has no
+        /// facing to keep: `ViewRegistry.EnsureCorpse` renting a doll for a
+        /// slot this client first meets as a corpse. A doll that died on its
+        /// feet already carries the facing its last `Sync` integrated and must
+        /// not be turned; a rented one has just been through `Bind`, which
+        /// resets `_visual.localRotation` to identity as pool hygiene, so
+        /// without this it would lie along the model's rest direction — and so
+        /// would every other body on the arena, which is what made the two
+        /// clients disagree about the pose of one body.
+        ///
+        /// IT SNAPS RATHER THAN TURNS, which is the difference from `Sync`'s
+        /// two turn-in branches above and not an omission. Those rate-limit the
+        /// facing because a live doll is WATCHED as it turns; this body fell
+        /// before the finder was looking, so there is no turn to show and any
+        /// rate at all would be a body pivoting on the ground.
+        ///
+        /// THE AIM POINT IS THE HEADING, the same quantity the idle branch of
+        /// `Sync` turns toward, taken off the same field of the same record
+        /// this body's POSITION came from — for a networked corpse the
+        /// border put the wire's `Dir` there (`NetworkSimBackend.ReadPlayers`),
+        /// for a local one it is the world's own aim point, pinned at the value
+        /// it had at death (`SimulationWorld.TickMovement`). A degenerate pair
+        /// (an aim point exactly on the body) leaves the rest facing alone
+        /// rather than inventing one: it is the same `1e-8` refusal `Sync`
+        /// makes, and the honest answer to "no heading was carried".
+        public void FaceAimInstantly(in PlayerState m, float yawOffsetDeg)
+        {
+            Vector3 aimDir = SimSpace.ToWorld(m.AimPoint) - transform.position;
+            aimDir.y = 0f;
+            if (aimDir.sqrMagnitude <= 1e-8f) return;
+            _facing = FacingAlong(aimDir.normalized, yawOffsetDeg);
+            _visual.rotation = _facing;
+        }
+
+        /// What a flat world direction MEANS as this model's facing — the model
+        /// yaw offset is part of that answer, and this is its one home (Stage 2
+        /// Task 47a fix-round 1: `Sync`'s movement and idle-aim branches and
+        /// `FaceAimInstantly` all compose it here, so a re-tune of
+        /// `GameFeelConfig.PlayerYawOffsetDeg` cannot reach two of the three
+        /// and miss the last). `dir` must be flat and normalized; the callers
+        /// are what guarantee it, since each already has its own reason to
+        /// refuse a near-zero one.
+        static Quaternion FacingAlong(Vector3 dir, float yawOffsetDeg)
+            => Quaternion.LookRotation(dir, Vector3.up) * Quaternion.AngleAxis(yawOffsetDeg, Vector3.up);
     }
 }

@@ -1131,8 +1131,37 @@ namespace Ring.Presentation.Net
 
                 if (slot == null) continue;
                 float hp01 = maxHp > 0f ? r.Hp / maxHp : 0f;
-                slot.Players[r.Index] = PlayerFlags.ToSyntheticState(r.Flags, r.Pos, r.Dir, hp01,
+                PlayerState state = PlayerFlags.ToSyntheticState(r.Flags, r.Pos, r.Dir, hp01,
                     in _cfg);
+                // A BODY'S HEADING WOULD OTHERWISE DIE ON THIS LINE (Stage 2
+                // Task 47a fix-round 1). The record carries a direction for
+                // every seat, dead or alive — `SnapshotAssembler.PlayerRecordOf`
+                // has no liveness branch and writes `normalizesafe(AimPoint -
+                // Pos)`, and `SimulationWorld.TickMovement`'s own doc pins that
+                // aim point at its value at death. The MAPPING drops it here
+                // for a corpse and is right to: it places an aim point off the
+                // `AimHeld` bit alone, and `KillPlayer` clears the settle timer
+                // that raises that bit, so a body reports no pose at all. But
+                // `ViewRegistry.EnsureCorpse` lays a body found after the fact
+                // along exactly this heading, and with the field left at
+                // `default` every such body on the arena would lie facing the
+                // arena origin. So the border restores it, at the same distance
+                // downrange the mapping's own constant states, and one field
+                // over from the position it belongs to — reaching into
+                // `Networking.Protocol` to widen the mapping instead would put
+                // a Presentation question inside the wire contract, which is
+                // the one thing that class's doc refuses to do.
+                //
+                // THE LOCAL BACKEND NEEDS NO SUCH LINE and gets the same
+                // answer: a world in memory hands `CaptureSnapshot` the real
+                // `AimPoint`, and `normalizesafe(AimPoint - Pos)` of it IS what
+                // the assembler would have put on the wire. Both backends
+                // therefore describe a body's facing with one field and one
+                // expression, which is what lets `EnsureCorpse` carry no
+                // branch on which backend it is drawing.
+                if (!state.Alive)
+                    state.AimPoint = r.Pos + r.Dir * PlayerFlags.SyntheticAimMeters;
+                slot.Players[r.Index] = state;
                 // THE SAME LINE, ONE FIELD OVER (Stage 2 Task 47a): a state
                 // written here is a state this frame KNOWS, and the flag says
                 // so. It rides with the write rather than with `applyState`

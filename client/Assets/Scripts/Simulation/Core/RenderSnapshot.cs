@@ -52,11 +52,36 @@ namespace Ring.Simulation.Core
         ///
         /// WHY BOTH FLAGS EXIST. `PlayerKnown` says what THIS FRAME saw, which
         /// is what decides whether a doll stands, lies, or is not drawn at all;
-        /// this one says who is still standing anywhere in the arena, which is
-        /// what a spectate candidate list and a "who is left" readout need
-        /// (Stage 2 Task 47b, Р70). A player alive behind the fog is `false` in
-        /// the first and `true` in the second, and neither flag can be derived
-        /// from the other.
+        /// this one says whether the seat is still standing anywhere in the
+        /// arena, which is what a spectate candidate list and a "who is left"
+        /// readout need (Stage 2 Task 47b, Р70). A player alive behind the fog
+        /// is `false` in the first and `true` in the second, and neither flag
+        /// can be derived from the other.
+        ///
+        /// `false` MEANS "NOT ALIVE OR NOT A SEAT OF THIS MATCH", and the
+        /// difference is not recoverable from this frame (fix-round 1; the
+        /// paragraph above used to promise "who is still standing" outright).
+        /// `PlayerCount` is what bounds a reader's loop, and it means two things
+        /// depending on who filled the frame: `SimulationWorld.CaptureSnapshot`
+        /// writes the world's REAL roster, while `NetworkSimBackend.BeginSlot`
+        /// writes `Arena.MaxPlayers` — the arena's cap — because the roster size
+        /// never reaches a client at all. Nothing carries it: the welcome names
+        /// the epoch, the seed and one's own index (`MatchWelcomeNet`), the
+        /// restart names the epoch and the seed, the snapshot header names the
+        /// tick and the epoch, the Liveness block is one bare byte of mask, and
+        /// the Players block carries only the others this client may see. So on
+        /// a two-player match in a three-seat arena the third entry reads
+        /// `false` here for a seat nobody ever took, indistinguishable from a
+        /// player who died out of sight — and a "who is left" readout built on
+        /// this alone would report a death that never happened.
+        ///
+        /// AN OPEN END FOR TASK 47b, STATED SO IT IS NOT REDISCOVERED. A
+        /// spectate candidate list is safe on this field as it stands (an empty
+        /// seat and a dead player are both "not a candidate", so the ambiguity
+        /// falls the harmless way), and a ROSTER readout is not. Whoever needs
+        /// the second has to bring the roster size across the wire first — the
+        /// server has it (`SnapshotAssembler`'s own capture `PlayerCount`) and
+        /// simply never says it — rather than infer it from this array.
         public bool[] PlayerAliveInMatch;
 
         /// Synonym for Players[LocalPlayerIndex] (Stage 2 Task 4) — every read

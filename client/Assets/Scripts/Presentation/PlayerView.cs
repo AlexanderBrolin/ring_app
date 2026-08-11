@@ -250,8 +250,15 @@ namespace Ring.Presentation
         }
 
         /// This doll has just become a corpse (Stage 2 Task 45a fix-round 1;
-        /// `ViewRegistry.DispatchToDoll` does the bookkeeping — leaving the slot
-        /// map for `_corpses` — and this is the view's own half of it). It stops
+        /// `ViewRegistry.IntoCorpse` does the bookkeeping — leaving the slot map
+        /// for `_corpses` — and this is the view's own half of it). THE
+        /// BOOKKEEPER MOVED IN STAGE 2 TASK 47a and this line named the old one
+        /// until fix-round 1: it used to be `DispatchToDoll`, the `PlayerDied`
+        /// fan-out, and that is now only one of `IntoCorpse`'s two callers. The
+        /// other is the FRAME (`EnsureCorpse`), which is the one that runs on
+        /// the networked backend in the ordinary case — so a reader sent to the
+        /// event path would have gone looking for a detach that never happens
+        /// there. It stops
         /// glowing, once and for good: `Sync` is never called on a corpse again,
         /// so this single write is the last thing the property block ever
         /// carries. Owner decision: a body that keeps its remote-player rim, or

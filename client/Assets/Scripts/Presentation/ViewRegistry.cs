@@ -49,8 +49,12 @@ namespace Ring.Presentation
     /// and from that moment it is never `Sync`ed and never repositioned again.
     /// That is what makes it a corpse — the snapshot can no longer move it.
     ///
-    /// Corpses go back to the pool only in `Clear` (a new match), which is what
-    /// client/CLAUDE.md's "трупы не исчезают до конца матча" asks for. The
+    /// Corpses go back to the pool in `Clear` (a new match), which is what
+    /// client/CLAUDE.md's "трупы не исчезают до конца матча" asks for, and in
+    /// nothing else that is expected to run — `IntoCorpse` carries one leak
+    /// guard that would also pool one, and its own doc says why it cannot fire
+    /// (fix-round 1: this sentence used to say "only in `Clear`" flat, and a
+    /// reader who found that branch would have stopped believing the doc). The
     /// emission is killed at detach (owner decision): a body that keeps glowing
     /// misreports who is still standing, and it does so exactly when the cost of
     /// the mistake is highest.
@@ -200,10 +204,12 @@ namespace Ring.Presentation
         public void Clear()
         {
             // Stage 2 Task 45a: the dolls go back too — live ones and, fix-round
-            // 1, the corpses. This is the ONLY place a corpse ever returns to
-            // the pool: it is what "трупы не исчезают до конца матча"
-            // (client/CLAUDE.md) means mechanically, and what keeps a fresh
-            // match from opening with the previous one's body on the floor.
+            // 1, the corpses. This is the only place a corpse returns to the
+            // pool on any path that runs (`IntoCorpse`'s leak guard is the
+            // other one, and unreachable — its own doc): it is what "трупы не
+            // исчезают до конца матча" (client/CLAUDE.md) means mechanically,
+            // and what keeps a fresh match from opening with the previous one's
+            // body on the floor.
             foreach (KeyValuePair<int, PlayerView> kv in _activePlayers)
             {
                 kv.Value.gameObject.SetActive(false);
@@ -325,12 +331,30 @@ namespace Ring.Presentation
         ///    shooter, which is the doll that must replay Pistol_Shoot. A mob's
         ///    round carries `ProjectileIds.NoOwner` and names no doll at all.
         /// An event naming a slot with no live doll is ignored, which on the
-        /// networked backend is every `PlayerDied` there is: the picture is a
-        /// tick ahead of the events that explain it, so the body has already
-        /// been laid down by the frame (`DispatchToDoll`'s own doc, Stage 2 Task
-        /// 47a). Ignoring it is now the right answer rather than the defect it
-        /// was — before that task the corpse waited on this event and the
-        /// networked backend therefore had no corpses at all (`app-2rf`).
+        /// networked backend is the ORDINARY `PlayerDied` and not every one of
+        /// them (Stage 2 Task 47a fix-round 1 — this paragraph used to say
+        /// "every", which the class doc two hundred lines up already
+        /// contradicts). The two orders both happen, and which one runs is
+        /// decided by whether one packet arrived:
+        ///  - ORDINARY. The frame at render tick R shows the snapshot at R + 1
+        ///    (`NetworkSimBackend.ResolveRenderPair`) while the queue refuses
+        ///    any event past R (`ClientEventQueue.TryDequeue`), so a death on
+        ///    tick T is already in the picture at R = T − 1, a whole render tick
+        ///    before the event is due at R = T. The body has been laid down by
+        ///    the frame and this path finds nothing to detach;
+        ///  - THE SNAPSHOT AT T IS LOST — ordinary in itself at the 5% loss
+        ///    every playtest build must survive. At R = T − 1 the pair collapses
+        ///    onto T − 1 with the victim still standing, so the picture does not
+        ///    carry the death at all; at R = T the same `Advance` resolves the
+        ///    pair to T + 1 AND drains the event, and the drain happens in
+        ///    `Update` while `SyncPlayers` runs in `LateUpdate`. The event
+        ///    therefore reaches a doll that is still live, and THIS path is what
+        ///    makes the body.
+        /// Ignoring the ordinary one is the right answer rather than the defect
+        /// it was — before Task 47a the corpse waited on this event and the
+        /// networked backend therefore had no corpses at all (`app-2rf`) — and
+        /// keeping this path is not redundancy: it is the only maker of a body
+        /// on the frames where the picture never carried the death.
         public void HandlePlayerEvent(in SimEvent e)
         {
             switch (e.Kind)
@@ -378,8 +402,10 @@ namespace Ring.Presentation
         /// that can trigger it (Stage 2 Task 47a): the `PlayerDied` event above
         /// and the frame itself in `EnsureCorpse` below. The doll leaves the
         /// slot map, is filed under that slot among the corpses, and stops
-        /// glowing and being aimable at (`PlayerView.DetachAsCorpse`). It is NOT
-        /// pooled — only `Clear` does that.
+        /// glowing and being aimable at (`PlayerView.DetachAsCorpse`). The doll
+        /// this method files is NOT pooled — `Clear` is what pools a body. The
+        /// one exception is in this very method, and is the subject of the next
+        /// paragraph rather than a hole in this one (fix-round 1).
         ///
         /// THE OLDER-BODY BRANCH IS A LEAK GUARD, not a case that is expected to
         /// run. A slot can only be occupied again after `SimulationRunner`
@@ -404,7 +430,8 @@ namespace Ring.Presentation
 
         /// The frame's half: this slot is KNOWN and NOT ALIVE, so a body belongs
         /// here (Stage 2 Task 47a, bd `app-2rf`). Three states of the slot reach
-        /// this method and each has one right answer:
+        /// this method — the two containers give four combinations, and the
+        /// fourth is dealt with at the end of this doc rather than below:
         ///  - a body is already filed under the slot — nothing to do. This is
         ///    every frame after the first one that saw the death, and it is also
         ///    how the local backend's order comes out: `PlayerDied` made the
@@ -421,6 +448,42 @@ namespace Ring.Presentation
         ///    body is exactly the case where the record starts arriving with the
         ///    Alive bit clear and this client has nothing standing to detach.
         ///    Without this branch that player still sees an empty floor.
+        ///
+        /// THE FOURTH COMBINATION — a body already filed under the slot AND a
+        /// live doll standing in it — takes the first line's early return, and
+        /// that is only safe because it cannot happen (fix-round 1). It would
+        /// mean the slot died, was reoccupied and died again inside one match;
+        /// a slot can only be reoccupied after `WorldRestarted`, which is wired
+        /// straight to `Clear` on both backends, and `Clear` empties both
+        /// containers at once. This is the same unreachability `IntoCorpse`'s
+        /// own older-body branch is a guard against, stated in both places so
+        /// the two cannot drift apart. If it ever DOES become reachable, the
+        /// early return is where it bites: the live doll would not be filed
+        /// under `_seenPlayerSlots`, and the retirement pass would pool it with
+        /// no body left behind — so the return would have to grow the
+        /// `_activePlayers` half of the question rather than the guard alone.
+        ///
+        /// A RENTED BODY IS ALSO FACED, and only a rented one. A doll that fell
+        /// on its feet carries the facing its last `Sync` integrated and is
+        /// left alone; a rented one has just been reset to the model's rest
+        /// direction by `Bind`, and without a facing every body found after the
+        /// fact would lie the same way (fix-round 1, both review axes). The
+        /// heading comes from the same record the position did — see
+        /// `PlayerVisual.FaceAimInstantly`.
+        ///
+        /// THE TWO CLIENTS STILL DO NOT AGREE TO THE DEGREE, and the residual is
+        /// named here rather than promised away. A witness's body keeps a facing
+        /// the RENDER integrated — rate-limited toward the target by
+        /// `VisualTurnDegPerSec`/`IdleAimTurnDegPerSec` and, while moving,
+        /// aimed along the doll's own displacement rather than along the aim at
+        /// all — while a body found after the fact snaps to the SIMULATION's aim
+        /// heading. So the two agree exactly only for a victim that died
+        /// standing still with its facing already settled; a victim killed
+        /// mid-run can lie up to the angle between its run and its aim apart on
+        /// the two screens, plus one wire quantization step of `Quantize.Dir`
+        /// (1.40625 deg). What is fixed is the part that was a lie: a body now
+        /// lies along a direction that player really faced, instead of along the
+        /// prefab's.
         ///
         /// NOTHING HERE DECIDES A DEATH (CR 3). The Alive bit is the server's,
         /// arriving in the frame; this method draws what it is told, and on the
@@ -443,6 +506,11 @@ namespace Ring.Presentation
             }
             IntoCorpse(slot, view);
             view.Visual?.PlayDeath(standing, _gameFeel.OneShotCrossFadeSeconds);
+            // Last, after the clip has landed its pose: `PlayDeath`'s body
+            // branch drives the Animator (`Play` + `Update(0f)`), and the
+            // facing is a write on the visual's own transform, so stating it
+            // afterwards is the same order `Sync` keeps for a live doll.
+            if (!standing) view.Visual?.FaceAimInstantly(in state, _gameFeel.PlayerYawOffsetDeg);
         }
 
         /// `GameFeelDirector`'s seam into per-mob view state (Task 25 Interfaces)
@@ -511,8 +579,20 @@ namespace Ring.Presentation
         /// seat therefore goes from "known and alive" to "not known" with no
         /// frame in between saying "known and dead", and no corpse is made for
         /// it. Everyone ELSE sees that body normally, off the record the server
-        /// does send them. What it costs is the death camera looking at an empty
-        /// floor, which is the task that owns the death camera.
+        /// does send them.
+        ///
+        /// WHAT IT COSTS IS NOT AN EMPTY FLOOR — that is what this paragraph
+        /// said before fix-round 1, and it understates the job Task 47b is
+        /// picking up. `CameraRig` follows `RenderCurr.Player.Pos`, which is
+        /// `Players[LocalPlayerIndex]`, and after one's own death on the
+        /// networked backend nothing writes that seat, so `BeginSlot`'s
+        /// `default(PlayerState)` reads as the ARENA ORIGIN. The camera does not
+        /// stay over the place of death looking at nothing; it smooth-damps away
+        /// to the geometric centre of the arena. Solo differs here more than
+        /// anywhere else in this class — there the dead seat keeps its state and
+        /// the camera stands over the body — so a death camera has to be
+        /// UNBOUND from that read before it can be pointed anywhere, or it will
+        /// be fighting the drift.
         ///
         /// THE LOCAL DOLL IS NO LONGER A SPECIAL CASE OF POSITIONING. It used to
         /// read `SimulationRunner.RenderPlayerWorldPos`; the lerp below is that
@@ -869,7 +949,8 @@ namespace Ring.Presentation
         }
 
         /// A LIVE doll leaving the frame — never a corpse, which is no longer in
-        /// `_activePlayers` at all and goes back to the pool only in `Clear`.
+        /// `_activePlayers` at all and is pooled by `Clear`, or by `IntoCorpse`'s
+        /// unreachable leak guard (that method's own doc), and by nothing else.
         void RetirePlayer(int slot)
         {
             if (!_activePlayers.TryGetValue(slot, out PlayerView view)) return;

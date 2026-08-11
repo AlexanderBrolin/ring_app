@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Ring.Simulation.Core;
+using Unity.Mathematics;
 
 namespace Ring.Simulation.Tests
 {
@@ -92,7 +93,7 @@ namespace Ring.Simulation.Tests
         public void CaptureSnapshot_ADeadSeatKeepsThePositionItFellAt()
         {
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
-            Unity.Mathematics.float2 standing = w.PlayerAt(0).Pos;
+            float2 standing = w.PlayerAt(0).Pos;
             w.KillPlayerForTest();
             var snap = new RenderSnapshot(cfg.Arena);
             w.CaptureSnapshot(snap);
@@ -102,6 +103,50 @@ namespace Ring.Simulation.Tests
             // body would put every corpse somewhere it never stood.
             Assert.AreEqual(standing.x, snap.Players[0].Pos.x, 1e-4f);
             Assert.AreEqual(standing.y, snap.Players[0].Pos.y, 1e-4f);
+        }
+
+        [Test]
+        public void CaptureSnapshot_ADeadSeatKeepsTheAimHeadingItDiedWith()
+        {
+            // Stage 2 Task 47a fix-round 1: the sibling of the position test
+            // above, and load-bearing for the same reason. A body found after
+            // the fact is laid down from the frame's own record — position AND
+            // facing — so the aim point a seat died holding is what says which
+            // way it lies (`ViewRegistry.EnsureCorpse`); the wire says the same
+            // thing one step later, because `SnapshotAssembler.PlayerRecordOf`
+            // writes `Dir` as `normalizesafe(AimPoint - Pos)` for every record,
+            // dead or alive. `TickMovement`'s own doc already states the rule
+            // this pins — AimPoint "must stay pinned at its value at death" —
+            // and every other field `KillPlayer` touches IS cleared "so a
+            // corpse's PlayerState reads clean", which is exactly why the one
+            // that must NOT be cleared needs a test standing on it.
+            SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            var aimedAt = new float2(0f, -12f);
+            var inputs = new SimInput[3];
+            inputs[0] = new SimInput { AimPoint = aimedAt };
+            w.TickAll(inputs);
+
+            float2 fellAt = w.PlayerAt(0).Pos;
+            w.KillPlayerForTest();
+            var snap = new RenderSnapshot(cfg.Arena);
+            w.CaptureSnapshot(snap);
+
+            Assert.IsFalse(snap.Players[0].Alive, "test setup: seat 0 must actually be down");
+            Assert.AreEqual(aimedAt.x, snap.Players[0].AimPoint.x, 1e-4f,
+                "the aim point survives the death that froze it");
+            Assert.AreEqual(aimedAt.y, snap.Players[0].AimPoint.y, 1e-4f);
+
+            // Asserted as a HEADING and not only as a point, because the
+            // heading is what the two consumers actually take: a cleared aim
+            // point on a seat standing at the origin normalizes to the +X
+            // fallback, i.e. to "every body on the arena lies the same way",
+            // which is the defect this whole fix-round is about.
+            float2 heading = math.normalizesafe(snap.Players[0].AimPoint - fellAt, new float2(1f, 0f));
+            Assert.That(math.distance(heading, new float2(0f, -1f)), Is.LessThan(1e-3f),
+                "seat 0 died looking due -Y and the frame still says so");
+            Assert.That(math.distance(heading, new float2(1f, 0f)), Is.GreaterThan(0.5f),
+                "and that heading is a fact, not `normalizesafe`'s fallback");
         }
 
         [Test]
