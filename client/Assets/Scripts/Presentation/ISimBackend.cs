@@ -355,6 +355,27 @@ namespace Ring.Presentation
         /// stops appearing, with nothing failing to compile).
         void EndFrame();
 
+        /// Whether this backend takes the frame's input in the TICK domain
+        /// rather than from `Advance`, and therefore owns the clearing of the
+        /// sampler's edge latches (bd `app-d1t`).
+        ///
+        /// WHOEVER CONSUMES AN EDGE IS WHO MAY CLEAR IT — that is Р35 read
+        /// literally ("`SampleFrame` before the send, `ClearLatches` after the
+        /// input is CONSUMED"), and the two backends consume at different
+        /// moments. The local one consumes inside `Advance`: it IS the
+        /// simulation, so the tick flush is exactly when its edges have been
+        /// spent. The networked one consumes when the input lands in the
+        /// prediction core, which happens in FishNet's pre-tick — a moment the
+        /// facade cannot see and, at 300 fps against a 30 Hz tick, one that
+        /// falls on roughly one render frame in ten.
+        ///
+        /// WITHOUT THIS ANSWER THE FACADE CLEARS ON THE RENDER CLOCK, and that
+        /// is what lost dash presses: an edge captured on a frame that did not
+        /// tick was wiped before any replicate could carry it. The flag is a
+        /// question about WHO CONSUMES, not a switch — a backend answering it
+        /// wrongly does not merely change a policy, it drops player input.
+        bool ConsumesInputInTickDomain { get; }
+
         /// Starts a fresh match. `cfg` is built facade-side from its serialized
         /// ScriptableObjects and passed by value; `seed` is the match seed a
         /// local backend seeds its RNG with and a networked one only records.

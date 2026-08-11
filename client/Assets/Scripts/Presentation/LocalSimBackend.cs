@@ -193,6 +193,12 @@ namespace Ring.Presentation
 
         public void EndFrame() => _world.ClearEvents();
 
+        /// False: this backend consumes the frame's input inside `Advance` —
+        /// it hands it straight to `SimulationWorld.Tick` — so the facade's
+        /// own tick flush is exactly when the edges have been spent, and the
+        /// facade keeps clearing them there, as it always has (bd `app-d1t`).
+        public bool ConsumesInputInTickDomain => false;
+
         /// Always accepts, and therefore always answers `true`: this backend's
         /// world is nobody else's, so the facade asking for a fresh match is
         /// the whole of the decision. The networked twin is the one that has a

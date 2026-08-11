@@ -1045,6 +1045,13 @@ namespace Ring.Presentation.Net
         /// because nothing clears the window except this method.
         public void EndFrame() => _frameEventCount = 0;
 
+        /// True: this backend takes the frame's input in FishNet's pre-tick
+        /// (`TimeManager_OnPreTick`) and the facade clears the edge latches at
+        /// that moment, inside the seam it hands them over through
+        /// (bd `app-d1t`). `Advance`'s own `frame` parameter is not read here
+        /// at all — see its doc.
+        public bool ConsumesInputInTickDomain => true;
+
         /// The server started a new match. See `ISimBackend.MatchRestarted` for
         /// the whole contract; what is this class's own is WHEN it fires:
         /// `ClientMatchLink` moves the epoch it tracks on exactly two messages,

@@ -880,6 +880,35 @@ namespace Ring.Presentation
             }
 
             input = SampleFrameInputOnce();
+
+            // THE EDGE LATCHES ARE CLEARED HERE, BY THE CONSUMER, AND THAT IS
+            // WHAT Р35 ACTUALLY SAYS (bd `app-d1t`, fixing the regression bd
+            // `app-b3z` introduced). This method's contract is not "read the
+            // input" — it is "hand this frame's input to a caller that is
+            // about to CONSUME it", and the tick path consumes it the moment
+            // it lands in `PlayerPredictionCore.PendingInput`, one statement
+            // later. From that moment the dash edge lives in the prediction
+            // core and the sampler's copy has done its job.
+            //
+            // WHAT IT REPLACED, AND WHY THAT WAS LOSING PRESSES. Until this
+            // fix the latches were cleared in `Update` below on `ticks > 0` —
+            // the RENDER clock advancing, which on a networked backend has
+            // nothing to do with whether anything consumed the input. At
+            // 300 fps a tick of FishNet happens on roughly one frame in ten,
+            // while the render tick advances on its own ~30 times a second, so
+            // a dash pressed on a frame that did not tick was captured into
+            // `LastFrameInput`, never handed to prediction, and then wiped —
+            // the press reaching the wire NEVER. Both clocks run at 30 Hz in
+            // different phases, which is why the owner saw it work about every
+            // other time.
+            //
+            // TWO TICKS IN ONE FRAME SEND THE EDGE TWICE, deliberately: the
+            // second pre-tick of the frame reads the memoised sample, which
+            // still carries the edge, so both replicates request the dash. The
+            // world's own `DashRequestCooldownTicks` is the rule that decides
+            // what a repeated request means — this class must not become a
+            // second opinion on it (Р34).
+            _sampler.ClearLatches();
             return true;
         }
 
@@ -964,7 +993,17 @@ namespace Ring.Presentation
                 // nothing would fail to compile or to run green.
                 TicksFlushed?.Invoke();
                 _backend.EndFrame();
-                _sampler.ClearLatches();
+
+                // ONLY WHEN THIS BACKEND IS THE CONSUMER (bd `app-d1t`). A
+                // local backend consumes the frame's input inside `Advance`
+                // above — it IS the simulation — so the flush is exactly when
+                // its edges have been spent, and clearing here is right. A
+                // backend that takes its input in the tick domain has already
+                // cleared them at the moment it took them
+                // (`TrySampleFrameInput`), and clearing again here would be
+                // clearing on the RENDER clock: an event with no relation to
+                // consumption, which is what lost dash presses until this fix.
+                if (!_backend.ConsumesInputInTickDomain) _sampler.ClearLatches();
             }
         }
 
