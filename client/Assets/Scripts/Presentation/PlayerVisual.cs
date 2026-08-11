@@ -82,10 +82,16 @@ namespace Ring.Presentation
         /// bind-time number `MobVisual.Bind`'s own second parameter is — read
         /// off `GameFeelConfig.PlayerVisualScale` by the caller, never here.
         ///
-        /// A DOLL IS ONLY EVER BOUND FOR A LIVE SLOT (`ViewRegistry.SyncPlayers`
-        /// rents on `Alive` alone): a corpse is a doll that was bound while
-        /// standing and then received `PlayerDied`, so the reset below boots
-        /// into locomotion rather than branching on `m.Alive`.
+        /// THE RESET BOOTS INTO LOCOMOTION AND DOES NOT BRANCH ON `m.Alive`,
+        /// which used to be justified by "a doll is only ever bound for a live
+        /// slot". That stopped being true in Stage 2 Task 47a: a doll is also
+        /// rented for a slot this client first meets as a BODY
+        /// (`ViewRegistry.EnsureCorpse`, someone else's corpse walked up to
+        /// after the fact). The reset is still right for both, and for the same
+        /// reason it was right before — it is pool-rebind hygiene, not a pose
+        /// choice — because the caller states the pose immediately afterwards:
+        /// `Sync` for a live slot, `PlayDeath` for a body. Branching here would
+        /// put the decision in two places.
         ///
         /// BEHAVIOR DELTA VS THE PRE-POOL RESTART PATH (Stage 2 Task 45a, named
         /// so it can be looked at rather than discovered): the component this
@@ -355,14 +361,51 @@ namespace Ring.Presentation
             switch (e.Kind)
             {
                 case SimEventKind.PlayerDied:
-                    _animator.CrossFadeInFixedTime(AnimIds.Death,
-                        oneShotCrossFadeSeconds, BaseLayer, 0f);
+                    PlayDeath(fromStanding: true, oneShotCrossFadeSeconds);
                     break;
                 case SimEventKind.ProjectileFired:
                     _animator.Play(AnimIds.PistolShoot, AimLayer, 0f);
                     _animator.Update(0f); // land the state this frame (ПБ1)
                     break;
             }
+        }
+
+        /// The pose half of becoming a corpse (Stage 2 Task 47a) — ONE home for
+        /// the Death01 transition, called by `ViewRegistry` at the moment a doll
+        /// leaves its slot for the corpse list, whichever of the two facts got
+        /// there first: the `PlayerDied` event above, or the frame itself when
+        /// it reports the slot known and not alive. Exactly one of them runs it,
+        /// because the registry files the body under its slot and the loser
+        /// finds it already there.
+        ///
+        /// `fromStanding` IS THE DIFFERENCE BETWEEN A DEATH AND A BODY, and it
+        /// is the caller's fact rather than a guess made here. A doll that was
+        /// on its feet in the previous frame is falling NOW, so it crossfades
+        /// and the collapse is seen. A doll rented for a slot this client only
+        /// ever met as a corpse — someone else's body, found after the fact
+        /// (`ViewRegistry.EnsureCorpse`) — lands on the LAST frame of the same
+        /// clip instead: it fell before this client was looking, and playing the
+        /// fall would state that it happened just now, in front of a player who
+        /// would then look for a killer who left long ago.
+        ///
+        /// The Aim layer is dropped outright in that second case rather than
+        /// faded. `SyncCorpse` eases it out over `LocomotionCrossFadeSeconds`
+        /// because a fresh death still has a weapon up to lower; a body already
+        /// on the ground has none, and easing from full weight would raise its
+        /// pistol first.
+        public void PlayDeath(bool fromStanding, float oneShotCrossFadeSeconds)
+        {
+            if (fromStanding)
+            {
+                _animator.CrossFadeInFixedTime(AnimIds.Death,
+                    oneShotCrossFadeSeconds, BaseLayer, 0f);
+                return;
+            }
+
+            _animator.Play(AnimIds.Death, BaseLayer, 1f);
+            _aimWeight = 0f;
+            _animator.SetLayerWeight(AimLayer, 0f);
+            _animator.Update(0f); // land the pose this frame (ПБ1)
         }
     }
 }

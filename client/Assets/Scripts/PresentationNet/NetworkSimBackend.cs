@@ -104,11 +104,11 @@ namespace Ring.Presentation.Net
     {
         /// The block kinds this receiver understands. A kind absent from this
         /// list is walked past and counted by `SnapshotReader.
-        /// SkippedBlockCount` (Р29) — which is why `Liveness` appears here
-        /// even though nothing below reads it: this client DOES know that
-        /// block, it simply has nowhere to put it yet (see `ReadFrame`), and
-        /// letting it count as an unknown kind would misreport a
-        /// forward-compatibility statistic.
+        /// SkippedBlockCount` (Р29), which would misreport a
+        /// forward-compatibility statistic for a block this client does in fact
+        /// know. All five are decoded as of Stage 2 Task 47a — `Liveness` was
+        /// the one that was listed here and read by nobody, for want of a field
+        /// to write it into (see `ReadLiveness`).
         static readonly byte[] KnownBlockKinds =
         {
             (byte)SnapshotBlockKind.Players,
@@ -140,6 +140,14 @@ namespace Ring.Presentation.Net
             | (1 << (byte)SnapshotBlockKind.Wave)
             | (1 << (byte)SnapshotBlockKind.Events);
 
+        /// How many seats the Liveness mask can speak about, derived from the
+        /// protocol's own payload size rather than restated as an 8 (Stage 2
+        /// Task 47a): the block is one byte and a bit per seat, so widening it
+        /// on the wire moves this number with it instead of leaving a literal
+        /// here to go stale. See `ReadLiveness` for what happens to a seat past
+        /// the ceiling.
+        const int LivenessMaskSeats = SnapshotBlocks.LivenessBlockPayloadBytes * 8;
+
         /// How long a ghost that was confirmed but never ended may stay in the
         /// registry, expressed as `GhostProjectiles`' own `maxTrackTicks`.
         /// That class's doc leaves the number to this task and names the
@@ -155,9 +163,15 @@ namespace Ring.Presentation.Net
         /// How many render ticks a stale entity takes to fade out once it is
         /// eligible (`StalePolicy`'s `fadeTicks`). `NetConfig` carries no field
         /// for it — `StalePolicy`'s own doc records that as an open end for
-        /// this task — and it stays a constant here rather than becoming an
-        /// asset field because the number has no visible consumer yet: nothing
-        /// reads `StaleState`/`FadeProgress` until the dolls of Task 45 do.
+        /// this task — and it is still a constant here rather than an asset
+        /// field because the number STILL has no consumer that draws it.
+        /// The earlier wording named the dolls of Task 45 as the consumer that
+        /// would arrive; Task 45 shipped whole (a, b and c) and reads neither
+        /// `StaleState` nor `FadeProgress`. The real address is Task 47b and bd
+        /// `app-wcy` — the fade of a stranger's doll whose records stopped
+        /// coming — and until that reader exists a balance-asset field would be
+        /// a number nobody could see the effect of tuning (CR 6 is about
+        /// numbers the game plays by).
         /// Half a second at 30 Hz: long enough to read as a fade rather than a
         /// blink, short enough that a genuinely departed entity does not
         /// linger past the moment the player stops believing in it.
@@ -997,17 +1011,7 @@ namespace Ring.Presentation.Net
                         stateDecoded &= ReadPlayers(slot, payload, tick, applyState);
                         break;
                     case SnapshotBlockKind.Liveness:
-                        // KNOWN, DECODED BY NOBODY, AND SAID OUT LOUD. The mask
-                        // is the roster of every slot in the match and its own
-                        // consumer is the spectate candidate list of Task 47
-                        // (Р70); `RenderSnapshot` has no field it could be
-                        // written into, and inventing a member here with no
-                        // reader would be a feature without a cause. What it
-                        // costs meanwhile: a slot that is alive but out of
-                        // sight is indistinguishable, on this side, from a
-                        // slot that is dead — both read `Alive == false`,
-                        // because the Players block only carries who is
-                        // VISIBLE.
+                        stateDecoded &= ReadLiveness(slot, payload);
                         break;
                     case SnapshotBlockKind.Mobs:
                         stateDecoded &= ReadMobs(slot, payload);
@@ -1059,6 +1063,15 @@ namespace Ring.Presentation.Net
         /// the doll pool of Task 45 — so records are scattered by their own
         /// `Index` rather than packed, and the slots no record arrived for read
         /// `default(PlayerState)`: not alive, at the origin.
+        ///
+        /// WHICH IS WHY BOTH FLAG ARRAYS ARE CLEARED HERE TOO (Stage 2 Task
+        /// 47a). `PlayerKnown` is the field that says that zero apart from a
+        /// real record of a real corpse, so it has to start this frame at "this
+        /// frame has seen nothing" — a leftover `true` from the tick that used
+        /// to live in this recycled slot would state, of a player behind the
+        /// fog, that the frame carries their state. `PlayerAliveInMatch` is
+        /// cleared for the same reason and refilled wholesale by
+        /// `ReadLiveness`, the Liveness block riding on every frame.
         void BeginSlot(RenderSnapshot slot, uint tick)
         {
             slot.Tick = (int)tick;
@@ -1068,6 +1081,8 @@ namespace Ring.Presentation.Net
             {
                 slot.Players[i] = default;
                 slot.PlayerStats[i] = default;
+                slot.PlayerKnown[i] = false;
+                slot.PlayerAliveInMatch[i] = false;
             }
             slot.MobCount = 0;
             slot.ProjectileCount = 0;
@@ -1118,8 +1133,58 @@ namespace Ring.Presentation.Net
                 float hp01 = maxHp > 0f ? r.Hp / maxHp : 0f;
                 slot.Players[r.Index] = PlayerFlags.ToSyntheticState(r.Flags, r.Pos, r.Dir, hp01,
                     in _cfg);
+                // THE SAME LINE, ONE FIELD OVER (Stage 2 Task 47a): a state
+                // written here is a state this frame KNOWS, and the flag says
+                // so. It rides with the write rather than with `applyState`
+                // above on purpose — the two answer different questions.
+                // `OnEntitySeen` feeds a monotonic maximum ACROSS frames, which
+                // a reordered frame has nothing newer to say about; this flag
+                // describes THIS frame's own content, and the frame is
+                // committed and drawn whatever the dedup thought of its tick
+                // (see `ReadFrame`'s last paragraph).
+                slot.PlayerKnown[r.Index] = true;
             }
 
+            return true;
+        }
+
+        /// The match roster's liveness mask — who is alive ANYWHERE in the
+        /// arena, as against the Players block above, which carries only who is
+        /// visible to this client (Stage 2 Task 47a, bd `app-2rf`; Р70).
+        ///
+        /// THE BLOCK HAS RIDDEN ON EVERY FRAME SINCE TASK 27 AND WAS DECODED BY
+        /// NOBODY UNTIL THIS TASK. `SnapshotBlocks.TryReadLivenessBlock` existed
+        /// and had no production caller; what was missing was a field to write
+        /// it into, and `RenderSnapshot.PlayerAliveInMatch` is that field. What
+        /// its absence cost, in the words the branch that used to stand here
+        /// carried: a slot alive but out of sight was indistinguishable from a
+        /// dead one, both reading `Alive == false`.
+        ///
+        /// THE MASK STOPS AT THE ARRAY, NOT AT THE CONSUMER. `Presentation` is
+        /// not told the wire's bit layout — the same border `PlayerFlags.
+        /// ToSyntheticState` draws for the player record's own flag byte — so
+        /// the spread happens here and everything above reads plain booleans.
+        ///
+        /// EIGHT SEATS IS THE MASK'S OWN CEILING, and the loop below refuses to
+        /// invent the bits it does not have: one byte carries eight, the sender
+        /// truncates its own scan the same way, and this match's roster is
+        /// capped at three (`ArenaConfig.MaxPlayers`). A roster grown past eight
+        /// would need a wider mask on the wire before it could be read here, and
+        /// leaving the extra seats at `false` — rather than guessing — is what
+        /// makes that a visible gap instead of a silent lie about who is alive.
+        bool ReadLiveness(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (!SnapshotBlocks.TryReadLivenessBlock(payload, out byte aliveMask,
+                    out SnapshotBlockError error))
+            {
+                LogBlockRefusal(SnapshotBlockKind.Liveness, error);
+                return false;
+            }
+
+            if (slot == null) return true;
+            int seats = math.min(slot.PlayerCount, LivenessMaskSeats);
+            for (int i = 0; i < seats; i++)
+                slot.PlayerAliveInMatch[i] = (aliveMask & (1 << i)) != 0;
             return true;
         }
 
@@ -1592,6 +1657,18 @@ namespace Ring.Presentation.Net
         /// while prediction is not running this slot reads `default`.
         /// `SampleOwnPlayer` above holds that gate; by the time this runs, the
         /// only question left is whether the seat is in range.
+        ///
+        /// IT IS ALSO THE ONLY PLACE THE LOCAL SEAT CAN BE MARKED KNOWN (Stage
+        /// 2 Task 47a). No record for it ever rides the wire — the assembler's
+        /// own rule — so `ReadPlayers` never reaches this seat, and a frame
+        /// left saying "nothing known about slot N" is a frame that retires
+        /// this client's OWN doll. The flag therefore travels with the write,
+        /// here as in `ReadPlayers`: the state came from prediction rather than
+        /// from a datagram, but the frame carries it either way, which is the
+        /// whole of what the flag claims. When the gate above is shut the seat
+        /// stays unknown, which is the truth of that moment: this client has no
+        /// state for its own player and the last frame's picture is all there is
+        /// (see the Task 47b note in `SyncPlayers` about one's own body).
         void ApplyOwnPlayer(RenderSnapshot snapshot, in PlayerState predicted)
         {
             if (!_hasOwnSample) return;
@@ -1599,6 +1676,7 @@ namespace Ring.Presentation.Net
             int index = snapshot.LocalPlayerIndex;
             if (index < 0 || index >= snapshot.PlayerCount) return;
             snapshot.Players[index] = predicted;
+            snapshot.PlayerKnown[index] = true;
         }
 
         /// Finds this client's own player object once FishNet has spawned it.

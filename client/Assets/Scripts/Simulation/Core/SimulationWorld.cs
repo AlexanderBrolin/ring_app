@@ -921,6 +921,18 @@ namespace Ring.Simulation.Core
             // every Player-synonym read site from before Stage 2 Task 4 still makes).
             target.PlayerCount = _players.Length;
             System.Array.Copy(_players, target.Players, _players.Length);
+            // Stage 2 Task 47a: both per-slot flags of the frame, filled here so
+            // the local backend and the networked one describe a slot in the
+            // same words. A world in memory has no fog and no packet loss — it
+            // holds every seat's state — so `PlayerKnown` is the whole roster,
+            // and the roster liveness is simply the world's own `Alive`. The
+            // difference only appears on the other backend, where a frame
+            // carries what one client was allowed to see.
+            for (int i = 0; i < _players.Length; i++)
+            {
+                target.PlayerKnown[i] = true;
+                target.PlayerAliveInMatch[i] = _players[i].Alive;
+            }
             target.MobCount = _mobCount;
             System.Array.Copy(_mobs, target.Mobs, _mobCount);
             target.ProjectileCount = _projectileCount;

@@ -460,6 +460,10 @@ namespace Ring.Simulation.Tests
             { nameof(RenderSnapshot.Mobs), nameof(RenderSnapshot.MobCount) },
             { nameof(RenderSnapshot.Projectiles), nameof(RenderSnapshot.ProjectileCount) },
             { nameof(RenderSnapshot.PlayerStats), nameof(RenderSnapshot.PlayerCount) },
+            // Stage 2 Task 47a: both per-slot flags are bounded by the roster,
+            // exactly like Players/PlayerStats above.
+            { nameof(RenderSnapshot.PlayerKnown), nameof(RenderSnapshot.PlayerCount) },
+            { nameof(RenderSnapshot.PlayerAliveInMatch), nameof(RenderSnapshot.PlayerCount) },
         };
 
         /// Fills every field of `s` with a distinct, non-default value so a
@@ -477,6 +481,17 @@ namespace Ring.Simulation.Tests
                     Alive = true,
                     DashRequestCooldownTicks = 3 + i,
                 };
+            // Stage 2 Task 47a. `true` for every seat because `false` IS this
+            // type's default and would leave the guard below unable to tell
+            // "copied" from "never written". A MIXED pattern — which is what
+            // discriminates a copy that writes a constant — is pinned by
+            // `FramePresenceTests` instead; this fixture's job is the "no
+            // public field is forgotten" half.
+            for (int i = 0; i < s.PlayerCount; i++)
+            {
+                s.PlayerKnown[i] = true;
+                s.PlayerAliveInMatch[i] = true;
+            }
             s.LocalPlayerIndex = s.PlayerCount > 1 ? 1 : 0;
             s.MobCount = math.min(2, arena.MaxMobs);
             for (int i = 0; i < s.MobCount; i++)
