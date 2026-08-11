@@ -439,6 +439,14 @@ namespace Ring.Presentation
 
         bool _paused;
 
+        /// A `Restart` happened INSIDE the `Update` currently running (Stage 2
+        /// Task 48 fix-round 1, F-7). Cleared at the top of every `Update`, so
+        /// it can only ever be true for a restart this very call performed —
+        /// a restart requested from anywhere else finds it cleared again by
+        /// the time the next frame reads it. See `Update`'s own gate for what
+        /// it buys.
+        bool _restartedThisUpdate;
+
         /// Task 24 (spec Interfaces): the sole pause gate for the whole project —
         /// `Time.timeScale` is never touched (class doc above). From the moment
         /// it goes true, `Update` skips input sampling and tick advancement
@@ -692,6 +700,10 @@ namespace Ring.Presentation
 
         void Update()
         {
+            // Only a restart performed BELOW, by this very call, may set it —
+            // see the field and the gate further down.
+            _restartedThisUpdate = false;
+
             if (_pendingApplyConfig)
             {
                 _pendingApplyConfig = false;
@@ -711,6 +723,33 @@ namespace Ring.Presentation
                     Restart(Seed);
                 }
             }
+
+            // THE EXCUSE A RESTART RAISES BELONGS TO THE FIRST FRAME THAT
+            // ACTUALLY RUNS AFTER IT — which is the NEXT one, never this one
+            // (Stage 2 Task 48 fix-round 1, F-7). A restart rebuilds the
+            // world, and `LocalSimBackend.Restart` ends by excusing the frame
+            // that follows, because that frame carries scene construction and
+            // shader compilation. Reached from the hot-tweak recovery above,
+            // the restart happens in the MIDDLE of this method, and the
+            // `Advance` below would then spend the excuse on the ordinary
+            // delta of the frame the restart itself ran in — leaving the long
+            // frame that follows to be charged to `DroppedTime` in full, which
+            // is the exact defect `app-c3m` was opened about, one path
+            // narrower.
+            //
+            // NOTHING IS LOST BY RETURNING. The world was rebuilt microseconds
+            // ago and this frame's delta measures the world before it; there
+            // is no state for it to advance and no input worth consuming, and
+            // `Restart` has already zeroed the render phase and rebuilt the
+            // frozen pair. The other restart call sites need none of this and
+            // never trip it: the death overlay, the pause controller and the
+            // dev overlay all run after this component (`[DefaultExecutionOrder
+            // (-50)]`), so their restarts land after this frame's `Advance`
+            // has been and gone, and the flag is cleared at the top of the next
+            // `Update` before it is ever read. The gate exists so that the
+            // guarantee is a property of THIS method rather than of an
+            // execution-order table a future scene could change.
+            if (_restartedThisUpdate) return;
 
             if (_paused) return;
 
@@ -1120,6 +1159,12 @@ namespace Ring.Presentation
             // by value and never sees a `ScriptableObject`.
             if (!_backend.Restart(seed, cfg)) return;
 
+            // BELOW THE GATE, because it too describes a restart that happened
+            // (Stage 2 Task 48 fix-round 1, F-7): a backend that refused the
+            // call started no match, excused no frame and must not cost the
+            // caller its `Advance`. On the networked backend that is every
+            // call after the first, so this flag never stops a frame there.
+            _restartedThisUpdate = true;
             Seed = seed;
             _renderPrevFrozen = new RenderSnapshot(cfg.Arena);
             _renderCurrFrozen = new RenderSnapshot(cfg.Arena);

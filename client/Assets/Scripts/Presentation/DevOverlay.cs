@@ -229,10 +229,22 @@ namespace Ring.Presentation
             // label must not let it be read as one.
             GUILayout.Label($"RTT: {_net.RoundTripMs} ms (incl tick rate)");
 
-            GUILayout.Label(_net.HasNewestServerTick
-                ? $"Tick: render {_net.RenderTick}  server {_net.NewestServerTick}  "
-                    + $"behind {_net.NewestServerTick - _net.RenderTick}"
-                : $"Tick: render {_net.RenderTick}  server —  behind —");
+            // A DASH PER FIELD, NOT ONE FLAG FOR THE TRIO (fix-round 1, F-2).
+            // The two halves of this line start at different moments: the ring
+            // has a newest tick from the first frame it commits, while the
+            // render clock does not run until it has seen a SECOND DISTINCT
+            // tick — so between the two, `RenderTick` is a zero and the
+            // difference printed beside it was the size of the server's tick
+            // counter rather than of any lag. Each number is printed only
+            // where it is a measurement, and `behind` only where BOTH are, the
+            // same discipline `StateHash` and `HasMatchStats` above already
+            // use.
+            string renderTick = _net.HasRenderTick ? _net.RenderTick.ToString() : "—";
+            string serverTick = _net.HasNewestServerTick ? _net.NewestServerTick.ToString() : "—";
+            string behind = _net.HasRenderTick && _net.HasNewestServerTick
+                ? (_net.NewestServerTick - _net.RenderTick).ToString()
+                : "—";
+            GUILayout.Label($"Tick: render {renderTick}  server {serverTick}  behind {behind}");
 
             // Up is a DASH, not a zero, and permanently: nothing on this side
             // of the wire measures outgoing bytes (see

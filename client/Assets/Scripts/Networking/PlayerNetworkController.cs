@@ -39,8 +39,14 @@ namespace Ring.Networking
     /// `Ring.Presentation`. STAGE 2 TASK 48 CORRECTS WHAT THIS PARAGRAPH USED
     /// TO SAY: it claimed Task 43 had added a reference from
     /// `Presentation.asmdef` to `Ring.Networking`, and there is no such
-    /// reference — that file lists `Ring.Simulation`, `Ring.Data` and four
-    /// Unity packages, and by `client/CLAUDE.md` it never may list more.
+    /// reference — that file lists `Ring.Simulation`, `Ring.Data` and FIVE
+    /// Unity packages (`Unity.InputSystem`, `Unity.Mathematics`,
+    /// `UnityEngine.UI`, `Unity.TextMeshPro` and
+    /// `Unity.RenderPipelines.Universal.Runtime`), and by `client/CLAUDE.md`
+    /// what it may never gain is a reference to FishNet or to
+    /// `Ring.Networking` (fix-round 1, F-3: the correction above arrived with
+    /// a miscount of its own — "four" — and with a prohibition wider than the
+    /// rule it cited).
     /// `Ring.Presentation.Net` is the assembly that was split off to hold the
     /// FishNet-facing half, and it is what reaches this class
     /// (`NetworkSimBackend.Advance` calls `SetPendingInput`). The direction is

@@ -76,6 +76,16 @@ namespace Ring.Simulation.Core
         /// engine would then carry a licence to under-report the FIRST REAL
         /// hitch of the session, whenever it happened to come.
         ///
+        /// RAISE IT AFTER THE FRAME'S LAST `Advance`, NEVER BEFORE IT (Stage 2
+        /// Task 48 fix-round 1, F-7). The excuse is spent by the very next
+        /// call, so a caller that raises it and then advances the same frame
+        /// has handed it to the frame it meant to charge, and the long frame
+        /// that follows — the one the restart or the resume actually caused —
+        /// is charged in full instead. It is a real ordering and not a
+        /// theoretical one: `SimulationRunner`'s hot-tweak recovery restarts
+        /// from the middle of its own `Update`, which is why that method
+        /// returns without advancing on the frame a restart happened in.
+        ///
         /// PAUSE NEEDS NOTHING FROM THIS. A paused facade returns from `Update`
         /// before it reaches `Advance` at all, so a pause of any length adds
         /// nothing to `DroppedTime` and there is no gap to excuse on the way

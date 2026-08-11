@@ -112,6 +112,47 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2f, shuffled.MedianMeters, 1e-5f);
         }
 
+        /// Stage 2 Task 48 fix-round 1 (axis A, finding I-3): the class doc
+        /// declares "HOSTILE CAPACITY IS REFUSED, NEVER THROWN (Р82)" and the
+        /// constructor floors a non-positive capacity at one — an absolute
+        /// that no test held. Every fixture above hands the constructor a
+        /// legal size (8, 8, 8, 8, 3, 8, 4), so the floor could be deleted and
+        /// all seven would stay green. The precedent for pinning it is next
+        /// door and arrived the same way, as a review finding:
+        /// `StalePolicyTests.Constructor_ClampsNonPositiveTunings`.
+        ///
+        /// A FLOOR AND NOT A THROW, because of who the readers are: a dev
+        /// overlay and milestone В3's lag gate. `GhostProjectiles` and
+        /// `StalePolicy` clamp their own capacities the same way for the same
+        /// reason.
+        [Test]
+        public void Constructor_FloorsNonPositiveCapacityAtOne()
+        {
+            Assert.AreEqual(1, new CorrectionWindow(0).Capacity,
+                "a capacity of zero must floor at one slot — a window that can "
+                + "hold no sample has no median to define");
+
+            var window = new CorrectionWindow(-3);
+            Assert.AreEqual(1, window.Capacity,
+                "a negative capacity must floor the same way; unfloored it "
+                + "reaches `new float[-3]`, which is the exception Р82 refuses "
+                + "to raise at a caller");
+
+            // And the floored window WORKS rather than merely constructs: one
+            // slot that records, evicts and reports the sample it holds.
+            window.Record(5f);
+            Assert.AreEqual(1, window.Count);
+            Assert.AreEqual(5f, window.MedianMeters, 1e-5f);
+
+            window.Record(7f);
+            Assert.AreEqual(2, window.Count,
+                "`Count` is the whole run and climbs past the window size, "
+                + "exactly as in WindowOverflow_OldestSamplesAreEvicted");
+            Assert.AreEqual(7f, window.MedianMeters, 1e-5f,
+                "the single slot now holds the newer sample — the ring cursor "
+                + "evicted the older one, which is what a capacity of one means");
+        }
+
         [Test]
         public void Reset_ForgetsEverySample()
         {

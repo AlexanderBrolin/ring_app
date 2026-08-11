@@ -58,6 +58,23 @@ namespace Ring.Presentation
         /// cannot resolve the pair the clock is asking for.
         public int RenderTick;
 
+        /// Whether the render clock has STARTED, i.e. whether `RenderTick` is
+        /// a tick at all (`RenderClock.Started`) — Stage 2 Task 48 fix-round
+        /// 1, F-2.
+        ///
+        /// THE TWO FLAGS ARE NOT THE SAME FLAG, AND THE GAP BETWEEN THEM IS
+        /// WHERE THE PANEL USED TO INVENT A NUMBER. `HasNewestServerTick`
+        /// turns true on the FIRST frame committed to the ring; the clock
+        /// refuses to run until it has seen a SECOND DISTINCT tick, because a
+        /// duplicated datagram gives interpolation no pair to work with
+        /// (`RenderClock.OnSnapshot`). In between, `RenderTick` is zero — and
+        /// zero minus a four-digit server tick was printed as "behind", a
+        /// figure the size of the match's whole history where the truth is
+        /// "the clock has not started". The window is one snapshot interval
+        /// when nothing is lost and does not close at all if the second frame
+        /// is, which is a state a milestone screenshot can be taken in.
+        public bool HasRenderTick;
+
         /// The newest world tick this client has received a complete frame of
         /// (`SnapshotQueue.NewestTick`) — the closest thing to "the server's
         /// tick" that exists on this side of the wire, and the number
@@ -70,7 +87,20 @@ namespace Ring.Presentation
         public bool HasNewestServerTick;
 
         /// Snapshot payload bytes per second arriving at this client, averaged
-        /// over the last whole second.
+        /// over the last whole second THIS GAME RAN.
+        ///
+        /// A PAUSE IS NOT PART OF ANY SECOND, and neither is a stretch the
+        /// engine spent running no frames at all (Stage 2 Task 48 fix-round 1,
+        /// F-1). A pause freezes the divisor while bytes keep arriving, so an
+        /// unguarded window would divide the whole pause's traffic by about
+        /// one second and print a burst that never crossed the wire; an idle
+        /// stretch arrives as a single enormous frame delta and would spread
+        /// an instant's traffic over it, printing almost nothing over a
+        /// healthy connection. Neither interval is let into a window —
+        /// `NetworkSimBackend.RestartBytesRateWindow` and `NotifyEngineIdle`
+        /// have the mechanism. What a reader sees meanwhile, for up to a
+        /// second after resuming either way, is the last whole second the game
+        /// actually ran: a figure that was measured.
         ///
         /// A RATE IS NOT A COUNTER, AND THE DERIVATIVE IS TAKEN BY WHOEVER
         /// OWNS THE FRAME TIME. `NetStats.BytesDown` is a running total; the

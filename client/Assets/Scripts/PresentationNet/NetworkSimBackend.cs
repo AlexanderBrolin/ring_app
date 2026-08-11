@@ -292,6 +292,14 @@ namespace Ring.Presentation.Net
         float _bytesRateWindowSeconds;
         float _bytesDownPerSecond;
 
+        // The NEXT frame's length is not an interval this client spent
+        // receiving, so it must not become part of a window (fix-round 1,
+        // F-1). Raised by `NotifyEngineIdle` and spent by the next
+        // `UpdateBytesRate` whatever that frame looks like — the same
+        // one-frame shape, and for the same reason, as
+        // `FixedStepAccumulator.IgnoreNextFrameGap`.
+        bool _bytesRateIgnoreNextFrame;
+
         /// This client's own player object once FishNet has spawned it.
         /// Found rather than injected: the object is spawned by the server
         /// mid-match, and the one authority on which object is ours is
@@ -611,6 +619,13 @@ namespace Ring.Presentation.Net
                 // the panel's label says so.
                 RoundTripMs = (int)_nm.TimeManager.RoundTripTime,
                 RenderTick = _clock.RenderTick,
+                // The clock's own "am I running" flag, public since before
+                // this task and left out of the first snapshot by oversight
+                // (fix-round 1, F-2). Without it the panel printed `render 0`
+                // and a `behind` the size of the server's tick number for as
+                // long as the clock was still waiting for its second distinct
+                // tick.
+                HasRenderTick = _clock.Started,
                 // Clamped into the `int` the panel prints rather than cast
                 // blind: the queue stores the wire's `uint`, and an
                 // out-of-range cast in C# produces an unspecified number
@@ -661,15 +676,33 @@ namespace Ring.Presentation.Net
             return true;
         }
 
-        /// Nothing to excuse: there is no `FixedStepAccumulator` on this side
-        /// and therefore no `DroppedTime` an engine-side gap could pollute
-        /// (`DroppedTime` above answers a permanent zero for the same reason).
-        /// The render clock takes care of a long frame by itself — it refuses
-        /// a delta that is not a positive finite number and snaps forward onto
-        /// its target past the configured threshold — and neither behaviour is
+        /// There is no `DroppedTime` here to excuse — this side owns no
+        /// `FixedStepAccumulator` and answers a permanent zero for one — and
+        /// the render clock takes care of a long frame by itself, refusing a
+        /// delta that is not a positive finite number and snapping forward
+        /// onto its target past the configured threshold; neither behaviour is
         /// something a caller may switch off.
+        ///
+        /// BUT THIS CLASS DID ACQUIRE A CLOCK OF ITS OWN IN TASK 48, AND IT IS
+        /// EXACTLY WHAT AN ENGINE-SIDE GAP RUINS (fix-round 1, F-1 — this
+        /// paragraph used to say there was nothing here at all, which stopped
+        /// being true in the commit that wrote it). The byte-rate window
+        /// counts FRAME time, and the frame that follows this callback carries
+        /// the whole idle stretch as one delta (the owner measured 79 seconds
+        /// of it): the window it closed would spread the traffic of an instant
+        /// over a minute and a half and print a rate near zero over a
+        /// connection receiving normally.
+        ///
+        /// EXCUSING THE FRAME, NOT MERELY RESTARTING THE WINDOW, is what that
+        /// takes. A restart alone leaves the idle delta itself inside the new
+        /// window, which is the lie above; the flag keeps the one frame that
+        /// measures nothing out of the arithmetic entirely, and the window
+        /// starts from the frame after it. Until it closes, the panel keeps
+        /// showing the last whole second the game ran — see
+        /// `RestartBytesRateWindow`.
         public void NotifyEngineIdle()
         {
+            _bytesRateIgnoreNextFrame = true;
         }
 
         /// One rendered frame of the incoming byte rate. Latched once per
@@ -683,10 +716,61 @@ namespace Ring.Presentation.Net
             // the same reason: a NaN here would poison the window forever.
             if (!math.isfinite(unscaledDeltaTime) || unscaledDeltaTime <= 0f) return;
 
+            // The one frame the engine itself was not running through (see
+            // `NotifyEngineIdle`). Its length is idle wall time, not receiving
+            // time, so the window does not count it and starts from here
+            // instead. Spent on ANY frame, exactly like the accumulator's own
+            // excuse: a short resume frame consumes it too, which costs one
+            // window and cannot hide a real change in the traffic.
+            if (_bytesRateIgnoreNextFrame)
+            {
+                _bytesRateIgnoreNextFrame = false;
+                RestartBytesRateWindow();
+                return;
+            }
+
             _bytesRateWindowSeconds += unscaledDeltaTime;
             if (_bytesRateWindowSeconds < BytesRateWindowSeconds) return;
 
             _bytesDownPerSecond = (_stats.BytesDown - _bytesDownAtWindowStart) / _bytesRateWindowSeconds;
+            RestartBytesRateWindow();
+        }
+
+        /// The averaging window starts again from NOW, because the interval it
+        /// had been counting is no longer an interval this client spent
+        /// receiving (Stage 2 Task 48 fix-round 1, F-1).
+        ///
+        /// WHAT WOULD OTHERWISE BE PRINTED. The dividend of this rate is
+        /// `NetStats.BytesDown`, written from FishNet's broadcast handler,
+        /// which knows nothing of the facade's pause gate. The divisor is
+        /// frame time, which the facade stops handing over the moment that
+        /// gate closes — `SimulationRunner.Update` returns before it reaches
+        /// `Advance`. A pause therefore freezes the divisor while the dividend
+        /// keeps climbing at the snapshot rate, and the first window to close
+        /// after resuming would divide a whole pause's worth of bytes by about
+        /// one second: a spike that never crossed the wire, printed at exactly
+        /// the moment a reader is most likely to be looking, since reading a
+        /// dev panel begins with pausing. `NotifyEngineIdle` above is the same
+        /// defect from the other end.
+        ///
+        /// STARTING OVER COSTS ONE WINDOW AND CANNOT INVENT ANYTHING. Until
+        /// the new window closes the panel keeps showing the last whole second
+        /// the game actually ran — a figure that was measured, and that no
+        /// pause can push above the real rate. Zeroing the rate instead would
+        /// print "nothing is arriving" over a connection receiving normally,
+        /// which is the same instrument lying in the other direction.
+        ///
+        /// THREE CALLERS, ONE MEANING — "the window that was running describes
+        /// nothing any more". `UpdateBytesRate` calls it having just latched a
+        /// finished window; `OnPausedChanged` on either edge, though only
+        /// leaving pause carries the fix (entering reaches the state leaving
+        /// would produce anyway, since the window cannot advance while no
+        /// frame time arrives, so the caller states the fact once instead of
+        /// naming a direction the rule does not have); and the excused frame
+        /// of `NotifyEngineIdle`, which is the one case where the window must
+        /// also NOT count the delta that ended it.
+        void RestartBytesRateWindow()
+        {
             _bytesDownAtWindowStart = _stats.BytesDown;
             _bytesRateWindowSeconds = 0f;
         }
@@ -1051,9 +1135,16 @@ namespace Ring.Presentation.Net
                 + "SimulationRunner.ConfigTweaked is set regardless of this refusal.");
         }
 
-        /// Nothing to settle. There is no accumulator here — the render clock
-        /// integrates local time and corrects by pace — so a pause needs no
-        /// per-backend bookkeeping.
+        /// The simulation needs nothing settled here: there is no accumulator
+        /// on this side — the render clock integrates local time and corrects
+        /// by pace — so a pause costs it no bookkeeping of the kind
+        /// `LocalSimBackend` does.
+        ///
+        /// THE ONE MEASUREMENT THAT DOES NOT SURVIVE A PAUSE BY ITSELF is the
+        /// byte rate, and this is where it is told (Stage 2 Task 48 fix-round
+        /// 1, F-1): its window counts frame time, which stops with the gate,
+        /// while the bytes it divides keep arriving. `RestartBytesRateWindow`
+        /// has the whole argument.
         ///
         /// THE PRICE OF A PAUSE IS REAL AND IS NOT THIS CLASS'S TO CHARGE.
         /// While the facade's pause gate is closed it calls neither `Advance`
@@ -1070,6 +1161,7 @@ namespace Ring.Presentation.Net
         /// decision rather than this class's.
         public void OnPausedChanged(bool paused)
         {
+            RestartBytesRateWindow();
         }
 
         /// Drops every subscription this backend made. Required before the
