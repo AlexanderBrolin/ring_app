@@ -156,6 +156,15 @@ namespace Ring.Presentation
         // `EnsureCorpse`. Every one of the three restores exactly the behaviour
         // that predates this task, where the doll was already in the pool by
         // then and each of those lookups simply found nothing.
+        //
+        // THE SET IS NOT THE WHOLE RULE — fix-round 1 counted the readers and
+        // found a fourth, which asks PHYSICS rather than this class: the aim
+        // raycast (`AimProvider.TryAimProxy`) walks up from a collider it struck
+        // and never consults any container here, so no membership test could
+        // have refused it. That one is closed on the doll itself, by switching
+        // its proxies off for the length of the hold (`PlayerView.SetAimable`).
+        // The set therefore says who is held; whether a given reader is covered
+        // is answered per reader — see `HoldFadingDoll`'s enumeration.
         HashSet<int> _fadingPlayerSlots;
 
         // Per-frame scratch buffers, cleared and reused every call — no allocation
@@ -412,7 +421,11 @@ namespace Ring.Presentation
         /// no longer true, and — the heavier half — turning it into a corpse
         /// would lay the body down at the last-seen spot instead of where the
         /// frame says the player fell, breaking the owner's own "где упал, там и
-        /// лежит". The body is made by the FRAME instead, in `EnsureCorpse`,
+        /// лежит" — quoted in full, with its recorded address, in this class's
+        /// own doc (Stage 2 Task 45a fix-round 1), which is the only place that
+        /// wording comes from: it is NOT a line of `client/CLAUDE.md`, whose
+        /// rule about bodies is the neighbouring "трупы не исчезают до конца
+        /// матча". The body is made by the FRAME instead, in `EnsureCorpse`,
         /// where a position actually exists; if the frame never carries that
         /// slot again, no body is drawn at all, which is right — this client
         /// never saw it. Before this task the doll was already pooled by then
@@ -756,10 +769,13 @@ namespace Ring.Presentation
                 _seenPlayerSlots.Add(i);
                 // Stage 2 Task 47c: the frame carries this slot again, so
                 // whatever was fading here is a live doll once more. The policy
-                // has already zeroed its own progress off the fresh sighting —
-                // this is the view-side half of the same fact, and it is what
-                // makes coming back need no other code at all.
-                _fadingPlayerSlots.Remove(i);
+                // has already zeroed its own progress off the fresh sighting;
+                // this is the view-side half of the same fact, and fix-round 1
+                // moved the whole of it into ONE call — the hold undoes more
+                // than a mark, and the rest of it is invisible from here (see
+                // `ResumeHeldDoll`). A slot that was never held returns from it
+                // immediately, on the same probe the bare `Remove` used to cost.
+                ResumeHeldDoll(i);
 
                 // THE AIM POINT IS RESOLVED HERE, AND ONLY HERE — the doll must
                 // not be able to tell whose slot it is (spec §3.12: a stranger's
@@ -872,36 +888,93 @@ namespace Ring.Presentation
         ///    decision 3a leaves them to a task with numbers of its own), and
         ///    this method is only ever reached from the player loop.
         ///
-        /// A HELD DOLL IS NOT THE SLOT'S LIVE DOLL, and that is one rule with
-        /// three enforcement points rather than three special cases. It keeps
-        /// its entry in `_activePlayers` — it is still that slot's doll and
-        /// still returns to the pool through `RetirePlayer` — but it is marked
-        /// in `_fadingPlayerSlots`, and `TryGetPlayerView`, `DispatchToDoll` and
-        /// `EnsureCorpse` each refuse it there. All three refusals restore
-        /// exactly what happened before this task, when the doll was already
-        /// pooled and each lookup found nothing; without them the hold would
-        /// have quietly bought two regressions with the fade — a muzzle flash
-        /// and brass thrown at a vanished player's last known position, and a
-        /// body laid down where that player was last SEEN rather than where the
-        /// frame says they fell.
+        /// A HELD DOLL IS NOT THE SLOT'S LIVE DOLL, and that is ONE RULE WITH
+        /// FOUR ENFORCEMENT POINTS rather than four special cases (fix-round 1
+        /// counted them; the paragraph this replaces said three and named the
+        /// three that go through this class). The doll keeps its entry in
+        /// `_activePlayers` — it is still that slot's doll and still returns to
+        /// the pool through `RetirePlayer` — and it is marked in
+        /// `_fadingPlayerSlots`. Every reader that would otherwise treat "in
+        /// `_activePlayers`" as "positioned by this frame":
+        ///  - `TryGetPlayerView` refuses the mark, so no muzzle flash and no
+        ///    brass are thrown at a vanished player's last known position;
+        ///  - `DispatchToDoll` refuses it, so no event replays on a doll the
+        ///    frame has stopped describing;
+        ///  - `EnsureCorpse` retires the marked doll first, so a body is laid
+        ///    down where the frame says the player fell rather than where they
+        ///    were last SEEN;
+        ///  - the AIM RAYCAST, which asks none of the above — it walks up from
+        ///    whatever collider it struck (`AimProvider.TryAimProxy`) and drops
+        ///    only this client's own doll — is refused ON THE DOLL, by switching
+        ///    its `AimProxy_*` triggers off for the length of the hold
+        ///    (`PlayerView.SetAimable`, its own doc for the consumers).
+        /// All four restore exactly what happened before this task, when the
+        /// doll was already pooled and every one of these lookups — the raycast
+        /// included, since a pooled doll is inactive — found nothing.
         ///
-        /// COMING BACK NEEDS NO CODE AT ALL. The policy zeroes a slot's fade the
-        /// instant a fresh sighting arrives, and a slot the frame carries again
-        /// takes the ordinary live path — which snaps rather than streaks,
-        /// because `FindPlayerPrevPos` refuses a `prev` half that does not have
-        /// the slot alive. A doll that was half out therefore comes back to full
-        /// brightness where it stands and then resumes moving, in that order:
-        /// the policy hears of the return at DECODE time while the picture
-        /// reaches it `InterpBufferTicks` later, so the light returns first.
+        /// COMING BACK IS ITS OWN POINT, `ResumeHeldDoll` (fix-round 1; this
+        /// paragraph used to claim it needed no code at all, and that was true
+        /// only of the mark). What is free is the LIGHT: the policy zeroes a
+        /// slot's fade the instant a fresh sighting arrives, so the live path's
+        /// own `Sync` recomposes full brightness with no special case. What is
+        /// not free is everything a fresh `Bind` would have reset and a
+        /// continuing doll never sees — the proxies switched off above, and the
+        /// pose anchor `PlayerVisual` keeps for its speed read. The picture
+        /// still snaps rather than streaks, because `FindPlayerPrevPos` refuses
+        /// a `prev` half that does not have the slot alive. So a doll that was
+        /// half out comes back to full brightness where it stands and then
+        /// resumes moving, in that order: the policy hears of the return at
+        /// DECODE time while the picture reaches it `InterpBufferTicks` later,
+        /// so the light returns first.
         bool HoldFadingDoll(int slot, bool local)
         {
             if (local) return false;
             if (!_activePlayers.TryGetValue(slot, out PlayerView view)) return false;
             if (!_runner.ShouldKeepPlayerDoll(slot)) return false;
 
-            _fadingPlayerSlots.Add(slot);
+            // Fix-round 1: `Add` answers whether this is the FIRST held frame,
+            // so the proxy switch is thrown once per hold rather than re-thrown
+            // every frame of it — the same shape `ResumeHeldDoll`'s `Remove`
+            // uses at the other end.
+            if (_fadingPlayerSlots.Add(slot)) view.SetAimable(false);
             view.FadeEmission(1f - _runner.PlayerFadeProgress(slot));
             return true;
+        }
+
+        /// THE OTHER END OF `HoldFadingDoll` (Stage 2 Task 47c fix-round 1):
+        /// the frame carries this slot again, so its doll stops being held.
+        /// One point for the whole transition, because the hold undoes more than
+        /// the mark the live path above used to clear inline, and the rest of it
+        /// is invisible from there.
+        ///
+        /// A RETURNING SLOT NEVER GOES THROUGH `Bind`, and that is what makes
+        /// this a method rather than a tidy-up. Its doll never left
+        /// `_activePlayers`, so the live path takes the CONTINUING branch —
+        /// position, `Sync`, `PlayerVisual.Sync` — and every reset a freshly
+        /// rented doll gets from `Bind` simply does not happen here. Two of
+        /// those resets are load-bearing on this path:
+        ///  - THE AIM PROXIES (`PlayerView.SetAimable`), switched off when the
+        ///    hold began. Nothing else would ever switch them back on: `Bind` is
+        ///    not called, so the doll would stay un-aimable for the rest of the
+        ///    match — a player nobody can point at;
+        ///  - THE SPEED REFERENCE (`PlayerVisual.ForgetPrevPos`). The line above
+        ///    is about to snap the transform to wherever that player is NOW,
+        ///    across everything they walked while the frame was silent, and the
+        ///    `Sync` right after it reads its own displacement.
+        /// The emission needs nothing of the sort: `Sync` recomposes it from
+        /// this frame's own remainder, which is `1` for a slot the frame
+        /// carries.
+        ///
+        /// THE LOOKUP IS HOW THE DOLL IS REACHED, NOT A GUARD. The mark is only
+        /// ever set for a slot that has one (`HoldFadingDoll` checks first), and
+        /// the two paths that take a doll away — `RetirePlayer` and `Clear` —
+        /// clear the mark as they go, so the second `if` cannot fail.
+        void ResumeHeldDoll(int slot)
+        {
+            if (!_fadingPlayerSlots.Remove(slot)) return;
+            if (!_activePlayers.TryGetValue(slot, out PlayerView view)) return;
+            view.SetAimable(true);
+            view.Visual?.ForgetPrevPos();
         }
 
         /// The previous render half's position for one player slot. Unlike the

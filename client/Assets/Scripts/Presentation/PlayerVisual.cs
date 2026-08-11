@@ -160,6 +160,28 @@ namespace Ring.Presentation
             _facing = _visual.rotation;
         }
 
+        /// Forget where this doll last stood (Stage 2 Task 47c fix-round 1) —
+        /// AN ENTRY INTO `Bind`'S OWN RESET, NOT A SECOND HOME FOR THE SPEED
+        /// RULE. It sets the one flag the line above already sets
+        /// (`_hasPrevPos = false`) and states nothing else about speed: the
+        /// displacement is still read in exactly one place, `Sync` below, which
+        /// then sees no previous point and reports zero for that frame.
+        ///
+        /// THE ONE CALLER IS A RETURN THAT IS NOT A BIND. A slot whose records
+        /// stopped keeps its doll — held, frozen and dimming
+        /// (`ViewRegistry.HoldFadingDoll`) — and `Sync` is not called for it at
+        /// all while that lasts, so `_prevPos` stays at the last point the
+        /// picture ever showed. When the frame carries the slot again the doll
+        /// is still in `_activePlayers`, so the registry takes its CONTINUING
+        /// path: no `Bind`, a transform snapped to wherever that player is now,
+        /// and then `Sync`. Without this call that first `Sync` reads everything
+        /// the player walked behind the fog — up to the whole stale-plus-fade
+        /// budget of running — as one frame's displacement: `speed01` pegs at
+        /// `1`, the doll sprints on the spot, and `_facing` turns along the
+        /// teleport vector instead of along any real movement. The first frame
+        /// back is a teleport, and this is what says so.
+        public void ForgetPrevPos() => _hasPrevPos = false;
+
         /// Per-frame pose pass, called once per render frame by
         /// `ViewRegistry.SyncPlayers` for every LIVE doll (new AND continuing),
         /// AFTER that method has written this frame's `transform.position` —

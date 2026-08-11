@@ -173,6 +173,32 @@ namespace Ring.Presentation
             for (int i = 0; i < _aimProxyCount; i++) _aimProxies[i].enabled = value;
         }
 
+        /// Whether this doll may be AIMED AT (Stage 2 Task 47c fix-round 1) —
+        /// the same switch `Bind` and `DetachAsCorpse` already throw, exposed
+        /// for the third state a doll can be in: HELD while its slot fades out
+        /// (`ViewRegistry.HoldFadingDoll`). A held doll is neither rented nor
+        /// retired, so neither of those two ever runs for it, and its proxies
+        /// would otherwise stay live for the whole fade.
+        ///
+        /// THE READER THIS CLOSES DOES NOT GO THROUGH `ViewRegistry` AT ALL,
+        /// which is why the registry's three refusals (`TryGetPlayerView`,
+        /// `DispatchToDoll`, `EnsureCorpse`) do not cover it: it is a raycast.
+        /// `AimProvider.TryAimProxy` walks up from whatever collider it struck
+        /// and drops only THIS client's own doll (`struckDoll.IsLocal`), so a
+        /// stranger's held doll passes that guard and fills `CurrentAimSimPos`/
+        /// `CurrentAimZone` — which `InputSampler.SampleFrame` puts on the wire
+        /// as `SimInput.AimPoint`, `CameraRig` leads the camera by, and
+        /// `CrosshairView`/`AimRayView` paint the zone tint and the head-hover
+        /// cue from. The doll is still drawn, so nothing the server withheld
+        /// leaks; what the aim would promise is a target the server has stopped
+        /// confirming, which is the same reason `DetachAsCorpse`'s own doc
+        /// gives for a corpse.
+        ///
+        /// Narrow for the same reason `FadeEmission` is: a slot the frame is
+        /// silent about has no state, so `Sync` cannot be called for it, and
+        /// members like these two are the only way its doll can be reached.
+        public void SetAimable(bool value) => SetAimProxiesEnabled(value);
+
         /// Rebinds this (pooled) doll to a player slot: records whose slot it is
         /// and clears any emission left over from a previous life in the pool.
         /// Only sets the resting baseline — `ViewRegistry` calls `Sync` right
@@ -200,7 +226,10 @@ namespace Ring.Presentation
             // frame and — via `ViewRegistry.Clear` — by corpses at a match
             // restart, so the previous life's last act can be "proxies off".
             // Renting one back without this line would put a live player behind
-            // a silhouette nothing can aim at.
+            // a silhouette nothing can aim at. Stage 2 Task 47c fix-round 1
+            // added a second way for a life to end that way — a doll retired
+            // mid-hold, switched off by `SetAimable` (its own doc) — and this
+            // line covers it for exactly the same reason.
             SetAimProxiesEnabled(true);
         }
 
@@ -331,7 +360,9 @@ namespace Ring.Presentation
         /// went on reporting a target that is already dead — and a mob's corpse
         /// has no such thing by construction (`CorpseMechView.prefab` carries no
         /// proxy at all), which is the asymmetry the owner's "труп игрока = труп
-        /// моба" rules out. Switched off here, switched back on by `Bind`.
+        /// моба" rules out. Switched off here and — since Stage 2 Task 47c
+        /// fix-round 1, for a doll held through its fade — in `SetAimable`;
+        /// switched back on by `Bind` and by that same member on the way back.
         public void DetachAsCorpse()
         {
             ApplyEmission(Color.black);
