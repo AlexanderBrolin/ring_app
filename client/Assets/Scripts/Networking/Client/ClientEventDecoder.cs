@@ -99,22 +99,29 @@ namespace Ring.Networking.Client
     ///     `SimEvent.Amount` means for `ProjectileFired` reads zero, and its
     ///     position has already been coarsened by the server.
     ///
-    /// AND THAT COARSENED POSITION IS DRAWN TODAY — A DEFECT NEITHER THIS FILE
-    /// NOR ITS CALLER CAN CLOSE FROM THIS SIDE. The muzzle-flash view and the
+    /// THAT COARSENED POSITION WAS DRAWN, ONCE — CLOSED BY bd app-p7t, IN
+    /// `MuzzleFlashView`, NOT HERE. The muzzle-flash view and the
     /// persistent-props director are both subscribed to the event fan-out, and
-    /// a `ShotHeard` reaches both as an ordinary `ProjectileFired`: the flash
-    /// decides on `Kind` alone and bursts at angle 0, the casing decides on
-    /// `Kind` plus `Owner == Player` and drops a shell that game feel keeps on
-    /// the floor for the rest of the match — at a position the server
-    /// coarsened precisely so it would not give the shooter away. The producer
-    /// side has no field the three consumers agree to read: the sound this
-    /// event exists for is played by the audio director on the same `Kind`
-    /// plus `Owner == Player`, so any change here that hides the event from
-    /// the first two hides it from the third as well, and no consumer reads
-    /// `EntityId` on this kind at all. The fix therefore belongs where the
-    /// flash and the casing are ANCHORED — Task 45 moves both onto the weapon
-    /// model's muzzle, and a shooter nobody can see has no doll and no barrel
-    /// to fire from.
+    /// a `ShotHeard` reaches both as an ordinary `ProjectileFired` carrying
+    /// `EntityId == 0` — the one fact this kind's payload can leave behind,
+    /// because it has no room for a round id at all (the wire table above).
+    /// `MuzzleFlashView.HandleEvent` now reads exactly that zero to withhold
+    /// its burst: a mob's `ShotHeard` used to draw at `e.Pos`, the position
+    /// the server coarsened precisely so it would not give the shooter away,
+    /// and a visible player's `ShotHeard` used to burst from that player's own
+    /// doll with an invented angle (the wire carries no direction for this
+    /// kind either) — neither happens any more. The persistent-props
+    /// director's casing was never actually exposed the way this paragraph
+    /// used to say: `SpawnCasing` has required the shooter's own doll since
+    /// Stage 2 Task 45b, so a `ShotHeard` from a shooter this client cannot
+    /// see has dropped no shell since then — only a VISIBLE shooter's own
+    /// `ShotHeard` ever produced one, at the honest position of their own
+    /// ejection port, and that is unchanged by app-p7t. The sound this event
+    /// exists for is still played by the audio director on `Kind` plus
+    /// `Owner == Player`, unconditionally, at `e.Pos` — the coarsened position
+    /// is exactly what a SOUND is allowed to give away, and the whole reason
+    /// this wire kind is sent at all. No consumer reads `EntityId` on this
+    /// kind for anything but that zero.
     public static class ClientEventDecoder
     {
         /// Whether `TryDecode` has a `SimEvent` for this wire kind — the Р29

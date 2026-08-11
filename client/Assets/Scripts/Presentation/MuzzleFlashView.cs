@@ -91,23 +91,39 @@ namespace Ring.Presentation
     /// `SnapshotEventKind.ShotHeard` and is decoded into an ordinary
     /// `ProjectileFired` (`ClientEventDecoder`) whose position the server
     /// coarsened on purpose and whose direction it did not send at all. Bursting
-    /// at that position — which is what this class did until now — draws a flash
-    /// where a hidden shooter roughly is, handing away the one thing interest
-    /// management exists to withhold. A hidden shooter has no doll, so this
-    /// class now has nothing to draw from and draws nothing; the SOUND of that
-    /// shot, which is the whole reason the event is sent, is `AudioDirector`'s
-    /// and is untouched. A visible shooter has a doll and keeps their flash.
+    /// at that position — which is what this class did until Stage 2 Task 45b —
+    /// draws a flash where a hidden shooter roughly is, handing away the one
+    /// thing interest management exists to withhold. A hidden shooter has no
+    /// doll, so this class now has nothing to draw from and draws nothing; the
+    /// SOUND of that shot, which is the whole reason the event is sent, is
+    /// `AudioDirector`'s and is untouched.
+    ///
+    /// NO ROUND ON THIS CONNECTION, NO FLASH EITHER — THE SAME RULE'S OTHER
+    /// HALF (bd app-p7t). The paragraph above stops `e.Pos` from ever reaching
+    /// `EmitBurst`, but until this task a `ShotHeard` from a shooter this
+    /// client CAN see still burst from that shooter's OWN doll, honest
+    /// position and all — the server sends this wire kind whenever a
+    /// connection was not given the round, which includes a shooter standing
+    /// in plain sight whose shot simply did not fly this way
+    /// (`SnapshotAssembler.RouteEvents`'s relevance check is per-TRAJECTORY,
+    /// not per-shooter). `HandleEvent` below now gates BOTH branches on
+    /// `noRoundOnThisConnection` (`e.EntityId == 0` — see that local's own doc
+    /// for why that is the one fact it means), so a visible shooter's
+    /// `ShotHeard` keeps their doll's shot animation (`ViewRegistry`) and
+    /// loses only the flash's particles.
     ///
     /// THE DIRECTION IS STILL THE SHOT'S, NOT THE SOCKET'S FORWARD. `e.Amount`
     /// is tick-exact by construction (two fix-rounds went into making it the
     /// source, see above) and the aim supplies the predicted burst's; a socket's
     /// forward axis is only as good as its tuned rotation, and the muzzle socket
     /// is deliberately a POINT (`GameFeelConfig.GunMuzzleLocalPosition` has no
-    /// euler beside it). The one place that costs something is a `ShotHeard`
-    /// from a shooter this client CAN see: the wire carries no angle for that
-    /// kind, so `e.Amount` reads 0 and the cone points due east while the burst
-    /// itself sits correctly on their barrel. That is a smaller lie than the
-    /// position was, and it is the shooter's cone, not their location.
+    /// euler beside it). Before bd app-p7t, the one place this cost something
+    /// was a `ShotHeard` from a shooter this client CAN see: the wire carries
+    /// no angle for that kind, so `e.Amount` read 0 and the cone pointed due
+    /// east while the burst itself sat correctly on their barrel. That cost is
+    /// gone with the burst itself — the paragraph above withholds the whole
+    /// record for that shooter's `ShotHeard`, so no cone, honest or not, is
+    /// ever computed from it.
     ///
     /// EVERY BURST OFF A DOLL IS DRAWN IN `LateUpdate`, AND THAT IS AN ORDERING
     /// FACT, NOT A STYLE (fix-round 1, G-1). A doll's gun rides a hand bone the
@@ -246,6 +262,21 @@ namespace Ring.Presentation
             // case a position difference could hit.
             Vector3 dir = new Vector3(Mathf.Cos(e.Amount), 0f, Mathf.Sin(e.Amount));
 
+            // ONE DEFINITION FOR "THIS CONNECTION WAS NEVER GIVEN A ROUND FOR
+            // THIS SHOT" (bd app-p7t, rule 2 — used by both branches below,
+            // never re-derived). `ShotHeard`'s one-byte wire payload carries no
+            // round id (`SnapshotEvents`'s payload table: `ShotHeard 1 B
+            // ownerIndex u8`) and `ClientEventDecoder`'s `ShotHeard` branch
+            // never touches `EntityId`, so it stays the zero `e = default`
+            // left it at. A real shot's id is `SimulationWorld`'s own entity
+            // counter (`_nextEntityId`), which starts at 1 and only grows, so
+            // it never mints zero for a `ProjectileSpawned`. This can never
+            // read true in solo: the local backend hands this method the
+            // world's own `SimEvent` straight off `SimulationWorld.GetEvent`,
+            // and `ShotHeard` is a wire-only artefact that path never
+            // produces.
+            bool noRoundOnThisConnection = e.EntityId == 0;
+
             // Task 21 (QC9): a Gunner mob fires from `MobConfig.MuzzleHeight`
             // (0.95, Task 4/Task 17) in the sim — the flash must match that
             // exact height, not the old flat ground-anchor `lift = 0`, or the
@@ -256,6 +287,14 @@ namespace Ring.Presentation
             // answer for it.
             if (e.Owner != ProjectileOwner.Player)
             {
+                // CR 4 (fog of war is the server's call; the client never gets
+                // a position it withheld) — bd app-p7t. `noRoundOnThisConnection`
+                // true here means this is a `ShotHeard`, and `e.Pos` below is
+                // the server's deliberately coarsened guess at a shooter this
+                // client cannot see: bursting there handed that guess away
+                // (class doc, "NO DOLL, NO FLASH").
+                if (noRoundOnThisConnection) return;
+
                 EmitBurst(SimSpace.ToWorld(e.Pos)
                     + Vector3.up * _runner.Config.Gunner.MuzzleHeight, dir);
                 return;
@@ -276,6 +315,26 @@ namespace Ring.Presentation
                 // duplicate (Task 28).
                 return;
             }
+
+            // `noRoundOnThisConnection` AFTER THE LATCH ABOVE, NEVER BEFORE —
+            // bd app-p7t, and not a style choice. A full carry queue on the
+            // server can deliver the LOCAL player's own shot as a `ShotHeard`
+            // too: `SnapshotAssembler.RouteEvents`'s `ShotHeard` case only
+            // suppresses when the matching spawn was actually DELIVERED
+            // (`lastSpawnDelivered`), not merely relevant, and a queue with no
+            // room refuses the spawn while still sending the sound — the
+            // shooter's own connection included. A guard here ahead of
+            // `TryConsume` above would let that shot's own confirmation walk
+            // past without consuming the latch, leaving it armed until
+            // `ImmediatePredictionLatch`'s TTL — which blocks the NEXT shot's
+            // prediction for as long as that window lasts, by that class's own
+            // doc ("WHAT IT COSTS, SAID PLAINLY") — bd app-id9, reproduced.
+            // Placed here instead, the check only ever withholds a doll's
+            // flash PARTICLES for a shot this connection has no round for: a
+            // visible stranger whose round did not fly this way keeps their
+            // shot animation (`ViewRegistry`) and loses only the cone, since
+            // `TryGetMuzzle` below never reads `e.Pos` to begin with.
+            if (noRoundOnThisConnection) return;
 
             // The shooter's own barrel, or nothing at all (class doc — this is
             // where F-3 closes). Recorded, not drawn: the barrel is not where
