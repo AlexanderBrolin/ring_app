@@ -70,15 +70,48 @@ namespace Ring.Presentation
 
         public float DroppedTime => _acc.DroppedTime;
 
-        /// Always true: this world is nobody else's, so spawning into it decides
-        /// no outcome for another player (CR 3).
-        public bool CanDevSpawnMob => true;
+        /// True wherever the world HAS a dev surface to spawn into: this world is
+        /// nobody else's, so spawning into it decides no outcome for another
+        /// player (CR 3).
+        ///
+        /// FALSE IN A PRODUCTION BUILD, AND THAT IS NOT A POLICY BUT AN
+        /// ARITHMETIC (bd `app-9m4`). `SimulationWorld.DevSpawnMob` is the one
+        /// method in the whole simulation compiled behind
+        /// `UNITY_EDITOR || DEVELOPMENT_BUILD`, and its own doc calls itself
+        /// "the sole public dev-surface method here, stripped from production
+        /// builds". A seat that answered `true` where that method does not
+        /// exist would be promising a call nobody can make.
+        public bool CanDevSpawnMob =>
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            true;
+#else
+            false;
+#endif
 
         /// `SimulationWorld.DevSpawnMob` hands back the spawned mob's id; the
         /// dev overlay has never used it and a networked twin could not produce
         /// one synchronously anyway, so the contract drops the return value
         /// instead of promising something only this implementation can keep.
-        public void DevSpawnMob(MobType type, float2 pos) => _world.DevSpawnMob(type, pos);
+        ///
+        /// THE BODY CARRIES THE SAME GUARD AS THE METHOD IT CALLS, AND WITHOUT
+        /// IT NO PRODUCTION BUILD COMPILES AT ALL (bd `app-9m4`, found by the
+        /// pre-milestone rebuild of Stage 2). From Task 43 until that find this
+        /// call stood unguarded against a definition stripped from every
+        /// non-development target, so `BuildLinuxServer`, `BuildLinuxClient` and
+        /// `BuildWindowsClient` all failed on `CS1061` while the editor, the
+        /// EditMode run and `BuildLinuxClientDev` — the three surfaces anyone
+        /// looked at — kept compiling, because all three define the symbol.
+        /// The seam member itself is NOT guarded (`ISimBackend`), and must not
+        /// be: an interface that changed shape per build target would make the
+        /// two backends disagree about their own contract. So the refusal lives
+        /// where the missing method is — here — and `CanDevSpawnMob` above tells
+        /// the truth about it beforehand.
+        public void DevSpawnMob(MobType type, float2 pos)
+        {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            _world.DevSpawnMob(type, pos);
+#endif
+        }
 
         /// Always true: `Restart` below accepts every call, because this world
         /// is nobody else's — so the death screen's restart button and its dev
