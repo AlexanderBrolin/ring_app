@@ -216,9 +216,12 @@ namespace Ring.Presentation
         ///
         /// STILL THE ONLY HOME OF "THIS FRAME'S INPUT", THOUGH `Update` IS NO
         /// LONGER ALWAYS WHAT FILLS IT (Stage 2 app-b3z). On a networked client
-        /// the sample is taken in FishNet's tick domain — earlier in the same
-        /// frame, immediately before the tick that replicates it — and `Update`
-        /// then reuses it rather than taking a second one; see
+        /// the sample is normally taken in FishNet's tick domain — earlier in
+        /// the same frame, immediately before the tick that replicates it — and
+        /// `Update` then reuses it rather than taking a second one. "Normally"
+        /// and not "always": a frame that produces no tick, one before the
+        /// backend has found this client's object, and one the tick path
+        /// refused are all sampled by `Update` exactly as solo is. See
         /// `SampleFrameInputOnce` and `TrySampleFrameInput` below. No reader
         /// can tell the two paths apart: every one of them runs at the default
         /// order or later and this facade is pinned at -50, so whichever path
@@ -794,7 +797,7 @@ namespace Ring.Presentation
         /// ticks every one of them replicates that one value — exactly as they
         /// all did before, when the one value was the previous frame's.
         ///
-        /// THREE REFUSALS, AND THE FIRST ONE IS LOAD-BEARING:
+        /// FOUR REFUSALS, AND THE FIRST ONE IS LOAD-BEARING:
         ///  - `_paused` — the pause gate must keep freezing input, and not
         ///    merely to stop the world. `WouldFireThisFrame` above has no pause
         ///    term of its own; `MuzzleFlashView` and `AudioDirector` fire on
@@ -816,9 +819,30 @@ namespace Ring.Presentation
         ///    sampler's actions, so a sample taken then would be a zeroed frame
         ///    that no `ClearLatches` would ever follow; refusing leaves
         ///    prediction on its last real input, which is exactly what a
-        ///    disabled facade produced before this seam existed.
+        ///    disabled facade produced before this seam existed;
+        ///  - `_aimProvider == null` — the ONE dereference `InputSampler.
+        ///    SampleFrame` makes without a guard of its own, and the only way
+        ///    this method could still throw (fix-round 1, Ф-3). The sampler's
+        ///    actions cannot be null — `FindAction(..., true)` throws in the
+        ///    constructor instead, which leaves `_sampler` null and trips the
+        ///    term above — but the provider is stored unchecked, so a scene
+        ///    that left the field empty would raise a `NullReferenceException`
+        ///    from inside the sampler.
         ///
-        /// `_restartedThisUpdate` IS DELIBERATELY NOT A FOURTH REFUSAL. That
+        /// THE FOURTH TERM IS ON THIS PATH ONLY, AND THE ASYMMETRY IS THE
+        /// DECISION. `Update` below calls `SampleFrameInputOnce` directly and
+        /// still dies exactly as loudly as it did before this seam existed —
+        /// an unwired scene must not be quietly playable. What the term buys is
+        /// the OTHER caller: this one is invoked from `OnPreTick` inside
+        /// FishNet's tick loop, where an escaping exception abandons the rest
+        /// of the pass — the incoming and outgoing iterations, the tick itself,
+        /// the state send and the accumulator's own decrement — so a broken
+        /// scene would stop the client reading and writing its socket rather
+        /// than merely stop it drawing. A `try`/`catch` here was the wrong
+        /// shape for the same reason a silent guard on the facade path would
+        /// be: it would hide the scene defect instead of localizing its blast.
+        ///
+        /// `_restartedThisUpdate` IS DELIBERATELY NOT A REFUSAL AT ALL. That
         /// flag means "a restart happened inside the `Update` now running", and
         /// this method runs BEFORE the `Update` that would clear it — so from
         /// here it reads the PREVIOUS frame's answer, which is the one thing
@@ -828,7 +852,7 @@ namespace Ring.Presentation
         /// after the first, which is itself made from `Awake`.
         public bool TrySampleFrameInput(out SimInput input)
         {
-            if (_paused || _sampler == null || !isActiveAndEnabled)
+            if (_paused || _sampler == null || !isActiveAndEnabled || _aimProvider == null)
             {
                 input = default;
                 return false;

@@ -7,9 +7,12 @@ namespace Ring.Presentation
 {
     /// Frame-level sampler: held values are read fresh every frame, while the Dash
     /// and Slide edges are captured via subscribed `performed` callbacks so a tap
-    /// shorter than a frame is never missed. `SimulationRunner.Update` samples once
-    /// per frame and clears latches only after any pending ticks consumed them
-    /// (spec §3.2/§3.8).
+    /// shorter than a frame is never missed. `SimulationRunner` samples once per
+    /// render frame — from its own `Update` in solo, and from FishNet's pre-tick
+    /// on a networked client, whichever asks first (Stage 2 app-b3z:
+    /// `SimulationRunner.SampleFrameInputOnce` is the sole caller of `SampleFrame`
+    /// below either way) — and clears latches only after any pending ticks
+    /// consumed them (spec §3.2/§3.8).
     public sealed class InputSampler
     {
         readonly InputAction _move, _aim, _fire, _dash, _slide, _aimHold;

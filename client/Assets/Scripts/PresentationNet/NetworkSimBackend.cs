@@ -79,8 +79,10 @@ namespace Ring.Presentation.Net
     /// widening the three to `public`. All three are called below, and each
     /// says at its call site why it is called from there:
     /// `Configure` the moment the controller is found, `SetPendingInput` with
-    /// the frame the facade already sampled, `NotifyOwnDeath` off the decoded
-    /// `PlayerDied` that names this client's own seat.
+    /// the input the facade hands over ON REQUEST from `TimeManager_OnPreTick`
+    /// (Stage 2 app-b3z — the facade no longer samples ahead of this class and
+    /// this class no longer collects a ready frame), `NotifyOwnDeath` off the
+    /// decoded `PlayerDied` that names this client's own seat.
     ///
     /// NOTHING INSTALLS THIS BACKEND YET, AND THAT IS A RECORDED DEBT RATHER
     /// THAN AN OVERSIGHT. `SimulationRunner.TryUseBackend` is the seam and it
@@ -827,12 +829,22 @@ namespace Ring.Presentation.Net
         /// client did before this method existed.
         ///
         /// `_controller` IS NOT LOOKED UP HERE. `EnsureController` runs once
-        /// per frame in `Advance` and is the single owner of that search
-        /// (its own doc says so); this method uses whatever that left behind.
-        /// The whole cost is one tick at the start of a match — the tick
-        /// between the frame `Advance` first finds the spawned object and the
-        /// next pre-tick — against which the alternative is a second home for
-        /// a per-frame search, on the hottest path this class has.
+        /// per frame in `Advance` and is the single owner of that search (its
+        /// own doc says so); this method uses whatever that left behind, and
+        /// the alternative would be a second home for a per-frame search on the
+        /// hottest path this class has.
+        ///
+        /// AND IT COSTS NOTHING, WHICH IS WORTH STATING BECAUSE IT LOOKS LIKE
+        /// IT SHOULD (fix-round 1, Ф-2, correcting a cost this doc invented).
+        /// Before the first find this method does return early — but the tick
+        /// it returns on was building no replicate either: `EnsureController`
+        /// calls `Configure` at the moment it finds the object, and until that
+        /// call `PlayerNetworkController.TimeManager_OnTick` refuses on
+        /// `!_configured` before it ever reaches `BuildReplicate`. So no tick
+        /// is skipped and none is emptied; the first replicate a match produces
+        /// is built on the first tick after the find, and it carries the input
+        /// of THAT frame — fresher than the pre-app-b3z arrangement, where it
+        /// would have carried the input of the frame the find happened on.
         void TimeManager_OnPreTick()
         {
             if (_controller == null) return;

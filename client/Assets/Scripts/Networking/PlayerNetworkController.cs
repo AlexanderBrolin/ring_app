@@ -49,7 +49,9 @@ namespace Ring.Networking
     /// rule it cited).
     /// `Ring.Presentation.Net` is the assembly that was split off to hold the
     /// FishNet-facing half, and it is what reaches this class
-    /// (`NetworkSimBackend.Advance` calls `SetPendingInput`). The direction is
+    /// (`NetworkSimBackend.TimeManager_OnPreTick` calls `SetPendingInput`, from
+    /// inside the tick loop rather than from the facade's frame — Stage 2
+    /// app-b3z). The direction is
     /// chosen so that that reference does NOT close an assembly cycle (Р35) —
     /// `Ring.Networking` must never reference a Presentation assembly back,
     /// which is exactly what sampling INSIDE this class would require.
@@ -124,10 +126,15 @@ namespace Ring.Networking
             _configured = true;
         }
 
-        /// The latest sampled frame, whole. Called by the backend every frame
-        /// (Р35: `SampleFrame` before the send, `ClearLatches` after the input
-        /// is consumed). See `PlayerPredictionCore.SetPendingInput` for why
-        /// nothing is coalesced here.
+        /// The latest sampled frame, whole. Called by the backend once per TICK
+        /// and not once per frame (Stage 2 app-b3z): twice on a frame that
+        /// produces two ticks, and not at all on a frame without one, while the
+        /// facade is paused, before the backend has found this controller, or
+        /// with the facade disabled — so what a replicate carries in any of
+        /// those states is whatever the last call left here (Р35: `SampleFrame`
+        /// before the send, `ClearLatches` after the input is consumed). See
+        /// `PlayerPredictionCore.SetPendingInput` for why nothing is coalesced
+        /// here.
         internal void SetPendingInput(in SimInput input) => _core.SetPendingInput(in input);
 
         /// Our own `PlayerDied` arrived (Р41/Р59). Task 44 owns the
