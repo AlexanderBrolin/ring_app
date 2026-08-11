@@ -344,6 +344,52 @@ namespace Ring.Simulation.Tests
                 + "would take the better part of seven minutes");
         }
 
+        // ---- T48. What the clock says about itself, for the dev overlay ----
+
+        /// Stage 2 Task 48: `SlewSign` and `Snaps` are the panel's "state of
+        /// the render clock" line. They are pure readers over state this class
+        /// already kept, so what is pinned here is the MAPPING — that each
+        /// reading really corresponds to the situation it claims, and that a
+        /// primary placement is not counted as a jump.
+        [Test]
+        public void SlewSignAndSnaps_ReportWhatTheClockIsDoing()
+        {
+            var cfg = Fixture();
+            var clock = Armed(cfg, out double start);
+
+            Assert.AreEqual(0, clock.SlewSign,
+                "a clock sitting on its target is correcting in neither direction");
+            Assert.AreEqual(0, clock.Snaps,
+                "and the primary placement that put it there is not a jump in anything "
+                + "the player has already seen");
+
+            // 1. Behind its target by less than the snap threshold: the slew.
+            uint newest = (uint)(start + cfg.InterpBufferTicks + cfg.RenderClockSnapTicks - 2);
+            clock.OnSnapshot(newest, Epoch);
+            clock.Advance(Dt, in cfg);
+            Assert.AreEqual(1, clock.SlewSign, "behind its target, the clock runs fast");
+            Assert.AreEqual(0, clock.Snaps,
+                "premise: a gap under RenderClockSnapTicks is the slew's to walk out");
+
+            // 2. Ahead of its target: nothing arrives while local time runs on,
+            //    so the clock overruns and gives time back.
+            for (int f = 0; f < 400; f++) clock.Advance(Dt, in cfg);
+            Assert.AreEqual(-1, clock.SlewSign, "ahead of its target, the clock runs slow");
+
+            // 3. A target far past the threshold: one forward jump, counted.
+            int snapsBefore = clock.Snaps;
+            clock.OnSnapshot((uint)(clock.RenderTime + cfg.InterpBufferTicks
+                + cfg.RenderClockSnapTicks + 50), Epoch);
+            clock.Advance(Dt, in cfg);
+            Assert.AreEqual(snapsBefore + 1, clock.Snaps, "a jump past the threshold is counted");
+            Assert.AreEqual(0, clock.SlewSign, "and it leaves the state machine neutral");
+
+            // 4. A new match counts its own snaps.
+            clock.ResetForEpoch(Epoch);
+            Assert.AreEqual(0, clock.Snaps);
+            Assert.AreEqual(0, clock.SlewSign);
+        }
+
         // ---- T31.4. Two DISTINCT snapshots, and a duplicate is not two ----
 
         [Test]

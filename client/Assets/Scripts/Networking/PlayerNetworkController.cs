@@ -3,6 +3,7 @@ using FishNet.Object;
 using FishNet.Object.Prediction;
 using FishNet.Transporting;
 using FishNet.Utility.Template;
+using Ring.Networking.Client;
 using Ring.Networking.Protocol;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
@@ -35,13 +36,17 @@ namespace Ring.Networking
     ///
     /// WHAT DRIVES IT, AND WHAT IT DOES NOT OWN. Input arrives from OUTSIDE
     /// through `SetPendingInput`, because `InputSampler` lives in
-    /// `Ring.Presentation` (fix-round 2, W18 — corrects an earlier,
-    /// PREMATURE claim: the reference from `Presentation.asmdef` to
-    /// `Ring.Networking` did not exist when this class was written; Task 43
-    /// added it). The direction is chosen so that that reference does
-    /// NOT close an assembly cycle (Р35) — `Ring.Networking` must
-    /// never reference `Ring.Presentation` back, which is exactly what
-    /// sampling INSIDE this class instead of outside it would require.
+    /// `Ring.Presentation`. STAGE 2 TASK 48 CORRECTS WHAT THIS PARAGRAPH USED
+    /// TO SAY: it claimed Task 43 had added a reference from
+    /// `Presentation.asmdef` to `Ring.Networking`, and there is no such
+    /// reference — that file lists `Ring.Simulation`, `Ring.Data` and four
+    /// Unity packages, and by `client/CLAUDE.md` it never may list more.
+    /// `Ring.Presentation.Net` is the assembly that was split off to hold the
+    /// FishNet-facing half, and it is what reaches this class
+    /// (`NetworkSimBackend.Advance` calls `SetPendingInput`). The direction is
+    /// chosen so that that reference does NOT close an assembly cycle (Р35) —
+    /// `Ring.Networking` must never reference a Presentation assembly back,
+    /// which is exactly what sampling INSIDE this class would require.
     /// The world that feeds `SetAuthoritativeState` and consumes
     /// `Core.LastServerInput` is Task 36's; the prefab this component sits on,
     /// the `NetworkTickSmoother` beside it and the death event feeding
@@ -295,6 +300,24 @@ namespace Ring.Networking
     /// and reachable only through the controller (fix-round 1).
     public sealed class PlayerPredictionCore
     {
+        /// How many corrections milestone В3's median is taken over (Stage 2
+        /// Task 48). A STRUCTURAL CONSTANT, NOT BALANCE — it tunes a
+        /// diagnostic's time constant, not anything the game plays with, so it
+        /// belongs in code rather than in an `.asset` (CR 6 is about the
+        /// numbers a match is decided by).
+        ///
+        /// 256 IS EIGHT AND A HALF SECONDS OF RECONCILIATION. FishNet runs one
+        /// reconcile cycle per state packet and the server sends state at the
+        /// tick rate, so this window is `256 / 30` seconds long at the shipped
+        /// 30 Hz. Long enough that a single dash, a single lost packet or a
+        /// single stall cannot move the reported median; short enough that the
+        /// number still describes the connection the owner is watching rather
+        /// than the whole match's history. Two arrays of 256 floats is 2 KB,
+        /// taken once.
+        public const int CorrectionWindowSamples = 256;
+
+        readonly CorrectionWindow _corrections = new CorrectionWindow(CorrectionWindowSamples);
+
         SimInput _pending;
         PlayerState _predicted;
         uint _lastReconciledTick;
@@ -324,6 +347,25 @@ namespace Ring.Networking
         /// (Р78) and is the quantity the lag gate's own median is written in
         /// (§3.14 item 7).
         public float LastCorrectionMeters => _lastCorrectionMeters;
+
+        /// How many reconciliation corrections this player has seen since the
+        /// match began (Stage 2 Task 48). Zero means the median below has
+        /// nothing to describe — the dev overlay prints a dash off this and
+        /// not off the median, because zero is a legitimate median.
+        ///
+        /// TWO FORWARDING PROPERTIES RATHER THAN THE WINDOW ITSELF, and that
+        /// is the same rule the rest of this class keeps: `CorrectionWindow`
+        /// has a `Record` and a `Reset` on it, and handing the object out
+        /// would let any assembly feed the lag gate's own statistic a number
+        /// that came from nowhere. The class doc's "every mutator is internal"
+        /// is structural, not a habit.
+        public int CorrectionCount => _corrections.Count;
+
+        /// The median correction over the last
+        /// `CorrectionWindowSamples` of them, in metres — §3.14 item 7's
+        /// quantity, whose gate threshold is 0.25 m. Meaningless while
+        /// `CorrectionCount` is zero.
+        public float CorrectionMedianMeters => _corrections.MedianMeters;
 
         /// The last input the server actually received, and its tick (Task 36's
         /// contract).
@@ -445,11 +487,23 @@ namespace Ring.Networking
         /// Idempotent and safe to call spuriously: `OnPostReconcile` fires once
         /// per state packet for the whole `PredictionManager`, including cycles
         /// in which this behaviour reconciled nothing.
+        /// THE WINDOW IS FED FROM HERE AND FROM NOWHERE ELSE (Stage 2 Task
+        /// 48), for the reason the paragraphs above give: this is the one
+        /// moment at which the correction is a real quantity. Recording it in
+        /// `BeginReconcile` instead would fill the lag gate's median with "how
+        /// far the player moved during half an RTT", which is around a metre
+        /// at 30 Hz on a flawless client — four times the gate's own 0.25 m
+        /// threshold. The guarded early return above therefore guards the
+        /// sample too: a spurious `OnPostReconcile` for a cycle this behaviour
+        /// reconciled nothing in must not add a duplicate of the previous
+        /// correction, which would drag the median toward whatever the last
+        /// real one was.
         internal void FinishReconcile()
         {
             if (!_reconcileOpen) return;
             _reconcileOpen = false;
             _lastCorrectionMeters = math.distance(_preReconcilePos, _predicted.Pos);
+            _corrections.Record(_lastCorrectionMeters);
         }
 
         /// One predicted tick, over the DECODED input (Р34 — and structurally

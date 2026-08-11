@@ -30,7 +30,9 @@ namespace Ring.Presentation
     ///
     /// ANSWERED AT ANY TIME, ready or not: `Ready`, `Config` (reads `default`
     /// before the first `Restart`), `HasStateHash`, `HasMatchStats`,
-    /// `CanDevSpawnMob`, `DroppedTime`. The facade reads several of these on
+    /// `CanDevSpawnMob`, `DroppedTime`, `TryGetNetDiagnostics` (Stage 2 Task
+    /// 48 — the dev overlay asks on frames that draw nothing, and a backend
+    /// with no network yet answers `false` rather than throwing). The facade reads several of these on
     /// frames that draw nothing, so an implementation returns a value here
     /// rather than throwing — and the two `Has…` members are the tests that
     /// decide whether the members they guard may be believed at all.
@@ -59,7 +61,9 @@ namespace Ring.Presentation
     ///
     /// OUTSIDE THAT RULE — the lifecycle mutators, called on the facade's own
     /// schedule: `Restart`, `ApplyConfig`, `OnPausedChanged`, `Advance`,
-    /// `EndFrame`. `Restart` is what MAKES an implementation ready and is
+    /// `EndFrame`, `NotifyEngineIdle` (Stage 2 Task 48 — raised from Unity's
+    /// focus/pause callbacks, which fire whether or not a backend is ready,
+    /// so it must stay answerable at any time too). `Restart` is what MAKES an implementation ready and is
     /// therefore called while `Ready` is still false — `SimulationRunner.Awake`
     /// -> `RestartNewSeed` -> `Restart(seed)` -> `_backend.Restart(seed, cfg)`
     /// is the first call any backend sees, so an implementation that refuses it
@@ -283,6 +287,52 @@ namespace Ring.Presentation
         /// "finished fading" want the same thing from the caller — let the doll
         /// go — and neither can strand one.
         bool ShouldKeepPlayerDoll(int slot);
+
+        /// This frame's network instrument panel, or `false` when this backend
+        /// HAS no network (Stage 2 Task 48, plan Ф9 :2100-2107). The dev
+        /// overlay draws its whole network section behind this answer, so a
+        /// solo session shows no section at all rather than a section full of
+        /// zeros — a zero here would be indistinguishable from a measurement,
+        /// which is the same defect `HasStateHash`/`HasMatchStats` exist to
+        /// avoid, and the panel paints two of these counters red above zero.
+        ///
+        /// ONE MEMBER FOR NINETEEN NUMBERS, ON PURPOSE. Nineteen members read
+        /// one at a time from `OnGUI` would be nineteen chances to describe
+        /// nineteen different moments, and `OnGUI` runs several times per
+        /// rendered frame (once per GUI event). The caller takes ONE snapshot
+        /// per frame, in `Update`, and draws off the copy. `NetDiagnostics`'
+        /// own doc has the rest, including why it is primitives.
+        ///
+        /// A FALSE ANSWER LEAVES `diagnostics` AT `default`, not at a partial
+        /// fill: there is no half-answer to give, and a caller that ignored
+        /// the return value would then read zeros rather than whatever the
+        /// last successful call left behind.
+        bool TryGetNetDiagnostics(out NetDiagnostics diagnostics);
+
+        /// The ENGINE itself has just stopped running frames, so the next
+        /// frame's length is not a measurement of anything this game did
+        /// (Stage 2 Task 48, bd `app-c3m`, the owner's decision of
+        /// 2026-08-11).
+        ///
+        /// A FACT, NOT AN INSTRUCTION. The facade knows one thing — that a
+        /// stretch of real time went by with no frames in it — and says only
+        /// that; what it means for a diagnostic is the backend's business, and
+        /// `FixedStepAccumulator.IgnoreNextFrameGap` is where the decision
+        /// actually lives (lesson 130). The facade is the caller because it is
+        /// the sole home of the simulation's Unity lifecycle: it performs
+        /// restarts itself, and `OnApplicationFocus`/`OnApplicationPause` are
+        /// raised on it and on nothing behind it.
+        ///
+        /// IDEMPOTENT WITHIN A FRAME. Both Unity callbacks can fire for one
+        /// resume, on some platforms only one of them does, and the facade
+        /// subscribes to both — so this is called once or twice for the same
+        /// event and must mean the same thing either way.
+        ///
+        /// A BACKEND WITH NO SUCH CLOCK DOES NOTHING, and that is a real
+        /// answer rather than a stub: the networked one has no accumulator at
+        /// all (its render clock corrects by pace and discards no time), so
+        /// there is nothing for a gap to be excused from.
+        void NotifyEngineIdle();
 
         /// One render frame of simulation; returns how many ticks it produced
         /// (0 = the frame landed inside the current tick).

@@ -71,5 +71,82 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0f, acc.Alpha);
             Assert.AreEqual(1.75f, acc.DroppedTime, 1e-4f); // NOT cleared — unlike Reset()
         }
+
+        // ---- Stage 2 Task 48 (bd app-c3m): the accounting, not the clamp ----
+
+        [Test]
+        public void IgnoreNextFrameGap_LongFrame_IsNotCounted()
+        {
+            var acc = new FixedStepAccumulator();
+            acc.IgnoreNextFrameGap();
+            acc.Advance(2f); // the same spike FrameSpike_CappedAndReported charges 1.75 for
+
+            Assert.AreEqual(0f, acc.DroppedTime, 1e-4f);
+        }
+
+        [Test]
+        public void IgnoreNextFrameGap_LastsExactlyOneFrame()
+        {
+            var acc = new FixedStepAccumulator();
+            acc.IgnoreNextFrameGap();
+            acc.Advance(2f); // excused
+            acc.Advance(2f); // charged in full — the flag is not "until somebody clears it"
+
+            Assert.AreEqual(1.75f, acc.DroppedTime, 1e-4f);
+        }
+
+        [Test]
+        public void IgnoreNextFrameGap_SpendsItselfOnAnOrdinaryFrame()
+        {
+            var acc = new FixedStepAccumulator();
+            acc.IgnoreNextFrameGap();
+            acc.Advance(1f / 60f); // the frame the engine actually came back on was short
+            acc.Advance(2f); // a REAL hitch, one frame later — it must still be reported
+
+            Assert.AreEqual(1.75f, acc.DroppedTime, 1e-4f);
+        }
+
+        /// THE HASH-NEUTRALITY PROOF (bd `app-c3m`, task 48 brief §2.6 item 4).
+        /// `DroppedTime` is not in `StateHash`, but the clamp that feeds it
+        /// decides HOW MANY TICKS a frame produces, and the tick count decides
+        /// everything. This pins that the flag changes the accounting and
+        /// nothing else: same frames, same tick counts, same interpolation
+        /// phase — only the diagnostic differs.
+        [Test]
+        public void IgnoreNextFrameGap_ChangesNoTickCountAndNoPhase()
+        {
+            var charged = new FixedStepAccumulator();
+            var excused = new FixedStepAccumulator();
+            excused.IgnoreNextFrameGap();
+
+            int chargedTicks = charged.Advance(2f);
+            int excusedTicks = excused.Advance(2f);
+
+            Assert.AreEqual(chargedTicks, excusedTicks);
+            Assert.AreEqual(charged.Alpha, excused.Alpha, 0f);
+
+            // And the frames after it, so the divergence cannot merely be
+            // deferred by one frame: the phase carried forward is the same,
+            // so every later tick boundary falls in the same place.
+            for (int i = 0; i < 40; i++)
+            {
+                Assert.AreEqual(charged.Advance(0.0177f), excused.Advance(0.0177f));
+                Assert.AreEqual(charged.Alpha, excused.Alpha, 0f);
+            }
+
+            Assert.AreEqual(1.75f, charged.DroppedTime, 1e-4f);
+            Assert.AreEqual(0f, excused.DroppedTime, 1e-4f);
+        }
+
+        [Test]
+        public void Reset_ClearsAPendingIgnore()
+        {
+            var acc = new FixedStepAccumulator();
+            acc.IgnoreNextFrameGap();
+            acc.Reset(); // a fresh match starts its own diagnostic — and its own excuses
+            acc.Advance(2f);
+
+            Assert.AreEqual(1.75f, acc.DroppedTime, 1e-4f);
+        }
     }
 }

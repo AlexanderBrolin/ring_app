@@ -166,6 +166,17 @@ namespace Ring.Presentation.Net
         /// while being stingy retires a round that is still flying.
         const int GhostTrackMarginTicks = 15;
 
+        /// How long the incoming byte RATE is averaged over, in seconds
+        /// (Stage 2 Task 48). One second, and the reason is the reader rather
+        /// than the arithmetic: the number is printed as "per second", so a
+        /// window of exactly that is the one that needs no explaining, and it
+        /// spans about 30 snapshot frames at the shipped tick rate — enough
+        /// that one large datagram cannot dominate the figure, short enough
+        /// that the panel reacts within a second of the traffic changing. A
+        /// STRUCTURAL CONSTANT, not balance (CR 6 is about the numbers a match
+        /// is decided by), so it lives here and not in an `.asset`.
+        const float BytesRateWindowSeconds = 1f;
+
         readonly NetworkManager _nm;
         readonly NetConfig _net;
         readonly string _playerId;
@@ -262,6 +273,24 @@ namespace Ring.Presentation.Net
         // The epoch everything above is keyed to, as last observed on the link.
         // See `SyncMatchEpoch`.
         ushort _matchEpoch;
+
+        // Stage 2 Task 48 — the dev overlay's network section.
+        //
+        // Frames that arrived with entities missing: either the SENDER dropped
+        // some for room (the header's `Truncated` bit) or the frame turned up
+        // without all five blocks it must carry. `ReadFrame` already computes
+        // that exact test for `StalePolicy`; this counts it. It is the honest
+        // client-side neighbour of the server's `NetStats.DroppedEntities`,
+        // which lives in the other process and which nothing here can read.
+        int _framesMissingEntities;
+
+        // The byte-rate derivative. `NetStats.BytesDown` is a running total
+        // and the panel wants a rate, so the division is done HERE, by the one
+        // object that is handed the frame time — `OnGUI` runs several times
+        // per rendered frame and has no interval it could honestly divide by.
+        long _bytesDownAtWindowStart;
+        float _bytesRateWindowSeconds;
+        float _bytesDownPerSecond;
 
         /// This client's own player object once FishNet has spawned it.
         /// Found rather than injected: the object is spawned by the server
@@ -532,6 +561,136 @@ namespace Ring.Presentation.Net
         public bool ShouldKeepPlayerDoll(int slot)
             => _stale != null && _stale.StateOf(slot) != StalePolicy.StaleState.Gone;
 
+        /// The dev overlay's whole network section, in one snapshot (Stage 2
+        /// Task 48). `false` before the first `Restart` has built the seams —
+        /// there is no ring, no clock and no queue to describe then, and a
+        /// section drawn out of a `default` struct would be a page of zeros
+        /// that look like measurements.
+        ///
+        /// EVERY FIELD IS READ HERE, IN ONE PLACE, ON ONE FRAME. That is the
+        /// point of the member: `NetDiagnostics`' own doc explains why
+        /// nineteen interface calls from `OnGUI` would be nineteen different
+        /// moments, and this is where the single moment is taken.
+        ///
+        /// WHAT IS DELIBERATELY NOT IN IT, and this is a finding of this task
+        /// rather than a shortcut:
+        ///   * BYTES UP. `NetStats.BytesUp` exists and NOTHING ON THIS SIDE
+        ///     EVER WRITES IT — the one client-side increment in the project
+        ///     is `BytesDown` in `OnSnapshotBroadcast`, and the upstream
+        ///     traffic that would dominate the figure is FishNet's own
+        ///     replicate data, which never passes through this class at all.
+        ///     FishNet does measure both directions, in
+        ///     `NetworkTrafficStatistics`, and it is unreachable from code:
+        ///     `StatisticsManager.TryGetNetworkTrafficStatistics` refuses
+        ///     unless `_enableMode` is set, and that field is a
+        ///     `[SerializeField]` with no setter, so turning it on is a scene
+        ///     edit. Counting only this class's own sends and calling the
+        ///     result "up" would be an instrument that lies. The panel prints
+        ///     a dash and says why.
+        ///   * `InputStarved`, `InputOverwritten`, `DroppedEntities`,
+        ///     `EdgeRequestsRejected`. All four are the SERVER's
+        ///     per-connection counters (`MatchServer`, `SnapshotAssembler`);
+        ///     this process holds a `NetStats` of its own on which they are
+        ///     permanently zero. `FramesMissingEntities` is what this side can
+        ///     honestly say about the third of them.
+        public bool TryGetNetDiagnostics(out NetDiagnostics diagnostics)
+        {
+            if (_snapshots == null)
+            {
+                diagnostics = default;
+                return false;
+            }
+
+            PlayerPredictionCore core = _controller != null ? _controller.Core : null;
+
+            diagnostics = new NetDiagnostics
+            {
+                // FishNet's own figure, and its own caveat with it: the
+                // package documents this as INCLUDING the latency of the tick
+                // rate (TimeManager.cs:104), so it is not a pure wire ping and
+                // the panel's label says so.
+                RoundTripMs = (int)_nm.TimeManager.RoundTripTime,
+                RenderTick = _clock.RenderTick,
+                // Clamped into the `int` the panel prints rather than cast
+                // blind: the queue stores the wire's `uint`, and an
+                // out-of-range cast in C# produces an unspecified number
+                // instead of an error (the same Р82 reasoning
+                // `RenderClock.OnSnapshot` refuses such a tick for).
+                NewestServerTick = (int)math.min(_snapshots.NewestTick, (uint)int.MaxValue),
+                HasNewestServerTick = _snapshots.HasNewestTick,
+                BytesDownPerSecond = _bytesDownPerSecond,
+                // Zero corrections is what a client with no player object yet
+                // has genuinely seen, so a missing controller and a fresh one
+                // answer the same thing — and the panel prints a dash off the
+                // count either way.
+                CorrectionCount = core != null ? core.CorrectionCount : 0,
+                CorrectionMedianMeters = core != null ? core.CorrectionMedianMeters : 0f,
+                StaleSnapshots = _stats.StaleSnapshots,
+                DuplicateSnapshots = _stats.DuplicateSnapshots,
+                DroppedSnapshots = _snapshots.OverflowDroppedSnapshots,
+                FramesMissingEntities = _framesMissingEntities,
+                UnconfirmedGhosts = _stats.UnconfirmedGhosts,
+                SnapshotQueueCount = _snapshots.Count,
+                SnapshotQueueDepth = _snapshots.Depth,
+                EventQueueCount = _events.Count,
+                EventQueueCapacity = _events.Capacity,
+                ClockSlewSign = _clock.SlewSign,
+                ClockSnaps = _clock.Snaps,
+            };
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // The APPLIED simulator facts, and they live on the LINK rather
+            // than on this class's `_stats`: the simulator is one instance for
+            // the whole transport, so what it reports describes this PROCESS,
+            // and `ClientMatchLink` is the object that applies it (on the
+            // connection's `Started`) and therefore the object that owns the
+            // answer. Guarded because `DevStats` itself is — the whole
+            // simulator path is compiled only into development builds, and
+            // `NetDiagnostics` keeps one shape across both configurations by
+            // leaving these at their C# defaults in a release build, exactly
+            // as `NetStats` does.
+            if (_link != null)
+            {
+                NetStats devStats = _link.DevStats;
+                diagnostics.LatencySimActive = devStats.LatencySimActive;
+                diagnostics.LatencySimRttMs = devStats.LatencySimRttMs;
+                diagnostics.LatencySimLossPercent = devStats.LatencySimLossPercent;
+            }
+#endif
+
+            return true;
+        }
+
+        /// Nothing to excuse: there is no `FixedStepAccumulator` on this side
+        /// and therefore no `DroppedTime` an engine-side gap could pollute
+        /// (`DroppedTime` above answers a permanent zero for the same reason).
+        /// The render clock takes care of a long frame by itself — it refuses
+        /// a delta that is not a positive finite number and snaps forward onto
+        /// its target past the configured threshold — and neither behaviour is
+        /// something a caller may switch off.
+        public void NotifyEngineIdle()
+        {
+        }
+
+        /// One rendered frame of the incoming byte rate. Latched once per
+        /// whole window rather than smoothed per frame, so the printed figure
+        /// is a real average over a stated interval instead of a filter whose
+        /// time constant a reader would have to know to interpret it.
+        void UpdateBytesRate(float unscaledDeltaTime)
+        {
+            // A frame length that is not a positive finite number is not a
+            // frame — the same refusal `RenderClock.Advance` makes, and for
+            // the same reason: a NaN here would poison the window forever.
+            if (!math.isfinite(unscaledDeltaTime) || unscaledDeltaTime <= 0f) return;
+
+            _bytesRateWindowSeconds += unscaledDeltaTime;
+            if (_bytesRateWindowSeconds < BytesRateWindowSeconds) return;
+
+            _bytesDownPerSecond = (_stats.BytesDown - _bytesDownAtWindowStart) / _bytesRateWindowSeconds;
+            _bytesDownAtWindowStart = _stats.BytesDown;
+            _bytesRateWindowSeconds = 0f;
+        }
+
         /// One render frame. Everything that has to happen every frame happens
         /// here, INCLUDING the two discharges — and that placement is the
         /// point, not an implementation detail.
@@ -631,6 +790,8 @@ namespace Ring.Presentation.Net
             // request either.
             if (_spectateRequestWindow > 0f)
                 _spectateRequestWindow = math.max(0f, _spectateRequestWindow - unscaledDeltaTime);
+
+            UpdateBytesRate(unscaledDeltaTime);
 
             _clock.Advance(unscaledDeltaTime, in _timings);
             int renderTick = _clock.RenderTick;
@@ -1135,8 +1296,18 @@ namespace Ring.Presentation.Net
                 _clock.OnSnapshot(tick, epoch);
             }
 
+            // ONE EXPRESSION, TWO READERS (Stage 2 Task 48): "this frame is
+            // missing entities" is exactly what `StalePolicy` is told and
+            // exactly what the dev overlay counts, so it is computed once. The
+            // COUNT is taken whatever `applyState` says, because a reordered
+            // frame that the dedup refuses for its state still arrived
+            // truncated, and the panel is reporting what the connection is
+            // delivering rather than what was applied out of it.
+            bool missingEntities = !complete || (flags & SnapshotHeaderFlags.Truncated) != 0;
+            if (missingEntities) _framesMissingEntities++;
+
             if (applyState)
-                _stale.OnFrameApplied(tick, !complete || (flags & SnapshotHeaderFlags.Truncated) != 0);
+                _stale.OnFrameApplied(tick, missingEntities);
         }
 
         /// Clears the reserved slot before a byte of this frame is decoded into

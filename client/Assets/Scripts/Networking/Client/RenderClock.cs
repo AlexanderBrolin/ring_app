@@ -191,6 +191,10 @@ namespace Ring.Networking.Client
 
         SlewState _slew;
 
+        /// How many times `Advance` has JUMPED onto its target since the last
+        /// `ResetForEpoch`. See `Snaps`.
+        int _snaps;
+
         /// Render time in world ticks — a continuous quantity that advances
         /// with local delta time, not with packet arrivals.
         public double RenderTime => _renderTime;
@@ -207,6 +211,39 @@ namespace Ring.Networking.Client
         /// Until it does, `Advance` is a no-op and the consumer has nothing to
         /// interpolate between.
         public bool Started => _started;
+
+        /// WHICH WAY THE CLOCK IS CORRECTING RIGHT NOW, as a sign: `+1` while
+        /// it is running fast to catch a target ahead of it, `-1` while it is
+        /// running slow, `0` while it is not correcting (Stage 2 Task 48 — the
+        /// dev overlay's "state of the render clock" line, plan Ф9
+        /// :2100-2107).
+        ///
+        /// A SIGN AND NOT THE STATE OBJECT, so that `SlewState` stays private:
+        /// the state machine's third value is "not correcting" and not "no
+        /// error" (see the enum), and a sign carries exactly that distinction
+        /// with nothing else attached. It also crosses the assembly border the
+        /// overlay's own seam is made of primitives for, without a second
+        /// enum being declared on the far side of it.
+        ///
+        /// IT IS A DIAGNOSTIC, NOT A CONTROL. Nothing may branch on it: what
+        /// the clock does about its error is decided in `Advance` and in
+        /// `NextSlewState`, and a reader that acted on this would be a second
+        /// copy of a rule with one home.
+        public int SlewSign => _slew == SlewState.Faster ? 1 : _slew == SlewState.Slower ? -1 : 0;
+
+        /// How many times the clock has JUMPED onto its target since the last
+        /// `ResetForEpoch` — the OTHER half of "the state of the render clock",
+        /// and it has to be a count rather than a state because a snap is an
+        /// instant and not a condition: `Advance` jumps and returns, and by the
+        /// time anything could read a flag it would be false again.
+        ///
+        /// NONZERO IS UNHEALTHY, WHICH IS WHY IT IS WORTH A LINE ON THE PANEL.
+        /// A snap is a visible discontinuity in the moment being shown — the
+        /// picture skips forward — and the slew exists precisely so that
+        /// ordinary error never needs one. The first frame of an epoch is NOT
+        /// counted here: primary placement returns before this branch, and it
+        /// is not a jump in anything the player has already seen.
+        public int Snaps => _snaps;
 
         /// Starts tracking `epoch` and forgets everything else — the buffered
         /// ticks, the start, the placement, the correction in progress and the
@@ -229,6 +266,7 @@ namespace Ring.Networking.Client
             _started = false;
             _placed = false;
             _slew = SlewState.Neutral;
+            _snaps = 0;
 
             _renderTime = 0d;
             _renderTick = 0;
@@ -319,6 +357,7 @@ namespace Ring.Networking.Client
                 //   * `drift > threshold` is strict: a gap of exactly
                 //     RenderClockSnapTicks is still the slew's to walk out.
                 _slew = SlewState.Neutral;
+                _snaps++; // Task 48: counted here and only here — see `Snaps`.
                 SetTime(target);
                 return;
             }

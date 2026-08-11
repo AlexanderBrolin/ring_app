@@ -120,6 +120,26 @@ namespace Ring.Presentation
         /// changed — the conservative one, not a placeholder.
         public bool ShouldKeepPlayerDoll(int slot) => false;
 
+        /// False, and permanently: solo has no wire, no round trip, no
+        /// snapshot ring and no reconciliation, so every field of
+        /// `NetDiagnostics` would be a zero that looks exactly like a
+        /// measurement. The dev overlay draws no network section at all here
+        /// — the same discipline as `HasMatchStats`, one step further:
+        /// there is nothing to print a dash FOR.
+        public bool TryGetNetDiagnostics(out NetDiagnostics diagnostics)
+        {
+            diagnostics = default;
+            return false;
+        }
+
+        /// The one backend this matters to (Stage 2 Task 48, bd `app-c3m`):
+        /// this is the only implementation that owns a
+        /// `FixedStepAccumulator`, and therefore the only one with a
+        /// `DroppedTime` an engine-side gap could pollute. The decision about
+        /// what an excused frame IS lives in the accumulator; this line is the
+        /// whole of the wiring.
+        public void NotifyEngineIdle() => _acc.IgnoreNextFrameGap();
+
         public int Advance(in SimInput frame, float unscaledDeltaTime,
             System.Action<int, ulong> onTick)
         {
@@ -152,6 +172,14 @@ namespace Ring.Presentation
             _world.CaptureSnapshot(_prev);
             _world.CaptureSnapshot(_curr);
             _acc.Reset();
+            // AFTER the reset, never before it (Stage 2 Task 48, bd
+            // `app-c3m`): `Reset` clears a pending excuse along with everything
+            // else it clears, so the order is the whole of this line's
+            // correctness. The frame that follows a restart carries scene
+            // construction and shader compilation — the first of the two cases
+            // the owner excused — and it is the accumulator, not this class,
+            // that decides what excusing one means.
+            _acc.IgnoreNextFrameGap();
             _alpha = 0f;
             return true;
         }

@@ -465,7 +465,48 @@ namespace Ring.Presentation
         /// Приложение П-6) — the clock behind it has no UnityEngine dependency
         /// and isn't otherwise exposed to Presentation. Survives pause (see
         /// `Paused` above); only a full match restart zeroes it.
+        ///
+        /// IT NO LONGER COUNTS THE TWO GAPS THE ENGINE ITSELF KNOWS ABOUT
+        /// (Stage 2 Task 48, bd `app-c3m`): the first frame after a restart
+        /// and the first frame after this window gets its focus back. See
+        /// `FixedStepAccumulator.IgnoreNextFrameGap` and `OnApplicationFocus`
+        /// below.
         public float AccumulatorDroppedTime => _backend.DroppedTime;
+
+        /// The dev overlay's network section, or `false` in solo
+        /// (`ISimBackend.TryGetNetDiagnostics` — its doc has the whole
+        /// contract). A pass-through like every other backend reader on this
+        /// facade; the overlay calls it ONCE per rendered frame.
+        public bool TryGetNetDiagnostics(out NetDiagnostics diagnostics)
+            => _backend.TryGetNetDiagnostics(out diagnostics);
+
+        /// Unity ran no frames while this window was out of focus
+        /// (`ProjectSettings` carries `runInBackground: 0`), so the frame that
+        /// follows this callback carries the whole idle stretch as one delta —
+        /// the owner measured 79 seconds of it after minimizing (bd
+        /// `app-c3m`). Telling the backend is all this does; what an excused
+        /// frame means is `FixedStepAccumulator.IgnoreNextFrameGap`'s
+        /// decision, and the clamp on `dt` is untouched either way, so the
+        /// number of ticks this frame produces is exactly what it was before.
+        ///
+        /// BOTH CALLBACKS, NOT ONE. Losing focus and being suspended are
+        /// different events and platforms raise different subsets of them —
+        /// desktop minimize is a focus change, mobile backgrounding is a pause
+        /// — so subscribing to only one leaves the other case unexcused. Both
+        /// firing for a single resume is harmless: the excuse is a flag, and
+        /// raising it twice still spends one frame.
+        void OnApplicationFocus(bool hasFocus)
+        {
+            if (hasFocus) _backend.NotifyEngineIdle();
+        }
+
+        /// The other half of `OnApplicationFocus` above — same fact, same
+        /// answer, raised on the platforms that report a suspend rather than a
+        /// focus change.
+        void OnApplicationPause(bool paused)
+        {
+            if (!paused) _backend.NotifyEngineIdle();
+        }
 
         public event System.Action TicksFlushed;
 
