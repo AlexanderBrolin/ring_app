@@ -571,28 +571,29 @@ namespace Ring.Presentation
         /// absence, and telling them apart is the whole of `app-2rf` — see the
         /// class doc and `EnsureCorpse`.
         ///
-        /// ONE'S OWN BODY IS NOT AMONG THEM ON THE NETWORKED BACKEND, and that
-        /// is an open end for Task 47b rather than a case handled below. The
-        /// assembler never sends a connection its own record, so the local seat
-        /// is known only while `NetworkSimBackend.ApplyOwnPlayer` writes it —
-        /// which stops the moment prediction stops, i.e. at one's own death. The
-        /// seat therefore goes from "known and alive" to "not known" with no
-        /// frame in between saying "known and dead", and no corpse is made for
-        /// it. Everyone ELSE sees that body normally, off the record the server
-        /// does send them.
+        /// ONE'S OWN BODY IS AMONG THEM AS OF STAGE 2 TASK 47b, and this method
+        /// needed no branch for it — which was the point of fixing it where it
+        /// was broken. The assembler used to leave a connection's own record out
+        /// of its frame UNCONDITIONALLY, so the local seat was known only while
+        /// `NetworkSimBackend.ApplyOwnPlayer` wrote it from prediction, and
+        /// prediction ends at one's own death: the seat went from "known and
+        /// alive" straight to "not known", never through the "known and dead"
+        /// state the corpse branch below keys on, and no body was ever made for
+        /// it. The server now sends a DEAD connection its own record (the
+        /// owner's decision 2a, `SnapshotAssembler.WriteFrame`'s candidate
+        /// phase), so the third reading arrives on the wire like anyone else's
+        /// and `EnsureCorpse` lays the body down off it. Everyone ELSE saw that
+        /// body correctly all along.
         ///
-        /// WHAT IT COSTS IS NOT AN EMPTY FLOOR — that is what this paragraph
-        /// said before fix-round 1, and it understates the job Task 47b is
-        /// picking up. `CameraRig` follows `RenderCurr.Player.Pos`, which is
-        /// `Players[LocalPlayerIndex]`, and after one's own death on the
-        /// networked backend nothing writes that seat, so `BeginSlot`'s
-        /// `default(PlayerState)` reads as the ARENA ORIGIN. The camera does not
-        /// stay over the place of death looking at nothing; it smooth-damps away
-        /// to the geometric centre of the arena. Solo differs here more than
-        /// anywhere else in this class — there the dead seat keeps its state and
-        /// the camera stands over the body — so a death camera has to be
-        /// UNBOUND from that read before it can be pointed anywhere, or it will
-        /// be fighting the drift.
+        /// WHAT IT USED TO COST WAS NOT AN EMPTY FLOOR — that is what this
+        /// paragraph said before fix-round 1, and it understated the defect.
+        /// `CameraRig` followed `RenderCurr.Player.Pos`, which is
+        /// `Players[LocalPlayerIndex]`, and with nothing writing that seat
+        /// `BeginSlot`'s `default(PlayerState)` read as the ARENA ORIGIN: the
+        /// camera did not stay over the place of death looking at nothing, it
+        /// smooth-damped away to the geometric centre. Both halves of that are
+        /// closed — the seat is written, and the camera follows
+        /// `SimulationRunner.ObservedIndex` rather than the local seat at all.
         ///
         /// THE LOCAL DOLL IS NO LONGER A SPECIAL CASE OF POSITIONING. It used to
         /// read `SimulationRunner.RenderPlayerWorldPos`; the lerp below is that

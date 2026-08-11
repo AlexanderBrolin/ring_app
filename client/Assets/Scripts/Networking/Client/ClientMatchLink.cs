@@ -647,5 +647,44 @@ namespace Ring.Networking.Client
             // channel is readable at the call site.
             _nm.ClientManager.Broadcast(hello, Channel.Reliable);
         }
+
+        /// Asks the server to watch player slot `targetIndex` (Stage 2 Task
+        /// 47b, spec §3.10 :673-678, Р70) — the client half of a message whose
+        /// server half has been complete since Task 42a
+        /// (`MatchServer.OnSpectateRequest`, `SpectatePolicy`) and which
+        /// nothing in this process had ever sent.
+        ///
+        /// IT LIVES HERE BECAUSE THE ONE OTHER `ClientManager.Broadcast` IN THE
+        /// PROJECT DOES (AGENT.md rule 2). This class already owns the client's
+        /// only outgoing message, its `Unregister`, and the match identity a
+        /// request is about; a second class talking to the transport would be a
+        /// second place to keep the channel, the guard and the teardown right.
+        ///
+        /// IT DECIDES NOTHING, like every other method of this class — WHETHER
+        /// to ask is the caller's, and whether to ACT on the asking is the
+        /// server's alone (`SpectatePolicy.Evaluate`, five refusal reasons).
+        /// Deliberately no phase test either: this class's own rule is that
+        /// nothing here decides anything, and both guards that matter already
+        /// exist elsewhere. `ClientManager.Broadcast<T>` opens with `if
+        /// (!Started) { LogWarning(...); return; }`, so a request sent before
+        /// the transport is up costs a warning line and no packet; and
+        /// `MatchServer.OnSpectateRequest` returns on `!_running` and on a
+        /// connection that holds no seat, so a request that arrives between
+        /// matches is ignored rather than acted on.
+        ///
+        /// THERE IS NO REPLY TO WAIT FOR — see `SpectateRequestNet`'s own doc.
+        /// An accepted switch is inferable only from the picture that follows
+        /// it, and a refusal is indistinguishable from a switch whose effects
+        /// have not arrived yet; the caller owns that wait.
+        ///
+        /// Reliable, like every message of the "Lifecycle" class in spec §3.7's
+        /// table Р27, and for the sharper reason this one has: a dropped
+        /// request is a keypress that did nothing, with nothing on the wire to
+        /// tell the player which of the two happened.
+        public void RequestSpectate(byte targetIndex)
+        {
+            _nm.ClientManager.Broadcast(new SpectateRequestNet { TargetIndex = targetIndex },
+                Channel.Reliable);
+        }
     }
 }

@@ -330,6 +330,195 @@ namespace Ring.Simulation.Tests
                 "and that is a real heading, not `normalizesafe`'s +X fallback");
         }
 
+        // ---- T47b. One's own body, once it is a body ----
+
+        /// Stage 2 Task 47b (the owner's decision 2a of 2026-08-11). The rule
+        /// the assembler used to keep unconditionally — "never oneself" — is now
+        /// conditional on being ALIVE, and this is the half that did not change:
+        /// while the connection's own player is standing, its state comes back
+        /// through reconciliation and the frame must not spend eight bytes
+        /// repeating it. Pinned on its own rather than left to
+        /// `FullFrame_RoundTrips`'s single line, because it is the one
+        /// assertion that tells a correct implementation from "send the record
+        /// always".
+        [Test]
+        public void LivingConnection_NeverReceivesItsOwnRecord()
+        {
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            Assert.IsTrue(w.PlayerAt(0).Alive, "test setup: the connection's own player is standing");
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.IsFalse(f.TryPlayer(0, out _),
+                "a living connection's own record must NOT ride its own frame — its state comes back "
+                + "through reconciliation, and the byte budget is spent on what only the server knows");
+            Assert.AreEqual(2, f.PlayerCount, "exactly the two others, and nothing else");
+            Assert.AreEqual((byte)0b111, f.AliveMask, "witness: all three slots are alive this tick");
+        }
+
+        /// Stage 2 Task 47b, the other half (owner's decision 2a). A dead
+        /// connection has no prediction left to fill its own seat from
+        /// (`PlayerNetworkController.ShouldPredict` is false for good once the
+        /// death is reported), so the snapshot is the ONLY source of its own
+        /// body — and without this record the client's own seat goes from
+        /// "known and alive" straight to "not known", which is the arena origin
+        /// (`NetworkSimBackend.BeginSlot`'s `default(PlayerState)`) rather than
+        /// the place the player fell.
+        ///
+        /// The POSE is asserted, not merely the presence: a body is laid along
+        /// the heading of the record it is rented from
+        /// (`ViewRegistry.EnsureCorpse`), so a record whose `Dir` came out as
+        /// `normalizesafe`'s +X fallback would put every own-body on the arena
+        /// facing the same way with nothing failing.
+        [Test]
+        public void DeadConnection_ReceivesItsOwnRecord_WithThePoseItDiedIn()
+        {
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            var aimedAt = new float2(-14f, 9f);
+            var inputs = new SimInput[3];
+            inputs[0] = new SimInput { AimPoint = aimedAt };
+            w.TickAll(inputs);
+            float2 fellAt = w.PlayerAt(0).Pos;
+            w.KillPlayerNoDamage(0);
+            Assert.IsFalse(w.PlayerAt(0).Alive, "test setup: the connection's own player is down");
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.IsTrue(f.TryPlayer(0, out SnapshotBlocks.PlayerRecord own),
+                "a dead connection must receive its OWN record — nothing else on this wire can "
+                + "tell that client where its body is");
+            Assert.AreEqual(0, own.Flags & PlayerWireFlags.Alive,
+                "and it is a body: the Alive bit is what carries the news (Р68)");
+            Assert.That(math.distance(own.Pos, fellAt), Is.LessThan(0.01f),
+                "the body stays where it fell");
+
+            // The same quantization bound the sibling assertion for another
+            // player's corpse states: `Quantize.Dir` spends 256 codes on the
+            // full turn, i.e. at most 0.0123 of chord between two unit vectors.
+            float2 expected = math.normalizesafe(aimedAt - fellAt, new float2(1f, 0f));
+            Assert.That(math.distance(own.Dir, expected), Is.LessThan(0.02f),
+                "and it points where its player was aiming when it died");
+            Assert.That(math.distance(own.Dir, new float2(1f, 0f)), Is.GreaterThan(0.5f),
+                "which is a real heading, not `normalizesafe`'s +X fallback");
+        }
+
+        /// Stage 2 Task 47b: the own-body record is an ADDITION and nothing
+        /// else. Two frames of the same world, one either side of the owner's
+        /// own death, compared record by record — a rule that reached the
+        /// others (a liveness guard, a reordering, a lost record) would show up
+        /// here rather than in a playtest.
+        [Test]
+        public void OwnDeath_ChangesNothingAboutTheOtherRecords()
+        {
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+
+            AssembledFrame before = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(2, before.PlayerCount, "test setup: two others ride while the owner stands");
+            Assert.IsTrue(before.TryPlayer(1, out SnapshotBlocks.PlayerRecord before1));
+            Assert.IsTrue(before.TryPlayer(2, out SnapshotBlocks.PlayerRecord before2));
+
+            w.KillPlayerNoDamage(0);
+            AssembledFrame after = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.AreEqual(3, after.PlayerCount,
+                "the owner's body is one record MORE, not one record instead of another");
+            Assert.IsTrue(after.TryPlayer(1, out SnapshotBlocks.PlayerRecord after1));
+            Assert.IsTrue(after.TryPlayer(2, out SnapshotBlocks.PlayerRecord after2));
+            AssertSameRecord(before1, after1, "slot 1");
+            AssertSameRecord(before2, after2, "slot 2");
+        }
+
+        static void AssertSameRecord(in SnapshotBlocks.PlayerRecord expected,
+            in SnapshotBlocks.PlayerRecord actual, string who)
+        {
+            Assert.AreEqual(expected.Index, actual.Index, $"{who}: index");
+            Assert.AreEqual(expected.Flags, actual.Flags, $"{who}: flags");
+            Assert.That(math.distance(expected.Pos, actual.Pos), Is.LessThan(0.001f), $"{who}: position");
+            Assert.That(math.distance(expected.Dir, actual.Dir), Is.LessThan(0.001f), $"{who}: heading");
+            Assert.That(actual.Hp, Is.EqualTo(expected.Hp).Within(0.001f), $"{who}: hp");
+        }
+
+        /// Stage 2 Task 47b: the two things one frame says about the owner's own
+        /// seat must say the same thing. The Players block's Alive bit and the
+        /// Liveness mask's bit are computed from the same capture but by two
+        /// separate loops (`PlayerRecordOf` and `WriteFrame`'s own mask scan),
+        /// and a client that believed one over the other would either predict a
+        /// corpse or bury a standing player.
+        [Test]
+        public void OwnCorpseRecord_AndTheLivenessMask_AgreeInTheSameFrame()
+        {
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            w.KillPlayerNoDamage(0);
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.IsTrue(f.TryPlayer(0, out SnapshotBlocks.PlayerRecord own), "the body rides");
+            Assert.AreEqual(0, own.Flags & PlayerWireFlags.Alive, "the record says: not alive");
+            Assert.AreEqual((byte)0b110, f.AliveMask,
+                "and so does the roster mask — slot 0 clear, 1 and 2 set");
+        }
+
+        /// Stage 2 Task 47b: what decision 2a costs, MEASURED on two real
+        /// frames of the same world rather than argued from the calculators —
+        /// one player record, and only while that player is dead. The events
+        /// the kill emits are cleared first, so the two frames differ in
+        /// exactly one thing.
+        [Test]
+        public void OwnBodyRecord_CostsOnePlayerRecord_AndOnlyWhileDead()
+        {
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+
+            AssembledFrame alive = Build(asm, w, cfg, 0, 0, 0);
+            w.KillPlayerNoDamage(0);
+            // The death event itself is not what this test is measuring.
+            w.ClearEvents();
+            AssembledFrame dead = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.AreEqual(0, alive.EventCount, "test setup: neither frame carries an event");
+            Assert.AreEqual(0, dead.EventCount);
+            Assert.AreEqual(SnapshotBlocks.PlayerRecordBytes, dead.Bytes - alive.Bytes,
+                "the whole price of one's own body on the wire is one player record, and it is paid "
+                + "only on the frames of a player who is already dead");
+        }
+
+        /// Stage 2 Task 47b: the constructor's own ceiling has to be the WIDEST
+        /// Players block a frame can carry, which is now the whole roster.
+        ///
+        /// WHY A TEST AND NOT A COMMENT: a ceiling left at `MaxPlayers - 1`
+        /// fails nowhere at startup. It accepts a configuration whose worst
+        /// frame does not fit and then throws out of `SnapshotWriter.Reserve`
+        /// INSIDE a server tick — the first time a player dies, mid-match,
+        /// instead of at startup with a sentence. The cap below sits in the
+        /// eight-byte gap between the two ceilings, which is the only place
+        /// the two answers differ at all.
+        [Test]
+        public void Constructor_RefusesACapThatCannotHoldTheWholeRoster()
+        {
+            SimConfig cfg = TestConfigs.Open();
+            int wholeRoster = SnapshotWriter.HeaderBytes
+                              + SnapshotWriter.PlayersBlockBytes(cfg.Arena.MaxPlayers)
+                              + SnapshotWriter.LivenessBlockBytes()
+                              + SnapshotWriter.WaveBlockBytes()
+                              + SnapshotWriter.MobsBlockBytes(0)
+                              + SnapshotWriter.EventsBlockBytes(0, 0);
+            int oneSeatShort = wholeRoster - SnapshotBlocks.PlayerRecordBytes;
+
+            Assert.DoesNotThrow(() => new SnapshotAssembler(cfg, Net(maxBytes: wholeRoster),
+                connectionCount: 1), "a cap that holds the whole roster is legal");
+
+            var refused = Assert.Throws<System.ArgumentException>(
+                () => new SnapshotAssembler(cfg, Net(maxBytes: oneSeatShort), connectionCount: 1),
+                "a cap one player record short of the whole roster must be refused HERE — its worst "
+                + "frame is the one a dead recipient gets, and that frame would throw inside a tick");
+            StringAssert.Contains("fixed part", refused.Message,
+                "and the refusal has to name what does not fit");
+        }
+
         // ---- T28.A3. Liveness covers EVERY slot, visible or not ----
 
         [Test]

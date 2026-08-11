@@ -80,6 +80,25 @@ namespace Ring.Presentation
         /// instead of promising something only this implementation can keep.
         public void DevSpawnMob(MobType type, float2 pos) => _world.DevSpawnMob(type, pos);
 
+        /// Always true: `Restart` below accepts every call, because this world
+        /// is nobody else's — so the death screen's restart button and its dev
+        /// keys mean what they have always meant in solo.
+        public bool CanRestartMatch => true;
+
+        /// False: there is nobody to ask and nobody to watch. Solo has one
+        /// player, so the candidate list is empty by construction and the two
+        /// mouse buttons keep the only meanings they have ever had here.
+        public bool CanRequestSpectate => false;
+
+        /// Refused, and silently: the facade asks `CanRequestSpectate` first,
+        /// and a second line of defence on a path that cannot reach a server
+        /// has nothing to report and nowhere to report it. A VALUE, never a
+        /// throw — the same discipline `Restart`'s own answer keeps.
+        public bool TryRequestSpectate(int targetIndex) => false;
+
+        /// Never: nothing was ever sent, so nothing is waiting to be answered.
+        public bool SpectateRequestInFlight => false;
+
         public int Advance(in SimInput frame, float unscaledDeltaTime,
             System.Action<int, ulong> onTick)
         {

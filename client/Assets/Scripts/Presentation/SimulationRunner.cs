@@ -194,6 +194,31 @@ namespace Ring.Presentation
             SimSpace.ToWorld(RenderPrev.Player.Pos),
             SimSpace.ToWorld(RenderCurr.Player.Pos), RenderAlpha);
 
+        /// The same П-7 lerp for the seat this client is WATCHING rather than
+        /// the seat it owns (Stage 2 Task 47b) — `CameraRig`'s single reader,
+        /// and identical to `RenderPlayerWorldPos` above for as long as the two
+        /// seats are the same one, which is the whole of solo and the whole of
+        /// being alive (see `ObservedIndex`).
+        ///
+        /// A HALF THAT DOES NOT KNOW THE SEAT IS NOT USED, and that is the
+        /// difference from the property above. `RenderPrev` and `RenderCurr`
+        /// are two DIFFERENT frames on a networked backend, filtered
+        /// separately, so a player who came into view between them is in one
+        /// and absent from the other — and an absent seat reads
+        /// `default(PlayerState)`, the arena origin, which a lerp would drag
+        /// the camera halfway across the map toward for one tick. So the halves
+        /// are chosen: both when both know the seat, the one that does when
+        /// only one does, and when NEITHER does this property HOLDS the value
+        /// it last had. Holding is the honest answer to "the frame says nothing
+        /// about the body you were watching" — the camera stays where it had a
+        /// picture instead of travelling to a coordinate nobody sent.
+        ///
+        /// WRITTEN ONLY BY `UpdateObservation`, once per non-paused frame,
+        /// beside the index it is a position of. A property computing it live
+        /// would have to keep the same memory anyway and would answer
+        /// differently depending on when in the frame it was asked.
+        public Vector3 RenderObservedWorldPos { get; private set; }
+
         /// Task 21 (PC7 — single home of the muzzle-height ternary): the exact
         /// slide-aware pick `WeaponSystem.Update` uses for the authoritative
         /// shot's own muzzle height (`SlideTimer > 0 ? SlideMuzzleHeight :
@@ -311,6 +336,59 @@ namespace Ring.Presentation
         ///    waits for `renderTick`), while this slot stops being written as
         ///    soon as prediction stops.
         public bool AimActive => Ready && !Paused && RenderCurr.Player.Alive;
+
+        // ---- observation: which seat this client is looking from -----------
+
+        /// The seat this client is WATCHING (Stage 2 Task 47b, spec §3.10,
+        /// Р70). Its own while that player is standing — always, without
+        /// exception — and, once that player is down, whichever living seat the
+        /// server has actually started sending records of.
+        ///
+        /// IT IS THE CLIENT'S STATE AND NOT THE FRAME'S, which is why it lives
+        /// here and not in `RenderSnapshot`. A frame describes the world; where
+        /// one client is looking from is a fact about that client, it changes
+        /// between ticks rather than with them, and putting it in the snapshot
+        /// would make it one more thing the hitstop freeze had to deep-copy.
+        ///
+        /// TWO READERS, DELIBERATELY: `HudController` (whose bars belong to the
+        /// player being watched) and `RenderObservedWorldPos` above, whose own
+        /// single reader is `CameraRig`. EVERYTHING ELSE STAYS ON
+        /// `LocalPlayerIndex` — the aim ray, the cursor, the ground marker,
+        /// `AimActive`, `RenderPlayerWorldPos`, `MuzzleFlashView`,
+        /// `AudioDirector`, `GameFeelDirector`, `ViewRegistry`. That is not an
+        /// omission (spec §3.12 asks for the opposite for the first three): a
+        /// spectator holds none of the watched player's rights, and Р48 is what
+        /// says so — a client must not be drawn a weapon it does not have. The
+        /// aim surfaces go dark on their own while spectating, because they key
+        /// on `AimActive`, whose last term is this client's OWN player standing.
+        ///
+        /// IT NEVER NAMES A SEAT THIS FRAME KNOWS NOTHING ABOUT while a better
+        /// answer exists — see `UpdateObservation`, and the residual case named
+        /// there.
+        public int ObservedIndex { get; private set; }
+
+        /// Whether this client is watching somebody else — the ONE signal every
+        /// surface that changes in spectator mode reads, so two of them can
+        /// never disagree about whether the picture belongs to this player: the
+        /// HUD's stamina bar (hidden), its spectate label (shown) and the
+        /// camera's look-ahead (not applied). Computed once per frame beside
+        /// `ObservedIndex` rather than re-derived per reader.
+        public bool IsSpectating { get; private set; }
+
+        /// Whether the death screen may offer a restart at all — forwarded from
+        /// the backend, which is where the answer lives
+        /// (`ISimBackend.CanRestartMatch`).
+        public bool CanRestartMatch => _backend.CanRestartMatch;
+
+        /// The seat a `SpectateRequestNet` has gone out for and the picture has
+        /// not confirmed yet, or -1. See `UpdateObservation` for the one place
+        /// it is armed and the one place it is cleared.
+        int _requestedIndex = -1;
+
+        /// Last frame's input, for the two button EDGES spectating reads. A
+        /// second `InputSampler.SampleFrame()` is what this avoids — it would
+        /// consume the dash latch a second time (see `LastFrameInput`).
+        SimInput _prevObservationInput;
 
         bool _paused;
 
@@ -557,6 +635,10 @@ namespace Ring.Presentation
             // `ISimBackend.Advance`'s).
             int ticks = _backend.Advance(frame, Time.unscaledDeltaTime, TickAdvanced);
             UpdateRenderAlpha();
+            // After the pair and the phase, because it reads both; before the
+            // event fan-out, so a view reacting to a death this frame already
+            // sees where the camera is going.
+            UpdateObservation(in frame);
             if (ticks > 0)
             {
                 // ORDER IS THE CONTRACT (Task 43): the fan-out behind
@@ -568,6 +650,179 @@ namespace Ring.Presentation
                 _backend.EndFrame();
                 _sampler.ClearLatches();
             }
+        }
+
+        /// One frame of observation (Stage 2 Task 47b): who this client is
+        /// watching, whether it asked to watch somebody else, and where that
+        /// body is on screen. ONE method on purpose — the arming of a request,
+        /// its confirmation and its expiry are three halves of one rule, and
+        /// splitting them across files is how a client ends up waiting forever
+        /// for an answer that is never coming.
+        ///
+        /// THE ORDER OF THE FOUR STEPS IS THE RULE ITSELF:
+        ///   1. a standing player watches its own body, ALWAYS. This is the
+        ///      whole of solo (`LocalSimBackend` has one player, who is alive
+        ///      until the match ends) and the whole of being alive anywhere
+        ///      else, and it is what makes `Players[ObservedIndex]` identical to
+        ///      `RenderSnapshot.Player` for every frame that has ever been drawn
+        ///      before this task;
+        ///   2. a request already sent is resolved — by the PICTURE, the only
+        ///      thing this wire answers with (`SpectateRequestNet`: no reply
+        ///      message exists, and a refusal is indistinguishable from a switch
+        ///      whose effects have not arrived). It is confirmed when the frame
+        ///      starts carrying the seat, and abandoned when the window it could
+        ///      be answered in closes — the backend's own
+        ///      `SpectateRequestInFlight`, which is the same interval that
+        ///      permits the next request, so this facade holds no timer and no
+        ///      copy of the number;
+        ///   3. the two buttons. Both idle while dead — a corpse fires nothing
+        ///      and aims at nothing — so left picks the next living candidate
+        ///      and right the previous, with no new input action and no change
+        ///      to the actions asset (the owner's decision 3a). Read as EDGES of
+        ///      the frame the facade already sampled, never a second sample;
+        ///   4. the invariant. The viewpoint must not name a seat this frame
+        ///      knows nothing about, because such a seat reads
+        ///      `default(PlayerState)` — the arena origin — and that is the
+        ///      defect this whole task exists to remove.
+        ///
+        /// THE RESIDUAL CASE, NAMED RATHER THAN PROMISED AWAY. Step 4 can only
+        /// fall back to one's own body while the FRAME carries it, and the
+        /// server sends that body only while it is inside the visibility set of
+        /// wherever this connection is looking FROM — which, after an accepted
+        /// switch, is the watched player rather than the corpse
+        /// (`SnapshotAssembler.BuildFor` computes the set from `viewpointIndex`)
+        /// and never comes back (`SpectatePolicy` refuses `TargetIsSelf`, whose
+        /// own doc names the one-way trip). So a spectator whose target stops
+        /// arriving can have neither seat in the frame, and there is no index
+        /// that would be honest to point at. What holds the picture still there
+        /// is `RenderObservedWorldPos`, which keeps its last value rather than
+        /// following an index into an empty seat, and `HudController`, which
+        /// leaves its bar where it was for the same reason. Nothing here invents
+        /// a viewpoint the server did not give.
+        void UpdateObservation(in SimInput frame)
+        {
+            SimInput previous = _prevObservationInput;
+            _prevObservationInput = frame;
+
+            // `Ready` FIRST, before the pair is touched at all: a backend that
+            // has not started answers `Prev`/`Curr` with null, and this method
+            // runs on every non-paused frame rather than behind a view's own
+            // guard. Nothing is decided on such a frame — the index is left
+            // where it was and the position holds, which is what the readers
+            // already do with a seat they have no picture of.
+            if (!Ready)
+            {
+                _requestedIndex = -1;
+                IsSpectating = false;
+                return;
+            }
+
+            RenderSnapshot curr = RenderCurr;
+            int local = curr.LocalPlayerIndex;
+            if (local < 0 || local >= curr.PlayerCount)
+            {
+                ObservedIndex = local;
+                _requestedIndex = -1;
+                IsSpectating = false;
+                return;
+            }
+
+            // 1. Alive: one's own body, and nothing pending.
+            if (curr.Players[local].Alive)
+            {
+                ObservedIndex = local;
+                _requestedIndex = -1;
+            }
+            else
+            {
+                // A restart, a reseat or a first frame can leave the index
+                // outside this frame's roster; own body is the answer to every
+                // one of them.
+                if (ObservedIndex < 0 || ObservedIndex >= curr.PlayerCount) ObservedIndex = local;
+
+                // 2. THE ONE PLACE A REQUEST IS RESOLVED — both ways.
+                if (_requestedIndex >= 0)
+                {
+                    bool confirmed = curr.PlayerKnown[_requestedIndex];
+                    if (confirmed) ObservedIndex = _requestedIndex;
+                    if (confirmed || !_backend.SpectateRequestInFlight) _requestedIndex = -1;
+                }
+
+                // 3. The two buttons, as edges of this frame's own input.
+                if (_requestedIndex < 0 && _backend.CanRequestSpectate)
+                {
+                    int step = 0;
+                    if (frame.FireHeld && !previous.FireHeld) step = 1;
+                    else if (frame.AimHeld && !previous.AimHeld) step = -1;
+
+                    if (step != 0)
+                    {
+                        int target = NextSpectateCandidate(curr, local, ObservedIndex, step);
+                        if (target >= 0 && _backend.TryRequestSpectate(target))
+                            _requestedIndex = target;
+                    }
+                }
+
+                // 4. The invariant, with the only fallback that is ever honest.
+                if (!curr.PlayerKnown[ObservedIndex] && curr.PlayerKnown[local]) ObservedIndex = local;
+            }
+
+            IsSpectating = ObservedIndex != local;
+            UpdateObservedWorldPos();
+        }
+
+        /// The next seat after `from`, walking `step` (+1 or -1) with wrap, that
+        /// is ALIVE SOMEWHERE IN THE MATCH and is not this client's own; -1 when
+        /// there is none (Stage 2 Task 47b).
+        ///
+        /// `PlayerAliveInMatch` IS A CANDIDATE LIST AND NOTHING MORE (Р177,
+        /// and that field's own doc). It cannot tell an empty seat from a player
+        /// who died out of sight, because the roster SIZE never reaches a client
+        /// — so it must never be printed as "who is left", and it is safe here
+        /// for the reason that doc gives: both readings of a `false` are "not a
+        /// candidate", so the ambiguity falls the harmless way.
+        ///
+        /// IT WALKS FROM THE CURRENT VIEWPOINT, NOT FROM ONE'S OWN SEAT, so
+        /// repeated presses cycle instead of returning to the same neighbour;
+        /// starting from one's own corpse is the ordinary first press.
+        ///
+        /// NOT COVERED BY A TEST, and the reason is structural rather than a
+        /// choice: `Ring.Simulation.Tests` does not reference `Ring.Presentation`
+        /// at all, so nothing in this assembly can be reached from EditMode. It
+        /// is written as a pure function of the frame regardless — the shape a
+        /// test would want, if one could ever be written.
+        static int NextSpectateCandidate(RenderSnapshot frame, int self, int from, int step)
+        {
+            int count = frame.PlayerCount;
+            if (count <= 1) return -1;
+
+            for (int n = 1; n <= count; n++)
+            {
+                // `% count` twice, with a `+ count` between, is what keeps a
+                // backward walk from producing a negative index.
+                int i = ((from + step * n) % count + count) % count;
+                if (i == self) continue;
+                if (frame.PlayerAliveInMatch[i]) return i;
+            }
+            return -1;
+        }
+
+        /// `RenderObservedWorldPos`'s one writer — see that property for why a
+        /// half that does not know the seat is skipped and why neither half
+        /// knowing it holds the last value instead of moving.
+        void UpdateObservedWorldPos()
+        {
+            RenderSnapshot prev = RenderPrev;
+            RenderSnapshot curr = RenderCurr;
+            int i = ObservedIndex;
+
+            bool hasPrev = i >= 0 && i < prev.PlayerCount && prev.PlayerKnown[i];
+            bool hasCurr = i >= 0 && i < curr.PlayerCount && curr.PlayerKnown[i];
+            if (!hasPrev && !hasCurr) return;
+
+            Vector3 fromW = SimSpace.ToWorld(hasPrev ? prev.Players[i].Pos : curr.Players[i].Pos);
+            Vector3 toW = SimSpace.ToWorld(hasCurr ? curr.Players[i].Pos : prev.Players[i].Pos);
+            RenderObservedWorldPos = Vector3.Lerp(fromW, toW, RenderAlpha);
         }
 
         /// Advances `RenderAlpha` every render frame (Task 25, Приложение П-7).

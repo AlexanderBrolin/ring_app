@@ -27,6 +27,14 @@ namespace Ring.Presentation
     /// per-frame update below are gone; `StageOneSceneBootstrap` self-heals
     /// an already-committed scene's stale `DashBar` object out and slides
     /// `StaminaBar` up into the freed slot (that bootstrap section's own doc).
+    ///
+    /// Stage 2 Task 47b (the owner's decision 4a): the bars describe the seat
+    /// this client is WATCHING, which is its own for the whole of solo and for
+    /// as long as that player is standing. While it is watching somebody else
+    /// the HUD is deliberately SMALLER, not fuller: HP and the wave stay, the
+    /// stamina bar is hidden outright because no stamina of anyone else exists
+    /// on the wire, and one label says whose health that is. Nothing new appears
+    /// while this player is alive.
     public sealed class HudController : MonoBehaviour
     {
         // Guards the stamina-max/threshold divisions against a zero
@@ -39,7 +47,16 @@ namespace Ring.Presentation
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] Image _hpFill;
         [SerializeField] Image _staminaFill;
+        /// The stamina bar's ROOT object, not its fill — a bar hidden by
+        /// emptying its fill still shows its background, which reads as "out of
+        /// Буст" rather than "this number is not yours to see" (Stage 2 Task
+        /// 47b, the owner's decision 4a).
+        [SerializeField] GameObject _staminaBar;
         [SerializeField] TMP_Text _waveText;
+        /// Shown only while this client is watching somebody else (Stage 2 Task
+        /// 47b) — the one thing on screen that says the HP beside it is not
+        /// this player's.
+        [SerializeField] TMP_Text _spectateLabel;
 
         // Task 22: StaminaDenied pulse — armed by HandleEvent (SimEventRouter's
         // fan-out, П-1; this is the one per-event reaction this class needs, so
@@ -64,15 +81,48 @@ namespace Ring.Presentation
             // snapshot lands".
             if (!_runner.Ready) return;
 
-            var player = _runner.Curr.Player;
+            // Stage 2 Task 47b: the bars belong to whoever is being WATCHED,
+            // which is this client's own player for the whole of solo and for
+            // as long as that player is standing (`SimulationRunner.
+            // ObservedIndex`). The index is resolved against the RENDER pair
+            // while the numbers still come off `Curr` — deliberately, and the
+            // two can only disagree inside a hitstop freeze, which moves a pose
+            // and never a seat's existence (QC10: the bar must not freeze with
+            // the picture).
+            RenderSnapshot curr = _runner.Curr;
+            int observed = _runner.ObservedIndex;
             var hero = _runner.Config.Hero;
+            bool spectating = _runner.IsSpectating;
 
-            _hpFill.fillAmount = player.Hp / hero.MaxHp;
             // F-8 fix: user-facing strings are Russian (ADR-003 §9 word list) — the
             // old "WAVE " placeholder predates the settled world vocabulary.
-            _waveText.text = "ВОЛНА " + _runner.Curr.Wave.WaveIndex;
+            _waveText.text = "ВОЛНА " + curr.Wave.WaveIndex;
 
-            UpdateStaminaBar(player.Stamina, hero.StaminaMax);
+            // THE STAMINA BAR IS HIDDEN, NOT EMPTIED, WHILE SPECTATING (the
+            // owner's decision 4a). Stamina is not on the wire in any form — no
+            // block carries it and no flag proxies it — so a bar drawn for
+            // somebody else could only ever be a painted zero, and a painted
+            // zero is a claim about their Буст rather than an absence of one.
+            if (_staminaBar != null) _staminaBar.SetActive(!spectating);
+            if (_spectateLabel != null)
+            {
+                _spectateLabel.gameObject.SetActive(spectating);
+                // The world's own word for a player (ADR-003 §9: Игрок →
+                // Сборщик) and a HUMAN seat number, one-based: this is a label,
+                // not an index.
+                if (spectating) _spectateLabel.text = "НАБЛЮДЕНИЕ · СБОРЩИК " + (observed + 1);
+            }
+
+            // A frame that says nothing about the watched seat moves nothing:
+            // its `PlayerState` would be `default` — full-health-less zero at
+            // the arena origin — and drawing that would report a death that
+            // this frame never witnessed. The bar holds what it had, the same
+            // answer `SimulationRunner.RenderObservedWorldPos` gives the camera.
+            if (observed < 0 || observed >= curr.PlayerCount || !curr.PlayerKnown[observed]) return;
+
+            PlayerState player = curr.Players[observed];
+            _hpFill.fillAmount = player.Hp / hero.MaxHp;
+            if (!spectating) UpdateStaminaBar(player.Stamina, hero.StaminaMax);
         }
 
         /// `SimEventRouter`'s fan-out (П-1). A `StaminaDenied` attempt (dash or

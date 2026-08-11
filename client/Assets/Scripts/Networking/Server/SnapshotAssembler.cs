@@ -242,14 +242,28 @@ namespace Ring.Networking.Server
                 (int)math.ceil(maxLifetime / SimulationWorld.TickDt) + net.EventRedundancyTicks;
 
             // The fixed part of a frame is the same size every tick at a given
-            // player count, and its worst case is tiny (38 B at the shipped
-            // caps) next to any legal SnapshotMaxBytes. Checking it ONCE here,
+            // player count, and its worst case is tiny (52 B at the shipped
+            // caps: 8 header + 27 players + 4 liveness + 7 wave + 3 + 3 empty
+            // block headers — it was 44 before this task widened the Players
+            // term below, and an older wording of this line said 38, which was
+            // the same sum with the two empty block headers left out of it)
+            // next to any legal SnapshotMaxBytes. Checking it ONCE here,
             // rather than per frame, means the per-frame path can subtract
             // without a guard — and a genuinely impossible configuration fails
             // at construction with a sentence instead of at the writer with an
             // InvalidOperationException about bytes.
+            //
+            // THE WHOLE ROSTER, NOT ONE SEAT FEWER (Stage 2 Task 47b). The
+            // ceiling used to be `MaxPlayers - 1`, because the frame never
+            // carried its own recipient; a DEAD recipient now receives its own
+            // body (see `WriteFrame`'s candidate phase for why), so the widest
+            // Players block a frame can carry is every seat of the match. A
+            // ceiling left one record short would not fail here at all — it
+            // would pass this check for a configuration whose worst frame does
+            // not fit, and throw out of `SnapshotWriter.Reserve` INSIDE a
+            // server tick, the moment the first player died.
             int fixedCeiling = SnapshotWriter.HeaderBytes
-                               + SnapshotWriter.PlayersBlockBytes(math.max(0, cfg.Arena.MaxPlayers - 1))
+                               + SnapshotWriter.PlayersBlockBytes(math.max(0, cfg.Arena.MaxPlayers))
                                + SnapshotWriter.LivenessBlockBytes()
                                + SnapshotWriter.WaveBlockBytes()
                                + SnapshotWriter.MobsBlockBytes(0)
@@ -1129,13 +1143,37 @@ namespace Ring.Networking.Server
                 if (id < 0)
                 {
                     int playerIndex = -id - 1;
-                    // Never oneself: one's own state comes back through
-                    // reconciliation, not the snapshot (spec §3.8's "up to
-                    // MaxPlayers - 1"). And NO liveness guard — a corpse is
-                    // ordinary replicated state (spec §3.5, carryover-t28.md
-                    // §8в); the Alive bit is what carries the news.
-                    if (playerIndex == identityIndex) continue;
+                    // Never oneself WHILE ONE IS ALIVE: a living connection's
+                    // own state comes back through reconciliation, not the
+                    // snapshot (spec §3.8's "up to MaxPlayers - 1"). And NO
+                    // liveness guard on ANYONE — a corpse is ordinary
+                    // replicated state (spec §3.5, carryover-t28.md §8в); the
+                    // Alive bit is what carries the news.
+                    //
+                    // THE EXCEPTION IS THE OWNER'S OWN BODY (Stage 2 Task 47b,
+                    // the owner's decision 2a of 2026-08-11). The reconciliation
+                    // this rule defers to only exists while the client is
+                    // PREDICTING, and prediction ends for good at one's own
+                    // death (`PlayerNetworkController.ShouldPredict`), so past
+                    // that instant the snapshot is the only thing that can say
+                    // where the body lies. Without the record the client's own
+                    // seat went from "known and alive" straight to "not known"
+                    // — never through "known and dead", which is the state the
+                    // whole corpse mechanism keys on — and a seat no record
+                    // arrives for reads `default(PlayerState)`, i.e. the arena
+                    // ORIGIN, which is where the camera then went.
+                    // Own visibility is unconditional (`VisibilitySystem.
+                    // Compute`'s own-observer branch), so the capture always has
+                    // the record to take; the cost is eight bytes
+                    // (`SnapshotBlocks.PlayerRecordBytes`) on the frames of a
+                    // player who is already dead, and the constructor's
+                    // `fixedCeiling` above is sized for it.
+                    //
+                    // THE ROSTER CHECK COMES FIRST, and now has to: the liveness
+                    // read below indexes the capture, so a slot the capture
+                    // knows nothing about must leave before it is asked about.
                     if (playerIndex >= _capture.PlayerCount) continue;
+                    if (playerIndex == identityIndex && _capture.Players[playerIndex].Alive) continue;
                     c.PlayerScratch[otherPlayers++] = PlayerRecordOf(playerIndex);
                 }
                 else

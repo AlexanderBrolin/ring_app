@@ -180,6 +180,52 @@ namespace Ring.Presentation
 
         void DevSpawnMob(MobType type, float2 pos);
 
+        /// Whether a MATCH can be restarted from this client at all (Stage 2
+        /// Task 47b, the owner's decision 4b) — the same shape as
+        /// `CanDevSpawnMob` above and for the same reason: on a backend whose
+        /// matches begin and end on the server's say-so, `Restart` can only
+        /// refuse, and a button wired to a refusal is a button that silently
+        /// does nothing. The death screen's restart button and its `R`/`Shift+R`
+        /// dev keys ask this instead of finding out.
+        ///
+        /// NOT THE SAME QUESTION AS `Restart`'s OWN RETURN VALUE, which answers
+        /// after the fact and only for the call that was already made. This one
+        /// is askable on a frame that restarts nothing, which is what a surface
+        /// deciding whether to offer the choice needs.
+        bool CanRestartMatch { get; }
+
+        /// Whether this backend can ask anyone to change which player this
+        /// client watches (Stage 2 Task 47b, spec §3.10, Р70) — false in solo,
+        /// where there is no server to ask and no one else to watch. The facade
+        /// asks before it reads a button, so a solo session's left mouse button
+        /// keeps meaning exactly what it always meant.
+        bool CanRequestSpectate { get; }
+
+        /// Asks to watch player slot `targetIndex`; true when a request
+        /// actually went out. A REFUSAL IS A VALUE — the transport is not a
+        /// place to throw from — and there are two of them: a backend that
+        /// cannot ask at all, and one still inside the window of its previous
+        /// request.
+        ///
+        /// THE ANSWER IS NOT "THE SWITCH HAPPENED". Nothing on this wire
+        /// replies to a spectate request (`SpectateRequestNet`'s own doc), so
+        /// `true` means only that the bytes left this process; whether the
+        /// server accepted is inferable from the picture alone.
+        bool TryRequestSpectate(int targetIndex);
+
+        /// Whether the last request is still inside the window an answer to it
+        /// could arrive in — `NetConfig.SpectatorSwitchCooldownSeconds`, the
+        /// same number the server measures its own cooldown from
+        /// (`ServerBootstrap` converts it to ticks for `SpectatePolicy`), so
+        /// this introduces no second number and the facade keeps no timer.
+        ///
+        /// IT IS THE EXPIRY OF A PENDING REQUEST, NOT ONLY A SEND RATE LIMIT.
+        /// A refusal is indistinguishable from a switch whose effects have not
+        /// arrived yet, so a facade waiting for the picture to confirm a
+        /// request needs a moment at which it stops waiting; this is that
+        /// moment, and it is the same one that permits the next request.
+        bool SpectateRequestInFlight { get; }
+
         /// One render frame of simulation; returns how many ticks it produced
         /// (0 = the frame landed inside the current tick).
         ///

@@ -29,6 +29,21 @@ namespace Ring.Presentation
     /// button (ordinary uGUI `Button`, driven by the project-wide `UI/Submit`
     /// action through the existing `EventSystem`/`InputSystemUIInputModule`, no
     /// custom input code needed) ships as a restart surface in Release.
+    ///
+    /// IT IS THIS CLIENT'S OWN DEATH SCREEN, AS OF STAGE 2 TASK 47b (bd
+    /// `app-jw0`). The fan-out delivers every `PlayerDied` this client is told
+    /// about, which in solo was only ever one player's and on a networked client
+    /// is everybody's it can see — so `HandleEvent` now compares the victim
+    /// against this client's own seat before showing anything.
+    ///
+    /// AND IT OFFERS ONLY WHAT THE BACKEND CAN DO (the owner's decision 4b).
+    /// Where a match cannot be restarted from this process
+    /// (`ISimBackend.CanRestartMatch`), the restart button and its `R`/`Shift+R`
+    /// hint are hidden and the keys are inert; what the panel offers there is
+    /// "Наблюдать", which closes it and leaves the match — and the spectator HUD
+    /// behind it — running. Where the numbers are somebody else's
+    /// (`HasMatchStats`), the metrics print dashes instead of the zeros the
+    /// render pair holds.
     public sealed class DeathOverlayController : MonoBehaviour
     {
         // Unscaled seconds after Show() before the keyboard shortcuts activate —
@@ -41,6 +56,15 @@ namespace Ring.Presentation
         [SerializeField] GameObject _panel;
         [SerializeField] TMP_Text _metricsText;
         [SerializeField] Button _restartButton;
+        /// The line that advertises `R`/`Shift+R`. It goes wherever the restart
+        /// button goes (Stage 2 Task 47b): on a backend that cannot restart, the
+        /// two keys do nothing, and a hint for them is a false instruction
+        /// rather than a missing one.
+        [SerializeField] TMP_Text _hintText;
+        /// Closes the panel and leaves the match running (Stage 2 Task 47b, the
+        /// owner's decision 4b) — the only thing there IS to do on a networked
+        /// client, where the match goes on without this player.
+        [SerializeField] Button _spectateButton;
 
         float _shownAtUnscaledTime = -1f;
 
@@ -48,6 +72,7 @@ namespace Ring.Presentation
         {
             _panel.SetActive(false);
             _restartButton.onClick.AddListener(_runner.RestartNewSeed);
+            if (_spectateButton != null) _spectateButton.onClick.AddListener(Hide);
         }
 
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
@@ -63,6 +88,19 @@ namespace Ring.Presentation
         public void HandleEvent(in SimEvent e)
         {
             if (e.Kind != SimEventKind.PlayerDied) return;
+            // bd `app-jw0`, closed by Stage 2 Task 47b: THIS client's death, not
+            // anybody's. Solo never noticed — there was one player — but a
+            // networked client is delivered every death it can see (and its own
+            // unconditionally, `EventRelevance`'s own-death carve-out), so
+            // without this the death screen came up over a match this player was
+            // still very much alive in.
+            //
+            // BY `PlayerIndex`, which is this kind's convention for the VICTIM
+            // (`SimEvent`'s own doc puts `PlayerDamaged`/`PlayerDied` under it
+            // for both id fields), and against `LocalPlayerIndex` rather than
+            // `ObservedIndex`: this screen is about one's own death, and a
+            // spectator watching somebody else die is watching, not dying.
+            if (e.PlayerIndex != _runner.RenderCurr.LocalPlayerIndex) return;
             Show();
         }
 
@@ -79,24 +117,51 @@ namespace Ring.Presentation
 
             _shownAtUnscaledTime = Time.unscaledTime;
             _metricsText.text = BuildMetricsText();
+
+            // THE PANEL OFFERS WHAT THIS BACKEND CAN ACTUALLY DO (Stage 2 Task
+            // 47b, the owner's decision 4b) — the same shape `DevOverlay` uses
+            // for `CanDevSpawnMob`. On a networked client `Restart` is refused
+            // by the backend, so the restart button was a control that silently
+            // did nothing; what exists there instead is the match this player is
+            // no longer in, and watching it.
+            bool canRestart = _runner.CanRestartMatch;
+            _restartButton.gameObject.SetActive(canRestart);
+            if (_hintText != null) _hintText.gameObject.SetActive(canRestart);
+            if (_spectateButton != null) _spectateButton.gameObject.SetActive(!canRestart);
+
             _panel.SetActive(true);
             // Review round (Minor): without an explicit selection, UI/Submit has
             // nothing to fire on until the owner first moves the mouse over the
-            // button — gamepad/keyboard Submit would silently do nothing.
-            if (EventSystem.current != null)
-                EventSystem.current.SetSelectedGameObject(_restartButton.gameObject);
+            // button — gamepad/keyboard Submit would silently do nothing. The
+            // selected object is whichever button this panel is actually
+            // offering.
+            Button offered = canRestart ? _restartButton : _spectateButton;
+            if (EventSystem.current != null && offered != null)
+                EventSystem.current.SetSelectedGameObject(offered.gameObject);
         }
 
-        void HandleWorldRestarted()
+        /// Closes the panel WITHOUT ending anything (Stage 2 Task 47b): the
+        /// match carries on, the HUD becomes a spectator's
+        /// (`SimulationRunner.ObservedIndex`), and nothing brings this panel
+        /// back — `PlayerDied` for this seat arrives once per match, and
+        /// `HandleWorldRestarted` below is what resets the screen for the next
+        /// one.
+        void Hide()
         {
             _shownAtUnscaledTime = -1f;
             _panel.SetActive(false);
         }
 
+        void HandleWorldRestarted() => Hide();
+
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         void Update()
         {
             if (_shownAtUnscaledTime < 0f) return;
+            // The same gate the button obeys (Stage 2 Task 47b): these two keys
+            // call exactly what it calls, so a backend that refuses a restart
+            // must refuse it from every surface, not only from the visible one.
+            if (!_runner.CanRestartMatch) return;
             if (Time.unscaledTime - _shownAtUnscaledTime < InputDelaySeconds) return;
 
             Keyboard kb = Keyboard.current;
@@ -111,8 +176,21 @@ namespace Ring.Presentation
 #endif
 
         /// Русские подписи — словарь мира (ADR-003 §9) + Приложение П-6.
+        ///
+        /// A DASH WHERE THERE IS NO NUMBER (Stage 2 Task 47b, the owner's
+        /// decision 4b). `ISimBackend.HasMatchStats` is the test — false on a
+        /// networked backend, whose protocol carries no block for either half of
+        /// the counters, so `RenderSnapshot.Stats`/`WorldStats` are
+        /// `BeginSlot`'s cleared zeros rather than measurements. Printed
+        /// straight, those six lines are a complete, plausible and permanent
+        /// lie: nothing utilised, no waves held, no damage taken, and an
+        /// accuracy of 0% for a player who spent the match shooting. The seed
+        /// and the tweak marker are NOT dashed — they are the facade's own
+        /// facts and true on either backend.
         string BuildMetricsText()
         {
+            if (!_runner.HasMatchStats) return BuildDashedMetricsText();
+
             // Stage 2 Task 5: personal counters off Curr.Stats (the local
             // player's own MatchStats), WavesCleared off Curr.WorldStats (a
             // match-wide counter, not something any one player earned).
@@ -142,6 +220,32 @@ namespace Ring.Presentation
             if (_runner.ConfigTweaked) sb.Append(" (прогон с правками)");
             return sb.ToString();
         }
+
+        /// The same six lines with a dash in place of every number the world
+        /// counted, and the two facade facts intact — see `BuildMetricsText`'s
+        /// own doc for why a dash rather than the zero the render pair holds.
+        /// The LABELS are repeated rather than shared with a formatter: the two
+        /// texts differ in every value and in nothing else, and a shared
+        /// builder taking six nullable numbers would be longer than both.
+        string BuildDashedMetricsText()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Заход");
+            sb.AppendLine($"Утилизировано: {NoNumber}");
+            sb.AppendLine($"Волн отражено: {NoNumber}");
+            sb.AppendLine($"Время на объекте: {NoNumber}");
+            sb.AppendLine($"Точность: {NoNumber}");
+            sb.AppendLine($"Дэшей: {NoNumber}");
+            sb.AppendLine($"Урона получено: {NoNumber}");
+            sb.Append($"seed: {_runner.Seed}");
+            if (_runner.ConfigTweaked) sb.Append(" (прогон с правками)");
+            return sb.ToString();
+        }
+
+        /// What stands where a number would, when the count is on another
+        /// machine. An em dash, the typographic one — not a hyphen, which reads
+        /// as a minus in a column of figures.
+        const string NoNumber = "—";
 
         static string FormatTime(float seconds)
         {

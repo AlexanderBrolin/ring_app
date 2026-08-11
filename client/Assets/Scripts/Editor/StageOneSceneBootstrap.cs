@@ -253,6 +253,22 @@ namespace Ring.Editor
     /// shape, and the same reason, as `GameFeelDirector`'s second pass. The
     /// sync-marker key moves with the new fields, `RemotePlayerEmission` →
     /// `GunEjectLocalEuler`.
+    /// Stage 2 Task 47b (spec §3.10, the owner's decisions 4a/4b of
+    /// 2026-08-11) adds the two objects a spectator needs and nothing else.
+    /// `HUD/SpectateLabel` is a `TMP_Text` on the HUD canvas, top-centre,
+    /// wired into `HudController._spectateLabel` and shown only while this
+    /// client is watching somebody else; the same block wires the STAMINA
+    /// BAR'S ROOT into `_staminaBar`, because that bar is HIDDEN while
+    /// spectating rather than drawn empty (no stamina of anyone else exists on
+    /// the wire, and an empty bar claims one). `DeathPanel/SpectateButton` is a
+    /// second `GetOrCreateOverlayButton` in the SAME slot as `RestartButton`,
+    /// which is safe because `DeathOverlayController.Show` offers exactly one
+    /// of the two — by `ISimBackend.CanRestartMatch` — and the panel's `Hint`
+    /// line is now wired in as well so it can be hidden beside the restart
+    /// button whose keys it advertises. `GetOrCreateWaveText`'s eleven lines of
+    /// label construction moved into a shared `GetOrCreateHudLabel` that both
+    /// labels call; its own self-heal branch is untouched. No new numbers, no
+    /// new sync-marker key: this task adds no asset field.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -272,6 +288,8 @@ namespace Ring.Editor
         const string DashBarObjectName = "DashBar";
         const string StaminaBarObjectName = "StaminaBar"; // Task 22
         const string WaveTextObjectName = "WaveText";
+        const string SpectateLabelObjectName = "SpectateLabel"; // Task 47b
+        const string SpectateButtonObjectName = "SpectateButton"; // Task 47b
         const string BackgroundObjectName = "Background";
         const string FillObjectName = "Fill";
 
@@ -1060,6 +1078,19 @@ namespace Ring.Editor
                 backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
                 fillColor: gameFeel.StaminaBarFullColor, ref sceneDirty);
             TMP_Text waveText = GetOrCreateWaveText(hudGo.transform, ref sceneDirty);
+            // Stage 2 Task 47b: the spectator's own line, top-centre between the
+            // two corners the bars and the wave counter already hold. Hidden by
+            // `HudController` on every frame this client is watching its own
+            // player, which is the whole of solo — so a solo screen gains
+            // nothing here, which is the requirement (the owner's decision 4a).
+            TMP_Text spectateLabel = GetOrCreateHudLabel(hudGo.transform, SpectateLabelObjectName,
+                "НАБЛЮДЕНИЕ", anchor: new Vector2(0.5f, 1f), anchoredPos: new Vector2(0f, -24f),
+                size: new Vector2(640f, 40f), fontSize: 26f,
+                alignment: TextAlignmentOptions.Top, ref sceneDirty);
+            // The bar's ROOT, which is what gets hidden — see HudController's
+            // `_staminaBar`. Found rather than returned by `GetOrCreateBar`,
+            // whose one job is the Fill every caller wires to.
+            Transform staminaBar = hudGo.transform.Find(StaminaBarObjectName);
 
             HudController hud = hudGo.GetComponent<HudController>();
             if (hud == null)
@@ -1074,6 +1105,9 @@ namespace Ring.Editor
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_hpFill", hpFill);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_staminaFill", staminaFill);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_waveText", waveText);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_spectateLabel", spectateLabel);
+            if (staminaBar != null)
+                hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_staminaBar", staminaBar.gameObject);
             if (hudRefsChanged)
             {
                 hudSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1098,9 +1132,17 @@ namespace Ring.Editor
                 new Vector2(0f, 160f), new Vector2(700f, 70f), 42f, ref sceneDirty);
             TMP_Text deathMetrics = GetOrCreateOverlayText(deathPanelGo.transform, "Metrics", "",
                 new Vector2(0f, -10f), new Vector2(700f, 260f), 24f, ref sceneDirty);
-            GetOrCreateOverlayText(deathPanelGo.transform, "Hint", "R — заново · Shift+R — тот же seed",
+            TMP_Text deathHint = GetOrCreateOverlayText(deathPanelGo.transform, "Hint",
+                "R — заново · Shift+R — тот же seed",
                 new Vector2(0f, -170f), new Vector2(700f, 30f), 18f, ref sceneDirty);
             Button deathRestartButton = GetOrCreateOverlayButton(deathPanelGo.transform, "RestartButton", "Заново",
+                new Vector2(0f, -230f), new Vector2(220f, 50f), ref sceneDirty);
+            // Stage 2 Task 47b (the owner's decision 4b): the same slot as the
+            // restart button, because the two are never both offered —
+            // `DeathOverlayController.Show` shows exactly one of them, by
+            // `ISimBackend.CanRestartMatch`.
+            Button deathSpectateButton = GetOrCreateOverlayButton(deathPanelGo.transform,
+                SpectateButtonObjectName, "Наблюдать",
                 new Vector2(0f, -230f), new Vector2(220f, 50f), ref sceneDirty);
 
             GameObject deathOverlayGo = EditorBootstrapUtils.FindRootObject(scene, DeathOverlayObjectName);
@@ -1122,6 +1164,9 @@ namespace Ring.Editor
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_panel", deathPanelGo);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_metricsText", deathMetrics);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_restartButton", deathRestartButton);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_hintText", deathHint);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_spectateButton",
+                deathSpectateButton);
             if (deathOverlayRefsChanged)
             {
                 deathOverlaySo.ApplyModifiedPropertiesWithoutUndo();
@@ -2875,10 +2920,7 @@ namespace Ring.Editor
             return fillImage;
         }
 
-        /// The wave-number label (Task 14), top-right anchored. TMP Essential
-        /// Resources are vendored at `Assets/TextMesh Pro/` (see class doc), so a
-        /// plain `AddComponent<TextMeshProUGUI>()` resolves `TMP_Settings.
-        /// defaultFontAsset` on its own — no explicit font wiring needed here.
+        /// The wave-number label (Task 14), top-right anchored.
         static TMP_Text GetOrCreateWaveText(Transform parent, ref bool sceneDirty)
         {
             Transform existing = parent.Find(WaveTextObjectName);
@@ -2898,19 +2940,49 @@ namespace Ring.Editor
                 return existingText;
             }
 
-            var go = new GameObject(WaveTextObjectName, typeof(RectTransform));
+            return GetOrCreateHudLabel(parent, WaveTextObjectName, "ВОЛНА 0",
+                anchor: new Vector2(1f, 1f), anchoredPos: new Vector2(-24f, -24f),
+                size: new Vector2(240f, 40f), fontSize: 28f,
+                alignment: TextAlignmentOptions.TopRight, ref sceneDirty);
+        }
+
+        /// A `TextMeshProUGUI` label directly on the HUD canvas, anchored to one
+        /// of its corners or edges (Stage 2 Task 47b lifted this out of
+        /// `GetOrCreateWaveText`, which was the only such label until the
+        /// spectate line joined it — a second hand-written copy of the same
+        /// eleven lines is exactly the duplication AGENT.md rule 2 forbids).
+        /// Distinct from `GetOrCreateOverlayText` above, which anchors to the
+        /// CENTRE of a modal panel and stacks by pixel offset.
+        ///
+        /// `anchor` sets `anchorMin`, `anchorMax` and `pivot` together: a HUD
+        /// label is a point on the screen with text hanging off it, so the three
+        /// are never anything but equal here, and passing one vector is what
+        /// keeps a caller from getting two of them right and one wrong.
+        ///
+        /// TMP Essential Resources are vendored at `Assets/TextMesh Pro/` (see
+        /// class doc), so a plain `AddComponent<TextMeshProUGUI>()` resolves
+        /// `TMP_Settings.defaultFontAsset` on its own — no explicit font wiring
+        /// needed here. Existence-guarded like everything else in this file.
+        static TMP_Text GetOrCreateHudLabel(Transform parent, string name, string defaultText,
+            Vector2 anchor, Vector2 anchoredPos, Vector2 size, float fontSize,
+            TextAlignmentOptions alignment, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(name);
+            if (existing != null) return existing.GetComponent<TMP_Text>();
+
+            var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
             var rect = (RectTransform)go.transform;
-            rect.anchorMin = new Vector2(1f, 1f);
-            rect.anchorMax = new Vector2(1f, 1f);
-            rect.pivot = new Vector2(1f, 1f);
-            rect.anchoredPosition = new Vector2(-24f, -24f);
-            rect.sizeDelta = new Vector2(240f, 40f);
+            rect.anchorMin = anchor;
+            rect.anchorMax = anchor;
+            rect.pivot = anchor;
+            rect.anchoredPosition = anchoredPos;
+            rect.sizeDelta = size;
 
             var tmp = go.AddComponent<TextMeshProUGUI>();
-            tmp.text = "ВОЛНА 0";
-            tmp.fontSize = 28f;
-            tmp.alignment = TextAlignmentOptions.TopRight;
+            tmp.text = defaultText;
+            tmp.fontSize = fontSize;
+            tmp.alignment = alignment;
             tmp.color = Color.white;
 
             sceneDirty = true;

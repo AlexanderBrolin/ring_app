@@ -94,12 +94,18 @@ namespace Ring.Presentation.Net
     /// client connection (see `Restart`), and `Unregister` any instance it
     /// discards (see `Unregister`).
     ///
-    /// WHAT IS DELIBERATELY NOT HERE. `ObservedIndex` and spectating (Task
-    /// 47), the player dolls and their pool (Task 45), the dev overlay's
-    /// network section (Task 48) and the walls (Task 46). Two further gaps are
-    /// this task's own findings rather than its neighbors' scope, and both
-    /// are recorded where they bite: the projectile picture (see `Curr`) and
-    /// the match statistics (see `HasMatchStats`).
+    /// WHAT IS DELIBERATELY NOT HERE. `ObservedIndex` — which seat this client
+    /// is LOOKING FROM — belongs to `SimulationRunner` and not to a backend: it
+    /// is a property of this client rather than of the world, it changes
+    /// between ticks, and putting it in the frame would make it something the
+    /// hitstop freeze had to carry. What Task 47b did put here is the half a
+    /// backend owns: the request that asks the server to move the viewpoint
+    /// (`TryRequestSpectate`) and the window an answer to it may arrive in.
+    /// Also not here: the player dolls and their pool (Task 45), the dev
+    /// overlay's network section (Task 48) and the walls (Task 46). Two
+    /// further gaps are this task's own findings rather than its neighbors'
+    /// scope, and both are recorded where they bite: the projectile picture
+    /// (see `Curr`) and the match statistics (see `HasMatchStats`).
     public sealed class NetworkSimBackend : ISimBackend
     {
         /// The block kinds this receiver understands. A kind absent from this
@@ -243,6 +249,11 @@ namespace Ring.Presentation.Net
         PlayerState _ownPrev, _ownCurr;
         uint _ownTick;
         bool _hasOwnSample;
+
+        // Seconds left of the window the last `SpectateRequestNet` may still be
+        // answered in — see `TryRequestSpectate`. Zero means "nothing is
+        // waiting, and the next request may go".
+        float _spectateRequestWindow;
 
         // Decode scratch, sized once from the arena caps.
         //
@@ -458,6 +469,55 @@ namespace Ring.Presentation.Net
                 + "false on this backend and the dev overlay hides the buttons because of it.");
         }
 
+        /// False, and permanently (Stage 2 Task 47b, the owner's decision 4b).
+        /// A match on this backend begins and ends on the server's say-so, and
+        /// `Restart` below refuses every call after the first — so a restart
+        /// button wired to the facade could only ever do nothing at all. The
+        /// death screen asks this and hides the button rather than offering a
+        /// choice that is not there.
+        public bool CanRestartMatch => false;
+
+        /// True: there is a server to ask, and `RequestSpectate` below is how.
+        /// Not gated on being dead, on the link's phase or on the seat — those
+        /// are the SERVER's decision (`SpectatePolicy.Evaluate` refuses a live
+        /// requester first of all), and a client that pre-judged them would be
+        /// a second, quietly diverging copy of a rule that already has one home.
+        public bool CanRequestSpectate => true;
+
+        /// Sends one `SpectateRequestNet` through `ClientMatchLink` — the one
+        /// place in this project that speaks to the server — and opens the
+        /// window `SpectateRequestInFlight` reports on.
+        ///
+        /// THE WINDOW IS `NetConfig.SpectatorSwitchCooldownSeconds`, NOT A
+        /// NUMBER OF THIS CLASS'S OWN. It is the same field `ServerBootstrap`
+        /// converts into `SpectatePolicy`'s tick cooldown, so the client asks no
+        /// faster than the server can accept, and a request the server refuses
+        /// stops being waited for after exactly the interval that permits the
+        /// next one.
+        ///
+        /// IN SECONDS, DELIBERATELY, AND MEASURED IN RENDER TIME. The asset
+        /// states seconds; the two tick counters this process holds are FishNet's
+        /// `LocalTick` and the world tick of the frame on screen, and neither is
+        /// this client's own clock — the second one even rewinds to zero when the
+        /// server restarts the match. Counting the interval down in the same
+        /// `unscaledDeltaTime` the facade already hands `Advance` needs no
+        /// conversion, no tick rate and no epoch arithmetic.
+        public bool TryRequestSpectate(int targetIndex)
+        {
+            if (_link == null) return false;
+            if (_spectateRequestWindow > 0f) return false;
+            // The wire field is a byte, the same width as `MatchWelcomeNet.
+            // PlayerIndex`; a seat that cannot be named is a seat that cannot
+            // be asked for.
+            if (targetIndex < 0 || targetIndex > byte.MaxValue) return false;
+
+            _link.RequestSpectate((byte)targetIndex);
+            _spectateRequestWindow = _net.SpectatorSwitchCooldownSeconds;
+            return true;
+        }
+
+        public bool SpectateRequestInFlight => _spectateRequestWindow > 0f;
+
         /// One render frame. Everything that has to happen every frame happens
         /// here, INCLUDING the two discharges — and that placement is the
         /// point, not an implementation detail.
@@ -549,6 +609,14 @@ namespace Ring.Presentation.Net
             // The predicted pair for the local slot, sampled once per
             // PREDICTION tick — see `SampleOwnPlayer`.
             SampleOwnPlayer();
+
+            // The one clock behind `SpectateRequestInFlight`, counted down in
+            // the frame time the facade already hands over. It stops while the
+            // facade is paused, which is correct rather than incidental: a
+            // paused client is not receiving the picture that would confirm a
+            // request either.
+            if (_spectateRequestWindow > 0f)
+                _spectateRequestWindow = math.max(0f, _spectateRequestWindow - unscaledDeltaTime);
 
             _clock.Advance(unscaledDeltaTime, in _timings);
             int renderTick = _clock.RenderTick;
@@ -1566,6 +1634,15 @@ namespace Ring.Presentation.Net
             _matchEpoch = epoch;
             _frameEventCount = 0;
             _ready = false;
+            // Two more things that belong to the match that just ended (Stage 2
+            // Task 47b). The predicted pose is of a body in the PREVIOUS
+            // match's arena — `SampleOwnPlayer` no longer forgets it when
+            // prediction stops, so a new match whose roster says this seat is
+            // alive again would otherwise have it pasted into the opening
+            // frames, before the new object's first reconcile. And a spectate
+            // request cannot outlive the match it named a slot of.
+            _hasOwnSample = false;
+            _spectateRequestWindow = 0f;
             // The third thing that cannot survive a match: a new one mints its
             // entity ids from 1 again, so a remembered id would answer with
             // the archetype of a mob from the match before (fix-round 1, G-2).
@@ -1646,17 +1723,29 @@ namespace Ring.Presentation.Net
         /// interpolates across the whole gap instead of jumping it, and the
         /// next sample puts the pair back on one tick.
         ///
+        /// THE LAST SAMPLE OUTLIVES PREDICTION, AND THAT IS THIS TASK'S OWN
+        /// CORRECTION (Stage 2 Task 47b). This method used to FORGET the pair
+        /// the moment `IsPredicting` went false, which is the instant the death
+        /// event is decoded — while the render pair is still `InterpBufferTicks`
+        /// behind, showing frames the server built when this player was alive
+        /// and therefore left this seat out of. For that whole window nothing
+        /// filled the seat: not the wire, which had no reason to, and not
+        /// prediction, which had just been forgotten. The seat read
+        /// `default(PlayerState)` — the arena ORIGIN — so the doll was retired
+        /// and the camera set off for the middle of the arena a fifth of a
+        /// second before the body arrived to explain itself. Keeping the last
+        /// pose costs nothing and is the truth of those frames: it is where
+        /// this player stood on the ticks they describe. `ApplyOwnPlayer`'s
+        /// roster gate is what stops it reaching a single frame past the death,
+        /// and `SyncMatchEpoch` drops it with the match it belongs to.
+        ///
         /// NOT VERIFIABLE BY A UNIT TEST, and said so plainly: this assembly is
         /// outside the EditMode test assembly's references, and the quantity in
         /// question is what motion looks like. The milestone В1 playtest is what
         /// answers it.
         void SampleOwnPlayer()
         {
-            if (_controller == null || !_controller.Core.IsPredicting)
-            {
-                _hasOwnSample = false;
-                return;
-            }
+            if (_controller == null || !_controller.Core.IsPredicting) return;
 
             uint tick = _nm.TimeManager.LocalTick;
             PlayerState predicted = _controller.Core.Predicted;
@@ -1673,37 +1762,48 @@ namespace Ring.Presentation.Net
             _hasOwnSample = true;
         }
 
-        /// Puts this client's own player back into the picture the snapshot
-        /// deliberately left it out of, one half of the render pair at a time.
+        /// Puts this client's own player back into the picture for the frames
+        /// that leave it out, one half of the render pair at a time.
         ///
-        /// FROM THE PREDICTED COPY, AND ONLY WHILE IT IS PREDICTING.
-        /// `PlayerPredictionCore.IsPredicting` is exactly "this client may
-        /// advance its own copy at all" — false before the first reconcile has
-        /// described the player, and false for good once the player dies — and
-        /// both of those cases are ones where the snapshot's own record is the
-        /// better answer. The catch is that the record does not exist: the
-        /// assembler never puts a connection's own slot in its own frame, so
-        /// while prediction is not running this slot reads `default`.
-        /// `SampleOwnPlayer` above holds that gate; by the time this runs, the
-        /// only question left is whether the seat is in range.
+        /// FROM THE PREDICTED COPY, AND ONLY WHILE **THIS FRAME'S ROSTER** SAYS
+        /// THE SEAT IS ALIVE (Stage 2 Task 47b). The assembler leaves a
+        /// connection's own record out of its frame exactly while that
+        /// connection is alive, and sends it once it is dead (the owner's
+        /// decision 2a) — so prediction and the wire each own one half of this
+        /// seat's life, and `PlayerAliveInMatch` is the line between them. It
+        /// is the same fact the SENDER used when it decided whether to write
+        /// the record (`SnapshotAssembler.WriteFrame`'s candidate phase and its
+        /// liveness mask are two loops over one capture), which is why this is
+        /// the gate rather than a second latch of "I died" on this side: a
+        /// third opinion beside the mask and `IsPredicting` could only ever
+        /// disagree with one of them.
         ///
-        /// IT IS ALSO THE ONLY PLACE THE LOCAL SEAT CAN BE MARKED KNOWN (Stage
-        /// 2 Task 47a). No record for it ever rides the wire — the assembler's
-        /// own rule — so `ReadPlayers` never reaches this seat, and a frame
-        /// left saying "nothing known about slot N" is a frame that retires
-        /// this client's OWN doll. The flag therefore travels with the write,
-        /// here as in `ReadPlayers`: the state came from prediction rather than
-        /// from a datagram, but the frame carries it either way, which is the
-        /// whole of what the flag claims. When the gate above is shut the seat
-        /// stays unknown, which is the truth of that moment: this client has no
-        /// state for its own player and the last frame's picture is all there is
-        /// (see the Task 47b note in `SyncPlayers` about one's own body).
+        /// WITHOUT IT, THE DEFECT IS A BODY THAT STANDS UP. Prediction stops
+        /// when the death EVENT arrives, the authoritative corpse arrives in a
+        /// frame of the same tick, and the render pair reaches that tick
+        /// `InterpBufferTicks` later — so there is a window in which this
+        /// method would paste a living predicted pose over a corpse the server
+        /// had already sent, and the doll would stand until the window closed
+        /// and then snap down.
+        ///
+        /// IT IS ALSO THE ONLY PLACE THE LOCAL SEAT CAN BE MARKED KNOWN WHILE
+        /// THAT PLAYER IS ALIVE (Stage 2 Task 47a). No record for a living seat
+        /// ever rides the wire, so `ReadPlayers` never reaches it, and a frame
+        /// left saying "nothing known about slot N" is a frame that retires this
+        /// client's OWN doll. The flag therefore travels with the write, here as
+        /// in `ReadPlayers`: the state came from prediction rather than from a
+        /// datagram, but the frame carries it either way, which is the whole of
+        /// what the flag claims.
         void ApplyOwnPlayer(RenderSnapshot snapshot, in PlayerState predicted)
         {
             if (!_hasOwnSample) return;
 
             int index = snapshot.LocalPlayerIndex;
             if (index < 0 || index >= snapshot.PlayerCount) return;
+            // The frame's own roster, not this class's memory: a frame that
+            // says the seat is down is a frame whose Players block carries the
+            // body, and the body is the authoritative answer.
+            if (!snapshot.PlayerAliveInMatch[index]) return;
             snapshot.Players[index] = predicted;
             snapshot.PlayerKnown[index] = true;
         }
