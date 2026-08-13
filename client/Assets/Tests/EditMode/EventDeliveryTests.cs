@@ -69,12 +69,12 @@ namespace Ring.Simulation.Tests
             var ev = new SimEvent { Kind = SimEventKind.StaminaDenied, PlayerIndex = 1, Pos = new float2(12.37f, -7.51f) };
 
             // Witness set (task-21-brief.md discipline): contains the OWNER's
-            // own synthetic id but NOT the neighbour's — the OPPOSITE of what a
+            // own synthetic id but NOT the neighbor's — the OPPOSITE of what a
             // Visible/Audible-channel gate would need to deliver to the owner
-            // and withhold from the neighbour. A mutant that (incorrectly)
+            // and withhold from the neighbor. A mutant that (incorrectly)
             // routed StaminaDenied through the Visible/Audible machinery
             // instead of a plain ownership check would pass the owner
-            // assertion below by coincidence but fail the neighbour one, since
+            // assertion below by coincidence but fail the neighbor one, since
             // Visible/Audible never consult the identity index at all.
             var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
             observerSet.Add(VisibilityIds.ForPlayer(1));
@@ -89,12 +89,12 @@ namespace Ring.Simulation.Tests
             // on the Owner channel's OWN refusal branch. Before the fix-round,
             // ShouldDeliver assigned `deliveredPos = ev.Pos` unconditionally,
             // BEFORE checking ownership, so this refusal handed back the
-            // neighbour's EXACT position through `out` even while returning
+            // neighbor's EXACT position through `out` even while returning
             // `false` — a caller that trusts `out` without checking the
             // `bool` first (a plausible per-connection assembler pattern,
             // Task 28) would still leak it. `out _` could never catch that.
             Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, 0, w, observerSet, cfg.Visibility, out float2 refusedPos),
-                "a neighbour must not receive another player's StaminaDenied — it would leak Stamina economy");
+                "a neighbor must not receive another player's StaminaDenied — it would leak Stamina economy");
             Assert.AreEqual(float2.zero, refusedPos,
                 "a `false` return must carry `default` (zero), never the leaked owner's exact position");
         }
@@ -113,7 +113,7 @@ namespace Ring.Simulation.Tests
 
             foreach (SimEventKind kind in new[] { SimEventKind.WaveStarted, SimEventKind.WaveCleared })
             {
-                // Nonzero and off-centre, mirroring WaveSystem's own
+                // Nonzero and off-center, mirroring WaveSystem's own
                 // "nearest-alive-player" event position (spec Р28 notes that
                 // today this position is simply taken from a player — so
                 // delivering it would leak that player's location to everyone).
@@ -230,7 +230,7 @@ namespace Ring.Simulation.Tests
         {
             // I-4 / carryover-t21.md #1: SimulationWorld.DamageMob
             // swap-removes a dead mob's slot in the SAME tick it dies
-            // (SimulationWorld.cs:595) — VisibilitySystem.Compute only ever
+            // (SimulationWorld.cs:621) — VisibilitySystem.Compute only ever
             // iterates LIVE mobs (w.Mobs/w.MobCount), so a freshly
             // recomputed CURRENT-tick set can never contain a corpse's id at
             // all, no matter how visible it was a moment before it died. The

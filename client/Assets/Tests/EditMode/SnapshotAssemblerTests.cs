@@ -765,7 +765,7 @@ namespace Ring.Simulation.Tests
             // which for a burst of shots is finer than the hero's own radius.
             // The fix is a per-connection, per-source LATCH with hysteresis:
             // while the true position stays within grid/2 + grid/4 of the
-            // latched cell's centre, the latched cell is what ships, so the
+            // latched cell's center, the latched cell is what ships, so the
             // independent roundings that the averaging attack needs never
             // happen.
             //
@@ -1325,7 +1325,7 @@ namespace Ring.Simulation.Tests
 
             // Tick 2: the dash mirrors off a wall. The contact point rounds to
             // a DIFFERENT cell than the actor's, but sits INSIDE the latch's
-            // hysteresis margin of the actor's latched centre — the exact
+            // hysteresis margin of the actor's latched center — the exact
             // geometry in which the actor-keyed latch used to answer with the
             // actor's stale cell instead of the contact's own.
             var contact = new float2(52.6f, 0.37f);

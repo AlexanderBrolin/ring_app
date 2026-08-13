@@ -73,7 +73,7 @@ namespace Ring.Simulation.Core
         /// it looks at `dt`, so a short frame spends the excuse just as a long
         /// one does. The alternative — hold the excuse until a long frame
         /// actually turns up — sounds more forgiving and is strictly worse: the
-        /// engine would then carry a licence to under-report the FIRST REAL
+        /// engine would then carry a license to under-report the FIRST REAL
         /// hitch of the session, whenever it happened to come.
         ///
         /// RAISE IT AFTER THE FRAME'S LAST `Advance`, NEVER BEFORE IT (Stage 2

@@ -10,7 +10,7 @@ namespace Ring.Simulation.Tests
     /// FOR. The gate reads one number off the dev overlay and compares it
     /// against 0.25 m. A single teleport — a dash mispredicted through a wall,
     /// one state packet arriving after a long stall — is a correction of
-    /// several metres, and an average over a window would let that one sample
+    /// several meters, and an average over a window would let that one sample
     /// hold the reported figure above the threshold for the whole window while
     /// the connection it is supposed to describe is healthy.
     /// `Median_IsNotTheMean` is the test that tells the two apart.

@@ -134,7 +134,7 @@ namespace Ring.Networking
         /// NetStats unclamped. `!(lossPercent > 0f)` is true for NaN
         /// (`NaN > 0f` is false), so NaN is caught by the same branch as an
         /// ordinary non-positive input (same form as
-        /// RenderClock.SlewFractionOf, RenderClock.cs:375-381).
+        /// RenderClock.SlewFractionOf, RenderClock.cs:414-420).
         static double ClampedLossFraction(float lossPercent)
         {
             if (!(lossPercent > 0f)) return 0d;

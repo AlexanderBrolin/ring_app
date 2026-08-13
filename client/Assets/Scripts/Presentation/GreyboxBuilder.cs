@@ -15,8 +15,8 @@ namespace Ring.Presentation
     /// discovered (fix-round 1, Ф-5). A primitive cylinder is a polygonal prism
     /// inscribed in its circle, not a circle: its drawn face lies inside the
     /// simulated one by R·(1 − cos(π/sides)), centimetres on this arena's radii.
-    /// And the ring wall is drawn as 0.5 m thick boxes CENTRED on the radius,
-    /// while Simulation stops a round when its centre reaches `Radius` minus the
+    /// And the ring wall is drawn as 0.5 m thick boxes CENTERED on the radius,
+    /// while Simulation stops a round when its center reaches `Radius` minus the
     /// round's own radius — so at the rim a round buries up to ~0.17 m into the
     /// drawn wall before it ends. Both are pre-Task-46 and neither is a defect
     /// — they are what "the picture matches the collision" costs, said out loud
@@ -64,8 +64,8 @@ namespace Ring.Presentation
     /// Ф-5: this passage used to measure it against today's): obstacles were
     /// drawn a flat 2 m then, which scales the capsule to radius 3.2 / height 2
     /// — height &lt; 2×radius — so PhysX collapsed it to a sphere of radius 3.2
-    /// centred at y = 1, reaching 4.2 m, i.e. 2.2 m over a 2 m crown. At this
-    /// task's 3 m the same collapse puts the sphere's centre at y = 1.5, its top
+    /// centered at y = 1, reaching 4.2 m, i.e. 2.2 m over a 2 m crown. At this
+    /// task's 3 m the same collapse puts the sphere's center at y = 1.5, its top
     /// at 4.7 and its bottom at −1.7: ~1.7 m over the crown and as far under the
     /// floor — a smaller overhang for a taller barrier, and still an overhang
     /// either way. Bounce was the only consumer of it, so it stood. It stopped
@@ -271,9 +271,9 @@ namespace Ring.Presentation
         ///
         /// A wall is a STADIUM in Simulation — the segment A→B inflated by
         /// HalfWidth, so its ends are ROUND (`Geometry.SegmentStadium`) — and it
-        /// is drawn as one: a box spanning the two end centres, plus a cylinder
+        /// is drawn as one: a box spanning the two end centers, plus a cylinder
         /// of radius HalfWidth at each end. One box alone would leave HalfWidth
-        /// metres of collision past each end with nothing drawn over it (0.8 m
+        /// meters of collision past each end with nothing drawn over it (0.8 m
         /// on four of the six shipped walls), which is precisely the "the round
         /// stops in mid-air" mismatch this task exists to remove; three
         /// primitives per wall — 18 objects against the ring's own 48 — is the

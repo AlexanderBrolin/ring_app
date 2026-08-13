@@ -124,7 +124,7 @@ namespace Ring.Presentation
         public bool CanRequestSpectate => false;
 
         /// Refused, and silently: the facade asks `CanRequestSpectate` first,
-        /// and a second line of defence on a path that cannot reach a server
+        /// and a second line of defense on a path that cannot reach a server
         /// has nothing to report and nowhere to report it. A VALUE, never a
         /// throw — the same discipline `Restart`'s own answer keeps.
         public bool TryRequestSpectate(int targetIndex) => false;

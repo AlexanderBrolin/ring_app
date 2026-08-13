@@ -391,7 +391,7 @@ namespace Ring.Editor
         /// `MovementSettings.TeleportThreshold` IS NOT SET, IN EITHER SET
         /// (Р160). It is not the reconciliation-snap knob it looks like:
         /// `UniversalTickSmoother` caches it SQUARED and compares it against a
-        /// plain metre distance, and what it gates is the transform delta
+        /// plain meter distance, and what it gates is the transform delta
         /// BETWEEN TWO TICKS — a quantity legitimate movement and a correction
         /// enter indistinguishably. The snap is driven from
         /// `NetConfig.ReconcileSnapMeters` through

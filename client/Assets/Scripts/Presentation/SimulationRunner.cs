@@ -31,8 +31,12 @@ namespace Ring.Presentation
     /// freeze layer, the pause gate and every event the views subscribe to. The
     /// backend seam exists because the networked one (Task 44) has no world at
     /// all — see `ISimBackend`'s own doc; the split is deliberately invisible
-    /// from outside, since seventeen classes hold a `SimulationRunner`
-    /// reference and read it by member name.
+    /// from outside, since sixteen classes hold a `SimulationRunner`
+    /// reference and read it by member name — the `[SerializeField]
+    /// SimulationRunner` fields, fifteen of them in `Presentation` plus
+    /// `ClientNetworkBootstrap` in `PresentationNet`. (The two Editor scene
+    /// bootstraps are not among them: they find one into a LOCAL, wire it and
+    /// let it go.)
     ///
     /// `Time.unscaledDeltaTime` is fed to the backend here and nowhere else, and
     /// `Time.timeScale` is never touched anywhere in the project — this is the
@@ -297,7 +301,7 @@ namespace Ring.Presentation
         /// only one does, and when NEITHER does this property HOLDS the value
         /// it last had. Holding is the honest answer to "the frame says nothing
         /// about the body you were watching" — the camera stays where it had a
-        /// picture instead of travelling to a coordinate nobody sent.
+        /// picture instead of traveling to a coordinate nobody sent.
         ///
         /// WRITTEN ONLY BY `UpdateObservation`, once per non-paused frame,
         /// beside the index it is a position of. A property computing it live
@@ -596,7 +600,12 @@ namespace Ring.Presentation
         public event System.Action TicksFlushed;
 
         /// A fresh match has begun and everything Presentation remembers about
-        /// the previous one must go — ten registries listen for it.
+        /// the previous one must go — nine registries listen for it:
+        /// `AudioDirector`, `DeathOverlayController`, `DevOverlay`,
+        /// `GameFeelDirector`, `GreyboxBuilder`, `HudController`,
+        /// `PauseController`, `PersistentPropsDirector`, `ViewRegistry`
+        /// (the `WorldRestarted +=` sites under `Assets/Scripts/`, all of them
+        /// in `Presentation`).
         ///
         /// TWO RAISE SITES AS OF TASK 44d, AND BOTH MEAN THE SAME THING. The
         /// first is `Restart` below, for a match this facade started, and it
@@ -635,7 +644,7 @@ namespace Ring.Presentation
         /// `RestartNewSeed()` -> `Restart(seed)` -> `_backend.Restart(...)` —
         /// so a backend arriving afterwards would be installed behind a facade
         /// that has already started a match on the previous one and already
-        /// told ten subscribers about it. The only mechanism that orders one
+        /// told nine subscribers about it. The only mechanism that orders one
         /// component's `Awake` against another's is Unity's own script
         /// execution order, which the caller owns and this class cannot reach:
         /// this component is pinned at `[DefaultExecutionOrder(-50)]` (see the
@@ -708,7 +717,7 @@ namespace Ring.Presentation
             // local one, which never raises it. A match restart decided on the
             // server does not wait for this component to be enabled, and the
             // network seams behind it are cleared either way; a subscription
-            // that came and went with `enabled` would leave the ten registries
+            // that came and went with `enabled` would leave the nine registries
             // behind `WorldRestarted` holding the previous match's entities for
             // as long as the gap lasted.
             _backend.MatchRestarted += OnBackendMatchRestarted;
@@ -903,7 +912,7 @@ namespace Ring.Presentation
             // other time.
             //
             // TWO TICKS IN ONE FRAME SEND THE EDGE TWICE, deliberately: the
-            // second pre-tick of the frame reads the memoised sample, which
+            // second pre-tick of the frame reads the memoized sample, which
             // still carries the edge, so both replicates request the dash. The
             // world's own `DashRequestCooldownTicks` is the rule that decides
             // what a repeated request means — this class must not become a
@@ -1076,7 +1085,7 @@ namespace Ring.Presentation
         /// thrown away in one real case: a target visible from the corpse at
         /// the moment of the press, gone from its sight before the switch
         /// arrives, breaks the run and would be refused at the close of a
-        /// window the server had already honoured. The proof is only recorded
+        /// window the server had already honored. The proof is only recorded
         /// while the window runs — the picture still does not move until it
         /// closes.
         ///
@@ -1243,7 +1252,7 @@ namespace Ring.Presentation
         /// candidate", so the ambiguity falls the harmless way.
         ///
         /// IT WALKS FROM THE CURRENT VIEWPOINT, NOT FROM ONE'S OWN SEAT, so
-        /// repeated presses cycle instead of returning to the same neighbour;
+        /// repeated presses cycle instead of returning to the same neighbor;
         /// starting from one's own corpse is the ordinary first press.
         ///
         /// NOT COVERED BY A TEST, and the reason is structural rather than a
@@ -1365,7 +1374,7 @@ namespace Ring.Presentation
         /// controls — the overlay's forced-seed button, the death overlay's R,
         /// the pause controller — and before the gate existed each of them
         /// raised `WorldRestarted` in the middle of a match the server was
-        /// still sending, clearing ten Presentation registries under a picture
+        /// still sending, clearing nine Presentation registries under a picture
         /// that kept arriving. The same gate settles a second disagreement the
         /// backend cannot fix from its side: the networked backend keeps the
         /// arena caps of the FIRST config for the life of the connection, so

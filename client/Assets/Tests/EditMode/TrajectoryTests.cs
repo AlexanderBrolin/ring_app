@@ -10,7 +10,7 @@ namespace Ring.Simulation.Tests
     /// `ProjectileSystem` retires it on the ground. The defect that motivated
     /// it is a picture, not a rule: the aim ray and the crosshair marker
     /// promised the mathematical point on the floor, which the round never
-    /// reaches because the ground contact is resolved at the round's CENTRE
+    /// reaches because the ground contact is resolved at the round's CENTER
     /// height, one radius up.
     ///
     /// EVERY EXPECTATION IS A FIXTURE EXPRESSION, never a number copied out of
@@ -37,7 +37,7 @@ namespace Ring.Simulation.Tests
 
         /// Fires a genuine aimed round from the arena origin at the hero's own
         /// standing muzzle height, down the +X axis at a FLOOR point `distance`
-        /// metres away, runs it to its end, and returns the fraction of that
+        /// meters away, runs it to its end, and returns the fraction of that
         /// muzzle→aim line the round actually covered.
         ///
         /// `TestWorlds.FireAimed3D` rather than a held trigger on purpose: it
@@ -58,7 +58,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0f, math.length(end.HitDir), 1e-6f,
                 "fixture premise: HitDir is exactly zero only on ProjectileSystem's FLOOR branch");
             Assert.AreEqual(c.Weapon.ProjectileRadius, end.Amount, 1e-4f,
-                "the ground contact happens at the round's CENTRE height, i.e. one radius up");
+                "the ground contact happens at the round's CENTER height, i.e. one radius up");
             return math.distance(origin, end.Pos) / distance;
         }
 
@@ -196,7 +196,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(expected, farCut, 1e-3f,
                 "and at 20 m — the cut is a fraction of the line, not a fixed distance");
             Assert.AreEqual(2f * (1f - nearCut) * near, (1f - farCut) * far, 1e-2f,
-                "the owner-visible symptom: twice the range, twice the miss in metres");
+                "the owner-visible symptom: twice the range, twice the miss in meters");
         }
     }
 }

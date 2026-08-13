@@ -135,8 +135,11 @@ namespace Ring.Presentation
         /// pulse or the Gunner Fire-state glint on top of the base accent, then the
         /// hit-flash decay on top of that. Called once per render frame by
         /// `ViewRegistry.SyncMobs` for every live view (new AND continuing) — the
-        /// sole place `ApplyEmission` is invoked from, so there is exactly one
-        /// write to the property block per view per frame. `telegraphSeconds`
+        /// only place `ApplyEmission` is invoked from PER FRAME, so a continuing
+        /// view takes exactly one write to the property block per frame. The one
+        /// other caller is `Bind`, which blacks the block out on a pool rebind
+        /// and is followed by `Sync` in the same frame, so the frame a view is
+        /// rented carries two. `telegraphSeconds`
         /// (L-13 fix-round) is `ViewRegistry`'s own read of
         /// `_runner.Config.Chaser.TelegraphSeconds` (Task 43 — the facade's
         /// single config source, Р87) — the source of truth the ramp tracks

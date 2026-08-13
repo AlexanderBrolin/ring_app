@@ -183,7 +183,7 @@ namespace Ring.Presentation
         /// the counters, so `RenderSnapshot.Stats`/`WorldStats` are
         /// `BeginSlot`'s cleared zeros rather than measurements. Printed
         /// straight, those six lines are a complete, plausible and permanent
-        /// lie: nothing utilised, no waves held, no damage taken, and an
+        /// lie: nothing utilized, no waves held, no damage taken, and an
         /// accuracy of 0% for a player who spent the match shooting. The seed
         /// and the tweak marker are NOT dashed — they are the facade's own
         /// facts and true on either backend.

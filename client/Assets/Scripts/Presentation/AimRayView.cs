@@ -45,7 +45,7 @@ namespace Ring.Presentation
     /// from instead.
     ///
     /// STAGE 2 TASK 45b MOVED THE ORIGIN ONTO THE MODEL (bd `app-60c`). The ray
-    /// started at the hero's own centre lifted to that height — a point inside
+    /// started at the hero's own center lifted to that height — a point inside
     /// the collector's chest, which reads as a laser growing out of his sternum
     /// once the doll carries a real pistol. It now starts at the muzzle socket
     /// of the LOCAL player's doll (`ViewRegistry.TryGetPlayerView` on
@@ -63,7 +63,7 @@ namespace Ring.Presentation
     /// comes down, measured from the simulation's own muzzle
     /// (`AimProvider.CurrentImpactWorldPoint`). The line between them is
     /// therefore not the round's own line: the two origins sit a fraction of a
-    /// metre apart, so the drawn ray is a hair off parallel to the shot. What it
+    /// meter apart, so the drawn ray is a hair off parallel to the shot. What it
     /// gets right is the thing the player actually reads off it — the point at
     /// the far end.
     ///

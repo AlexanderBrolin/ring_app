@@ -115,7 +115,7 @@ namespace Ring.Networking.Server
     /// `SimulationWorld.TickAll`'s own length guards run first (fix-round 2,
     /// W7 — precise: a throw must never leave `_tick` half-bumped), and
     /// `_tick++` is the first MUTATION of state after them
-    /// (`SimulationWorld.cs:196`), so the property still reads 0 before the
+    /// (`SimulationWorld.cs:203`), so the property still reads 0 before the
     /// match's first tick has run at all. `OnPostTick` reads it TWICE, on
     /// purpose, once on each side of `TickAll`, and the two readings mean
     /// different things: `preTickWorldTick` (before) is "how many ticks were

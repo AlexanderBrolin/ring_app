@@ -21,8 +21,15 @@ namespace Ring.Presentation
     /// EMISSION LIVES HERE, POSE LIVES ON `PlayerVisual` — the exact
     /// `MobView`/`MobVisual` split this pair mirrors. `Bind` sets the
     /// pool-rebind baseline; `Sync` composes every per-frame accent and is the
-    /// sole caller of `ApplyEmission`, so there is exactly one property-block
-    /// write per doll per frame. Three accents compose here:
+    /// only place that COMPOSES one, so on the steady per-frame path there is
+    /// exactly one property-block write per doll per frame. Four methods call
+    /// `ApplyEmission` and the other three write a value rather than compose
+    /// it: `Bind` blacks the block out on a pool rebind (`ViewRegistry` calls
+    /// `Sync` right after, so a rebind frame carries two writes),
+    /// `FadeEmission` re-applies what `Sync` last composed for a slot the
+    /// frame has stopped carrying — `ViewRegistry` calls that one INSTEAD of
+    /// `Sync`, never beside it — and `DetachAsCorpse` writes black once and
+    /// for good. Three accents compose here:
     ///  - the Dash↔Slide combo-window pulse (В1 fix-wave 1, owner playtest item
     ///    3 "мерцание сборщика"): a sine at `GameFeelConfig.LinkWindowFlashHz`
     ///    on unscaled time (hitstop/slow-mo never touch it) while
@@ -84,7 +91,7 @@ namespace Ring.Presentation
         int _aimProxyCount;
         // Stage 2 Task 45c: the hit-flash pair, same shape and same unscaled
         // clock as `MobView`'s own — `Update` counts the timer down, `Sync`
-        // composes the resulting colour on top of whatever accent the frame
+        // composes the resulting color on top of whatever accent the frame
         // already has, so a flash never races the other accents for the last
         // property-block write.
         float _flashTimer;
@@ -289,7 +296,7 @@ namespace Ring.Presentation
         /// there is not one transparent material to fade an alpha on — so
         /// turning a doll translucent would mean a new material contract in the
         /// art track's zone. What goes out here is the emissive rim that marks a
-        /// stranger; the grey silhouette underneath stays lit by the scene until
+        /// stranger; the gray silhouette underneath stays lit by the scene until
         /// the doll is retired. So the pop is not abolished, it is made quieter
         /// and later: the thing that reads as "a player is there" dims away over
         /// half a second, and what vanishes at the end is an unlit shape the eye

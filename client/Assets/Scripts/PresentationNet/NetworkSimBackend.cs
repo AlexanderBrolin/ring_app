@@ -110,6 +110,15 @@ namespace Ring.Presentation.Net
     /// (see `Curr`) and the match statistics (see `HasMatchStats`).
     public sealed class NetworkSimBackend : ISimBackend
     {
+        /// How often the dev diagnostics line is written, in seconds of facade
+        /// frame time (`LogDiagnosticsTick`). A STRUCTURAL CONSTANT, not
+        /// balance: it tunes how coarse a log a playtest leaves behind, not
+        /// anything the game plays with (CR 6 is about the numbers a match is
+        /// decided by). Why one second rather than one line per frame is
+        /// argued once, in `LogDiagnosticsTick`'s own doc ("ONE LINE PER
+        /// SECOND, NOT PER FRAME") — not repeated here.
+        const float DiagnosticsLogIntervalSeconds = 1f;
+
         /// The block kinds this receiver understands. A kind absent from this
         /// list is walked past and counted by `SnapshotReader.
         /// SkippedBlockCount` (Р29), which would misreport a
@@ -117,13 +126,6 @@ namespace Ring.Presentation.Net
         /// know. All five are decoded as of Stage 2 Task 47a — `Liveness` was
         /// the one that was listed here and read by nobody, for want of a field
         /// to write it into (see `ReadLiveness`).
-        /// How often the dev diagnostics line is written, in seconds of facade
-        /// frame time (`LogDiagnosticsTick`). A STRUCTURAL CONSTANT, not
-        /// balance: it tunes how coarse a log a playtest leaves behind, not
-        /// anything the game plays with (CR 6 is about the numbers a match is
-        /// decided by).
-        const float DiagnosticsLogIntervalSeconds = 1f;
-
         static readonly byte[] KnownBlockKinds =
         {
             (byte)SnapshotBlockKind.Players,
@@ -289,7 +291,7 @@ namespace Ring.Presentation.Net
         // some for room (the header's `Truncated` bit) or the frame turned up
         // without all five blocks it must carry. `ReadFrame` already computes
         // that exact test for `StalePolicy`; this counts it. It is the honest
-        // client-side neighbour of the server's `NetStats.DroppedEntities`,
+        // client-side neighbor of the server's `NetStats.DroppedEntities`,
         // which lives in the other process and which nothing here can read.
         int _framesMissingEntities;
 
@@ -606,7 +608,7 @@ namespace Ring.Presentation.Net
         ///
         /// EVERY FIELD IS READ HERE, IN ONE PLACE, ON ONE FRAME. That is the
         /// point of the member: `NetDiagnostics`' own doc explains why
-        /// nineteen interface calls from `OnGUI` would be nineteen different
+        /// twenty-two interface calls from `OnGUI` would be twenty-two different
         /// moments, and this is where the single moment is taken.
         ///
         /// WHAT IS DELIBERATELY NOT IN IT, and this is a finding of this task
@@ -618,12 +620,23 @@ namespace Ring.Presentation.Net
         ///     replicate data, which never passes through this class at all.
         ///     FishNet does measure both directions, in
         ///     `NetworkTrafficStatistics`, and it is unreachable from code:
-        ///     `StatisticsManager.TryGetNetworkTrafficStatistics` refuses
-        ///     unless `_enableMode` is set, and that field is a
-        ///     `[SerializeField]` with no setter, so turning it on is a scene
+        ///     `StatisticsManager.TryGetNetworkTrafficStatistics`
+        ///     (FishNet 4.7.2, `Runtime/Managing/Statistic/
+        ///     StatisticsManager.cs:34`) hands the object out only when
+        ///     `IsEnabled()` says so, and that method's first test is
+        ///     `_enableMode == EnabledMode.Disabled`
+        ///     (`NetworkTrafficStatistics.cs:267-269`). `_enableMode` is a
+        ///     `[SerializeField]` whose only accessor is the getter
+        ///     `EnableMode` — no setter, unlike its neighbors `_updateClient`/
+        ///     `_updateServer`, which have `SetUpdateClient`/`SetUpdateServer`
+        ///     (same file, :54-57 and :74). So turning it on is a scene
         ///     edit. Counting only this class's own sends and calling the
         ///     result "up" would be an instrument that lies. The panel prints
-        ///     a dash and says why.
+        ///     a dash and says why. THIS NARROWS spec §3.12 and plan Т48,
+        ///     which both ask for bytes/s in BOTH directions: the outgoing
+        ///     half is not deferred work, it is a limit of the pinned package,
+        ///     and it is recorded as a decision here and in `NetDiagnostics`'
+        ///     own doc rather than left as a silent gap.
         ///   * `InputStarved`, `InputOverwritten`, `DroppedEntities`,
         ///     `EdgeRequestsRejected`. All four are the SERVER's
         ///     per-connection counters (`MatchServer`, `SnapshotAssembler`);
@@ -709,7 +722,7 @@ namespace Ring.Presentation.Net
         /// `FixedStepAccumulator` and answers a permanent zero for one — and
         /// the render clock takes care of a long frame by itself, refusing a
         /// delta that is not a positive finite number and snapping forward
-        /// onto its target past the configured threshold; neither behaviour is
+        /// onto its target past the configured threshold; neither behavior is
         /// something a caller may switch off.
         ///
         /// BUT THIS CLASS DID ACQUIRE A CLOCK OF ITS OWN IN TASK 48, AND IT IS
@@ -907,7 +920,7 @@ namespace Ring.Presentation.Net
             SyncMatchEpoch();
 
             // RAISED HERE AND NOWHERE ELSE, THOUGH THE EPOCH CHANGE IS USUALLY
-            // NOTICED IN THE BROADCAST HANDLER. Behind this event sit ten
+            // NOTICED IN THE BROADCAST HANDLER. Behind this event sit nine
             // ordinary Presentation components, and a throw out of any of them
             // inside FishNet's batched parsing loop abandons every message
             // behind this one in the same datagram. Deferring the raise to the
@@ -1654,6 +1667,18 @@ namespace Ring.Presentation.Net
                 // therefore describe a body's facing with one field and one
                 // expression, which is what lets `EnsureCorpse` carry no
                 // branch on which backend it is drawing.
+                //
+                // THE CONSTANT HAS ONE HOME, THE EXPRESSION HAS TWO, AND THE
+                // SECOND ONE IS THIS. `PlayerFlags.ToSyntheticState` places the
+                // synthetic aim point the same way for a LIVING doll whose
+                // `AimHeld` bit is set (`PlayerFlags.cs:125`); the line below is
+                // the DEAD branch, which that mapping deliberately does not
+                // cover — a cleared `Alive` bit there sets `Alive` false and
+                // touches nothing else, by that method's own doc. So the repeat
+                // is the price of keeping the corpse's facing out of the wire
+                // contract, not an oversight; what is NOT repeated is the
+                // distance itself, which both read from
+                // `PlayerFlags.SyntheticAimMeters`.
                 if (!state.Alive)
                     state.AimPoint = r.Pos + r.Dir * PlayerFlags.SyntheticAimMeters;
                 slot.Players[r.Index] = state;

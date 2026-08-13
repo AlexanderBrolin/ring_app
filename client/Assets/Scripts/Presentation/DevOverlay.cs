@@ -48,7 +48,7 @@ namespace Ring.Presentation
 
         /// Whether there is a network to describe at all. False in solo, where
         /// the whole section is omitted rather than drawn out of zeros: a zero
-        /// is indistinguishable from a measurement, and five of the lines
+        /// is indistinguishable from a measurement, and six of the lines
         /// below are red above zero — a permanent all-clear on a diagnostic
         /// nobody is feeding is exactly what the dashes elsewhere on this
         /// panel exist to prevent.
@@ -204,16 +204,21 @@ namespace Ring.Presentation
         /// absent, not empty.
         ///
         /// RED MEANS ILL HEALTH AND NOTHING ELSE, which is why most of these
-        /// lines are never red. Five counters go red above zero, and each is
-        /// something that should not happen on a healthy connection at
-        /// Critical Rule 7's own 80 ms / 5% — none of them is caused by packet
-        /// LOSS, which is ordinary and which the interpolation buffer exists
-        /// to absorb: they are reordering, duplication, a ring that overflowed,
-        /// a frame that arrived with entities missing, and a predicted round
-        /// the server never confirmed. The sixth red is the correction median
-        /// past the gate's own 0.25 m. Everything else — RTT, the tick trio,
+        /// lines are never red. SEVEN of the thirteen can go red. Six of them
+        /// are counters red above zero, each something that should not happen
+        /// on a healthy connection at Critical Rule 7's own 80 ms / 5% — none
+        /// of them is caused by packet LOSS, which is ordinary and which the
+        /// interpolation buffer exists to absorb: they are reordering,
+        /// duplication, a ring that overflowed, a frame that arrived with
+        /// entities missing, a predicted round the server never confirmed, and
+        /// the render clock's own snap count. That last one shares the `Clock:`
+        /// line with the slew, which is the clock working as designed and never
+        /// reddens — a snap is a visible jump in the moment being shown, so
+        /// only the count carries the verdict. The seventh red is the
+        /// correction median past the gate's own 0.25 m — the one threshold
+        /// that is not "above zero". Everything else — RTT, the tick trio,
         /// the byte rate, the queue occupancies, the simulator's settings —
-        /// is a reading rather than a verdict, and colouring it would be the
+        /// is a reading rather than a verdict, and coloring it would be the
         /// disease this task was opened to cure (`DroppedTime`, red from the
         /// first minute of every session and therefore meaningless).
         void DrawNetworkSection()

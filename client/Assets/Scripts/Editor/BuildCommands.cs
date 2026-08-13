@@ -49,10 +49,23 @@ namespace Ring.Editor
 
         /// The same client, built WITH `BuildOptions.Development` (Stage 2
         /// Task 44d, owner's playtest of Ф9). Separate entry point rather than
-        /// a flag on the three above: those produce the artifacts the stage
-        /// gates and milestones В2/В3 are measured on, and a build that
-        /// silently gained a define would invalidate exactly the measurements
-        /// they exist for.
+        /// a flag on the three above: those produce the artifacts the STAGE
+        /// GATES and the delivered build are taken from, and a build that
+        /// silently gained a define would invalidate exactly what they exist
+        /// for.
+        ///
+        /// GATES AND MILESTONES ARE NOT THE SAME AUDIENCE. The milestones
+        /// В1/В2/В3 are measured on the DEV pair, not on these three, because
+        /// their numbers are read off instruments that a release player does
+        /// not contain: В2 (plan Т53 Step 3) reads per-client traffic against
+        /// its 40 KB/s threshold off the dev overlay beside `docker stats`, and
+        /// В3 (plan Т56 Step 1) runs under 80 ms / 5% with the dev overlay's
+        /// own readouts. Both instruments are compiled behind
+        /// `UNITY_EDITOR || DEVELOPMENT_BUILD` (`DevOverlay.cs:1`; both
+        /// `DevLatencySetup.Apply` call sites), which is the same fact the
+        /// paragraph below states for Critical Rule 7. So these three targets
+        /// are what the gates and the shipped artifact are, and the two `Dev`
+        /// entry points below are what the milestone numbers are read on.
         ///
         /// WHAT THE DEFINE BUYS, AND WHY A RELEASE CLIENT CANNOT BE SMOKE-
         /// TESTED WITHOUT IT. `DEVELOPMENT_BUILD` is what compiles in every
@@ -74,9 +87,11 @@ namespace Ring.Editor
 
         /// The headless server, built WITH `BuildOptions.Development` (bd
         /// `app-p63`). Separate output path for the same reason the dev client
-        /// has one: `linux-server` is the artifact the stage gates and
-        /// milestones В2/В3 measure, and a build that silently gained a define
-        /// would invalidate exactly those measurements.
+        /// has one: `linux-server` is the artifact the stage gates and the
+        /// container deploy are taken from, and a build that silently gained a
+        /// define would invalidate exactly what that artifact exists for. This
+        /// one is the server half of the dev pair the milestones are measured
+        /// on — see `BuildLinuxClientDev` above for that split.
         ///
         /// WITHOUT IT MILESTONE В1 MEASURES HALF A LINK, AND THE OVERLAY STILL
         /// LOOKS RIGHT. The latency simulator delays only the OUTGOING side of

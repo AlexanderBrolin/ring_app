@@ -28,7 +28,7 @@ namespace Ring.Simulation.Combat
         /// WHY THE AIMED POINT IS NOT THE ANSWER, which is the whole defect
         /// (`app-bej`, owner smoke test #1 — "при ПКМ попадание в пол
         /// происходит не по мушке, а ближе к игроку"). `ProjectileSystem`
-        /// resolves the ground contact at the round's CENTRE height, i.e. when
+        /// resolves the ground contact at the round's CENTER height, i.e. when
         /// the sphere's underside touches the floor at `projectileRadius`, not
         /// at zero. A shot aimed at the floor therefore stops one radius' worth
         /// of the descent early — and since that is a share of the drop, not a

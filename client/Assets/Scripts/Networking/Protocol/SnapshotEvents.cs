@@ -147,7 +147,7 @@ namespace Ring.Networking.Protocol
         /// `ProjectileSpawned` only: the round's vertical speed, signed.
         public float VelZ;
 
-        /// Metres above ground: the muzzle height for `ProjectileSpawned`, the
+        /// Meters above ground: the muzzle height for `ProjectileSpawned`, the
         /// contact height for a `Blocked` `ProjectileEnded` (0 otherwise).
         public float Height;
 

@@ -160,7 +160,7 @@ namespace Ring.Presentation
         /// Trajectory.FloorCutFraction`'s answer and nothing is re-derived here
         /// — a shot aimed at the floor stops one projectile radius' worth of
         /// the descent early, because `ProjectileSystem` resolves the ground
-        /// contact at the round's CENTRE height (that method's own doc has the
+        /// contact at the round's CENTER height (that method's own doc has the
         /// measured numbers).
         ///
         /// THE LINE IS THE SIMULATION'S, NOT THE PICTURE'S. Both endpoints come
@@ -271,7 +271,7 @@ namespace Ring.Presentation
         /// cast above screens what the CAMERA cannot see past, and this camera
         /// is a rigid frame — `CameraRig` builds its offset from `CameraConfig`
         /// alone (pitch 55°, distance 18, no yaw), so a 3 m barrier throws a
-        /// screen shadow of only 3/tan(55°) ≈ 2.1 m at frame centre. A mob
+        /// screen shadow of only 3/tan(55°) ≈ 2.1 m at frame center. A mob
         /// standing further behind a barrier than that is unshadowed on screen,
         /// the cast reaches its proxy, and the head pulse, the zone tint and the
         /// marker would go back to promising a target a shot from a 1.0 m muzzle

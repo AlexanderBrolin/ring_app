@@ -178,7 +178,7 @@ namespace Ring.Simulation.Core
         /// path has no production caller — SimConfigBuilder rejects a
         /// zero-length wall — and SweepArena filters t == 1 on its own side,
         /// so the divergence is documented rather than smoothed over.
-        /// Fix-round 1 M-4: when halfW + padR &lt; 0, behaviour is UNDEFINED —
+        /// Fix-round 1 M-4: when halfW + padR &lt; 0, behavior is UNDEFINED —
         /// the end caps (candidates 2/3) work off `|R|` inside SegmentCircle's
         /// own quadratic, while the flat side (candidate 4) works off the
         /// signed `R`, so the two disagree about where the surface even is.
@@ -191,7 +191,7 @@ namespace Ring.Simulation.Core
             float2 axis = b - a;
 
             // Degenerate wall (zero-length axis): the stadium collapses to a
-            // circle of radius halfW centred on a — SegmentCircle already IS
+            // circle of radius halfW centered on a — SegmentCircle already IS
             // that shape, so delegate rather than duplicate it.
             if (math.lengthsq(axis) < 1e-12f)
                 return SegmentCircle(p0, p1, padR, a, halfW, out t);
@@ -225,7 +225,7 @@ namespace Ring.Simulation.Core
             float d1 = math.dot(p1 - a, n);
             // The |d1-d0| and tb<=1f checks below are defensive-only, not
             // load-bearing: fix-round 1 review verified both branches are
-            // behaviourally equivalent to removing the check on every
+            // behaviorally equivalent to removing the check on every
             // fixture tried (tb's own [0,1] lower bound and the s-interior
             // check downstream already exclude the cases these would). Kept
             // for robustness against inputs neither review nor the test
@@ -233,7 +233,7 @@ namespace Ring.Simulation.Core
             if (math.abs(d1 - d0) >= 1e-12f)
             {
                 float r = halfW + padR;
-                // d0 == 0f (path starts exactly ON the band's centreline) is
+                // d0 == 0f (path starts exactly ON the band's centerline) is
                 // safe even though math.sign(0f) == 0f makes target == 0:
                 // tb then resolves to 0 and contact == p0. When R > 0 (the
                 // usual case) candidate 1 above would already have caught p0
@@ -292,7 +292,7 @@ namespace Ring.Simulation.Core
         /// Mirrors PushOutOfCircle for the stadium shape (Stage 2 Task 11).
         /// The degenerate-normal fallback differs from PushOutOfCircle's
         /// plain (1,0): sitting exactly on the wall's axis is not
-        /// direction-agnostic the way sitting at a circle's centre is —
+        /// direction-agnostic the way sitting at a circle's center is —
         /// pushing along the axis would slide the body along the wall
         /// instead of clearing it, and Depenetrate's next iteration would
         /// find it still penetrating. The fallback is instead the axis' own
@@ -412,7 +412,7 @@ namespace Ring.Simulation.Core
                     // covers both the flat side (projection lands in the
                     // interior, delta ⊥ axis) and a rounded cap (projection
                     // lands on an endpoint, delta is radial from that cap's
-                    // own centre). sideRef = p0 for the on-axis fallback's
+                    // own center). sideRef = p0 for the on-axis fallback's
                     // side test — fix-round 1 M-7: this branch only runs when
                     // the CONTACT sits exactly on the axis, which forces p0
                     // onto the axis too (the start-inside branch of
@@ -444,9 +444,9 @@ namespace Ring.Simulation.Core
 
         /// Surface normal of the arena's outer ring boundary at `contact` —
         /// inward, because the only side a body can touch that boundary from is
-        /// the inside. The ring is centred on the sim origin, so the outward
+        /// the inside. The ring is centered on the sim origin, so the outward
         /// radial IS the normalized contact point and the inward one is its
-        /// negation; the (1,0) fallback covers a contact exactly at the centre,
+        /// negation; the (1,0) fallback covers a contact exactly at the center,
         /// which a real ring contact cannot be (SweepArena's own branch above
         /// only reaches this for a sweep that crossed |p| = Radius - padR) but
         /// which normalizesafe must be told what to do about anyway.
@@ -493,7 +493,7 @@ namespace Ring.Simulation.Core
         /// dependency on world state, and Ring.Data (the builder's home)
         /// should not have to reach into the stateful world class just to
         /// call a formula. Solo (playerCount <= 1) spawns at the arena
-        /// center, unchanged from the pre-Stage-2 single-player behaviour
+        /// center, unchanged from the pre-Stage-2 single-player behavior
         /// (189 pre-Stage-2 tests depend on it); otherwise index sits on a
         /// ring at Radius * PlayerSpawnRingFrac, evenly spaced by angle, with
         /// no seed-dependent rotation — spawn layout must stay reproducible

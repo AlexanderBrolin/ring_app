@@ -480,7 +480,7 @@ namespace Ring.Data
         /// derives its own body radius the same way.
         ///
         /// Spawn coverage reuses Geometry.SpawnPosFor over the same candidate set
-        /// the obstacle loop walks (solo centre + every ring size up to
+        /// the obstacle loop walks (solo center + every ring size up to
         /// MaxPlayers), and the "spawn ring is not locked" rule mirrors
         /// WaveSystem.TryFindSpawnPos' RNG-free FallbackSlots grid.
         static void ValidateWalls(List<string> errors, in SimConfig cfg, float spawnClearance)

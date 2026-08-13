@@ -21,7 +21,7 @@ namespace Ring.Simulation.Tests
     ///
     /// ARENA CAP IS A FIXTURE, NEVER THE BARE LITERAL 3 (brief §4/§2.2):
     /// `ArenaCap` below reads `TestConfigs.Default().Arena.MaxPlayers` — the
-    /// SAME number `SimConfigBuilder.cs:374` validates and `ArenaConfig.cs:84`
+    /// SAME number `SimConfigBuilder.cs:377` validates and `ArenaConfig.cs:84`
     /// ships as `[Range(1,3)]` — so a future rebalance of the arena's cap
     /// doesn't silently desync this file from the number `Ring.Server`
     /// actually receives at runtime. `ArenaCapIsHandedIn_NotHardcoded` is the

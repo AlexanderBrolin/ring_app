@@ -82,9 +82,9 @@ namespace Ring.Networking
     ///   1. UNITS. `UniversalTickSmoother.cs:448` caches the threshold SQUARED
     ///      (`TeleportThreshold * TeleportThreshold`) while the value it is
     ///      compared against — `MoveRates.cs:216-218` against `distance` from
-    ///      `Vectors.cs:26-30` — is a plain `Vector3.Distance` in metres. The
-    ///      inspector number therefore behaves as metres² and coincides with
-    ///      metres at exactly 1.0 and nowhere else; the moment an owner retuned
+    ///      `Vectors.cs:26-30` — is a plain `Vector3.Distance` in meters. The
+    ///      inspector number therefore behaves as meters² and coincides with
+    ///      meters at exactly 1.0 and nowhere else; the moment an owner retuned
     ///      `ReconcileSnapMeters` to 2, the smoother would snap at 4 m.
     ///   2. QUANTITY. It is not a correction threshold at all. What it is
     ///      compared against is the transform delta BETWEEN TWO TICKS
@@ -207,7 +207,7 @@ namespace Ring.Networking
         /// On the server the data is the WORLD's — and there is NO reconcile at
         /// all until the world has produced one (fix-round 1). Before that,
         /// `_authoritativeState` is `default(PlayerState)`, whose `Alive` is
-        /// false and whose position is the arena centre: sending it would tell
+        /// false and whose position is the arena center: sending it would tell
         /// every client it is dead at the origin, on every tick between spawn
         /// and the first world update.
         ///
@@ -354,7 +354,7 @@ namespace Ring.Networking
         /// A `PlayerDied` for our own index has been seen (Р41/Р59).
         public bool OwnDeathReported => _ownDeathReported;
 
-        /// How far the PICTURE jumped at the last reconciliation, in metres —
+        /// How far the PICTURE jumped at the last reconciliation, in meters —
         /// see `FinishReconcile` for why that is a different number from "how
         /// far the server disagreed". Drives the snap-versus-smooth decision
         /// (Р78) and is the quantity the lag gate's own median is written in
@@ -375,7 +375,7 @@ namespace Ring.Networking
         public int CorrectionCount => _corrections.Count;
 
         /// The median correction over the last
-        /// `CorrectionWindowSamples` of them, in metres — §3.14 item 7's
+        /// `CorrectionWindowSamples` of them, in meters — §3.14 item 7's
         /// quantity, whose gate threshold is 0.25 m. Meaningless while
         /// `CorrectionCount` is zero.
         public float CorrectionMedianMeters => _corrections.MedianMeters;
@@ -484,8 +484,8 @@ namespace Ring.Networking
         /// `RTT/2 + StateInterpolation` ticks in the past. Measuring the
         /// distance between those two is measuring how far the player has
         /// MOVED since, not how wrong the client was: at 30 Hz on the run that
-        /// is around a metre of "correction" with prediction working
-        /// perfectly, and several metres in a dash, which would snap the
+        /// is around a meter of "correction" with prediction working
+        /// perfectly, and several meters in a dash, which would snap the
         /// graphic on nearly every reconcile and would report the lag gate's
         /// own median (§3.14 item 7, threshold 0.25 m) at four times its limit
         /// on flawless code.
@@ -499,15 +499,15 @@ namespace Ring.Networking
         ///
         /// Idempotent and safe to call spuriously: `OnPostReconcile` fires once
         /// per state packet for the whole `PredictionManager`, including cycles
-        /// in which this behaviour reconciled nothing.
+        /// in which this behavior reconciled nothing.
         /// THE WINDOW IS FED FROM HERE AND FROM NOWHERE ELSE (Stage 2 Task
         /// 48), for the reason the paragraphs above give: this is the one
         /// moment at which the correction is a real quantity. Recording it in
         /// `BeginReconcile` instead would fill the lag gate's median with "how
-        /// far the player moved during half an RTT", which is around a metre
+        /// far the player moved during half an RTT", which is around a meter
         /// at 30 Hz on a flawless client — four times the gate's own 0.25 m
         /// threshold. The guarded early return above therefore guards the
-        /// sample too: a spurious `OnPostReconcile` for a cycle this behaviour
+        /// sample too: a spurious `OnPostReconcile` for a cycle this behavior
         /// reconciled nothing in must not add a duplicate of the previous
         /// correction, which would drag the median toward whatever the last
         /// real one was.

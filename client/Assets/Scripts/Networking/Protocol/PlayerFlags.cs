@@ -60,7 +60,7 @@ namespace Ring.Networking.Protocol
     public static class PlayerFlags
     {
         /// How far downrange the synthetic `AimPoint` is placed along the
-        /// heading, in metres. A COSMETIC PLACEMENT DISTANCE, not a balance
+        /// heading, in meters. A COSMETIC PLACEMENT DISTANCE, not a balance
         /// number: the flags byte says "aiming" and carries no aim point, while
         /// the doll only needs a point far enough away for the aim pose to face
         /// the right way. It is a constant here, and not a `SimConfig` field,

@@ -87,7 +87,7 @@ namespace Ring.Data
         // 1 ± SlewFraction instead of jumping. Sits next to
         // RenderClockSnapTicks because the two are the same clock's two
         // correction modes, and it is a FIELD rather than a code constant for
-        // the same reason its three neighbours are: NetTimings' other numbers
+        // the same reason its three neighbors are: NetTimings' other numbers
         // all come off this asset, and a fourth one living in code would be an
         // exception without a cause. It is also a taste knob, and taste is
         // tuned by playtest in the .asset, not by recompiling.

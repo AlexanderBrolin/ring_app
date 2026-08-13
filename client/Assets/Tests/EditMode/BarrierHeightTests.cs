@@ -83,7 +83,7 @@ namespace Ring.Simulation.Tests
                 "the shared arena baseline must mean 'no modelled top' — the golden scenarios "
                 + "run off it and a projectile's Height/VelZ both feed StateHash");
 
-            // And the behaviour that value stands for: a round on a line no
+            // And the behavior that value stands for: a round on a line no
             // barrier could plausibly reach is still stopped by one.
             SimConfig c = Field(0f);
             const float obstacleX = 6f, obstacleRadius = 1.5f, flightHeight = 12f;
@@ -264,7 +264,7 @@ namespace Ring.Simulation.Tests
             const float obstacleX = 5f, obstacleRadius = 1.5f, entryHeight = 3.5f;
             PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
             float2 start = new float2(obstacleX - 0.5f, 0f);
-            // One metre of descent per tick: the whole step is expressed inside
+            // One meter of descent per tick: the whole step is expressed inside
             // the very tick the contact happens on.
             float velZ = -1f / SimulationWorld.TickDt;
             float stepEndHeight = entryHeight + velZ * SimulationWorld.TickDt;
@@ -336,7 +336,7 @@ namespace Ring.Simulation.Tests
 
         /// The pair below pins the gate's THIRD argument, the round's own
         /// radius (fix-round 1, Ф-1). Every other fixture in this file clears
-        /// or misses the crown by whole metres, so substituting `0f` for
+        /// or misses the crown by whole meters, so substituting `0f` for
         /// `proj.Radius` there changes no verdict at all: the suite stays green
         /// while a band `ProjectileRadius` tall opens over the crown of every
         /// interior barrier and rounds start passing through it. These two sit

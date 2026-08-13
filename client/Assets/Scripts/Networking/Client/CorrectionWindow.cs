@@ -1,7 +1,7 @@
 namespace Ring.Networking.Client
 {
     /// Stage 2 Task 48 (plan Ф9 :2100-2107, spec §3.14 item 7): the rolling
-    /// MEDIAN of reconciliation corrections, in metres — the one number
+    /// MEDIAN of reconciliation corrections, in meters — the one number
     /// milestone В3's lag gate is written in, and the number nothing in this
     /// project computed before this class.
     ///
@@ -17,7 +17,7 @@ namespace Ring.Networking.Client
     /// The gate compares one number against 0.25 m. Corrections are not
     /// normally distributed: prediction is exact most of the time (a perfect
     /// replay reconciles to EXACTLY zero — see `FinishReconcile`) and wrong by
-    /// metres when it is wrong at all, because what makes it wrong is a
+    /// meters when it is wrong at all, because what makes it wrong is a
     /// mispredicted dash or a state packet that arrived after a stall. One such
     /// sample moves a mean over a window of 256 by four centimetres and can
     /// hold the reported figure above the threshold on its own; it moves a
@@ -103,7 +103,7 @@ namespace Ring.Networking.Client
         /// double as "no samples" and no sentinel median is invented.
         public int Count => _count;
 
-        /// The median magnitude of the last `Capacity` corrections, in metres.
+        /// The median magnitude of the last `Capacity` corrections, in meters.
         /// Meaningless while `Count` is zero — read that first.
         ///
         /// An even sample count takes the MEAN OF THE TWO MIDDLE SAMPLES, the
@@ -121,7 +121,7 @@ namespace Ring.Networking.Client
             }
         }
 
-        /// One reconciliation correction, as a distance in metres. Called from
+        /// One reconciliation correction, as a distance in meters. Called from
         /// `PlayerPredictionCore.FinishReconcile` — the moment, and the only
         /// moment, at which "how far did the picture jump" is a real quantity
         /// (that method's own doc has the whole argument).

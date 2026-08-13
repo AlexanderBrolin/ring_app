@@ -27,10 +27,17 @@ namespace Ring.Networking.Client
     /// refusal. In the Editor and in a development build (that file opens by
     /// defining `DEVELOPMENT` as `UNITY_EDITOR || DEVELOPMENT_BUILD`) the loop
     /// has no try/catch at all and the exception escapes into the transport's
-    /// receive callback. In the production player this project actually ships
-    /// (`BuildCommands` never sets `BuildOptions.Development`) the same loop is
-    /// wrapped in a try/catch compiled in exactly when `DEVELOPMENT` is NOT
-    /// defined, and that catch does one thing: `LogError` naming the packet id.
+    /// receive callback. THIS PROJECT BUILDS BOTH KINDS OF PLAYER, so both
+    /// branches are reachable in a shipped artifact: `BuildCommands` passes
+    /// `BuildOptions.Development` from `BuildLinuxClientDev` and
+    /// `BuildLinuxServerDev`, and passes it from nowhere else — `BuildLinuxClient`,
+    /// `BuildWindowsClient` and `BuildLinuxServer` get no such define. In those
+    /// three the same loop is wrapped in a try/catch compiled in exactly when
+    /// `DEVELOPMENT` is NOT defined, and that catch does one thing: `LogError`
+    /// naming the packet id. Which branch a given number was read under is not
+    /// academic: milestone В1 is measured on the DEV pair (the overlay and the
+    /// latency simulator only exist there), so a В1 reading runs under the FIRST
+    /// branch, where nothing catches at all.
     ///
     /// WHAT IT COSTS IS A FRAME OF DATA, SILENTLY. Either way the throw leaves
     /// the loop, so every message batched BEHIND the one that threw is never

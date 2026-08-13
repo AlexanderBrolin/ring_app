@@ -655,7 +655,7 @@ namespace Ring.Simulation.Core
         /// chaser's fist, the KillPlayerForTest seam). Credit is gated on that
         /// sentinel for exactly the reason DamageMob's own `ownerIndex` guard
         /// documents, and here the gate is load-bearing rather than
-        /// defence-in-depth: mob-owned blows on a player are the COMMON case, so
+        /// defense-in-depth: mob-owned blows on a player are the COMMON case, so
         /// an unguarded increment would both credit a nonexistent shooter and
         /// index `_players[NoOwner]` out of range.
         /// Self-damage is impossible by construction — ProjectileSystem's gather
@@ -676,7 +676,7 @@ namespace Ring.Simulation.Core
             // Only the i-frame half of that is reachable from production today
             // (and both of its directions are pinned by
             // PvpDamageTests.IframesAbsorbPvpDamage); the posthumous half is
-            // defence-in-depth: both production callers re-check Alive right
+            // defense-in-depth: both production callers re-check Alive right
             // before calling in — ProjectileSystem's gather phase gates on
             // player.Alive once per projectile, and MobAiSystem re-runs
             // Targeting.NearestAlivePlayer once per mob per tick — and nothing
@@ -851,12 +851,12 @@ namespace Ring.Simulation.Core
         }
 
         /// Test-only alias for SpawnMob (Task 16 Interfaces, retargeted in Task 22
-        /// once the battle spawn path existed — same cap/id/StrafeSign behaviour,
+        /// once the battle spawn path existed — same cap/id/StrafeSign behavior,
         /// named for test call-sites). Now also emits MobSpawned like the battle
         /// path does; no EditMode test asserts a specific MobSpawned count/absence
         /// (checked by grep — call-sites either don't inspect events at all or
         /// ClearEvents() before the window they measure), so this is not a
-        /// behavioural change any existing test depends on.
+        /// behavioral change any existing test depends on.
         internal int SpawnMobForTest(MobType type, float2 pos) => SpawnMob(type, pos);
 
         /// Test-only wrapper over SpawnProjectile (Task 16 Interfaces) — same spawn
@@ -893,7 +893,7 @@ namespace Ring.Simulation.Core
                 HitZone.Body, new float2(1f, 0f));
 
         /// Test-only seam (Task 8 Interfaces): exposes the private Sanitize step
-        /// so tests can assert the AimHeight NaN-map/clamp behaviour directly,
+        /// so tests can assert the AimHeight NaN-map/clamp behavior directly,
         /// without threading it through a full Tick(). Stage 2 Task 4: stays a
         /// thin, single-argument call into index 0 — HostileInput_*/Sanitize_*
         /// tests are not rewritten.
@@ -1106,7 +1106,7 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.PostDashSlideTimer); h = StateHash64.Add(h, p.LinkWindowTimer);
             // Stage 2 Task 10: the two edge-request rate-limit counters — real
             // per-player state that survives across ticks and decides whether the
-            // next request is honoured, so a replay/rollback that dropped them
+            // next request is honored, so a replay/rollback that dropped them
             // would diverge the moment a request lands.
             h = StateHash64.Add(h, p.DashRequestCooldownTicks);
             h = StateHash64.Add(h, p.SlideRequestCooldownTicks);

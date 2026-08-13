@@ -213,7 +213,7 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(frozen.PlayerKnown[0], "the frozen half still knows seat 0");
             Assert.IsFalse(frozen.Players[0].Alive, "and still says it is down — a corpse, not an absence");
             Assert.IsFalse(frozen.PlayerAliveInMatch[0], "the roster fact survives the freeze too");
-            Assert.IsTrue(frozen.PlayerKnown[1], "a living neighbour is unaffected");
+            Assert.IsTrue(frozen.PlayerKnown[1], "a living neighbor is unaffected");
             Assert.IsTrue(frozen.PlayerAliveInMatch[1]);
         }
     }

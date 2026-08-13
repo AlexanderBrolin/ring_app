@@ -22,7 +22,7 @@ namespace Ring.Simulation.Combat
         // obstacle the round actually cleared. Its number is appended rather
         // than inserted so the existing kinds keep their values — nothing
         // serializes these, but the packing order below reads as a table and a
-        // renumbering would make every neighbouring comment lie.
+        // renumbering would make every neighboring comment lie.
         const int HitNone = 0, HitBarrier = 1, HitMob = 2, HitPlayer = 3, HitFloor = 4,
             HitRingWall = 5;
 
@@ -118,7 +118,7 @@ namespace Ring.Simulation.Combat
                 }
 
                 // Floor candidate (Task 7): a descending shot (VelZ < 0) crosses
-                // the ground when its centre height reaches Radius (the sphere's
+                // the ground when its center height reaches Radius (the sphere's
                 // underside at z = 0). t_floor solves proj.Height + t*VelZ*dt =
                 // Radius for t; only gathered when that crossing genuinely falls
                 // within THIS tick's step — clipped to [0,1] the same way
@@ -267,7 +267,7 @@ namespace Ring.Simulation.Combat
                         float dmg = proj.Damage * hitMult;
                         // Stage 2 Task 44a (bd app-dsh): this branch used to
                         // remove the round without emitting anything at all,
-                        // while every neighbouring branch emits — so a PvP hit
+                        // while every neighboring branch emits — so a PvP hit
                         // produced no end-of-round event, the client's ghost
                         // tracer had to time out instead of being cut, and
                         // ADR-001 §10's per-hit feedback had nothing to fire on.

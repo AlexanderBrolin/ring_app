@@ -69,7 +69,7 @@ namespace Ring.Simulation.Tests
             return new ClientEventQueue(in timings, eventBudget);
         }
 
-        /// One already-decoded event on `tick`, labelled by its `EntityId`.
+        /// One already-decoded event on `tick`, labeled by its `EntityId`.
         /// As of Task 44d the queue holds finished `SimEvent`s rather than
         /// wire records — the record's payload fields point into a FishNet
         /// receive buffer that is gone by the time an event is due — and the

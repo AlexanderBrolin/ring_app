@@ -153,7 +153,7 @@ namespace Ring.Presentation
         // distinction is the same one `_corpses` draws and it earns its keep at
         // three read sites, each of which would otherwise draw a fact at a place
         // that has stopped being true: `TryGetPlayerView`, `DispatchToDoll` and
-        // `EnsureCorpse`. Every one of the three restores exactly the behaviour
+        // `EnsureCorpse`. Every one of the three restores exactly the behavior
         // that predates this task, where the doll was already in the pool by
         // then and each of those lookups simply found nothing.
         //
@@ -424,7 +424,7 @@ namespace Ring.Presentation
         /// лежит" — quoted in full, with its recorded address, in this class's
         /// own doc (Stage 2 Task 45a fix-round 1), which is the only place that
         /// wording comes from: it is NOT a line of `client/CLAUDE.md`, whose
-        /// rule about bodies is the neighbouring "трупы не исчезают до конца
+        /// rule about bodies is the neighboring "трупы не исчезают до конца
         /// матча". The body is made by the FRAME instead, in `EnsureCorpse`,
         /// where a position actually exists; if the frame never carries that
         /// slot again, no body is drawn at all, which is right — this client
@@ -623,7 +623,7 @@ namespace Ring.Presentation
         /// calls this same method unconditionally for any player-owned shot,
         /// and this refusal remains the only thing keeping a `ShotHeard` from
         /// throwing brass at a stale spot. That is the F-3 defect in a
-        /// narrower window, and the narrower window is not a defence. Before
+        /// narrower window, and the narrower window is not a defense. Before
         /// this task the doll was already pooled by then and this lookup found
         /// nothing; the line below is what keeps that true.
         public bool TryGetPlayerView(int slot, out PlayerView view)
@@ -683,7 +683,7 @@ namespace Ring.Presentation
         /// `Players[LocalPlayerIndex]`, and with nothing writing that seat
         /// `BeginSlot`'s `default(PlayerState)` read as the ARENA ORIGIN: the
         /// camera did not stay over the place of death looking at nothing, it
-        /// smooth-damped away to the geometric centre. Both halves of that are
+        /// smooth-damped away to the geometric center. Both halves of that are
         /// closed — the seat is written, and the camera follows
         /// `SimulationRunner.ObservedIndex` rather than the local seat at all.
         ///

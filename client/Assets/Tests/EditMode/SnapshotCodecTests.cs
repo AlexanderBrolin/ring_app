@@ -503,7 +503,7 @@ namespace Ring.Simulation.Tests
         {
             // Not a hostile-input case but a caller-sequencing one. It is
             // guarded all the same because the alternative to a guard is
-            // undefined behaviour in a parser of untrusted bytes: without it
+            // undefined behavior in a parser of untrusted bytes: without it
             // the header's own bytes would be handed back as a block whose
             // "kind" is the protocol version.
             byte[] frame = BuildTwoBlockFrame();

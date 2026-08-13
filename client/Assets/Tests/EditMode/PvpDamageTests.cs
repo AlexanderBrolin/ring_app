@@ -15,7 +15,7 @@ namespace Ring.Simulation.Tests
     {
         /// Open arena, no spread/recoil, immobile mobs: every fixture below
         /// places bodies by hand and measures which one a single round reaches,
-        /// so a wandering target or a randomised muzzle angle would move the
+        /// so a wandering target or a randomized muzzle angle would move the
         /// contact point the expectations are built from. Same shape (and same
         /// reasons) as HitZoneTests.Range().
         static SimConfig Range()
@@ -34,7 +34,7 @@ namespace Ring.Simulation.Tests
         /// the very next tick and no fixture has to budget for flight time.
         const float TargetX = 1f;
 
-        /// Shooter (player 0) at the origin, victim (player 1) TargetX metres
+        /// Shooter (player 0) at the origin, victim (player 1) TargetX meters
         /// down the +X axis.
         static SimulationWorld Duel(out SimConfig c)
         {
@@ -310,7 +310,7 @@ namespace Ring.Simulation.Tests
                 "HitDir is the round's travel direction at contact — this shot flies straight down +X");
             Assert.AreEqual(0f, hit.HitDir.y, 1e-3f);
             Assert.Greater(hit.Pos.x, 0f,
-                "Pos is the CONTACT point, somewhere between the muzzle and the victim's centre");
+                "Pos is the CONTACT point, somewhere between the muzzle and the victim's center");
             Assert.LessOrEqual(hit.Pos.x, TargetX + 1e-3f);
         }
 

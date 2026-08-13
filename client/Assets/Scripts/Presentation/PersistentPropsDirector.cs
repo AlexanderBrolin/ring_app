@@ -340,7 +340,7 @@ namespace Ring.Presentation
         /// Stage 2 Task 45b (bd `app-e2n`, owner smoke test #1: "гильзы падают
         /// ПЕРЕД пистолетом"): the brass leaves the shooter's own EJECTION PORT
         /// — the socket on that doll's gun — instead of the simulation's muzzle
-        /// point, which is the hero's centre plus `WeaponConfig.MuzzleOffset`
+        /// point, which is the hero's center plus `WeaponConfig.MuzzleOffset`
         /// along the aim and therefore lands the shell a barrel's length in
         /// front of the model.
         ///

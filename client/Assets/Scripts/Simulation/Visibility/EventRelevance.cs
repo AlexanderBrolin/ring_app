@@ -165,7 +165,7 @@ namespace Ring.Simulation.Visibility
                     // leak another player's Stamina economy) — exact
                     // position, gated purely on identity, never on
                     // visibility. Task 21 fix-round 1 (I-1): `deliveredPos`
-                    // must still honour the `false`-return-means-`default`
+                    // must still honor the `false`-return-means-`default`
                     // contract documented above — assigning `ev.Pos`
                     // unconditionally here (as the pre-fix-round code did)
                     // would hand a caller that trusts the `out` value
@@ -181,7 +181,7 @@ namespace Ring.Simulation.Visibility
                 case DeliveryChannel.All:
                     // Spec Р28 requires this channel to carry NO position at
                     // all — today's WaveStarted/WaveCleared position comes from
-                    // whichever player happens to be nearest the arena centre
+                    // whichever player happens to be nearest the arena center
                     // (WaveSystem.Update) and must never reach the wire, or
                     // every observer would learn that player's location for
                     // free every wave.

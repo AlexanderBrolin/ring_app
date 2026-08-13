@@ -152,7 +152,7 @@ namespace Ring.Simulation.Tests
         /// slide-adjacent stamina-regen timing tests (regen frozen for the
         /// whole slide even once the post-action delay alone would have
         /// elapsed; buffer-window regen catch-up) have enough headroom to
-        /// observe the behaviour deterministically instead of racing it.
+        /// observe the behavior deterministically instead of racing it.
         public static SimConfig RegenFixture()
         {
             var c = Open();

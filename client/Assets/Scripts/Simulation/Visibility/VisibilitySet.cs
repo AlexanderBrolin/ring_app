@@ -90,7 +90,7 @@ namespace Ring.Simulation.Visibility
     /// Synthetic id space for players inside a VisibilitySet (Р20 context):
     /// PlayerState carries no Id field of its own, and MobState.Id is drawn
     /// from SimulationWorld's private _nextEntityId counter, which starts at
-    /// 1 and only grows (SimulationWorld.cs:67, :518, :813) — every REAL
+    /// 1 and only grows (SimulationWorld.cs:74, :544, :839) — every REAL
     /// entity id is therefore >= 1, leaving the negative integers free for a
     /// synthetic, disjoint player id space. This is the single seam that
     /// writes "-(index + 1)" (the "+1" keeps player 0 from mapping to 0,

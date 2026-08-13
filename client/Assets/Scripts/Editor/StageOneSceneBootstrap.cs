@@ -255,7 +255,7 @@ namespace Ring.Editor
     /// `GunEjectLocalEuler`.
     /// Stage 2 Task 47b (spec §3.10, the owner's decisions 4a/4b of
     /// 2026-08-11) adds the two objects a spectator needs and nothing else.
-    /// `HUD/SpectateLabel` is a `TMP_Text` on the HUD canvas, top-centre,
+    /// `HUD/SpectateLabel` is a `TMP_Text` on the HUD canvas, top-center,
     /// wired into `HudController._spectateLabel`, LEFT DISABLED IN THE SCENE
     /// (fix-round 1) and shown only while this client is watching somebody
     /// else — the object's shipped state has to be the state the game loads
@@ -1088,7 +1088,7 @@ namespace Ring.Editor
                 backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
                 fillColor: gameFeel.StaminaBarFullColor, ref sceneDirty);
             TMP_Text waveText = GetOrCreateWaveText(hudGo.transform, ref sceneDirty);
-            // Stage 2 Task 47b: the spectator's own line, top-centre between the
+            // Stage 2 Task 47b: the spectator's own line, top-center between the
             // two corners the bars and the wave counter already hold. Hidden by
             // `HudController` on every frame this client is watching its own
             // player, which is the whole of solo — so a solo screen gains
@@ -2979,7 +2979,7 @@ namespace Ring.Editor
         /// spectate line joined it — a second hand-written copy of the same
         /// eleven lines is exactly the duplication AGENT.md rule 2 forbids).
         /// Distinct from `GetOrCreateOverlayText` above, which anchors to the
-        /// CENTRE of a modal panel and stacks by pixel offset.
+        /// CENTER of a modal panel and stacks by pixel offset.
         ///
         /// `anchor` sets `anchorMin`, `anchorMax` and `pivot` together: a HUD
         /// label is a point on the screen with text hanging off it, so the three

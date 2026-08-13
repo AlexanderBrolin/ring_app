@@ -8,7 +8,7 @@ namespace Ring.Simulation.Core
         public float MaxSpeed, Accel, Friction, Radius, MaxHp,
             DashSpeed, DashDuration, DashCooldown, DashIframes, DashBufferWindow;
 
-        /// Vertical hit-zone bounds (metres above ground) and per-zone damage
+        /// Vertical hit-zone bounds (meters above ground) and per-zone damage
         /// multipliers for the raycast aim system (Task 4+).
         public float LegsTop, BodyTop, HeadTop,
             LegsDamageMult, BodyDamageMult, HeadDamageMult;
@@ -63,7 +63,7 @@ namespace Ring.Simulation.Core
             StrafeSpeed, FireInterval, ProjectileSpeed, ProjectileRadius, ProjectileLifetime,
             ProjectileDamage, LeadFactor, SeparationRadius, SeparationStrength, AvoidLookahead;
 
-        /// Vertical hit-zone bounds (metres above ground) and per-zone damage
+        /// Vertical hit-zone bounds (meters above ground) and per-zone damage
         /// multipliers for the raycast aim system (Task 4+); MuzzleHeight is read for the
         /// Gunner archetype only.
         public float LegsTop, BodyTop, HeadTop,
@@ -161,7 +161,7 @@ namespace Ring.Simulation.Core
 
         /// Stage 2 Task 46 (bd app-r8x): height of every INTERIOR barrier —
         /// the obstacle circles and the stadium walls above share this one
-        /// number, in metres above the floor (y = 0). A round whose whole
+        /// number, in meters above the floor (y = 0). A round whose whole
         /// remaining step sits above it passes over the barrier instead of
         /// being stopped by it (ProjectileSystem.AcceptCandidate).
         ///
@@ -169,7 +169,7 @@ namespace Ring.Simulation.Core
         /// stops a shot at any height, which is what every barrier did before
         /// this field existed. That is the C# default of this struct, so every
         /// hand-built fixture — and with it the golden scenarios — keeps the
-        /// pre-Task-46 behaviour without stating anything.
+        /// pre-Task-46 behavior without stating anything.
         ///
         /// ONE NUMBER, NOT ONE PER BARRIER (owner decision 2026-08-11): with a
         /// shared height "cleared one interior barrier" means "cleared them

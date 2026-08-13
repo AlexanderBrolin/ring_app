@@ -596,8 +596,8 @@ namespace Ring.Simulation.Tests
         public void Validate_WallOverPlayerSpawn_Throws()
         {
             // Same contract the obstacle loop already has: every candidate spawn
-            // point (solo centre + every ring size up to MaxPlayers) must stay
-            // clear. This wall is laid straight through the arena centre.
+            // point (solo center + every ring size up to MaxPlayers) must stay
+            // clear. This wall is laid straight through the arena center.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(-5f, 0f), B = new Vector2(5f, 0f), HalfWidth = 0.8f } };

@@ -82,7 +82,7 @@ namespace Ring.Presentation
     /// the muzzle socket of THAT PLAYER'S DOLL — `ViewRegistry.TryGetPlayerView`
     /// on `SimEvent.PlayerIndex`, or on `RenderSnapshot.LocalPlayerIndex` for
     /// the predicted burst — instead of at the simulation's own muzzle point
-    /// (the hero's centre plus `WeaponConfig.MuzzleOffset` along the aim, lifted
+    /// (the hero's center plus `WeaponConfig.MuzzleOffset` along the aim, lifted
     /// to `SimulationRunner.RenderMuzzleHeight`), which is a point in front of
     /// the collector and visibly not the pistol in his hand.
     ///

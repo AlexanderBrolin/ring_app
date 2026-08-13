@@ -36,7 +36,7 @@ namespace Ring.Data
         /// The first five circles are the Stage 1 layout, kept FIRST and in
         /// order: SweepArena walks them by index and that order is part of the
         /// state hash. Stage 2 Task 16 appends three more (spec §3.15, owner
-        /// decision F4a) — the Stage 1 five all sit within r ~ 15 of the centre,
+        /// decision F4a) — the Stage 1 five all sit within r ~ 15 of the center,
         /// so at Radius 65 the whole outer band would otherwise be bare.
         public Obstacle[] Obstacles =
         {
@@ -86,7 +86,7 @@ namespace Ring.Data
 
         /// Stage 2 Task 46 (bd app-r8x, owner decision 2026-08-11): the height
         /// every INTERIOR barrier is built and simulated at — the eight obstacle
-        /// circles and the six walls above share this one number, in metres
+        /// circles and the six walls above share this one number, in meters
         /// above the floor. A round whose whole remaining step sits above it
         /// flies over the barrier; below it, the barrier stops the shot exactly
         /// as it always did.

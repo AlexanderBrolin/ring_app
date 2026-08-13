@@ -275,7 +275,7 @@ namespace Ring.Presentation
         /// MAKES `false` THE SAFE ANSWER — the same shape `CanDevSpawnMob`,
         /// `CanRestartMatch` and `CanRequestSpectate` above already have, where
         /// `false` is what a backend that does not have the mechanism at all
-        /// says. `false` here reproduces the behaviour that predates this task
+        /// says. `false` here reproduces the behavior that predates this task
         /// exactly: the doll is retired the moment the frame goes quiet about
         /// its slot. Stated the other way round, a backend with no fade to
         /// report would have to answer "it has not gone" — an assertion about a
@@ -294,11 +294,11 @@ namespace Ring.Presentation
         /// solo session shows no section at all rather than a section full of
         /// zeros — a zero here would be indistinguishable from a measurement,
         /// which is the same defect `HasStateHash`/`HasMatchStats` exist to
-        /// avoid, and the panel paints two of these counters red above zero.
+        /// avoid, and the panel paints six of these counters red above zero.
         ///
-        /// ONE MEMBER FOR NINETEEN NUMBERS, ON PURPOSE. Nineteen members read
-        /// one at a time from `OnGUI` would be nineteen chances to describe
-        /// nineteen different moments, and `OnGUI` runs several times per
+        /// ONE MEMBER FOR TWENTY-TWO NUMBERS, ON PURPOSE. Twenty-two members
+        /// read one at a time from `OnGUI` would be twenty-two chances to
+        /// describe twenty-two different moments, and `OnGUI` runs several times per
         /// rendered frame (once per GUI event). The caller takes ONE snapshot
         /// per frame, in `Update`, and draws off the copy. `NetDiagnostics`'
         /// own doc has the rest, including why it is primitives.
@@ -386,7 +386,7 @@ namespace Ring.Presentation
         /// `ConfigTweaked`, the pause gate, and `WorldRestarted` — describes a
         /// restart that happened. A backend for which a match begins on the
         /// SERVER's say-so refuses every call after the first, so returning
-        /// `false` is what keeps the facade from announcing a new match to ten
+        /// `false` is what keeps the facade from announcing a new match to nine
         /// subscribers in the middle of one the server is still sending, and
         /// from rebuilding buffers to a config the backend did not adopt.
         /// A refusal is a VALUE and not an exception on purpose: the interface
@@ -399,7 +399,7 @@ namespace Ring.Presentation
         /// an implementation whose matches start somewhere other than the
         /// facade's own `Restart` — today that is the networked one, told by
         /// `MatchRestartedNet` — and the facade answers it by raising its own
-        /// `WorldRestarted`, which is what the ten Presentation registries
+        /// `WorldRestarted`, which is what the nine Presentation registries
         /// listening for a fresh match are subscribed to. Without this seam a
         /// server-side restart clears the client's per-match network seams and
         /// leaves every view still holding the previous match's entities.
@@ -408,7 +408,7 @@ namespace Ring.Presentation
         /// local match begins in the facade's own `Restart`, which raises
         /// `WorldRestarted` itself once its own bookkeeping is finished; a
         /// backend event on that path would fire a second time, and it would
-        /// fire from the middle of `Restart`, handing the ten subscribers a
+        /// fire from the middle of `Restart`, handing the nine subscribers a
         /// facade whose frozen buffers and pause gate had not been reset yet.
         ///
         /// AN IMPLEMENTATION MUST RAISE IT FROM THE FACADE'S OWN CALL STACK,

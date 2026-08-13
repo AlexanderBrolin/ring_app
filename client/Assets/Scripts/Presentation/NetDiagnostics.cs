@@ -14,8 +14,8 @@ namespace Ring.Presentation
     /// floats and bools cross it — the same shape `PlayerFadeProgress` and
     /// `ShouldKeepPlayerDoll` already have.
     ///
-    /// ONE SNAPSHOT PER RENDERED FRAME, NOT ONE CALL PER FIELD. Twenty
-    /// interface calls from `OnGUI` would be twenty chances to disagree about
+    /// ONE SNAPSHOT PER RENDERED FRAME, NOT ONE CALL PER FIELD. Twenty-two
+    /// interface calls from `OnGUI` would be twenty-two chances to disagree about
     /// the moment being described, and `OnGUI` itself runs SEVERAL TIMES per
     /// rendered frame — once per GUI event (Unity's execution-order page:
     /// "OnGUI is called multiple times per frame for GUI events"). The overlay
@@ -25,7 +25,7 @@ namespace Ring.Presentation
     /// THIS PROJECT ALREADY USES (`SimConfig` through `ISimBackend.Config`):
     /// a consumer gets a copy, so writing to it changes nothing anybody else
     /// will ever read. The alternative — a `readonly struct` — buys the same
-    /// guarantee at the price of a nineteen-argument constructor at the single
+    /// guarantee at the price of a twenty-two-argument constructor at the single
     /// fill site, where two adjacent `int`s of unrelated meaning could be
     /// transposed silently. An object initializer names every field it sets.
     ///
@@ -38,7 +38,26 @@ namespace Ring.Presentation
     /// all-clear on a diagnostic nobody is feeding, which is the same defect
     /// `ISimBackend.HasMatchStats` was added to avoid; the overlay prints a
     /// dash and names them instead. `FramesMissingEntities` below is the
-    /// honest client-side neighbour of the first of them.
+    /// honest client-side neighbor of the first of them.
+    ///
+    /// BYTES PER SECOND IS ONE DIRECTION, NOT TWO, AND THAT IS A RECORDED
+    /// NARROWING RATHER THAN AN UNFINISHED FIELD. Spec §3.12 and plan Т48 ask
+    /// for bytes/s "in both directions"; only `BytesDownPerSecond` below
+    /// exists, and the panel prints a permanent dash for up. The reason is a
+    /// limit of the package, not of this task: the only thing that measures
+    /// outgoing traffic is FishNet's own `NetworkTrafficStatistics`, and it
+    /// cannot be switched on from code. `StatisticsManager.
+    /// TryGetNetworkTrafficStatistics` hands the object out only when
+    /// `IsEnabled()`, which reads the private `_enableMode` — a
+    /// `[SerializeField]` whose only accessor is the getter `EnableMode`,
+    /// with no setter, where its immediate neighbors `_updateClient` and
+    /// `_updateServer` DO get `SetUpdateClient`/`SetUpdateServer`
+    /// (FishNet 4.7.2, `Runtime/Managing/Statistic/NetworkTrafficStatistics.cs`
+    /// lines 54-57 and 74; `StatisticsManager.cs:34`). Turning it on is a
+    /// scene edit. Counting only this client's own sends instead would be an
+    /// instrument that lies, since the traffic that would dominate the figure
+    /// is FishNet's replicate data, which never passes through our code —
+    /// see `NetworkSimBackend.TryGetNetDiagnostics` for the full finding.
     public struct NetDiagnostics
     {
         /// FishNet's `TimeManager.RoundTripTime`, in milliseconds.
@@ -119,7 +138,7 @@ namespace Ring.Presentation
         /// median beside it describes nothing and the panel prints a dash.
         public int CorrectionCount;
 
-        /// The median correction magnitude in metres over the last
+        /// The median correction magnitude in meters over the last
         /// `PlayerPredictionCore.CorrectionWindowSamples` of them — the
         /// quantity milestone В3's lag gate is written in, threshold 0.25 m.
         public float CorrectionMedianMeters;
@@ -142,7 +161,7 @@ namespace Ring.Presentation
         /// the sender set the header's `Truncated` bit because it dropped
         /// entities to fit the datagram, or the frame turned up without all
         /// five blocks it is required to carry. This is the CLIENT-SIDE
-        /// neighbour of the server's `NetStats.DroppedEntities`, which this
+        /// neighbor of the server's `NetStats.DroppedEntities`, which this
         /// process never sees; the consequence is the same and the receiver
         /// already computes the test for `StalePolicy`.
         public int FramesMissingEntities;

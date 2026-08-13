@@ -23,7 +23,7 @@ namespace Ring.Networking
     /// and exit code 2": the caller has to turn the answer into a diagnosable
     /// stdout line and an OS exit code, and a throw from the middle of a
     /// headless boot would hand it a stack trace instead. This is the opposite
-    /// choice from the neighbouring `SimConfigBuilder.Validate`, which
+    /// choice from the neighboring `SimConfigBuilder.Validate`, which
     /// accumulates into a `List&lt;string&gt;` and then throws — deliberately
     /// so, because that one runs inside an Editor/test call chain where an
     /// exception IS the diagnosis.
