@@ -42,6 +42,256 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(Targeting.HasLineOfFire(new float2(-20f, -20f),
                 new float2(-25f, -20f), 0.15f, arena));
         }
+
+        [Test]
+        public void LineOfFire_BlockedByWall()
+        {
+            // Stage 2 Task 13 (spec §3.3): HasLineOfFire grows a wall loop
+            // mirroring the existing obstacle loop above. Vertical wall
+            // straddling the ray's crossing point on its flat side (not a cap).
+            float2 wallA = new float2(5f, -5f);
+            float2 wallB = new float2(5f, 5f);
+            float halfW = 1f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+            Assert.IsFalse(Targeting.HasLineOfFire(new float2(0f, 0f), new float2(10f, 0f),
+                0.15f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_ClearAlongWall()
+        {
+            // Same wall as LineOfFire_BlockedByWall, but the ray runs PARALLEL
+            // to its flat side, offset well clear of halfW + padR (3m vs
+            // 1.15m) — catches a "wall always blocks" mutant that
+            // LineOfFire_BlockedByWall alone would let survive.
+            float2 wallA = new float2(5f, -5f);
+            float2 wallB = new float2(5f, 5f);
+            float halfW = 1f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(2f, -5f), new float2(2f, 5f),
+                0.15f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_NegativePadClamped()
+        {
+            // Stage 2 Task 13 (context Р64): a target's own radius is passed
+            // as a NEGATIVE padR by upcoming visibility callers (Task 19/21).
+            // Geometry.SegmentCircle computes r = padR + cR and squares it, so
+            // an unclamped padR deeper than -cR flips the sign and turns this
+            // circle into a phantom of radius |r| = 0.25 (padR -0.45 + cR
+            // 0.2) — big enough to swallow the 0.1m offset below and falsely
+            // block the ray. Clamped to padR' = max(padR, -cR) = -0.2,
+            // r' = 0: the circle degenerates to its own centre point, which
+            // the ray — offset by 0.1, not colinear with it — genuinely misses.
+            float2 circlePos = new float2(5f, 0.1f);
+            float circleR = 0.2f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 1,
+                ObstaclePos = new[] { circlePos },
+                ObstacleRadius = new[] { circleR },
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(0f, 0f), new float2(10f, 0f),
+                -0.45f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_NegativePadClamped_PerObstacle_NotHoisted()
+        {
+            // Fix-round T13 tail (coordinator review): every existing negative-
+            // padR fixture above has exactly ONE obstacle, so a mutant that
+            // hoists the clamp out of the loop and computes it once (from
+            // either the first or the largest/smallest obstacle's own radius)
+            // is numerically indistinguishable from the correct per-obstacle
+            // clamp on any of them — the per-obstacle clamp is unwitnessed.
+            // TWO obstacles with DIFFERENT radii on the same ray kills every
+            // single-clamp variant: hoisting by the larger radius (0.5) still
+            // clamps to -0.45 (since -0.45 > -0.5), but applying THAT shared
+            // clamp to the smaller circle (R 0.2) gives r = -0.45 + 0.2 =
+            // -0.25, a phantom of radius 0.25 that swallows its 0.1 m offset
+            // from the ray and falsely blocks it. Hoisting by the smaller
+            // radius (0.2) instead clamps to -0.2, which applied to the
+            // LARGER circle (R 0.5) gives r = -0.2 + 0.5 = 0.3, again bigger
+            // than its own 0.2 m offset — also a false block. The correct
+            // per-obstacle clamp resolves both circles to r <= 0 (no phantom)
+            // and the ray is genuinely clear.
+            float2 circle0Pos = new float2(5f, 0.2f);
+            float circle0R = 0.5f;
+            float2 circle1Pos = new float2(7f, 0.1f);
+            float circle1R = 0.2f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 2,
+                ObstaclePos = new[] { circle0Pos, circle1Pos },
+                ObstacleRadius = new[] { circle0R, circle1R },
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(0f, 0f), new float2(10f, 0f),
+                -0.45f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_NegativePadClamped_Wall()
+        {
+            // Coordinator addition to the plan's circle-only clamp test above:
+            // without a SEPARATE clamp on the wall side, halfW would
+            // "inflate" by |padR| exactly like an unclamped circle radius,
+            // leaving half of Р64 uncovered. Same numbers as the circle case
+            // (halfW 0.2, padR -0.45): unclamped total pad = halfW + padR =
+            // -0.25 (phantom |r| = 0.25); clamped total pad = halfW +
+            // max(padR, -halfW) = 0 (degenerate axis). The ray runs parallel
+            // to the wall's axis, offset by 0.1 — inside the unclamped
+            // phantom, clear of the clamped (degenerate) one.
+            float2 wallA = new float2(0f, 0f);
+            float2 wallB = new float2(0f, 10f);
+            float halfW = 0.2f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(0.1f, 3f), new float2(0.1f, 7f),
+                -0.45f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_NegativePadClamped_PerWall_NotHoisted()
+        {
+            // Fixwave Ф3 item 1: mirrors LineOfFire_NegativePadClamped_
+            // PerObstacle_NotHoisted above (the same discipline that test
+            // pins for CIRCLES) but for the wall loop's own
+            // `wallPad = max(padR, -arena.WallHalfWidth[i])` clamp — every
+            // existing wall fixture in this file has exactly ONE wall, so a
+            // mutant that hoists the clamp out of the loop (computed once
+            // from either wall's own half-width) is numerically
+            // indistinguishable from the correct per-wall clamp on any of
+            // them.
+            //
+            // Two SHORT walls, each just a rounded end cap facing the ray —
+            // wall0's near end sits at (5, 0.2) with HalfWidth 0.5, wall1's at
+            // (7, 0.1) with HalfWidth 0.2 (the far end of each is placed well
+            // off to the side so only the near cap is in play). Since a
+            // wall's rounded end is resolved through the exact same
+            // Geometry.SegmentCircle call a circle obstacle uses, this
+            // reproduces LineOfFire_NegativePadClamped_PerObstacle_
+            // NotHoisted's own numbers (circle0Pos/circle0R, circle1Pos/
+            // circle1R) verbatim, just wrapped as walls: hoisting by the
+            // larger half-width (0.5) still clamps to -0.45 (since
+            // -0.45 > -0.5) but applied to wall1's cap (R 0.2) gives
+            // r = -0.45 + 0.2 = -0.25, a phantom of radius 0.25 that
+            // swallows wall1's 0.1 m offset from the ray and falsely blocks
+            // it; hoisting by the smaller half-width (0.2) clamps to -0.2,
+            // which applied to wall0's cap (R 0.5) gives r = -0.2 + 0.5 =
+            // 0.3, again bigger than its own 0.2 m offset — also a false
+            // block. The correct per-wall clamp resolves both caps to r <= 0
+            // (no phantom) and the ray is genuinely clear.
+            float2 wall0A = new float2(5f, 0.2f);
+            float2 wall0B = new float2(5f, 3.2f); // far end, well clear of the ray
+            float wall0HalfWidth = 0.5f;
+            float2 wall1A = new float2(7f, 0.1f);
+            float2 wall1B = new float2(7f, 3.1f); // far end, well clear of the ray
+            float wall1HalfWidth = 0.2f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 2,
+                WallA = new[] { wall0A, wall1A },
+                WallB = new[] { wall0B, wall1B },
+                WallHalfWidth = new[] { wall0HalfWidth, wall1HalfWidth },
+            };
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(0f, 0f), new float2(10f, 0f),
+                -0.45f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_BlockedByWallCap()
+        {
+            // Coordinator addition: the ray crosses well below the wall's
+            // flat-side span [0,10] on the y axis, so only the rounded end
+            // cap at wallA can catch it — proves the caps participate in LoS
+            // the same way the flat side does (a "flat-side-only" mutant
+            // would miss this and read the wall as open there).
+            float2 wallA = new float2(0f, 0f);
+            float2 wallB = new float2(0f, 10f);
+            float halfW = 1f;
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { halfW },
+            };
+            Assert.IsFalse(Targeting.HasLineOfFire(new float2(-3f, -0.9f), new float2(3f, -0.9f),
+                0.15f, arena));
+        }
+
+        [Test]
+        public void NearestAlivePlayer_ZeroAlive_ReturnsFalseAndMinusOne()
+        {
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 2);
+            w.KillPlayerNoDamage(0);
+            w.KillPlayerNoDamage(1); // nobody alive now
+            bool found = Targeting.NearestAlivePlayer(w, float2.zero, out int index);
+            Assert.IsFalse(found);
+            Assert.AreEqual(-1, index);
+        }
+
+        [Test]
+        public void NearestAlivePlayer_EqualDistance_TieBreaksOnSmallerIndex()
+        {
+            // Fresh multiplayer world: every player spawns on the ring at the
+            // SAME radius from the arena center
+            // (MultiPlayerWorldTests.SoloSpawnsAtOrigin_MultiplayerSpawnsOnRing),
+            // so querying from the center is an exact three-way tie — the
+            // smaller index must win (spec Р85), not spawn/array order coincidence.
+            var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
+            bool found = Targeting.NearestAlivePlayer(w, float2.zero, out int index);
+            Assert.IsTrue(found);
+            Assert.AreEqual(0, index);
+        }
     }
 
     public class MobAiTests
@@ -261,8 +511,8 @@ namespace Ring.Simulation.Tests
         public void Gunner_LongApproach_FiresAtMostOnceOnFirstWindow()
         {
             // F-1 regression: MobAiSystem.UpdateGunner decrements FireCooldown every
-            // tick with no floor clamp, unlike the player's WeaponSystem (WeaponSystem.
-            // cs:29, `p.FireCooldown = math.max(0f, p.FireCooldown);` while not firing).
+            // tick with no floor clamp, unlike the player's WeaponSystem.Update
+            // (`p.FireCooldown = math.max(0f, p.FireCooldown);` while not firing).
             // A gunner spending several seconds in Reposition (outside PreferredRange
             // +-RangeTolerance) racks up a negative "debt" on FireCooldown; the instant
             // it steps inside the tolerance band (LoS is unobstructed the whole way in
@@ -316,6 +566,57 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void ZeroAlivePlayers_MobsGoIdle()
+        {
+            // Stage 2 Task 8: extends the existing solo PlayerDead_MobsGoIdle
+            // coverage above to the genuinely multiplayer case — EVERY player
+            // dead, not just the one solo player — proving MobAiSystem's Idle
+            // branch now reads NearestAlivePlayer's "nobody alive" result
+            // instead of the old solo-only w.Player.Alive.
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c, playerCount: 2);
+            w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f));
+            w.KillPlayerNoDamage(0);
+            w.KillPlayerNoDamage(1); // nobody alive now
+
+            var inputs = new SimInput[2];
+            for (int i = 0; i < 30; i++) w.TickAll(inputs);
+
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            Assert.AreEqual(MobAiState.Idle, snap.Mobs[0].Ai);
+        }
+
+        [Test]
+        public void Chaser_SwitchesTarget_WhenNearestPlayerDies()
+        {
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c, playerCount: 2);
+            // Player 0 sits close to the mob's spawn (east); player 1 sits far
+            // away in the OPPOSITE direction (west) — closing in on one vs the
+            // other is directionally distinguishable, not just "closer/farther
+            // along the same line".
+            var p0 = new PlayerState { Pos = new float2(5f, 0f), Hp = c.Hero.MaxHp, Alive = true };
+            var p1 = new PlayerState { Pos = new float2(-20f, 0f), Hp = c.Hero.MaxHp, Alive = true };
+            w.SetPlayerForTest(0, p0);
+            w.SetPlayerForTest(1, p1);
+            var mobStart = new float2(0f, 0f);
+            w.SpawnMobForTest(MobType.Chaser, mobStart);
+
+            var inputs = new SimInput[2];
+            for (int i = 0; i < 10; i++) w.TickAll(inputs); // mob closes on the NEARER player (0)
+            Assert.Less(math.distance(w.Mobs[0].Pos, p0.Pos), math.distance(mobStart, p0.Pos),
+                "mob should have closed in on player 0 — the nearer alive target");
+
+            w.KillPlayerNoDamage(0); // the nearer target leaves — player 1 is now the only alive one
+            float distToP1AtSwitch = math.distance(w.Mobs[0].Pos, p1.Pos);
+
+            for (int i = 0; i < 60; i++) w.TickAll(inputs);
+            Assert.Less(math.distance(w.Mobs[0].Pos, p1.Pos), distToP1AtSwitch,
+                "after the nearer player dies, the mob must retarget the remaining alive player");
+        }
+
+        [Test]
         public void Separation_PreventsStackingSymmetrically()
         {
             var c = TestConfigs.Open();
@@ -331,6 +632,398 @@ namespace Ring.Simulation.Tests
             // symmetry: the pair's midpoint hasn't drifted
             float2 mid = (snap.Mobs[0].Pos + snap.Mobs[1].Pos) * 0.5f;
             Assert.AreEqual(12f, mid.x, 0.05f);
+        }
+
+        [Test]
+        public void Chaser_NavigatesAroundWall()
+        {
+            // Mirrors Chaser_BehindObstacle_SteersAroundNotStuck above,
+            // substituting a wall for the circular obstacle (Stage 2 Task 14,
+            // spec §3.3): SteerAround must treat WallCount the same way it
+            // already treats ObstacleCount.
+            //
+            // The wall STRADDLES the direct mob->player line, exactly like the
+            // circular obstacle in the mirrored test — that is the case the
+            // detour exists for, and the only one that can witness it. An
+            // earlier revision of this fixture placed the wall entirely to one
+            // side of that line, which made the test pass on pre-Task-14 code
+            // (a straight run never touches such a wall) and therefore proved
+            // nothing; it was moved back here together with the coordinator's
+            // waypoint fix. Fix-round T14 (M-2): this comment used to describe
+            // that fix in "tangent-side choice"/"shorter-turn rule" terms —
+            // language from the tangent-to-end-cap algorithm the waypoint
+            // approach replaced, not what SteerAround actually does now (see
+            // its XML doc for the current rule). Before that fix this fixture
+            // dead-stopped the chaser against the wall's flat face: a tangent
+            // to the nearer end cap cuts through the wall's body, the
+            // collide-and-slide cancels the resulting velocity, and the next
+            // tick reproduces the same geometry. A mutation that reintroduces
+            // tangent-to-end-cap steering for walls reddens this test.
+            var c = TestConfigs.Open();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(7f, -3f) };
+            c.Arena.WallB = new[] { new float2(7f, 3f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
+            var w = new SimulationWorld(1, c);
+            w.SpawnMobForTest(MobType.Chaser, new float2(14f, 0f)); // player at (0,0) behind the wall
+            for (int i = 0; i < 300; i++) w.Tick(Idle);
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), 3f); // reached it by going around
+        }
+
+        [Test]
+        public void Chaser_DoesNotRubAlongWall()
+        {
+            // Coordinator addition (task-14-context.md): the regression this
+            // guards against is subtler than "does the chaser eventually get
+            // around" (Chaser_NavigatesAroundWall above already covers that).
+            // Reviewed in fix-round T14 (M-1): this fixture does NOT redden
+            // from reducing the wall to an equivalent circle at the nearest
+            // point on its axis, as an earlier revision of this comment
+            // claimed — that reduction clamps `ratio` to 1 (the mob starts
+            // inside the padded circle), `theta` becomes 90 degrees, and the
+            // resulting tangent gives the mob its MAXIMUM possible axial
+            // component, i.e. exactly the "commit to a detour along the
+            // wall" behaviour this test wants, not the churn it's meant to
+            // catch. What DOES redden it: dropping the wall loop entirely
+            // (SteerAround never even sees the wall, so the mob walks
+            // straight into its flat side and the physical collide-and-slide
+            // alone has to grind it around, very slowly) and a broken `face`
+            // normal (aimed into the wall instead of away from it, so the
+            // waypoint sits on the wrong side and steering re-aims almost
+            // straight back at the face every tick). Over a fixed window
+            // that shows up as motion that is mostly perpendicular churn
+            // against the wall with little progress ALONG it; this test
+            // measures exactly that ratio, spawning the chaser squarely on
+            // the wall's flat side, far from either end.
+            var c = TestConfigs.Open();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(6f, -15f) };
+            c.Arena.WallB = new[] { new float2(6f, 15f) };
+            c.Arena.WallHalfWidth = new[] { 1.5f };
+
+            var w = new SimulationWorld(1, c);
+            var player = w.Player;
+            player.Pos = new float2(-6f, -1f); // west of the wall, off-centre like the chaser below
+            w.SetPlayerForTest(player);
+            // East of the wall, at the same off-centre offset — squarely on
+            // the flat side, far from either rounded end.
+            w.SpawnMobForTest(MobType.Chaser, new float2(12f, -1f));
+
+            float2 prevPos = w.Mobs[0].Pos;
+            float startY = prevPos.y;
+            float pathLength = 0f;
+            const int ticks = 200;
+            for (int i = 0; i < ticks; i++)
+            {
+                w.Tick(Idle);
+                float2 pos = w.Mobs[0].Pos;
+                pathLength += math.distance(pos, prevPos);
+                prevPos = pos;
+            }
+
+            float axialProgress = math.abs(prevPos.y - startY);
+            Assert.Greater(pathLength, 5f, "chaser barely moved at all over the window");
+            Assert.GreaterOrEqual(axialProgress, 0.2f * pathLength,
+                $"axial progress along the wall ({axialProgress:F2}) should track a " +
+                $"meaningful fraction of the total distance travelled ({pathLength:F2}) — " +
+                "a mob rubbing along the wall face instead of heading for its end would fail this");
+        }
+
+        [Test]
+        public void SteerAround_WallEndNearTie_BreaksOnIdParity_NotRawComparison()
+        {
+            // Fixwave Ф3 item 3(a): SteerAround's wall-end tie-break
+            // (fix-round T14, I-5) widens an EXACT `costA == costB`
+            // comparison to a Geometry.Skin-wide band, specifically so one
+            // ULP of rounding noise between costA/costB's two independent
+            // sqrt chains can't flip which end of the wall a mob commits to
+            // — and falls back to Id parity, not raw magnitude, inside that
+            // band. No existing fixture pins the band itself:
+            // Chaser_NavigatesAroundWall above is EXACTLY symmetric
+            // (costA == costB to the bit), so a mutant that disables the
+            // near-tie check (`math.abs(costA - costB) < Geometry.Skin` ->
+            // `< 0f`, i.e. never true, falling through to the raw
+            // `costA < costB`) still steers the same way there and the test
+            // stays green — the raw comparison is bit-identical to the
+            // parity answer when costA == costB exactly, so it can't tell
+            // the two rules apart. It also can't tell apart a mutated parity
+            // check (`(id & 1) == 0` -> `true`/`false`/`== 1`): a symmetric
+            // fixture mirrors regardless of which side either mutant picks.
+            //
+            // Fixture: a symmetric wall (WallA/WallB equidistant from the
+            // ray pos->target on the x axis) with the mob's own position
+            // nudged 1e-4 off that axis of symmetry. That nudge makes costA
+            // and costB differ by ~1.4e-4 — comfortably inside
+            // Geometry.Skin's 1e-3 band (the near-tie rule fires) and
+            // comfortably above float noise (a raw `costA < costB` gives a
+            // STABLE, non-flaky verdict — the same one for every mob at this
+            // position, regardless of Id). Two Chasers at the identical
+            // position/target, one even Id and one odd, are spawned close
+            // enough to the wall that its avoidance padding already overlaps
+            // them at spawn (Geometry.SegmentStadium's "already inside at
+            // the start" candidate), so the wall branch fires on the very
+            // first Chase-state tick, with no drift from ordinary pursuit
+            // motion to account for. Under the real near-tie rule the two
+            // mobs commit to OPPOSITE ends of the wall (evidenced by
+            // opposite-signed Vel.y after that tick); under the disabled-
+            // near-tie mutant, Id is never consulted and both commit to the
+            // SAME end (raw costA < costB, identical for both mobs) — so at
+            // least one of the two sign assertions below must fail.
+            //
+            // Both mobs share the exact same spawn point, so
+            // SeparationSystem (which runs every tick, right after
+            // MobAiSystem — spec Task 20) would otherwise push them apart on
+            // the very first tick along an ARBITRARY fallback direction
+            // (Geometry.normalizesafe's (1,0) default for a zero delta),
+            // biased by spawn ORDER rather than Id PARITY — a confound
+            // unrelated to the branch under test. Zeroing SeparationRadius
+            // switches that system off entirely (its own `threshold <= 0f`
+            // early-out) so the only thing that can move the two mobs apart
+            // is the wall-end tie-break this test targets.
+            var c = TestConfigs.Open();
+            c.Chaser.SeparationRadius = 0f;
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(2f, 2f) };
+            c.Arena.WallB = new[] { new float2(2f, -2f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
+
+            var w = new SimulationWorld(1, c);
+            var player = w.Player;
+            player.Pos = new float2(20f, 0f);
+            w.SetPlayerForTest(player);
+
+            const float eps = 1e-4f;
+            int firstId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, eps));
+            int secondId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, eps));
+            Assert.AreNotEqual(firstId % 2, secondId % 2,
+                "test setup: two consecutively-spawned mobs must have opposite Id parity");
+            int evenSlot = (firstId & 1) == 0 ? 0 : 1;
+            int oddSlot = 1 - evenSlot;
+
+            w.Tick(Idle); // Idle -> Chase (settles in, no steering yet)
+            w.Tick(Idle); // Chase: the wall already overlaps at spawn -> SteerAround fires
+
+            float velYEven = w.Mobs[evenSlot].Vel.y;
+            float velYOdd = w.Mobs[oddSlot].Vel.y;
+            Assert.Greater(velYEven, 0f, "even-Id mob must round the TOP end (WallA, y=2)");
+            Assert.Less(velYOdd, 0f, "odd-Id mob must round the BOTTOM end (WallB, y=-2)");
+        }
+
+        [Test]
+        public void SteerAround_WallFaceNearTie_BreaksOnIdParity_NotRawSign()
+        {
+            // Fixwave Ф3 item 3(b): SteerAround's SEPARATE near-tie band —
+            // which side of the wall's face to offset the waypoint on
+            // (`keepFace`, fix-round T14, I-2) — is a different branch from
+            // 3(a)'s wall-END tie-break above, and no existing fixture
+            // witnesses it either: every fixture in this file keeps the mob
+            // well off the wall's own axis line, where `|faceDot|` sits
+            // around unity or more (nowhere near Geometry.Skin), so the near-
+            // tie rule never fires and a mutant disabling it (`< Geometry.Skin`
+            // -> `< 0f`) or corrupting the parity check is unwitnessed.
+            //
+            // Fixture: an ASYMMETRIC wall (WallB nearer both the mob and the
+            // target than WallA, so costA/costB differ by ~0.8 — nowhere
+            // near Geometry.Skin, keeping THIS fixture's wall-end choice
+            // (roundA -> WallB, deterministic) uncoupled from 3(a)'s
+            // near-tie concern) with the mob positioned almost exactly ON
+            // the wall's own axis line extended past WallB (a 1e-4 nudge off
+            // it), which puts `faceDot` at that same ~1e-4 — inside
+            // Geometry.Skin, outside float noise. Under the real near-tie
+            // rule the even/odd mobs land on OPPOSITE sides of the wall's
+            // face (opposite-signed Vel.x after the steering tick); under a
+            // disabled-near-tie mutant, both resolve `keepFace` off the same
+            // raw (and here, tiny/borderline) sign, landing on the SAME
+            // side.
+            //
+            // Both mobs share the exact same spawn point, so SeparationSystem
+            // (spec Task 20, runs every tick right after MobAiSystem) would
+            // otherwise push them apart on the first tick along an ARBITRARY
+            // fallback direction biased by spawn ORDER, not Id PARITY — see
+            // SteerAround_WallEndNearTie_BreaksOnIdParity_NotRawComparison's
+            // own note above for the full reasoning. Zeroing SeparationRadius
+            // switches that confound off entirely.
+            var c = TestConfigs.Open();
+            c.Chaser.SeparationRadius = 0f;
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(2f, 7f) };
+            c.Arena.WallB = new[] { new float2(2f, 2f) };
+            c.Arena.WallHalfWidth = new[] { 2f };
+
+            var w = new SimulationWorld(1, c);
+            var player = w.Player;
+            player.Pos = new float2(20f, 20f);
+            w.SetPlayerForTest(player);
+
+            const float eps = 1e-4f;
+            int firstId = w.SpawnMobForTest(MobType.Chaser, new float2(2f + eps, 1f));
+            int secondId = w.SpawnMobForTest(MobType.Chaser, new float2(2f + eps, 1f));
+            Assert.AreNotEqual(firstId % 2, secondId % 2,
+                "test setup: two consecutively-spawned mobs must have opposite Id parity");
+            int evenSlot = (firstId & 1) == 0 ? 0 : 1;
+            int oddSlot = 1 - evenSlot;
+
+            w.Tick(Idle); // Idle -> Chase (settles in, no steering yet)
+            w.Tick(Idle); // Chase: the wall already overlaps at spawn -> SteerAround fires
+
+            float velXEven = w.Mobs[evenSlot].Vel.x;
+            float velXOdd = w.Mobs[oddSlot].Vel.x;
+            // Absolute signs, not just "opposite" (fixture geometry: end =
+            // WallB, axis points from WallB towards -y, so face starts as
+            // +x) — a merely-relative check would miss a mutant that swaps
+            // which parity keeps vs. flips the face (`(id & 1) == 0` ->
+            // `== 1`), since that still lands the two mobs on opposite
+            // sides, just the wrong ones.
+            Assert.Greater(velXEven, 0f, "even-Id mob must KEEP the face (not flip it)");
+            Assert.Less(velXOdd, 0f, "odd-Id mob must FLIP the face");
+        }
+
+        [Test]
+        public void SteerAround_PrefersNearestBlocker_AcrossKinds()
+        {
+            // Coordinator addition, revised in fix-round T14 (I-1): circles
+            // and walls compete for the SAME "nearest blocker" slot
+            // (task-14-context.md — same rule SweepArena already uses for
+            // circle-then-wall order). The two fixtures below place both an
+            // obstacle AND a wall in the mob's lookahead at different
+            // distances from it — whichever is nearer must determine the
+            // steer, regardless of kind. A bare same-sign check stopped
+            // being discriminating once the wall branch switched from a
+            // tangent to a waypoint detour (the coordinator's Т14 fix):
+            // fixture A's geometry now steers the mob south whichever kind
+            // wins, so a mutant that always prefers the wall over the
+            // circle would still pass a lone "Vel.y &lt; -0.3" assertion here
+            // — it did, undetected, until this revision. Each fixture below
+            // therefore compares against the SAME world with the
+            // non-winning kind removed — a mutant that swaps which kind
+            // wins collapses that difference to near zero — plus a sign
+            // check as a sanity read on which side the mob actually went.
+            float2 mobStart = new float2(-10f, 0f);
+
+            // Fixture A: the CIRCLE is nearer along the lookahead segment.
+            {
+                var c = TestConfigs.Open();
+                c.Arena.ObstacleCount = 1;
+                c.Arena.ObstaclePos = new[] { new float2(-8f, 0.8f) };
+                c.Arena.ObstacleRadius = new[] { 0.5f };
+                c.Arena.WallCount = 1;
+                c.Arena.WallA = new[] { new float2(-7.2f, -0.3f) };
+                c.Arena.WallB = new[] { new float2(-7.2f, 6f) };
+                c.Arena.WallHalfWidth = new[] { 0.3f };
+                var w = new SimulationWorld(1, c);
+                w.SpawnMobForTest(MobType.Chaser, mobStart);
+                w.Tick(Idle); // Idle->Chase warm-up, no steering yet
+                w.Tick(Idle); // first tick SteerAround actually runs
+                float2 steerWithCircle = w.Mobs[0].Vel;
+
+                // Same world with the circle removed: whatever the wall
+                // alone would have produced.
+                var noCircle = TestConfigs.Open();
+                noCircle.Arena.WallCount = 1;
+                noCircle.Arena.WallA = new[] { new float2(-7.2f, -0.3f) };
+                noCircle.Arena.WallB = new[] { new float2(-7.2f, 6f) };
+                noCircle.Arena.WallHalfWidth = new[] { 0.3f };
+                var w2 = new SimulationWorld(1, noCircle);
+                w2.SpawnMobForTest(MobType.Chaser, mobStart);
+                w2.Tick(Idle);
+                w2.Tick(Idle);
+                float2 steerWithoutCircle = w2.Mobs[0].Vel;
+
+                Assert.Greater(math.distance(steerWithCircle, steerWithoutCircle), 0.3f,
+                    "the nearer CIRCLE should have determined the steer, not the farther wall");
+                Assert.Less(steerWithCircle.y, -0.3f,
+                    "the circle sits north of the direct line — the tangent past it steers south");
+            }
+
+            // Fixture B: same two shapes, swapped distances — the WALL is now nearer.
+            {
+                var c = TestConfigs.Open();
+                c.Arena.ObstacleCount = 1;
+                c.Arena.ObstaclePos = new[] { new float2(-7f, 1.4f) };
+                c.Arena.ObstacleRadius = new[] { 0.3f };
+                c.Arena.WallCount = 1;
+                c.Arena.WallA = new[] { new float2(-7.6f, -0.3f) };
+                c.Arena.WallB = new[] { new float2(-7.6f, 6f) };
+                c.Arena.WallHalfWidth = new[] { 0.7f };
+                var w = new SimulationWorld(1, c);
+                w.SpawnMobForTest(MobType.Chaser, mobStart);
+                w.Tick(Idle);
+                w.Tick(Idle);
+                float2 steerWithWall = w.Mobs[0].Vel;
+
+                // Same world with the wall removed: whatever the circle alone
+                // would have produced. "The nearer wall determined the steer"
+                // means the two differ materially — asserting a fixed sign
+                // instead is what the first revision of this test did, and the
+                // sign it demanded (upwards) was the pre-fix defect: this wall
+                // runs from y = -0.3 UP to y = 6, so upwards is straight through
+                // its body and the only way past it is below its lower end.
+                var noWall = TestConfigs.Open();
+                noWall.Arena.ObstacleCount = 1;
+                noWall.Arena.ObstaclePos = new[] { new float2(-7f, 1.4f) };
+                noWall.Arena.ObstacleRadius = new[] { 0.3f };
+                var w2 = new SimulationWorld(1, noWall);
+                w2.SpawnMobForTest(MobType.Chaser, mobStart);
+                w2.Tick(Idle);
+                w2.Tick(Idle);
+                float2 steerWithoutWall = w2.Mobs[0].Vel;
+
+                Assert.Greater(math.distance(steerWithWall, steerWithoutWall), 0.3f,
+                    "the nearer WALL should have determined the steer, not the farther circle");
+                Assert.Less(steerWithWall.y, 0f,
+                    "the only way past this wall is below its lower end");
+            }
+        }
+
+        [Test]
+        public void SteerAround_Waypoint_PinsBothFaceAndAxisOffsets()
+        {
+            // I-7 (fix-round T14): `waypoint = end + axis * clearance +
+            // face * clearance` was previously only pinned as a WHOLE — a
+            // mutation dropping either addend on its own still greened every
+            // existing test (`waypoint = end` is the only combination those
+            // caught). This fixture isolates each addend's own sign/
+            // dominance in the returned direction.
+            //
+            // Geometry: a vertical wall from (7,-3) to (7,3), halfWidth 1.
+            // The mob sits due WEST of end A=(7,-3), at exactly the
+            // physical-contact x-distance from the wall's flat face
+            // (wallHalfWidth + Chaser.Radius = 1.5m: pos.x = 5.5) and at the
+            // SAME y as A — the direct-line target (9,-3) sits due EAST,
+            // clearly closer to A than to B, so A wins with no near-tie
+            // involved. With both offsets applied, `end - pos = (1.5, 0)`
+            // and the returned direction points WEST and SOUTH:
+            // west because `face * clearance` (2.5m off the face, more than
+            // the 1.5m the mob already stands off it) overshoots the mob's
+            // own position outward past the face; south because
+            // `axis * clearance` pushes 2.5m past A along the wall's axis.
+            // Dropping `face * clearance` removes the only westward pull,
+            // flipping Vel.x positive (the waypoint would sit EAST of the
+            // mob, back toward the wall). Dropping `axis * clearance`
+            // removes the only southward pull, collapsing Vel.y to ~0 (the
+            // waypoint would sit level with the mob, offering no route past
+            // the end).
+            var c = TestConfigs.Open();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(7f, -3f) };
+            c.Arena.WallB = new[] { new float2(7f, 3f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
+            var w = new SimulationWorld(1, c);
+            var player = w.Player;
+            player.Pos = new float2(9f, -3f);
+            w.SetPlayerForTest(player);
+            float contactX = 7f - (c.Arena.WallHalfWidth[0] + c.Chaser.Radius);
+            w.SpawnMobForTest(MobType.Chaser, new float2(contactX, -3f));
+            w.Tick(Idle); // Idle->Chase warm-up, no steering yet
+            w.Tick(Idle); // first tick SteerAround actually runs
+            float2 vel = w.Mobs[0].Vel;
+
+            Assert.Less(vel.x, 0f,
+                "face*clearance pin: without it the waypoint sits on the WRONG side of the mob (east, toward the wall)");
+            Assert.Less(vel.y, -0.5f,
+                "axis*clearance pin: without it the waypoint sits level with the mob (no route past the end)");
         }
     }
 }

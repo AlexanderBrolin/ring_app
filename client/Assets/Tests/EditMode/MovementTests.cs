@@ -58,7 +58,7 @@ namespace Ring.Simulation.Tests
         public void HoldRight_AcceleratesToMaxSpeed()
         {
             var w = World();
-            for (int i = 0; i < 60; i++) w.Tick(Move(1f, 0f)); // 2 c — хватает разогнаться
+            for (int i = 0; i < 60; i++) w.Tick(Move(1f, 0f)); // 2 s — enough to reach top speed
             Assert.AreEqual(TestConfigs.Open().Hero.MaxSpeed, w.Player.Vel.x, 0.05f);
             Assert.Greater(w.Player.Pos.x, 5f);
         }
@@ -75,38 +75,47 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Wall_StopsAndSlides()
         {
+            // Stage 2 Task 16: the ring radius is a FIXTURE EXPRESSION now
+            // (convention app-n6g C14) — it used to be the literal 35, which the
+            // arena's 35 -> 65 growth silently invalidated.
+            SimConfig cfg = TestConfigs.Open();
+            float rim = cfg.Arena.Radius - cfg.Hero.Radius;
             var w = World();
-            for (int i = 0; i < 400; i++) w.Tick(Move(1f, 0f)); // упереться в стену
+            for (int i = 0; i < 400; i++) w.Tick(Move(1f, 0f)); // run into the wall
             float2 atWall = w.Player.Pos;
-            Assert.AreEqual(35f - TestConfigs.Open().Hero.Radius, math.length(atWall), 0.05f);
-            for (int i = 0; i < 30; i++) w.Tick(Move(1f, 1f)); // диагональ у стены → скользит
+            Assert.AreEqual(rim, math.length(atWall), 0.05f);
+            for (int i = 0; i < 30; i++) w.Tick(Move(1f, 1f)); // diagonal into the wall -> slides
             Assert.Greater(w.Player.Pos.y, atWall.y + 0.5f);
-            Assert.LessOrEqual(math.length(w.Player.Pos), 35f - 0.44f);
+            Assert.LessOrEqual(math.length(w.Player.Pos), rim + 0.01f);
         }
 
         [Test]
         public void Obstacle_BlocksAndSlides_NoSpeedGain()
         {
-            var cfg = TestConfigs.Quiet(); // препятствие (10,4) r=2.2, волны выключены
+            var cfg = TestConfigs.Quiet(); // obstacle (10,4) r=2.2, waves disabled
             var w = new SimulationWorld(1, cfg);
             for (int i = 0; i < 600; i++)
             {
                 w.Tick(Move(1f, 0.4f));
                 float speed = math.length(w.Player.Vel);
-                Assert.LessOrEqual(speed, cfg.Hero.MaxSpeed + 1e-3f); // скольжение не ускоряет
+                Assert.LessOrEqual(speed, cfg.Hero.MaxSpeed + 1e-3f); // sliding does not accelerate
                 Assert.IsFalse(Geometry.CircleOverlap(w.Player.Pos, cfg.Hero.Radius - 0.01f,
-                    new float2(10f, 4f), 2.2f), "игрок внутри препятствия");
+                    new float2(10f, 4f), 2.2f), "player inside the obstacle");
             }
-            // скольжение реально продвигает: застывший у препятствия игрок — провал
-            Assert.Greater(w.Player.Pos.y, 1.5f, "не обогнул препятствие — застрял");
+            // sliding actually makes progress: a player stuck at the obstacle is a failure
+            Assert.Greater(w.Player.Pos.y, 1.5f, "did not go around the obstacle — stuck");
         }
 
         [Test]
         public void CornerWallPlusObstacle_NoStuckNoTunnel()
         {
+            // Stage 2 Task 16: the obstacle sits a fixed 2 m short of the rim
+            // (fixture expression, C14) instead of the old literal 33 that only
+            // meant "at the rim" while Arena.Radius was 35.
             var cfg = TestConfigs.Open();
+            float rim = cfg.Arena.Radius - cfg.Hero.Radius;
             cfg.Arena.ObstacleCount = 1;
-            cfg.Arena.ObstaclePos = new[] { new float2(33f, 0f) };
+            cfg.Arena.ObstaclePos = new[] { new float2(cfg.Arena.Radius - 2f, 0f) };
             cfg.Arena.ObstacleRadius = new[] { 1.5f };
             var w = new SimulationWorld(1, cfg);
             float2 start = w.Player.Pos;
@@ -114,10 +123,10 @@ namespace Ring.Simulation.Tests
             {
                 w.Tick(Move(1f, 0.05f));
                 Assert.IsTrue(math.all(math.isfinite(w.Player.Pos)));
-                Assert.LessOrEqual(math.length(w.Player.Pos), 35f - 0.44f);
+                Assert.LessOrEqual(math.length(w.Player.Pos), rim + 0.01f);
             }
             Assert.Greater(math.distance(w.Player.Pos, start), 10f,
-                "залип в углу стена+препятствие — не скользит");
+                "stuck in the wall+obstacle corner — not sliding");
         }
     }
 }

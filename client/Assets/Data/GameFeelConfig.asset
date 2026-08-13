@@ -26,9 +26,9 @@ MonoBehaviour:
   PitchRange: 0.12
   TracerFadeSeconds: 0.4
   CasingPhysicsSeconds: 1.5
-  MaxCasings: 1024
-  MaxDecals: 512
-  MaxCorpses: 64
+  MaxCasings: 3072
+  MaxDecals: 1536
+  MaxCorpses: 128
   VoicesPerSfx: 6
   MinSfxInterval: 0.03
   CasingImpulseUpMin: 0.2
@@ -48,7 +48,6 @@ MonoBehaviour:
   HitSparkBurstCount: 30
   BlockSparkBurstCount: 18
   ImmediateMuzzleFeedback: 1
-  ExtrapolateLocalPlayer: 0
   PlayerVisualScale: 1
   ChaserVisualScale: 0.4
   GunnerVisualScale: 0.76
@@ -108,3 +107,7 @@ MonoBehaviour:
   ProjectileBallScale: 1
   HeadHoverPulseHz: 5
   HeadHoverPulseAmp: 0.25
+  RemotePlayerEmission: {r: 1.4, g: 0.15, b: 1.6, a: 1}
+  GunMuzzleLocalPosition: {x: 0, y: 0, z: 0.18}
+  GunEjectLocalPosition: {x: 0.03, y: 0.04, z: 0.16}
+  GunEjectLocalEuler: {x: 0, y: 100, z: 0}

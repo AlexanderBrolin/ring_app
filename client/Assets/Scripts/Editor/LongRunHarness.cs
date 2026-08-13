@@ -70,15 +70,20 @@ namespace Ring.Editor
                 if (i % LogInterval == 0)
                 {
                     world.CaptureSnapshot(snapshot);
+                    // Stage 2 Task 5: Kills is personal (world.Stats == StatsAt(0),
+                    // the harness's single bot); MobSpawnsSkipped/ProjectileSpawnsSkipped
+                    // moved to WorldStats (world-scoped, shared arena caps).
                     MatchStats stats = world.Stats;
+                    WorldStats worldStats = world.WorldStats;
                     long mem = GC.GetTotalMemory(false);
                     Debug.Log($"LongRunHarness,{i},{snapshot.MobCount},{snapshot.ProjectileCount}," +
                         $"{world.EventCount},{world.DroppedEvents}," +
-                        $"{stats.MobSpawnsSkipped},{stats.ProjectileSpawnsSkipped},{mem}," +
+                        $"{worldStats.MobSpawnsSkipped},{worldStats.ProjectileSpawnsSkipped},{mem}," +
                         $"{snapshot.Player.Alive},{snapshot.Player.Hp},{stats.Kills},{snapshot.Wave.WaveIndex}");
                 }
 
-                // Mirrors SimulationRunner.Update's per-frame ClearEvents() cadence
+                // Mirrors the per-frame event-buffer flush SimulationRunner drives
+                // through its backend (ISimBackend.EndFrame since Task 43) cadence
                 // (one flush per render frame; at 30 Hz with no catch-up debt that's
                 // one flush per tick) — without this, the preallocated event buffer
                 // fills up within the first few ticks and DroppedEvents free-runs
@@ -119,7 +124,8 @@ namespace Ring.Editor
             MobConfig gunner = Load<MobConfig>("MobGunnerConfig");
             WaveConfig wave = Load<WaveConfig>("WaveConfig");
             ArenaConfig arena = Load<ArenaConfig>("ArenaConfig");
-            SimConfig cfg = SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena);
+            VisibilityConfig visibility = Load<VisibilityConfig>("VisibilityConfig");
+            SimConfig cfg = SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena, visibility);
             cfg.Hero.MaxHp = 1e9f;
             return cfg;
         }

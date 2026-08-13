@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 39230840e4cee19e88a1b3184a7d8e3d, type: 3}
   m_Name: ArenaConfig
   m_EditorClassIdentifier: Ring.Data::Ring.Data.ArenaConfig
-  Radius: 35
+  Radius: 65
   Obstacles:
   - Pos: {x: 10, y: 4}
     Radius: 2.2
@@ -24,7 +24,35 @@ MonoBehaviour:
     Radius: 2
   - Pos: {x: 14, y: -9}
     Radius: 1.6
-  MaxMobs: 64
-  MaxProjectiles: 256
-  MaxEventsPerFrame: 256
+  - Pos: {x: -40, y: 8}
+    Radius: 3
+  - Pos: {x: 30, y: 22}
+    Radius: 2.8
+  - Pos: {x: -6, y: -30}
+    Radius: 3.2
+  Walls:
+  - A: {x: -28, y: 10}
+    B: {x: -8, y: 10}
+    HalfWidth: 0.8
+  - A: {x: -28, y: 17.6}
+    B: {x: -8, y: 17.6}
+    HalfWidth: 0.8
+  - A: {x: 12, y: -6}
+    B: {x: 34, y: -6}
+    HalfWidth: 0.8
+  - A: {x: 12, y: -13.6}
+    B: {x: 34, y: -13.6}
+    HalfWidth: 0.8
+  - A: {x: 2, y: 24}
+    B: {x: 2, y: 44}
+    HalfWidth: 0.6
+  - A: {x: -34, y: -20}
+    B: {x: -16, y: -34}
+    HalfWidth: 0.6
+  MaxMobs: 96
+  MaxProjectiles: 384
+  MaxEventsPerFrame: 512
   SpawnClearance: 1
+  MaxPlayers: 3
+  PlayerSpawnRingFrac: 0.8
+  BarrierTop: 3

@@ -57,5 +57,35 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < 10; i++) w.Tick(default); // projectile arrives and kills
             Assert.AreEqual(0, w.Stats.Kills); // does not count toward the run
         }
+
+        [Test]
+        public void DamagePlayer_Death_PlayerDamagedAndPlayerDiedShareSameBlowPos()
+        {
+            // Fix-round 1 I-1: KillPlayer's extraction briefly dropped the
+            // blow's own position for PlayerDied (fell back to the victim's
+            // own Pos instead) while the paired PlayerDamaged above it kept
+            // the blow's real origin — a damage-caused death must report the
+            // SAME Pos on both events, byte-for-byte like before the
+            // extraction. A blow position deliberately DIFFERENT from the
+            // victim's own Pos (an attacker standing elsewhere, e.g. a
+            // Chaser's contact strike — MobAiSystem passes `m.Pos`, not the
+            // player's) is what makes a dropped blowPos observable — reusing
+            // the victim's own Pos here would not have caught the bug.
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c);
+            var blowPos = new float2(123f, 45f); // far from the player's actual Pos (origin)
+            // Stage 2 Task 17 signature ripple: victim 0 (the solo player this
+            // world has) killed by nobody in particular — ProjectileIds.NoOwner,
+            // since this fixture is about the blow POSITION, not about credit.
+            w.DamagePlayer(0, ProjectileIds.NoOwner, c.Hero.MaxHp + 1f, blowPos,
+                HitZone.Body, new float2(1f, 0f));
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent damaged));
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDied, out SimEvent died));
+            Assert.AreEqual(blowPos.x, died.Pos.x, 1e-5f);
+            Assert.AreEqual(blowPos.y, died.Pos.y, 1e-5f);
+            Assert.AreEqual(damaged.Pos.x, died.Pos.x, 1e-5f);
+            Assert.AreEqual(damaged.Pos.y, died.Pos.y, 1e-5f);
+        }
     }
 }

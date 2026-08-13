@@ -12,6 +12,12 @@ namespace Ring.Simulation.Movement
     {
         public bool DashStarted, DashDenied;
         public bool SlideStarted, SlideDenied;
+        /// Stage 2 Task 10: this tick's request of that kind was dropped by the
+        /// edge-request rate limit. Purely diagnostic — SimulationWorld counts
+        /// them into a test-only tally and emits NOTHING for them (no
+        /// StaminaDenied, no MatchStats write): a dropped request is one the
+        /// world refused to act on, so it must leave no trace in game state.
+        public bool DashRejected, SlideRejected;
         /// Task 12: an active dash mirrored off a wall/obstacle this tick.
         /// RicochetPos is MoveWithCollisions' first-contact point, RicochetNormal
         /// its surface normal — SimulationWorld.Tick emits DashRicocheted with
@@ -26,18 +32,68 @@ namespace Ring.Simulation.Movement
         /// and 10) by one tick. DashStarted/DashDenied/SlideStarted/SlideDenied
         /// (spec §3.4/§3.9) tell the world whether to bump MatchStats and emit
         /// PlayerDashed/PlayerSlideStarted, or emit StaminaDenied, without this
-        /// layer touching either.
+        /// layer touching either. Stage 2 Task 10 puts the edge-request rate
+        /// limit at the very top of this method — the single home for it, since
+        /// PlayerPrediction.Step (Stage 2 Task 30) drives the client's predicted
+        /// player through this same call — and reports its drops through
+        /// DashRejected/SlideRejected, which the world counts for diagnostics
+        /// and acts on in no other way.
         public static MovementResult Update(ref PlayerState p, in SimInput input, in SimConfig cfg)
         {
             float dt = SimulationWorld.TickDt;
             var hero = cfg.Hero;
+            var result = new MovementResult();
+
+            // Stage 2 Task 10 — edge-request rate limit (spec Interfaces; the
+            // gate lives HERE, inside Update, and nowhere else: PlayerPrediction.
+            // Step (Stage 2 Task 30) calls this very method, and a second home
+            // would decrement the counters twice for a predicting client).
+            //
+            // Counters are PER KIND (Р26): a single shared counter would cut the
+            // LEGAL dash->slide link, whose own windows (PostDashSlideWindow,
+            // LinkWindowSeconds) are both shorter than a typical gate window.
+            //
+            // They count down first and unconditionally, exactly like the timers
+            // below, and re-arm to EdgeRequestMinTicks on an ACCEPTED request —
+            // so two accepted requests of the same kind are always at least
+            // EdgeRequestMinTicks ticks apart. The limit is on REQUESTS, not on
+            // actions: an accepted request arms the counter even when the action
+            // it asks for is then refused for an unrelated reason (cooldown,
+            // stamina) — that refusal is what the buffer/deny machinery below is
+            // for, and folding the two together would let a client re-ask every
+            // tick simply by asking for something impossible.
+            //
+            // A dropped request is dropped BEFORE the buffer latch below, and
+            // that suppression is the entire mechanism: DashBufferWindow (4.5
+            // ticks) is WIDER than the gate window (3 ticks), so a gate that let
+            // a dropped request latch the buffer would achieve nothing at all —
+            // the request would simply arrive a tick later through the buffer
+            // (EdgeRateLimitTests.RejectedRequest_DoesNotRearmBuffer). Because
+            // the buffer timers are hashed, this is also what moves the golden
+            // hash, which is why this task is the one that re-pins it.
+            p.DashRequestCooldownTicks = math.max(0, p.DashRequestCooldownTicks - 1);
+            p.SlideRequestCooldownTicks = math.max(0, p.SlideRequestCooldownTicks - 1);
+            bool dashRequested = input.DashRequested;
+            if (dashRequested)
+            {
+                if (p.DashRequestCooldownTicks > 0) { dashRequested = false; result.DashRejected = true; }
+                else p.DashRequestCooldownTicks = hero.EdgeRequestMinTicks;
+            }
+            bool slideRequested = input.SlideRequested;
+            if (slideRequested)
+            {
+                if (p.SlideRequestCooldownTicks > 0) { slideRequested = false; result.SlideRejected = true; }
+                else p.SlideRequestCooldownTicks = hero.EdgeRequestMinTicks;
+            }
+
             // Contract: DashRequested/SlideRequested are edge inputs — SimInputFrame.
             // ForTick/InputSampler latch them true for exactly one tick per press, not
             // for the whole time a key is held. A raw held-true request re-arms the
             // buffer every tick it's seen, but by construction that means a fresh
             // latch each time, so any deny event gated on the buffer still fires at
-            // most once per latch, not once per tick.
-            p.DashBufferTimer = input.DashRequested
+            // most once per latch, not once per tick. Stage 2 Task 10: the latch
+            // reads the GATED request above, never input.DashRequested directly.
+            p.DashBufferTimer = dashRequested
                 ? hero.DashBufferWindow
                 : math.max(0f, p.DashBufferTimer - dt);
             p.DashCooldown = math.max(0f, p.DashCooldown - dt);
@@ -48,7 +104,7 @@ namespace Ring.Simulation.Movement
             // Task 10: same DashBufferTimer edge-latch pattern, for a buffered
             // slide request; PostDashSlideTimer/LinkWindowTimer are plain
             // countdowns (opened elsewhere in this method, below).
-            p.SlideBufferTimer = input.SlideRequested
+            p.SlideBufferTimer = slideRequested
                 ? hero.SlideBufferWindow
                 : math.max(0f, p.SlideBufferTimer - dt);
             p.PostDashSlideTimer = math.max(0f, p.PostDashSlideTimer - dt);
@@ -76,7 +132,6 @@ namespace Ring.Simulation.Movement
             // post-dash window that substitutes for one (spec §3.3 v5).
             bool slideGate = p.RunUpTimer >= hero.RunUpSeconds || p.PostDashSlideTimer > 0f;
 
-            var result = new MovementResult();
             // Task 11: true only inside the "slide tick — link of the SAME
             // chain" branch below. MoveWithCollisions is a single shared call
             // site at the bottom of this method (see its call-site comment),
@@ -221,13 +276,21 @@ namespace Ring.Simulation.Movement
                     // C1 (final review wave, app-n6g): the gate-failed path
                     // must still drive Vel from this tick's input — same
                     // "denied path still moves" contract as the dash
-                    // branch's own gate-fail else above (:153) — otherwise
+                    // branch's own insufficient-stamina else above (the
+                    // "else { ... result.DashDenied = true; ... }" branch,
+                    // named rather than by line number — the edge-request
+                    // gate this method gained since keeps pushing it down)
+                    // — otherwise
                     // the player coasts at frozen velocity for the whole
                     // SlideBufferWindow (~5 ticks at TickDt) every tick the
                     // buffer keeps retrying/decaying (C11 below), not just
                     // the request's own tick.
                     p.Vel = RegularMoveVel(p.Vel, input.MoveDir, input.AimHeld, hero, dt);
-                    if (input.SlideRequested)
+                    // Stage 2 Task 10: the GATED request, not input.SlideRequested
+                    // — a request the rate limit dropped must emit no
+                    // StaminaDenied at all (it never reached the movement system
+                    // as a request in the first place).
+                    if (slideRequested)
                     {
                         // C11: unlike dash, the buffer is NOT cleared on a
                         // missed attempt — it keeps decaying/rechecking

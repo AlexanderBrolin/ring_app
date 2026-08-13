@@ -93,15 +93,20 @@ namespace Ring.Simulation.Tests
             var c = TestConfigs.Open();
             var w = new SimulationWorld(1, c);
             // enemy projectile right in front of the player during the dash frame — i-frames are active
+            // Stage 2 Task 10 (carryover-t10.md item 2): explicit NoOwner — the
+            // seam's default 0 models a solo PLAYER's shot, and OwnerIndex is
+            // part of StateHash from this task on.
             w.SpawnProjectileForTest(ProjectileOwner.Mob,
-                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f);
+                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f,
+                ownerIndex: ProjectileIds.NoOwner);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), DashRequested = true });
             w.Tick(default);
             Assert.AreEqual(c.Hero.MaxHp, w.Player.Hp); // i-frames absorbed it
             for (int i = 0; i < 10; i++) w.Tick(default); // dash and i-frames have expired
             // second projectile — from the player's CURRENT position (shifted after the dash)
             w.SpawnProjectileForTest(ProjectileOwner.Mob,
-                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f);
+                w.Player.Pos + new float2(1.2f, 0f), new float2(-14f, 0f), 1f, 0f, 8f, 0.15f, 3f,
+                ownerIndex: ProjectileIds.NoOwner); // Stage 2 Task 10: see above
             for (int i = 0; i < 4; i++) w.Tick(default);
             Assert.Less(w.Player.Hp, c.Hero.MaxHp);
         }
@@ -144,7 +149,8 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
             // enemy projectile flies toward the player through two mobs — ignores the mobs
             w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(10f, 0f),
-                new float2(-30f, 0f), 1f, 0f, 5f, 0.15f, 2f);
+                new float2(-30f, 0f), 1f, 0f, 5f, 0.15f, 2f,
+                ownerIndex: ProjectileIds.NoOwner); // Stage 2 Task 10 (carryover-t10.md item 2)
             for (int i = 0; i < 12; i++) w.Tick(default);
             var snap = new RenderSnapshot(cfg.Arena);
             w.CaptureSnapshot(snap);
@@ -159,6 +165,75 @@ namespace Ring.Simulation.Tests
             w.CaptureSnapshot(snap);
             Assert.AreEqual(1, snap.MobCount);
             Assert.AreEqual(cfg.Chaser.MaxHp, snap.Mobs[0].Hp); // the far one is alive and unscathed
+        }
+
+        [Test]
+        public void MobProjectile_HasNoOwnerIndex()
+        {
+            // Stage 2 Task 7: a Mob-owned projectile never has a shooter —
+            // MobAiSystem's SpawnProjectile call passes ProjectileIds.NoOwner
+            // explicitly (task-7-context.md §2.2), so ProjectileState.OwnerIndex
+            // reads NoOwner, not a stale/hardcoded player index. Spawns through
+            // the real production path (MobAiSystem, a live Gunner) rather than
+            // SpawnProjectileForTest, mirroring EventTests.
+            // ProjectileFired_CarriesOwner_PlayerAndMob's own "pin the actual
+            // call site" rationale — and reuses that same test's proven Gunner
+            // fixture position (well inside PreferredRange+-RangeTolerance with
+            // clear LoS, fires on its first eligible tick).
+            var c = TestConfigs.Open();
+            var w = new SimulationWorld(1, c);
+            w.SpawnMobForTest(MobType.Gunner, new float2(9f, 0f));
+            bool fired = false;
+            for (int i = 0; i < 60 && !fired; i++)
+            {
+                w.Tick(default);
+                fired = w.ProjectileCount > 0;
+            }
+            Assert.IsTrue(fired, "Gunner never fired within the tick budget");
+            Assert.AreEqual(ProjectileIds.NoOwner, w.GetProjectileForTest(0).OwnerIndex);
+        }
+
+        [Test]
+        public void SpawnProjectileForTest_OmittedOwnerIndex_DefaultsToSoloPlayer()
+        {
+            // Stage 2 Task 7 (task-7-context.md decision 3): omitting ownerIndex
+            // must default to 0 — Э1's dozens of existing SpawnProjectileForTest
+            // call sites model a solo player's own shot and assert its credit; a
+            // NoOwner default would silently rob them of it.
+            var w = new SimulationWorld(1, NoSpread());
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(1f, 0f), new float2(1f, 0f),
+                1f, 0f, 10f, 0.1f, 1f);
+            Assert.AreEqual(0, w.GetProjectileForTest(0).OwnerIndex);
+
+            // Fix-round 1 M-3: the assertion above is satisfied by BOTH a correct
+            // implementation AND a broken one that never forwards ownerIndex into
+            // SpawnProjectile at all (0 == default(byte) either way). This second
+            // pair — an EXPLICIT non-zero ownerIndex — only passes if the value
+            // actually threads through; together the two pin both the default and
+            // the forwarding.
+            var w2 = new SimulationWorld(1, NoSpread());
+            w2.SpawnProjectileForTest(ProjectileOwner.Player, new float2(1f, 0f), new float2(1f, 0f),
+                1f, 0f, 10f, 0.1f, 1f, ownerIndex: 1);
+            Assert.AreEqual(1, w2.GetProjectileForTest(0).OwnerIndex);
+        }
+
+        [Test]
+        public void ProjectileOwner_CreditsShooterStats_NotAlwaysPlayerZero()
+        {
+            // Stage 2 Task 7 (carryover I-2 from the T5 review, carryover-t7.md):
+            // DamageMob used to hardcode Increment*(0) — a hit from ANY player's
+            // projectile always credited player 0's personal stats. Now it must
+            // route to the projectile's OWN OwnerIndex, so player 1's kill lands
+            // on player 1's stats, not player 0's — the exact "10 own shots + 40
+            // others' hits = 500% accuracy" bug the carryover describes.
+            var w = new SimulationWorld(1, NoSpread(), playerCount: 2);
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(4f, 0f),
+                new float2(35f, 0f), 1f, 0f, 1000f, 0.6f, 1f, ownerIndex: 1); // player 1 fired it
+            var inputs = new SimInput[2];
+            for (int i = 0; i < 6; i++) w.TickAll(inputs);
+            Assert.AreEqual(1, w.StatsAt(1).Kills, "player 1 fired — the kill must land on their own stats");
+            Assert.AreEqual(0, w.StatsAt(0).Kills, "player 0 never fired — their stats must stay untouched");
         }
 
         [Test]

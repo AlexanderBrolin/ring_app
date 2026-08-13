@@ -11,7 +11,7 @@ namespace Ring.Data
     public static class SimConfigBuilder
     {
         public static SimConfig Build(HeroConfig hero, WeaponConfig weapon, MobConfig chaser,
-            MobConfig gunner, WaveConfig wave, ArenaConfig arena)
+            MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility)
         {
             var cfg = new SimConfig
             {
@@ -56,7 +56,8 @@ namespace Ring.Data
                     RicochetRetention = hero.RicochetRetention,
                     AimMoveSpeedFrac = hero.AimMoveSpeedFrac,
                     AimSlideSpeedMult = hero.AimSlideSpeedMult,
-                    AimSettleSeconds = hero.AimSettleSeconds
+                    AimSettleSeconds = hero.AimSettleSeconds,
+                    EdgeRequestMinTicks = hero.EdgeRequestMinTicks
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -90,9 +91,20 @@ namespace Ring.Data
                     MaxSpawnAttempts = wave.MaxSpawnAttempts,
                     FallbackSlots = wave.FallbackSlots,
                     GunnerShareBase = wave.GunnerShareBase,
-                    GunnerShareGrowth = wave.GunnerShareGrowth
+                    GunnerShareGrowth = wave.GunnerShareGrowth,
+                    PerPlayerCountFrac = wave.PerPlayerCountFrac
                 },
-                Arena = ToArenaSimConfig(arena)
+                Arena = ToArenaSimConfig(arena),
+                // Stage 2 Task 22 (spec §3.15): seventh Build() parameter —
+                // field names mirror VisibilitySimConfig one to one.
+                Visibility = new VisibilitySimConfig
+                {
+                    SightRadius = visibility.SightRadius,
+                    HearRadius = visibility.HearRadius,
+                    ExitHysteresis = visibility.ExitHysteresis,
+                    LingerTicks = visibility.LingerTicks,
+                    HearPositionGridMeters = visibility.HearPositionGridMeters
+                }
             };
 
             Validate(in cfg, arena.SpawnClearance);
@@ -144,6 +156,19 @@ namespace Ring.Data
                 radius[i] = a.Obstacles[i].Radius;
             }
 
+            // Stage 2 Task 16 (spec §3.15): interior walls, same shape as the
+            // obstacle triple above — count plus three parallel arrays.
+            int wn = a.Walls?.Length ?? 0;
+            var wallA = new float2[wn];
+            var wallB = new float2[wn];
+            var wallHalfWidth = new float[wn];
+            for (int i = 0; i < wn; i++)
+            {
+                wallA[i] = new float2(a.Walls[i].A.x, a.Walls[i].A.y);
+                wallB[i] = new float2(a.Walls[i].B.x, a.Walls[i].B.y);
+                wallHalfWidth[i] = a.Walls[i].HalfWidth;
+            }
+
             return new ArenaSimConfig
             {
                 Radius = a.Radius,
@@ -152,7 +177,16 @@ namespace Ring.Data
                 ObstacleRadius = radius,
                 MaxMobs = a.MaxMobs,
                 MaxProjectiles = a.MaxProjectiles,
-                MaxEventsPerFrame = a.MaxEventsPerFrame
+                MaxEventsPerFrame = a.MaxEventsPerFrame,
+                MaxPlayers = a.MaxPlayers,
+                PlayerSpawnRingFrac = a.PlayerSpawnRingFrac,
+                WallCount = wn,
+                WallA = wallA,
+                WallB = wallB,
+                WallHalfWidth = wallHalfWidth,
+                // Stage 2 Task 46 (bd app-r8x): the one height every interior
+                // barrier — circles and walls alike — is simulated and drawn at.
+                BarrierTop = a.BarrierTop
             };
         }
 
@@ -229,6 +263,35 @@ namespace Ring.Data
             ReqInRange(errors, "Hero.AimSlideSpeedMult", cfg.Hero.AimSlideSpeedMult, 0f, 1f, minExclusive: true);
             ReqPositive(errors, "Hero.AimSettleSeconds", cfg.Hero.AimSettleSeconds);
 
+            // Stage 2 Task 8 (spec Interfaces): minimum tick gap the
+            // edge-request gate requires between two ACCEPTED
+            // DashRequested/SlideRequested edges of the same kind. Declared in
+            // Task 8; consumed since Stage 2 Task 10, where the gate itself
+            // landed (PlayerMovementSystem.Update's rate limit at the top of
+            // the method).
+            // app-zx8 (spec §6e, decision "a"): [Range(0,15)] on HeroConfig is an
+            // Editor-only Inspector hint, never enforced on a value that
+            // reaches the builder from code/JSON/a test fixture — mirror the
+            // upper bound here, same precedent as Arena.MaxPlayers (Task 4).
+            ReqInRange(errors, "Hero.EdgeRequestMinTicks", cfg.Hero.EdgeRequestMinTicks, 0, 15);
+            // app-zx8: even a value inside [0,15] can be tall enough in real
+            // time to swallow the dash<->slide link windows whole — at the
+            // shipped .asset numbers (LinkWindowSeconds 0.25s = 7.5 ticks,
+            // PostDashSlideWindow 0.32s = 9.6 ticks) EdgeRequestMinTicks >= 8
+            // eats the legal link entirely, making the ADR-001 mechanic
+            // unreachable while still passing every check above. The error
+            // names both numbers (gate window in seconds, narrower of the two
+            // link windows) so an owner tuning the number knows which one to
+            // move.
+            float edgeGateWindowSeconds = cfg.Hero.EdgeRequestMinTicks * SimulationWorld.TickDt;
+            float minLinkWindowSeconds = math.min(cfg.Hero.LinkWindowSeconds, cfg.Hero.PostDashSlideWindow);
+            if (edgeGateWindowSeconds >= minLinkWindowSeconds)
+            {
+                errors.Add("Hero.EdgeRequestMinTicks * TickDt must be < min(Hero.LinkWindowSeconds, " +
+                    "Hero.PostDashSlideWindow) " +
+                    $"(got gate window={edgeGateWindowSeconds:F4}s, min link window={minLinkWindowSeconds:F4}s).");
+            }
+
             // Task 2: movement-driven spread widening while running/sliding.
             ReqAtLeast(errors, "Weapon.SpreadRunMult", cfg.Weapon.SpreadRunMult, 1f);
             ReqAtLeast(errors, "Weapon.SpreadSlideMult", cfg.Weapon.SpreadSlideMult, 1f);
@@ -293,12 +356,35 @@ namespace Ring.Data
             ReqNonNegative(errors, "Wave.FallbackSlots", cfg.Wave.FallbackSlots);
             ReqNonNegative(errors, "Wave.GunnerShareBase", cfg.Wave.GunnerShareBase);
             ReqNonNegative(errors, "Wave.GunnerShareGrowth", cfg.Wave.GunnerShareGrowth);
+            // Stage 2 Task 16 (spec §3.4/§3.15): the per-extra-player wave
+            // scale. Spec's own rule is ">= 0"; the upper end mirrors
+            // WaveConfig's [Range(0f, 2f)] Inspector hint, which is never
+            // enforced on a value reaching the builder from code/JSON/a test
+            // fixture — same precedent as Arena.MaxPlayers (Task 4) and
+            // Hero.EdgeRequestMinTicks (app-zx8).
+            ReqInRange(errors, "Wave.PerPlayerCountFrac", cfg.Wave.PerPlayerCountFrac, 0f, 2f);
 
             ReqPositive(errors, "Arena.Radius", cfg.Arena.Radius);
             ReqPositive(errors, "Arena.MaxMobs", cfg.Arena.MaxMobs);
             ReqPositive(errors, "Arena.MaxProjectiles", cfg.Arena.MaxProjectiles);
             ReqPositive(errors, "Arena.MaxEventsPerFrame", cfg.Arena.MaxEventsPerFrame);
             ReqPositive(errors, "Arena.SpawnClearance", spawnClearance);
+            // Stage 2 Task 4 (spec §3.2): must stay in lockstep with ArenaConfig's own
+            // [Range(...)] Inspector hints — those are never enforced outside
+            // the Editor UI, so the builder rejects an out-of-range value
+            // reaching it programmatically too (same I3 rationale as
+            // ValidateMob's SwingLeadFactor check below).
+            ReqInRange(errors, "Arena.MaxPlayers", cfg.Arena.MaxPlayers, 1, 3);
+            ReqInRange(errors, "Arena.PlayerSpawnRingFrac", cfg.Arena.PlayerSpawnRingFrac, 0.1f, 0.95f);
+            // Stage 2 Task 46: ReqInRange rather than ReqPositive — ZERO is a
+            // legal authoring choice here, it is the "no modelled top" reading
+            // the field defaults to in every hand-built fixture, exactly like
+            // MobSimConfig.AvoidMargin's own 0 spends a guarantee instead of
+            // breaking a rule. A NEGATIVE height is not a quieter way of saying
+            // the same thing — it is a number with no meaning — and the bounds
+            // mirror ArenaConfig's own [Range(0, 20)] hint, which is never
+            // enforced on a value reaching the builder from code or a test.
+            ReqInRange(errors, "Arena.BarrierTop", cfg.Arena.BarrierTop, 0f, 20f);
 
             for (int i = 0; i < cfg.Arena.ObstacleCount; i++)
             {
@@ -317,16 +403,192 @@ namespace Ring.Data
                         $"(|pos|+r={dist + r:F3} > Arena.Radius={cfg.Arena.Radius:F3}).");
                 }
 
+                // Stage 2 Task 4 (spec §3.2, fix-round 1 I-1): the builder
+                // doesn't know the match's actual playerCount (it arrives
+                // later, from MatchConfig), and rings for different player
+                // counts are NOT nested — e.g. the n=2 ring's point (-28,0)
+                // is never a point on the n=3 ring — so every potential spawn
+                // point must be checked: the solo center, plus every point on
+                // every ring size from n=2 up to Arena.MaxPlayers (at
+                // MaxPlayers=3 that's 5 ring points: the n=2 ring's 2 points
+                // plus the n=3 ring's 3). Formula reused from
+                // Geometry.SpawnPosFor, not duplicated — reuse > duplication.
+                // MaxPlayers < 2 (M-3): the ring loop below doesn't run (n
+                // starts at 2), so only the center is checked once — no
+                // duplicate "covers the spawn point" message.
                 float clearanceNeeded = r + cfg.Hero.Radius + spawnClearance;
-                if (dist <= clearanceNeeded)
+                CheckSpawnClearance(errors, tag, pos, clearanceNeeded, float2.zero, "solo center");
+                for (int n = 2; n <= cfg.Arena.MaxPlayers; n++)
                 {
-                    errors.Add($"{tag} covers the player spawn point " +
-                        $"(|pos|={dist:F3} <= r+Hero.Radius+SpawnClearance={clearanceNeeded:F3}).");
+                    for (int s = 0; s < n; s++)
+                    {
+                        float2 spawnPos = Geometry.SpawnPosFor(s, n, in cfg.Arena);
+                        CheckSpawnClearance(errors, tag, pos, clearanceNeeded, spawnPos, $"ring {n}/point {s}");
+                    }
                 }
             }
 
+            ValidateWalls(errors, in cfg, spawnClearance);
+
+            // Stage 2 Task 22 (spec §3.15/Р72; carryover-t22 §1): server-side
+            // visibility filter invariants. Upper bounds mirror
+            // VisibilityConfig's own [Range] Inspector hints via ReqInRange —
+            // same Р115 precedent as Hero.EdgeRequestMinTicks/Arena.MaxPlayers
+            // above ([Range] is an Editor-only hint, never enforced on a value
+            // reaching the builder from code/JSON/a test fixture).
+            // NetConfig's LingerTicks >= InterpBufferTicks + 2 cross-check is
+            // NOT here — NetConfig is not part of SimConfig (Р72); it lands in
+            // Task 41's NetInvariants instead.
+            ReqInRange(errors, "Visibility.SightRadius", cfg.Visibility.SightRadius, 0f, 150f,
+                minExclusive: true);
+            if (cfg.Visibility.HearRadius < cfg.Visibility.SightRadius)
+            {
+                errors.Add("Visibility.HearRadius must be >= Visibility.SightRadius " +
+                    $"(got HearRadius={cfg.Visibility.HearRadius:F3}, " +
+                    $"SightRadius={cfg.Visibility.SightRadius:F3}).");
+            }
+            ReqInRange(errors, "Visibility.HearRadius", cfg.Visibility.HearRadius, 0f, 200f);
+            ReqInRange(errors, "Visibility.ExitHysteresis", cfg.Visibility.ExitHysteresis, 0f, 20f);
+            ReqInRange(errors, "Visibility.HearPositionGridMeters",
+                cfg.Visibility.HearPositionGridMeters, 0f, 10f);
+            ReqInRange(errors, "Visibility.LingerTicks", cfg.Visibility.LingerTicks, 0, 30);
+
             if (errors.Count > 0)
                 throw new ArgumentException("SimConfig validation failed:\n- " + string.Join("\n- ", errors));
+        }
+
+        /// Stage 2 Task 16 (spec §3.3/§3.15, carryover-t16 items 7b/7c): the
+        /// interior-wall rules. Before this task the builder carried NO wall
+        /// check at all, while Task 11/12 docstrings already referred to one.
+        ///
+        /// The "inside the arena" rule is deliberately STRONGER than spec §3.3's
+        /// original wording ("inside Radius - HalfWidth"). A wall whose end sits
+        /// that close to the rim leaves a pocket where the two depenetration
+        /// steps fight forever: PushOutOfStadium shoves a body outward, then
+        /// ClampInsideRing pulls it back in, and at `iterations: 1` (what all
+        /// four Depenetrate callers pass) the pair never converges; SweepArena
+        /// from such a position returns t == 0 on all three MoveWithCollisions
+        /// iterations, i.e. no tangential motion either — a soft-locked player or
+        /// mob. The working rule keeps a full body diameter of slack:
+        ///   max(|A|,|B|) + HalfWidth + bodyRadius + Skin &lt;= Radius - bodyRadius,
+        /// where bodyRadius is the LARGEST body that can end up wedged there —
+        /// max(Hero, Chaser, Gunner), not the hero alone. A mob is 0.5 against the
+        /// hero's 0.45, so hero-only slack leaves a ~0.1 m band in which a wall
+        /// passes validation and a mob driven into it by separation still
+        /// soft-locks — exactly the failure this rule exists to prevent (review
+        /// of Stage 2 Task 16, I-1). The wave-spawn-ring check below already
+        /// derives its own body radius the same way.
+        ///
+        /// Spawn coverage reuses Geometry.SpawnPosFor over the same candidate set
+        /// the obstacle loop walks (solo center + every ring size up to
+        /// MaxPlayers), and the "spawn ring is not locked" rule mirrors
+        /// WaveSystem.TryFindSpawnPos' RNG-free FallbackSlots grid.
+        static void ValidateWalls(List<string> errors, in SimConfig cfg, float spawnClearance)
+        {
+            float wallBodyRadius = math.max(cfg.Hero.Radius,
+                math.max(cfg.Chaser.Radius, cfg.Gunner.Radius));
+            float rimLimit = cfg.Arena.Radius - wallBodyRadius;
+            float spawnClearanceNeeded = cfg.Hero.Radius + spawnClearance;
+
+            for (int i = 0; i < cfg.Arena.WallCount; i++)
+            {
+                float2 a = cfg.Arena.WallA[i];
+                float2 b = cfg.Arena.WallB[i];
+                float halfWidth = cfg.Arena.WallHalfWidth[i];
+                string tag = $"Arena.Walls[{i}]";
+
+                ReqFinite(errors, $"{tag}.A.x", a.x);
+                ReqFinite(errors, $"{tag}.A.y", a.y);
+                ReqFinite(errors, $"{tag}.B.x", b.x);
+                ReqFinite(errors, $"{tag}.B.y", b.y);
+                ReqPositive(errors, $"{tag}.HalfWidth", halfWidth);
+
+                // Fixwave Ф3 item 5: mirrors Geometry's OWN degenerate-axis
+                // threshold (ClosestPointOnSegment/SegmentStadium's
+                // `math.lengthsq(axis) < 1e-12f`) instead of a bare
+                // `length <= 0f`. A wall shorter than that (e.g. 1e-7 m) used
+                // to clear this check yet still trip Geometry's degenerate
+                // branch at runtime everywhere it consumes the wall:
+                // SegmentStadium/SweepArena fall back to treating it as a
+                // CIRCLE, while ClosestPointOnSegment (PushOutOfStadium,
+                // SteerAround's wall waypoint) collapses its projected axis
+                // to `dir` instead of the wall's own direction — a silent
+                // mismatch between "validated as a wall" and "behaves like
+                // one" this rule exists to reject outright.
+                if (math.lengthsq(b - a) < 1e-12f)
+                {
+                    errors.Add($"{tag} has zero length (|A-B| below Geometry's own 1e-6 " +
+                        "degenerate-axis threshold) — a wall must be a real segment, not a " +
+                        $"point (A=({a.x:F3}, {a.y:F3})).");
+                }
+
+                float farEnd = math.max(math.length(a), math.length(b));
+                float reach = farEnd + halfWidth + wallBodyRadius + Geometry.Skin;
+                if (reach > rimLimit)
+                {
+                    errors.Add($"{tag} sits too close to the arena rim " +
+                        $"(max(|A|,|B|)+HalfWidth+bodyRadius+Skin={reach:F3} > " +
+                        $"Arena.Radius-bodyRadius={rimLimit:F3}, bodyRadius=" +
+                        $"{wallBodyRadius:F3}) — a body wedged between the " +
+                        "wall and the ring can neither be pushed out nor slide along it.");
+                }
+
+                CheckWallSpawnClearance(errors, tag, a, b, halfWidth, spawnClearanceNeeded,
+                    float2.zero, "solo center");
+                for (int n = 2; n <= cfg.Arena.MaxPlayers; n++)
+                {
+                    for (int s = 0; s < n; s++)
+                    {
+                        float2 spawnPos = Geometry.SpawnPosFor(s, n, in cfg.Arena);
+                        CheckWallSpawnClearance(errors, tag, a, b, halfWidth, spawnClearanceNeeded,
+                            spawnPos, $"ring {n}/point {s}");
+                    }
+                }
+            }
+
+            float ringRadius = cfg.Arena.Radius - cfg.Wave.SpawnRingInset;
+            int slots = cfg.Wave.FallbackSlots;
+            if (ringRadius <= 0f || slots <= 0) return;
+
+            float bodyRadius = math.max(cfg.Chaser.Radius, cfg.Gunner.Radius);
+            for (int i = 0; i < slots; i++)
+            {
+                float angle = 2f * math.PI * i / slots;
+                float2 candidate = ringRadius * new float2(math.cos(angle), math.sin(angle));
+                if (!RingSlotBlocked(in cfg.Arena, candidate, bodyRadius)) return; // a free slot exists
+            }
+
+            errors.Add("Arena geometry locks the whole wave spawn ring: none of the " +
+                $"{slots} fallback slots at radius {ringRadius:F3} can hold a mob of radius " +
+                $"{bodyRadius:F3} — no wave could ever spawn.");
+        }
+
+        /// One wall-vs-one-candidate-spawn-point check, factored out for the same
+        /// reason CheckSpawnClearance above is: the loop runs it once per
+        /// candidate point without repeating the message.
+        static void CheckWallSpawnClearance(List<string> errors, string tag, float2 a, float2 b,
+            float halfWidth, float clearanceNeeded, float2 spawnPos, string pointTag)
+        {
+            if (Geometry.OverlapsStadium(spawnPos, clearanceNeeded, a, b, halfWidth))
+            {
+                errors.Add($"{tag} covers the player spawn point ({pointTag}) " +
+                    $"(needs Hero.Radius+SpawnClearance={clearanceNeeded:F3} of clearance).");
+            }
+        }
+
+        /// Mirrors WaveSystem.IsValidSpawn's geometry half (circles then walls) —
+        /// the player-distance and live-mob halves depend on world state the
+        /// builder has none of.
+        static bool RingSlotBlocked(in ArenaSimConfig arena, float2 pos, float bodyRadius)
+        {
+            for (int o = 0; o < arena.ObstacleCount; o++)
+                if (Geometry.CircleOverlap(pos, bodyRadius, arena.ObstaclePos[o], arena.ObstacleRadius[o]))
+                    return true;
+            for (int w = 0; w < arena.WallCount; w++)
+                if (Geometry.OverlapsStadium(pos, bodyRadius, arena.WallA[w], arena.WallB[w],
+                        arena.WallHalfWidth[w]))
+                    return true;
+            return false;
         }
 
         /// Shared hit-zone body validated for Hero, Chaser and Gunner alike (PC5):
@@ -412,6 +674,29 @@ namespace Ring.Data
         {
             if (value < 0)
                 errors.Add($"{name} must be >= 0 (got {value}).");
+        }
+
+        /// Stage 2 Task 4: a bounded integer field (e.g. Arena.MaxPlayers) — both ends
+        /// inclusive, matching the [Range(min, max)] Inspector hint it mirrors.
+        static void ReqInRange(List<string> errors, string name, int value, int min, int max)
+        {
+            if (value < min || value > max)
+                errors.Add($"{name} must be in [{min}, {max}] (got {value}).");
+        }
+
+        /// Stage 2 Task 4 (spec §3.2): one obstacle-vs-one-candidate-spawn-point
+        /// check, factored out so the loop above can run it once for the solo
+        /// center and once per point on every ring size up to MaxPlayers
+        /// (fix-round 1 I-1) without repeating the distance/message logic.
+        static void CheckSpawnClearance(List<string> errors, string tag, float2 obstaclePos,
+            float clearanceNeeded, float2 spawnPos, string pointTag)
+        {
+            float dist = math.distance(obstaclePos, spawnPos);
+            if (dist <= clearanceNeeded)
+            {
+                errors.Add($"{tag} covers the player spawn point ({pointTag}) " +
+                    $"(dist={dist:F3} <= r+Hero.Radius+SpawnClearance={clearanceNeeded:F3}).");
+            }
         }
 
         /// Task 2: a stamina-cost field must be positive and not exceed the pool it

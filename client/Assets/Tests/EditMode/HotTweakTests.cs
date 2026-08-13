@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using Ring.Simulation.Core;
+using Unity.Mathematics;
 
 namespace Ring.Simulation.Tests
 {
@@ -10,7 +11,7 @@ namespace Ring.Simulation.Tests
         public void ApplyConfig_ClampsHpDown_KeepsTimersInRange()
         {
             var w = new SimulationWorld(3, TestConfigs.Default());
-            w.Tick(new SimInput { DashRequested = true }); // активный кулдаун — П-12(а)
+            w.Tick(new SimInput { DashRequested = true }); // active cooldown — П-12(a)
             var next = TestConfigs.Default();
             next.Hero.MaxHp = 50f;
             w.ApplyConfig(next);
@@ -58,6 +59,15 @@ namespace Ring.Simulation.Tests
         /// Task 10 (SlideTimer et al.), Task 11 (LinkWindowTimer), Task 12
         /// (DashSpeedCur), Task 14 (AimSettleTimer) — add a line here as part
         /// of that task's GREEN step, not as an afterthought.
+        ///
+        /// Stage 2 Task 10 widened the pass from float-only to float AND int
+        /// fields. Until then an int PlayerState field was skipped silently by
+        /// the `FieldType != typeof(float)` filter, so the task's two new
+        /// tick counters (DashRequestCooldownTicks / SlideRequestCooldownTicks
+        /// — the first int fields the struct ever had) would have slipped
+        /// through the "no map entry fails LOUDLY" guarantee entirely. Ceilings
+        /// stay a float map: every int ceiling in play is small and exactly
+        /// representable, and the comparison is the same "<= its new maximum".
         [Test]
         public void ApplyConfig_ReflectiveClampPass_EveryFloatFieldWithinNewMax()
         {
@@ -70,6 +80,7 @@ namespace Ring.Simulation.Tests
             next.Hero.DashBufferWindow = 0.05f;
             next.Hero.StaminaMax = 20f;
             next.Hero.StaminaRegenDelay = 0.2f;
+            next.Hero.EdgeRequestMinTicks = 2; // reduced from TestConfigs' 3 — the clamp must bite
             next.Weapon.FireInterval = 0.04f;
 
             var ceilingByField = new Dictionary<string, float>
@@ -94,31 +105,201 @@ namespace Ring.Simulation.Tests
                 ["LinkWindowTimer"] = next.Hero.LinkWindowSeconds,
                 // Task 14: aim-settle progress.
                 ["AimSettleTimer"] = next.Hero.AimSettleSeconds,
+                // Stage 2 Task 10: the two edge-request tick counters.
+                ["DashRequestCooldownTicks"] = next.Hero.EdgeRequestMinTicks,
+                ["SlideRequestCooldownTicks"] = next.Hero.EdgeRequestMinTicks,
             };
 
             var w = new SimulationWorld(5, cfg);
             object boxedPlayer = w.Player;
             foreach (var field in typeof(PlayerState).GetFields())
             {
-                if (field.FieldType != typeof(float)) continue;
-                field.SetValue(boxedPlayer, 1e6f);
+                if (field.FieldType == typeof(float)) field.SetValue(boxedPlayer, 1e6f);
+                else if (field.FieldType == typeof(int)) field.SetValue(boxedPlayer, 1_000_000);
             }
             w.SetPlayerForTest((PlayerState)boxedPlayer);
 
             w.ApplyConfig(next);
 
+            // Fix-round 1 (M-3): field types this pass deliberately does NOT
+            // measure, each for a stated reason. Anything outside both this set
+            // and the measured types below is a hard failure — extending the
+            // pass to int (Stage 2 Task 10) would otherwise have left the exact
+            // same silent hole for the next new type (a byte, an enum) that the
+            // old float-only filter left for int.
+            var unmeasuredFieldTypes = new HashSet<System.Type>
+            {
+                // Headings and positions (Pos, Vel, AimPoint, DashDir, SlideDir):
+                // ApplyConfig has no per-axis ceiling to clamp them to — arena
+                // containment is Geometry's job, every tick, not a hot-tweak's.
+                typeof(float2),
+                // Alive: a state flag, not a magnitude — nothing to clamp.
+                typeof(bool),
+            };
+
             foreach (var field in typeof(PlayerState).GetFields())
             {
-                if (field.FieldType != typeof(float)) continue;
+                float actual;
+                if (field.FieldType == typeof(float)) actual = (float)field.GetValue(w.Player);
+                else if (field.FieldType == typeof(int)) actual = (int)field.GetValue(w.Player);
+                else
+                {
+                    if (!unmeasuredFieldTypes.Contains(field.FieldType))
+                    {
+                        Assert.Fail($"PlayerState.{field.Name} has type {field.FieldType.Name}, " +
+                            "which this clamp-pass neither measures (float, int) nor lists in " +
+                            "unmeasuredFieldTypes as deliberately unmeasured — decide which it is " +
+                            "in the SAME task that declares the field, and say so here.");
+                    }
+                    continue;
+                }
                 Assert.IsTrue(ceilingByField.TryGetValue(field.Name, out float ceiling),
-                    $"PlayerState.{field.Name} is a new float field with no clamp-pass " +
+                    $"PlayerState.{field.Name} is a new float/int field with no clamp-pass " +
                     "entry in ApplyConfig_ReflectiveClampPass_EveryFloatFieldWithinNewMax's " +
                     "ceilingByField map — add a line mapping it to its ApplyConfig ceiling, " +
                     "or to float.PositiveInfinity if ApplyConfig intentionally leaves it unclamped.");
-                float actual = (float)field.GetValue(w.Player);
                 Assert.LessOrEqual(actual, ceiling,
                     $"PlayerState.{field.Name} exceeded its ApplyConfig ceiling after hot-tweak");
             }
+        }
+
+        [Test]
+        public void HotTweak_WallChange_Throws()
+        {
+            // Stage 2 Task 14 (spec §3.3): ArenaTopologyMatches grows a wall
+            // comparison mirroring the existing obstacle one — same
+            // WallCount, only a coordinate moves.
+            var c = TestConfigs.Default();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(5f, -5f) };
+            c.Arena.WallB = new[] { new float2(5f, 5f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.WallB = new[] { new float2(5f, 6f) }; // same count/half-width, moved coordinate
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_WallHalfWidthChange_Throws()
+        {
+            // Carryover-t14.md #2 (Task 12 review): comparing only WallA/
+            // WallB and skipping WallHalfWidth would let a corridor-width
+            // tuning pass as a hot-tweak while Depenetrate keeps pushing
+            // bodies out to the OLD width — same A/B here, only the width changes.
+            var c = TestConfigs.Default();
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { new float2(5f, -5f) };
+            c.Arena.WallB = new[] { new float2(5f, 5f) };
+            c.Arena.WallHalfWidth = new[] { 1f };
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.WallHalfWidth = new[] { 1.5f };
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_BarrierTopChange_Throws()
+        {
+            // Stage 2 Task 46 (bd app-r8x): the interior barriers' modelled
+            // height is arena topology exactly like WallHalfWidth above is.
+            // Raising or lowering it mid-match changes which shots the geometry
+            // stops, and ApplyConfig has no way to reconcile rounds already in
+            // flight against the old height — the same mine Task 14 closed for
+            // corridor width, one field over.
+            var c = TestConfigs.Default();
+            c.Arena.BarrierTop = 3f;
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.BarrierTop = 1.5f;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_CapChange_Throws()
+        {
+            // Coordinator addition: one of the three per-match entity caps
+            // (MaxMobs/MaxProjectiles/MaxEventsPerFrame) added to
+            // ArenaTopologyMatches — without this, resizing a cap mid-match
+            // would pass as a hot-tweak even though the backing arrays it
+            // sized at construction can't grow. This particular fixture
+            // exercises MaxProjectiles; MaxMobs and MaxEventsPerFrame get
+            // their own dedicated throws below (I-6, fix-round T14) — before
+            // this round only MaxProjectiles had any coverage at all.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.MaxProjectiles = c.Arena.MaxProjectiles + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_MaxMobsChange_Throws()
+        {
+            // I-6 (fix-round T14): MaxMobs had no dedicated coverage before
+            // this round — only MaxProjectiles was exercised, by
+            // HotTweak_CapChange_Throws above. This matters concretely from
+            // Task 16 onward: carryover-t14.md #3 predicts the .asset's
+            // MaxMobs moving 64->96 will make an old-generation config's
+            // hot-tweak throw here, by design — this test pins the
+            // mechanism that makes that true.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.MaxMobs = c.Arena.MaxMobs + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_MaxEventsPerFrameChange_Throws()
+        {
+            // I-6 (fix-round T14): same gap as HotTweak_MaxMobsChange_Throws
+            // above, for MaxEventsPerFrame. carryover-t14.md #3 predicts the
+            // .asset's MaxEventsPerFrame moving 256->512 at Task 16 will hit
+            // exactly this throw for an old-generation config.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.MaxEventsPerFrame = c.Arena.MaxEventsPerFrame + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_PlayerSpawnRingFracChange_Throws()
+        {
+            // I-6 (fix-round T14): PlayerSpawnRingFrac had NO coverage at
+            // all before this round, despite ArenaTopologyMatches comparing
+            // it right alongside MaxPlayers (Stage 2 Task 14) — it defines
+            // spawn geometry at construction time the same way Radius does,
+            // so a hot-tweak changing it must be rejected the same way.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.PlayerSpawnRingFrac = c.Arena.PlayerSpawnRingFrac + 0.05f;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_MaxPlayersChange_Throws()
+        {
+            // Carryover-t14.md #1 (deferred from Task 4's review, M-4): a
+            // hot-tweak lowering MaxPlayers below the match's actual live
+            // player count must not silently succeed — ArenaTopologyMatches
+            // now compares MaxPlayers like any other topology field, so ANY
+            // change (not only a dedicated "< PlayerCount" special case)
+            // forces the restart path instead of leaving the world's player
+            // array longer than its own new cap. Renamed in fix-round T14
+            // (M-6, was HotTweak_MaxPlayersBelowPlayerCount_Throws): the old
+            // name promised a narrow "specifically below player count"
+            // semantic this test never actually isolated — the fixture
+            // below is one instance of the "ANY change throws" rule the
+            // comment above already documents, nothing about it is specific
+            // to the below-count case.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c, playerCount: 3); // uses the full MaxPlayers(3) cap
+            var next = c;
+            next.Arena.MaxPlayers = 2; // below the match's actual 3 live players
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
         }
     }
 }

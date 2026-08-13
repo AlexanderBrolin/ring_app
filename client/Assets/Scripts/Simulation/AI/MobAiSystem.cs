@@ -31,9 +31,14 @@ namespace Ring.Simulation.AI
             {
                 ref MobState m = ref mobs[i];
                 MobSimConfig cfg = w.MobConfigFor(m.Type);
-                PlayerState player = w.Player;
 
-                if (!player.Alive)
+                // Stage 2 Task 8: target selection now goes through
+                // NearestAlivePlayer (from THIS mob's own position) instead of
+                // the old solo-only w.Player — for a solo world (PlayerCount
+                // == 1) this reduces to exactly the same "the one player, if
+                // alive" read as before. `false` (nobody alive) reuses the
+                // SAME "go Idle" branch the old `!player.Alive` check used.
+                if (!Targeting.NearestAlivePlayer(w, m.Pos, out int targetIndex))
                 {
                     m.Ai = MobAiState.Idle;
                     m.StateTimer = 0f;
@@ -41,16 +46,27 @@ namespace Ring.Simulation.AI
                     ApplyMotion(ref m, in cfg, in arena, dt);
                     continue;
                 }
+                PlayerState player = w.PlayerAt(targetIndex);
 
+                // Stage 2 Task 17 (carryover-t17.md item 1, from the Task 8
+                // review): the chaser's contact strike needs the target's INDEX,
+                // not just its state — before this task the strike paid out to
+                // player 0 regardless of whom the FSM had chosen, so a chaser
+                // standing on player 1 hit someone across the arena. UpdateGunner
+                // deliberately does NOT take the index: its shot is a projectile,
+                // and a projectile's victim is decided by geometry in
+                // ProjectileSystem (it can legitimately hit a player who walked
+                // into the line of fire), so an index parameter there would be
+                // carried and never read.
                 if (m.Type == MobType.Chaser)
-                    UpdateChaser(w, ref m, in cfg, in player, in arena, dt);
+                    UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt);
                 else
                     UpdateGunner(w, ref m, in cfg, in player, in arena, dt);
             }
         }
 
         static void UpdateChaser(SimulationWorld w, ref MobState m, in MobSimConfig cfg,
-            in PlayerState player, in ArenaSimConfig arena, float dt)
+            in PlayerState player, int targetIndex, in ArenaSimConfig arena, float dt)
         {
             switch (m.Ai)
             {
@@ -134,7 +150,13 @@ namespace Ring.Simulation.AI
                             // knock-reaction axis Presentation needs; the same
                             // pre-motion `player` snapshot the overlap check
                             // above uses, so both read one consistent frame.
-                            w.DamagePlayer(cfg.ContactDamage, m.Pos, HitZone.Body,
+                            // Stage 2 Task 17: the victim is `targetIndex` — the
+                            // very player this FSM selected and re-validated the
+                            // overlap against — and the attacker is
+                            // ProjectileIds.NoOwner, since a mob owns no player
+                            // slot and no player earns credit for its kill.
+                            w.DamagePlayer(targetIndex, ProjectileIds.NoOwner, cfg.ContactDamage,
+                                m.Pos, HitZone.Body,
                                 math.normalizesafe(player.Pos - m.Pos, new float2(1f, 0f)));
                         }
                         m.Ai = MobAiState.Recover;
@@ -216,8 +238,9 @@ namespace Ring.Simulation.AI
                 float2 aimDir = Targeting.AimWithLead(m.Pos, player.Pos, player.Vel,
                     cfg.ProjectileSpeed, cfg.LeadFactor);
                 // Height/VelZ (Task 4): flat trajectory for now — spawns at the
-                // gunner's muzzle height with zero vertical velocity.
-                w.SpawnProjectile(ProjectileOwner.Mob, m.Pos + aimDir * cfg.Radius,
+                // gunner's muzzle height with zero vertical velocity. ownerIndex
+                // (Stage 2 Task 7): a mob never owns a player slot — NoOwner.
+                w.SpawnProjectile(ProjectileOwner.Mob, ProjectileIds.NoOwner, m.Pos + aimDir * cfg.Radius,
                     aimDir * cfg.ProjectileSpeed, cfg.MuzzleHeight, 0f,
                     cfg.ProjectileDamage, cfg.ProjectileRadius,
                     cfg.ProjectileLifetime);
@@ -238,27 +261,60 @@ namespace Ring.Simulation.AI
                 out _, out _, out _);
         }
 
-        /// Steering direction toward `targetPos`: the direct line unless an obstacle
-        /// lies within `lookahead` along it, in which case it returns the exact
-        /// tangent line from the mob's position to that obstacle's padded circle
-        /// (classic external-point-to-circle tangent — right triangle pos/tangent
-        /// point/centre, hypotenuse `d` = distance to centre, opposite side =
-        /// padded radius, so the half-angle at pos is `asin(radius / d)`). Unlike a
-        /// pure sideways tangent, this direction still has a net component toward
-        /// the target — the earlier pure-tangent version left zero radial velocity
-        /// relative to the obstacle centre, so the mob settled into a stable
-        /// circular orbit right at the lookahead trigger boundary and never closed
-        /// in (found via the RED run of Chaser_BehindObstacle_SteersAroundNotStuck:
-        /// it parked at exactly obstacleRadius+padR+lookahead from the centre).
-        /// Side is the sign of the cross product of the approach direction and the
+        /// Steering direction toward `targetPos`: the direct line unless an
+        /// obstacle (circle) or a wall lies within `lookahead` along it, in
+        /// which case an avoidance direction is returned instead. Obstacles and
+        /// walls compete for the SAME "nearest blocker" slot — whichever gives
+        /// the smaller sweep parameter `t` wins; an exact tie keeps whichever
+        /// was recorded first (circles are swept before walls, mirroring
+        /// SweepArena's fixed circle-then-wall order).
+        ///
+        /// Circle blocker: the exact external tangent from the mob's position
+        /// to the obstacle's padded circle (classic point-to-circle tangent —
+        /// right triangle pos/tangent point/centre, hypotenuse `d` = distance
+        /// to centre, opposite side = padded radius, half-angle at pos =
+        /// `asin(radius / d)`). Unlike a pure sideways tangent, this direction
+        /// still has a net component toward the target — a pure-tangent
+        /// version left zero radial velocity relative to the obstacle centre,
+        /// so the mob settled into a stable circular orbit right at the
+        /// lookahead trigger boundary and never closed in (found via the RED
+        /// run of Chaser_BehindObstacle_SteersAroundNotStuck: it parked at
+        /// exactly obstacleRadius+padR+lookahead from the centre). Side is the
+        /// sign of the cross product of the approach direction and the
         /// direction to the obstacle's centre; a dead-on approach (cross == 0)
-        /// breaks the tie on the mob's Id parity so the choice stays deterministic
-        /// without RNG. Only obstacles are considered (matches
-        /// Targeting.HasLineOfFire) — the ring wall is handled by the physical
-        /// collide-and-slide in MoveWithCollisions, not by look-ahead steering.
-        /// `avoidMargin` (MobSimConfig.AvoidMargin — see its doc comment for the
-        /// full rationale) pads the obstruction check beyond `mobRadius` so the
-        /// mob doesn't hug the obstacle at the bare minimum clearance.
+        /// breaks the tie on the mob's Id parity so the choice stays
+        /// deterministic without RNG.
+        ///
+        /// Wall blocker (Stage 2 Task 14, spec 3.3): NOT a tangent — see the
+        /// coordinator's comment in the wall branch below for why a tangent
+        /// (to the wall's body or to either end cap) fails for a wall. The mob
+        /// instead heads for a WAYPOINT placed just outside whichever end
+        /// (WallA/WallB) gives the shorter total detour (mob-&gt;end distance +
+        /// end-&gt;target distance; a near-tie — within Geometry.Skin, the wall
+        /// straddles the path close to symmetrically — breaks on the mob's Id
+        /// parity so the choice is stable across ticks). The waypoint sits off
+        /// the wall's face on the mob's own side (a near-tie there breaks the
+        /// same way) AND past that end along the wall's axis, both offsets
+        /// equal to `clearance` (wallHalfWidth + padR): being off the body on
+        /// both axes guarantees an outward component the collide-and-slide can
+        /// never fully cancel, so the mob can't dead-stop against the wall.
+        /// Within `clearance` of the waypoint the heading switches to running
+        /// straight along the axis instead (`normalizesafe` would otherwise
+        /// fall back to the still-blocked direct line and park the mob
+        /// there) — see the wall branch's own comment on why this fallback
+        /// radius is NOT narrower than `clearance` despite the wobble/capture
+        /// defect that width causes (app-jyv tracks the real fix). Past the
+        /// end, steering re-evaluates every tick and reverts to the direct
+        /// line as soon as the wall stops blocking.
+        ///
+        /// Only obstacles and walls are considered (matches
+        /// `Targeting.HasLineOfFire`) — the ring wall is handled by the
+        /// physical collide-and-slide in `MoveWithCollisions`, not by
+        /// look-ahead steering.
+        /// `avoidMargin` (MobSimConfig.AvoidMargin — see its doc comment for
+        /// the full rationale) pads the obstruction check beyond `mobRadius`
+        /// so the mob doesn't hug the obstacle/wall at the bare minimum
+        /// clearance.
         static float2 SteerAround(float2 pos, float2 targetPos, in ArenaSimConfig arena,
             float lookahead, float mobRadius, float avoidMargin, int id)
         {
@@ -266,7 +322,8 @@ namespace Ring.Simulation.AI
             float2 aheadEnd = pos + dir * lookahead;
             float padR = mobRadius + avoidMargin;
 
-            int blockedIdx = -1;
+            int blockedCircleIdx = -1;
+            int blockedWallIdx = -1;
             float bestT = 1f;
             for (int o = 0; o < arena.ObstacleCount; o++)
             {
@@ -274,15 +331,143 @@ namespace Ring.Simulation.AI
                         arena.ObstacleRadius[o], out float t) && t < bestT)
                 {
                     bestT = t;
-                    blockedIdx = o;
+                    blockedCircleIdx = o;
+                    blockedWallIdx = -1;
                 }
             }
-            if (blockedIdx < 0) return dir;
+            for (int wIdx = 0; wIdx < arena.WallCount; wIdx++)
+            {
+                if (Geometry.SegmentStadium(pos, aheadEnd, padR, arena.WallA[wIdx], arena.WallB[wIdx],
+                        arena.WallHalfWidth[wIdx], out float t) && t < bestT)
+                {
+                    bestT = t;
+                    blockedWallIdx = wIdx;
+                    blockedCircleIdx = -1;
+                }
+            }
+            if (blockedCircleIdx < 0 && blockedWallIdx < 0) return dir;
 
-            float2 toCenter = arena.ObstaclePos[blockedIdx] - pos;
+            if (blockedWallIdx >= 0)
+            {
+                // Coordinator fix (Stage 2 Task 14) — why NOT a tangent. A
+                // circle IS the whole obstacle, so a tangent to it clears it.
+                // A wall's blocking body is its side; an end cap is only that
+                // body's edge, so the tangent to one cap can cut straight
+                // through the body — the mob then steers into the wall, the
+                // physical collide-and-slide cancels that velocity, and the
+                // next tick reproduces the same geometry: a stable dead stop
+                // (measured at 5.5e-17 parallelism to the flat face,
+                // reproduced from five independent geometries). Picking the
+                // cap by "whichever end is nearer" adds a second failure: for
+                // a wall straddling the mob's path the two ends are
+                // equidistant, the choice flips between them tick to tick,
+                // and the mob oscillates in place instead of committing to a
+                // detour. A tangent-based rule cannot fix this by choosing
+                // differently either: a wall is routinely LONGER than
+                // AvoidLookahead, and local look-ahead has no notion of
+                // "which way is out" of a surface that extends past what it
+                // can see. See the XML doc above for the waypoint approach
+                // used instead (fix-round T14, C-1: this comment used to
+                // duplicate that description verbatim — trimmed here to just
+                // the "why not tangent" reasoning so the two can't drift out
+                // of sync again).
+                float2 wallA = arena.WallA[blockedWallIdx];
+                float2 wallB = arena.WallB[blockedWallIdx];
+                float clearance = arena.WallHalfWidth[blockedWallIdx] + padR;
+
+                // Which end to round: the one giving the shorter total detour.
+                // A near-tie (the wall straddles the path close to
+                // symmetrically) breaks on Id parity — a constant per mob, so
+                // the choice is STABLE across ticks. Breaking such a tie on a
+                // bare float comparison instead is what makes a mob oscillate
+                // on the spot: at the symmetric point the winner flips every
+                // tick and no lateral progress is ever committed to.
+                // I-5 (fix-round T14): costA/costB are two INDEPENDENT sqrt
+                // chains, so an exact `==` comparison is one ULP of rounding
+                // noise away from flipping — and unlike most float slop, the
+                // consequence here is macroscopic: the mob commits to the
+                // OPPOSITE side of the wall, not a barely different steering
+                // angle. Widening the tie window to Geometry.Skin catches that
+                // noise deterministically instead of leaving it to chance
+                // (and, from Task 16 onward, to the golden hash).
+                float costA = math.distance(pos, wallA) + math.distance(wallA, targetPos);
+                float costB = math.distance(pos, wallB) + math.distance(wallB, targetPos);
+                bool roundA = math.abs(costA - costB) < Geometry.Skin
+                    ? (id & 1) == 0
+                    : costA < costB;
+                float2 end = roundA ? wallA : wallB;
+                float2 farEnd = roundA ? wallB : wallA;
+
+                // Aim just OUTSIDE that end, offset off the wall's face on the
+                // mob's own side and past the cap along the axis. Steering at the
+                // end itself would aim at the cap's centre — into the wall.
+                float2 axis = math.normalizesafe(end - farEnd, dir);
+                float2 face = new float2(-axis.y, axis.x);
+                // I-2 (fix-round T14): the raw sign of this dot flips as the
+                // mob passes the end's axis-perpendicular line (the waypoint
+                // would jump to the wall's OTHER side from one tick to the
+                // next), and at dot == 0 the result silently depended on
+                // WallA/WallB authoring order. Same near-tie idiom as the end
+                // selection above: within Geometry.Skin of zero, resolve on
+                // Id parity instead of the raw sign.
+                float faceDot = math.dot(pos - end, face);
+                bool keepFace = math.abs(faceDot) < Geometry.Skin
+                    ? (id & 1) == 0
+                    : faceDot >= 0f;
+                if (!keepFace) face = -face;
+                float2 waypoint = end + axis * clearance + face * clearance;
+                float2 toWaypoint = waypoint - pos;
+                // Standing ON the waypoint has to keep producing a heading:
+                // normalizesafe would fall back to `dir`, which is the blocked
+                // straight line, and the mob would park there for good
+                // (observed: it stopped exactly one waypoint's distance short
+                // of the player). C-2 (fix-round T14): the fallback radius is
+                // still the full `clearance` disc, NOT narrowed to
+                // Geometry.Skin — see app-jyv for why the narrow radius that
+                // review asked for turned out not to be safe. Inside ANY
+                // fallback radius the heading (`axis`) ignores both the
+                // target and the mob's own position, so a radius as wide as
+                // `clearance` (2-2.5m at AvoidLookahead 3m) lets a mob wobble
+                // near a single wall's end, and gives a stable capture
+                // between two walls whose gap fits inside it — that's the
+                // real defect app-jyv tracks, and its proper fix is per-tick
+                // hysteresis on the chosen wall/end/side (needs a new
+                // hashable MobState field, out of scope here). Narrowing this
+                // radius to Geometry.Skin looked like a cheap partial
+                // mitigation, but empirically it swaps one instability for a
+                // WORSE one: shrunk that far, the mob keeps re-aiming at the
+                // literal waypoint point at full MaxSpeed with no arrival
+                // damping, which is an undamped pursuit-of-a-fixed-point
+                // controller — it overshoots past the waypoint every tick and
+                // never converges, orbiting it forever instead of ever
+                // reaching the `axis`-only fallback (reproduced with
+                // Chaser_NavigatesAroundWall's exact fixture: final distance
+                // to player 0.72 at the `clearance` radius here, 11.01 at
+                // Geometry.Skin — confirmed the wall branch's own
+                // near-tie band changes from I-2/I-5 are NOT the cause, only
+                // this radius is). A smaller-but-not-tiny radius does not
+                // save it either — a sweep of this same fixture found the
+                // orbit sets in below ~0.8x of `clearance`, too close to the
+                // original value to buy any meaningful narrowing. Left at
+                // `clearance`, unchanged, pending app-jyv's real fix. Past
+                // the waypoint the detour continues along the axis, out
+                // beyond the cap, until the wall no longer blocks at all.
+                return math.lengthsq(toWaypoint) > clearance * clearance
+                    ? math.normalizesafe(toWaypoint, dir)
+                    : axis;
+            }
+
+            // Circle branch — untouched by Stage 2 Task 14 and bit-for-bit as it
+            // was before it: mob steering around obstacles is inside the golden
+            // hash, so this arithmetic may not be re-expressed, only extended
+            // alongside (the wall branch above returns before reaching here).
+            float2 center = arena.ObstaclePos[blockedCircleIdx];
+            float baseRadius = arena.ObstacleRadius[blockedCircleIdx];
+
+            float2 toCenter = center - pos;
             float d = math.length(toCenter);
             float2 u = d > 1e-5f ? toCenter / d : new float2(-dir.y, dir.x);
-            float radius = arena.ObstacleRadius[blockedIdx] + padR;
+            float radius = baseRadius + padR;
             // Clamped to 1 when pos is already at/inside the padded circle (grazing,
             // 90-degree tangent) instead of NaN-ing out of range for asin.
             float ratio = d > 1e-5f ? math.clamp(radius / d, 0f, 1f) : 1f;

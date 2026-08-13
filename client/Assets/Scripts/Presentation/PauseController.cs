@@ -40,8 +40,10 @@ namespace Ring.Presentation
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
         // its sole SimEventRouter subscriber) — direct subscription, same shape
         // as the deleted PracticeTargets' pattern. Covers a restart triggered
-        // from somewhere other than this menu's own RestartFromMenu (dev-overlay
-        // forced-seed restart, or the death overlay's R/Shift+R) while paused.
+        // while paused from anywhere at all: the dev-overlay forced-seed
+        // restart, the death overlay's R/Shift+R, and — since Task 44d
+        // fix-round 1 — this menu's own RestartFromMenu, which no longer does
+        // any of it itself (see that method).
         void OnEnable() => _runner.WorldRestarted += HandleWorldRestarted;
 
         void OnDisable() => _runner.WorldRestarted -= HandleWorldRestarted;
@@ -80,10 +82,23 @@ namespace Ring.Presentation
 
         void RestartFromMenu()
         {
-            // Runner.Restart already clears Paused itself (Task 24 defensive
-            // fix), but the menu still needs to hide — nothing else does that
-            // for this specific path.
-            _menu.SetActive(false);
+            // ONE HOME FOR "A MATCH BEGAN, SO CLOSE THIS MENU", AND IT IS
+            // `HandleWorldRestarted` BELOW (Stage 2 Task 44d fix-round 1). It
+            // clears the pause and hides the menu on every restart, including
+            // this one — the line that used to hide the menu here as well was
+            // redundant from the day it was written, and its comment ("nothing
+            // else does that for this specific path") was never true.
+            //
+            // Task 44d turned that redundancy into a defect. `Restart` is now
+            // a REQUEST: a networked backend refuses one the server did not
+            // order, and everything the facade does for a restart —
+            // `WorldRestarted` included — stays behind that refusal. Hiding
+            // the menu unconditionally therefore left the game paused with the
+            // menu gone, and the pause menu is the only surface offering
+            // Resume in a Release build (Escape is compiled out, class doc
+            // above). Doing nothing here is what makes a refused restart look
+            // like what it is: nothing happened, the menu is still up, Resume
+            // still works.
             _runner.RestartNewSeed();
         }
 

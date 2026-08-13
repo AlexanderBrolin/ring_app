@@ -24,7 +24,10 @@ namespace Ring.Simulation.Tests
                     PostDashSlideWindow = 0.32f, SlideWallStopDot = 0.7f,
                     RicochetRetention = 0.8f,
                     AimMoveSpeedFrac = 0.8f, AimSlideSpeedMult = 0.5f,
-                    AimSettleSeconds = 0.5f },
+                    AimSettleSeconds = 0.5f,
+                    // Stage 2 Task 8: mirrors HeroConfig's C# default (two-sources-
+                    // of-numbers discipline — this is the test/code-default side).
+                    EdgeRequestMinTicks = 3 },
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
                     ProjectileRadius = 0.12f, ProjectileLifetime = 1.5f, Damage = 12f,
                     SpreadRad = 0.026f, RecoilPerShotRad = 0.006f,
@@ -58,9 +61,16 @@ namespace Ring.Simulation.Tests
                     MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f, WavePause = 4f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f, BaseCount = 4,
-                    CountGrowth = 2, MaxMobsPerWave = 24, MaxSpawnAttempts = 16,
-                    FallbackSlots = 24, GunnerShareBase = 0.2f, GunnerShareGrowth = 0.05f },
-                Arena = DefaultArena()
+                    CountGrowth = 2, MaxMobsPerWave = 36, MaxSpawnAttempts = 16,
+                    FallbackSlots = 24, GunnerShareBase = 0.2f, GunnerShareGrowth = 0.05f,
+                    // Stage 2 Task 16: mirrors WaveConfig's C# default
+                    // (two-sources-of-numbers discipline — test/code-default side).
+                    PerPlayerCountFrac = 0.7f },
+                Arena = DefaultArena(),
+                // Stage 2 Task 19: mirrors VisibilityConfig's C# defaults
+                // (two-sources-of-numbers discipline — test/code-default side).
+                Visibility = new VisibilitySimConfig { SightRadius = 45f, HearRadius = 60f,
+                    ExitHysteresis = 3f, LingerTicks = 5, HearPositionGridMeters = 3f }
             };
         }
 
@@ -68,11 +78,41 @@ namespace Ring.Simulation.Tests
         {
             return new ArenaSimConfig
             {
-                Radius = 35f, ObstacleCount = 5,
+                // Stage 2 Task 16: the whole block below mirrors ArenaConfig's C#
+                // defaults field for field — the golden scenarios run off THIS
+                // struct, so an arena change that skipped it would leave the
+                // golden hash pinned to the old layout while the game moved.
+                Radius = 65f, ObstacleCount = 8,
                 ObstaclePos = new[] { new float2(10f, 4f), new float2(-8f, 9f),
-                    new float2(2f, -12f), new float2(-13f, -6f), new float2(14f, -9f) },
-                ObstacleRadius = new[] { 2.2f, 1.8f, 2.5f, 2.0f, 1.6f },
-                MaxMobs = 64, MaxProjectiles = 256, MaxEventsPerFrame = 256
+                    new float2(2f, -12f), new float2(-13f, -6f), new float2(14f, -9f),
+                    new float2(-40f, 8f), new float2(30f, 22f), new float2(-6f, -30f) },
+                ObstacleRadius = new[] { 2.2f, 1.8f, 2.5f, 2.0f, 1.6f, 3.0f, 2.8f, 3.2f },
+                MaxMobs = 96, MaxProjectiles = 384, MaxEventsPerFrame = 512,
+                // Stage 2 Task 4: same values as ArenaConfig's C# defaults
+                // (two-sources-of-numbers discipline — this is the test/code-default side).
+                MaxPlayers = 3, PlayerSpawnRingFrac = 0.8f,
+                // Stage 2 Task 16: interior walls, same mirror discipline.
+                WallCount = 6,
+                WallA = new[] { new float2(-28f, 10f), new float2(-28f, 17.6f),
+                    new float2(12f, -6f), new float2(12f, -13.6f),
+                    new float2(2f, 24f), new float2(-34f, -20f) },
+                WallB = new[] { new float2(-8f, 10f), new float2(-8f, 17.6f),
+                    new float2(34f, -6f), new float2(34f, -13.6f),
+                    new float2(2f, 44f), new float2(-16f, -34f) },
+                WallHalfWidth = new[] { 0.8f, 0.8f, 0.8f, 0.8f, 0.6f, 0.6f },
+                // Stage 2 Task 46 — THE ONE FIELD WHERE THIS MIRROR IS BROKEN
+                // ON PURPOSE. ArenaConfig's own C# default is 3 m (the height
+                // the game plays at); this baseline stays at 0, "no modelled
+                // top", which is what every barrier did before Task 46.
+                // The reason is the golden scenarios above this comment: they
+                // run off THIS struct, a projectile's Height and VelZ both feed
+                // StateHash, and any climbing shot that passed over a barrier
+                // would change its own trajectory and with it the pinned hash.
+                // Keeping the test side on the pre-Task-46 branch means the new
+                // branch is not merely expected to leave the goldens alone — it
+                // is never executed by them at all. Tests that need a real
+                // height state it themselves, in the fixture, and say so.
+                BarrierTop = 0f
             };
         }
 
@@ -87,12 +127,23 @@ namespace Ring.Simulation.Tests
         }
 
         /// Quiet arena without obstacles — open-field movement/combat tests.
+        /// Stage 2 Task 16: "without obstacles" now also means without the
+        /// interior WALLS DefaultArena() ships, for exactly the same reason it
+        /// has always dropped the circles — an open-field fixture must not have
+        /// its geometry silently rewritten by an arena-layout tuning pass. This
+        /// keeps every Open()-based fixture at the WallCount == 0 it has had
+        /// since Task 11, so the layout change moves the golden scenarios
+        /// (Default()) and nothing else.
         public static SimConfig Open()
         {
             var c = Quiet();
             c.Arena.ObstacleCount = 0;
             c.Arena.ObstaclePos = System.Array.Empty<float2>();
             c.Arena.ObstacleRadius = System.Array.Empty<float>();
+            c.Arena.WallCount = 0;
+            c.Arena.WallA = System.Array.Empty<float2>();
+            c.Arena.WallB = System.Array.Empty<float2>();
+            c.Arena.WallHalfWidth = System.Array.Empty<float>();
             return c;
         }
 
@@ -101,7 +152,7 @@ namespace Ring.Simulation.Tests
         /// slide-adjacent stamina-regen timing tests (regen frozen for the
         /// whole slide even once the post-action delay alone would have
         /// elapsed; buffer-window regen catch-up) have enough headroom to
-        /// observe the behaviour deterministically instead of racing it.
+        /// observe the behavior deterministically instead of racing it.
         public static SimConfig RegenFixture()
         {
             var c = Open();

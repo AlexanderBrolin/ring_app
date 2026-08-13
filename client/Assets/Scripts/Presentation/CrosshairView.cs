@@ -16,16 +16,16 @@ namespace Ring.Presentation
     /// `AimHeld` the cone is hidden (PD15: a spread CONE only ever describes hip
     /// fire — aimed fire draws a genuine 3D ray instead, `AimRayView`) and this
     /// same marker doubles as the aim-point dot, scaled by `GameFeelConfig.
-    /// AimDotScale` — no second marker is ever created for that (PC8). Hides the
-    /// OS cursor while active.
+    /// AimDotScale` — no second marker is ever created for that (PC8). Sole
+    /// owner of the OS cursor's visibility (`UpdateCursor`, Stage 2 Task 45c).
     ///
     /// П-3 (Task 19's resolution): `AimProvider.CurrentAimSimPos` is the sole
     /// per-frame aim source both the marker and the cone's CENTER read — no tick
     /// quantization. The cone's RADIUS is the one place this class reads the
     /// simulation snapshot at all (`RenderCurr.Player`, the hitstop-consistent
-    /// half of the render pair, the same snapshot `PlayerView`/`CameraRig`
-    /// already read), fed into `Spread.HipRadians` alongside `World.Config.
-    /// Weapon`/`World.Config.Hero` (hot-tweakable via their SOs, never hardcoded
+    /// half of the render pair, the same snapshot `ViewRegistry`/`CameraRig`
+    /// already read), fed into `Spread.HipRadians` alongside the runner's
+    /// `Config.Weapon`/`Config.Hero` (hot-tweakable via their SOs, never hardcoded
     /// here) — `settleFactor` is deliberately NOT applied (PD15 above): that
     /// shrink exists only on `WeaponSystem`'s AIMED-fire branch, which this cone
     /// never represents.
@@ -63,7 +63,7 @@ namespace Ring.Presentation
         // В1/В2 fix-wave 2 (app-n6g item 3a): the marker doubles as the
         // zone-colored aim dot while AimHeld — same MaterialPropertyBlock/
         // _EmissionColor idiom every other accent in this project uses
-        // (PlayerVisual/MobView/CorpseView), never a material instance.
+        // (PlayerView/MobView/CorpseView), never a material instance.
         Renderer _markerRenderer;
         MaterialPropertyBlock _block;
         Color _markerBaseEmission;
@@ -83,22 +83,64 @@ namespace Ring.Presentation
             _markerBaseEmission = _markerRenderer.sharedMaterial.GetColor(EmissionColorId);
         }
 
-        void OnEnable() => Cursor.visible = false;
-
+        /// The safety net, and only that (Stage 2 Task 45c): whoever switches
+        /// this component off — leaving Play mode included — gets the OS cursor
+        /// back rather than a machine with no pointer. The matching `OnEnable`
+        /// that used to hide it is gone: hiding on enable and revealing on
+        /// disable made the cursor a function of THIS COMPONENT's lifetime,
+        /// which is why it stayed hidden through the pause menu and the death
+        /// screen (bd `app-10j`) — `UpdateCursor` below decides per frame
+        /// instead, and an enable while paused must not overrule it.
         void OnDisable() => Cursor.visible = true;
+
+        /// SOLE OWNER OF `Cursor.visible` IN THE PROJECT (owner decision 6а,
+        /// Stage 2 Task 45c, bd `app-10j`): one class writes it, every frame,
+        /// from the state of the game rather than from any event. Written
+        /// unconditionally rather than on change — the write is what makes the
+        /// ownership real, and a component that only wrote on its own edges
+        /// could be overruled by anything else and never notice.
+        ///
+        /// SHOWN WHENEVER THE GAME IS NOT ASKING FOR AIM, and "asking for aim"
+        /// is `SimulationRunner.AimActive` — not a test assembled here. That
+        /// property's own doc has the three terms and why each is in it; what
+        /// matters at this call site is that the pointer, the ground marker
+        /// below and `AimRayView`'s ray all obey the SAME signal, so the cursor
+        /// can never appear over a crosshair that is still tracking the mouse
+        /// (fix-round 1, G-4).
+        void UpdateCursor() => Cursor.visible = !(_runner != null && _runner.AimActive);
 
         void LateUpdate()
         {
+            // Ahead of everything else on purpose: a frame with nothing to show
+            // is a frame with nothing to aim at, and the cursor is the player's
+            // only way out of it.
+            UpdateCursor();
+
             // Г5 review (Minor, same lens as AimRayView's Important — QA18
-            // pattern): UpdateCone below dereferences _runner.World.Config,
-            // same as RenderMuzzleHeight does for AimRayView — hide the cone
-            // and skip it until both exist, rather than crash on the cold
-            // start. Once running, behavior below is unchanged.
-            if (_runner == null || _runner.World == null)
+            // pattern): UpdateCone below reads _runner.Config and the render
+            // pair, the same pair AimRayView's own guard protects — hide the
+            // cone and skip it until the backend has something to show, rather
+            // than crash on the cold start. Once running, behavior below is
+            // unchanged. Task 43: was `World == null`, then `Ready`.
+            // (Stage 2 Task 45b fix-round 1, G-6: this comment used to name
+            // `RenderMuzzleHeight` as what AimRayView reads. That task moved
+            // that view onto the doll's muzzle socket. Stage 2 Task 45c
+            // fix-round 1, G-5 item 6: nor is the property unread — `AimProvider`
+            // has read it since that task, for the simulation's own muzzle
+            // rather than for a drawn one.)
+            //
+            // Fix-round 1 (G-4): the guard is `AimActive` now, not `Ready` — a
+            // strictly narrower condition that also covers the pause menu and
+            // the death screen. The MARKER goes down with the cone here: it used
+            // to keep tracking the mouse across the menu buttons the cursor was
+            // finally being shown for.
+            if (_runner == null || !_runner.AimActive)
             {
                 _cone.enabled = false;
+                _markerRenderer.enabled = false;
                 return;
             }
+            _markerRenderer.enabled = true;
 
             bool aimHeld = _runner.LastFrameInput.AimHeld;
 
@@ -117,7 +159,15 @@ namespace Ring.Presentation
                 // marker's local Y axis is its flat disc's cap normal) so it
                 // always reads as a coin facing the viewer, not a decal
                 // lying on whatever surface it currently touches.
-                aimWorld = _aimProvider.CurrentAimWorldPoint;
+                // Stage 2 Task 45c (bd app-bej): the point is now the round's
+                // own landing point rather than the cursor's
+                // (`AimProvider.CurrentImpactWorldPoint` vs the
+                // `CurrentAimWorldPoint` this line used to read). The two are
+                // the same point for any aim at or above the round's
+                // ground-contact height — every shot at a mob's body included —
+                // and part company on a shot at the FLOOR, where the marker used
+                // to stand 8% of the range beyond where the round comes down.
+                aimWorld = _aimProvider.CurrentImpactWorldPoint;
                 _marker.position = aimWorld + GroundOffset;
                 Vector3 toCamera = _camera != null
                     ? _camera.transform.position - _marker.position : Vector3.up;
@@ -141,7 +191,7 @@ namespace Ring.Presentation
             // "unmistakable, not just recolored" rationale.
             // В3 fix-wave 2 (item 3a): a breathing scale PULSE layers on top of
             // that boost while on Head — same `0.5+0.5*sin(...)`-shaped
-            // oscillation idiom as PlayerVisual/MobView's own pulses (class doc
+            // oscillation idiom as PlayerView/MobView's own pulses (class doc
             // above the GameFeelConfig fields), remapped to a signed [-1,1]
             // swing around 1 so the dot visibly grows AND shrinks, not just
             // fades.
@@ -185,8 +235,8 @@ namespace Ring.Presentation
         /// Radius = `tan(Spread.HipRadians(...)) * distanceToAimPoint` — the
         /// half-angle the HIP-FIRE branch's next shot could land within, read via
         /// the single shared `Ring.Simulation.Combat.Spread.HipRadians` formula
-        /// (class doc — PC6) off `World.Config.Weapon`/`RenderCurr.Player`/
-        /// `World.Config.Hero`, never a private copy of the math, projected out
+        /// (class doc — PC6) off `_runner.Config.Weapon`/`RenderCurr.Player`/
+        /// `_runner.Config.Hero`, never a private copy of the math, projected out
         /// to the player's current aim distance (spec §3.5/§3.11: the player
         /// sees the weapon's REAL current hip-fire spread — recoil AND
         /// movement-widening both included, since `Spread.HipRadians` folds in
@@ -203,7 +253,7 @@ namespace Ring.Presentation
         /// `transform.localScale`, so ring width never distorts with radius.
         void UpdateCone(float2 aimSim, Vector3 aimWorld)
         {
-            var cfg = _runner.World.Config;
+            var cfg = _runner.Config;
             var player = _runner.RenderCurr.Player;
             float halfAngle = Spread.HipRadians(cfg.Weapon, player, cfg.Hero);
             float distance = math.distance(player.Pos, aimSim);

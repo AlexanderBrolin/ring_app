@@ -40,8 +40,9 @@ namespace Ring.Data
         // is draining it.
         // В1 fix-wave 3 (owner economy rework, app-n6g): LinkedDashStaminaCost's
         // discounted-dash-in-window model is retired — dash/slide now always pay
-        // their own full price; LinkRefund (below, the class's new sync-marker
-        // field) is what makes chaining net-cheaper instead.
+        // their own full price; LinkRefund (below — was the class's sync-marker
+        // field until Stage 2 Task 8's EdgeRequestMinTicks superseded it, see
+        // LinkRefund's own doc) is what makes chaining net-cheaper instead.
         [Range(1f, 300f)] public float StaminaMax = 100f;
         [Range(0.1f, 300f)] public float DashStaminaCost = 40f;
         [Range(0.1f, 300f)] public float SlideStaminaCost = 30f;
@@ -76,8 +77,21 @@ namespace Ring.Data
         // PlayerMovementSystem.Update's two "linked" branches). Validated
         // strictly below min(DashStaminaCost, SlideStaminaCost) by
         // SimConfigBuilder — no perpetual motion, every linked move still nets
-        // a stamina drain.
-        [Range(0f, 40f)] public float LinkRefund = 10f; // sync-marker key — keep LAST
+        // a stamina drain. Was the sync-marker key until Stage 2 Task 8's
+        // EdgeRequestMinTicks field below superseded it.
+        [Range(0f, 40f)] public float LinkRefund = 10f;
+
+        // Stage 2 Task 8 (spec Interfaces): minimum tick gap the edge-request
+        // gate requires between two ACCEPTED DashRequested/SlideRequested edges
+        // of the same kind from the same player. Declared here in Task 8;
+        // consumed since Stage 2 Task 10, where the gate itself landed
+        // (PlayerMovementSystem.Update — decision F1a moved it out of Task 8,
+        // see task-8-brief.md's header). SimConfig is not part of StateHash
+        // (SimConfigHash arrives in Task 23), so the field itself stays
+        // hash-neutral by construction even though what it gates is not.
+        // LinkRefund above was the sync-marker key until this field superseded
+        // it — see its own doc for the historical chain before it.
+        [Range(0, 15)] public int EdgeRequestMinTicks = 3; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a

@@ -1,0 +1,14 @@
+{
+    "name": "Ring.Networking",
+    "rootNamespace": "Ring.Networking",
+    "references": ["Ring.Simulation", "Ring.Data", "FishNet.Runtime", "Unity.Mathematics"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

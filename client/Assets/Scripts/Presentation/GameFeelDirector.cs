@@ -12,7 +12,7 @@ namespace Ring.Presentation
     /// class in Presentation.
     ///
     /// Architecture (П-7): `SimulationRunner.RenderPrev`/`RenderCurr`/
-    /// `RenderAlpha` are the SOLE point `ViewRegistry`/`PlayerView`/`CameraRig`
+    /// `RenderAlpha` are the SOLE point `ViewRegistry`/`CameraRig`
     /// read for interpolation — none of them ever check `HitstopActive` or
     /// branch on hitstop at all. This class is the only thing that ever calls
     /// `SimulationRunner.FreezeRender`/`UnfreezeRender`, so "does hitstop affect
@@ -43,9 +43,12 @@ namespace Ring.Presentation
     /// the instant a death screen is about to cover the whole frame anyway.
     ///
     /// Budget (spec Interfaces): a trailing 1-second window tracks each
-    /// ACCEPTED trigger's own `(timestamp, seconds)` pair; a new
-    /// `ProjectileHit` is only granted hitstop if the window's summed seconds
-    /// plus this trigger's own duration stay under `MaxHitstopRatio` (a
+    /// ACCEPTED trigger's own `(timestamp, seconds)` pair; a new hit — a
+    /// `ProjectileHit` on a mob, or (Stage 2 Task 45c, moved onto this kind by
+    /// its fix-round 1) a `PlayerDamaged` naming this client's own player — is
+    /// only granted hitstop if the window's
+    /// summed seconds plus this trigger's own duration stay under
+    /// `MaxHitstopRatio` (a
     /// fraction of that 1s window — e.g. 0.35 == 350ms of hitstop per real
     /// second) — otherwise the freeze/target-freeze step is skipped outright,
     /// so hold-fire through a wave doesn't turn into a slideshow. The
@@ -73,12 +76,6 @@ namespace Ring.Presentation
     /// hitstop or paused by anything — so a shake already in flight when a
     /// hitstop freeze or the death overlay hits keeps reading live instead of
     /// stalling with the rest of the frame.
-    ///
-    /// `GameFeelConfig.ExtrapolateLocalPlayer` is deliberately left unconsumed
-    /// here: no spec text ties it to a concrete mechanic, and inventing one
-    /// risks contradicting the one hard rule above (`PlayerView` reads ONLY
-    /// `RenderAlpha`, no per-class special casing) — left documented as still
-    /// reserved rather than guessed at.
     public sealed class GameFeelDirector : MonoBehaviour
     {
         const float BudgetWindowSeconds = 1f;
@@ -160,19 +157,11 @@ namespace Ring.Presentation
                 case SimEventKind.ProjectileHit:
                     HandleProjectileHit(in e);
                     break;
+                case SimEventKind.PlayerDamaged:
+                    HandlePlayerDamaged(in e);
+                    break;
                 case SimEventKind.MobDied:
                     AddTrauma(_gameFeel.TraumaDeath);
-                    break;
-                case SimEventKind.PlayerDamaged:
-                    AddTrauma(_gameFeel.TraumaPlayerHit);
-                    // Vignette pulse: jumps up to the hit's severity (never below
-                    // whatever's already fading out from a prior hit) and decays
-                    // linearly in `UpdateVignette`, reusing `TraumaDecayPerSec` —
-                    // no separate `GameFeelConfig` field for this, see class/Task
-                    // 25 report: the vignette piggybacks the same trauma numbers
-                    // rather than growing the SO for a second, near-identical pulse
-                    // curve.
-                    _vignetteAlpha = Mathf.Max(_vignetteAlpha, _gameFeel.TraumaPlayerHit);
                     break;
                 case SimEventKind.PlayerDied:
                     ForceEndHitstop();
@@ -221,6 +210,83 @@ namespace Ring.Presentation
             }
 
             AddTrauma(_gameFeel.TraumaHit);
+        }
+
+        /// A BLOW LANDED ON A PLAYER — the whole victim half of ADR-001 §10's
+        /// per-hit checklist (Stage 2 Task 45c fix-round 1, G-1). Until that
+        /// round this handler was two lines that shook the camera and lit the
+        /// vignette for ANY victim, and the flash/hitstop hung off
+        /// `ProjectileHitPlayer` instead.
+        ///
+        /// WHY THIS KIND AND NOT `ProjectileHitPlayer`, WHICH IS THE ONE THAT
+        /// NAMES THE HIT. Because the victim is not on the wire there.
+        /// `ClientEventDecoder`'s `HitPlayer` branch fills exactly `Kind`,
+        /// `SecondaryEntityId` and `Zone`; `EntityId` keeps the zero it was
+        /// initialized with, and that class's own doc spells out the trap: "it
+        /// is not 'no victim', it is 'seat 0', and the victim is simply not on
+        /// the wire". Addressing anything by that field would give every hit in
+        /// the match to whoever sits in slot 0 and nothing at all to everybody
+        /// else — invisible in solo, wrong for every networked match. On THIS
+        /// kind the decoder writes `e.EntityId = e.PlayerIndex = p.PlayerIndex`,
+        /// the victim, which is also what `SimulationWorld.DamagePlayer` emits
+        /// locally: one field, one meaning, both backends.
+        ///
+        /// WHAT IT COSTS, SAID PLAINLY: a round refused by dash i-frames emits
+        /// no `PlayerDamaged` at all, so it draws no flash and no shake. That is
+        /// the more honest of the two — the cue now means damage was taken, not
+        /// that something flew close. The round's own end still reports itself
+        /// through `ProjectileHitPlayer`: spark, sound and tracer retirement,
+        /// none of which needs to know who was hit.
+        ///
+        /// WHAT IT GAINS: a Chaser's fist arrives here too (`MobAiSystem` calls
+        /// the same `DamagePlayer`), so melee finally gets the checklist it
+        /// never had while this hung off a projectile kind.
+        ///
+        /// FLASH FOR ANY VICTIM, FRAME-FREEZE/SHAKE/VIGNETTE ONLY WHEN IT IS ME.
+        /// A stranger being shot across the arena is something I watch; freezing
+        /// my frame, shaking my camera and reddening my screen for it would make
+        /// somebody else's fight jerk my aim. That filter is new in fix-round 1
+        /// and closes a defect older than this task: the two lines this method
+        /// replaced ran for every `PlayerDamaged` that reached this client,
+        /// whoever it named. Which of them reach me is the server's decision,
+        /// not this class's — `SnapshotAssembler` delivers this kind on the
+        /// Visible channel, keyed on the VICTIM's own visibility
+        /// (`EventRelevance.VisibleSubjectId`).
+        ///
+        /// NO `TargetOnly` FREEZE. That scope pins the struck `MobView`'s
+        /// transform; a player's doll has no such hook, and inventing one would
+        /// freeze a body the snapshot is still moving. `TriggerHitstop` reads
+        /// the scope itself, so under `TargetOnly` this hit costs budget and
+        /// freezes nothing, exactly like a mob hit whose view has already been
+        /// retired.
+        void HandlePlayerDamaged(in SimEvent e)
+        {
+            if (_viewRegistry.TryGetPlayerView(e.EntityId, out PlayerView victim))
+                victim.Flash(_gameFeel.FlashDuration);
+
+            if (e.EntityId != _runner.RenderCurr.LocalPlayerIndex) return;
+
+            // Same head-scaling and the same 1-second budget a mob hit is
+            // priced against (`HandleProjectileHit` above) — one hitstop
+            // economy for the whole match, not a second one for the receiving end.
+            float hitstopSeconds = e.Zone == HitZone.Head
+                ? _gameFeel.HitstopSeconds * _gameFeel.HeadHitstopScale
+                : _gameFeel.HitstopSeconds;
+            if (TryConsumeHitstopBudget(hitstopSeconds)) TriggerHitstop(hitstopSeconds);
+
+            // ONE trauma call for a blow taken, not two. `AddTrauma` is a `Max`,
+            // so the 0.2 `TraumaHit` this method also used to add through the
+            // `ProjectileHitPlayer` path was invisible next to this 0.45 on every
+            // landed hit and visible only on a refused one — the exact inverse of
+            // what either cue meant (fix-round 1, G-3).
+            AddTrauma(_gameFeel.TraumaPlayerHit);
+            // Vignette pulse: jumps up to the hit's severity (never below
+            // whatever's already fading out from a prior hit) and decays
+            // linearly in `UpdateVignette`, reusing `TraumaDecayPerSec` — no
+            // separate `GameFeelConfig` field for this, see class/Task 25
+            // report: the vignette piggybacks the same trauma numbers rather
+            // than growing the SO for a second, near-identical pulse curve.
+            _vignetteAlpha = Mathf.Max(_vignetteAlpha, _gameFeel.TraumaPlayerHit);
         }
 
         /// Resets (never sums, spec Interfaces: "таймер переустанавливается, не

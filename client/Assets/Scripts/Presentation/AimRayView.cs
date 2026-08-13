@@ -36,11 +36,46 @@ namespace Ring.Presentation
     /// convention-consistent simplification; a real transparent surface is a
     /// separate scope decision for whoever wants it later.
     ///
-    /// Muzzle height: reads `SimulationRunner.RenderMuzzleHeight` (Task 21,
-    /// PC7's single home of the `SlideTimer > 0 ? SlideMuzzleHeight :
-    /// MuzzleHeight` ternary `WeaponSystem.Update` itself uses for the
-    /// authoritative shot) so the ray's visible origin never disagrees with
-    /// where the server actually spawns the round.
+    /// Muzzle height: Task 21 read `SimulationRunner.RenderMuzzleHeight` (PC7's
+    /// single home of the `SlideTimer > 0 ? SlideMuzzleHeight : MuzzleHeight`
+    /// ternary `WeaponSystem.Update` itself uses for the authoritative shot), so
+    /// that the ray's visible origin did not disagree with where the server
+    /// spawns the round. This class reads neither that property nor any other
+    /// muzzle height today — see the next paragraph for where the origin came
+    /// from instead.
+    ///
+    /// STAGE 2 TASK 45b MOVED THE ORIGIN ONTO THE MODEL (bd `app-60c`). The ray
+    /// started at the hero's own center lifted to that height — a point inside
+    /// the collector's chest, which reads as a laser growing out of his sternum
+    /// once the doll carries a real pistol. It now starts at the muzzle socket
+    /// of the LOCAL player's doll (`ViewRegistry.TryGetPlayerView` on
+    /// `RenderSnapshot.LocalPlayerIndex`), so the ray leaves the barrel the
+    /// player is looking at, at whatever height the animated hand is holding it
+    /// — including mid-slide, which the ternary above approximated with a second
+    /// number. No doll (the opening frames, or after this player dies) means no
+    /// ray, switched off exactly the way `!Ready`/`!AimHeld` already switch it
+    /// off. The ray's far END was untouched by that task and is Stage 2 Task
+    /// 45c's own subject (`app-bej`).
+    ///
+    /// THE TWO ENDS ANSWER DIFFERENT QUESTIONS, AND THAT IS DELIBERATE (Stage 2
+    /// Task 45c). The start is the barrel the player is looking at — a point on
+    /// the model, put there by Task 45b. The end is where the simulation's round
+    /// comes down, measured from the simulation's own muzzle
+    /// (`AimProvider.CurrentImpactWorldPoint`). The line between them is
+    /// therefore not the round's own line: the two origins sit a fraction of a
+    /// meter apart, so the drawn ray is a hair off parallel to the shot. What it
+    /// gets right is the thing the player actually reads off it — the point at
+    /// the far end.
+    ///
+    /// `[DefaultExecutionOrder(10)]` IS WHAT MAKES THAT ORIGIN THIS FRAME'S
+    /// (fix-round 1, G-1). The socket rides a hand bone the Animator writes in
+    /// `PreLateUpdate`, on a doll root `ViewRegistry` (pinned at −10) moves in
+    /// its own `LateUpdate`; this class reads it in `LateUpdate` too, and Unity
+    /// orders equal-order `LateUpdate`s arbitrarily — with no
+    /// `ProjectSettings/MonoManager.asset` in the project, the ray's start could
+    /// otherwise come from this frame or the previous one, and which of the two
+    /// could differ between runs.
+    [DefaultExecutionOrder(10)]
     [RequireComponent(typeof(LineRenderer))]
     public sealed class AimRayView : MonoBehaviour
     {
@@ -48,6 +83,9 @@ namespace Ring.Presentation
         [SerializeField] AimProvider _aimProvider;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] Material _rayMaterial;
+        // Stage 2 Task 45b: asked per frame, never cached — the local player's
+        // doll is one pooled instance among several (`TryGetPlayerView`'s doc).
+        [SerializeField] ViewRegistry _viewRegistry;
 
         LineRenderer _line;
         MaterialPropertyBlock _block;
@@ -76,24 +114,55 @@ namespace Ring.Presentation
         void LateUpdate()
         {
             // Г5 review (Important): cold-start guard, same shape as
-            // AimProvider's own QA18 pattern — World isn't built yet on the
-            // very first frame(s) before SimulationRunner.Awake's
-            // RestartNewSeed completes (or a scene missing the wiring), and
-            // RenderMuzzleHeight below dereferences World.Config.
-            if (_runner == null || _runner.World == null)
+            // AimProvider's own QA18 pattern — the backend has nothing to show
+            // on the very first frame(s) before SimulationRunner.Awake's
+            // RestartNewSeed completes (or a scene missing the wiring).
+            // Task 43: was `World == null`, then `Ready`.
+            // Task 45b fix-round 1 (G-6): the guard's REASON changed with that
+            // task and this comment kept the old one — `RenderMuzzleHeight` is
+            // read nowhere below any more. What needs the guard is
+            // `TryGetMuzzle`, which reads the render pair for the local slot.
+            // Stage 2 Task 45c fix-round 1 (G-4): and the test is `AimActive`
+            // now — `Ready` plus "not paused" plus "my player is standing", the
+            // SAME signal that decides the OS cursor and the ground marker
+            // (`SimulationRunner.AimActive`, `CrosshairView.UpdateCursor`).
+            // Without it the ray outlived the pause menu: `Update` stops
+            // sampling input while paused, so a right button held when Escape
+            // was pressed leaves `AimHeld` true and the check below passes
+            // forever.
+            if (_runner == null || !_runner.AimActive)
             {
                 _line.enabled = false;
                 return;
             }
 
             bool aimHeld = _runner.LastFrameInput.AimHeld;
-            _line.enabled = aimHeld;
-            if (!aimHeld) return;
+            if (!aimHeld)
+            {
+                _line.enabled = false;
+                return;
+            }
 
-            var player = _runner.RenderCurr.Player;
-            Vector3 muzzle = SimSpace.ToWorld(player.Pos) + Vector3.up * _runner.RenderMuzzleHeight;
-            Vector3 aimPoint = SimSpace.ToWorld(_aimProvider.CurrentAimSimPos)
-                + Vector3.up * _aimProvider.CurrentAimHeight;
+            // Stage 2 Task 45b: a ray with no barrel to leave is not drawn from
+            // somewhere else — same rule the flash and the casing follow (class
+            // doc). `_line.enabled` is written on both paths so a doll that
+            // disappears mid-aim takes the ray with it.
+            if (!TryGetMuzzle(out Vector3 muzzle))
+            {
+                _line.enabled = false;
+                return;
+            }
+            _line.enabled = true;
+
+            // Stage 2 Task 45c (bd app-bej): the far end is where the round
+            // COMES DOWN, not where the cursor points — the two part company
+            // whenever the aim is low enough for the ground to take the round
+            // first (`AimProvider.CurrentImpactWorldPoint`). The ray used to end
+            // at `ToWorld(CurrentAimSimPos) + up * CurrentAimHeight`, which is
+            // that provider's `CurrentAimWorldPoint` by another name, and which
+            // for a shot at the floor promised a point 8% of the way further out
+            // than the round reaches at the shipped balance.
+            Vector3 aimPoint = _aimProvider.CurrentImpactWorldPoint;
 
             _line.SetPosition(0, muzzle);
             _line.SetPosition(1, aimPoint);
@@ -116,6 +185,23 @@ namespace Ring.Presentation
             Color dimmed = zoneColor * (_gameFeel.AimRayAlpha * alphaBoost);
             _block.SetColor("_BaseColor", new Color(dimmed.r, dimmed.g, dimmed.b, 1f));
             _line.SetPropertyBlock(_block);
+        }
+
+        /// The local player's own barrel mouth (Stage 2 Task 45b) — false when
+        /// this client has no live doll, which the caller answers by hiding the
+        /// ray. The socket's own null check has the same meaning it has in
+        /// `MuzzleFlashView`: a doll prefab older than this task carries no
+        /// socket, and that must read as "no ray", not as an exception per
+        /// frame.
+        bool TryGetMuzzle(out Vector3 worldPos)
+        {
+            worldPos = default;
+            int slot = _runner.RenderCurr.LocalPlayerIndex;
+            if (!_viewRegistry.TryGetPlayerView(slot, out PlayerView doll)) return false;
+            Transform muzzle = doll.MuzzleSocket;
+            if (muzzle == null) return false;
+            worldPos = muzzle.position;
+            return true;
         }
     }
 }

@@ -70,8 +70,10 @@ namespace Ring.Editor
             // InPrefab`, confirmed in UAL1_Standard.fbx.meta — no external
             // .mat asset exists for this pack anywhere on disk) therefore
             // never get `_EMISSION` enabled by ANY step in this pipeline.
-            // `PlayerVisual.UpdateLinkWindowFlash`'s `MaterialPropertyBlock.
-            // SetColor("_EmissionColor", ...)` writes were consequently dead:
+            // The doll's `MaterialPropertyBlock.SetColor("_EmissionColor",
+            // ...)` writes (`PlayerView.Sync` since Stage 2 Task 45a, which
+            // moved emission off `PlayerVisual` onto the root view) were
+            // consequently dead:
             // with the keyword off, the shader variant compiled for the
             // material has no emission sampling path at all, so no MPB value
             // can ever show, regardless of the pulse math driving it (which
@@ -341,8 +343,10 @@ namespace Ring.Editor
                 mat.SetColor("_BaseColor", baseColor);
                 mat.EnableKeyword("_EMISSION");
                 mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
-                // Black at rest — PlayerVisual's MPB writes are the only thing
-                // that ever lights this up (LinkWindowFlashAccent * wave), same
+                // Black at rest — the doll view's MPB writes are the only thing
+                // that ever lights this up (`PlayerView.Sync`: the combo-window
+                // pulse `LinkWindowFlashAccent * wave` plus, since Stage 2 Task
+                // 45a, a remote player's `RemotePlayerEmission` rim), same
                 // "textureless-pack" black-base convention GetOrCreateRemapMaterial
                 // above already follows.
                 mat.SetColor("_EmissionColor", Color.black);

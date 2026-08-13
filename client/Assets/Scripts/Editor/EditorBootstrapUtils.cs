@@ -38,6 +38,25 @@ namespace Ring.Editor
             return null;
         }
 
+        /// The one component of its type anywhere in `scene`, inactive
+        /// objects included — the sibling of `FindRootObject` for the case
+        /// where the TYPE is the identity and the object's name is not.
+        /// Promoted out of `StageOneSceneBootstrap`'s private `FindRunner`
+        /// when Stage 2 Task 44e needed the same `SimulationRunner` from the
+        /// other bootstrap: the name of the object it sits on is a literal of
+        /// the file that creates it, and copying that literal into a second
+        /// file would tie the two together far harder than sharing this
+        /// search does.
+        public static T FindComponentInScene<T>(Scene scene) where T : Component
+        {
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                var found = root.GetComponentInChildren<T>(true);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
         public static bool SetRef(SerializedObject so, string fieldName, Object value)
         {
             SerializedProperty prop = so.FindProperty(fieldName);

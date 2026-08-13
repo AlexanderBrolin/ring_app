@@ -8,7 +8,7 @@ namespace Ring.Simulation.Core
         public float MaxSpeed, Accel, Friction, Radius, MaxHp,
             DashSpeed, DashDuration, DashCooldown, DashIframes, DashBufferWindow;
 
-        /// Vertical hit-zone bounds (metres above ground) and per-zone damage
+        /// Vertical hit-zone bounds (meters above ground) and per-zone damage
         /// multipliers for the raycast aim system (Task 4+).
         public float LegsTop, BodyTop, HeadTop,
             LegsDamageMult, BodyDamageMult, HeadDamageMult;
@@ -31,6 +31,14 @@ namespace Ring.Simulation.Core
 
         /// Aim-down-sights movement/settle profile (Task 2).
         public float AimMoveSpeedFrac, AimSlideSpeedMult, AimSettleSeconds;
+
+        /// Stage 2 Task 8 (spec Interfaces): minimum tick gap between two
+        /// ACCEPTED edge requests of the same kind (Dash/Slide) from the same
+        /// player. Consumed by the rate limit at the top of
+        /// PlayerMovementSystem.Update since Stage 2 Task 10, which also clamps
+        /// PlayerState's two counters against it in SimulationWorld.ApplyConfig.
+        /// 0 disables the limit (every request is accepted).
+        public int EdgeRequestMinTicks;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).
@@ -55,7 +63,7 @@ namespace Ring.Simulation.Core
             StrafeSpeed, FireInterval, ProjectileSpeed, ProjectileRadius, ProjectileLifetime,
             ProjectileDamage, LeadFactor, SeparationRadius, SeparationStrength, AvoidLookahead;
 
-        /// Vertical hit-zone bounds (metres above ground) and per-zone damage
+        /// Vertical hit-zone bounds (meters above ground) and per-zone damage
         /// multipliers for the raycast aim system (Task 4+); MuzzleHeight is read for the
         /// Gunner archetype only.
         public float LegsTop, BodyTop, HeadTop,
@@ -86,6 +94,20 @@ namespace Ring.Simulation.Core
         /// current Chaser/Gunner numbers (empirically, >=0.8 already suffices —
         /// verified in an offline replay of the collision/steering math before
         /// touching Unity, see the Task 19 report).
+        /// Fix-round T14: the wall branch of SteerAround carries a second,
+        /// independent guarantee scaled by this same field — offset directly
+        /// off a wall's face at a mob sitting in exact physical contact with
+        /// it, the resulting waypoint clears that face by exactly
+        /// `AvoidMargin`. At `AvoidMargin == 0` that guaranteed clearance
+        /// itself vanishes — NOT a dead stop against the flat face: the
+        /// waypoint's face offset collapses to zero, leaving a heading that
+        /// runs strictly TANGENTIAL to the wall (along its axis), and
+        /// `Geometry.Slide` only cancels the velocity component pointing
+        /// INTO a surface, so a purely tangential heading is untouched by it
+        /// — no dead stop arises. This is why `SimConfigBuilder` validates
+        /// this field with `ReqNonNegative`, not `ReqPositive`: 0 is a legal
+        /// value, it just spends away the clearance guarantee itself — a
+        /// config choice, not a validation bug.
         public float AvoidMargin;
     }
 
@@ -97,6 +119,13 @@ namespace Ring.Simulation.Core
         public int BaseCount, CountGrowth, MaxMobsPerWave,
             MaxSpawnAttempts, FallbackSlots;
         public float GunnerShareBase, GunnerShareGrowth;
+
+        /// Stage 2 Task 16 (spec §3.4): per-extra-player wave scale. The raw
+        /// wave size is multiplied by (1 + (playerCount - 1) *
+        /// PerPlayerCountFrac) before the MaxMobsPerWave cap — see
+        /// Ring.Simulation.AI.WaveSystem.CountForTest, the single seam that
+        /// owns the formula. 0 keeps solo-sized waves at any player count.
+        public float PerPlayerCountFrac;
     }
 
     /// Arena geometry and per-match entity caps.
@@ -107,6 +136,68 @@ namespace Ring.Simulation.Core
         public float2[] ObstaclePos;
         public float[] ObstacleRadius;
         public int MaxMobs, MaxProjectiles, MaxEventsPerFrame;
+
+        /// Stage 2 Task 4 (spec §3.2): per-match player cap and the multiplayer
+        /// spawn-ring radius fraction (ring radius = Radius * PlayerSpawnRingFrac).
+        /// Read by SimulationWorld's constructor guard, Geometry.SpawnPosFor and
+        /// SimConfigBuilder.Validate's spawn-clearance check — all three reuse
+        /// the same formula, not a duplicated copy of the trigonometry.
+        public int MaxPlayers;
+        public float PlayerSpawnRingFrac;
+
+        /// Stage 2 Task 11 (spec §3.3): wall geometry. Each wall is a
+        /// "stadium" — segment WallA[i]→WallB[i] inflated by
+        /// WallHalfWidth[i] — reusing Geometry's circle-sweep math instead
+        /// of an OBB. Shape mirrors the ObstaclePos/ObstacleRadius pair.
+        /// Populated by SimConfigBuilder from ArenaConfig.Walls[] since
+        /// Stage 2 Task 16 (the shipped default arena now carries WallCount
+        /// 6). WallCount is 0 and the arrays EMPTY — never null, a real
+        /// Build() always allocates them, empty or not — for a config that
+        /// opts out of walls entirely (e.g. TestConfigs.Open()).
+        public int WallCount;
+        public float2[] WallA;
+        public float2[] WallB;
+        public float[] WallHalfWidth;
+
+        /// Stage 2 Task 46 (bd app-r8x): height of every INTERIOR barrier —
+        /// the obstacle circles and the stadium walls above share this one
+        /// number, in meters above the floor (y = 0). A round whose whole
+        /// remaining step sits above it passes over the barrier instead of
+        /// being stopped by it (ProjectileSystem.AcceptCandidate).
+        ///
+        /// 0 (or any non-positive value) means NO MODELLED TOP: the barrier
+        /// stops a shot at any height, which is what every barrier did before
+        /// this field existed. That is the C# default of this struct, so every
+        /// hand-built fixture — and with it the golden scenarios — keeps the
+        /// pre-Task-46 behavior without stating anything.
+        ///
+        /// ONE NUMBER, NOT ONE PER BARRIER (owner decision 2026-08-11): with a
+        /// shared height "cleared one interior barrier" means "cleared them
+        /// all", which is what lets the projectile gather keep a single
+        /// candidate slot for the nearest interior barrier instead of one slot
+        /// per barrier.
+        ///
+        /// The arena's outer ring boundary is NOT covered by this: it holds the
+        /// edge of the world, and a shot flying over it would leave the arena
+        /// altogether — see ProjectileSystem's HitRingWall candidate.
+        public float BarrierTop;
+    }
+
+    /// Server-side visibility filter numbers (Stage 2 Task 19, spec §3.5,
+    /// Р18-Р21): sight/hearing radii, exit hysteresis, linger grace period and
+    /// the audible-position quantization grid (the latter two fields —
+    /// HearRadius and HearPositionGridMeters — are read only from Stage 2
+    /// Task 20 on, once IsAudible/QuantizeAudiblePos land, but ship together
+    /// with the rest of the config here since VisibilityConfig's own SO
+    /// carries them as one balance sheet). NOT part of StateHash: a
+    /// per-observer fog-of-war filter is a network-facing concern, not world
+    /// state — see VisibilitySet's own doc for where the per-connection
+    /// result actually lives.
+    public struct VisibilitySimConfig
+    {
+        public float SightRadius, HearRadius, ExitHysteresis;
+        public int LingerTicks;
+        public float HearPositionGridMeters;
     }
 
     /// Full balance snapshot for one match — plain data, no ScriptableObjects.
@@ -117,5 +208,6 @@ namespace Ring.Simulation.Core
         public MobSimConfig Chaser, Gunner;
         public WaveSimConfig Wave;
         public ArenaSimConfig Arena;
+        public VisibilitySimConfig Visibility;
     }
 }

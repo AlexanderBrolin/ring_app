@@ -214,9 +214,15 @@ namespace Ring.Simulation.Tests
             // Horizontal shot at the Gunner's muzzle height (M13): 0.55
             // (SlideProfileTop) + 0.15 (Gunner.ProjectileRadius) < 0.95
             // (Gunner.MuzzleHeight) — the sliding profile must let it pass clean over.
+            // Stage 2 Task 10: ownerIndex is explicit here — the seam's default
+            // is 0 (a solo PLAYER's shot), while a real mob shot always carries
+            // ProjectileIds.NoOwner. Harmless while OwnerIndex sat outside the
+            // hash; it is inside it from this task on, so the fixture has to model
+            // the production value it claims to (carryover-t10.md item 2).
             w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(TargetX, 0f),
                 new float2(-cfg.Gunner.ProjectileSpeed, 0f), cfg.Gunner.MuzzleHeight, 0f,
-                cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius, cfg.Gunner.ProjectileLifetime);
+                cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius, cfg.Gunner.ProjectileLifetime,
+                ownerIndex: ProjectileIds.NoOwner);
 
             w.ClearEvents();
             w.Tick(default);
@@ -237,7 +243,8 @@ namespace Ring.Simulation.Tests
             const float shotHeight = 0.3f; // below SlideProfileTop (0.55) and LegsTop (0.55)
             w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(TargetX, 0f),
                 new float2(-cfg.Gunner.ProjectileSpeed, 0f), shotHeight, 0f,
-                cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius, cfg.Gunner.ProjectileLifetime);
+                cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius, cfg.Gunner.ProjectileLifetime,
+                ownerIndex: ProjectileIds.NoOwner); // Stage 2 Task 10: see the sibling fixture above
 
             w.ClearEvents();
             w.Tick(default);

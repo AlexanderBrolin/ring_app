@@ -225,6 +225,53 @@ namespace Ring.Editor
     /// instead of `AimSettleSeconds`, so an already-committed HeroConfig.asset
     /// predating this wave self-heals the new key on this Apply. No new
     /// scene objects/references — this wave is config-shape only.
+    /// Stage 2 Task 45a (spec §3.12) SUPERSEDES THE PHASE-B TASK 8 PARAGRAPH
+    /// ABOVE, which this history keeps verbatim as the record of what that task
+    /// did rather than of what the file does now (append-only, same as every
+    /// entry here): the scene's `Player` object is gone. Every doll in a match
+    /// — this client's own included — is an instance of ONE pooled prefab,
+    /// `GetOrCreatePlayerDollPrefab` below, wired into `ViewRegistry`'s new
+    /// `_playerPrefab` slot; `Apply` now self-heals the scene by DESTROYING a
+    /// leftover `Player` root, exactly the way the retired `PracticeTargets`
+    /// object is destroyed. Consequences for the two paragraphs above: no
+    /// `PlayerView`/`PlayerVisual` reference wiring happens in the scene at all
+    /// (`PlayerVisual` keeps only `_animator`/`_visual`, both prefab-internal),
+    /// `SimEventRouter`'s `_playerVisual` slot is gone with the class's fan-out
+    /// entry (`ViewRegistry.HandlePlayerEvent` took its place), and the gun's
+    /// write-if-different pose reconciliation moved from the scene block into
+    /// `SelfHealGunPoseOnPrefab`, against the same `GameFeelConfig.GunLocalPosition`/
+    /// `GunLocalEuler` numbers, so an owner's Б1 tweak still reaches a build.
+    /// Stage 2 Task 45b (owner requirement 2026-08-10) gives that gun two empty
+    /// children — `Muzzle` and `EjectPort`, `EnsureGunSockets` — posed from
+    /// three new `GameFeelConfig` fields and reconciled on every `Apply` by
+    /// `SelfHealGunSocketsOnPrefab`, which also wires them into `PlayerView`
+    /// (the runtime read) and `PlayerGunTuner` (the owner's PlayMode gizmo
+    /// loop). Three scene references follow them: `MuzzleFlashView` and
+    /// `PersistentPropsDirector` gain a `_viewRegistry` slot in their existing
+    /// wiring blocks, and `AimRayView` gains one in a second pass of its own,
+    /// because its object is built long before `ViewRegistry` exists — the same
+    /// shape, and the same reason, as `GameFeelDirector`'s second pass. The
+    /// sync-marker key moves with the new fields, `RemotePlayerEmission` →
+    /// `GunEjectLocalEuler`.
+    /// Stage 2 Task 47b (spec §3.10, the owner's decisions 4a/4b of
+    /// 2026-08-11) adds the two objects a spectator needs and nothing else.
+    /// `HUD/SpectateLabel` is a `TMP_Text` on the HUD canvas, top-center,
+    /// wired into `HudController._spectateLabel`, LEFT DISABLED IN THE SCENE
+    /// (fix-round 1) and shown only while this client is watching somebody
+    /// else — the object's shipped state has to be the state the game loads
+    /// in, because a run-time rule cannot run before the game is running;
+    /// the same block wires the STAMINA
+    /// BAR'S ROOT into `_staminaBar`, because that bar is HIDDEN while
+    /// spectating rather than drawn empty (no stamina of anyone else exists on
+    /// the wire, and an empty bar claims one). `DeathPanel/SpectateButton` is a
+    /// second `GetOrCreateOverlayButton` in the SAME slot as `RestartButton`,
+    /// which is safe because `DeathOverlayController.Show` offers exactly one
+    /// of the two — by `ISimBackend.CanRestartMatch` — and the panel's `Hint`
+    /// line is now wired in as well so it can be hidden beside the restart
+    /// button whose keys it advertises. `GetOrCreateWaveText`'s eleven lines of
+    /// label construction moved into a shared `GetOrCreateHudLabel` that both
+    /// labels call; its own self-heal branch is untouched. No new numbers, no
+    /// new sync-marker key: this task adds no asset field.
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
@@ -244,6 +291,8 @@ namespace Ring.Editor
         const string DashBarObjectName = "DashBar";
         const string StaminaBarObjectName = "StaminaBar"; // Task 22
         const string WaveTextObjectName = "WaveText";
+        const string SpectateLabelObjectName = "SpectateLabel"; // Task 47b
+        const string SpectateButtonObjectName = "SpectateButton"; // Task 47b
         const string BackgroundObjectName = "Background";
         const string FillObjectName = "Fill";
 
@@ -312,6 +361,11 @@ namespace Ring.Editor
 
         // Task 8 (assets phase B plan, spec §3.2): the pistol in the doll's hand.
         const string GunObjectName = "Gun";
+        // Stage 2 Task 45b: the pistol's own two anchor points — the mouth of
+        // the barrel and the ejection port. Empty children of the gun, posed
+        // from GameFeelConfig (EnsureGunSockets).
+        const string MuzzleSocketObjectName = "Muzzle";
+        const string EjectSocketObjectName = "EjectPort";
         // 8a: swapping the gun = this one id.
         const string GunModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Gun_Pistol.fbx";
 
@@ -322,6 +376,10 @@ namespace Ring.Editor
         // this is the SOLE place the pair is chosen.
         const string ChaserModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/George.fbx";
         const string GunnerModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/Leela.fbx";
+        // Stage 2 Task 45a (spec §3.12): the collector doll is a pooled prefab
+        // now, one instance per player slot, rented by `ViewRegistry` — the
+        // scene's own `Player` object is retired in `Apply`.
+        const string PlayerDollPrefabPath = PrefabsDir + "/PlayerDollView.prefab";
         const string MobChaserPrefabPath = PrefabsDir + "/MobChaserView.prefab";
         const string MobGunnerPrefabPath = PrefabsDir + "/MobGunnerView.prefab";
         const string CorpseMechPrefabPath = PrefabsDir + "/CorpseMechView.prefab";
@@ -355,6 +413,22 @@ namespace Ring.Editor
 
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
+            // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter — a
+            // brand-new asset, so its C# defaults ARE the shipped numbers
+            // (VisibilityConfig.cs's own doc: they mirror
+            // TestConfigs.Default().Visibility exactly), unlike
+            // ApplyGunnerDefaults/ApplyStageTwoBalance below, which backfill an
+            // OLDER asset that predates a field.
+            VisibilityConfig visibility = GetOrCreate<VisibilityConfig>("VisibilityConfig");
+            // Stage 2 Task 23 (spec §3.8/§3.15, Р52): NetConfig is NOT a
+            // SimConfigBuilder.Build() parameter (see its own class doc for
+            // why) and carries no scene reference below — until Task 33
+            // (DevLatencySetup) and Task 41 (ServerBootstrap) nothing in the
+            // scene consumes it, and a SimulationRunner field would wire a
+            // network concern into Presentation, which spec §3.12 does not
+            // provide for. This GetOrCreate call exists purely to deliver
+            // the asset to disk, exactly like every other balance SO here.
+            NetConfig net = GetOrCreate<NetConfig>("NetConfig");
             GameFeelConfig gameFeel = GetOrCreate<GameFeelConfig>("GameFeelConfig");
             CameraConfig camera = GetOrCreate<CameraConfig>("CameraConfig");
 
@@ -387,6 +461,74 @@ namespace Ring.Editor
             gunnerChanged |= (gunnerCreated || !gunnerMarkerPresent) && ApplyGunnerZoneDefaults(gunner);
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
 
+            // Stage 2 Task 9 (owner decision F3a): call-gate scaffold for the
+            // one-time Stage 2 balance delivery Task 16 populates. Sample
+            // taken from ApplyGunnerZoneDefaults' BODY only (SetIfDifferent
+            // per field, see ApplyStageTwoBalance below), not its call-site
+            // gate — that gate is the EnsureAssetHasKey backfill marker
+            // (gunnerMarkerPresent above), which only proves "does this field
+            // EXIST", not "does it still hold the spec value", and which for
+            // arena would already read true on this very Apply() (Arena's own
+            // marker, PlayerSpawnRingFrac, is delivered by this same run a
+            // few lines down) — copying it literally would gate on the wrong
+            // signal on the one run that matters.
+            //
+            // Fix-round 1 (Explore/opus review, C-1): the first draft of this
+            // gate read `arena.Walls == null || arena.Walls.Length == 0` on
+            // the LOADED ArenaConfig instance. That is wrong by construction:
+            // a missing YAML key silently falls back to the C# field
+            // initializer (documented above, at EnsureAssetHasKey's own call
+            // site) — so once Task 16 gives `Walls` a non-empty default array
+            // (it must, or Build_DefaultAssets_MatchesTestConfigsBaseline
+            // fails comparing CreateInstance defaults against
+            // TestConfigs.DefaultArena()), `arena.Walls` would read populated
+            // on EVERY run, including the very first one where the numbers
+            // have never touched disk — ApplyStageTwoBalance would never
+            // fire, and ArenaConfig.asset would silently keep pre-Stage-2
+            // numbers forever while EditMode stays green (tests read C#
+            // defaults, not the asset; the gap would only surface at a
+            // playtest). The fix — mirroring gunnerMarkerPresent exactly — is
+            // to measure the ON-DISK text instead, snapshotted here, BEFORE
+            // the EnsureAssetHasKey/SaveAssets block below can change it.
+            // "Walls:" cannot appear in ArenaConfig.asset before Task 16 adds
+            // the field, so this reads true unconditionally through Tasks
+            // 9-15 and turns meaningful only once Task 16's own Apply first
+            // writes the key — no further edit needed at that point.
+            //
+            // AND IT IS NOW CLOSED FOR GOOD (spec Р120, phase F3 review I-3):
+            // Task 16 committed "Walls:" into ArenaConfig.asset, so from here
+            // on the predicate is false in every clone and
+            // ApplyStageTwoBalance never runs again. New KEYS still arrive via
+            // the EnsureAssetHasKey marker mechanism below, but any future
+            // sanctioned edit of an EXISTING value on these three assets will
+            // NOT be delivered by this bootstrap and must be re-gated
+            // deliberately. Tasks 22/23/45 edit this file again — they must not
+            // assume this block still fires.
+            bool stageTwoPending = !System.IO.File
+                .ReadAllText($"{DataDir}/ArenaConfig.asset")
+                .Contains("Walls:");
+
+            // Fix-round 1 (I-2): the eight Task 16 numbers do not all live on
+            // `arena` — MaxMobsPerWave belongs to WaveConfig and
+            // MaxCorpses/MaxCasings/MaxDecals to GameFeelConfig — so a single
+            // `arenaChanged`/`SetDirty(arena)` pair would silently drop
+            // whichever of those four numbers Task 16 changes. Three
+            // independent flags/SetDirty calls instead, fed by two `out`
+            // params from the shared call below.
+            bool arenaChanged = false;
+            bool waveChanged = false;
+            bool feelChanged = false;
+            if (stageTwoPending)
+            {
+                arenaChanged |= ApplyStageTwoBalance(arena, wave, gameFeel,
+                    out bool waveDelta, out bool feelDelta);
+                waveChanged |= waveDelta;
+                feelChanged |= feelDelta;
+            }
+            if (arenaChanged) EditorUtility.SetDirty(arena);
+            if (waveChanged) EditorUtility.SetDirty(wave);
+            if (feelChanged) EditorUtility.SetDirty(gameFeel);
+
             // Task 27 review fix-round (extended by the milestone-4 DoD
             // iteration, generalized to five assets by Task 17): an already-
             // committed SO asset predates whichever feel/balance field most
@@ -404,21 +546,75 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `HeadHoverPulseAmp` as of В3 fix-wave 2 —
-            // was `AimRayHeadAlphaBoost` (В3 fix-wave 1) before that,
+            // field (GameFeelConfig: `RemotePlayerEmission` as of Stage 2 Task
+            // 45a — was `HeadHoverPulseAmp` (В3 fix-wave 2) before that,
+            // `AimRayHeadAlphaBoost` (В3 fix-wave 1) before THAT,
             // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
             // field's own doc for the fuller history; HeroConfig's marker is
-            // `LinkRefund` as of В1 fix-wave 3 (owner economy rework) — was
-            // `AimSettleSeconds` (Task 17) before that; WeaponConfig/
-            // MobConfig's marker fields are unchanged since Task 17, so any
-            // asset committed before that task predates them and self-heals
-            // on this Apply).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "LinkRefund");
+            // `EdgeRequestMinTicks` as of Stage 2 Task 8/9 (edge-request rate
+            // limiting) — was `LinkRefund` (В1 fix-wave 3, owner economy
+            // rework) before that, `AimSettleSeconds` (Task 17) before THAT;
+            // WeaponConfig/MobConfig's marker fields are unchanged since Task
+            // 17, so any asset committed before that task predates them and
+            // self-heals on this Apply; ArenaConfig's marker is `BarrierTop`
+            // as of Stage 2 Task 46 (the interior barriers' modelled height,
+            // the class's new last field) — was `PlayerSpawnRingFrac` (Stage 2
+            // Task 4) from Stage 2 Task 9, when ArenaConfig joined the
+            // mechanism for the first time, and the committed asset carries
+            // that key already, so leaving the marker there would have left
+            // `BarrierTop` unable to reach the file at all).
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "EdgeRequestMinTicks"); // Stage 2 Task 9
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "HeadHoverPulseAmp"); // В3 fix-wave 2
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "GunEjectLocalEuler"); // Stage 2 Task 45b
+            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "BarrierTop"); // Stage 2 Task 46
+            // WaveConfig joins the marker mechanism for the first time in Stage 2
+            // Task 16, with PerPlayerCountFrac (the class's newest field) as its
+            // marker — the per-extra-player wave scale is a NEW key, and new keys
+            // are exactly what this mechanism is for (ApplyStageTwoBalance above
+            // only rewrites values that already exist on disk).
+            EditorBootstrapUtils.EnsureAssetHasKey(wave, $"{DataDir}/WaveConfig.asset", "PerPlayerCountFrac"); // Stage 2 Task 16
+            // VisibilityConfig joins the marker mechanism for the first time
+            // here, in Stage 2 Task 22, with HearPositionGridMeters (the
+            // class's own newest/last field) as its marker — the asset is
+            // brand new on this run, so this call is a one-time onboarding
+            // exactly like ArenaConfig/WaveConfig's own first-join comments
+            // above, not a migration of an older asset.
+            EditorBootstrapUtils.EnsureAssetHasKey(visibility, $"{DataDir}/VisibilityConfig.asset",
+                "HearPositionGridMeters"); // Stage 2 Task 22
+            // NetConfig joins the marker mechanism for the first time here,
+            // in Stage 2 Task 23, with MatchMaxDurationSeconds (the class's
+            // own newest/last field) as its marker — brand-new asset on
+            // this run, so this call is a one-time onboarding exactly like
+            // ArenaConfig/WaveConfig/VisibilityConfig's own first-join
+            // comments above, not a migration of an older asset. Stage 2
+            // Task 41b moves the marker to MatchAbandonGraceSeconds, which
+            // Task 41a appended as the class's new last field: the mechanism
+            // is a text search for the marker's NAME in the committed YAML,
+            // so a marker naming a key the asset already carries can never
+            // dirty anything again — with MatchMaxDurationSeconds still named
+            // here, neither SlewFraction (Task 41a) nor
+            // MatchAbandonGraceSeconds would ever reach NetConfig.asset, and
+            // both would silently fall back to their C# initializers while
+            // EditMode stayed green (the tests read the C# defaults, not the
+            // asset). Same drill as HeroConfig's own marker moves above
+            // (AimSettleSeconds -> LinkRefund -> EdgeRequestMinTicks). Stage
+            // 2 Task 42a moves the marker again, to
+            // SpectatorSwitchCooldownSeconds, which it appended as the
+            // class's new last field — same drill, same reason: with
+            // MatchAbandonGraceSeconds still named here the new field would
+            // never reach NetConfig.asset either. Stage 2 Task 47c moves it
+            // once more, to EntityFadeTicks — the stranger-doll fade duration
+            // that stopped being a NetworkSimBackend constant the moment
+            // ViewRegistry became its reader. Same drill: with
+            // SpectatorSwitchCooldownSeconds still named here the new key
+            // would never reach NetConfig.asset, the owner's В1 fade knob
+            // would silently be the C# initializer, and EditMode would stay
+            // green throughout (the tests read C# defaults, not the asset).
+            EditorBootstrapUtils.EnsureAssetHasKey(net, $"{DataDir}/NetConfig.asset",
+                "EntityFadeTicks"); // Stage 2 Task 47c (was SpectatorSwitchCooldownSeconds, Task 42a; MatchAbandonGraceSeconds, Task 41b; MatchMaxDurationSeconds, Task 23)
 
             AssetDatabase.SaveAssets();
 
@@ -442,7 +638,8 @@ namespace Ring.Editor
             // via EnsureUserLayer (QC14).
             bool aimProxyLayerChanged = EnsureAimProxyLayer();
 
-            SimulationRunner runner = FindRunner(scene);
+            SimulationRunner runner =
+                EditorBootstrapUtils.FindComponentInScene<SimulationRunner>(scene);
             bool sceneDirty = false;
             if (runner == null)
             {
@@ -493,6 +690,7 @@ namespace Ring.Editor
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_gunner", gunner);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_wave", wave);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_arena", arena);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_visibility", visibility);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_gameFeel", gameFeel);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_camera", camera);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_actionsAsset", actionsAsset);
@@ -557,133 +755,20 @@ namespace Ring.Editor
             // the base emissive color those numbers scale.
             Material aimRayMat = GetOrCreateUnlitMaterial("AimRayEmissive", new Color(0.6f, 2.4f, 3.2f));
 
-            GameObject playerGo = EditorBootstrapUtils.FindRootObject(scene, PlayerObjectName);
-            if (playerGo == null)
+            // Stage 2 Task 45a (spec §3.12): the scene's `Player` object is
+            // retired outright — every doll in the match, this client's own
+            // included, is now rented from ONE pooled prefab by `ViewRegistry`
+            // (GetOrCreatePlayerDollPrefab below). Keeping a scene-resident doll
+            // for slot 0 would mean two homes for one concept: a doll wired to
+            // `SimulationRunner`/`AimProvider`/`GameFeelConfig` for the local
+            // player and a reference-free clone for everybody else. The
+            // existence-guard is inverted here, exactly like the retired
+            // `PracticeTargets` object below: PRESENCE, not absence, is what
+            // makes the scene dirty.
+            GameObject stalePlayerGo = EditorBootstrapUtils.FindRootObject(scene, PlayerObjectName);
+            if (stalePlayerGo != null)
             {
-                playerGo = new GameObject(PlayerObjectName);
-                sceneDirty = true;
-            }
-            // Self-heal an already-committed E1 capsule: since assets phase B
-            // (spec §3.2) the root carries no renderer of its own — the doll
-            // lives on the "Visual" child instead (EnsureVisual below).
-            MeshRenderer playerMeshRenderer = playerGo.GetComponent<MeshRenderer>();
-            if (playerMeshRenderer != null)
-            {
-                Object.DestroyImmediate(playerMeshRenderer);
-                sceneDirty = true;
-            }
-            MeshFilter playerMeshFilter = playerGo.GetComponent<MeshFilter>();
-            if (playerMeshFilter != null)
-            {
-                Object.DestroyImmediate(playerMeshFilter);
-                sceneDirty = true;
-            }
-            PlayerView playerView = playerGo.GetComponent<PlayerView>();
-            if (playerView == null)
-            {
-                playerView = playerGo.AddComponent<PlayerView>();
-                sceneDirty = true;
-            }
-            var playerSo = new SerializedObject(playerView);
-            bool playerRefsChanged = false;
-            playerRefsChanged |= EditorBootstrapUtils.SetRef(playerSo, "_runner", runner);
-            if (playerRefsChanged)
-            {
-                playerSo.ApplyModifiedPropertiesWithoutUndo();
-                sceneDirty = true;
-            }
-
-            // Task 19 (spec QA7/QD1): the player doll carries the same
-            // AimProxy_Legs/Body/Head belts as the mob archetypes, sized from
-            // HeroConfig's own zone-geometry fields — spec Interfaces treats
-            // every hittable actor's proxy the same way; this task wires only
-            // the local player's own AimProvider, but the layer/geometry
-            // contract itself is symmetric across player and mobs.
-            sceneDirty |= EnsureAimProxyChildren(playerGo.transform,
-                hero.LegsTop, hero.BodyTop, hero.HeadTop, hero.Radius, gameFeel.AimProxyHeadRadiusFrac);
-
-            // Assets phase B (spec §3.2, task 8): the collector doll — a named
-            // "Visual" child instantiated from the UAL1 doll FBX, driven by
-            // PlayerVisual (facing/animation) instead of the root transform
-            // itself (PlayerView doc).
-            bool playerVisualChanged = false;
-            GameObject playerVisualGo = EditorBootstrapUtils.EnsureVisual(playerGo,
-                ThirdPartyAssetPostprocessor.DollPath,
-                ThirdPartyAnimatorBootstrap.PlayerControllerPath,
-                gameFeel.PlayerVisualScale, ref playerVisualChanged);
-            sceneDirty |= playerVisualChanged;
-
-            PlayerVisual playerVisual = playerGo.GetComponent<PlayerVisual>();
-            if (playerVisual == null)
-            {
-                playerVisual = playerGo.AddComponent<PlayerVisual>();
-                sceneDirty = true;
-            }
-            var playerVisualSo = new SerializedObject(playerVisual);
-            bool playerVisualRefsChanged = false;
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_runner", runner);
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_aimProvider", aimProvider);
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_gameFeel", gameFeel);
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_animator",
-                playerVisualGo.GetComponent<Animator>());
-            playerVisualRefsChanged |= EditorBootstrapUtils.SetRef(playerVisualSo, "_visual",
-                playerVisualGo.transform);
-            if (playerVisualRefsChanged)
-            {
-                playerVisualSo.ApplyModifiedPropertiesWithoutUndo();
-                sceneDirty = true;
-            }
-
-            // The gun: instantiated once as a child of the doll's RightHand
-            // bone, then write-if-different reconciled against
-            // GameFeelConfig's local transform every Apply — an owner's
-            // number tweak on the milestone Б1 playtest applies without
-            // tearing the object down and rebuilding it.
-            Animator dollAnimator = playerVisualGo.GetComponent<Animator>();
-            Transform hand = dollAnimator.GetBoneTransform(HumanBodyBones.RightHand);
-            if (hand == null)
-                throw new System.InvalidOperationException(
-                    "StageOneSceneBootstrap: doll has no RightHand bone.");
-            Transform gunTf = hand.Find(GunObjectName);
-            if (gunTf == null)
-            {
-                GameObject gunModel = AssetDatabase.LoadAssetAtPath<GameObject>(GunModelPath);
-                if (gunModel == null)
-                    throw new System.InvalidOperationException(
-                        "StageOneSceneBootstrap: no gun model at " + GunModelPath);
-                var gun = (GameObject)PrefabUtility.InstantiatePrefab(gunModel);
-                gun.name = GunObjectName;
-                gun.transform.SetParent(hand, false);
-                gunTf = gun.transform;
-                sceneDirty = true;
-            }
-
-            // playerVisual's _gun slot needs gunTf, which doesn't exist until
-            // here (this gun-block runs after the playerVisual wiring block
-            // above) — wired in its own mini-block rather than reordering
-            // either block, same |=/ApplyModifiedPropertiesWithoutUndo/
-            // sceneDirty shape as every other ref-wiring block in this method.
-            var playerVisualGunSo = new SerializedObject(playerVisual);
-            if (EditorBootstrapUtils.SetRef(playerVisualGunSo, "_gun", gunTf))
-            {
-                playerVisualGunSo.ApplyModifiedPropertiesWithoutUndo();
-                sceneDirty = true;
-            }
-
-            if (gunTf.localPosition != gameFeel.GunLocalPosition)
-            {
-                gunTf.localPosition = gameFeel.GunLocalPosition;
-                sceneDirty = true;
-            }
-            // Compare ROTATIONS, not euler read-backs: localEulerAngles returns values
-            // re-derived from the quaternion (normalized to [0;360)), so e.g. (0,-90,0)
-            // reads back as (0,270,0) and a naive != would re-dirty the scene on every
-            // Apply (audit fix ПБ19). Writing via localEulerAngles keeps the serialized
-            // euler hint consistent.
-            Quaternion gunTargetRotation = Quaternion.Euler(gameFeel.GunLocalEuler);
-            if (Quaternion.Angle(gunTf.localRotation, gunTargetRotation) > 1e-3f)
-            {
-                gunTf.localEulerAngles = gameFeel.GunLocalEuler;
+                Object.DestroyImmediate(stalePlayerGo);
                 sceneDirty = true;
             }
 
@@ -1003,6 +1088,36 @@ namespace Ring.Editor
                 backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
                 fillColor: gameFeel.StaminaBarFullColor, ref sceneDirty);
             TMP_Text waveText = GetOrCreateWaveText(hudGo.transform, ref sceneDirty);
+            // Stage 2 Task 47b: the spectator's own line, top-center between the
+            // two corners the bars and the wave counter already hold. Hidden by
+            // `HudController` on every frame this client is watching its own
+            // player, which is the whole of solo — so a solo screen gains
+            // nothing here, which is the requirement (the owner's decision 4a).
+            TMP_Text spectateLabel = GetOrCreateHudLabel(hudGo.transform, SpectateLabelObjectName,
+                "НАБЛЮДЕНИЕ", anchor: new Vector2(0.5f, 1f), anchoredPos: new Vector2(0f, -24f),
+                size: new Vector2(640f, 40f), fontSize: 26f,
+                alignment: TextAlignmentOptions.Top, ref sceneDirty);
+            // AND IT SHIPS DISABLED (fix-round 1, Ф-2). `GetOrCreateHudLabel`
+            // hands back a live object — right for the wave counter, which is
+            // always on screen, wrong for a label that belongs to a state the
+            // game is not in when it loads. `HudController` switching it off at
+            // run time is not enough on its own: the committed scene is what a
+            // build starts from, and this one was committed with
+            // `m_IsActive: 1`, so the word hung over the connect screen of
+            // every networked client. Checked unconditionally rather than only
+            // on creation, exactly like `GetOrCreateWaveText`'s "WAVE" heal
+            // below — a scene saved by the previous run of this bootstrap
+            // picks the fix up, and being ALREADY disabled raises no flag, so
+            // a second run of this method changes nothing (А6).
+            if (spectateLabel != null && spectateLabel.gameObject.activeSelf)
+            {
+                spectateLabel.gameObject.SetActive(false);
+                sceneDirty = true;
+            }
+            // The bar's ROOT, which is what gets hidden — see HudController's
+            // `_staminaBar`. Found rather than returned by `GetOrCreateBar`,
+            // whose one job is the Fill every caller wires to.
+            Transform staminaBar = hudGo.transform.Find(StaminaBarObjectName);
 
             HudController hud = hudGo.GetComponent<HudController>();
             if (hud == null)
@@ -1017,6 +1132,9 @@ namespace Ring.Editor
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_hpFill", hpFill);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_staminaFill", staminaFill);
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_waveText", waveText);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_spectateLabel", spectateLabel);
+            if (staminaBar != null)
+                hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_staminaBar", staminaBar.gameObject);
             if (hudRefsChanged)
             {
                 hudSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1041,9 +1159,17 @@ namespace Ring.Editor
                 new Vector2(0f, 160f), new Vector2(700f, 70f), 42f, ref sceneDirty);
             TMP_Text deathMetrics = GetOrCreateOverlayText(deathPanelGo.transform, "Metrics", "",
                 new Vector2(0f, -10f), new Vector2(700f, 260f), 24f, ref sceneDirty);
-            GetOrCreateOverlayText(deathPanelGo.transform, "Hint", "R — заново · Shift+R — тот же seed",
+            TMP_Text deathHint = GetOrCreateOverlayText(deathPanelGo.transform, "Hint",
+                "R — заново · Shift+R — тот же seed",
                 new Vector2(0f, -170f), new Vector2(700f, 30f), 18f, ref sceneDirty);
             Button deathRestartButton = GetOrCreateOverlayButton(deathPanelGo.transform, "RestartButton", "Заново",
+                new Vector2(0f, -230f), new Vector2(220f, 50f), ref sceneDirty);
+            // Stage 2 Task 47b (the owner's decision 4b): the same slot as the
+            // restart button, because the two are never both offered —
+            // `DeathOverlayController.Show` shows exactly one of them, by
+            // `ISimBackend.CanRestartMatch`.
+            Button deathSpectateButton = GetOrCreateOverlayButton(deathPanelGo.transform,
+                SpectateButtonObjectName, "Наблюдать",
                 new Vector2(0f, -230f), new Vector2(220f, 50f), ref sceneDirty);
 
             GameObject deathOverlayGo = EditorBootstrapUtils.FindRootObject(scene, DeathOverlayObjectName);
@@ -1065,6 +1191,9 @@ namespace Ring.Editor
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_panel", deathPanelGo);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_metricsText", deathMetrics);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_restartButton", deathRestartButton);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_hintText", deathHint);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_spectateButton",
+                deathSpectateButton);
             if (deathOverlayRefsChanged)
             {
                 deathOverlaySo.ApplyModifiedPropertiesWithoutUndo();
@@ -1138,6 +1267,13 @@ namespace Ring.Editor
                 gameFeel.AimProxyHeadRadiusFrac);
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
+            // Stage 2 Task 45a: the collector doll, same factory shape as the
+            // two mech archetypes above — it is a POOLED prefab now, one
+            // instance per player slot, and no longer a scene object.
+            PlayerView playerDollPrefab = GetOrCreatePlayerDollPrefab(
+                PlayerDollPrefabPath, gameFeel.PlayerVisualScale,
+                hero.LegsTop, hero.BodyTop, hero.HeadTop, hero.Radius,
+                gameFeel.AimProxyHeadRadiusFrac, gameFeel);
 
             GameObject viewsGo = EditorBootstrapUtils.FindRootObject(scene, ViewsObjectName);
             if (viewsGo == null)
@@ -1161,6 +1297,9 @@ namespace Ring.Editor
             // boost — same reference already wired into CrosshairView/AimRayView
             // above (`aimProvider` local var, still in scope).
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_aimProvider", aimProvider);
+            // Stage 2 Task 45a: the doll pool's own prefab slot, alongside the
+            // two mech archetypes and the projectile.
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_playerPrefab", playerDollPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_chaserPrefab", chaserPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gunnerPrefab", gunnerPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
@@ -1181,6 +1320,18 @@ namespace Ring.Editor
             if (gameFeelDirectorRefsChanged2)
             {
                 gameFeelDirectorSo2.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // Stage 2 Task 45b: second `AimRayView` wiring pass, and it exists
+            // for exactly the reason `GameFeelDirector`'s does — the ray's
+            // object is built with the rest of the aiming UI, well before
+            // `ViewRegistry`, and the ray now starts at the local doll's own
+            // muzzle socket instead of at the hero's center + a muzzle height.
+            var aimRaySo2 = new SerializedObject(aimRayView);
+            if (EditorBootstrapUtils.SetRef(aimRaySo2, "_viewRegistry", viewRegistry))
+            {
+                aimRaySo2.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -1276,6 +1427,12 @@ namespace Ring.Editor
             bool muzzleRefsChanged = false;
             muzzleRefsChanged |= EditorBootstrapUtils.SetRef(muzzleSo, "_runner", runner);
             muzzleRefsChanged |= EditorBootstrapUtils.SetRef(muzzleSo, "_gameFeel", gameFeel);
+            // Stage 2 Task 45b: the flash is anchored to the shooter's own doll
+            // now (`ViewRegistry.TryGetPlayerView`), so this view asks the
+            // registry per event/frame — the same `_viewRegistry` slot
+            // `GameFeelDirector` already carries for `TryGetMobView`, not a
+            // second way in.
+            muzzleRefsChanged |= EditorBootstrapUtils.SetRef(muzzleSo, "_viewRegistry", viewRegistry);
             if (muzzleRefsChanged)
             {
                 muzzleSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1394,6 +1551,10 @@ namespace Ring.Editor
             bool persistentPropsRefsChanged = false;
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_runner", runner);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_gameFeel", gameFeel);
+            // Stage 2 Task 45b: the shell casing leaves the shooter's own
+            // ejection port now — same registry seam the muzzle flash above
+            // uses (`SpawnCasing`'s own doc).
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_viewRegistry", viewRegistry);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_casingPrefab", casingPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_decalPrefab", decalPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_corpsePrefab", corpseMechPrefab);
@@ -1433,7 +1594,9 @@ namespace Ring.Editor
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_persistentProps", persistentProps);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_audioDirector", audioDirector);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_muzzleFlash", muzzleFlash);
-            routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_playerVisual", playerVisual);
+            // Stage 2 Task 45a: the `_playerVisual` slot is gone — the doll's
+            // own fan-out place is now `ViewRegistry.HandlePlayerEvent`, which
+            // needs no second reference (`_viewRegistry` already wired below).
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_viewRegistry", viewRegistry);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_deathOverlay", deathOverlay);
             routerRefsChanged |= EditorBootstrapUtils.SetRef(routerSo, "_hud", hud); // Task 22
@@ -1558,9 +1721,106 @@ namespace Ring.Editor
             return changed;
         }
 
+        /// Stage 2 Task 9 scaffold (owner decision F3a), body filled by Task 16:
+        /// the ONE-TIME delivery of Stage 2's sanctioned balance edits into the
+        /// already-committed `.asset`s. Mirrors ApplyGunnerZoneDefaults'
+        /// body — SetIfDifferent per field, so a post-delivery owner hand-tune at
+        /// milestone В1 survives every later R-APPLY. Called behind the on-disk
+        /// `stageTwoPending` gate above; see that call site's doc (fix-round 1,
+        /// C-1) for why it reads ArenaConfig.asset's TEXT instead of the loaded
+        /// object, and why that gate is the gate's PERMANENT form — and, since Task 16 committed the key, a
+        /// permanently CLOSED one (spec Р120): this method has already run its
+        /// one and only time which Task 16
+        /// must not replace. Task 9's tripwire (a throw that fired the moment
+        /// `ArenaConfig.Walls` was declared) has done its job and is gone.
+        ///
+        /// The VALUES are not restated here. Spec §0's two-sources discipline
+        /// makes the C# field initializer the starting-balance source of truth,
+        /// so a pristine `CreateInstance` of each class supplies them and this
+        /// method only decides WHICH fields are sanctioned to move (spec §3.15):
+        /// ArenaConfig's Radius/MaxMobs/MaxProjectiles/MaxEventsPerFrame plus the
+        /// Obstacles and Walls arrays, WaveConfig's MaxMobsPerWave, and
+        /// GameFeelConfig's MaxCorpses/MaxCasings/MaxDecals. Everything else on
+        /// those three assets — SpawnClearance, wave pacing, every game-feel
+        /// number the owner tuned across milestones Б/В — is deliberately left
+        /// untouched. A literal copy of the numbers here would have been a THIRD
+        /// place to keep them in sync, on top of the C# defaults and TestConfigs.
+        ///
+        /// `PerPlayerCountFrac` is absent on purpose: it is a NEW key, and new
+        /// keys arrive through the marker mechanism (EnsureAssetHasKey on
+        /// WaveConfig, added by this same task) — this method exists only for
+        /// EXISTING values, which that mechanism never rewrites.
+        ///
+        /// The two `out` flags let the call site SetDirty all three touched
+        /// assets independently (fix-round 1, I-2): MaxMobsPerWave lives on
+        /// WaveConfig and the three FIFO limits on GameFeelConfig, so a single
+        /// dirty flag on `arena` would silently drop them.
+        static bool ApplyStageTwoBalance(ArenaConfig arena, WaveConfig wave, GameFeelConfig gameFeel,
+            out bool waveChanged, out bool feelChanged)
+        {
+            var arenaDefaults = ScriptableObject.CreateInstance<ArenaConfig>();
+            var waveDefaults = ScriptableObject.CreateInstance<WaveConfig>();
+            var feelDefaults = ScriptableObject.CreateInstance<GameFeelConfig>();
+            try
+            {
+                bool arenaChanged = false;
+                arenaChanged |= SetIfDifferent(ref arena.Radius, arenaDefaults.Radius);
+                arenaChanged |= SetIfDifferent(ref arena.MaxMobs, arenaDefaults.MaxMobs);
+                arenaChanged |= SetIfDifferent(ref arena.MaxProjectiles, arenaDefaults.MaxProjectiles);
+                arenaChanged |= SetIfDifferent(ref arena.MaxEventsPerFrame, arenaDefaults.MaxEventsPerFrame);
+                arenaChanged |= SetIfDifferent(ref arena.Obstacles, arenaDefaults.Obstacles);
+                arenaChanged |= SetIfDifferent(ref arena.Walls, arenaDefaults.Walls);
+
+                waveChanged = SetIfDifferent(ref wave.MaxMobsPerWave, waveDefaults.MaxMobsPerWave);
+
+                feelChanged = false;
+                feelChanged |= SetIfDifferent(ref gameFeel.MaxCorpses, feelDefaults.MaxCorpses);
+                feelChanged |= SetIfDifferent(ref gameFeel.MaxCasings, feelDefaults.MaxCasings);
+                feelChanged |= SetIfDifferent(ref gameFeel.MaxDecals, feelDefaults.MaxDecals);
+
+                return arenaChanged;
+            }
+            finally
+            {
+                Object.DestroyImmediate(arenaDefaults);
+                Object.DestroyImmediate(waveDefaults);
+                Object.DestroyImmediate(feelDefaults);
+            }
+        }
+
         static bool SetIfDifferent(ref float field, float value)
         {
             if (field == value) return false;
+            field = value;
+            return true;
+        }
+
+        /// Stage 2 Task 16: five of the eight sanctioned numbers are ints — the
+        /// `ref float` overload above silently would not bind to them.
+        static bool SetIfDifferent(ref int field, int value)
+        {
+            if (field == value) return false;
+            field = value;
+            return true;
+        }
+
+        /// Stage 2 Task 16: the arena's Obstacles/Walls arrays. Length first,
+        /// then element-wise via the struct's own value equality — an
+        /// already-delivered asset must compare equal so a re-Apply stays a
+        /// no-op (R-IDEM). Both failure modes are safe: a false "different"
+        /// verdict assigns an equal array (no YAML delta), and a false "same"
+        /// verdict cannot happen on the delivery run itself, where the lengths
+        /// differ (5 -> 8 circles, 0 -> 6 walls).
+        static bool SetIfDifferent<T>(ref T[] field, T[] value) where T : struct
+        {
+            if (field != null && field.Length == value.Length)
+            {
+                var comparer = System.Collections.Generic.EqualityComparer<T>.Default;
+                bool same = true;
+                for (int i = 0; i < value.Length && same; i++)
+                    same = comparer.Equals(field[i], value[i]);
+                if (same) return false;
+            }
             field = value;
             return true;
         }
@@ -1660,6 +1920,249 @@ namespace Ring.Editor
                     bodyRadius, headRadiusFrac);
                 return go;
             });
+        }
+
+        /// Stage 2 Task 45a (spec §3.12): the collector doll prefab — the same
+        /// hierarchy the scene's retired `Player` object carried
+        /// (`PlayerView`/`PlayerVisual` on the root, a named `Visual` child off
+        /// the UAL1 doll FBX with its generated controller, the
+        /// `AimProxy_Legs/Body/Head` belts sized from `HeroConfig`'s own
+        /// zone geometry, and the pistol parented into the doll's `RightHand`
+        /// bone), plus the editor-only `PlayerGunTuner` that inherited the
+        /// owner's PlayMode gun workflow (Р97).
+        ///
+        /// Guarded by `PrefabVisualsMatch` (Б11) and self-healed on the
+        /// early-return path exactly like `GetOrCreateMobArchetypePrefab` above,
+        /// with ONE extra self-heal of its own: the gun's local pose. That is
+        /// the write-if-different reconciliation the scene block used to do on
+        /// every `Apply` (audit anchor A14) — it has to keep happening, because
+        /// what a BUILD ships is the pose baked into this prefab, while
+        /// `PlayerGunTuner`'s live push only exists in the Editor.
+        static PlayerView GetOrCreatePlayerDollPrefab(string prefabPath, float visualScale,
+            float legsTop, float bodyTop, float headTop, float bodyRadius,
+            float headRadiusFrac, GameFeelConfig gameFeel)
+        {
+            if (AssetDatabase.LoadAssetAtPath<PlayerView>(prefabPath) != null)
+            {
+                if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath,
+                        ("Visual", ThirdPartyAssetPostprocessor.DollPath)))
+                {
+                    SelfHealAimProxyOnPrefab(prefabPath, legsTop, bodyTop, headTop,
+                        bodyRadius, headRadiusFrac);
+                    SelfHealVisualScaleOnPrefab(prefabPath, "Visual", visualScale);
+                    SelfHealGunPoseOnPrefab(prefabPath, gameFeel);
+                    SelfHealGunSocketsOnPrefab(prefabPath, gameFeel); // Stage 2 Task 45b
+                    return AssetDatabase.LoadAssetAtPath<PlayerView>(prefabPath);
+                }
+                AssetDatabase.DeleteAsset(prefabPath); // doll swapped: rebuild; SetRef re-wires
+            }
+            return EditorBootstrapUtils.BuildPrefab<PlayerView>(prefabPath, () =>
+            {
+                var go = new GameObject(System.IO.Path.GetFileNameWithoutExtension(prefabPath));
+                bool changed = false;
+                GameObject visual = EditorBootstrapUtils.EnsureVisual(go,
+                    ThirdPartyAssetPostprocessor.DollPath,
+                    ThirdPartyAnimatorBootstrap.PlayerControllerPath, visualScale, ref changed);
+                go.AddComponent<PlayerView>();
+                PlayerVisual playerVisual = go.AddComponent<PlayerVisual>();
+                var visualSo = new SerializedObject(playerVisual);
+                EditorBootstrapUtils.SetRef(visualSo, "_animator", visual.GetComponent<Animator>());
+                EditorBootstrapUtils.SetRef(visualSo, "_visual", visual.transform);
+                visualSo.ApplyModifiedPropertiesWithoutUndo();
+                // Task 19: AimProxy_Legs/Body/Head siblings of Visual, at
+                // prefab-root local space (EnsureAimProxyChildren's own doc).
+                // Every doll carries them now, which is what lets a player be
+                // aimed AT — see AimProvider.TryAimProxy's own doc.
+                EnsureAimProxyChildren(go.transform, legsTop, bodyTop, headTop,
+                    bodyRadius, headRadiusFrac);
+
+                Transform hand = visual.GetComponent<Animator>()
+                    .GetBoneTransform(HumanBodyBones.RightHand);
+                if (hand == null)
+                    throw new System.InvalidOperationException(
+                        "StageOneSceneBootstrap: doll has no RightHand bone.");
+                GameObject gunModel = AssetDatabase.LoadAssetAtPath<GameObject>(GunModelPath);
+                if (gunModel == null)
+                    throw new System.InvalidOperationException(
+                        "StageOneSceneBootstrap: no gun model at " + GunModelPath);
+                var gun = (GameObject)PrefabUtility.InstantiatePrefab(gunModel);
+                gun.name = GunObjectName;
+                gun.transform.SetParent(hand, false);
+                gun.transform.localPosition = gameFeel.GunLocalPosition;
+                gun.transform.localEulerAngles = gameFeel.GunLocalEuler;
+                // Stage 2 Task 45b: the barrel's mouth and the ejection port,
+                // the two points every weapon cosmetic is anchored to from now
+                // on. The model carries no sockets of its own (its only nodes
+                // are the mesh), so they are ours to place.
+                EnsureGunSockets(gun.transform, gameFeel,
+                    out Transform muzzleSocket, out Transform ejectSocket);
+
+                var viewSo = new SerializedObject(go.GetComponent<PlayerView>());
+                EditorBootstrapUtils.SetRef(viewSo, "_muzzleSocket", muzzleSocket);
+                EditorBootstrapUtils.SetRef(viewSo, "_ejectSocket", ejectSocket);
+                viewSo.ApplyModifiedPropertiesWithoutUndo();
+
+                PlayerGunTuner tuner = go.AddComponent<PlayerGunTuner>();
+                var tunerSo = new SerializedObject(tuner);
+                EditorBootstrapUtils.SetRef(tunerSo, "_gameFeel", gameFeel);
+                EditorBootstrapUtils.SetRef(tunerSo, "_gun", gun.transform);
+                EditorBootstrapUtils.SetRef(tunerSo, "_muzzleSocket", muzzleSocket);
+                EditorBootstrapUtils.SetRef(tunerSo, "_ejectSocket", ejectSocket);
+                tunerSo.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
+
+        /// Stage 2 Task 45a: the gun-pose half of the doll prefab's self-heal —
+        /// the write-if-different reconciliation the scene block did on every
+        /// `Apply` before the doll became a prefab, moved here unchanged in
+        /// substance. Same `LoadPrefabContents`/`SaveAsPrefabAsset` shape as
+        /// `SelfHealAimProxyOnPrefab`/`SelfHealVisualScaleOnPrefab` next door,
+        /// and kept a separate method for the same reason those two are: one
+        /// self-heal, one concern.
+        static void SelfHealGunPoseOnPrefab(string prefabPath, GameFeelConfig gameFeel)
+        {
+            GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                Transform gun = FindDescendant(contents.transform, GunObjectName);
+                if (gun == null) return;
+                bool changed = false;
+                if (gun.localPosition != gameFeel.GunLocalPosition)
+                {
+                    gun.localPosition = gameFeel.GunLocalPosition;
+                    changed = true;
+                }
+                // Compare ROTATIONS, not euler read-backs: localEulerAngles returns values
+                // re-derived from the quaternion (normalized to [0;360)), so e.g. (0,-90,0)
+                // reads back as (0,270,0) and a naive != would re-dirty the prefab on every
+                // Apply (audit fix ПБ19). Writing via localEulerAngles keeps the serialized
+                // euler hint consistent.
+                if (Quaternion.Angle(gun.localRotation,
+                        Quaternion.Euler(gameFeel.GunLocalEuler)) > 1e-3f)
+                {
+                    gun.localEulerAngles = gameFeel.GunLocalEuler;
+                    changed = true;
+                }
+                if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        /// Stage 2 Task 45b: the two empty sockets under the doll's `Gun` —
+        /// created if missing, reconciled write-if-different otherwise, and
+        /// handed back either way so the caller can wire the references that
+        /// make them reachable at runtime. Same find-or-create + per-field diff
+        /// shape as `EnsureAimProxyCapsule` above; returns whether anything
+        /// changed, like every other `Ensure*` in this file.
+        ///
+        /// UNDER THE GUN, NOT UNDER THE HAND. The gun's own pose inside the hand
+        /// is itself owner-tuned (`GameFeelConfig.GunLocalPosition/Euler`), so a
+        /// socket parented to the hand would silently drift off the barrel the
+        /// next time the grip is re-tuned. Parented to the gun, the barrel's
+        /// mouth stays the barrel's mouth.
+        ///
+        /// ONLY THE PORT'S ROTATION IS RECONCILED. The muzzle socket is a POINT
+        /// for the flash and the aim ray — nothing reads its forward axis — and
+        /// writing a rotation nobody reads would give the owner a knob whose
+        /// effect is invisible. `GameFeelConfig.GunEjectLocalEuler`'s own doc
+        /// has the split.
+        static bool EnsureGunSockets(Transform gun, GameFeelConfig gameFeel,
+            out Transform muzzle, out Transform eject)
+        {
+            bool changed = EnsureSocketChild(gun, MuzzleSocketObjectName, out muzzle);
+            changed |= EnsureSocketChild(gun, EjectSocketObjectName, out eject);
+            if (muzzle.localPosition != gameFeel.GunMuzzleLocalPosition)
+            {
+                muzzle.localPosition = gameFeel.GunMuzzleLocalPosition;
+                changed = true;
+            }
+            if (eject.localPosition != gameFeel.GunEjectLocalPosition)
+            {
+                eject.localPosition = gameFeel.GunEjectLocalPosition;
+                changed = true;
+            }
+            // Rotations compared as rotations, never as euler read-backs — the
+            // ПБ19 audit fix `SelfHealGunPoseOnPrefab` above documents in full.
+            if (Quaternion.Angle(eject.localRotation,
+                    Quaternion.Euler(gameFeel.GunEjectLocalEuler)) > 1e-3f)
+            {
+                eject.localEulerAngles = gameFeel.GunEjectLocalEuler;
+                changed = true;
+            }
+            return changed;
+        }
+
+        static bool EnsureSocketChild(Transform gun, string childName, out Transform socket)
+        {
+            socket = gun.Find(childName);
+            if (socket != null) return false;
+            var go = new GameObject(childName);
+            go.transform.SetParent(gun, false);
+            socket = go.transform;
+            return true;
+        }
+
+        /// Stage 2 Task 45b: the socket half of the doll prefab's self-heal.
+        /// Separate from `SelfHealGunPoseOnPrefab` above for the reason this
+        /// file's own convention gives — one self-heal, one concern — and it
+        /// carries something that one does not: the two REFERENCES into the
+        /// sockets. An already-committed prefab predates both the objects and
+        /// the fields that point at them, so creating the children without
+        /// rewiring `PlayerView`/`PlayerGunTuner` would leave a doll whose gun
+        /// has a muzzle nothing can find.
+        static void SelfHealGunSocketsOnPrefab(string prefabPath, GameFeelConfig gameFeel)
+        {
+            GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                Transform gun = FindDescendant(contents.transform, GunObjectName);
+                if (gun == null) return;
+                bool changed = EnsureGunSockets(gun, gameFeel,
+                    out Transform muzzle, out Transform eject);
+
+                var viewSo = new SerializedObject(contents.GetComponent<PlayerView>());
+                bool refsChanged = EditorBootstrapUtils.SetRef(viewSo, "_muzzleSocket", muzzle);
+                refsChanged |= EditorBootstrapUtils.SetRef(viewSo, "_ejectSocket", eject);
+                if (refsChanged) viewSo.ApplyModifiedPropertiesWithoutUndo();
+                changed |= refsChanged;
+
+                PlayerGunTuner tuner = contents.GetComponent<PlayerGunTuner>();
+                if (tuner != null)
+                {
+                    var tunerSo = new SerializedObject(tuner);
+                    bool tunerRefsChanged =
+                        EditorBootstrapUtils.SetRef(tunerSo, "_muzzleSocket", muzzle);
+                    tunerRefsChanged |= EditorBootstrapUtils.SetRef(tunerSo, "_ejectSocket", eject);
+                    if (tunerRefsChanged) tunerSo.ApplyModifiedPropertiesWithoutUndo();
+                    changed |= tunerRefsChanged;
+                }
+
+                if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        /// Depth-first search by name — the gun hangs off a humanoid bone whose
+        /// path inside the doll rig is the pack's business, not this file's, so
+        /// it cannot be reached by a fixed `Transform.Find` path the way every
+        /// other child in this file can.
+        static Transform FindDescendant(Transform root, string name)
+        {
+            for (int i = 0; i < root.childCount; i++)
+            {
+                Transform child = root.GetChild(i);
+                if (child.name == name) return child;
+                Transform found = FindDescendant(child, name);
+                if (found != null) return found;
+            }
+            return null;
         }
 
         /// Task 12 (assets phase B plan, spec §3.7/§3.11): the shared mech
@@ -2444,10 +2947,7 @@ namespace Ring.Editor
             return fillImage;
         }
 
-        /// The wave-number label (Task 14), top-right anchored. TMP Essential
-        /// Resources are vendored at `Assets/TextMesh Pro/` (see class doc), so a
-        /// plain `AddComponent<TextMeshProUGUI>()` resolves `TMP_Settings.
-        /// defaultFontAsset` on its own — no explicit font wiring needed here.
+        /// The wave-number label (Task 14), top-right anchored.
         static TMP_Text GetOrCreateWaveText(Transform parent, ref bool sceneDirty)
         {
             Transform existing = parent.Find(WaveTextObjectName);
@@ -2467,19 +2967,49 @@ namespace Ring.Editor
                 return existingText;
             }
 
-            var go = new GameObject(WaveTextObjectName, typeof(RectTransform));
+            return GetOrCreateHudLabel(parent, WaveTextObjectName, "ВОЛНА 0",
+                anchor: new Vector2(1f, 1f), anchoredPos: new Vector2(-24f, -24f),
+                size: new Vector2(240f, 40f), fontSize: 28f,
+                alignment: TextAlignmentOptions.TopRight, ref sceneDirty);
+        }
+
+        /// A `TextMeshProUGUI` label directly on the HUD canvas, anchored to one
+        /// of its corners or edges (Stage 2 Task 47b lifted this out of
+        /// `GetOrCreateWaveText`, which was the only such label until the
+        /// spectate line joined it — a second hand-written copy of the same
+        /// eleven lines is exactly the duplication AGENT.md rule 2 forbids).
+        /// Distinct from `GetOrCreateOverlayText` above, which anchors to the
+        /// CENTER of a modal panel and stacks by pixel offset.
+        ///
+        /// `anchor` sets `anchorMin`, `anchorMax` and `pivot` together: a HUD
+        /// label is a point on the screen with text hanging off it, so the three
+        /// are never anything but equal here, and passing one vector is what
+        /// keeps a caller from getting two of them right and one wrong.
+        ///
+        /// TMP Essential Resources are vendored at `Assets/TextMesh Pro/` (see
+        /// class doc), so a plain `AddComponent<TextMeshProUGUI>()` resolves
+        /// `TMP_Settings.defaultFontAsset` on its own — no explicit font wiring
+        /// needed here. Existence-guarded like everything else in this file.
+        static TMP_Text GetOrCreateHudLabel(Transform parent, string name, string defaultText,
+            Vector2 anchor, Vector2 anchoredPos, Vector2 size, float fontSize,
+            TextAlignmentOptions alignment, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(name);
+            if (existing != null) return existing.GetComponent<TMP_Text>();
+
+            var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
             var rect = (RectTransform)go.transform;
-            rect.anchorMin = new Vector2(1f, 1f);
-            rect.anchorMax = new Vector2(1f, 1f);
-            rect.pivot = new Vector2(1f, 1f);
-            rect.anchoredPosition = new Vector2(-24f, -24f);
-            rect.sizeDelta = new Vector2(240f, 40f);
+            rect.anchorMin = anchor;
+            rect.anchorMax = anchor;
+            rect.pivot = anchor;
+            rect.anchoredPosition = anchoredPos;
+            rect.sizeDelta = size;
 
             var tmp = go.AddComponent<TextMeshProUGUI>();
-            tmp.text = "ВОЛНА 0";
-            tmp.fontSize = 28f;
-            tmp.alignment = TextAlignmentOptions.TopRight;
+            tmp.text = defaultText;
+            tmp.fontSize = fontSize;
+            tmp.alignment = alignment;
             tmp.color = Color.white;
 
             sceneDirty = true;
@@ -2618,15 +3148,10 @@ namespace Ring.Editor
             return mat;
         }
 
-        static SimulationRunner FindRunner(Scene scene)
-        {
-            foreach (GameObject root in scene.GetRootGameObjects())
-            {
-                var runner = root.GetComponentInChildren<SimulationRunner>(true);
-                if (runner != null) return runner;
-            }
-            return null;
-        }
+        // FindRunner lived here until Stage 2 Task 44e; it is
+        // `EditorBootstrapUtils.FindComponentInScene<SimulationRunner>` now,
+        // because StageTwoSceneBootstrap needs the very same runner to wire
+        // the client's network bootstrap to.
 
         static Camera FindMainCamera(Scene scene)
         {

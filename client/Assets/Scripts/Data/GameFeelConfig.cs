@@ -24,9 +24,16 @@ namespace Ring.Data
         [Range(0f, 1f)] public float PitchRange = 0.12f;
         [Range(0f, 2f)] public float TracerFadeSeconds = 0.4f;
         [Range(0f, 5f)] public float CasingPhysicsSeconds = 1.5f;
-        [Range(1, 4096)] public int MaxCasings = 1024;
-        [Range(1, 4096)] public int MaxDecals = 512;
-        [Range(1, 512)] public int MaxCorpses = 64;
+        // Stage 2 Task 16 (spec §3.4, Р17/Р92): persistent-prop FIFO limits
+        // rescaled for a 65 m arena with three players and MaxMobs 96 — at
+        // MaxCorpses 64 the first wave alone would already start evicting.
+        // These are the C# side of the two-sources discipline (§0): the same
+        // three numbers ship into GameFeelConfig.asset via
+        // StageOneSceneBootstrap.ApplyStageTwoBalance, so no new .asset-vs-C#
+        // divergence is created.
+        [Range(1, 4096)] public int MaxCasings = 3072;
+        [Range(1, 4096)] public int MaxDecals = 1536;
+        [Range(1, 512)] public int MaxCorpses = 128;
         [Range(1, 32)] public int VoicesPerSfx = 6;
         [Range(0f, 1f)] public float MinSfxInterval = 0.03f;
 
@@ -81,7 +88,6 @@ namespace Ring.Data
         [Range(1, 64)] public int BlockSparkBurstCount = 18;
 
         public bool ImmediateMuzzleFeedback = true;
-        public bool ExtrapolateLocalPlayer = false;
 
         // Assets phase B (spec §3.7): character-visual numbers. Scale fields are
         // bind-time (re-run the bootstrap / rebuild prefabs to apply); the rest are
@@ -91,8 +97,11 @@ namespace Ring.Data
         // `DashGlowSize` in turn until the Б1 fix-wave-3 field below superseded
         // THAT, and `CasingEjectSpeedMax` after that, then `AimDotScale`
         // (Task 17), then `SlideDustSize` (Task 22, spec Г6), then
-        // `LinkWindowFlashBoost` (В1 fix-wave 1) — `AimHoverGlowBoost` is the
-        // current marker (В1/В2 fix-wave 2), see its own doc.
+        // `LinkWindowFlashBoost` (В1 fix-wave 1), then `AimHoverGlowBoost`
+        // (В1/В2 fix-wave 2), then `AimRayHeadAlphaBoost` (В3 fix-wave 1), then
+        // `HeadHoverPulseAmp` (В3 fix-wave 2), then `RemotePlayerEmission`
+        // (Stage 2 Task 45a) — `GunEjectLocalEuler` is the current marker
+        // (Stage 2 Task 45b), see its own doc.
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
         // I5 reviewer rec #5 (final review wave, app-n6g): this scale is NOT
@@ -127,6 +136,18 @@ namespace Ring.Data
         // muzzle height (PC7) — instead of this flat guessed lift. Field kept
         // rather than deleted so an already-authored .asset doesn't silently
         // lose a serialized value; no code path reads it anymore.
+        //
+        // AND THOSE CONSUMERS MOVED AGAIN, off RenderMuzzleHeight too (Stage 2
+        // Task 45b): the flash and the brass now leave sockets on the doll's
+        // gun, at whatever height the animated hand holds it, so neither this
+        // field nor the property that replaced it describes them any more.
+        // RenderMuzzleHeight itself sat with zero readers between that task and
+        // Stage 2 Task 45c, which gave it one of a different kind — AimProvider
+        // asks where the SIMULATION's round leaves from in order to work out
+        // where it lands (app-bej). Recorded here because "this field's
+        // successor" is the only thing this paragraph is for, and a successor
+        // that had stopped being read would have made it a dead pointer to a
+        // dead pointer.
         [Range(0f, 2f)] public float MuzzleLiftY = 1.1f;
         public Vector3 GunLocalPosition = Vector3.zero;
         public Vector3 GunLocalEuler = Vector3.zero;
@@ -137,8 +158,11 @@ namespace Ring.Data
         // bootstrap sync-marker key until the Б1 fix-wave-3 field below
         // superseded it, then `CasingEjectSpeedMax`, then `AimDotScale`
         // (Task 17), then `SlideDustSize` (Task 22, spec Г6), then
-        // `LinkWindowFlashBoost` (В1 fix-wave 1) — `AimHoverGlowBoost` is the
-        // current marker (В1/В2 fix-wave 2), see its own doc.
+        // `LinkWindowFlashBoost` (В1 fix-wave 1), then `AimHoverGlowBoost`
+        // (В1/В2 fix-wave 2), then `AimRayHeadAlphaBoost` (В3 fix-wave 1), then
+        // `HeadHoverPulseAmp` (В3 fix-wave 2), then `RemotePlayerEmission`
+        // (Stage 2 Task 45a) — `GunEjectLocalEuler` is the current marker
+        // (Stage 2 Task 45b), see its own doc.
         [Range(1, 32)] public int MaxDashGlows = 8;
         [Range(0.1f, 10f)] public float DashGlowSeconds = 2.5f;
         [Range(0.1f, 3f)] public float DashGlowSize = 0.9f;
@@ -154,9 +178,17 @@ namespace Ring.Data
         // random left/right scatter — CasingView.Spawn now switched from
         // ForceMode.Impulse to ForceMode.VelocityChange (see its own doc),
         // so these are direct meters-per-second along a *directed* eject
-        // vector (PersistentPropsDirector.SpawnCasing ejects to the
-        // shooter's right of the shot, like a real pistol's ejection port)
-        // rather than an undirected impulse.
+        // vector rather than an undirected impulse.
+        //
+        // WHICH DIRECTION THAT IS CHANGED IN STAGE 2 TASK 45b, and this doc
+        // named the old one until Task 45c: the shell no longer leaves "to the
+        // shooter's right of the shot" (the shot direction rotated -90°, a
+        // guess about a pistol derived from where the ROUND went). It leaves
+        // along the ejection-port socket's own forward axis, flattened to
+        // horizontal — GunEjectLocalEuler below is what aims it, and
+        // CasingImpulseUpMin/Max above supply the vertical part these two
+        // fields deliberately do not (PersistentPropsDirector.SpawnCasing's own
+        // doc has the reason the axis is flattened rather than used whole).
         [Range(0f, 5f)] public float CasingEjectSpeedMin = 0.8f;
         [Range(0f, 5f)] public float CasingEjectSpeedMax = 1.4f;
 
@@ -206,12 +238,14 @@ namespace Ring.Data
 
         // В1 fix-wave 1 (owner playtest feedback, item 3 "мерцание сборщика"):
         // the collector's doll pulses while a Dash↔Slide combo window is open
-        // (`PlayerVisual.UpdateLinkWindowFlash` reads `PlayerState.
-        // PostDashSlideTimer`/`LinkWindowTimer`, either > 0f — the same two
-        // timers `PlayerMovementSystem` already uses to gate the link itself).
+        // (`PlayerView.Sync` reads `PlayerState.PostDashSlideTimer`/
+        // `LinkWindowTimer`, either > 0f — the same two timers
+        // `PlayerMovementSystem` already uses to gate the link itself; the
+        // pulse lived in `PlayerVisual.UpdateLinkWindowFlash` until Stage 2
+        // Task 45a moved emission onto the root view, next to the renderers).
         // `LinkWindowFlashHz` is the pulse's oscillation rate; `LinkWindowFlashBoost`
         // scales its peak intensity on top of the fixed accent color
-        // `PlayerVisual` reuses from `PlayerEmissive`/`DashGlowView` (Э1) —
+        // `PlayerView` reuses from `PlayerEmissive`/`DashGlowView` (Э1) —
         // same accent-constant-vs-SO-number split `MobView`'s Gunner glint
         // already makes. `LinkWindowFlashBoost` was the sync-marker key,
         // superseding `SlideDustSize` (Task 22, spec Г6) — see that field's
@@ -246,7 +280,8 @@ namespace Ring.Data
         // from `LinkWindowFlashAccent`/`LinkWindowFlashBoost` above. Range
         // floors at 1x (never DIMS an already-visible accent, only adds to
         // it) and caps at 3x; "keep subtle" per owner guidance, default 1.35.
-        // New sync-marker key, superseding `LinkWindowFlashBoost` above.
+        // Was the sync-marker key, superseding `LinkWindowFlashBoost` above,
+        // until `AimRayHeadAlphaBoost` below superseded it (В3 fix-wave 1).
         [Range(1f, 3f)] public float AimHoverGlowBoost = 1.35f;
 
         // В3 fix-wave 1 (app-n6g item 3, owner playtest feedback: "не видно,
@@ -299,7 +334,7 @@ namespace Ring.Data
         // rejected). `CrosshairView.LateUpdate` now layers a breathing scale PULSE
         // on top of that boost while the aim-proxy hit is `HitZone.Head`: the same
         // `0.5+0.5*Mathf.Sin(Time.unscaledTime * Hz * 2π)`-shaped oscillation
-        // `PlayerVisual.UpdateLinkWindowFlash`/`MobView`'s telegraph/glint pulses
+        // `PlayerView.Sync`/`MobView`'s telegraph/glint pulses
         // already use (Reuse > duplication — this project has exactly one pulse
         // idiom, not a second one per feature), remapped from that method's [0,1]
         // emission-intensity range to a signed [-1,1] SCALE offset around 1 (a
@@ -308,9 +343,90 @@ namespace Ring.Data
         // oscillation rate; `HeadHoverPulseAmp` is the peak deviation from 1 —
         // default 0.25 swings the marker between 0.75x and 1.25x of its existing
         // `AimMarkerHeadScaleBoost`-boosted size, never zero/negative (amp capped
-        // at 1). New sync-marker key, superseding `AimRayHeadAlphaBoost` above.
+        // at 1). Was the sync-marker key, superseding `AimRayHeadAlphaBoost`
+        // above, until `RemotePlayerEmission` below superseded it in turn
+        // (Stage 2 Task 45a).
         [Range(0.5f, 15f)] public float HeadHoverPulseHz = 5f;
-        [Range(0f, 1f)] public float HeadHoverPulseAmp = 0.25f; // sync-marker key — keep LAST
+        [Range(0f, 1f)] public float HeadHoverPulseAmp = 0.25f;
+
+        // Stage 2 Task 45a (spec §3.12's "other players — pooled by index,
+        // emission GameFeelConfig.RemotePlayerEmission" bullet; §3.15's
+        // new-fields table): the
+        // steady emissive rim every doll but this client's own wears, so a
+        // stranger reads as a stranger the instant they come out of the fog.
+        // Applied by `PlayerView.Sync` through the SAME MaterialPropertyBlock/
+        // `_EmissionColor` write the combo-window pulse already goes through —
+        // one emission mechanism per doll, not two — and composed with it
+        // additively, so a remote player in a link window still pulses. The
+        // local doll is handed `Color.black` by `ViewRegistry`, which is why
+        // "own" needs no branch inside the view; a doll that dies is handed
+        // black once and for good (`PlayerView.DetachAsCorpse`).
+        //
+        // HDR IS NOT DECORATION HERE, IT IS THE FIELD WORKING AT ALL
+        // (fix-round 1). An unattributed `Color` draws with Unity's LDR picker,
+        // which clamps every channel into [0,1] the first time the owner opens
+        // it and presses OK — and this field IS the В1 tuning path for
+        // "свой/чужой", with the `.asset` off-limits to hand editing. Emission
+        // above 1 is what Bloom reacts to, so a clamped value would quietly
+        // turn the rim off. This is the first HDR color the project keeps in an
+        // SO: the existing accent pairs put the HDR part in a CODE constant
+        // (`LinkWindowFlashAccent`, `MobView.TelegraphAccent`/`GunnerGlintAccent`)
+        // and expose only an LDR multiplier, and the existing SO colors
+        // (`AimZoneBodyColor`/`AimZoneHeadColor`, `StaminaBar*`) are LDR because
+        // something else multiplies them. Neither shape fits: the spec asks for
+        // one field, nothing multiplies this one, and a second SO float would be
+        // a knob the owner did not ask for.
+        //
+        // DEFAULT IS A VIOLET, and the reason is the palette that already
+        // exists rather than taste: the player signature is the cyan
+        // `PlayerView`/`DashGlowView`/`PlayerEmissive` share (0, 2.5, 3), the
+        // Chaser telegraph is amber, the Gunner glint cool-white, the headshot
+        // cue red and the body cue pale blue — violet is the one direction left
+        // that neither argues with the player's own cyan nor imitates a mob
+        // tell. Intensity sits well under the pulse's own peak (the cyan accent
+        // × LinkWindowFlashBoost reaches ~4.8 on its brightest channel), so it
+        // reads as a rim under Bloom rather than a flash, and a remote player's
+        // link window still visibly out-shines their resting tint.
+        //
+        // Was the sync-marker key, superseding `HeadHoverPulseAmp` above, until
+        // `GunEjectLocalEuler` below superseded it in turn (Stage 2 Task 45b).
+        [ColorUsage(false, true)]
+        public Color RemotePlayerEmission = new Color(1.4f, 0.15f, 1.6f);
+
+        // Stage 2 Task 45b (owner requirement 2026-08-10: the flash, the brass
+        // and the aim ray all leave the BARREL OF THE MODEL, not a point in
+        // front of the hero — bd app-fl3/app-e2n/app-60c): the local poses of
+        // the two empty sockets `StageOneSceneBootstrap` parents under the
+        // doll's `Gun`, reconciled write-if-different on every `Apply` exactly
+        // like `GunLocalPosition`/`GunLocalEuler` above already are.
+        //
+        // SOCKETS RATHER THAN A COMPUTED OFFSET, because the owner's tuning
+        // loop is "drag it with the scene gizmo in PlayMode → Capture → the
+        // numbers land here" (`PlayerGunTuner`), and a GameObject is what a
+        // gizmo can drag. Both are read at runtime through `PlayerView`'s own
+        // serialized references, never by name lookup.
+        //
+        // WHY THE MUZZLE HAS NO EULER AND THE EJECTION PORT DOES. The flash and
+        // the ray need a POINT: the shot's direction is already carried
+        // tick-exactly by the event itself (`SimEvent.Amount`) and by the aim
+        // for the predicted burst, and re-deriving it from an untuned socket's
+        // forward axis would replace a measured number with a guess. The brass
+        // needs a point AND a direction — bd app-e2n asks for an impulse
+        // "вбок-назад от ориентации оружия" outright, and the only home for
+        // that direction is the port's own rotation.
+        //
+        // DEFAULTS. Muzzle: 0.18 m along the pistol's own local forward, i.e.
+        // about the length of the slide ahead of the model's pivot — the
+        // barrel's mouth for a model authored facing +Z. Ejection port: 3 cm to
+        // the right of the pistol's centerline and 4 cm above it (the top-right
+        // of the slide, where a real pistol throws brass), 2 cm behind the
+        // muzzle's own offset. Its euler yaws the port's forward 100° right of
+        // the barrel, which is "sideways and slightly back". Each is a starting
+        // pose for the owner's gizmo pass on the smoke test, not a measurement:
+        // the model carries no sockets of its own to take them from.
+        public Vector3 GunMuzzleLocalPosition = new Vector3(0f, 0f, 0.18f);
+        public Vector3 GunEjectLocalPosition = new Vector3(0.03f, 0.04f, 0.16f);
+        public Vector3 GunEjectLocalEuler = new Vector3(0f, 100f, 0f); // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

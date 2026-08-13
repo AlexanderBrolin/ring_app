@@ -72,6 +72,31 @@ namespace Ring.Simulation.Tests
             return world.StateHash();
         }
 
+        /// Stage 2 Task 10: the multiplayer counterpart of RunScripted above —
+        /// three players, each fed its OWN scripted input drawn from the same
+        /// local Random in increasing player order, so every player's stream is
+        /// independent of the others' while the whole run stays reproducible
+        /// from the one input seed. This is what pins the canonical hash order's
+        /// player/stats ARRAY halves (playerCount + players[0..n), statsCount +
+        /// stats[0..n)): the solo golden below can only ever exercise index 0.
+        /// `aimHeld` is one LOCAL flag per player (an array element passed by
+        /// ref) for the same no-static-leak reason RunScripted's own local has.
+        static ulong RunMultiScripted(uint inputSeed, int ticks, int playerCount)
+        {
+            SimConfig cfg = TestConfigs.Default();
+            var world = new SimulationWorld(42, cfg, playerCount);
+            var rng = new Random(inputSeed);
+            var aimHeld = new bool[playerCount];
+            var inputs = new SimInput[playerCount];
+            for (int i = 0; i < ticks; i++)
+            {
+                for (int p = 0; p < playerCount; p++)
+                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight);
+                world.TickAll(inputs);
+            }
+            return world.StateHash();
+        }
+
         [Test]
         public void SameSeed_SameHash_After1000Ticks()
         {
@@ -151,6 +176,18 @@ namespace Ring.Simulation.Tests
                 for (int i = 0; i < 50; i++) w.Tick(default); // zero moveDir
                 var p = w.Player;
                 Assert.IsTrue(math.all(math.isfinite(p.Pos)) && math.all(math.isfinite(p.Vel)));
+                // Stage 2 Task 10: the `nan` block above also holds
+                // DashRequested true for 50 straight ticks — request spam is
+                // hostile input in its own right, and this is the one existing
+                // scenario that already exercised it. The rate limit must be
+                // dropping most of it (Hero.EdgeRequestMinTicks = 3 keeps
+                // roughly one request in three), and the finiteness and
+                // determinism asserted around this line must hold WITH the gate
+                // in the loop, not merely without it. Asserted, not assumed, so
+                // that a gate accidentally disabled for hostile/NaN input turns
+                // this red instead of silently reverting the scenario.
+                Assert.Greater(w.RejectedEdgeRequestsForTest, 0,
+                    "50 ticks of held DashRequested must reach the edge-request rate limit");
                 return w.StateHash();
             }
             Assert.AreEqual(Run(), Run()); // two independent worlds, same hash
@@ -165,6 +202,117 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(cfg.Hero.MaxAimHeight, over.AimHeight, 1e-5f);  // clamp (fixture expr - PA2)
             var nan = w.SanitizeForTest(new SimInput { AimHeld = true, AimHeight = float.NaN });
             Assert.AreEqual(cfg.Hero.MuzzleHeight, nan.AimHeight, 1e-5f);   // NaN -> muzzle height
+        }
+
+        [Test]
+        public void Sanitizer_MatchesWorldBehaviour()
+        {
+            // Stage 2 Task 6 fix-round 1 (I-1, review): the world-vs-seam loop
+            // below is a WIRING check, not a formula check. After GREEN,
+            // w.SanitizeForTest(raw) resolves to SimulationWorld.Sanitize(raw, 0),
+            // which itself just calls SimInputSanitizer.Sanitize(raw,
+            // _players[0], _config) — `actual` below calls the exact same
+            // static function with the exact same arguments (w.Player ==
+            // _players[0], w.Config == _config), so every assertion in the loop
+            // is x == x for ANY seam body, including a broken one; it cannot
+            // catch a formula regression. What it still catches: the world
+            // silently failing to pass ITS OWN reference player/config into the
+            // seam (stale player index, stale config) — inputs 3-6 below read
+            // the reference player's Pos/AimPoint and would diverge if that
+            // wiring broke. Formula correctness is pinned separately, below,
+            // by property-based asserts that call the seam directly and never
+            // go through the world.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player;
+            p.Pos = new float2(5f, -3f);
+            p.AimPoint = new float2(1f, 1f);
+            w.SetPlayerForTest(p);
+
+            SimInput[] hostileInputs =
+            {
+                // 0) non-finite MoveDir -> zero.
+                new SimInput { MoveDir = new float2(float.NaN, float.PositiveInfinity),
+                    AimPoint = new float2(2f, 2f), AimHeight = 1f },
+                // 1) over-length MoveDir (|v| = 5) -> normalized down to unit length.
+                new SimInput { MoveDir = new float2(3f, 4f),
+                    AimPoint = new float2(2f, 2f), AimHeight = 1f },
+                // 2) sub-unit MoveDir (|v| = 0.5) -> partial stick deflection
+                //    preserved, NOT forced up to 1.0 (spec §3.8).
+                new SimInput { MoveDir = new float2(0.5f, 0f),
+                    AimPoint = new float2(2f, 2f), AimHeight = 1f },
+                // 3) non-finite AimPoint -> falls back to the reference player's
+                //    own AimPoint.
+                new SimInput { MoveDir = float2.zero,
+                    AimPoint = new float2(float.NaN, float.NegativeInfinity), AimHeight = 1f },
+                // 4) AimPoint far outside Arena.Radius * 2 from the reference
+                //    player's Pos -> clamped onto that radius, AND non-finite
+                //    AimHeight -> muzzle height.
+                new SimInput { MoveDir = float2.zero,
+                    AimPoint = new float2(1e9f, -1e9f), AimHeight = float.NaN },
+                // 5) AimHeight above the cap -> clamps down to Hero.MaxAimHeight
+                //    (upper bound of the unconditional clamp, fix-round 1 I-2).
+                new SimInput { MoveDir = float2.zero,
+                    AimPoint = float2.zero, AimHeight = cfg.Hero.MaxAimHeight + 5f },
+                // 6) AimHeight below zero -> clamps up to 0 (lower bound; not
+                //    exercised anywhere else in the repo before this fix-round).
+                new SimInput { MoveDir = float2.zero,
+                    AimPoint = float2.zero, AimHeight = -1f },
+            };
+
+            foreach (var raw in hostileInputs)
+            {
+                SimInput expected = w.SanitizeForTest(raw);
+                SimInput actual = SimInputSanitizer.Sanitize(raw, w.Player, w.Config);
+
+                Assert.AreEqual(expected.MoveDir.x, actual.MoveDir.x, 1e-5f);
+                Assert.AreEqual(expected.MoveDir.y, actual.MoveDir.y, 1e-5f);
+                Assert.AreEqual(expected.AimPoint.x, actual.AimPoint.x, 1e-5f);
+                Assert.AreEqual(expected.AimPoint.y, actual.AimPoint.y, 1e-5f);
+                Assert.AreEqual(expected.AimHeight, actual.AimHeight, 1e-5f);
+            }
+
+            // Property-based asserts (fix-round 1, I-1/I-2, review decision 2):
+            // pin the seam's actual sanitization BEHAVIOUR against its
+            // documented contract via fixture expressions (Global Constraints
+            // C14 — no literal restating a config number), calling the seam
+            // directly against the fixed reference player `p` and `cfg` —
+            // independent of the world, so a broken FORMULA (not just broken
+            // wiring) turns these red.
+            SimInput r0 = SimInputSanitizer.Sanitize(hostileInputs[0], p, cfg);
+            Assert.IsTrue(math.all(r0.MoveDir == float2.zero),
+                "non-finite MoveDir must sanitize to zero");
+
+            SimInput r1 = SimInputSanitizer.Sanitize(hostileInputs[1], p, cfg);
+            Assert.AreEqual(1f, math.length(r1.MoveDir), 1e-5f,
+                "over-length MoveDir (|v| = 5) must normalize down to unit length");
+            Assert.AreEqual(0f, r1.MoveDir.x * 4f - r1.MoveDir.y * 3f, 1e-4f,
+                "normalization must preserve the raw (3,4) heading (zero cross product)");
+
+            SimInput r2 = SimInputSanitizer.Sanitize(hostileInputs[2], p, cfg);
+            Assert.AreEqual(0.5f, math.length(r2.MoveDir), 1e-5f,
+                "sub-unit MoveDir (|v| = 0.5) must NOT be forced up to 1.0 " +
+                "(spec §3.8, analog stick partial deflection)");
+
+            SimInput r3 = SimInputSanitizer.Sanitize(hostileInputs[3], p, cfg);
+            Assert.AreEqual(p.AimPoint.x, r3.AimPoint.x, 1e-5f,
+                "non-finite AimPoint must fall back to the reference player's own AimPoint");
+            Assert.AreEqual(p.AimPoint.y, r3.AimPoint.y, 1e-5f);
+
+            SimInput r4 = SimInputSanitizer.Sanitize(hostileInputs[4], p, cfg);
+            float maxR = cfg.Arena.Radius * 2f; // fixture expression (C14) - the same formula the seam itself computes
+            Assert.AreEqual(maxR, math.length(r4.AimPoint - p.Pos), 1e-2f,
+                "out-of-radius AimPoint must land exactly on the clamp circle around the reference player's Pos");
+            Assert.AreEqual(cfg.Hero.MuzzleHeight, r4.AimHeight, 1e-5f,
+                "non-finite AimHeight must map to standing muzzle height");
+
+            SimInput r5 = SimInputSanitizer.Sanitize(hostileInputs[5], p, cfg);
+            Assert.AreEqual(cfg.Hero.MaxAimHeight, r5.AimHeight, 1e-5f,
+                "AimHeight above the cap must clamp down to Hero.MaxAimHeight");
+
+            SimInput r6 = SimInputSanitizer.Sanitize(hostileInputs[6], p, cfg);
+            Assert.AreEqual(0f, r6.AimHeight, 1e-5f,
+                "AimHeight below zero must clamp up to 0");
         }
 
         [Test]
@@ -284,8 +432,159 @@ namespace Ring.Simulation.Tests
             // SlideRequested draw (~5%/tick) can land on a tick the stamina
             // gate fails, so the scripted run's Vel/Pos trace on those ticks
             // legitimately differs from repin #11's.
-            const ulong GoldenHash = 0x760AEB00D11301C4UL; // = 8505869234982814148
+            //
+            // Re-pinned by Stage 2 Task 10 (repin #13, the ONE sanctioned golden
+            // shift of the stage-2 network phase): the player array, WorldStats,
+            // ProjectileState.OwnerIndex, the two edge-request rate-limit
+            // counters and the edge-request gate itself all entered the hash.
+            // Four distinct causes, all legitimate: (1) the canonical order is
+            // now playerCount + players[0..n) ... worldStats + statsCount +
+            // stats[0..n), so the counts and the array shape are hashed where
+            // Task 5 hashed a single player and a single interleaved stats
+            // block; (2) HashProjectile folds in OwnerIndex, live on every shot
+            // the scripted run fires; (3) HashPlayer folds in
+            // DashRequestCooldownTicks/SlideRequestCooldownTicks, which move on
+            // every scripted dash/slide request; (4) the gate itself changes
+            // BEHAVIOUR — Scripted() rolls DashRequested and SlideRequested at
+            // 5%/tick each, so over 1000 ticks it repeatedly asks twice inside
+            // one EdgeRequestMinTicks window, and the second ask is now dropped
+            // before it can latch the (hashed) input buffer.
+            //
+            // Re-pinned by Stage 2 Task 16 (repin #14, the SECOND and LAST
+            // sanctioned golden shift of the stage-2 network phase — spec
+            // §3.4/§3.15). Everything that moves this hash, by code:
+            // (1) ARENA GEOMETRY. TestConfigs.DefaultArena() — which every
+            //     scripted run is built from — grew from Radius 35 / 5 circles
+            //     / 0 walls to Radius 65 / 8 circles / 6 walls. Radius feeds
+            //     SimInputSanitizer's AimPoint clamp, ClampInsideRing,
+            //     SweepArena's ring boundary, WaveSystem's wave-spawn ring AND
+            //     Geometry.SpawnPosFor's PLAYER spawn ring (Radius *
+            //     PlayerSpawnRingFrac: 28 -> 52 — added by the Task 16 review,
+            //     M-2, which caught it missing from this list; it moves nothing
+            //     solo, where spawn is the origin, and is the heaviest single
+            //     channel for the multiplayer golden below, whose three start
+            //     positions all shift by 24 m). The three new circles and six
+            //     walls are new blockers for movement, dash ricochets,
+            //     projectiles, LoS and mob steering. The scripted player walks
+            //     and shoots into all of them.
+            // (2) WORLD CAPS. MaxMobs 64 -> 96 and MaxProjectiles 256 -> 384
+            //     are CAPABLE of moving the hash: a run that reaches either
+            //     cap keeps mobs/rounds the old cap silently dropped, and the
+            //     drop counters themselves (MobSpawnsSkipped/
+            //     ProjectileSpawnsSkipped) are hashed via WorldStats.
+            //     Wave.MaxMobsPerWave 24 -> 36 is a DIFFERENT mechanism, not a
+            //     drop counter — WaveSystem.CountForTest clamps the wave's own
+            //     mob COUNT to it directly (`math.min(scaled, MaxMobsPerWave)`,
+            //     baked straight into WaveState before any mob spawns), so a
+            //     run whose scaled wave size would exceed the old 24 gets a
+            //     structurally different, larger wave composition under the
+            //     new 36 rather than any mobs being skipped/counted. Whether
+            //     this 1000-tick solo run actually reaches any of these three
+            //     caps is not claimed here — it very likely does not (waves of
+            //     4/6/8 mobs, ~12 live rounds), and the honest statement is
+            //     "capable", not "did" (Task 16 review, M-1). MaxEventsPerFrame
+            //     256 -> 512 is NOT a channel at all: events have been outside
+            //     the hash since stage 1 and Emit drops silently with no
+            //     hashed counter — it was listed here in error.
+            // (3) WAVE SCALE. WaveSystem.CountForTest replaces the inline
+            //     count formula. At playerCount 1 the scale factor is exactly
+            //     1, so this changes NOTHING for the solo golden by itself —
+            //     it is listed for completeness, and it is a real cause for the
+            //     multiplayer golden below.
+            // (4) statsCount LEFT THE HASH (owner decision Р114): the canonical
+            //     order is now ... -> worldStats -> stats[0..n), with the
+            //     duplicated _matchStats.Length step removed. One fewer Add
+            //     shifts every subsequent byte of the fold.
+            // Nothing else moved: the mob-projectile fixtures already carried
+            // ProjectileIds.NoOwner since Task 10 (carryover-t16 item 6 was
+            // already discharged there), no state field entered or left
+            // PlayerState/MobState/ProjectileState/MatchStats, and no system's
+            // per-tick order changed.
+            const ulong GoldenHash = 0x5BD8AC0DE1D0C454UL; // = 6618228828044051540
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
+        }
+
+        [Test]
+        public void MultiPlayerGoldenHash_ScriptedScenario()
+        {
+            // Stage 2 Task 10, FIRST pin of this constant (not a re-pin): the
+            // solo golden above walks exactly one player and one MatchStats
+            // slot, so it cannot see the array halves of the canonical hash
+            // order (playerCount + players[0..n), statsCount + stats[0..n)) —
+            // a HashPlayer/HashStats loop silently truncated back to index 0
+            // would leave it green. This pins a three-player run: world seed 42,
+            // scripted input from Random(123) drawn per player in increasing
+            // index order, 1000 ticks.
+            //
+            // Same first-run procedure the solo golden documents: with the
+            // constant at 0 this assert fails and NUnit prints the actual hash.
+            // Pinned in Stage 2 Task 10 (first pin of this constant, NOT a
+            // re-pin — it never held a nonzero value before): three players
+            // spawned on the ring, each drawing its own scripted input, over the
+            // full canonical hash order including both array halves.
+            //
+            // Re-pinned by Stage 2 Task 16 (first RE-pin of this constant —
+            // Task 10 only pinned it): every cause listed on the solo golden
+            // above applies here too, plus the one that is exclusive to this
+            // test — WAVE SCALE. Wave.PerPlayerCountFrac (0 before this task,
+            // 0.7 now) multiplies each wave by 1 + (playerCount - 1) * frac, so
+            // a three-player run's waves go from BaseCount 4 to round(4 * 2.4) =
+            // 10 mobs, and every LATER wave's own scaled size grows the same
+            // way (same formula, later waves' own larger BaseCount+CountGrowth
+            // input) — capped at MaxMobsPerWave (36 now, up from 24) same as
+            // the solo golden's own WORLD CAPS note above, and whether this
+            // 1000-tick run's later waves actually reach that cap is likewise
+            // not claimed here, only that the scale factor is CAPABLE of
+            // pushing them into it sooner than the old cap would have. Either
+            // way the scale factor changes how much WaveRng the spawn search
+            // consumes, how many mobs live, shoot and die, and therefore the
+            // whole downstream trace. Spec §6e sanctions exactly one further
+            // shift of THIS constant, in Task 17 (owner decision Р113).
+            //
+            // Re-pinned by Stage 2 Task 17 (second and LAST re-pin of this
+            // constant — the sanctioned shift spec §6e reserved above, owner
+            // decision Р113 variant (a); it is limited to THIS constant, the
+            // solo golden's own "two re-pins, then stop" invariant is untouched
+            // and it did NOT move here). Cause: Task 17 completes the damage
+            // matrix, and all three of its halves are live in a three-player
+            // run while none of them exists in a solo one.
+            // (1) VICTIM BY INDEX. A chaser's contact strike now lands on the
+            //     player its own FSM selected (Targeting.NearestAlivePlayer,
+            //     since Task 8) instead of always on player 0 — so Hp,
+            //     DamageTaken, death and every downstream consequence move to a
+            //     different player than the pre-Task-17 run recorded. Solo has
+            //     one player, so the chosen target is player 0 either way.
+            // (2) MOB ROUNDS AGAINST EVERY LIVE PLAYER. ProjectileSystem's
+            //     gather packed exactly one player candidate (player 0); it now
+            //     packs one per live player, so a gunner's round finally stops
+            //     on whoever is actually standing in it. Solo gathers the same
+            //     single candidate as before, bit for bit.
+            // (3) PLAYER ROUNDS AGAINST OTHER PLAYERS. Player-owned rounds gather
+            //     live players other than their own owner — a whole class of
+            //     hits, deaths and ShotsHit/Kills/HeadshotKills credit that did
+            //     not exist in this run before. Solo has no other player, so the
+            //     branch is dead there (the owner is the only player and is
+            //     skipped), which is exactly why the solo golden stands.
+            // Nothing else moved: the candidate scratch is excluded from
+            // SaveState/StateHash, SimEvent.PlayerIndex on ProjectileHit/MobDied
+            // is an EVENT field and events are outside the hash entirely (spec
+            // §3.2, the SimEvent.PlayerIndex bullet, which is where that norm
+            // is stated — §3.7 is the networking section and says nothing about
+            // the hash at all), and no state field entered or left
+            // PlayerState/MobState/ProjectileState/MatchStats.
+            const ulong MultiGoldenHash = 0x136FA6114112E44FUL; // = 1400520602171925583
+            Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
+        }
+
+        [Test]
+        public void MultiPlayerScriptedRun_SameSeed_SameHash()
+        {
+            // Companion to ScriptedRun_SameSeed_SameHash for the multiplayer
+            // generator: the pinned constant above is only meaningful if the run
+            // it pins is reproducible in the first place, and if a different
+            // input seed actually reaches a different world.
+            Assert.AreEqual(RunMultiScripted(123, Ticks, 3), RunMultiScripted(123, Ticks, 3));
+            Assert.AreNotEqual(RunMultiScripted(123, Ticks, 3), RunMultiScripted(43, Ticks, 3));
         }
 
         [Test]

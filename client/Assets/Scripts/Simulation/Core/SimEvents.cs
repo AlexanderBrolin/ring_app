@@ -32,20 +32,69 @@ namespace Ring.Simulation.Core
         /// param, not the player's post-slide position), HitDir carries the
         /// surface normal at contact (same "unused for every other kind"
         /// convention as Amount/Owner/Zone above).
-        DashRicocheted
+        DashRicocheted,
+        /// Stage 2 Task 44a: a round ended ON A PLAYER. Deliberately its own
+        /// kind rather than a widened `ProjectileHit`, for two reasons that are
+        /// both about the CONSUMER, not about taste. First, `EntityId` here is a
+        /// PLAYER SLOT while `ProjectileHit`'s is a MOB id, and the two id
+        /// spaces overlap freely — a presentation layer that looks the number up
+        /// in its mob registry would flash a bystanding mob that happens to
+        /// share it, and `SimEvent` carries no field left to discriminate on
+        /// (`MobType` has no "not a mob" member, `PlayerIndex` is spent on the
+        /// shooter, `Owner` describes the round). Second,
+        /// `Ring.Networking.Server.SnapshotAssembler` maps `ProjectileHit` to a
+        /// hardcoded `ProjectileEndKind.HitMob`, so reusing it would put a
+        /// literal falsehood on the wire.
+        ///
+        /// PAYLOAD: `Pos` = the contact point; `EntityId` = the VICTIM's player
+        /// slot (same victim convention `ProjectileHit`'s `EntityId` follows);
+        /// `MobType` unused; `Amount` = the round's post-multiplier damage;
+        /// `Zone` = the vertical zone it landed in; `HitDir` = the round's
+        /// travel direction at contact; `PlayerIndex` = the SHOOTER (ATTACKER
+        /// convention, `ProjectileIds.NoOwner` for a mob's round);
+        /// `SecondaryEntityId` = the ROUND's own id, since `EntityId` is spent
+        /// on the victim exactly as it is for `ProjectileHit`.
+        ///
+        /// EMITTED ON EVERY REMOVAL, INCLUDING AN ABSORBED ONE. It reports that
+        /// the ROUND ENDED, not that damage landed — dash i-frames make
+        /// `SimulationWorld.DamagePlayer` a no-op while the round is still
+        /// consumed, and a tracer whose end went unreported would hang until the
+        /// client's own confirm timeout. `Amount` is therefore what the round
+        /// CARRIED, which is the damage actually dealt in the ordinary case and
+        /// strictly more than it when the victim absorbed the hit;
+        /// `DamagePlayer` returns nothing, so the applied figure is not
+        /// available at the emit site at all. A consumer that needs "damage that
+        /// actually landed" must read `PlayerDamaged`, which is not emitted when
+        /// the blow is refused.
+        ProjectileHitPlayer
     }
 
     public struct SimEvent
     {
         public SimEventKind Kind;
         public int Tick;
+        /// World-space position this event concerns — per-Kind meaning varies
+        /// (e.g. the projectile's contact point for ProjectileHit, the mob's
+        /// own position for MobDied). PlayerDamaged/PlayerDied (Stage 2 Task 8
+        /// fix-round 1, I-1): normally the BLOW's own origin — the attacking
+        /// mob's or projectile's position `SimulationWorld.DamagePlayer` was
+        /// called with, NOT necessarily the victim's — so a paired
+        /// PlayerDamaged+PlayerDied from the same hit carry the SAME Pos.
+        /// PlayerDied is the one exception: it can also fire with no blow at
+        /// all (`KillPlayerNoDamage` — a player exiting the match), in which
+        /// case Pos is the victim's OWN last-known position instead, since
+        /// there is no blow to place.
         public float2 Pos;
         public int EntityId;
         public MobType MobType;
         /// Per-`Kind` payload: damage dealt for ProjectileHit/PlayerDamaged (and
         /// for MobDied, the killing blow's amount) — since Task 6 that is the
         /// damage AFTER the hit-zone multiplier, i.e. exactly what was subtracted
-        /// from the victim's Hp, not the projectile's base Damage; the shot's
+        /// from the victim's Hp, not the projectile's base Damage.
+        /// ProjectileHitPlayer (Stage 2 Task 44a) carries the same
+        /// post-multiplier figure but under a WEAKER claim — the round's
+        /// carried damage, which the victim's i-frames may have refused
+        /// entirely (see that kind's own doc); the shot's
         /// sim-plane velocity angle (`atan2(vel.y, vel.x)` radians,
         /// `SimulationWorld.SpawnProjectile`) for ProjectileFired — Presentation
         /// needs a tick-exact fire direction, and `Curr.Player.Pos` at
@@ -63,19 +112,72 @@ namespace Ring.Simulation.Core
         /// kind" contract as `Amount` above.
         public ProjectileOwner Owner;
         /// Task 6: the vertical hit-zone the blow landed in — meaningful for
-        /// ProjectileHit, MobDied, PlayerDamaged and PlayerDied (for the two
+        /// ProjectileHit, ProjectileHitPlayer (Stage 2 Task 44a), MobDied,
+        /// PlayerDamaged and PlayerDied (for the two
         /// death kinds it is the killing blow's zone), so Presentation can pick
         /// zone-specific feedback (headshot ping, leg stagger) without
         /// re-deriving any geometry. Same "unused for every other kind" contract
         /// as `Amount`/`Owner` above, and its unused value is the enum's zero
-        /// (`HitZone.None`).
+        /// (`HitZone.None`). Stage 2 Task 8 fix-round 1 (M-6): PlayerDied can
+        /// also fire with NO blow behind it at all (`KillPlayerNoDamage` — a
+        /// player exiting the match) — in that one case Zone reads its unused
+        /// `HitZone.None`, same as every kind that never carries a blow.
         public HitZone Zone;
         /// Task 6: unit impact direction in the sim plane — the projectile's
         /// direction of travel at contact, or attacker→victim for a melee
         /// strike. Drives directional feedback (blood spray, hit flash, knock
         /// reaction) that would otherwise need the attacker's position, which
         /// the event does not carry. Zero for every kind that has no blow behind
-        /// it; paired with `Zone` above and never read without it.
+        /// it; paired with `Zone` above and never read without it. Same
+        /// no-blow PlayerDied exception as `Zone` above (`KillPlayerNoDamage`) —
+        /// reads `float2.zero` there.
         public float2 HitDir;
+        /// Stage 2 Task 7: which player this event concerns, under three
+        /// conventions picked per kind.
+        /// ACTOR — the five "own-action" kinds ProjectileFired, PlayerDashed,
+        /// PlayerSlideStarted, DashRicocheted, StaminaDenied
+        /// (SimulationWorld.TickMovement's own per-player loop index /
+        /// SpawnProjectile's ownerIndex).
+        /// VICTIM — PlayerDamaged/PlayerDied (mirrors EntityId's convention for
+        /// those two kinds, spec §3.2); the attacker is deliberately not
+        /// reported, there is only one player slot on the struct and for a
+        /// damage/death pair the victim is the one Presentation places the
+        /// feedback on.
+        /// ATTACKER — ProjectileHit/MobDied, added by Stage 2 Task 17
+        /// (carryover-t17.md item 2), and ProjectileHitPlayer, added by Stage 2
+        /// Task 44a: the SHOOTER behind the blow, i.e. the
+        /// projectile's OwnerIndex (ProjectileIds.NoOwner for a mob's round).
+        /// Without it Presentation cannot tell "my hit" from another player's
+        /// when placing a hitmarker in a multiplayer match — the victim of the
+        /// first two kinds is a mob, already identified by EntityId/MobType,
+        /// and ProjectileHitPlayer's victim is the player slot in EntityId.
+        /// Unused (ProjectileIds.NoOwner) for every other kind, same "unused for
+        /// every other kind" contract as `Amount`/`Owner`/`Zone` above. Not part
+        /// of StateHash — events are excluded from the hash entirely (spec §3.7,
+        /// see this struct's own doc comment).
+        public byte PlayerIndex;
+        /// Stage 2 Task 28: the event's SECOND participant, for the kinds whose
+        /// primary `EntityId` is already spent on the victim. Two kinds write
+        /// it: ProjectileHit and, since Stage 2 Task 44a, ProjectileHitPlayer —
+        /// in both it carries the ROUND's own id while EntityId keeps the
+        /// victim's (a mob id, or a player slot). Every other projectile ending
+        /// (ProjectileBlocked/ProjectileExpired) already puts the round in
+        /// EntityId, so only the two victim-bearing branches needed a second slot.
+        ///
+        /// 0 MEANS "NONE", and that is safe rather than merely conventional:
+        /// SimulationWorld's `_nextEntityId` counter starts at 1 and only grows
+        /// (see VisibilityIds' own doc), so no real entity can ever be 0.
+        ///
+        /// WHY IT EXISTS AT ALL: spec §3.8's `ProjectileEndedNet (id, contact
+        /// point, end kind)` and table Р28's "to everyone who received THAT
+        /// round's spawn" are both keyed on the round's id, and without this
+        /// field a round that ended on a mob could never close the
+        /// per-connection spawn subscription it opened. Same "unused for every
+        /// other kind" contract as `Amount`/`Owner`/`Zone` above — and MobDied
+        /// is deliberately part of "every other kind" (SimulationWorld.DamageMob
+        /// has no projectile in scope; the assembler joins death to round
+        /// through the tick's event buffer instead, task-28-brief §2.4 item 4).
+        /// Not part of StateHash — events are excluded from the hash entirely.
+        public int SecondaryEntityId;
     }
 }
