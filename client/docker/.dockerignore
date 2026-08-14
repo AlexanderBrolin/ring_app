@@ -1,0 +1,24 @@
+# Build context filter for the headless game server image (Stage 2, task T50).
+#
+# Docker reads .dockerignore from the ROOT OF THE BUILD CONTEXT, which is why
+# this file sits next to the Dockerfile: the main context of the reference build
+# is this directory. The reference invocation is not repeated here -- it lives in
+# the header of the Dockerfile, and from T51 on in build.sh, which is where it
+# becomes executable rather than quoted.
+#
+# The file governs exactly the directory it lives in. Had the artifact
+# directory been the main context instead, this file would have been ignored
+# altogether -- it would not be at that context's root.
+#
+# The game artifact does not come through here at all: it arrives as the named
+# context `game` and is filtered by the targeted COPY instructions in the
+# Dockerfile, which do not depend on any ignore file.
+#
+# Deny everything, then allow the single file the image needs. Written this way
+# round so that whatever lands in this directory later (build.sh in T51, notes,
+# editor leftovers) stays out of the context without anyone remembering to add
+# it here. The Dockerfile itself needs no exception: BuildKit loads the file
+# named by `-f` outside this context, so the deny pattern below never applies
+# to it.
+*
+!entrypoint.sh
