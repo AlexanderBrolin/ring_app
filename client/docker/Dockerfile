@@ -23,11 +23,16 @@
 # entrypoint.sh lives in the repository -- and COPY can only read from a
 # context. So the main context is this directory (small: entrypoint.sh only,
 # see .dockerignore) and the artifact arrives as the named context `game`.
-# Run from the REPOSITORY ROOT -- both paths below are relative to it:
+# The shape of the call, run from the REPOSITORY ROOT:
 #
 #   docker build -f client/docker/Dockerfile \
 #     --build-context game="$RING_BUILD_ROOT/linux-server" \
-#     -t ring-server:dev client/docker
+#     -t <repo>:<tag> client/docker
+#
+# THIS IS THE SHAPE, NOT THE COMMAND. The real invocation lives in
+# client/docker/build.sh (T51) and differs on purpose: `buildx build --load`,
+# two tags, and the provenance labels, none of which a reader needs in order to
+# understand what this file expects to be handed.
 #
 # Named contexts need BuildKit, which is the default builder here. The artifact
 # directory is the output of Ring.Editor.BuildCommands.BuildLinuxServer, whose
@@ -78,8 +83,8 @@ ENV HOME=/home/ring
 
 WORKDIR /app
 
-# Targeted COPY, not a copy of the whole artifact directory. Two entries of the
-# build output are deliberately left behind:
+# Targeted COPY, not a copy of the whole artifact directory. Three entries of
+# the build output are deliberately left behind:
 #   ring-client-new_BurstDebugInformation_DoNotShip/ - debug symbols, the name
 #     states the intent;
 #   libdecor-0.so.0, libdecor-cairo.so - Wayland window decorations. A
