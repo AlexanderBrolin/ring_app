@@ -444,6 +444,22 @@ namespace Ring.Presentation.Net
         /// pair alone and therefore leaves the phase alone with it. See
         /// `Advance` for what advancing one without the other looks like on
         /// screen.
+        ///
+        /// IT NO LONGER GOVERNS THIS CLIENT'S OWN SLOT, AND NOBODY HAS TO KNOW
+        /// THAT (app-5fh). Both halves of the pair THIS class publishes carry
+        /// the same local pose, so blending them by this number is an identity
+        /// whatever the number is — which is how that slot got out of this
+        /// clock's domain without a second phase on the seam. `BlendOwnPlayer`
+        /// has the argument.
+        ///
+        /// THE IDENTITY IS ABOUT THIS PAIR, NOT ABOUT EVERY PAIR A CONSUMER MAY
+        /// HOLD. Views read `SimulationRunner.RenderPrev`/`RenderCurr`, and
+        /// during the hitstop catch-up window that facade pairs a FROZEN buffer
+        /// with the live one and eases its own coefficient across them
+        /// (`SimulationRunner.cs:270-272`). The two halves it hands out are then
+        /// genuinely different, including for the local seat, and the identity
+        /// above says nothing about that window. It is the behavior hitstop
+        /// already had and this fix neither improves nor worsens it.
         public float Alpha => _alpha;
 
         public int EventCount => _frameEventCount;
@@ -982,6 +998,19 @@ namespace Ring.Presentation.Net
                 _alpha = _clock.Phase;
                 _ready = true;
             }
+
+            // AND THE LOCAL SEAT IS FILLED AFTER IT, EVERY FRAME, WHETHER OR
+            // NOT THE PAIR ABOVE MOVED (app-5fh + app-0t6). Freezing the
+            // picture that came off the wire is the paragraph above; freezing
+            // this client's own PREDICTION with it is the opposite of what
+            // prediction is for — it exists so that one's own movement does not
+            // wait on somebody else's datagram (CR 3), and while the two writes
+            // lived inside the branch above a hole in the ring stopped the local
+            // doll dead and then jumped it forward when the hole closed. It runs
+            // after the resolve rather than before it because `CopyFrom`
+            // overwrites the slot it writes. What pose it writes, and why the
+            // pair's two halves both get the same one, is `BlendOwnPlayer`.
+            BlendOwnPlayer();
 
             _stale.Advance(renderTick);
 
@@ -2129,6 +2158,17 @@ namespace Ring.Presentation.Net
         /// whole picture forward by the remainder of a tick on the first
         /// starved frame and hold it there, where holding the phase moves
         /// nothing at all. It would also make `_prev` claim `_curr`'s tick.
+        ///
+        /// THE LOCAL SEAT IS NO LONGER FILLED HERE (app-5fh + app-0t6). It used
+        /// to be, one predicted sample per half, on the two lines that followed
+        /// the copies below — which made this client's own doll wait on the
+        /// arrival of somebody else's datagram and had it blended by a phase
+        /// belonging to another clock. `Advance` calls `BlendOwnPlayer` after
+        /// this method returns, every frame and whatever it returned; the whole
+        /// argument for the move is there. The order matters and is that way
+        /// round on purpose: `CopyFrom` overwrites every slot of both halves,
+        /// the local one included, so anything written into that slot has to be
+        /// written after this method has had its say.
         bool ResolveRenderPair(int renderTick)
         {
             if (renderTick < 0) return false;
@@ -2141,8 +2181,6 @@ namespace Ring.Presentation.Net
 
             _prev.CopyFrom(older);
             _curr.CopyFrom(newer);
-            ApplyOwnPlayer(_prev, in _ownPrev);
-            ApplyOwnPlayer(_curr, in _ownCurr);
             return true;
         }
 
@@ -2151,24 +2189,56 @@ namespace Ring.Presentation.Net
         ///
         /// WHY TWO AND NOT ONE. The snapshot leaves this client's own slot out
         /// by the assembler's own rule, so the slot is filled from prediction —
-        /// and the pair's two halves are then blended by `Alpha` like every
-        /// other entity's. Writing ONE predicted state into both halves makes
-        /// that blend degenerate (`Lerp(P, P, a) == P`), so the local player
-        /// alone would step at the tick rate while every mob and every other
-        /// doll slid between ticks. Two consecutive predicted poses restore the
-        /// same in-between motion the rest of the picture has.
+        /// and a single predicted state is quantized to the tick it was taken
+        /// on, so a doll drawn straight from it would STEP at the tick rate
+        /// while every mob and every other doll slid between ticks. Two
+        /// consecutive predicted poses are the two ends of a blend that puts
+        /// that in-between motion back.
+        ///
+        /// WHAT THE BLEND IS NOT, ANY MORE, IS THE CONSUMERS' OWN (app-5fh).
+        /// This paragraph used to go on to reject writing ONE predicted state
+        /// into both halves, on the grounds that the consumers' blend would
+        /// degenerate (`Lerp(P, P, a) == P`) and the local player alone would
+        /// step at the tick rate. That objection is TRUE OF A RAW PREDICTED
+        /// STATE and false of one recomputed every frame: `BlendOwnPlayer`
+        /// collapses this pair into a single pose per FRAME, using the
+        /// prediction domain's own phase, and writes that pose into both
+        /// halves. Such a pose moves at the frame rate — smoother than anything
+        /// the consumers' blend ever gave it, not coarser — and the degeneracy
+        /// is then the point rather than the price: with both halves equal, no
+        /// consumer of the local slot can be blending THIS pair by a coefficient
+        /// that does not belong to it — the hitstop catch-up window, where the
+        /// facade makes a pair of its own out of a frozen buffer and a live one,
+        /// is the exception `BlendOwnPlayer` spells out. The pair is still
+        /// sampled here, and still exactly one tick wide, because it is what
+        /// that per-frame blend interpolates between.
         ///
         /// THE SAMPLE IS TAKEN AGAINST THE PREDICTION TICK, NOT THE RENDER
         /// FRAME, and that distinction is the whole of the method. Prediction
         /// advances in `TimeManager.LocalTick`; a "previous" latched per render
         /// frame would be microseconds old at a high frame rate and the blend
-        /// would jitter across a distance the player never travelled. Two poses
-        /// exactly one prediction tick apart, blended by a coefficient that
-        /// sweeps 0..1 once per world tick, move at the right speed — the two
-        /// clocks share a rate and differ in phase, so what the offset costs is
-        /// a fraction of a tick of latency on one's own doll and nothing else.
-        /// Mixing them further than that would be mixing domains outright, so
-        /// nothing here subtracts one tick number from the other.
+        /// would jitter across a distance the player never traveled. Two poses
+        /// exactly one prediction tick apart are what a coefficient can honestly
+        /// be swept across.
+        ///
+        /// AND THE COEFFICIENT HAS TO COME OFF THE SAME CLOCK — the sentence
+        /// this paragraph used to end on said otherwise, and it was the defect
+        /// itself (app-5fh). It claimed the two clocks "share a rate and differ
+        /// in phase, so what the offset costs is a fraction of a tick of latency
+        /// on one's own doll and nothing else". A constant phase offset buys a
+        /// constant delay ONLY where the pair's index and the blend coefficient
+        /// step on the same edge. These two never did: the halves move on
+        /// FishNet's local tick while `Alpha` wraps on the render clock's, an
+        /// origin with no fixed offset to the first (`CurrentTick` says so in as
+        /// many words). What the offset actually cost was two discontinuities
+        /// per tick, in opposite directions, each a whole tick of motion wide.
+        /// The arithmetic is in `BlendOwnPlayer`, which is where the blend
+        /// happens now and where the coefficient is read from
+        /// `TimeManager.GetPreciseTick` — the phase of the very clock this
+        /// method latches `_ownTick` against, normalized by the delta that
+        /// clock actually spends. Nothing here subtracts one
+        /// tick number from the other even so: mixing the two domains further
+        /// than sampling would be mixing them outright.
         ///
         /// A FRAME LONGER THAN A TICK LEAVES THE HALVES MORE THAN ONE TICK
         /// APART, and that is accepted rather than corrected: the picture then
@@ -2214,8 +2284,172 @@ namespace Ring.Presentation.Net
             _hasOwnSample = true;
         }
 
+        /// THIS FRAME'S OWN DRAWN POSE: one state, blended out of the two
+        /// predicted samples by the PREDICTION domain's own phase and written
+        /// into BOTH halves of the render pair (app-5fh + app-0t6, the owner's
+        /// decision of 2026-08-15).
+        ///
+        /// WHAT IT REPLACES WAS A DEFECT AND NOT A COST. The two samples used
+        /// to go into the pair as they stood, one per half, and every consumer
+        /// blended them by `Alpha` as it does any other entity's. But the halves
+        /// step on FishNet's LOCAL tick and `Alpha` wraps on the RENDER clock's,
+        /// and those two counters have no fixed offset between them (see
+        /// `CurrentTick`). Equal rates with unequal phases do not buy a constant
+        /// delay; they buy TWO DISCONTINUITIES PER TICK, IN OPPOSITE
+        /// DIRECTIONS, each a whole tick of motion wide. Take the pair
+        /// `(P[k-1], P[k])` and an offset `f`: the phase wraps to 0 while the
+        /// pair still holds the old halves, so the doll snaps BACK by
+        /// `P[k] - P[k-1]`; a fraction `f` of a tick later the pair steps under
+        /// a phase already part-way through, and the doll snaps FORWARD by the
+        /// same distance. The average speed stays right, which is why the player
+        /// still arrives where they steered while the picture alternates between
+        /// two positions a tick of travel apart — a quarter of a meter at this
+        /// project's tick rate and top speed, thirty times a second. That is the
+        /// "one's own doll splits in two while running" the owner reported: no
+        /// single frame of it is wrong, so no screenshot holds it, and a solo
+        /// match cannot show it at all because there both ends of the blend come
+        /// off one accumulator. It is the same saw `Advance`'s F-2 paragraph
+        /// refuses to ship for a STARVED pair — except that the local seat had
+        /// it on a healthy connection, and had it always.
+        ///
+        /// SO THE BLEND MOVES HERE, WHERE COEFFICIENT AND PAIR SHARE A CLOCK.
+        /// `TimeManager.GetPreciseTick(tick).PercentAsDouble` is how far the
+        /// tick in progress has run — `_elapsedTickTime` over the delta the
+        /// client's own loop spends, FishNet 4.7.2,
+        /// `Runtime/Managing/Timing/TimeManager.cs:826-834`, read in the package
+        /// rather than in its documentation as this project's rule for pinned
+        /// packages requires — and that is the very tick `SampleOwnPlayer`
+        /// latches its pair against. The two now change on the same edge by
+        /// construction, which is the whole of the fix; what is left is a pose
+        /// sliding at the FRAME rate along the segment between two predicted
+        /// ticks.
+        ///
+        /// THE COEFFICIENT IS MEASURED FROM `_ownTick` RATHER THAN TAKEN RAW,
+        /// AND THE CLAMP IS LOAD-BEARING. Whole ticks elapsed since the pair was
+        /// sampled are added to the fraction before clamping. While prediction
+        /// runs that term is zero on every frame — `SampleOwnPlayer` latched
+        /// `_ownTick` off this same counter earlier in this same `Advance` — so
+        /// the coefficient is the ruled one exactly. The term earns its keep the
+        /// moment prediction STOPS, which is a state this class deliberately
+        /// keeps samples through (Task 47b: the last pose outlives `IsPredicting`
+        /// by the interpolation buffer, so the seat is not vacant while the
+        /// corpse is in flight). A bare fraction would then be a free
+        /// coefficient sawing across a FROZEN pair — precisely the oscillation
+        /// `Advance`'s F-2 paragraph refuses for the remote picture, and it
+        /// would have put a quarter-meter jitter on one's own body for the
+        /// length of that window. With the term, the coefficient saturates at 1
+        /// within a tick: the doll finishes the motion it was part-way through,
+        /// holds at `_ownCurr`, and `ApplyOwnPlayer`'s roster gate ends the
+        /// write when the body arrives. That is F-2's own answer for the local
+        /// seat, reached without latching a second phase field.
+        ///
+        /// THE FRACTION COMES FROM `GetPreciseTick`, AND THE OBVIOUS-LOOKING
+        /// `GetTickPercentAsDouble` IS THE WRONG CALL HERE. FishNet's tick loop
+        /// drains `_elapsedTickTime` by the CLIENT-ADJUSTED delta
+        /// (`TimeManager.cs:693`, `:771`), while that property divides the
+        /// remainder by the NOMINAL one (`:792`). On a client the two differ
+        /// whenever the server has asked it to speed up or slow down, so the
+        /// fraction would reach `adjusted/nominal` at the tick boundary instead
+        /// of 1 — the pair would then advance while the coefficient was still
+        /// short of the end, which is a discontinuity of exactly the shape this
+        /// method exists to remove, only smaller. `GetPreciseTick` divides by
+        /// the delta the loop actually spent (`:830-832`) and hands back a
+        /// `PreciseTick` whose constructor has already clamped the ratio to
+        /// `[0, 1]` (`PreciseTick.cs:63`). No number is copied out of the
+        /// package to get this: the ratio it holds privately is read through the
+        /// accessor built for it.
+        ///
+        /// THE CLAMP IS STILL OWED, BUT ON THE SUM RATHER THAN ON THE FRACTION.
+        /// `PreciseTick` hands the fraction over already inside `[0, 1]`; what
+        /// is unbounded is the tick term beside it, which counts whole ticks
+        /// the pair has fallen behind by and grows without limit once sampling
+        /// stops. An unclamped coefficient would EXTRAPOLATE, placing the
+        /// doll where neither predicted pose ever was, and this method
+        /// interpolates on purpose. `math.saturate` is the same NaN-safe clamp
+        /// `Quantize` puts on ratios of exactly this shape, and it also catches
+        /// the one way the tick term can go negative: `LocalTick` is reset to
+        /// zero on disconnect (`TimeManager.cs:459`), which lands on the lower
+        /// rail — a legal pose, on a frame nobody is still drawing.
+        ///
+        /// ONLY `Pos` IS BLENDED, AND THAT IS A DECISION RATHER THAN AN
+        /// OVERSIGHT. The defect is positional. Every other field of
+        /// `PlayerState` is either discrete — `Alive`, the dash and slide
+        /// latches — or already behaves exactly as it does today, and sweeping a
+        /// coefficient across a timer or across `AimPoint` would invent
+        /// intermediate values the simulation never produced and no consumer
+        /// asked for. `Vel`, `AimPoint`, `DashDir` and `SlideTimer` are
+        /// therefore taken from `_ownCurr` as they stand.
+        ///
+        /// ONE POSE IN BOTH HALVES IS WHAT KEEPS THE SEAM OUT OF THIS FIX.
+        /// `Lerp(P, P, a) == P` for every `a`, so consumers go on reading the
+        /// pair exactly as they always have: `ISimBackend`, `RenderSnapshot`,
+        /// `SimulationRunner` and everything under `Presentation/` are untouched
+        /// by it, and no reader can drift from another by having been missed —
+        /// as long as the pair it reads is THIS pair. The hitstop catch-up
+        /// window is the one place a consumer holds two different halves of its
+        /// own making (`SimulationRunner.cs:270-272`, and the `Alpha` doc above
+        /// says the same); that window is untouched here, for better and for
+        /// worse.
+        /// The alternative was a SECOND phase on the seam, for the local slot
+        /// only, and the sweep of the two dozen places that read this pose
+        /// priced it: the drawn aim ray would have moved with the doll while the
+        /// point it lands on did not, and the muzzle flash while the shot's
+        /// audio did not.
+        ///
+        /// WHAT IT DOES NOT BUY BACK IS THE SMOOTHING LAG, unchanged here rather
+        /// than accepted anew. The drawn pose still trails the newest predicted
+        /// one by `1 - phase` ticks, half a tick on average — exactly the
+        /// average the old blend had, since it swept the same two poses at the
+        /// same rate. Only the discontinuities go. Extrapolating past `_ownCurr`
+        /// instead would trade that lag for an overshoot on every change of
+        /// direction, which is a different decision and not this one.
+        ///
+        /// TWO CONSEQUENCES THAT ARE BEHAVIOR AND NOT ONLY PICTURE, named
+        /// because they were found before the change rather than after it. The
+        /// facade's muzzle position and its client-side line-of-fire gate both
+        /// read the local seat out of `Curr`, so both now see an INTERPOLATED
+        /// pose where they used to see a tick-quantized one. That is what makes
+        /// them agree with the doll instead of trailing it, and it moves a
+        /// client-side aiming input by a fraction of a tick. No game outcome is
+        /// decided on this side (CR 3), so the change is legal — but it is a
+        /// change, and this is where it is recorded.
+        ///
+        /// NOT VERIFIABLE BY A UNIT TEST, for the reason `SampleOwnPlayer` gives
+        /// at length: this assembly sits outside the EditMode test assembly's
+        /// references, and the quantity in question is what motion looks like.
+        /// The playtest under 80 ms RTT and 5% loss is what answers it.
+        void BlendOwnPlayer()
+        {
+            // How far the drawn pose has traveled from `_ownPrev` towards
+            // `_ownCurr`, in ticks: whole ticks the pair has fallen behind by,
+            // plus the fraction of the tick in progress. Subtracted as doubles
+            // so that a `LocalTick` reset cannot wrap the difference of two
+            // unsigned counters into a very large positive number.
+            double ticksBehind = (double)_nm.TimeManager.LocalTick - _ownTick;
+            // `GetPreciseTick`, NOT `GetTickPercentAsDouble`: only the former
+            // normalizes by the delta the client's own tick loop spends. The
+            // argument is passed through untouched into the returned struct and
+            // does not enter the fraction; `_ownTick` is handed over because it
+            // is the tick this fraction is measured from.
+            double fraction = _nm.TimeManager.GetPreciseTick(_ownTick).PercentAsDouble;
+            float phase = (float)math.saturate(ticksBehind + fraction);
+
+            PlayerState pose = _ownCurr;
+            pose.Pos = math.lerp(_ownPrev.Pos, _ownCurr.Pos, phase);
+
+            // Both halves, through the one method that owns the guards: no
+            // sample yet, a seat outside this frame's roster, and the roster's
+            // own verdict on whether this seat is still standing (Task 47b).
+            ApplyOwnPlayer(_prev, in pose);
+            ApplyOwnPlayer(_curr, in pose);
+        }
+
         /// Puts this client's own player back into the picture for the frames
-        /// that leave it out, one half of the render pair at a time.
+        /// that leave it out, one half of the render pair at a time. Its two
+        /// callers are the two halves, and `predicted` is the same value both
+        /// times — the frame's blended pose, see `BlendOwnPlayer`. Everything
+        /// below is about WHETHER the write may happen, which is a question of
+        /// the frame in hand and not of the pose.
         ///
         /// FROM THE PREDICTED COPY, AND ONLY WHILE **THIS FRAME'S ROSTER** SAYS
         /// THE SEAT IS ALIVE (Stage 2 Task 47b). The assembler leaves a
