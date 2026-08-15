@@ -586,7 +586,7 @@ namespace Ring.Presentation
         /// that seat (Stage 2 Task 47b fix-round 1) — four states because the
         /// question has four answers, and a pile of bools would have
         /// combinations that mean nothing.
-        enum RequestedPicture
+        internal enum RequestedPicture
         {
             /// No frame has carried the seat yet. The ordinary state of the
             /// first frames after a press: the request is still climbing the
@@ -618,6 +618,59 @@ namespace Ring.Presentation
         }
 
         RequestedPicture _requestedPicture;
+
+        /// What one frame says about a request in flight (bd `app-sfi`) — the
+        /// whole state machine, as a pure function of the state and the two
+        /// facts a frame carries. Extracted from `UpdateObservation` so the
+        /// table is pinned by tests instead of by a scene (the rule
+        /// `PlayerPredictionCore.RouteReplicate` already follows).
+        ///
+        /// THE FIX ITSELF IS THE `Broken` BRANCH (owner's variant (a) of the
+        /// task). Before it, `Broken` was a dead end with only `Proven` leading
+        /// out, so this sequence threw an ACCEPTED switch away in silence: the
+        /// target is visible from this client's own corpse when the button is
+        /// pressed, hides for longer than `NetConfig.EntityFadeTicks`' linger
+        /// (5 ticks = 167 ms), and comes back into the corpse's view before the
+        /// switch lands. The request then closes on `Broken`, the picture never
+        /// moves, and when the target walks away the frame carries neither it
+        /// nor this client's own seat — camera and HP bar freeze with no way
+        /// back but another press. Letting a returning target restart the run
+        /// costs exactly what decision 1b already accepted (a switch can be
+        /// confirmed by a target that is merely visible from the body), and it
+        /// buys back the accepted switch.
+        ///
+        /// `Proven` IS STICKY, AND IT HAS EXACTLY ONE HOME. It is a fact about
+        /// a frame that has already arrived (a frame without this client's own
+        /// seat was built from somebody else's eyes), and no later frame can
+        /// unsay it. That is enforced STRUCTURALLY — no branch below leads out
+        /// of `Proven` — rather than by an early return saying the same thing a
+        /// second time: a guard `if (current == Proven) return current` was
+        /// written first and deleted, because mutation testing showed it changed
+        /// no answer at all (two copies of a rule are two copies of a defect,
+        /// and the copy no test can discriminate is the one that rots).
+        internal static RequestedPicture NextRequestedPicture(RequestedPicture current,
+            bool targetKnown, bool ownKnown)
+        {
+            if (targetKnown)
+            {
+                // The frame that settles it outright: the target is here and
+                // this client's own body is not.
+                if (!ownKnown) return RequestedPicture.Proven;
+
+                // A run that was broken by the target crossing the corpse's
+                // field of view starts again the moment the target is back —
+                // the request is still in flight, and nothing about the earlier
+                // gap says the switch was refused.
+                if (current == RequestedPicture.Broken) return RequestedPicture.NeverArrived;
+
+                if (current == RequestedPicture.NeverArrived) return RequestedPicture.Holding;
+                return current;
+            }
+
+            return current == RequestedPicture.Holding
+                ? RequestedPicture.Broken
+                : current;
+        }
 
         /// Last frame's input, for the two button EDGES spectating reads. A
         /// second `InputSampler.SampleFrame()` is what this avoids — it would
@@ -1277,19 +1330,8 @@ namespace Ring.Presentation
                 // only records what the frames said; nothing moves.
                 if (_requestedIndex >= 0)
                 {
-                    if (curr.PlayerKnown[_requestedIndex])
-                    {
-                        // The frame that settles it outright: the target is
-                        // here and this client's own body is not.
-                        if (!curr.PlayerKnown[local])
-                            _requestedPicture = RequestedPicture.Proven;
-                        else if (_requestedPicture == RequestedPicture.NeverArrived)
-                            _requestedPicture = RequestedPicture.Holding;
-                    }
-                    else if (_requestedPicture == RequestedPicture.Holding)
-                    {
-                        _requestedPicture = RequestedPicture.Broken;
-                    }
+                    _requestedPicture = NextRequestedPicture(_requestedPicture,
+                        curr.PlayerKnown[_requestedIndex], curr.PlayerKnown[local]);
 
                     if (!_backend.SpectateRequestInFlight)
                     {
