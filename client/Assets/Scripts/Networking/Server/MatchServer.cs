@@ -1023,7 +1023,14 @@ namespace Ring.Networking.Server
             // is used ONLY as a change-identity here, never subtracted from a
             // world tick directly.
             for (int i = 0; i < _controllers.Length; i++)
+            {
                 _lastInputsScratch[i] = _controllers[i].Core.LastServerInput;
+                // bd `app-mi4`: taken now, so an input arriving after this line
+                // overwrites nothing the world was still going to use — and one
+                // that arrives BEFORE the next gather is counted as the loss it
+                // is.
+                _controllers[i].Core.MarkServerInputTaken();
+            }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
@@ -1056,6 +1063,21 @@ namespace Ring.Networking.Server
 
             for (int i = 0; i < _starvedScratch.Length; i++)
                 if (_starvedScratch[i]) _assembler.StatsFor(i).InputStarved++;
+
+            // bd `app-mi4`: two counters that had no writer at all, so the
+            // post-match log printed zeros where measurements belonged (the
+            // `app-c3m` genre — an instrument that lies). Both are running
+            // TOTALS owned by their sources, so they are assigned rather than
+            // incremented: the world counts a player's dropped edge requests
+            // (`SimulationWorld.RejectedEdgeRequestsFor`) and the prediction
+            // core counts inputs a newer replicate overwrote before this loop
+            // could take them.
+            for (int i = 0; i < _controllers.Length; i++)
+            {
+                NetStats stats = _assembler.StatsFor(i);
+                stats.EdgeRequestsRejected = _world.RejectedEdgeRequestsFor(i);
+                stats.InputOverwritten = _controllers[i].Core.OverwrittenServerInputs;
+            }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.

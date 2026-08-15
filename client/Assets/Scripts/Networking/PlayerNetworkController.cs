@@ -340,6 +340,14 @@ namespace Ring.Networking
         bool _reconcileOpen;
         ServerTickInput _lastServerInput;
 
+        /// bd `app-mi4`: whether the input in `_lastServerInput` is one the
+        /// world has not taken yet. A second replicate arriving before the
+        /// world's own tick has taken the first OVERWRITES it — the round trip
+        /// gives the client no way to know, and the server's post-match log
+        /// printed a permanent zero where that number belonged.
+        bool _serverInputPending;
+        int _overwrittenServerInputs;
+
         /// The latest sampled frame, held WHOLE and unmodified.
         public SimInput PendingInput => _pending;
 
@@ -383,6 +391,14 @@ namespace Ring.Networking
         /// The last input the server actually received, and its tick (Task 36's
         /// contract).
         public ServerTickInput LastServerInput => _lastServerInput;
+
+        /// How many arrived inputs this connection lost to a newer one before
+        /// the world could take them (bd `app-mi4`). Read once per tick into
+        /// `NetStats.InputOverwritten`. NOT a health metric of the client's
+        /// aim: it counts the server consuming slower than the wire delivers,
+        /// which is the one thing the starvation counter (Р25) cannot see —
+        /// starvation is the same fault in the other direction.
+        public int OverwrittenServerInputs => _overwrittenServerInputs;
 
         /// True while this client may advance its own copy at all.
         public bool IsPredicting => ShouldPredict(_ownDeathReported, _predicted.Alive);
@@ -548,6 +564,24 @@ namespace Ring.Networking
         /// all, and the world detects starvation from the gap between this tick
         /// and the tick it is running (Р25).
         internal void RecordServerInput(uint tick, in SimInput decodedInput)
-            => _lastServerInput = new ServerTickInput(tick, in decodedInput);
+        {
+            // The previous input never reached a world tick: it is gone, and
+            // being gone is exactly what this counts (bd `app-mi4`).
+            if (_serverInputPending) _overwrittenServerInputs++;
+
+            _lastServerInput = new ServerTickInput(tick, in decodedInput);
+            _serverInputPending = true;
+        }
+
+        /// The world has taken whatever `LastServerInput` held (bd `app-mi4`).
+        /// Called by the server once per tick, right where it gathers the
+        /// inputs — a later arrival then overwrites nothing, because there is
+        /// nothing left to overwrite.
+        ///
+        /// SEPARATE FROM THE READ ITSELF, and deliberately: `LastServerInput`
+        /// is public and read by more than the tick loop (diagnostics), while
+        /// only the tick loop consumes. A property with a side effect would
+        /// make every reader a consumer.
+        internal void MarkServerInputTaken() => _serverInputPending = false;
     }
 }

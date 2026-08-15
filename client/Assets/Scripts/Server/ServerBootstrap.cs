@@ -997,13 +997,24 @@ namespace Ring.Server
             for (int i = 0; i < summary.ConnectionStats.Length; i++)
             {
                 NetStats c = summary.ConnectionStats[i];
+                // bd `app-mi4`: `bytesUp` prints a DASH, not a zero. Nothing in
+                // this project writes it and nothing can: the outgoing traffic
+                // leaves through FishNet's own replicate/state path, and the
+                // package's `NetworkTrafficStatistics` cannot be enabled from a
+                // runtime build (`_enableMode` is a private [SerializeField]
+                // with a getter-only property — checked in the 4.7.2 sources,
+                // not in its docs). A zero here read as "no outgoing traffic",
+                // which is the `app-c3m` genre of defect: an instrument that
+                // lies. The dash follows the dev overlay's own convention for
+                // a number nobody measured.
                 sb.AppendFormat(CultureInfo.InvariantCulture,
                     "\n  conn[{0}] droppedEntities={1} droppedEvents={2} staleSnapshots={3} " +
                     "duplicateSnapshots={4} inputStarved={5} inputOverwritten={6} " +
                     "unconfirmedGhosts={7} edgeRequestsRejected={8} bytesDown={9} bytesUp={10}",
                     i, c.DroppedEntities, c.DroppedEvents, c.StaleSnapshots,
                     c.DuplicateSnapshots, c.InputStarved, c.InputOverwritten,
-                    c.UnconfirmedGhosts, c.EdgeRequestsRejected, c.BytesDown, c.BytesUp);
+                    c.UnconfirmedGhosts, c.EdgeRequestsRejected, c.BytesDown,
+                    c.BytesUp > 0L ? c.BytesUp.ToString(CultureInfo.InvariantCulture) : "—");
             }
 
             Debug.Log(sb.ToString());
