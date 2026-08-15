@@ -379,6 +379,25 @@ namespace Ring.Presentation.Net
 
         void Awake()
         {
+            // Step 0 (bd `app-bwy`): fullscreen without an explicit size means
+            // "fill this display", and Unity's own answer is the size the LAST
+            // launch happened to leave in the player prefs — which is how a
+            // playtest on a 6144x3456 desktop came up at 1280x720 and looked
+            // pixelated. Applied here rather than in `Start` because `Start`
+            // returns immediately on a solo launch, and a solo player has the
+            // same display and the same complaint.
+            //
+            // `FullScreenWindow` rather than `ExclusiveFullScreen`: it is the
+            // mode that composites at the desktop's own resolution on Linux
+            // instead of asking for a mode switch the compositor emulates by
+            // stretching. `Display.main.systemWidth/systemHeight` are the
+            // display's own numbers, not the ones the prefs remember.
+            if (ScreenLaunchOptions.ShouldUseNativeResolution(Environment.GetCommandLineArgs()))
+            {
+                Screen.SetResolution(Display.main.systemWidth, Display.main.systemHeight,
+                    FullScreenMode.FullScreenWindow);
+            }
+
             // Step 1. A fresh id per PROCESS, not per build: milestone В1
             // runs two clients out of one build on one machine, and a
             // constant default would have the second one answered

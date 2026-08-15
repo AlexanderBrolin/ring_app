@@ -6,6 +6,7 @@
         "Ring.Data",
         "Ring.Networking",
         "Ring.Presentation",
+        "Ring.Presentation.Net",
         "Ring.Server",
         "FishNet.Runtime",
         "Unity.Mathematics",
