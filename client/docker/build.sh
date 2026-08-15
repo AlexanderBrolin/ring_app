@@ -3,13 +3,15 @@
 # Build and publish the headless game server image (Stage 2, task T51).
 #
 # FOUR STEPS, IN THIS ORDER: the Unity dedicated-server player, a check of the
-# artifact root against the inventory this script is PAIRED WITH (which is a
-# superset of what the Dockerfile copies -- see ARTIFACT_ROOT_ENTRIES), the
-# image itself with two tags, and a push of both tags unless --no-push was
-# given. Everything that can fail cheaply -- docker client, docker daemon, build
-# root, dirty tree, Unity binary -- is checked BEFORE the Unity build, which is
-# the only slow step here: discovering a missing buildx after ten minutes of
-# Unity would be the script's fault, not the operator's.
+# artifact -- its root against the inventory this script is PAIRED WITH (which
+# is a superset of what the Dockerfile copies -- see ARTIFACT_ROOT_REQUIRED
+# and ARTIFACT_ROOT_OPTIONAL) plus the compiled burst library by name (see
+# BURST_PLAYER_PLUGIN) -- the image itself with two tags, and a push of both
+# tags unless --no-push was given. Everything that can fail cheaply -- docker
+# client, docker daemon, build root, dirty tree, Unity binary -- is checked
+# BEFORE the Unity build, which is the only slow step here: discovering a
+# missing buildx after ten minutes of Unity would be the script's fault, not
+# the operator's.
 #
 # RE-RUNNABLE BY CONSTRUCTION. Every step overwrites its own output on a fixed
 # path -- the artifact directory, the build log, the two tags -- so a second run
@@ -60,29 +62,94 @@ readonly DEV_TAG='dev'
 readonly UNITY_METHOD='Ring.Editor.BuildCommands.BuildLinuxServer'
 readonly ARTIFACT_SUBDIR='linux-server'
 
-# The artifact root as it is supposed to look, and the reason this list exists:
-# the Dockerfile copies root files BY NAME (`COPY --from=game RingServer
-# UnityPlayer.so FishNet.SDK.Id ./`), which keeps the image independent of any
-# ignore file but also means a NEW mandatory file next to the executable -- a
-# native plugin shipped by a future package, for instance -- would be left out
-# silently and only surface as a runtime failure on the LAN host.
+# The artifact root as it is supposed to look, and the reason this inventory
+# exists: the Dockerfile copies root files BY NAME (`COPY --from=game
+# RingServer UnityPlayer.so FishNet.SDK.Id ./`), which keeps the image
+# independent of any ignore file but also means a NEW mandatory file next to
+# the executable -- a native plugin shipped by a future package, for instance
+# -- would be left out silently and only surface as a runtime failure on the
+# LAN host.
 #
-# THIS LIST IS PAIRED WITH THE COPY INSTRUCTIONS IN Dockerfile: when the build
-# output legitimately changes, both are updated together, and the decision of
-# what belongs in the image is taken while looking at the diff rather than at a
-# crash.
-readonly ARTIFACT_ROOT_ENTRIES=(
+# THIS INVENTORY IS PAIRED WITH THE COPY INSTRUCTIONS IN Dockerfile: when the
+# build output legitimately changes, both are updated together, and the
+# decision of what belongs in the image is taken while looking at the diff
+# rather than at a crash.
+#
+# IT COMES IN TWO CLASSES, because "the build output changed" and "this
+# machine's build cache was warm" are different events and only the first one
+# is worth stopping a build over. An entry whose absence proves nothing about
+# the artifact belongs below, not here.
+readonly ARTIFACT_ROOT_REQUIRED=(
     'FishNet.SDK.Id'
     'RingServer'
     'RingServer_Data'
     'UnityPlayer.so'
     'libdecor-0.so.0'
     'libdecor-cairo.so'
+)
+
+# ENTRIES THAT MAY OR MAY NOT BE THERE AND NEVER SHIP. Burst writes
+# '<product>_BurstDebugInformation_DoNotShip' from its post-build step and
+# from nowhere else -- `CreateFolderForMiscFiles` and `CollateMiscFiles`, both
+# inside `BurstAotCompiler.OnPostBuildPlayerScriptDLLsImpl`
+# (com.unity.burst@1.8.30, Editor/BurstAotCompiler.cs:737 and :971; the folder
+# name is assembled in Editor/BurstPlatformAotSettings.cs:339-342). An
+# incremental player build that reuses the already linked
+# lib_burst_generated.so out of Library/Bee/artifacts/LinuxPlayerBuildProgram/
+# AsyncPluginsFromLinker never runs that step, so the folder is never written.
+#
+# MEASURED, NOT ASSUMED (bd app-23p): two builds of commit 0e48049 twenty-
+# seven minutes apart, the first with the folder and the second without, both
+# shipping a byte-identical lib_burst_generated.so inside RingServer_Data
+# (md5 f28582db014ce9f542cb91bf9d9f1232). Its absence therefore says something
+# about the build cache and nothing about the artifact; the Dockerfile does
+# not copy it in either case.
+#
+# IT IS LISTED RATHER THAN DROPPED, and that is the whole point of the second
+# class: a name nobody knows about is an alarm, so an entry deleted from the
+# inventory would start failing builds on the days it IS produced.
+readonly ARTIFACT_ROOT_OPTIONAL=(
     'ring-client-new_BurstDebugInformation_DoNotShip'
 )
 
+# WHAT BURST ACTUALLY SHIPS, checked separately and required -- this is the
+# guarantee the inventory above deliberately gives up, put back in its honest
+# place. The debug folder is a byproduct of a compile that may or may not have
+# run today; this library is the compiled code itself, and it is in the
+# artifact either way (the incremental build that skipped the debug folder
+# still shipped it byte for byte -- bd app-23p).
+#
+# THE STATE IT CATCHES IS BURST BEING OFF. `OnPostBuildPlayerScriptDLLsImpl`
+# returns at BurstAotCompiler.cs:606-609 when a platform's
+# `EnableBurstCompilation` says so -- BEFORE it creates the folder at :737 and
+# before any bcl call; `ForceDisableBurstCompilation` cuts the same pipeline
+# off even earlier (:141 and :175 under the plugin-generation API this project
+# builds with, :200 on the legacy path), with the same outcome. Either way the
+# player carries no burst code at all and falls back to managed. On an
+# authoritative server that is a performance and float-behavior change nobody
+# asked for, and it must stop a build rather than reach the LAN host. If a
+# legitimate change ever removes the last burst-compiled job, this line is the
+# place where that decision gets taken deliberately.
+readonly BURST_PLAYER_PLUGIN='RingServer_Data/Plugins/lib_burst_generated.so'
+
 info() { printf '%s: %s\n' "$PROG" "$*"; }
 warn() { printf '%s: warning: %s\n' "$PROG" "$*" >&2; }
+
+# One name per line, in C order, and NOTHING AT ALL for an empty set. The
+# straight `printf '%s\n' "${array[@]}"` applies its format once even with no
+# arguments left, so an emptied list would feed `comm` a single blank line --
+# that is, an entry named "" -- and the comparison would report a phantom.
+lines_of() {
+    (( $# > 0 )) || return 0
+    printf '%s\n' "$@" | LC_ALL=C sort
+}
+
+# The same guarantee for a captured block: `$(...)` strips trailing newlines,
+# so an empty capture must print nothing rather than one blank line.
+lines_in() {
+    [[ -n "$1" ]] || return 0
+    printf '%s\n' "$1"
+}
 
 die() {
     printf '%s: error: %s\n' "$PROG" "$1" >&2
@@ -347,21 +414,29 @@ fi
 info "Unity build finished; artifact: $artifact_dir"
 
 # ---------------------------------------------------------------------------
-# Step 2: the artifact root is still the one the COPY list was written against
+# Step 2: the artifact is still the one the COPY list was written against --
+#         its root by inventory, and the burst library by name
 # ---------------------------------------------------------------------------
 
 [[ -d "$artifact_dir" ]] || die "the Unity build reported success but left no '$artifact_dir'"
 
 artifact_actual=$(find "$artifact_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
-artifact_expected=$(printf '%s\n' "${ARTIFACT_ROOT_ENTRIES[@]}" | LC_ALL=C sort)
+artifact_required=$(lines_of "${ARTIFACT_ROOT_REQUIRED[@]}")
+artifact_known=$(lines_of "${ARTIFACT_ROOT_REQUIRED[@]}" "${ARTIFACT_ROOT_OPTIONAL[@]}")
 
-if [[ "$artifact_actual" != "$artifact_expected" ]]; then
-    # comm compares by the collating order of the locale it runs in, and both
-    # sides above were sorted under C: it has to be told the same.
-    unexpected=$(LC_ALL=C comm -13 <(printf '%s\n' "$artifact_expected") \
-        <(printf '%s\n' "$artifact_actual"))
-    missing=$(LC_ALL=C comm -23 <(printf '%s\n' "$artifact_expected") \
-        <(printf '%s\n' "$artifact_actual"))
+# comm compares by the collating order of the locale it runs in, and every
+# side here was sorted under C: it has to be told the same.
+#
+# THE TWO QUESTIONS ARE ASKED AGAINST DIFFERENT LISTS, and that asymmetry is
+# the fix: a name nobody knows about is measured against EVERYTHING known,
+# while a name that went missing is measured against what must always be
+# there. An optional entry that fails to appear is neither.
+unexpected=$(LC_ALL=C comm -13 <(lines_in "$artifact_known") \
+    <(lines_in "$artifact_actual"))
+missing=$(LC_ALL=C comm -23 <(lines_in "$artifact_required") \
+    <(lines_in "$artifact_actual"))
+
+if [[ -n "$unexpected" || -n "$missing" ]]; then
     if [[ -n "$unexpected" ]]; then
         printf '%s: new in %s:\n' "$PROG" "$artifact_dir" >&2
         while IFS= read -r entry; do printf '    %s\n' "$entry" >&2; done <<<"$unexpected"
@@ -374,16 +449,40 @@ if [[ "$artifact_actual" != "$artifact_expected" ]]; then
         "A new file here is copied into the image only if the Dockerfile names" \
         "it, and a file that is needed but not named fails at run time on the" \
         "host, not here. Decide what each entry is, then update BOTH the COPY" \
-        "instructions in client/docker/Dockerfile and ARTIFACT_ROOT_ENTRIES in" \
-        "this script."
+        "instructions in client/docker/Dockerfile and the inventory arrays in" \
+        "this script -- ARTIFACT_ROOT_REQUIRED for anything the artifact must" \
+        "always have, ARTIFACT_ROOT_OPTIONAL for what never ships and may be" \
+        "skipped by an incremental build."
 fi
 
-# The count is of the INVENTORY, not of what ships: the Dockerfile names a
-# subset of these entries in its COPY instructions and leaves the rest behind
-# on purpose (the Burst debug directory and the two libdecor libraries). What
-# this check proves is that the build output is still the one that list was
-# written against -- nothing new appeared next to the executable unnoticed.
-info "artifact root unchanged: ${#ARTIFACT_ROOT_ENTRIES[@]} known entries, none new, none gone"
+# The count is of the REQUIRED class alone, not of what ships and not of the
+# whole inventory: two of those six entries (the libdecor libraries) are
+# required to be there and are still left out of the image on purpose, and the
+# optional class is reported on its own line below. What this check proves is
+# that the build output is still the one the inventory was written against --
+# nothing new appeared next to the executable unnoticed.
+#
+# WHAT IS PRINTED IS THE ABSENCE, because that is the half that surprises
+# somebody later: two artifacts of the same commit differing by a folder is
+# exactly the kind of difference that reads as a defect until the log says it
+# was expected.
+optional_absent=$(LC_ALL=C comm -23 <(lines_of "${ARTIFACT_ROOT_OPTIONAL[@]}") \
+    <(lines_in "$artifact_actual"))
+info "artifact root as inventoried: ${#ARTIFACT_ROOT_REQUIRED[@]} required entries" \
+     "present, none new"
+if [[ -n "$optional_absent" ]]; then
+    while IFS= read -r entry; do
+        info "  optional, not produced by this build: $entry"
+    done <<<"$optional_absent"
+fi
+
+# The compiled burst library, on the other hand, is not optional at all.
+[[ -f "$artifact_dir/$BURST_PLAYER_PLUGIN" ]] || die \
+    "no burst library in the artifact: '$BURST_PLAYER_PLUGIN'" \
+    "The player build produced no compiled burst code, which means burst" \
+    "compilation was off for this build -- not that the cache was warm. The" \
+    "image would ship a server running the managed fallback. Check the AOT" \
+    "settings and the editor's command line before building again."
 
 # ---------------------------------------------------------------------------
 # Step 3: the image
