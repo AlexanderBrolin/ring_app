@@ -110,6 +110,37 @@ namespace Ring.Editor
             Build(BuildTarget.StandaloneLinux64, StandaloneBuildSubtarget.Server,
                 "linux-server-dev/RingServer", new[] { ServerScene }, BuildOptions.Development);
 
+        /// The WINDOWS client, built WITH `BuildOptions.Development` (bd
+        /// `app-ck7`). Separate output path for the reason the two Dev targets
+        /// above have theirs: `windows-client` is the artifact a player is
+        /// handed, and a delivered build that silently gained a define would
+        /// invalidate exactly what it exists to be.
+        ///
+        /// WITHOUT IT A DEFECT SEEN ON WINDOWS CANNOT BE LOOKED AT, AND THAT
+        /// IS NOT THE SAME PROBLEM THE TWO TARGETS ABOVE SOLVE. Those are the
+        /// two halves of the dev pair the milestones are MEASURED on, and both
+        /// run on this workstation. This one is about the machines that are
+        /// not here: the players who join a session from Windows are where a
+        /// desync, a hitch or a traffic figure is first SEEN, and every
+        /// instrument that could say anything about it is compiled behind
+        /// `UNITY_EDITOR || DEVELOPMENT_BUILD` — `DevOverlay` with its state
+        /// hash, tick and "no silent loss" counters, the `NetDiagnostics` row
+        /// it draws, and, from `app-ck7`, the `-ring-latency` switch that lets
+        /// that machine stand the simulator down so what it reports is the
+        /// real link instead of the real link plus a fake 80 ms. Ship a
+        /// release `windows-client` to that player and the only thing he can
+        /// send back is a sentence; give him this build and he can read the
+        /// same numbers off his own screen that this workstation reads off
+        /// its own.
+        ///
+        /// It is a PLAYER subtarget, like `BuildWindowsClient` — there is no
+        /// Windows server target in this project, and none is wanted: the
+        /// headless server is a Linux container (`client/docker/`), and the
+        /// deploy path has exactly one shape.
+        public static void BuildWindowsClientDev() =>
+            Build(BuildTarget.StandaloneWindows64, StandaloneBuildSubtarget.Player,
+                "windows-client-dev/Ring.exe", new[] { ClientScene }, BuildOptions.Development);
+
         static void Build(BuildTarget target, StandaloneBuildSubtarget subtarget, string relPath,
             string[] scenes, BuildOptions buildOptions = BuildOptions.None)
         {

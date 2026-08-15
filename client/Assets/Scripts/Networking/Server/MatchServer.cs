@@ -579,7 +579,51 @@ namespace Ring.Networking.Server
             // TransportManager.LatencySimulator — DevLatencySetup.cs's own doc:
             // AddOutgoing only delays the OUTGOING side of whichever process
             // calls it.
-            DevLatencySetup.Apply(_nm.TransportManager.LatencySimulator, _netConfig, _devStats);
+            //
+            // Stage 2 app-ck7: WHICH numbers is the launch line's to say now
+            // (`-ring-latency`, read once per process by DevLatencyLaunch),
+            // and both lines printed below are load-bearing rather than
+            // decorative (lesson 195). Without the applied line, "the switch
+            // worked" and "the switch was ignored" are the same observation on
+            // this console; without the complaint, "the switch never arrived"
+            // and "the switch was rejected" are.
+            //
+            // BOTH GO THROUGH UnityEngine.Debug, NOT THROUGH _nm.Log, and the
+            // two _nm.Log lines further down this file are not the precedent
+            // to follow here. A dedicated-server build defines UNITY_SERVER,
+            // and FishNet's logging configuration answers that define with
+            // `_headlessLogging`, whose default is LoggingType.Error
+            // (LevelLoggingConfiguration.cs:55, :86-98 — and Server.unity
+            // leaves NetworkManager's `_logging` unassigned, so the default is
+            // what runs). CanLog admits only levels at or below the highest
+            // admitted one, and Common(3)/Warning(2) both sit above Error(1),
+            // so EVERY _nm.Log and _nm.LogWarning of the headless build is
+            // dropped before it reaches stdout. The build this matters for is
+            // `linux-server-dev` — NOT the container, whose image is packed
+            // from the RELEASE server (`client/docker/build.sh` builds
+            // `BuildLinuxServer`), where this whole `#if` is gone before the
+            // compiler sees it and there is no switch to operate. The dev
+            // server IS headless all the same, so without `Debug` the only
+            // report an operator has of what his launch line did would be
+            // silence. ServerBootstrap writes every operator-facing diagnostic
+            // through UnityEngine.Debug and reaches that log; `Debug` is
+            // spelled out in full because this file imports System.Diagnostics
+            // (for Stopwatch) and does NOT import UnityEngine, so a bare
+            // `Debug` would bind to the wrong type outright rather than being
+            // reported as ambiguous.
+            DevLatencyOptions latency = DevLatencyLaunch.Options;
+            DevLatencySetup.Apply(_nm.TransportManager.LatencySimulator, _netConfig, _devStats,
+                latency);
+            if (latency.Complaint != null)
+            {
+                UnityEngine.Debug.LogWarning($"MatchServer: {latency.Complaint} Running on "
+                    + "NetConfig's numbers instead, so Critical Rule 7's simulator stays ON — a "
+                    + "value nobody could read must never be able to stand it down.");
+            }
+            UnityEngine.Debug.Log("MatchServer: dev latency simulator — "
+                + DevLatencySetup.Describe(latency, _devStats)
+                + ". This is the server's own OUTGOING half of the link; the client applies and "
+                + "prints the other.");
 #endif
 
             _running = true;

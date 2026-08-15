@@ -629,7 +629,43 @@ namespace Ring.Networking.Client
             // calls it on its own TransportManager in MatchServer.StartMatch.
             // Without this half a playtest measures 40 ms one-way as if it
             // were the required 80 ms RTT, and 5% loss in one direction only.
-            DevLatencySetup.Apply(_nm.TransportManager.LatencySimulator, _netConfig, _devStats);
+            //
+            // Stage 2 app-ck7: the numbers come from `-ring-latency` when the
+            // launch line carries it (DevLatencyLaunch reads it once per
+            // process; this client and the server each obey their own copy,
+            // which is why an operator on a real link has to pass it twice).
+            // Both lines below are load-bearing rather than decorative
+            // (lesson 195): without the applied one, "the switch worked" and
+            // "the switch was ignored" look the same on this console; without
+            // the complaint, "the switch never arrived" and "the switch was
+            // rejected" do. They go through UnityEngine.Debug rather than the
+            // NetworkManager's logger every other line of this class uses —
+            // the paragraph below the call has the reason, and it is not the
+            // server's reason repeated.
+            DevLatencyOptions latency = DevLatencyLaunch.Options;
+            DevLatencySetup.Apply(_nm.TransportManager.LatencySimulator, _netConfig, _devStats,
+                latency);
+            // BOTH LINES GO THROUGH `UnityEngine.Debug`, NOT `_nm.Log`, AND THE
+            // CLIENT NEEDS THAT AS MUCH AS THE SERVER DOES. FishNet caps its
+            // own logging by a define, not by role: `LevelLoggingConfiguration.
+            // InitializeOnce` reads `_headlessLogging` (default `Error`)
+            // whenever `UNITY_SERVER` is defined, and `BuildCommands.Build`
+            // leaves the EDITOR on the Dedicated Server platform after any
+            // server build — so a Play-mode session that followed one would
+            // drop both of these, the complaint included, and say nothing about
+            // having dropped them. That is lesson 195 in a new place, and the
+            // one honest fix is not to route a measurement's own audit trail
+            // through a filter that answers to something else.
+            if (latency.Complaint != null)
+            {
+                UnityEngine.Debug.LogWarning($"ClientMatchLink: {latency.Complaint} Running on "
+                    + "NetConfig's numbers instead, so Critical Rule 7's simulator stays ON — a "
+                    + "value nobody could read must never be able to stand it down.");
+            }
+            UnityEngine.Debug.Log("ClientMatchLink: dev latency simulator — "
+                + DevLatencySetup.Describe(latency, _devStats)
+                + ". This is the client's own OUTGOING half of the link; the server applies and "
+                + "prints the other.");
 #endif
 
             if (!_state.TryBeginHello())
