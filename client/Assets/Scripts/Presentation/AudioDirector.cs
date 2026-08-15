@@ -240,8 +240,7 @@ namespace Ring.Presentation
             // of the shared gate AND nothing already waiting for its event (see
             // `ImmediatePredictionLatch`). Evaluated every frame this method
             // reaches, because the edge is a function of the previous frame.
-            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime,
-                    _runner.FirePredictionMinGapSeconds)) return;
+            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime)) return;
 
             float2 muzzlePos = _runner.RenderMuzzleSimPos(_runner.RenderCurr.Player.AimPoint);
 

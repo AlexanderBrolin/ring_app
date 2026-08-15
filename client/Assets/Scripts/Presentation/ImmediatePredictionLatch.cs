@@ -214,26 +214,8 @@ namespace Ring.Presentation
         /// into two numbers rather than stretching this one.
         public const float BufferedWindowSeconds = 0.5f;
 
-        /// Deadlines of the predictions shown but not yet confirmed, oldest
-        /// first (bd `app-8dv`). A RING rather than a single flag because a
-        /// networked client fires faster than the wire confirms: at the
-        /// measured 0.27 s confirmation and a 0.12 s cadence, two or three
-        /// rounds are outstanding at any moment (bd `app-a4k`). Eight is four
-        /// times that, and every entry carries the same window, so the deadlines
-        /// are monotonic and the oldest is always at the head.
-        const int MaxOutstanding = 8;
-
-        readonly float[] _armedExpiry = new float[MaxOutstanding];
-        int _armedHead;
-        int _armedCount;
-
-        /// When the last GRANTED prediction was actually shown — the floor in
-        /// `ShouldPredict`'s overload measures from here rather than from the
-        /// edge, because an edge the caller declined to show (no doll, a voice
-        /// the SFX gates refused) must not push the next round's prediction out.
-        float _lastArmedAt;
-        bool _hasArmed;
-
+        bool _armed;
+        float _expireAt;
         bool _gateWasSatisfied;
         bool _shownFromEvent;
         float _shownExpireAt;
@@ -253,100 +235,37 @@ namespace Ring.Presentation
         /// edge a credit from `NoteShownFromEvent` refuses: the credit is
         /// consumed here and now, so the act AFTER this one is predicted
         /// normally.
-        /// The same question with a FLOOR on how close two GRANTED predictions
-        /// may be (bd `app-8dv`), which is what lets a caller hold more than one
-        /// unconfirmed prediction at a time.
-        ///
-        /// WHY A FLOOR AND NOT SIMPLY "AS MANY AS YOU LIKE". The second fact of
-        /// the class doc — one unconfirmed prediction at a time — is not a
-        /// simplification to be lifted, it is what closes the SECOND rising edge
-        /// reconciliation hands out for a round already shown (`app-id9`: one
-        /// shot shown twice). Its cost was measured on a networked client
-        /// (`app-a4k`, 44 presses): confirmation takes 8 ticks ~ 0.27 s against a
-        /// 0.12 s cadence, so only about every third round of a held burst was
-        /// predicted and the rest waited for the wire — the owner's "half a
-        /// second of delay on a spray".
-        ///
-        /// The floor separates the two cases by the one property that really
-        /// distinguishes them: a genuine next round cannot arrive sooner than
-        /// the weapon's own cadence, while a reconciliation echo arrives within
-        /// a few frames of the round it echoes. So a burst is predicted round
-        /// for round, and an echo is still refused.
-        ///
-        /// THE NUMBER COMES FROM THE CALLER, NEVER FROM HERE (lesson 155). This
-        /// class reads no weapon cadence, no tick rate and no network timing; it
-        /// is handed a floor exactly as `Arm` is handed a window. A caller that
-        /// supplies none keeps the old one-at-a-time rule, which is how the dash
-        /// (bd `app-g21`) is untouched by this: its gate can rise while its own
-        /// dash still runs, and a floor there would mean nothing.
-        public bool ShouldPredict(bool gateSatisfied, float now, float minGapSeconds)
+        public bool ShouldPredict(bool gateSatisfied, float now)
         {
             bool rising = gateSatisfied && !_gateWasSatisfied;
             _gateWasSatisfied = gateSatisfied;
             if (!rising) return false;
-
             Expire(now);
             if (_shownFromEvent)
             {
                 _shownFromEvent = false;
                 return false;
             }
-
-            // No floor supplied: the original rule, unchanged.
-            if (minGapSeconds <= 0f) return _armedCount == 0;
-
-            // A prediction this class could not account for would leave its
-            // confirming event with nothing to consume — and an event nobody
-            // consumed shows the act a second time. So a full ring refuses
-            // rather than overwrites; at the shipped numbers it is unreachable
-            // (see `MaxOutstanding`).
-            if (_armedCount >= MaxOutstanding) return false;
-
-            return !_hasArmed || now - _lastArmedAt >= minGapSeconds;
+            return !_armed;
         }
-
-        public bool ShouldPredict(bool gateSatisfied, float now)
-            => ShouldPredict(gateSatisfied, now, 0f);
 
         /// Records that the caller actually SHOWED a predicted act, and for how
         /// long it is willing to wait for the confirming event (class doc — the
         /// backend decides the window).
         public void Arm(float now, float windowSeconds)
         {
-            _lastArmedAt = now;
-            _hasArmed = true;
-
-            if (_armedCount >= MaxOutstanding)
-            {
-                // Unreachable through `ShouldPredict`'s own refusal above; kept
-                // because `Arm` is public and a caller that armed without asking
-                // must not corrupt the ring. Dropping the OLDEST is the least
-                // wrong answer: it is the one closest to expiring anyway.
-                _armedExpiry[_armedHead] = now + windowSeconds;
-                _armedHead = (_armedHead + 1) % MaxOutstanding;
-                return;
-            }
-
-            _armedExpiry[(_armedHead + _armedCount) % MaxOutstanding] = now + windowSeconds;
-            _armedCount++;
+            _armed = true;
+            _expireAt = now + windowSeconds;
         }
 
         /// Whether the authoritative event that just arrived was already shown
         /// ahead of time, in which case its own feedback must be suppressed.
         /// Consumes the outstanding prediction when it answers true.
-        /// Consumes the OLDEST outstanding prediction — the events of a burst
-        /// arrive in the order the rounds were fired, so oldest-first is what
-        /// pairs each event with the round it belongs to. Matching by tick is
-        /// still impossible for the reason the class doc gives (two counters
-        /// with no fixed offset); matching by ORDER is what this class has
-        /// always done, and a queue only makes the order explicit.
         public bool TryConsume(float now)
         {
             Expire(now);
-            if (_armedCount == 0) return false;
-
-            _armedHead = (_armedHead + 1) % MaxOutstanding;
-            _armedCount--;
+            if (!_armed) return false;
+            _armed = false;
             return true;
         }
 
@@ -376,15 +295,9 @@ namespace Ring.Presentation
             _shownExpireAt = now + windowSeconds;
         }
 
-        /// Deadlines are monotonic (one window for every entry), so expiring
-        /// from the head until one is still alive drops exactly the stale ones.
         void Expire(float now)
         {
-            while (_armedCount > 0 && now > _armedExpiry[_armedHead])
-            {
-                _armedHead = (_armedHead + 1) % MaxOutstanding;
-                _armedCount--;
-            }
+            if (_armed && now > _expireAt) _armed = false;
             if (_shownFromEvent && now > _shownExpireAt) _shownFromEvent = false;
         }
     }
