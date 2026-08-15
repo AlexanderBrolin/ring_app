@@ -312,12 +312,6 @@ namespace Ring.Networking.Server
         NetworkConnection[] _connections;
         PlayerNetworkController[] _controllers;
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-        // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
-        bool _devLastFireHeld;
-        bool _devLastEffectiveFire;
-        int _devLastShotsFired;
-#endif
         ServerTickInput[] _lastInputsScratch;
         SimInput[] _effectiveInputsScratch;
         bool[] _starvedScratch;
@@ -1032,32 +1026,6 @@ namespace Ring.Networking.Server
                 _controllers[i].Core.MarkServerInputTaken();
             }
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
-            // How long a client's input sits between arriving and being run:
-            // PacketTick is the newest replicate RECEIVED (client-stamped),
-            // ReplicateTick the newest one RUN (same scale), so their
-            // difference is the server-side replicate queue in ticks.
-            uint serverLocalTick = _nm.TimeManager.LocalTick;
-            if (serverLocalTick % 30u == 0u)
-            {
-                for (int i = 0; i < _connections.Length; i++)
-                {
-                    var c = _connections[i];
-                    if (c == null) continue;
-                    uint packetTick = c.PacketTick.RemoteTick;
-                    uint replicateTick = c.ReplicateTick.RemoteTick;
-                    long queued = (long)packetTick - (long)replicateTick;
-                    UnityEngine.Debug.Log($"REPLAG conn={i} serverTick={serverLocalTick} "
-                        + $"worldTick={preTickWorldTick} packetTick={packetTick} "
-                        + $"replicateTick={replicateTick} queuedTicks={queued} "
-                        + $"inputTick={_lastInputsScratch[i].Tick} "
-                        + $"fireHeld={_lastInputsScratch[i].Input.FireHeld}");
-                }
-            }
-
-#endif
-
             EffectiveInputBatch.Gather(_lastInputsScratch, preTickWorldTick, starveTicks,
                 _lastSeenInputTick, _lastFreshWorldTick, _effectiveInputsScratch, _starvedScratch);
 
@@ -1079,40 +1047,10 @@ namespace Ring.Networking.Server
                 stats.InputOverwritten = _controllers[i].Core.OverwrittenServerInputs;
             }
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
-            // The EDGE of the trigger as the server saw it — raw (what arrived)
-            // and effective (what the world will actually be stepped on), read
-            // AFTER Gather so the effective half is this tick's own answer.
-            bool fireNow = _lastInputsScratch.Length > 0 && _lastInputsScratch[0].Input.FireHeld;
-            bool effNow = _effectiveInputsScratch.Length > 0 && _effectiveInputsScratch[0].FireHeld;
-            if (fireNow != _devLastFireHeld || effNow != _devLastEffectiveFire)
-            {
-                _devLastFireHeld = fireNow;
-                _devLastEffectiveFire = effNow;
-                UnityEngine.Debug.Log($"FIREEDGE raw={fireNow} effective={effNow} "
-                    + $"serverTick={serverLocalTick} worldTick={preTickWorldTick} "
-                    + $"inputTick={_lastInputsScratch[0].Tick} starved={_starvedScratch[0]}");
-            }
-#endif
-
             // 2. The world steps exactly once, on the effective inputs — never
             // the raw ones (a stale/absent input must never reach TickAll
             // unmodified, see InputStarvation's own doc).
             _world.TickAll(_effectiveInputsScratch);
-
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
-            // The tick the round was actually SPAWNED on, which is the moment
-            // the second half of the loop (server -> picture) starts from.
-            int shotsNow = _world.StatsAt(0).ShotsFired;
-            if (shotsNow != _devLastShotsFired)
-            {
-                _devLastShotsFired = shotsNow;
-                UnityEngine.Debug.Log($"SHOT worldTick={_world.CurrentTick} "
-                    + $"serverTick={serverLocalTick} total={shotsNow}");
-            }
-#endif
 
             // Fix-round 2, W8: captured BEFORE the try and used in `finally`
             // below instead of the field — see the `finally` block's own
