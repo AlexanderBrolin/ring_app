@@ -200,7 +200,7 @@ namespace Ring.Presentation.Net
         /// same reason.
         readonly NetStats _stats = new NetStats();
 
-        // The six per-match seams, plus the two objects that own their reset
+        // The seven per-match seams, plus the two objects that own their reset
         // and their epoch. All built by the first `Restart`, because the
         // facade does not hand `SimConfig` over until then and four of the
         // eight cannot be built without it: `SnapshotQueue` (the arena sizes
@@ -241,6 +241,12 @@ namespace Ring.Presentation.Net
         // the views would then read a half-decoded frame of another tick under
         // the identity of this one.
         RenderSnapshot _prev, _curr;
+
+        /// bd `app-s0u`: this client's copy of the rounds in flight, rebuilt
+        /// from `ProjectileSpawned`/`ProjectileEnded`. The snapshot carries no
+        /// projectile block, so without this the render pair's `Projectiles`
+        /// stays at `BeginSlot`'s zeros and no bullet is ever drawn.
+        TracerProjectiles _tracers;
         float _alpha;
         bool _ready;
         int _lastRenderTick;
@@ -997,6 +1003,19 @@ namespace Ring.Presentation.Net
             {
                 _alpha = _clock.Phase;
                 _ready = true;
+
+                // bd `app-s0u`. BOTH halves, and each with its OWN tick: the
+                // pair is `renderTick` and `renderTick + 1`, and the renderer
+                // blends them by `_alpha`, so writing one state into both would
+                // freeze every tracer between ticks while the rest of the world
+                // slid. `ResolveRenderPair` has just overwritten these arrays
+                // wholesale (`CopyFrom`), which is why this runs after it and
+                // not before.
+                _prev.ProjectileCount = _tracers.WriteInto(_prev.Projectiles, renderTick);
+                _curr.ProjectileCount = _tracers.WriteInto(_curr.Projectiles, renderTick + 1);
+                // Pruned by the OLDER tick, so a round ending on the newer half
+                // is still drawn on the older one (see `Prune`'s own doc).
+                _tracers.Prune(renderTick);
             }
 
             // AND THE LOCAL SEAT IS FILLED AFTER IT, EVERY FRAME, WHETHER OR
@@ -1239,7 +1258,13 @@ namespace Ring.Presentation.Net
             // EntityFadeTicks` has the why).
             _stale = new StalePolicy(cfg.Arena.MaxPlayers, _net.InterpMaxStaleTicks,
                 _net.EntityFadeTicks);
-            _reset = new ClientMatchReset(_dedup, _snapshots, _clock, _ghosts, _stale, _events);
+            // bd `app-s0u`: the rounds this client draws are rebuilt from the
+            // wire, so the table is sized by the same cap the arena mints ids
+            // from — `MaxProjectiles` bounds what can be in flight at once,
+            // and a client sees a subset of it (`SightRadius`, Р32).
+            _tracers = new TracerProjectiles(cfg.Arena.MaxProjectiles);
+            _reset = new ClientMatchReset(_dedup, _snapshots, _clock, _ghosts, _stale, _events,
+                _tracers);
             // Sized from the same cap as `_mobScratch` below, which is what
             // makes "a frame can never carry more records than one generation
             // holds" true rather than hoped for.
@@ -1902,6 +1927,7 @@ namespace Ring.Presentation.Net
                 // is what leaves the decode a pure function a unit test can
                 // reach.
                 RouteToGhosts((SnapshotEventKind)record.Kind, in p);
+                RouteToTracers(originTick, (SnapshotEventKind)record.Kind, in p, in decoded);
                 RouteOwnDeath(in decoded);
 
                 // The answer is deliberately not read: a refused event is one
@@ -2027,6 +2053,54 @@ namespace Ring.Presentation.Net
                     break;
                 case SnapshotEventKind.ProjectileEnded:
                     _ghosts.TryTranslateEnd(p.Id, out int _);
+                    break;
+            }
+        }
+
+        /// bd `app-s0u` — the tracer half of the same two records, kept in its
+        /// own method because it needs two things `RouteToGhosts` does not: the
+        /// event's TICK (the tracer lives in render time, see
+        /// `TracerProjectiles`) and the decoded envelope's position, which is
+        /// where the round was born and is not part of the payload's own eight
+        /// bytes.
+        ///
+        /// EVERY ROUND, NOT JUST THIS CLIENT'S. `ProjectileSpawned` is sent for
+        /// every round the client can see (Р32 — relevance is judged on the
+        /// whole trajectory), and a firefight in which only your own bullets
+        /// are visible is exactly the picture this task exists to fix.
+        ///
+        /// `Radius`/`Ttl` COME FROM THE CONFIG, BY OWNER, AND THAT IS LOAD-
+        /// BEARING. Neither rides the wire, and the two shooters do not share
+        /// them: decoding a Gunner mob's round on the hero's `Weapon` numbers
+        /// would draw a sphere of the wrong size. `PlayerIndex` carries
+        /// `ProjectileIds.NoOwner` for a mob's round — the same sentinel the
+        /// simulation uses — so the question is answered by the wire rather
+        /// than guessed.
+        void RouteToTracers(uint eventTick, SnapshotEventKind kind, in SnapshotEventPayload p,
+            in SimEvent decoded)
+        {
+            switch (kind)
+            {
+                case SnapshotEventKind.ProjectileSpawned:
+                {
+                    bool byPlayer = p.PlayerIndex != ProjectileIds.NoOwner;
+                    float radius = byPlayer
+                        ? _cfg.Weapon.ProjectileRadius
+                        : _cfg.Gunner.ProjectileRadius;
+                    float ttl = byPlayer
+                        ? _cfg.Weapon.ProjectileLifetime
+                        : _cfg.Gunner.ProjectileLifetime;
+
+                    // A refusal (full table, id already tracked) is a value on
+                    // purpose: this runs inside FishNet's batched parse, where a
+                    // throw would abandon every message behind it (Р82/195).
+                    // What it costs is one bullet not drawn.
+                    _tracers.TrySpawn(p.Id, (int)eventTick, decoded.Pos, p.Height, p.Dir,
+                        p.HorizSpeed, p.VelZ, radius, ttl);
+                    break;
+                }
+                case SnapshotEventKind.ProjectileEnded:
+                    _tracers.Retire(p.Id, (int)eventTick);
                     break;
             }
         }
