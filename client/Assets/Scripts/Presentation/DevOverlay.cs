@@ -209,7 +209,7 @@ namespace Ring.Presentation
         /// on a healthy connection at Critical Rule 7's own 80 ms / 5% — none
         /// of them is caused by packet LOSS, which is ordinary and which the
         /// interpolation buffer exists to absorb: they are reordering,
-        /// duplication, a ring that overflowed, a frame that arrived with
+        /// duplication, a frame thrown away unshown, a frame that arrived with
         /// entities missing, a predicted round the server never confirmed, and
         /// the render clock's own snap count. That last one shares the `Clock:`
         /// line with the slew, which is the clock working as designed and never
@@ -221,6 +221,20 @@ namespace Ring.Presentation
         /// is a reading rather than a verdict, and coloring it would be the
         /// disease this task was opened to cure (`DroppedTime`, red from the
         /// first minute of every session and therefore meaningless).
+        ///
+        /// `DroppedSnapshots` HAD THE SAME DISEASE AND KEPT THE SAME CURE (bd
+        /// `app-0wm`), WHICH IS WHY THE LIST ABOVE NOW SAYS "a frame thrown
+        /// away unshown" WHERE IT USED TO SAY "a ring that overflowed". Those
+        /// are not the same event: a full ring is ordinary here — capacity is
+        /// `InterpBufferTicks + 2` and the residents span it whenever the render
+        /// clock sits its full `InterpBufferTicks` behind the newest tick — so
+        /// counting every eviction made the number a reading of the ring's
+        /// geometry, red on a healthy link at 16.5 a second (1371 in 83
+        /// seconds), believed by both the owner and the coordinator. The cure
+        /// went where `app-c3m`'s went, into the class that owns the counter
+        /// (`SnapshotQueue.EvictionWasNeverShown`), and nothing in this file
+        /// changed but this wording: the line is still red above zero, and
+        /// above zero now names a frame that was actually lost.
         void DrawNetworkSection()
         {
             if (!_hasNet) return;

@@ -175,6 +175,20 @@ namespace Ring.Networking.Client
     /// the ring is genuinely full of committed residents (no free slot
     /// exists) — never merely because a physical slot happened to be reused,
     /// which is precisely the bug fix-round 1 found in the modulo scheme.
+    /// THAT IS NECESSARY AND NO LONGER SUFFICIENT (bd `app-0wm`): the evicted
+    /// resident must also be a tick the render clock has NOT walked past yet.
+    /// A full ring is an ordinary working state here rather than a symptom —
+    /// capacity is `InterpBufferTicks + 2`, the floor trails the RENDER tick by
+    /// one, and the render clock trails the newest tick by `InterpBufferTicks`
+    /// whenever it is on target, which leaves the residents spanning the whole
+    /// ring and an admission with no free slot to take. Counting those
+    /// evictions measured the ring's geometry rather than the connection.
+    /// ⚠ IT IS NOT EVERY ADMISSION, and the measurement says so: 1371 in 83
+    /// seconds is 16.5/s against a ~28.5/s stream at 30 Hz and 5% loss, because
+    /// the clock's distance from the newest tick breathes between 2 and 4 —
+    /// one tick nearer and the residents are one short of the ring, so the
+    /// admission finds a free slot and evicts nothing. `EvictionWasNeverShown`
+    /// carries the added test and its own doc carries the rest.
     /// `Reset` does NOT clear this counter: the task brief's own list of what
     /// `Reset` clears — the ring, the floor, the newest tick, the epoch — does
     /// not name it, and a per-connection health counter that reset itself on
@@ -270,8 +284,13 @@ namespace Ring.Networking.Client
 
         /// Р83: snapshots evicted because the ring was full of committed
         /// residents when a newer, otherwise-valid tick needed a slot one of
-        /// them occupied. The queue's OWN counter, not `NetStats` — see the
-        /// class doc.
+        /// them occupied — AND the evicted tick had not been shown yet
+        /// (`EvictionWasNeverShown`, bd `app-0wm`). The eviction that frees a
+        /// tick the render clock has already walked past is the ring doing its
+        /// job, not a loss, and counting it made this number a function of the
+        /// ring's geometry rather than of the connection: 1371 "losses" in 83
+        /// seconds of a healthy match. The queue's OWN counter, not `NetStats`
+        /// — see the class doc.
         public int OverflowDroppedSnapshots;
 
         /// The ring's physical capacity, `InterpBufferTicks + 2` from the
@@ -395,12 +414,15 @@ namespace Ring.Networking.Client
             if (idx < 0)
             {
                 // The ring is genuinely full of COMMITTED residents (fix-round
-                // 1: this is the ONLY condition that counts as overflow now —
-                // never a physical-slot coincidence). Evict the TRUE oldest.
+                // 1: never a physical-slot coincidence). Evict the TRUE oldest.
+                // A full ring is the NECESSARY condition for the counter below
+                // and no longer the sufficient one — bd `app-0wm` added the
+                // second test, `EvictionWasNeverShown`, four lines down.
                 idx = OldestCommittedIndex();
+                uint evictedTick = _slotTick[idx];
                 _occupied[idx] = false;
                 _count--;
-                OverflowDroppedSnapshots++;
+                if (EvictionWasNeverShown(evictedTick)) OverflowDroppedSnapshots++;
             }
 
             _hasPending = true;
@@ -513,5 +535,51 @@ namespace Ring.Networking.Client
             }
             return oldest;
         }
+
+        /// Whether the frame just evicted from `evictedTick`'s slot was thrown
+        /// away UNSHOWN — the only kind of eviction
+        /// `OverflowDroppedSnapshots` is meant to count (bd `app-0wm`).
+        ///
+        /// THE FLOOR IS WHAT "ALREADY SHOWN" MEANS, and the ring already holds
+        /// it. `DiscardBelow(renderTick - 1)` is the consumer telling this
+        /// queue how far the render clock has walked
+        /// (`NetworkSimBackend.Advance`), so a resident at or below `_floor` is
+        /// a tick the picture has been through: evicting it frees a slot and
+        /// costs nothing. Above the floor is a frame that arrived intact and
+        /// was thrown away before it could be shown — the loss
+        /// `NetDiagnostics.DroppedSnapshots` has always promised in as many
+        /// words, and the only kind worth a red counter.
+        ///
+        /// WITHOUT THIS TEST THE COUNTER MEASURED THE RING'S GEOMETRY, NOT THE
+        /// CONNECTION. Capacity is `InterpBufferTicks + 2` and the floor sits
+        /// one tick below the render tick, so whenever the render clock is the
+        /// full `InterpBufferTicks` behind the newest tick, the residents span
+        /// the entire ring and the next admission has no free slot: it evicts a
+        /// tick the picture went through a frame ago and charged the diagnostic
+        /// for it.
+        ///
+        /// HOW OFTEN THAT HAPPENS IS A MEASUREMENT, NOT A DERIVATION, and the
+        /// arithmetic is worth keeping because it is what tells the two states
+        /// apart. Measured: 1371 "losses" in 83 seconds of a healthy match
+        /// under 80 ms / 5%, `stale` and `dup` both zero, red the whole time.
+        /// That is 16.5/s against a stream of ~28.5 admissions/s (30 Hz less 5%
+        /// loss) — not every frame, because the clock's distance from the
+        /// newest tick breathes between 2 and 4 ticks and one tick nearer
+        /// leaves a slot free. Both the owner and the coordinator believed the
+        /// number and went looking for a network fault that was not there.
+        ///
+        /// NO FLOOR YET MEANS EVERY EVICTION COUNTS. Before the first
+        /// `DiscardBelow` nothing has been shown, so nothing evicted can have
+        /// been shown either; the honest answer is the conservative one. It is
+        /// also what keeps this change confined to the accounting: the two
+        /// pre-existing asserts that reach this branch run with no floor set,
+        /// and they still read what they always read.
+        ///
+        /// THE EVICTION ITSELF IS UNTOUCHED — which slot, which resident, which
+        /// verdict, in what order — exactly as `app-c3m` left the `dt` clamp
+        /// alone and moved only the accounting off it. The test named
+        /// `NewAccounting_EvictsTheSameTicks_InTheSameOrder_WithTheSameVerdicts`
+        /// is that promise, checked rather than asserted.
+        bool EvictionWasNeverShown(uint evictedTick) => !_hasFloor || evictedTick > _floor;
     }
 }

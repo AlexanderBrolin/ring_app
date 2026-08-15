@@ -362,6 +362,354 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual((uint)(depth + extra), queue.NewestTick);
         }
 
+        // ---- Stage 2 (bd app-0wm): the accounting, not the ring ----
+        //
+        // `OverflowDroppedSnapshots` counted every eviction, and evicting is
+        // ordinary here: the ring holds `InterpBufferTicks + 2` ticks, the
+        // render clock sits up to `InterpBufferTicks` behind the newest, and
+        // `NetworkSimBackend.Advance` discharges at `RenderTick - 1` — so
+        // whenever the clock is at its full distance the residents fill `Depth`
+        // of `Depth`, and the tick pushed out is the one the renderer finished
+        // with a frame ago. Not every frame: the measured 1371 in 83 seconds is
+        // 16.5/s against ~28.5 admissions/s, because that distance breathes
+        // between 2 and 4 and one tick nearer leaves a slot free. Either way the
+        // counter grew on a HEALTHY connection and DevOverlay painted it red. The fix subtracts that case from the COUNT and
+        // touches nothing else, the same move `app-c3m` made for `DroppedTime`
+        // in `FixedStepAccumulator` (`AccumulatorTests`' own Task 48 block).
+        //
+        // The ring's own behavior — which resident is evicted, when, and what
+        // verdict `Admit` returns — is unchanged, and
+        // `NewAccounting_EvictsTheSameTicks_...` below is what makes that a
+        // fact rather than a claim.
+
+        /// THE TEST THIS TASK WAS OPENED FOR. It drives the queue the way
+        /// `NetworkSimBackend.Advance` really drives it: admit the newest
+        /// tick, then `DiscardBelow(RenderTick - 1)` where `RenderTick` is
+        /// `newest - InterpBufferTicks` (`RenderClock`'s own target). Every
+        /// frame past the fill evicts, every evicted tick IS the floor — a
+        /// moment the render clock walked past — and the counter must stay at
+        /// zero through all of it.
+        [Test]
+        public void SteadyStateRotation_EvictsOnlyTicksTheRenderClockPassed_AndCountsNone()
+        {
+            var queue = NewQueue(out NetTimings timings);
+            queue.Reset(Epoch);
+            int depth = queue.Depth;
+            Assert.AreEqual(5, depth, "fixture premise: the shipped default ring");
+
+            const uint firstTick = 200;
+            const int frames = 60;
+            int framesThatEvicted = 0;
+
+            for (uint newest = firstTick; newest < firstTick + (uint)frames; newest++)
+            {
+                // A FULL ring before the admission is the only state in which
+                // `Admit` can reach its eviction branch at all, so this is the
+                // premise without which the assertion below would be empty
+                // (Task 26 finding F-D: prove the thing under test actually
+                // happened before concluding anything from a zero).
+                if (queue.Count == depth) framesThatEvicted++;
+
+                Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted,
+                    queue.Admit(Epoch, newest, out RenderSnapshot slot),
+                    $"tick {newest}: a healthy stream is admitted every frame");
+                Assert.IsNotNull(slot);
+                queue.Commit(newest);
+
+                uint renderTick = newest - (uint)timings.InterpBufferTicks;
+                queue.DiscardBelow(renderTick - 1u);
+
+                Assert.AreEqual(0, queue.OverflowDroppedSnapshots,
+                    $"frame at tick {newest}: the ring pushed out a tick the render clock had "
+                    + "already walked past — routine rotation, not a lost snapshot. Counting it "
+                    + "is the whole defect: 1371 'losses' in 83 seconds of a healthy match under "
+                    + "80 ms / 5%, with stale and dup both at zero");
+            }
+
+            Assert.Greater(framesThatEvicted, frames / 2,
+                "fixture premise: the eviction branch really did run, on most of these frames — a "
+                + "counter that stays at zero proves nothing if nothing was ever evicted");
+            Assert.AreEqual(depth, queue.Count, "the ring stays exactly full in the steady state");
+
+            const uint lastTick = firstTick + (uint)frames - 1u;
+            for (uint t = lastTick - (uint)depth + 1u; t <= lastTick; t++)
+                Assert.IsTrue(queue.TryGet(t, out _),
+                    $"tick {t}: the residents are the newest Depth ticks, as they were all along");
+            Assert.IsFalse(queue.TryGet(lastTick - (uint)depth, out _),
+                "and the tick just behind them is the one the last frame evicted — the renderer "
+                + "was done with it before it went");
+        }
+
+        /// THE OTHER HALF OF THE SAME COIN, and the reason "never count
+        /// anything" is not a legal answer. A consumer that stops discharging
+        /// — a hitch, a freeze, a burst of delayed datagrams landing faster
+        /// than render frames go by (Р83's own scenario) — loses frames the
+        /// render clock never reached. Those are real, and they are exactly
+        /// what `NetDiagnostics.DroppedSnapshots` has promised all along: "a
+        /// snapshot that arrived intact and was thrown away unshown".
+        [Test]
+        public void EvictionAboveTheFloor_IsCountedAsARealLoss()
+        {
+            var queue = NewQueue(out _);
+            queue.Reset(Epoch);
+            int depth = queue.Depth;
+            Assert.AreEqual(5, depth, "fixture premise: the shipped default ring");
+
+            // The consumer discharged once, long ago, and has not run since.
+            queue.DiscardBelow(50);
+
+            for (uint t = 100; t <= 104; t++)
+            {
+                Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, t, out _));
+                queue.Commit(t);
+            }
+            Assert.AreEqual(depth, queue.Count, "fixture premise: full, and nothing here was shown");
+            Assert.AreEqual(0, queue.OverflowDroppedSnapshots, "fixture premise: nothing evicted yet");
+
+            Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 105, out _));
+            queue.Commit(105);
+            Assert.IsFalse(queue.TryGet(100, out _), "fixture premise: tick 100 really was evicted");
+            Assert.AreEqual(1, queue.OverflowDroppedSnapshots,
+                "tick 100 sat far above a floor of 50 — the render clock never reached it, so it "
+                + "went unshown: a genuine loss, and the one thing this counter exists to say");
+
+            Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 106, out _));
+            queue.Commit(106);
+            Assert.AreEqual(2, queue.OverflowDroppedSnapshots,
+                "one per frame lost, not one per stall — 101 went unshown too");
+        }
+
+        /// THE OFF-BY-ONE, FROM BOTH SIDES. Both runs below hold the exact
+        /// same residents and evict the exact same tick (100); the floor is
+        /// the only thing that differs, and only by one. `DiscardBelow`'s
+        /// floor is `RenderTick - 1` — the last tick the consumer is DONE
+        /// with — so a tick equal to the floor has been shown and a tick one
+        /// above it has not.
+        [Test]
+        public void FloorBoundary_EvictionAtTheFloorIsFree_OneTickAboveItIsALoss()
+        {
+            int EvictTick100(uint floor)
+            {
+                var queue = NewQueue(out _);
+                queue.Reset(Epoch);
+                Assert.AreEqual(5, queue.Depth, "fixture premise: the shipped default ring");
+                queue.DiscardBelow(floor);
+
+                for (uint t = 100; t <= 104; t++)
+                {
+                    Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, t, out _),
+                        $"fixture premise (floor {floor}): tick {t} fills a free slot");
+                    queue.Commit(t);
+                }
+                Assert.AreEqual(queue.Depth, queue.Count,
+                    $"fixture premise (floor {floor}): the ring is full, nothing discharged");
+
+                Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 105, out _));
+                queue.Commit(105);
+                Assert.IsFalse(queue.TryGet(100, out _),
+                    $"fixture premise (floor {floor}): tick 100 is the evicted one, both times");
+                return queue.OverflowDroppedSnapshots;
+            }
+
+            Assert.AreEqual(0, EvictTick100(floor: 100),
+                "the evicted tick IS the floor: `DiscardBelow(RenderTick - 1)` means the consumer "
+                + "is finished with it, so pushing it out is routine rotation");
+            Assert.AreEqual(1, EvictTick100(floor: 99),
+                "one lower a floor, the same ring evicting the same tick: 100 now sits one ABOVE "
+                + "the floor, which means the renderer had not reached it — a lost snapshot");
+        }
+
+        /// NO FLOOR AT ALL — named here rather than left to fall out of an
+        /// implementation detail (bd `app-0wm`: a real loss is an evicted tick
+        /// above the floor, "or there being no floor yet"). Before the first
+        /// `DiscardBelow` the consumer has shown NOTHING, so nothing the ring
+        /// throws away can have been shown. In production that window is only
+        /// the opening frames — `NetworkSimBackend.Advance` discharges every
+        /// render frame — so a ring that manages to overflow inside it is
+        /// genuinely ill, which is precisely what the counter is for.
+        ///
+        /// TICK ZERO IS THE FIXTURE ON PURPOSE. "No floor" and "a floor of 0"
+        /// are different states, and a test evicting tick 100 could not tell
+        /// them apart: `100 > 0` answers the same either way. Evicting tick
+        /// ZERO is the only pair of runs where the `_hasFloor` half of the
+        /// decision is the thing under test.
+        [Test]
+        public void WithNoFloorYet_AnEvictionIsALoss_AFloorOfZeroMakesItRotation()
+        {
+            int EvictTickZero(bool discharge)
+            {
+                var queue = NewQueue(out _);
+                queue.Reset(Epoch);
+                Assert.AreEqual(5, queue.Depth, "fixture premise: the shipped default ring");
+                if (discharge) queue.DiscardBelow(0); // the opening frames' own floor
+
+                for (uint t = 0; t <= 4; t++)
+                {
+                    Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, t, out _),
+                        $"fixture premise (discharge {discharge}): tick {t} fills a free slot");
+                    queue.Commit(t);
+                }
+                Assert.AreEqual(queue.Depth, queue.Count,
+                    $"fixture premise (discharge {discharge}): the ring is full");
+
+                Assert.AreEqual(SnapshotQueue.AdmitVerdict.Accepted, queue.Admit(Epoch, 5, out _));
+                queue.Commit(5);
+                Assert.IsFalse(queue.TryGet(0, out _),
+                    $"fixture premise (discharge {discharge}): tick 0 is the evicted one, both times");
+                return queue.OverflowDroppedSnapshots;
+            }
+
+            Assert.AreEqual(1, EvictTickZero(discharge: false),
+                "no `DiscardBelow` has ever run, so the consumer has shown nothing at all — the "
+                + "frame the ring threw away was thrown away unshown, by definition");
+            Assert.AreEqual(0, EvictTickZero(discharge: true),
+                "the same ring evicting the same tick 0, the consumer now finished with tick 0: "
+                + "routine rotation. `_floor == 0` and 'no floor yet' are DIFFERENT states and the "
+                + "count has to tell them apart — a bare `evicted > _floor` cannot");
+        }
+
+        /// THE BEHAVIOR-NEUTRALITY PROOF — the precedent's own
+        /// `AccumulatorTests.IgnoreNextFrameGap_ChangesNoTickCountAndNoPhase`
+        /// ("THE HASH-NEUTRALITY PROOF") applied to this class.
+        /// `OverflowDroppedSnapshots` is a diagnostic nothing reads back, but
+        /// the branch it lives in is the ring's EVICTION branch — the one that
+        /// decides which arrived frame the renderer will never see. So this
+        /// pins the whole observable shape of that branch against a scripted
+        /// stream: the verdict of every admission, the tick evicted by every
+        /// admission IN ORDER, the occupancy after each one, and the residents
+        /// at the end. Exactly one number in this test is allowed to move
+        /// between the old accounting and the new one, and it is the last
+        /// assertion.
+        ///
+        /// THE TRACE ASSERTIONS HOLD IN BOTH WORLDS ON PURPOSE — that IS the
+        /// proof, the same way `Assert.AreEqual(chargedTicks, excusedTicks)`
+        /// is in the precedent. What they discriminate against is a fix that
+        /// reaches the ring instead of the count: variant (b) of the bug
+        /// report (a wider `Depth`) moves the occupancies AND the eviction
+        /// ticks AND the `Stale` verdicts, since `Depth` is also the backward
+        /// admission window; a fix that refused the admission rather than
+        /// evicting moves the verdicts; a fix that left the below-floor
+        /// resident in place moves both.
+        [Test]
+        public void NewAccounting_EvictsTheSameTicks_InTheSameOrder_WithTheSameVerdicts()
+        {
+            var queue = NewQueue(out _);
+            queue.Reset(Epoch);
+            Assert.AreEqual(5, queue.Depth, "fixture premise: the shipped default ring");
+
+            var verdicts = new List<SnapshotQueue.AdmitVerdict>();
+            var evicted = new List<uint>();
+            var occupancy = new List<int>();
+
+            // Every tick this script can ever make resident. A reservation is
+            // invisible until `Commit`, and `Admit` adds nothing to the ring
+            // on its own, so the ONE tick that disappears across an `Admit`
+            // call is the tick that admission evicted.
+            List<uint> Residents()
+            {
+                var live = new List<uint>();
+                for (uint t = 195; t <= 220; t++)
+                    if (queue.TryGet(t, out _)) live.Add(t);
+                return live;
+            }
+
+            void Step(uint tick)
+            {
+                List<uint> before = Residents();
+                var verdict = queue.Admit(Epoch, tick, out RenderSnapshot slot);
+                foreach (uint t in before)
+                    if (!queue.TryGet(t, out _)) evicted.Add(t);
+
+                verdicts.Add(verdict);
+                if (verdict == SnapshotQueue.AdmitVerdict.Accepted)
+                {
+                    Assert.IsNotNull(slot, $"tick {tick}: Accepted always hands back a slot");
+                    queue.Commit(tick);
+                }
+                occupancy.Add(queue.Count);
+            }
+
+            // 1-5. The ring fills through FREE slots while the consumer keeps
+            // up: `DiscardBelow(newest - InterpBufferTicks - 1)` every frame,
+            // which is `NetworkSimBackend.Advance`'s own call spelled out.
+            Step(200); queue.DiscardBelow(196);
+            Step(201); queue.DiscardBelow(197);
+            Step(202); queue.DiscardBelow(198);
+            Step(203); queue.DiscardBelow(199);
+            Step(204); queue.DiscardBelow(200);
+
+            // 6-8. The steady state: full ring, one eviction per frame, and
+            // the evicted tick IS the floor every time.
+            Step(205); queue.DiscardBelow(201);
+            Step(206); queue.DiscardBelow(202);
+            Step(207);
+
+            // 9-11. The consumer stalls — no `DiscardBelow` at all — while
+            // frames keep arriving (Р83's burst). The floor stays at 202, so
+            // these three evictions are of ticks nobody has seen.
+            Step(208);
+            Step(209);
+            Step(210);
+
+            // The consumer catches up in one jump, discharging three residents.
+            queue.DiscardBelow(209);
+
+            Step(211); // 12. A free slot again — no eviction at all.
+            Step(208); // 13. Below the floor — Stale.
+            Step(210); // 14. Still a committed resident — Duplicate.
+            Step(213); // 15. A gap in the stream, accepted on a free slot.
+            Step(212); // 16. The hole behind it, filled (Р37).
+            Step(214); // 17. Full again — evicts 209, which IS the floor.
+            Step(214u + (uint)SnapshotQueue.FutureHorizonTicks + 1u); // 18. FutureRejected (Р150е).
+            Step(209); // 19. Evicted AND behind the backward window — Stale.
+            Step(215); // 20. Evicts 210, one above the floor — a real loss.
+
+            CollectionAssert.AreEqual(new[]
+            {
+                SnapshotQueue.AdmitVerdict.Accepted,       // 200
+                SnapshotQueue.AdmitVerdict.Accepted,       // 201
+                SnapshotQueue.AdmitVerdict.Accepted,       // 202
+                SnapshotQueue.AdmitVerdict.Accepted,       // 203
+                SnapshotQueue.AdmitVerdict.Accepted,       // 204
+                SnapshotQueue.AdmitVerdict.Accepted,       // 205
+                SnapshotQueue.AdmitVerdict.Accepted,       // 206
+                SnapshotQueue.AdmitVerdict.Accepted,       // 207
+                SnapshotQueue.AdmitVerdict.Accepted,       // 208
+                SnapshotQueue.AdmitVerdict.Accepted,       // 209
+                SnapshotQueue.AdmitVerdict.Accepted,       // 210
+                SnapshotQueue.AdmitVerdict.Accepted,       // 211
+                SnapshotQueue.AdmitVerdict.Stale,          // 208 again, below the floor
+                SnapshotQueue.AdmitVerdict.Duplicate,      // 210 again, still resident
+                SnapshotQueue.AdmitVerdict.Accepted,       // 213
+                SnapshotQueue.AdmitVerdict.Accepted,       // 212, the hole
+                SnapshotQueue.AdmitVerdict.Accepted,       // 214
+                SnapshotQueue.AdmitVerdict.FutureRejected, // 214 + horizon + 1
+                SnapshotQueue.AdmitVerdict.Stale,          // 209, past the backward window
+                SnapshotQueue.AdmitVerdict.Accepted,       // 215
+            }, verdicts, "every admission answers exactly what it answered before — the accounting "
+                + "change does not reach a single verdict");
+
+            CollectionAssert.AreEqual(new uint[] { 200, 201, 202, 203, 204, 205, 209, 210 }, evicted,
+                "the same eight ticks are evicted, in the same order, by the same admissions — the "
+                + "TRUE oldest resident each time (Р83), untouched");
+
+            CollectionAssert.AreEqual(
+                new[] { 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 4, 5, 5, 5, 5, 5 }, occupancy,
+                "and the ring holds the same number of residents after every one of them");
+
+            Assert.AreEqual(215u, queue.NewestTick);
+            CollectionAssert.AreEqual(new uint[] { 211, 212, 213, 214, 215 }, Residents(),
+                "ending on exactly the newest Depth ticks, as it began");
+
+            // THE ONE NUMBER ALLOWED TO MOVE. Four of those eight evictions —
+            // 200, 201, 202 and 209 — were of ticks at or below the floor at
+            // the moment they went: the render clock had walked past them.
+            // The old accounting charged all eight.
+            Assert.AreEqual(4, queue.OverflowDroppedSnapshots,
+                "only the four evictions of ticks the consumer had NOT reached count as lost "
+                + "snapshots: 203, 204 and 205 during the stall, and 210 after it");
+        }
+
         // ---------------------------------------------------------------------
         // Fix-round 1, IMPORTANT #2. Admission is two-phase: a reservation
         // that is never Committed must not be visible, must not count, and
