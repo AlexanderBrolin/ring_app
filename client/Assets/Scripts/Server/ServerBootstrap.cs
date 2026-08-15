@@ -258,6 +258,10 @@ namespace Ring.Server
 
         void Awake()
         {
+            // bd `app-l6b`: strip the stack trace from ordinary lines FIRST, so
+            // even the lines this method's own failures print come out clean.
+            QuietenOrdinaryLogLines();
+
             // See the class doc's last paragraph. `InstanceFinder` reads
             // `NetworkManager.Instances`, which that class appends itself to
             // only AFTER `InitializeComponents()` — i.e. after `ServerManager`
@@ -269,6 +273,39 @@ namespace Ring.Server
             if (_nm == null) return;
 
             _nm.ServerManager.SetStartOnHeadless(false);
+        }
+
+        /// Unity prints a 4-8 line stack trace under EVERY line a player logs,
+        /// ordinary ones included (bd `app-l6b`, measured on a live headless
+        /// smoke: `ServerBootstrap: listening` came with four frames beneath
+        /// it). On a game server that is not noise, it is four separate costs:
+        /// the container's log is four to five times longer than its content;
+        /// a line-by-line reader (the control panel of `app-7ss`) has to tell
+        /// a message from a stack frame; the frames of OUR code print the
+        /// ABSOLUTE path of the build machine's working tree, so the
+        /// developer's directory layout ends up in the host's log; and
+        /// `ExtractStackTrace` runs on every single call.
+        ///
+        /// ERRORS AND EXCEPTIONS KEEP THEIRS (`ScriptOnly` — our frames, not
+        /// the engine's). That is the whole point of the owner's variant (a):
+        /// an operator needs the stack where something BROKE, never under a
+        /// line that reports normal progress. `ScriptOnly` rather than `Full`
+        /// because the engine's own frames name Unity's build paths and tell
+        /// an operator nothing about this project.
+        ///
+        /// PROCESS-WIDE AND SET ONCE, on the one component that owns the
+        /// server process's lifetime. `Application.SetStackTraceLogType` has no
+        /// scene state behind it and no scope narrower than the process, which
+        /// is exactly right here: every line this process prints is a server
+        /// line. The client is untouched — it has no `ServerBootstrap`, and its
+        /// console is a developer's, not an operator's.
+        static void QuietenOrdinaryLogLines()
+        {
+            Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
+            Application.SetStackTraceLogType(LogType.Warning, StackTraceLogType.None);
+            Application.SetStackTraceLogType(LogType.Assert, StackTraceLogType.None);
+            Application.SetStackTraceLogType(LogType.Error, StackTraceLogType.ScriptOnly);
+            Application.SetStackTraceLogType(LogType.Exception, StackTraceLogType.ScriptOnly);
         }
 
         void Start()
