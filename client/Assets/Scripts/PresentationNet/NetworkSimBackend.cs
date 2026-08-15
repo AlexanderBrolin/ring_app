@@ -314,6 +314,30 @@ namespace Ring.Presentation.Net
         float _diagLogSeconds;
         float _bytesDownPerSecond;
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
+        // Holds the trigger down without a human so the fire pipeline can be
+        // measured end to end, and records WHEN each authoritative round of
+        // this client's own came off the wire. Reverted once the numbers are
+        // taken.
+        static readonly bool _autofireEnabled =
+            System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-ring-autofire") >= 0;
+        uint _autofireFirstTick;
+        bool _autofireHeld;
+        uint _autofireEdgeTick;
+        bool _autofireEdgeShotSeen;
+        uint _devLastOriginTick;
+        int _shownShotsThisWindow;
+        uint _lastShownShotTick;
+        bool _shownEdgeSeen;
+        readonly System.Text.StringBuilder _shownShotGaps = new System.Text.StringBuilder();
+        bool _lastFireInputHeld;
+        uint _lastFireInputTick;
+        int _ownShotsThisWindow;
+        uint _lastOwnShotTick;
+        readonly System.Text.StringBuilder _ownShotGaps = new System.Text.StringBuilder();
+#endif
+
         // The NEXT frame's length is not an interval this client spent
         // receiving, so it must not become part of a window (fix-round 1,
         // F-1). Raised by `NotifyEngineIdle` and spent by the next
@@ -897,6 +921,41 @@ namespace Ring.Presentation.Net
             if (_controller == null) return;
             if (!_requestFrameInput(out SimInput frame)) return;
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
+            if (_autofireEnabled)
+            {
+                uint now = _nm.TimeManager.LocalTick;
+                if (_autofireFirstTick == 0u) _autofireFirstTick = now;
+                // 90 ticks (3 s) of settling, then 150 on / 90 off, repeating:
+                // both edges of the symptom (the pause at the start of a burst
+                // and the tail after release) land inside one 30-second run.
+                uint since = now - _autofireFirstTick;
+                bool held = since >= 90u && ((since - 90u) % 240u) < 150u;
+                if (held != _autofireHeld)
+                {
+                    _autofireHeld = held;
+                    _autofireEdgeTick = now;
+                    _autofireEdgeShotSeen = false;
+                    UnityEngine.Debug.Log($"AUTOFIRE {(held ? "on" : "off")} localTick={now}");
+                }
+                frame.FireHeld = held;
+            }
+
+            // The trigger EDGE as this process really sampled it — with or
+            // without `-ring-autofire`, so an owner's own playtest logs the same
+            // quantity the automated stand does.
+            if (frame.FireHeld != _lastFireInputHeld)
+            {
+                _lastFireInputHeld = frame.FireHeld;
+                _lastFireInputTick = _nm.TimeManager.LocalTick;
+                _autofireEdgeShotSeen = false;
+                _shownEdgeSeen = false;
+                UnityEngine.Debug.Log($"FIREINPUT held={frame.FireHeld} "
+                    + $"localTick={_lastFireInputTick}");
+            }
+#endif
+
             _controller.SetPendingInput(in frame);
         }
 
@@ -1092,6 +1151,19 @@ namespace Ring.Presentation.Net
                 + $"corrections={d.CorrectionCount} medianM={d.CorrectionMedianMeters:F3} "
                 + $"bytesDownPerSec={d.BytesDownPerSecond} "
                 + $"latSim={(d.LatencySimActive ? $"{d.LatencySimRttMs}ms/{d.LatencySimLossPercent:F1}%" : "off")}");
+
+            // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
+            if (_ownShotsThisWindow > 0 || _shownShotsThisWindow > 0)
+            {
+                UnityEngine.Debug.Log($"SHOTS held={_lastFireInputHeld} "
+                    + $"localTick={_nm.TimeManager.LocalTick} "
+                    + $"recv={_ownShotsThisWindow} recvGaps=[{_ownShotGaps}] "
+                    + $"shown={_shownShotsThisWindow} shownGaps=[{_shownShotGaps}]");
+                _ownShotsThisWindow = 0;
+                _ownShotGaps.Clear();
+                _shownShotsThisWindow = 0;
+                _shownShotGaps.Clear();
+            }
 #endif
         }
 
@@ -1926,6 +1998,10 @@ namespace Ring.Presentation.Net
                 // calls below reach a live FishNet object. Keeping them here
                 // is what leaves the decode a pure function a unit test can
                 // reach.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
+                _devLastOriginTick = originTick;
+#endif
                 RouteToGhosts((SnapshotEventKind)record.Kind, in p);
                 RouteToTracers(originTick, (SnapshotEventKind)record.Kind, in p, in decoded);
                 RouteOwnDeath(in decoded);
@@ -2049,7 +2125,29 @@ namespace Ring.Presentation.Net
             switch (kind)
             {
                 case SnapshotEventKind.ProjectileSpawned:
-                    if (p.PlayerIndex == LocalPlayerIndex) _ghosts.Confirm(p.Id, 0u);
+                    if (p.PlayerIndex == LocalPlayerIndex)
+                    {
+                        _ghosts.Confirm(p.Id, 0u);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                        // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20.
+                        // NOT FOR COMMIT. The gap between consecutive arrivals
+                        // is what tells an evenly-paced stream from a burst.
+                        uint arrivedAt = _nm.TimeManager.LocalTick;
+                        _ownShotsThisWindow++;
+                        if (_lastOwnShotTick != 0u)
+                            _ownShotGaps.Append(arrivedAt - _lastOwnShotTick).Append(',');
+                        _lastOwnShotTick = arrivedAt;
+                        if (!_autofireEdgeShotSeen && _lastFireInputHeld)
+                        {
+                            _autofireEdgeShotSeen = true;
+                            UnityEngine.Debug.Log($"FIRSTSHOT arrivedTick={arrivedAt} "
+                                + $"pressTick={_lastFireInputTick} "
+                                + $"delayTicks={arrivedAt - _lastFireInputTick} "
+                                + $"originTick={_devLastOriginTick} "
+                                + $"renderTick={_clock.RenderTick}");
+                        }
+#endif
+                    }
                     break;
                 case SnapshotEventKind.ProjectileEnded:
                     _ghosts.TryTranslateEnd(p.Id, out int _);
@@ -2131,6 +2229,29 @@ namespace Ring.Presentation.Net
                    && _events.TryDequeue(renderTick, out SimEvent due))
             {
                 _frameEvents[_frameEventCount++] = due;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // TEMPORARY INSTRUMENTATION — bd app-a4k, session 20. NOT FOR COMMIT.
+                // The moment the PICTURE is handed this client's own shot: the
+                // far end of the loop the owner watches.
+                // `Owner` is Player-vs-Mob, not a slot index — in a one-player
+                // probe match that is exactly this client's own fire.
+                if (due.Kind == Ring.Simulation.Core.SimEventKind.ProjectileFired
+                    && due.Owner == Ring.Simulation.Core.ProjectileOwner.Player)
+                {
+                    uint shownAt = _nm.TimeManager.LocalTick;
+                    _shownShotsThisWindow++;
+                    if (_lastShownShotTick != 0u)
+                        _shownShotGaps.Append(shownAt - _lastShownShotTick).Append(',');
+                    _lastShownShotTick = shownAt;
+                    if (!_shownEdgeSeen && _lastFireInputHeld)
+                    {
+                        _shownEdgeSeen = true;
+                        UnityEngine.Debug.Log($"SHOTSHOWN localTick={shownAt} "
+                            + $"renderTick={renderTick} eventTick={due.Tick} "
+                            + $"sincePressTicks={shownAt - _lastFireInputTick}");
+                    }
+                }
+#endif
             }
         }
 

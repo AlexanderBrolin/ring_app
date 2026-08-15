@@ -233,7 +233,8 @@ namespace Ring.Presentation
         void PredictBurst()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
-            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime)) return;
+            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime,
+                    _runner.FirePredictionMinGapSeconds)) return;
 
             RenderSnapshot curr = _runner.RenderCurr;
             // No doll yet (the opening frames of a match), or none any more

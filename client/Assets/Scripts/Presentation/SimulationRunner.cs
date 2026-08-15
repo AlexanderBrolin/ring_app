@@ -173,6 +173,28 @@ namespace Ring.Presentation
         public float ImmediatePredictionWindowSeconds
             => _backend.ImmediatePredictionWindowSeconds;
 
+        /// How close two PREDICTED shots may be before the latch reads the
+        /// second one as a reconciliation echo of the first (bd `app-8dv`,
+        /// `ImmediatePredictionLatch.ShouldPredict`'s three-argument overload).
+        ///
+        /// FOUR FIFTHS OF THE WEAPON'S OWN CADENCE, and both halves of that
+        /// matter. The cadence is the right quantity: a genuine next round
+        /// cannot arrive sooner than `FireInterval`, while a correction's echo
+        /// arrives within a few frames of the round it echoes. The margin is
+        /// what makes it usable on a real clock — frames do not land on tick
+        /// boundaries, and an accumulated float drifts either side of the
+        /// nominal gap (0.11999997 against 0.12 in the latch's own tests), so a
+        /// floor AT the cadence would refuse legitimate rounds.
+        ///
+        /// IT LIVES HERE AND NOT IN THE LATCH because the latch may not read a
+        /// number that belongs to somebody else (lesson 155); this class already
+        /// owns the config the gate itself is asked about.
+        ///
+        /// ZERO BEFORE THE FIRST `Restart`, which is exactly right: `Config`
+        /// reads `default` until then, and a zero floor is the old
+        /// one-prediction-at-a-time rule — the safe direction.
+        public float FirePredictionMinGapSeconds => Config.Weapon.FireInterval * 0.8f;
+
         /// This flush's event buffer, read by `SimEventRouter` inside
         /// `TicksFlushed` and dropped right after it returns (see `Update`).
         public int EventCount => _backend.EventCount;
