@@ -95,16 +95,22 @@ namespace Ring.Presentation
         /// as `Curr.Tick` for a backend whose snapshots arrive late.
         int CurrentTick { get; }
 
-        /// How long a shown-but-unconfirmed ImmediateMuzzleFeedback prediction
-        /// may wait for the event that confirms it (Stage 2 Task 45b fix-round
-        /// 1) — `ImmediatePredictionLatch`'s window, and the answer belongs
+        /// How long a shown-but-unconfirmed prediction may wait for the event
+        /// that confirms it (Stage 2 Task 45b fix-round 1) —
+        /// `ImmediatePredictionLatch`'s window, and the answer belongs
         /// HERE because it is a property of how fast a backend's own events come
         /// back, which is the one thing the two implementations differ in by
         /// orders of magnitude: the local one flushes a tick's events inside the
         /// same `SimulationRunner.Update` that produced them, while a networked
         /// one holds every event until the render clock has waited out the
-        /// interpolation buffer. Both consumers read this ONE number through the
-        /// facade; neither keeps a window of its own.
+        /// interpolation buffer. Every consumer reads this ONE number through
+        /// the facade; not one of them keeps a window of its own. Since bd
+        /// `app-g21` that is three components and two predicted things (the shot
+        /// of Task 28 and the dash), and the number also bounds the OPPOSITE
+        /// record — an act already shown by its own event, waiting to refuse the
+        /// prediction still to come (`ImmediatePredictionLatch.
+        /// NoteShownFromEvent`). What that second use demands of each of the two
+        /// constants is written on the constants themselves.
         ///
         /// THE DEFAULT IS THE PATIENT ONE, deliberately. A backend that says
         /// nothing is assumed to confirm slowly, because the two mistakes are

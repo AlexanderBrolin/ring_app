@@ -42,7 +42,10 @@ namespace Ring.Presentation
         /// patient default here would leave a prediction that will never be
         /// confirmed blocking the next round's prediction ten times longer than
         /// this backend can possibly need — and solo play is where every
-        /// playtest before milestone В1 happens.
+        /// playtest before milestone В1 happens. SHORT HAS A FLOOR OF ITS OWN
+        /// since bd `app-g21`, and it is on the constant rather than here: on
+        /// this backend a dash's event precedes its gate's edge, so the same
+        /// number also has to outlive a whole dash.
         public float ImmediatePredictionWindowSeconds
             => ImmediatePredictionLatch.SameFrameWindowSeconds;
 
