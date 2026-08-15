@@ -588,29 +588,37 @@ namespace Ring.Networking.Server
             // this console; without the complaint, "the switch never arrived"
             // and "the switch was rejected" are.
             //
-            // BOTH GO THROUGH UnityEngine.Debug, NOT THROUGH _nm.Log, and the
-            // two _nm.Log lines further down this file are not the precedent
-            // to follow here. A dedicated-server build defines UNITY_SERVER,
-            // and FishNet's logging configuration answers that define with
-            // `_headlessLogging`, whose default is LoggingType.Error
-            // (LevelLoggingConfiguration.cs:55, :86-98 — and Server.unity
-            // leaves NetworkManager's `_logging` unassigned, so the default is
-            // what runs). CanLog admits only levels at or below the highest
-            // admitted one, and Common(3)/Warning(2) both sit above Error(1),
-            // so EVERY _nm.Log and _nm.LogWarning of the headless build is
-            // dropped before it reaches stdout. The build this matters for is
-            // `linux-server-dev` — NOT the container, whose image is packed
-            // from the RELEASE server (`client/docker/build.sh` builds
-            // `BuildLinuxServer`), where this whole `#if` is gone before the
-            // compiler sees it and there is no switch to operate. The dev
-            // server IS headless all the same, so without `Debug` the only
-            // report an operator has of what his launch line did would be
-            // silence. ServerBootstrap writes every operator-facing diagnostic
-            // through UnityEngine.Debug and reaches that log; `Debug` is
-            // spelled out in full because this file imports System.Diagnostics
-            // (for Stopwatch) and does NOT import UnityEngine, so a bare
-            // `Debug` would bind to the wrong type outright rather than being
-            // reported as ambiguous.
+            // BOTH GO THROUGH UnityEngine.Debug, WHICH IS HOW THE WHOLE SERVER
+            // ZONE LOGS (app-aor, owner's decision (a)): no operator-facing
+            // line in this file, in MatchHandshake or in ServerBootstrap goes
+            // through the NetworkManager's own logger any more, so this pair is
+            // the rule rather than an exception anything nearby contradicts.
+            // The mechanism is what makes it the rule, and it is written down
+            // here because it is not visible from the call site: a
+            // dedicated-server build defines UNITY_SERVER, and FishNet's
+            // logging configuration answers that define with `_headlessLogging`,
+            // whose default is LoggingType.Error (LevelLoggingConfiguration.
+            // cs:55, :86-98 — and Server.unity leaves NetworkManager's
+            // `_logging` unassigned, so the default is what runs). CanLog
+            // admits only levels at or below the highest admitted one, and
+            // Common(3)/Warning(2) both sit above Error(1), so anything a
+            // headless build hands NetworkManager.Log or NetworkManager.
+            // LogWarning is dropped before it reaches stdout.
+            //
+            // The build THIS PAIR matters for is `linux-server-dev` — NOT the
+            // container, whose image is packed from the RELEASE server
+            // (`client/docker/build.sh` builds `BuildLinuxServer`), where this
+            // whole `#if` is gone before the compiler sees it and there is no
+            // switch to operate. The dev server IS headless all the same, so
+            // without `Debug` the only report an operator has of what his
+            // launch line did would be silence. The lines outside this `#if`
+            // are in the container too, which is why they cannot be left on a
+            // logger the container silences. ServerBootstrap writes every
+            // operator-facing diagnostic through UnityEngine.Debug and reaches
+            // that log; `Debug` is spelled out in full because this file
+            // imports System.Diagnostics (for Stopwatch) and does NOT import
+            // UnityEngine, so a bare `Debug` would bind to the wrong type
+            // outright rather than being reported as ambiguous.
             DevLatencyOptions latency = DevLatencyLaunch.Options;
             DevLatencySetup.Apply(_nm.TransportManager.LatencySimulator, _netConfig, _devStats,
                 latency);
@@ -946,22 +954,34 @@ namespace Ring.Networking.Server
                 // remembers, so the next refusal — of any reason, even one
                 // this slot already logged before the switch — is fresh.
                 _lastLoggedRefusal[slot] = SpectateRefusal.None;
-                _nm.Log($"MatchServer: spectate switch accepted — slot={slot} target={target} "
-                    + $"tick={currentTick}.");
+                // UnityEngine.Debug, not _nm.Log (app-aor): see StartMatch's
+                // own paragraph on the UNITY_SERVER logging ceiling for the
+                // mechanism, and note that THIS line is outside any `#if` —
+                // it has to reach the container's stdout, which is precisely
+                // where the NetworkManager's logger never carried it.
+                UnityEngine.Debug.Log($"MatchServer: spectate switch accepted — slot={slot} "
+                    + $"target={target} tick={currentTick}.");
             }
             else if (_spectatePolicy.ShouldLogRefusal(_lastLoggedRefusal[slot],
                 _lastLoggedRefusalTick[slot], currentTick))
             {
                 _lastLoggedRefusal[slot] = refusal;
                 _lastLoggedRefusalTick[slot] = currentTick;
-                // Diagnostic wording only, the same discipline
-                // `MatchHandshake.Refuse` names in its own doc: never
-                // "exploit"/"illegitimate"/"security" — an unmodified client
-                // reaches every one of these reasons through ordinary play
-                // (a stale target that just died, a double-tap past the
+                // Diagnostic wording only, the same discipline `HandshakeLog`'s
+                // refusal tails state in their own docs (MatchHandshake.cs):
+                // never "exploit"/"illegitimate"/"security" — an unmodified
+                // client reaches every one of these reasons through ordinary
+                // play (a stale target that just died, a double-tap past the
                 // cooldown).
-                _nm.Log($"MatchServer: refusing spectate switch — slot={slot} target={target} "
-                    + $"tick={currentTick} — {refusal}.");
+                //
+                // UnityEngine.Debug, not _nm.Log (app-aor) — as above. The
+                // level stays Log rather than following `MatchHandshake.
+                // Refuse` to LogWarning: that one refusal is per CONNECTION and
+                // ends it, while this one is per REQUEST on a live connection
+                // and is already rate-limited by ShouldLogRefusal precisely
+                // because a client may legitimately produce it every tick.
+                UnityEngine.Debug.Log($"MatchServer: refusing spectate switch — slot={slot} "
+                    + $"target={target} tick={currentTick} — {refusal}.");
             }
         }
 
@@ -1156,7 +1176,26 @@ namespace Ring.Networking.Server
                     // another subscriber stopped the match from inside this very
                     // tick — worth a line no operator can miss rather than a match
                     // that simply stops reporting.
-                    _nm.LogError("MatchServer: the match ended mid-tick for " + reason
+                    // UnityEngine.Debug, not _nm.LogError (app-aor). Error is
+                    // the ONE level FishNet's headless ceiling would have let
+                    // through, so this line is moved for uniformity rather than
+                    // to rescue it: after the sweep no line OF OURS in the
+                    // server's own half goes through NetworkManager's logger,
+                    // so there is no lone survivor here for the next line to
+                    // imitate. FishNet's own diagnostics still use it — see
+                    // ServerManager's unhandled-PacketId errors — which is
+                    // exactly why the claim has to be about our code and not
+                    // about the process.
+                    // The sweep stopped at the server's own half on purpose:
+                    // Networking/Client/ClientMatchLink.cs still logs through
+                    // `_nm.Log` (owner's decision 3a). Those three are a
+                    // different question, not a solved one — a client build
+                    // does not define UNITY_SERVER, so THIS ceiling never
+                    // applied to them, but `_guiLogging` has a ceiling of its
+                    // own and an Editor left on the Dedicated Server target
+                    // does define UNITY_SERVER. Recorded in the phase-gate
+                    // errata basket rather than settled here.
+                    UnityEngine.Debug.LogError("MatchServer: the match ended mid-tick for " + reason
                         + ", but something else had already stopped it in this same tick — "
                         + "no MatchEndedNet was sent and Outcome stays None.");
                 }
