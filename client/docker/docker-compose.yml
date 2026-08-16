@@ -1,0 +1,62 @@
+# Headless game server, one match per container (Stage 2).
+#
+# Usage, from this directory:
+#
+#     docker login                      # once per host: the repository is private
+#     docker compose up                 # logs in the terminal, Ctrl+C stops
+#     docker compose up -d              # detached; then: docker compose logs -f
+#     docker compose down               # stop and remove
+#
+# The roster lives in match.json next to this file -- edit the player ids and
+# join tokens there, not here. Every client must pass the id and token of its
+# own roster entry (-ring-player-id / -ring-join-token), and the match does not
+# start until ALL of them have joined.
+#
+# THE IMAGE TAG IS MOVING, AND THIS FILE ALWAYS PULLS IT. `dev` is rebuilt on
+# every server change, and a host that already has an older `dev` locally would
+# otherwise keep running it and report numbers from code nobody is looking at
+# anymore -- the exact trap that cost this project a session's measurements.
+# Set RING_IMAGE to pin something reproducible when that matters:
+#
+#     RING_IMAGE=brolin/ring-server@sha256:0eaddd1ce734… docker compose up
+
+services:
+  ring-server:
+    image: ${RING_IMAGE:-brolin/ring-server:dev}
+    pull_policy: always
+    container_name: ring-server
+
+    # The container exits on its own when nobody joins within the join timeout
+    # (120 s, NetConfig.asset) and when a match ends. Restarting is what makes
+    # the host usable without a human on it: the next group just connects.
+    restart: unless-stopped
+
+    # UDP, and only UDP. There is no discovery: clients go exactly where they
+    # were told with -ring-connect <host>:7777.
+    ports:
+      - "${RING_PORT:-7777}:7777/udp"
+
+    # The path form wins over the body form (RING_MATCH_CONFIG_JSON) inside the
+    # game, and it is the one that keeps the roster in a file a human can edit.
+    environment:
+      RING_MATCH_CONFIG: /config/match.json
+
+    # Read-only mount: the server never writes here. The file must be readable
+    # by uid 10001, which the container runs as -- a plain 0644 file is. If it
+    # is not, the server exits with code 2, and its message names the variable
+    # and the path but does NOT distinguish "no file" from "no permission".
+    volumes:
+      - ./match.json:/config/match.json:ro
+
+    # The game handles SIGTERM itself and stops in well under a second; this
+    # only bounds the wait before docker escalates to SIGKILL.
+    stop_grace_period: 15s
+
+    # Logs go to stdout as plain lines (the entrypoint runs the player with
+    # `-logFile -`), so `docker compose logs` is the whole story. The caps keep
+    # a forgotten container from filling the host's disk over a weekend.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

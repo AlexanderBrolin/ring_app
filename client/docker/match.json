@@ -1,0 +1,13 @@
+{
+  "matchId": "lan-1",
+  "seed": 20260816,
+  "maxPlayers": 3,
+  "port": 7777,
+  "startMode": "waitForAll",
+  "countdownSeconds": 0,
+  "players": [
+    { "playerId": "p1", "joinToken": "t1" },
+    { "playerId": "p2", "joinToken": "t2" },
+    { "playerId": "p3", "joinToken": "t3" }
+  ]
+}
