@@ -16,3 +16,22 @@
 В репозиторий импортирован ТОЛЬКО отбор (FBX + текстуры; список —
 `assets-src/INSPECTION.md`): OBJ/glTF/Blend-дубли, `_RM`-варианты, мебель и
 превью-материалы паков в репо не входят.
+
+## Сторонние библиотеки кода
+
+Запись по тому же Critical Rule 9 (ADR-002 §4) + амендмент T11 (голос —
+MetaVoiceChat вместо Dissonance). Дата вендоринга: 2026-08-16.
+
+| Библиотека | Автор | Лицензия | URL | Версия / контрольная сумма |
+|---|---|---|---|---|
+| MetaVoiceChat | Connor Myers (Metater) | MIT (`LICENSE` в поставке) | https://github.com/Metater/MetaVoiceChat | тег `v4.2`, коммит `de1bfd404871be9f2327c3df1ab10b4ff08f8b25`; sha256 релизного `MetaVoiceChat.v4.2.unitypackage` — `32c19e1fac59a755036487f50dcfed618cfd0a26e00ea1e38815e1d65f339a33` |
+| Concentus (в поставке MetaVoiceChat) | Logan Stromberg и правообладатели Opus (Skype, Xiph.Org, CSIRO, Microsoft и др.) | BSD 3-clause (`Concentus.2.2.2/LICENSE`) | https://github.com/lostromb/concentus | `2.2.2`, `lib/netstandard2.0/Concentus.dll` (управляемый, без нативных бинарников) |
+
+MetaVoiceChat лежит в `client/Assets/Plugins/MetaVoiceChat/` (**не** в
+`ThirdParty/`: `ThirdPartyImportBootstrap.CheckJunk` отвергает любые `.cs`/`.dll`
+в `ThirdParty/**` вне `_Ring/`). Дерево тега перенесено **дословно, без правок
+исходников**; единственный добавленный нами файл — `MetaVoiceChat.asmdef`:
+сборки asmdef не видят предопределённых, поэтому без него `Ring.Networking` не
+смог бы сослаться на пакет вовсе. Опциональное шумоподавление rnnoise
+(`RnnoiseVcInputFilter`) выключено собственным `#define` поставки — пакет
+Adrenak RNNoise4Unity в репозиторий не вносился.
