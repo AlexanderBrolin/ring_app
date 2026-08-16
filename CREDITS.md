@@ -25,13 +25,26 @@ MetaVoiceChat вместо Dissonance). Дата вендоринга: 2026-08-1
 | Библиотека | Автор | Лицензия | URL | Версия / контрольная сумма |
 |---|---|---|---|---|
 | MetaVoiceChat | Connor Myers (Metater) | MIT (`LICENSE` в поставке) | https://github.com/Metater/MetaVoiceChat | тег `v4.2`, коммит `de1bfd404871be9f2327c3df1ab10b4ff08f8b25`; sha256 релизного `MetaVoiceChat.v4.2.unitypackage` — `32c19e1fac59a755036487f50dcfed618cfd0a26e00ea1e38815e1d65f339a33` |
-| Concentus (в поставке MetaVoiceChat) | Logan Stromberg и правообладатели Opus (Skype, Xiph.Org, CSIRO, Microsoft и др.) | BSD 3-clause (`Concentus.2.2.2/LICENSE`) | https://github.com/lostromb/concentus | `2.2.2`, `lib/netstandard2.0/Concentus.dll` (управляемый, без нативных бинарников) |
+| Concentus (в поставке MetaVoiceChat) | Logan Stromberg и правообладатели Opus (Skype, Xiph.Org, CSIRO, Microsoft и др.) | BSD 3-clause (`Concentus.2.2.2/LICENSE`) | https://github.com/lostromb/concentus | `2.2.2`, `lib/netstandard2.0/Concentus.dll` — управляемая сборка; нативных бинарников не несёт, но умеет оппортунистически подхватить системную libopus (слой `Concentus.Native`), при её отсутствии работает чистым managed-путём |
+| UniVoice / UniMic / univoice-audiosource-output (код-предок частей MetaVoiceChat) | Vatsal Ambastha (adrenak) | MIT | https://github.com/adrenak/univoice · https://github.com/adrenak/unimic · https://github.com/adrenak/univoice-audiosource-output | без версии: заимствование на уровне исходников, отмечено самим автором MetaVoiceChat в шапках `MetaVc.cs`, `Output/AudioSource/VcAudioClip.cs` и `Output/AudioSource/VcAudioSourceOutput.cs` |
+
+Иконки `Examples/Speaking{None,Min,Mid,Max}Icon (CCO).png` в поставке помечены
+CC0 (в имени файла — опечатка апстрима, «CCO» вместо «CC0»); атрибуции CC0 не
+требует, фиксируем по тому же правилу, что и паки выше.
+
+⚠ **Открытый долг: раздаваемые сборки уведомлений НЕ несут.** MIT (обе записи) и
+BSD 3-clause (пункт 2) требуют воспроизводить уведомление и текст лицензии при
+распространении **в бинарной форме**, а `Ring.Editor.BuildCommands` сегодня не
+кладёт в артефакт ни `CREDITS.md`, ни лицензий. Заведено задачей `app-29t`
+(найдено ревью Т54); касается всех сборок, включая уже собранный
+`ring-windows-client-dev.zip` и docker-образ.
 
 MetaVoiceChat лежит в `client/Assets/Plugins/MetaVoiceChat/` (**не** в
 `ThirdParty/`: `ThirdPartyImportBootstrap.CheckJunk` отвергает любые `.cs`/`.dll`
-в `ThirdParty/**` вне `_Ring/`). Дерево тега перенесено **дословно, без правок
-исходников**; единственный добавленный нами файл — `MetaVoiceChat.asmdef`:
-сборки asmdef не видят предопределённых, поэтому без него `Ring.Networking` не
-смог бы сослаться на пакет вовсе. Опциональное шумоподавление rnnoise
+в `ThirdParty/**` вне `_Ring/`). Дерево тега перенесено **дословно, без единой
+правки исходников**; единственный написанный нами файл — `MetaVoiceChat.asmdef`
+(сборки asmdef не видят предопределённых, поэтому без него `Ring.Networking` не
+смог бы сослаться на пакет вовсе), плюс `.meta` к нему и `LICENSE.meta` —
+их сгенерировал Unity. Опциональное шумоподавление rnnoise
 (`RnnoiseVcInputFilter`) выключено собственным `#define` поставки — пакет
 Adrenak RNNoise4Unity в репозиторий не вносился.
