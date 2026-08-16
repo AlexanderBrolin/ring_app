@@ -58,7 +58,19 @@ namespace Ring.Presentation.Net
             // `Time.unscaledDeltaTime`, not `deltaTime`: the pause menu sets
             // `Time.timeScale` to zero, and a paused game must still be able to
             // finish the sentence it was in the middle of.
+            bool wasTransmitting = IsTransmitting;
             IsTransmitting = _gate.Tick(held, Time.unscaledDeltaTime);
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // Dev-only, and edge-triggered rather than per-frame: a playtester
+            // who hears nothing has to be able to tell "my key is not
+            // registering" from "the key works and the audio is lost
+            // downstream", and that is one bit that no amount of listening
+            // recovers. Fifty frames a second of logging would be its own
+            // defect, hence the edge.
+            if (IsTransmitting != wasTransmitting)
+                Debug.Log($"Voice: talk key {(IsTransmitting ? "DOWN — transmitting" : "UP — silent")}.");
+#endif
 
             if (!IsTransmitting)
             {
