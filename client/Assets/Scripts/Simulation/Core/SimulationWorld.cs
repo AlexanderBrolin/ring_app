@@ -111,8 +111,29 @@ namespace Ring.Simulation.Core
         // part of the replay/rollback contract. The shipped, network-facing
         // counter arrives with NetStats in Stage 2 Task 23/28; this seam exists
         // so EdgeRateLimitTests can observe the drops until then.
-        int _rejectedEdgeRequests;
-        internal int RejectedEdgeRequestsForTest => _rejectedEdgeRequests;
+        /// bd `app-mi4`: PER PLAYER since the counter finally reached the
+        /// network layer, which is what the paragraph above always meant by
+        /// "the shipped, network-facing counter arrives with NetStats". A
+        /// single total could not be reported per connection without telling
+        /// every player about everybody else's dropped requests.
+        int[] _rejectedEdgeRequests;
+
+        /// The whole match's drops, which is the quantity `EdgeRateLimitTests`
+        /// has always asked about (solo worlds, one player).
+        internal int RejectedEdgeRequestsForTest
+        {
+            get
+            {
+                int total = 0;
+                for (int i = 0; i < _rejectedEdgeRequests.Length; i++)
+                    total += _rejectedEdgeRequests[i];
+                return total;
+            }
+        }
+
+        /// One player's own drops (bd `app-mi4`) — read by the server once per
+        /// tick into that connection's `NetStats.EdgeRequestsRejected`.
+        public int RejectedEdgeRequestsFor(int index) => _rejectedEdgeRequests[index];
 
         /// `playerCount` defaults to 1 so every call site that predates Stage 2
         /// Task 4 (136 existing constructions) keeps compiling and behaving
@@ -142,6 +163,10 @@ namespace Ring.Simulation.Core
             // already correct" reasoning the constructor already relies on for
             // _mobs/_projectiles below.
             _matchStats = new MatchStats[playerCount];
+            // bd `app-mi4`: one slot per player, allocated with the rest of the
+            // per-player scratch and never resized — the roster is fixed for a
+            // match (spec §3.1).
+            _rejectedEdgeRequests = new int[playerCount];
             for (int i = 0; i < playerCount; i++)
             {
                 float2 pos = Geometry.SpawnPosFor(i, playerCount, in config.Arena);
@@ -281,8 +306,8 @@ namespace Ring.Simulation.Core
                 // is counted for diagnostics ONLY — no StaminaDenied, no
                 // MatchStats write, nothing that reaches game state (see
                 // _rejectedEdgeRequests' own comment for why).
-                if (moveResult.DashRejected) _rejectedEdgeRequests++;
-                if (moveResult.SlideRejected) _rejectedEdgeRequests++;
+                if (moveResult.DashRejected) _rejectedEdgeRequests[i]++;
+                if (moveResult.SlideRejected) _rejectedEdgeRequests[i]++;
                 if (moveResult.Ricocheted)
                 {
                     // Task 12: Pos is the contact point (not the player's

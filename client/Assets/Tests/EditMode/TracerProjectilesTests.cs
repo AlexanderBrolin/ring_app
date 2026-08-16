@@ -1,0 +1,290 @@
+using NUnit.Framework;
+using Ring.Networking.Client;
+using Ring.Simulation.Core;
+using Unity.Mathematics;
+
+namespace Ring.Simulation.Tests
+{
+    /// bd `app-s0u` — the client-side tracer rebuild, measured against the
+    /// authority rather than argued from algebra.
+    ///
+    /// THE SHAPE IS `TrajectoryTests.MatchesTheSimulationsOwnFloorCut`'s, and
+    /// that is deliberate (the audit named it as the pattern): a REAL round is
+    /// fired through `SimulationWorld`/`ProjectileSystem`, the reconstruction is
+    /// fed exactly what the wire carries about that round, and both are stepped
+    /// side by side. A test that restated `Pos += Vel * dt` would agree with a
+    /// wrong implementation as happily as with a right one.
+    public class TracerProjectilesTests
+    {
+        const int SpawnTick = 100;
+
+        static SimConfig Range()
+        {
+            var c = TestConfigs.Open();
+            c.Weapon.SpreadRad = 0f;
+            c.Weapon.RecoilPerShotRad = 0f;
+            return c;
+        }
+
+        static bool TryFindInWorld(SimulationWorld w, int id, out ProjectileState found)
+        {
+            for (int i = 0; i < w.ProjectileCount; i++)
+            {
+                if (w.Projectiles[i].Id != id) continue;
+                found = w.Projectiles[i];
+                return true;
+            }
+            found = default;
+            return false;
+        }
+
+        /// Fires one round at `targetH` and hands back the world plus the
+        /// round's state as the WIRE describes it.
+        static SimulationWorld Fire(in SimConfig c, float targetH, out ProjectileState spawned)
+        {
+            var w = new SimulationWorld(1, c);
+            float muzzle = c.Hero.MuzzleHeight;
+            TestWorlds.FireAimed3D(w, float2.zero, muzzle, new float2(30f, 0f), targetH);
+            Assert.AreEqual(1, w.ProjectileCount, "fixture premise: exactly one round in flight");
+            spawned = w.Projectiles[0];
+            return w;
+        }
+
+        static TracerProjectiles TrackerFor(in ProjectileState s, int capacity = 8)
+        {
+            var tracers = new TracerProjectiles(capacity);
+            Assert.IsTrue(tracers.TrySpawn(s.Id, SpawnTick, s.Pos, s.Height,
+                    math.normalizesafe(s.Vel), math.length(s.Vel), s.VelZ, s.Radius, s.Ttl),
+                "a round the client can see must be accepted");
+            return tracers;
+        }
+
+        /// The flat case: no vertical component at all, so this one pins the
+        /// horizontal half and nothing else.
+        [Test]
+        public void ReproducesTheSimulationsOwnFlight_TickForTick()
+        {
+            var c = Range();
+            var w = Fire(in c, c.Hero.MuzzleHeight, out ProjectileState s);
+            var tracers = TrackerFor(in s);
+            var scratch = new ProjectileState[8];
+
+            for (int age = 1; age <= 8; age++)
+            {
+                w.Tick(default);
+
+                Assert.IsTrue(TryFindInWorld(w, s.Id, out ProjectileState authoritative),
+                    $"fixture premise: the round is still in flight at tick {age}");
+                Assert.AreEqual(1, tracers.WriteInto(scratch, SpawnTick + age),
+                    $"the tracer must still be drawn at tick {age}");
+
+                Assert.AreEqual(authoritative.Pos.x, scratch[0].Pos.x, 1e-3f,
+                    $"x must match the authority at tick {age}");
+                Assert.AreEqual(authoritative.Pos.y, scratch[0].Pos.y, 1e-3f,
+                    $"y must match the authority at tick {age}");
+                Assert.AreEqual(authoritative.PrevPos.x, scratch[0].PrevPos.x, 1e-3f,
+                    $"PrevPos is what the renderer interpolates from at tick {age}");
+            }
+        }
+
+        /// The flat test above cannot see the vertical half at all — a round
+        /// fired level has `VelZ == 0`, so dropping the height step entirely
+        /// would still pass it. This one climbs.
+        [Test]
+        public void ReproducesTheClimbOfAnAimedRound_TickForTick()
+        {
+            var c = Range();
+            var w = Fire(in c, c.Hero.MuzzleHeight + 6f, out ProjectileState s);
+            Assert.Greater(s.VelZ, 0.5f, "fixture premise: this round genuinely climbs");
+
+            var tracers = TrackerFor(in s);
+            var scratch = new ProjectileState[8];
+            float startHeight = s.Height;
+
+            for (int age = 1; age <= 8; age++)
+            {
+                w.Tick(default);
+
+                Assert.IsTrue(TryFindInWorld(w, s.Id, out ProjectileState authoritative),
+                    $"fixture premise: still in flight at tick {age}");
+                Assert.AreEqual(1, tracers.WriteInto(scratch, SpawnTick + age));
+
+                Assert.AreEqual(authoritative.Height, scratch[0].Height, 1e-3f,
+                    $"height must match the authority at tick {age}");
+                Assert.AreEqual(authoritative.PrevHeight, scratch[0].PrevHeight, 1e-3f,
+                    $"PrevHeight must match the authority at tick {age}");
+            }
+
+            Assert.Greater(scratch[0].Height, startHeight + 0.5f,
+                "and the round really did rise over the run — otherwise the two agreeing "
+                + "means only that both stood still");
+        }
+
+        /// The property the closed form exists for: the answer at a tick does
+        /// not depend on having been asked about the ticks before it.
+        [Test]
+        public void ASkippedFrameCostsTheTracerNothing()
+        {
+            var c = Range();
+            Fire(in c, c.Hero.MuzzleHeight + 4f, out ProjectileState s);
+
+            var stepped = TrackerFor(in s);
+            var jumped = TrackerFor(in s);
+            var a = new ProjectileState[4];
+            var b = new ProjectileState[4];
+
+            for (int age = 1; age <= 6; age++) stepped.WriteInto(a, SpawnTick + age);
+            Assert.AreEqual(1, jumped.WriteInto(b, SpawnTick + 6), "asked only once, at the end");
+
+            Assert.AreEqual(a[0].Pos.x, b[0].Pos.x, 1e-6f,
+                "a client that dropped five frames must draw the round exactly where a client "
+                + "that drew all of them draws it");
+            Assert.AreEqual(a[0].Height, b[0].Height, 1e-6f, "and at the same height");
+            Assert.AreEqual(a[0].PrevPos.x, b[0].PrevPos.x, 1e-6f,
+                "including the previous pair, which is a function of the clock too");
+        }
+
+        [Test]
+        public void ARoundIsNotDrawnBeforeTheTickItWasFiredOn()
+        {
+            var c = Range();
+            Fire(in c, c.Hero.MuzzleHeight, out ProjectileState s);
+            var tracers = TrackerFor(in s);
+            var scratch = new ProjectileState[4];
+
+            Assert.AreEqual(0, tracers.WriteInto(scratch, SpawnTick - 1),
+                "the render clock has not reached the shot yet — the muzzle flash has not "
+                + "played either, and a bullet ahead of its own flash is the artifact this "
+                + "clock discipline exists to prevent");
+            Assert.AreEqual(1, tracers.Count, "but the round is tracked, waiting for its tick");
+            Assert.AreEqual(1, tracers.WriteInto(scratch, SpawnTick),
+                "and on its own tick it appears, standing at the muzzle");
+            Assert.AreEqual(s.Pos.x, scratch[0].Pos.x, 1e-6f);
+            Assert.AreEqual(scratch[0].Pos.x, scratch[0].PrevPos.x, 1e-6f,
+                "with nothing behind it to interpolate from");
+        }
+
+        [Test]
+        public void CarriesTheRadiusTheRendererDrawsWith()
+        {
+            var c = Range();
+            Fire(in c, c.Hero.MuzzleHeight, out ProjectileState s);
+            var tracers = TrackerFor(in s);
+
+            var scratch = new ProjectileState[4];
+            Assert.AreEqual(1, tracers.WriteInto(scratch, SpawnTick));
+            Assert.AreEqual(s.Radius, scratch[0].Radius, 1e-6f,
+                "ViewRegistry.SyncProjectiles sizes the sphere off Radius, and the wire does "
+                + "not carry it — it comes from the config by owner");
+            Assert.AreEqual(s.Id, scratch[0].Id, "the id is what ProjectileEnded retires by");
+        }
+
+        [Test]
+        public void ARetiredRoundFliesUntilTheClockReachesItsEnd()
+        {
+            var tracers = new TracerProjectiles(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(11, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f));
+            Assert.IsTrue(tracers.Retire(11, SpawnTick + 5), "the server ended it five ticks later");
+
+            var scratch = new ProjectileState[4];
+            Assert.AreEqual(1, tracers.WriteInto(scratch, SpawnTick + 4),
+                "before that tick the round is still in the air — the impact has not been "
+                + "shown yet either");
+            Assert.AreEqual(0, tracers.WriteInto(scratch, SpawnTick + 5),
+                "and on the ending tick it is gone, together with the impact");
+            Assert.AreEqual(1, tracers.Count,
+                "writing never mutates — see Prune's own doc for why that matters to the pair");
+
+            tracers.Prune(SpawnTick + 5);
+            Assert.AreEqual(0, tracers.Count, "the table drops it rather than keeping a corpse");
+        }
+
+        [Test]
+        public void RetireNamesOneRound_AndAnUnknownIdIsARefusal()
+        {
+            var tracers = new TracerProjectiles(4);
+            var dir = new float2(1f, 0f);
+            tracers.TrySpawn(11, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);
+            tracers.TrySpawn(22, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);
+
+            Assert.IsFalse(tracers.Retire(33, SpawnTick), "a round this client never saw fired");
+            Assert.IsTrue(tracers.Retire(11, SpawnTick + 1));
+
+            var scratch = new ProjectileState[4];
+            Assert.AreEqual(1, tracers.WriteInto(scratch, SpawnTick + 1));
+            Assert.AreEqual(22, scratch[0].Id, "the survivor is the one that was not named");
+        }
+
+        [Test]
+        public void ARoundNeverEndsItselfWhileTheServerHasNotSaidSo()
+        {
+            var tracers = new TracerProjectiles(4);
+            // A Ttl far shorter than the run below: the round would have expired
+            // several times over in the simulation, and here it must not — every
+            // ending is the server's to declare (CR 3).
+            Assert.IsTrue(tracers.TrySpawn(7, SpawnTick, float2.zero, 1f, new float2(1f, 0f),
+                10f, 0f, 0.1f, ttl: 0.05f));
+
+            var scratch = new ProjectileState[4];
+            Assert.AreEqual(1, tracers.WriteInto(scratch, SpawnTick + 30),
+                "the client owns no outcome — only ProjectileEnded retires a tracer");
+            Assert.Less(scratch[0].Ttl, 0f, "even with its own lifetime long spent");
+        }
+
+        [Test]
+        public void ResetDropsEverything_SoAMatchRestartStartsEmpty()
+        {
+            var tracers = new TracerProjectiles(4);
+            var dir = new float2(1f, 0f);
+            tracers.TrySpawn(1, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);
+            tracers.TrySpawn(2, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);
+
+            tracers.Reset();
+
+            Assert.AreEqual(0, tracers.Count, "rounds of the match that ended must not outlive it");
+            var scratch = new ProjectileState[4];
+            Assert.AreEqual(0, tracers.WriteInto(scratch, SpawnTick + 1));
+            Assert.IsTrue(tracers.TrySpawn(1, 0, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f),
+                "and an id from the previous match is free to be minted again");
+        }
+
+        [Test]
+        public void ADuplicateIdIsRefused_NotTrackedTwice()
+        {
+            var tracers = new TracerProjectiles(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(5, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f));
+            Assert.IsFalse(tracers.TrySpawn(5, SpawnTick + 2, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f),
+                "one live id is one round");
+            Assert.AreEqual(1, tracers.Count);
+        }
+
+        [Test]
+        public void AFullTableRefusesRatherThanOverwriting()
+        {
+            var tracers = new TracerProjectiles(2);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(1, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f));
+            Assert.IsTrue(tracers.TrySpawn(2, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f));
+
+            Assert.IsFalse(tracers.TrySpawn(3, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f),
+                "a refusal is a value, never an exception — this runs inside a broadcast "
+                + "handler (Р82/195)");
+            Assert.AreEqual(2, tracers.Count, "and the rounds already tracked are untouched");
+        }
+
+        [Test]
+        public void WriteIntoNeverOverrunsTheDestination()
+        {
+            var tracers = new TracerProjectiles(4);
+            var dir = new float2(1f, 0f);
+            for (int i = 1; i <= 4; i++)
+                tracers.TrySpawn(i, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);
+
+            var small = new ProjectileState[2];
+            Assert.AreEqual(2, tracers.WriteInto(small, SpawnTick),
+                "a destination smaller than the table is filled to its own length, not past it");
+        }
+    }
+}

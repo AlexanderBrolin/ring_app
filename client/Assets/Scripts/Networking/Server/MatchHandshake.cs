@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using FishNet.Connection;
 using FishNet.Managing;
 using FishNet.Transporting;
@@ -128,6 +129,325 @@ namespace Ring.Networking.Server
         public static bool SlotsFitOnTheWire(int maxPlayers) => maxPlayers >= 1 && maxPlayers <= 256;
     }
 
+    /// THE REFUSAL LOG LINE, FORMATTED (Stage 2 app-uxx + app-aor,
+    /// task-uxx-red-brief.md §3.1/§3.2) — the pure half of what
+    /// `MatchHandshake.Refuse` prints. This class BUILDS the sentence; the
+    /// caller is the only thing that logs it.
+    ///
+    /// NO FISHNET TYPES HERE EITHER — `HandshakeDecision`'s rule above, plus
+    /// a stronger one this class needs on its own: EVERY METHOD IS A FUNCTION
+    /// OF ITS ARGUMENTS AND NOTHING ELSE. `playerId`, `clientId`, `reason`
+    /// and `atSeconds` all arrive as parameters; nothing is read from a
+    /// `NetworkConnection`, from a clock or from the environment, and nothing
+    /// is written to a logger. `DevLatencyOptions.Parse` states the same rule
+    /// for the same reason ("passed in rather than fetched, so this is a
+    /// function of its argument and nothing else"): a formatter that fetched
+    /// its own inputs could not be covered by an EditMode test at all, and one
+    /// that logged would drag `UnityEngine` into a file that has never
+    /// imported it.
+    ///
+    /// WHY THE LINE WAS REBUILT AT ALL. The refusal this one replaced named
+    /// only `connection.ClientId` — a number the transport hands out afresh on
+    /// every run — so a container log gave no way to tell WHICH configured
+    /// player was turned away. That is precisely the question a refused join
+    /// raises: a client launched without `-ring-player-id` generates its own
+    /// `dev-XXXXXXXX` and is then refused by a named roster, and the line as it
+    /// stood could not say so. The accepted side already answers the same
+    /// question — `ServerBootstrap`'s "player accepted slot=... playerId=...
+    /// clientId=... connected=.../... atSeconds=..." — and this line is
+    /// deliberately its mirror rather than a second style.
+    ///
+    /// THE FORMAT:
+    ///
+    ///     MatchHandshake: player refused playerId={0} clientId={1} reason={2} atSeconds={3:F3} (tail)
+    ///
+    /// - `player refused` MIRRORS `player accepted` so that both halves of the
+    ///   join decision come out of ONE `grep -E "player accepted|player
+    ///   refused"`. The operator who asks "did anybody get in?" and the one who
+    ///   asks "why did nobody get in?" are the same operator minutes apart, and
+    ///   two unrelated spellings would make that two searches.
+    /// - `MatchHandshake:` AND NOT `HandshakeLog:` — the prefix names the
+    ///   subsystem an operator can look up, which is the class that decides and
+    ///   prints, not the one that formats a string for it. It is also what the
+    ///   line already says today, so no existing filter is invalidated.
+    /// - `key=value`, space separated, `CultureInfo.InvariantCulture`, and
+    ///   `atSeconds` at `F3` — every one of those is the accepted line's
+    ///   choice, restated rather than reinvented. The culture is not a
+    ///   formality: on a comma-decimal machine (the owner's own workstation)
+    ///   the default format writes `12,500`, which reads as a second field to
+    ///   anything parsing the line and as a different number to a human.
+    /// - `reason` IS PRINTED BY NAME, NOT BY NUMBER. The byte is what rides the
+    ///   wire (`MatchRefusedNet.Reason`); a log read by a person and by the
+    ///   future control panel (app-7ss) should not require a second lookup
+    ///   table to say `SimConfigMismatch`.
+    /// - `atSeconds` IS THE SERVER'S OWN ELAPSED AXIS, NOT A WALL CLOCK, and it
+    ///   is here to pay a known price. It is whatever the injected
+    ///   `Func&lt;double&gt;` answers — in production `ServerBootstrap`'s clock,
+    ///   whose zero is that component's `Start` and NOT process spawn
+    ///   (`ServerBootstrap.cs`'s "ONE CLOCK, HANDED OUT AS A DELEGATE"
+    ///   paragraph says so in as many words: engine startup is deliberately
+    ///   outside the join window). Naming it "since process start" here would
+    ///   contradict that file. Which axis it is remains this class's caller's
+    ///   business either way — see "TIME ORIGIN IS INJECTED" below.
+    ///   The refusal no longer goes out through
+    ///   FishNet's `NetworkManager.Log` — whose `LevelLoggingConfiguration.
+    ///   AddSettingsToLog` prepends `[yyyy.MM.dd HH:mm:ss]` outside the editor
+    ///   — but through `UnityEngine.Debug.*`, which prepends nothing. The same
+    ///   axis the accepted line already prints is the compensation, and it has
+    ///   the advantage of being directly comparable with it: two lines from one
+    ///   run can be subtracted, which two wall-clock stamps at one-second
+    ///   resolution cannot.
+    ///
+    /// THE TAIL IS CHOSEN BY REASON, AND BOTH TAILS ARE KEPT (brief §3.1). The
+    /// balance/version wording below went through an earlier phase-gate review and
+    /// deliberately avoids "exploit"/"illegitimate"/"security": every reason it
+    /// covers is one an HONEST client of an out-of-sync build produces by
+    /// itself, and `HandshakeRefusal`'s own doc in HandshakeNet.cs states at
+    /// length that this whole handshake is a parity diagnostic and not an
+    /// anti-cheat check. `UnrecognizedRejection` gets the OTHER tail because
+    /// for that one member the first sentence would be false — it is an
+    /// internal contract violation between the join delegate and this
+    /// assembly, a server-side bug, with no balance or version drift involved
+    /// at all.
+    ///
+    /// SEVERITY IS NOT DECIDED HERE. `UnrecognizedRejection` goes out as an
+    /// error and every other reason as a warning; that is a choice about which
+    /// console channel to use, which only the caller — the one holding the
+    /// logger — can act on. This class hands back the same kind of value in
+    /// both cases: a string. `MatchHandshake.Refuse` splits on the SAME member
+    /// this class splits the tail on, deliberately: one condition decides both
+    /// halves of "how loud and in whose words", so the two can never come
+    /// apart into an internal-bug sentence printed at a routine level.
+    ///
+    /// ONE MORE FIELD IS DELIBERATELY ABSENT: `JoinToken`. It is a secret the
+    /// client sends (`ClientHelloNet.JoinToken`), and a log line is exactly
+    /// where a secret must not appear. That is also why the sanitizer below is
+    /// named for `playerId` specifically rather than as a general
+    /// "SanitizeForLog": a general name is an invitation to hand it the token
+    /// next.
+    public static class HandshakeLog
+    {
+        /// The longest `playerId` that reaches the log unabridged. ONE NUMBER,
+        /// ONE HOME (project rule 2): no caller passes a limit and no second
+        /// constant restates it, so raising the bound is a one-line change with
+        /// nothing left behind to disagree with it.
+        ///
+        /// 64 because it is comfortably above every id this project actually
+        /// produces — `dev-XXXXXXXX` is twelve characters, and the ids in a
+        /// match config are written by a human — while still being far below
+        /// the length at which one refused join can push everything else out of
+        /// a scrollback. THIS IS NOT A VALIDATION BOUND (brief §4): nothing
+        /// anywhere limits how long a `playerId` may be, `MatchRoster` and
+        /// `MatchConfigLoader` check only that it is non-empty, and this
+        /// constant must never grow into a reason to refuse a join. It governs
+        /// one thing: how much of an untrusted string is copied into a log
+        /// line.
+        public const int MaxPlayerIdLength = 64;
+
+        /// Appended when — and only when — something was cut, so that a
+        /// truncated id is never mistaken for a real one. Without it an
+        /// operator reading a 64-character id has no way to know whether that
+        /// was the whole id, which turns a diagnostic line into a misleading
+        /// one. No spaces in it, like everything else that lands inside a
+        /// `key=value` field.
+        public const string TruncationMarker = "...";
+
+        /// What every `char.IsControl` character becomes. A SUBSTITUTION, NOT A
+        /// DELETION: dropping the character would render `a\nb` as `ab`, which
+        /// is a perfectly ordinary id and says nothing about what was really
+        /// received, while the placeholder keeps the length and shows the shape
+        /// of what arrived. A single ASCII character rather than an escape
+        /// sequence (`\n`), so the substitution is exactly length-preserving
+        /// and truncation and neutralization cannot interact.
+        public const char ControlCharPlaceholder = '?';
+
+        /// `playerId` was `null` on the wire — the client never wrote the field.
+        public const string NullPlayerIdMarker = "[null]";
+
+        /// `playerId` was present and empty — the client wrote "" on purpose.
+        ///
+        /// TWO MARKERS, NOT ONE, and the reason is that nothing else can tell
+        /// them apart: `MatchRoster.TryJoin` answers `string.IsNullOrEmpty`
+        /// with a single `JoinRejection.InvalidPlayerId`, so the refusal reason
+        /// this line prints is identical in both cases and the log line is the
+        /// ONLY place the difference can survive. It is a real difference to
+        /// whoever debugs the client: a `null` means the field was never
+        /// assigned, an empty string means it was assigned something empty.
+        ///
+        /// Square brackets rather than angle brackets because the Unity console
+        /// treats `&lt;...&gt;` as rich-text markup. A client that sends the
+        /// literal text `[null]` renders identically — an ambiguity this class
+        /// accepts rather than escapes, on the same grounds the whole handshake
+        /// is documented with: it is a diagnostic, not an anti-cheat check, and
+        /// that client is refused either way.
+        public const string EmptyPlayerIdMarker = "[empty]";
+
+        /// The tail every reason but `UnrecognizedRejection` carries, kept
+        /// verbatim from the text `MatchHandshake.Refuse` used to format in
+        /// place. The wording went through an earlier phase-gate review and is
+        /// not restated in this class's own words on purpose: it names the check
+        /// for what it is and deliberately avoids "exploit"/"illegitimate"/
+        /// "security", because an HONEST client of an out-of-sync build produces
+        /// every reason it covers by itself.
+        ///
+        /// THIS CONSTANT IS THE SENTENCE'S ONLY HOME (project rule 2). `Refuse`
+        /// now prints what `RefusalLine` builds and formats nothing of its own,
+        /// so there is no second copy of this wording anywhere to drift from it
+        /// — which also means the tests that pin the fragment pin what the
+        /// server actually says, not a parallel string that merely resembles it.
+        const string ParityTail = "(balance/version parity diagnostic, not an anti-cheat check; "
+            + "a modified client can report any hash or version).";
+
+        /// The tail `UnrecognizedRejection` carries INSTEAD, because for that one
+        /// member the sentence above would be false: no version or balance drift
+        /// is involved at all. The join delegate — or `HandshakeDecision.
+        /// FromJoinRejection` — produced a code this assembly does not recognize,
+        /// which is a bug on the server's own side of the contract and says
+        /// nothing about the client that happened to be turned away by it.
+        /// Same substance as the error branch `MatchHandshake.Refuse` used to
+        /// format in place, minus the reason's name: `reason=` already carries
+        /// that. The BRANCH still exists in the caller — it is what picks the
+        /// error channel over the warning one — but the WORDING lives here and
+        /// nowhere else.
+        const string InternalBugTail = "(the join delegate or HandshakeDecision.FromJoinRejection "
+            + "produced a code the handshake does not recognize; an internal contract violation on "
+            + "the server side, not a balance/version mismatch).";
+
+        /// The whole line, ready to print — see the class doc for the format
+        /// and for why each field is in it.
+        ///
+        /// `playerId` IS THE ONLY UNTRUSTED ARGUMENT and is passed through
+        /// `SanitizePlayerId` before it reaches the line; `clientId` is the
+        /// transport's own number, `reason` is an enum member and `atSeconds`
+        /// comes from the process's own clock.
+        ///
+        /// `CultureInfo.InvariantCulture` IS PASSED, NOT ASSUMED — the same call
+        /// shape `ServerBootstrap` uses for the accepted line, and for the same
+        /// reason: string interpolation would pick up `CurrentCulture` and write
+        /// `atSeconds=12,500` on the owner's own comma-decimal workstation.
+        /// `reason` is formatted by the same call, which prints an enum member as
+        /// its NAME.
+        public static string RefusalLine(string playerId, int clientId, HandshakeRefusal reason,
+            double atSeconds)
+        {
+            string tail = reason == HandshakeRefusal.UnrecognizedRejection
+                ? InternalBugTail
+                : ParityTail;
+
+            return string.Format(CultureInfo.InvariantCulture,
+                "MatchHandshake: player refused playerId={0} clientId={1} reason={2} "
+                + "atSeconds={3:F3} {4}",
+                SanitizePlayerId(playerId), clientId, reason, atSeconds, tail);
+        }
+
+        /// An arbitrary string from the wire, made safe to put inside one
+        /// `key=value` field of one log line. Three things happen, in this
+        /// order:
+        ///
+        /// 1. `null` and `""` become their markers above, so an absent id is
+        ///    visibly absent instead of being an empty gap that reads as a
+        ///    formatting bug.
+        /// 2. Every `char.IsControl` character becomes
+        ///    `ControlCharPlaceholder`. THE POINT IS `\n` AND `\r`: without
+        ///    this, one string chosen by whoever is connecting turns one log
+        ///    line into two, and everything that reads the log a line at a time
+        ///    — `grep`, a human, the future control panel (app-7ss) — is handed
+        ///    a fabricated record. `\0` and the rest of the C0/C1 range come
+        ///    along because they are the same class of input and cost the same
+        ///    predicate.
+        /// 3. Anything longer than `MaxPlayerIdLength` is cut to it and given
+        ///    `TruncationMarker`.
+        ///
+        /// A CUT NEVER SPLITS A SURROGATE PAIR: if the character at the bound is
+        /// the leading half of a pair, it is dropped with its partner rather
+        /// than left behind alone. A lone surrogate is not a control character
+        /// and would survive step 2 untouched, then reach the log encoder as an
+        /// unpaired UTF-16 unit that no encoder can represent — a defect
+        /// manufactured by the truncation itself, which is why it is the
+        /// truncation's job to avoid it.
+        ///
+        /// WHAT THIS DOES NOT DO, NAMED SO IT IS NOT MISTAKEN FOR AN OVERSIGHT:
+        /// it does not neutralize the SPACE or the `=` character, so an id
+        /// containing either still reads as more than one `key=value` pair to
+        /// anything parsing the line. That is a different defect from the one
+        /// above — it forges a field inside one line rather than forging a
+        /// whole line — and closing it would mean altering ids that are
+        /// perfectly legitimate (nothing forbids a space in a configured
+        /// `playerId` today). Whether to quote the field instead is a decision
+        /// for whoever builds the panel that parses it.
+        public static string SanitizePlayerId(string playerId)
+        {
+            if (playerId == null)
+                return NullPlayerIdMarker;
+            if (playerId.Length == 0)
+                return EmptyPlayerIdMarker;
+
+            int kept = KeptLength(playerId);
+            bool cut = kept < playerId.Length;
+            char[] neutralized = null;
+
+            // STEPS 2 AND 3 ARE FUSED, NOT REORDERED. Because the substitution
+            // is exactly one character for one character, "neutralize the whole
+            // string, then cut it" and "cut it, then neutralize what is left"
+            // produce the same answer character for character — which is the
+            // whole point of a length-preserving placeholder, and why the cut
+            // can be measured on the raw string above. Scanning only the kept
+            // range is therefore the documented behavior for less work: no
+            // placeholder is ever written into a character the cut discards.
+            for (int i = 0; i < kept; i++)
+            {
+                if (!char.IsControl(playerId[i]))
+                    continue;
+
+                if (neutralized == null)
+                {
+                    // Allocated on the FIRST control character and never for an
+                    // ordinary id — the overwhelmingly common case, and the one
+                    // that must stay a plain reference return.
+                    neutralized = new char[kept];
+                    playerId.CopyTo(0, neutralized, 0, kept);
+                }
+
+                neutralized[i] = ControlCharPlaceholder;
+            }
+
+            string body;
+            if (neutralized != null)
+                body = new string(neutralized);
+            else if (cut)
+                body = playerId.Substring(0, kept);
+            else
+                body = playerId;
+
+            return cut ? body + TruncationMarker : body;
+        }
+
+        /// How many of `playerId`'s characters reach the line: all of them when
+        /// it fits, `MaxPlayerIdLength` when it does not, and one less than that
+        /// when a cut at the bound would strand a character.
+        ///
+        /// The character a cut can strand is a LEADING SURROGATE sitting last in
+        /// the kept range: its partner is the first one dropped, so keeping it
+        /// would end the id with half of a code point — not a control character,
+        /// so the neutralization pass leaves it alone, and not representable by
+        /// any encoder the log line passes through afterwards. Whether the next
+        /// character really is the trailing half is deliberately not consulted:
+        /// the answer is the same either way, since a leading surrogate with
+        /// nothing after it is unpaired however it got that way, and the property
+        /// this function owes the caller is simply that the cut never produces
+        /// one. `MaxPlayerIdLength` is 64, so the `- 1` below is always a valid
+        /// index.
+        static int KeptLength(string playerId)
+        {
+            if (playerId.Length <= MaxPlayerIdLength)
+                return playerId.Length;
+
+            return char.IsHighSurrogate(playerId[MaxPlayerIdLength - 1])
+                ? MaxPlayerIdLength - 1
+                : MaxPlayerIdLength;
+        }
+    }
+
     /// The FishNet wiring around `HandshakeDecision` (Stage 2 Task 39, spec
     /// §3.10 :642-651; brief §2.1/§2.6). Registers the one
     /// `ClientHelloNet` handler this process has and answers it with
@@ -189,9 +509,13 @@ namespace Ring.Networking.Server
     /// where the delegate makes the origin STRUCTURALLY single — whoever
     /// owns the axis (Task 41's bootstrap, which is also the thing that
     /// calls `MatchRoster.ShouldStart`) is the only place a clock is ever
-    /// started. Contract for Task 40/41: pass the SAME `Func&lt;double&gt;`
-    /// (or an equivalent reading of the same underlying clock) here and to
-    /// every `MatchRoster.ShouldStart`/`TryJoin` call.
+    /// started. A SECOND READER JOINED SINCE (app-uxx): `Refuse` stamps its
+    /// log line with the same delegate, so a refusal and `ServerBootstrap`'s
+    /// accepted line report one axis and can simply be subtracted — which is
+    /// precisely what two clocks would break. Contract for Task 40/41: pass
+    /// the SAME `Func&lt;double&gt;` (or an equivalent reading of the same
+    /// underlying clock) here and to every `MatchRoster.ShouldStart`/`TryJoin`
+    /// call.
     ///
     /// THE `onAccepted` CALLBACK CLOSES THE SLOT-TO-CONNECTION GAP
     /// (fix-round 1, I-3 — blocks Task 41 without it). `MatchServer.
@@ -429,29 +753,60 @@ namespace Ring.Networking.Server
                 }
             }
 
-            Refuse(connection, refusal);
+            // `hello.PlayerId` is handed on rather than looked up later
+            // (app-uxx): this stack frame is the only place the id that
+            // arrived in THIS hello still exists. A refused candidate never
+            // enters the roster, so after this call returns there is nothing
+            // left anywhere that could answer "which player was turned away".
+            Refuse(connection, hello.PlayerId, refusal);
         }
 
-        void Refuse(NetworkConnection connection, HandshakeRefusal reason)
+        /// The single refusal path: say it on the console, say it on the wire,
+        /// then (except for `DuplicatePlayer`) close the connection — the
+        /// ordering and the exception both have their own paragraphs in the
+        /// class doc above.
+        ///
+        /// `playerId` ARRIVES AS A PARAMETER (app-uxx), not as a field and not
+        /// read back out of `connection`. See the call site's own comment for
+        /// why it can only come from there.
+        ///
+        /// THE SENTENCE IS `HandshakeLog.RefusalLine`'S, THE CHANNEL IS THIS
+        /// METHOD'S (`HandshakeLog`'s "SEVERITY IS NOT DECIDED HERE"
+        /// paragraph). Warning for an ordinary refusal and error for
+        /// `UnrecognizedRejection`, split on the same member the formatter
+        /// splits its tail on. A REFUSED JOIN IS A ROUTINE EVENT, NOT A FAULT
+        /// — app-uxx's own direction, "Warning, not Error, because a refusal is
+        /// routine": a wrong `-ring-player-id`, an out-of-sync balance asset or
+        /// a full match are all things an operator causes and fixes himself,
+        /// and calling every one of them an error would leave nothing louder to
+        /// say when the server really does break. `UnrecognizedRejection` is
+        /// the one that really is broken — the join delegate and this assembly
+        /// disagreeing about a code, on the server's own side of the contract.
+        ///
+        /// `UnityEngine.Debug`, NOT `_nm.Log*` (app-aor, owner's decision (a)).
+        /// The dedicated-server build defines `UNITY_SERVER`, and FishNet's
+        /// `LevelLoggingConfiguration.InitializeOnce` answers that define with
+        /// `_headlessLogging`, whose default is `LoggingType.Error` — so both
+        /// `Common` and `Warning` are dropped before reaching stdout, and a
+        /// refusal logged through the `NetworkManager` would be invisible in
+        /// exactly the process this line exists for. THE NAME IS SPELLED OUT IN
+        /// FULL although nothing in this file makes a bare `Debug` ambiguous
+        /// (unlike `MatchServer.cs`, which imports `System.Diagnostics` for
+        /// `Stopwatch` and would bind the short name to the wrong type
+        /// outright). Which logger a server-side line uses is the thing this
+        /// zone has now got wrong twice — the two `MatchServer` lines app-aor
+        /// found silenced, and this refusal (app-aor's third `MatchServer` line
+        /// was already an `Error` and audible; it moved for uniformity, not to
+        /// be rescued) — so it belongs in the reader's way at the call site
+        /// rather than in a `using` at the top of the file.
+        void Refuse(NetworkConnection connection, string playerId, HandshakeRefusal reason)
         {
+            string line = HandshakeLog.RefusalLine(playerId, connection.ClientId, reason,
+                _nowSeconds());
             if (reason == HandshakeRefusal.UnrecognizedRejection)
-            {
-                _nm.LogError($"MatchHandshake: refusing connection {connection.ClientId} with "
-                    + "UnrecognizedRejection — the join delegate or HandshakeDecision."
-                    + "FromJoinRejection produced a code this class does not recognize; this "
-                    + "is an internal contract violation, not a balance/version mismatch "
-                    + "(fix-round 1, N-2/N-3).");
-            }
+                UnityEngine.Debug.LogError(line);
             else
-            {
-                // Diagnostic wording only (brief §2.5) — never "exploit"/
-                // "illegitimate"/"security": an unmodified client can
-                // produce every one of these reasons just by running an
-                // out-of-sync build.
-                _nm.Log($"MatchHandshake: refusing connection {connection.ClientId} — {reason} "
-                    + "(balance/version parity diagnostic, not an anti-cheat check; a modified "
-                    + "client can report any hash or version).");
-            }
+                UnityEngine.Debug.LogWarning(line);
 
             var refused = new MatchRefusedNet { Reason = (byte)reason };
             _nm.ServerManager.Broadcast(connection, refused, channel: Channel.Reliable);

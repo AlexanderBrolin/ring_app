@@ -402,6 +402,87 @@ namespace Ring.Presentation
         public bool WouldFireThisFrame => Ready
             && WeaponSystem.WouldFireThisTick(RenderCurr.Player, LastFrameInput, Config.Weapon);
 
+        /// Whether this client's own player is inside a dash right now (bd
+        /// `app-g21`) — the single source of truth for the two PREDICTED dash
+        /// cosmetics, `PersistentPropsDirector`'s floor mark and
+        /// `AudioDirector`'s dash sound, so the two components' decisions can
+        /// never drift apart, exactly as `WouldFireThisFrame` above serves the
+        /// two halves of a shot's feedback. Both readers hold their own
+        /// `ImmediatePredictionLatch` and wait out the same
+        /// `ImmediatePredictionWindowSeconds`; the latch is what turns this
+        /// LEVEL into the one rising EDGE per dash they act on.
+        ///
+        /// A LEVEL AND NOT A GUESS, WHICH IS WHY NOTHING IN `Simulation` HAD TO
+        /// GROW A `WouldDashThisTick` TO ANSWER IT. The property above has to
+        /// call into `WeaponSystem` because a shot must be predicted from a
+        /// cooldown and a held button BEFORE the tick that fires it. A dash
+        /// announces itself instead: `PlayerMovementSystem` sets
+        /// `PlayerState.DashTimer` on the tick the dash starts (its `else`
+        /// branch, unreachable while a dash is already running) and from there
+        /// only ever decrements it, so the fact is already in the state this
+        /// client predicts for itself and needs no second opinion (Р34).
+        ///
+        /// `RenderCurr.Player` — THIS CLIENT'S OWN PREDICTED SEAT, NEVER
+        /// `ObservedIndex` (Р48/Р189). That property's own doc names both
+        /// readers of this one among the surfaces that stay on
+        /// `LocalPlayerIndex`, and for the same reason: a spectator watches a
+        /// body it does not drive, so there is no dash of that body to predict
+        /// — a watched player's mark and dash sound arrive with their event,
+        /// like every other stranger's.
+        ///
+        /// `Ready` LEADS BECAUSE `RenderCurr` IS NOT A PICTURE BEFORE IT — the
+        /// same lead as the property above, for a different reason of its own:
+        /// `LocalSimBackend` has no snapshot pair at all until its first
+        /// `Restart` (`Ready => _world != null`), and `RenderSnapshot.Player`
+        /// indexes `Players[LocalPlayerIndex]` with no guard.
+        ///
+        /// IT OVERLAPS ITS OWN EVENT, WHICH THE SHOT'S GATE NEVER DOES, AND
+        /// BOTH READERS CARRY THE CONSEQUENCE. `WouldFireThisFrame` goes DOWN
+        /// on the tick that fires, so a round's authoritative `ProjectileFired`
+        /// can only ever arrive after that gate has fallen, and the latch alone
+        /// orders the two. This one goes UP on the tick that emits
+        /// `PlayerDashed` and stays up for the whole dash (`HeroConfig.
+        /// DashDuration` 0.09 s — three ticks at the shipped balance), so its
+        /// readers can be handed the event and the rising edge in EITHER order:
+        ///  - on the LOCAL backend the event is always first. This component
+        ///    advances the tick and fans its events out inside its own `Update`
+        ///    (pinned -50), before any view's `Update` or `LateUpdate` runs, so
+        ///    a solo dash's mark and sound are still drawn and played by the
+        ///    event exactly as they were before this property existed, and the
+        ///    edge that follows is refused. USUALLY IN THE SAME FRAME, BUT NOT
+        ///    ALWAYS: a hitstop freeze pins `RenderCurr` at a copy taken before
+        ///    the dash (`FreezeRender`, `GameFeelConfig.HitstopScope`
+        ///    `FullFrame` in the shipped asset) while the simulation keeps
+        ///    ticking under it, so this property reads false right through the
+        ///    freeze and rises only when the freeze ends — several frames after
+        ///    the event, and only if the dash is still running by then. A single
+        ///    freeze (`HitstopSeconds` 0.04 s, 0.056 s scaled by
+        ///    `HeadHitstopScale`) is shorter than the 0.09 s dash, so ordinarily
+        ///    it is; a chain of freezes that outlasts the dash simply yields no
+        ///    edge at all, which is the harmless direction — the mark and the
+        ///    sound have already been shown by the event;
+        ///  - on a NETWORKED client the edge is first by an interpolation
+        ///    buffer plus half a round trip — the ~170 ms the owner's В1
+        ///    playtest measured against a 90 ms dash, which is the whole reason
+        ///    this property exists — unless a hitstop freeze is holding
+        ///    `RenderCurr` across the emitting tick, in which case the edge
+        ///    rises when the freeze ends and is still ahead of the event by
+        ///    most of that gap (0.056 s at the very most against ~170 ms).
+        /// So the readers hold that memory in their latches rather than in a
+        /// bit of their own cleared when this property goes false:
+        /// `ImmediatePredictionLatch.NoteShownFromEvent`, taken out exactly
+        /// where a reader draws or plays a dash of this client's own from the
+        /// event, spent by the next rising edge whenever that edge turns up and
+        /// forgotten by its own window when none ever does. A bit on the LEVEL
+        /// was the first shape of this rule and was
+        /// wrong — the freeze in the first case above takes the level away in
+        /// the middle of the very dash the bit had to remember, so the bit
+        /// cleared itself just in time for the edge to draw a second mark on
+        /// the way out. The latch's other half cannot answer this question
+        /// either: `TryConsume` records a prediction waiting for its event, and
+        /// here the event arrived FIRST, with nothing to consume.
+        public bool DashingThisFrame => Ready && RenderCurr.Player.DashTimer > 0f;
+
         /// Whether the game is asking this client to AIM right now (Stage 2 Task
         /// 45c fix-round 1, G-4) — the single signal three surfaces key off, so
         /// they can never disagree about whether the player is in the fight: the
@@ -444,8 +525,11 @@ namespace Ring.Presentation
         /// player being watched) and `RenderObservedWorldPos` above, whose own
         /// single reader is `CameraRig`. EVERYTHING ELSE STAYS ON
         /// `LocalPlayerIndex` — the aim ray, the cursor, the ground marker,
-        /// `AimActive`, `RenderPlayerWorldPos`, `MuzzleFlashView`,
-        /// `AudioDirector`, `GameFeelDirector`, `ViewRegistry`. That is not an
+        /// `AimActive`, `RenderPlayerWorldPos`, `DashingThisFrame`,
+        /// `MuzzleFlashView`, `AudioDirector`, `PersistentPropsDirector`
+        /// (bd `app-g21` gave it a local-seat read of its own: the predicted
+        /// dash mark, and the own-slot test that suppresses that dash's event),
+        /// `GameFeelDirector`, `ViewRegistry`. That is not an
         /// omission (spec §3.12 asks for the opposite for the first three): a
         /// spectator holds none of the watched player's rights, and Р48 is what
         /// says so — a client must not be drawn a weapon it does not have. The
@@ -480,7 +564,7 @@ namespace Ring.Presentation
         /// that seat (Stage 2 Task 47b fix-round 1) — four states because the
         /// question has four answers, and a pile of bools would have
         /// combinations that mean nothing.
-        enum RequestedPicture
+        internal enum RequestedPicture
         {
             /// No frame has carried the seat yet. The ordinary state of the
             /// first frames after a press: the request is still climbing the
@@ -512,6 +596,59 @@ namespace Ring.Presentation
         }
 
         RequestedPicture _requestedPicture;
+
+        /// What one frame says about a request in flight (bd `app-sfi`) — the
+        /// whole state machine, as a pure function of the state and the two
+        /// facts a frame carries. Extracted from `UpdateObservation` so the
+        /// table is pinned by tests instead of by a scene (the rule
+        /// `PlayerPredictionCore.RouteReplicate` already follows).
+        ///
+        /// THE FIX ITSELF IS THE `Broken` BRANCH (owner's variant (a) of the
+        /// task). Before it, `Broken` was a dead end with only `Proven` leading
+        /// out, so this sequence threw an ACCEPTED switch away in silence: the
+        /// target is visible from this client's own corpse when the button is
+        /// pressed, hides for longer than `VisibilityConfig.LingerTicks`
+        /// (5 ticks = 167 ms), and comes back into the corpse's view before the
+        /// switch lands. The request then closes on `Broken`, the picture never
+        /// moves, and when the target walks away the frame carries neither it
+        /// nor this client's own seat — camera and HP bar freeze with no way
+        /// back but another press. Letting a returning target restart the run
+        /// costs exactly what decision 1b already accepted (a switch can be
+        /// confirmed by a target that is merely visible from the body), and it
+        /// buys back the accepted switch.
+        ///
+        /// `Proven` IS STICKY, AND IT HAS EXACTLY ONE HOME. It is a fact about
+        /// a frame that has already arrived (a frame without this client's own
+        /// seat was built from somebody else's eyes), and no later frame can
+        /// unsay it. That is enforced STRUCTURALLY — no branch below leads out
+        /// of `Proven` — rather than by an early return saying the same thing a
+        /// second time: a guard `if (current == Proven) return current` was
+        /// written first and deleted, because mutation testing showed it changed
+        /// no answer at all (two copies of a rule are two copies of a defect,
+        /// and the copy no test can discriminate is the one that rots).
+        internal static RequestedPicture NextRequestedPicture(RequestedPicture current,
+            bool targetKnown, bool ownKnown)
+        {
+            if (targetKnown)
+            {
+                // The frame that settles it outright: the target is here and
+                // this client's own body is not.
+                if (!ownKnown) return RequestedPicture.Proven;
+
+                // A run that was broken by the target crossing the corpse's
+                // field of view starts again the moment the target is back —
+                // the request is still in flight, and nothing about the earlier
+                // gap says the switch was refused.
+                if (current == RequestedPicture.Broken) return RequestedPicture.NeverArrived;
+
+                if (current == RequestedPicture.NeverArrived) return RequestedPicture.Holding;
+                return current;
+            }
+
+            return current == RequestedPicture.Holding
+                ? RequestedPicture.Broken
+                : current;
+        }
 
         /// Last frame's input, for the two button EDGES spectating reads. A
         /// second `InputSampler.SampleFrame()` is what this avoids — it would
@@ -1171,19 +1308,8 @@ namespace Ring.Presentation
                 // only records what the frames said; nothing moves.
                 if (_requestedIndex >= 0)
                 {
-                    if (curr.PlayerKnown[_requestedIndex])
-                    {
-                        // The frame that settles it outright: the target is
-                        // here and this client's own body is not.
-                        if (!curr.PlayerKnown[local])
-                            _requestedPicture = RequestedPicture.Proven;
-                        else if (_requestedPicture == RequestedPicture.NeverArrived)
-                            _requestedPicture = RequestedPicture.Holding;
-                    }
-                    else if (_requestedPicture == RequestedPicture.Holding)
-                    {
-                        _requestedPicture = RequestedPicture.Broken;
-                    }
+                    _requestedPicture = NextRequestedPicture(_requestedPicture,
+                        curr.PlayerKnown[_requestedIndex], curr.PlayerKnown[local]);
 
                     if (!_backend.SpectateRequestInFlight)
                     {

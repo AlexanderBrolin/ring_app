@@ -29,9 +29,15 @@ headless-образ в Docker Hub, лаг-гейт механик и спайк 
 **FishNet 4.7.2** (UPM git-URL; новый пакет, санкционирован ADR-002 T2),
 **MetaVoiceChat** (MIT, вендоринг, спайк), Docker + Docker Hub.
 
-**Спека:** **v3.5** (С1–С21, Р1–Р140; два круга self-review, аудит перед
-имплементацией, decision log фаз Ф1–Ф5 — §6d–§6h).
-**Статус плана:** **v3.6** — синхронизирован со спекой пофазно: v3.1 (фикс-волна
+**Спека:** **v4.0** (С1–С21, Р1–Р205; два круга self-review, аудит перед
+имплементацией, decision log и errata фаз Ф1–Ф10 — §6d–§6m).
+**Статус плана:** **v3.7** — синхронизирован со спекой пофазно. **Правки гейта
+Ф10 (2026-08-16, спека §6m Р193–Р205):** рунбуки R-DOCKER и R-CONTAINER
+переписаны (несобиравшаяся команда, каталог `linux-server`, тег-сирота);
+пометки errata у Т50 Step 3 (код 0, не 143) и Т51 Step 2 (порядок
+`--no-push` → R-COMMIT → `push`); пометка Е-20 у требования мерить Т53
+дев-оверлеем — веха В2 принята владельцем на стенде с ботами, порог 40 КБ/с и
+плейтест втроём перенесены в Т56. История версий: v3.1 (фикс-волна
 Ф1) → v3.2 (Ф2) → v3.3 (Ф3) → v3.4 (Ф4) → **v3.5 (Ф5: поправка Р135 «домов семь,
 а не пять», гейт Ф5 приведён к факту +69)** → **v3.6 (гейт фазы Ф9, 2026-08-13:
 раздел «Правки по гейту фазы Ф9» в конце — четыре места, где план разошёлся с
@@ -101,6 +107,8 @@ headless-образ в Docker Hub, лаг-гейт механик и спайк 
   <лог>` → пусто (кроме явно ожидаемых таском строк).
 - **ГЕЙТ-META:** каждому новому не-`.meta` файлу **и папке** соответствует
   `<path>.meta`; генерятся ближайшим Unity-прогоном; несопоставленный → стоп.
+  ⚠ **Errata Р199: гейт действует ТОЛЬКО под `client/Assets/**`** — `client/docker/`
+  лежит вне `Assets`, Unity его не импортирует, `.meta` там нет и не будет.
   (`Scripts/Networking/` и `Scripts/Server/` уже существуют пустыми с `.meta` —
   новые только подпапки.)
 - **RED-дисциплина:** тест не компилируется из-за отсутствующих полей/сигнатур
@@ -162,14 +170,26 @@ headless-образ в Docker Hub, лаг-гейт механик и спайк 
 - **R-BUILD-`<X>`:** `cd "$WT" && RING_BUILD_ROOT="$SCRATCH/builds"
   timeout -k 30 900 "$UNITY" -batchmode -quit -projectPath client
   -executeMethod Ring.Editor.BuildCommands.Build<X> -logFile "$SCRATCH/b<X>.log";
-  echo EXIT=$?` (X ∈ `LinuxServer` | `LinuxClient` | `WindowsClient`).
-- **R-DOCKER (Т47):** `cd "$WT" && docker build -f client/docker/Dockerfile
-  -t ring-server:dev "$SCRATCH/builds/LinuxServer"` → образ собран.
+  echo EXIT=$?` (X ∈ `LinuxServer` | `LinuxClient` | `WindowsClient` |
+  `LinuxServerDev` | `LinuxClientDev` | `WindowsClientDev` — целей ШЕСТЬ;
+  дев-цели несут оверлей и `-ring-latency`, и именно они нужны вехе В3).
+- **R-DOCKER (Т47, ИСТОРИЧЕСКИЙ — errata Р195/Р196):** записанная форма не
+  собирается: контекстом взят каталог артефакта, и у `COPY entrypoint.sh` нет
+  источника; каталог зовётся `linux-server`, а не `LinuxServer`. Исполнимая
+  форма — два контекста, из корня репозитория: `docker buildx build -f
+  client/docker/Dockerfile --build-context game="$SCRATCH/builds/linux-server"
+  -t <репозиторий>/ring-server:dev client/docker`. С Т51 вместо неё —
+  **R-IMAGE**, он же единственный поддерживаемый путь.
 - **R-IMAGE (с Т51):** `cd "$WT" && client/docker/build.sh [--no-push]` →
   в выводе размер и sha.
-- **R-CONTAINER:** `docker run --rm --cpus=1 --memory=1g -e
-  RING_MATCH_CONFIG_JSON="$(cat "$SCRATCH/match.json")" -p 7777:7777/udp
-  ring-server:dev` → в stdout строка старта матча, порт слушается.
+- **R-CONTAINER (errata Р197):** тега `ring-server:dev` больше нет — `build.sh`
+  собирает `${RING_IMAGE_REPO:-<юзер>/ring-server}:{<sha>,dev}`, а
+  локальный сирота удалён с машины. Форма замера: `docker rm -f ring-measure
+  2>/dev/null; docker run -d --name ring-measure --cpus=1 --memory=1g -p
+  7777:7777/udp -e RING_MATCH_CONFIG_JSON="$(cat "$SCRATCH/match.json")"
+  ${RING_IMAGE_REPO:-<юзер>/ring-server}:dev` → в stdout строка старта
+  матча, порт слушается; убрать за собой `docker rm -f ring-measure`. Штатный
+  запуск стенда с Т52 — `client/docker/docker-compose.yml` (`docs/deploy.md`).
 - **R-COMMIT:** секрет-чек → ГЕЙТ-META → `git add <файлы+meta> && git commit
   -m "<msg>" -m "<трейлер>"`.
 
@@ -2157,8 +2177,10 @@ SIGTERM = «матч прерван» → код 143.
 - [ ] **Step 1:** написать; `shellcheck client/docker/entrypoint.sh` (если есть).
 - [ ] **Step 2:** R-BUILD-`LinuxServer` → **R-DOCKER** (сырой `docker build`;
   `build.sh` появится в Т51).
-- [ ] **Step 3:** R-CONTAINER → строка старта; `docker stop` → **код 143 и
-  дописанный лог** (проверка `exec`).
+- [ ] **Step 3:** R-CONTAINER → строка старта; `docker stop` → **код 0 и
+  быстрая остановка** (проверка `exec`). ⚠ **Errata Р193:** «код 143» здесь и в
+  Interfaces выше — неверно, измерено: код 0, 0.21 с; случаи различает ЛОГ
+  (`exiting with code N` есть у своего исхода и нет у SIGTERM).
 - [ ] **Step 4:** R-COMMIT `feat(app-5nu): Т50 — образ headless-сервера`.
 
 ### Task Т51: `build.sh` и публикация в Docker Hub
@@ -2173,7 +2195,9 @@ SIGTERM = «матч прерван» → код 143.
 
 - [ ] **Step 1:** написать; прогон с `--no-push`.
 - [ ] **Step 2:** `docker login` → полный прогон с `push`; тег виден в приватном
-  репозитории.
+  репозитории. ⚠ **Errata Р198:** порядок шагов 2 и 3 в этом списке несовместим
+  с гвардом самого скрипта (он не публикует с грязного дерева). Исполненный и
+  правильный порядок: `--no-push` → **R-COMMIT** → `push`.
 - [ ] **Step 3:** R-COMMIT `feat(app-5nu): Т51 — сборка и публикация образа`.
 
 ### Task Т52: `docs/deploy.md` и LAN-хост (`app-u0l`)
@@ -2574,7 +2598,7 @@ FishNet 4.7.2. Правки кода — внутри `Spike/` (плюс `SpikeS
 Гейт фазы Ф9 (два фазовых ревьюера + сверки координатора) нашёл **четыре места,
 где план разошёлся с исполненным кодом**, и все четыре — расхождения плана, а не
 кода: код сверен открытием файлов, решения владельца записаны. Развёрнутые
-формулировки — в спеке, §6l, Р180–Р192. **План против §6l — верить §6l.**
+формулировки — в спеке, §6l, Р180–Р192. **План против §6l/§6m — верить §6l и §6m.**
 
 1. **Т45 РАЗБИТ ВЛАДЕЛЬЦЕМ НА ТРИ ТАСКА** (Т45a — кукла и пул вьюх, Т45b —
    вспышка/гильзы/луч от сокетов модели, Т45c — прицел в пол, курсор, отклик на
@@ -2612,6 +2636,8 @@ EditMode-прогон и R-COMPILE этого не видят в принцип�
 `BuildWindowsClient`, обе EXIT=0 при нуле `error CS`.
 
 **Т53 и Т56 меряются на ДЕВ-паре, не на релизных артефактах.** Порог трафика
-40 КБ/с в Т53 читается дев-оверлеем, лаг-гейт Т56 идёт под 80/5 — оба прибора
-живут под `#if UNITY_EDITOR || DEVELOPMENT_BUILD`. Релизные цели — артефакт
+40 КБ/с и лаг-гейт под 80/5 читаются дев-оверлеем — оба прибора живут под
+`#if UNITY_EDITOR || DEVELOPMENT_BUILD`. ⚠ **Errata Е-20 (спека §6m):** веха В2
+принята владельцем 2026-08-16 на стенде с ботами, и чтение оверлеем **не
+исполнялось** — порог 40 КБ/с вместе с плейтестом втроём перенесён в Т56. Релизные цели — артефакт
 гейтов и поставки.

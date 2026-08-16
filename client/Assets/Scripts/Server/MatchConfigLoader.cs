@@ -124,9 +124,17 @@ namespace Ring.Server
         // running without any balance data loaded at all.
         const string DevMatchId = "dev-match";
         const long DevSeed = 1; // arbitrary, fixed, nonzero — only Р42 legality matters here, not the specific value.
-        // R-CONTAINER's own runbook (global-constraints.md) publishes
-        // `-p 7777:7777/udp` — this constant is the reason that number in the
-        // runbook is not a coincidence; a change here must update the runbook too.
+        // THIS NUMBER IS A CONVENTION WITH FOUR HOMES, and a change here has
+        // to be carried to all of them: `client/docker/Dockerfile` declares
+        // `EXPOSE 7777/udp`, R-CONTAINER's runbook and `docker-compose.yml`
+        // publish `-p 7777:7777/udp`, and `client/docker/match.json` carries
+        // the `"port"` the server actually binds in every container run.
+        //
+        // THE CONTAINER DOES NOT READ THIS CONSTANT. It gets its port from the
+        // match config, and this value only stands in for a dev run started
+        // without one -- which is exactly why the four can drift apart
+        // silently, and why the Dockerfile names this constant as the origin
+        // of its own number.
         const int DevPort = 7777;
         const int DevCountdownSeconds = 5;
 

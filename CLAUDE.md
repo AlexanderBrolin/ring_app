@@ -128,8 +128,12 @@ app/
   -testPlatform EditMode -testResults <абс.путь>.xml -logFile <лог>`;
   exit 0 = все зелёные.
 - **Сборки:** `RING_BUILD_ROOT=<каталог вне git> "$UNITY" -batchmode -quit -projectPath
-  client -executeMethod Ring.Editor.BuildCommands.<BuildLinuxServer|BuildWindowsClient|BuildLinuxClient>
-  -logFile <лог>`.
+  client -executeMethod Ring.Editor.BuildCommands.<цель> -logFile <лог>`.
+  Целей **шесть**: релизные `BuildLinuxServer`, `BuildLinuxClient`,
+  `BuildWindowsClient` и дев-цели `BuildLinuxServerDev`, `BuildLinuxClientDev`,
+  `BuildWindowsClientDev` (с `BuildOptions.Development`: дев-оверлей,
+  `-ring-latency`). Каталоги — строчными через дефис (`linux-server`,
+  `windows-client-dev`, …), не CamelCase.
 - **Unity MCP:** CoplayDev/unity-mcp (Amendment A6): Unity-пакет в manifest +
   проектный `.mcp.json` (сервер: `uvx --from mcpforunityserver mcp-for-unity
   --transport stdio`); тулы доступны при открытом Editor, после перезапуска сессии агента.
@@ -138,6 +142,11 @@ app/
 
 - **Server-трек (владелец):** `Simulation/` (включая AI), `Networking/`, `Server/`,
   `Tests/`, `client/docker/`, весь `server/`, ADR и правила.
+  **Правило зоны:** операторские строки серверной зоны пишутся через
+  `UnityEngine.Debug`, а не через `_nm.Log` — под `#if UNITY_SERVER` потолок
+  логгера FishNet равен `Error`, и всё, что ниже, в headless невидимо. Цена
+  умолчания измерена дважды (`app-aor`, `app-uxx`): строка отказа в джоине была
+  написана и не видна.
 - **Клиентский трек (коллеги + их Claude-агенты):** `Presentation/`, `Meta/` (UI),
   `Art/`, `Audio/`, визуальные префабы/сцены — детальные правила в `client/CLAUDE.md`
   (подхватывается их агентами автоматически при работе в `client/`).

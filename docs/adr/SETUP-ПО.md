@@ -24,7 +24,7 @@
 | Unity.Mathematics | Package Manager | Детерминированная математика в Simulation |
 | DOTween | Asset Store (free) | Твины UI/game feel |
 | Feel (More Mountains) | Asset Store, платный (~$45) | Game-feel-компоненты: hitstop, тряска, вспышки. Опционален, но окупает себя на Этапе 1 |
-| Dissonance Voice Chat | Asset Store, платный (~$75) + интеграция FishNet | Проксимити-войс (ADR-002 T11). Обязателен, покупать к Этапу 2 (спайк) |
+| MetaVoiceChat | GitHub, **MIT, бесплатно**; вендоринг в `client/Assets/Plugins/MetaVoiceChat/` | Проксимити-войс (ADR-002 T11, амендмент гейта Ф10 — спека §6m Р204). Покупать НЕ нужно; Dissonance (~$75) — план Б, если интеграция окажется битой |
 
 ### MCP для Claude-агентов
 

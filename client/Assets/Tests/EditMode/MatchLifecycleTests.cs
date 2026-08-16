@@ -1,3 +1,4 @@
+using Unity.Mathematics;
 using System;
 using FishNet.Broadcast;
 using FishNet.Connection;
@@ -13,7 +14,7 @@ namespace Ring.Simulation.Tests
 {
     /// Stage 2 Task 40 (spec §3.10, §3.11, §6k Р163/Р164; plan Т40): the
     /// match's own life cycle — the epoch it is minted under, the two ways it
-    /// can end, and the SIX client-side seams a restart has to clear (five in
+    /// can end, and the SEVEN client-side seams a restart has to clear (five in
     /// Task 40; `ClientEventQueue` joined them in Task 44b, by the two-places
     /// rule `ClientMatchReset`'s own doc states).
     ///
@@ -54,7 +55,7 @@ namespace Ring.Simulation.Tests
     /// and this file. The completeness of the set is contractual, not
     /// something the type system holds up: nothing in C# can say "these are
     /// all the objects a restart must clear". The mutation wave of each task
-    /// (one removed call per seam) is what pins the current six
+    /// (one removed call per seam) is what pins the current seven
     /// mechanically; a seventh inherits the same obligation.
     ///
     /// FIXTURES ARE HAND-BUILT (Р56 — the asset owns the game's numbers, the
@@ -444,6 +445,26 @@ namespace Ring.Simulation.Tests
                 + "own target");
         }
 
+        /// bd `app-s0u`, the seventh seam. Without this the mutation "delete
+        /// `_tracers.Reset()` from `ResetForEpoch`" leaves the whole suite
+        /// green while the rounds of the match that ended keep flying through
+        /// the new one.
+        [Test]
+        public void ResetForEpoch_ClearsTracers()
+        {
+            var tracers = new TracerProjectiles(4);
+            tracers.TrySpawn(1, 0, float2.zero, 1f, new float2(1f, 0f), 10f, 0f, 0.1f, 2f);
+            var scratch = new ProjectileState[4];
+            Assert.AreEqual(1, tracers.WriteInto(scratch, 0), "witness: a round is being drawn");
+
+            NewReset(NewDedup(), NewQueue(), new RenderClock(), NewGhosts(), NewStalePolicy(),
+                NewEventQueue(), tracers).ResetForEpoch(2);
+
+            Assert.AreEqual(0, tracers.Count, "the new epoch starts with no tracer at all");
+            Assert.AreEqual(0, tracers.WriteInto(scratch, 0));
+        }
+
+
         [Test]
         public void ResetForEpoch_ClearsGhosts()
         {
@@ -597,33 +618,41 @@ namespace Ring.Simulation.Tests
             var policy = NewStalePolicy();
             var events = NewEventQueue();
 
-            // Six separate guards, six separate assertions on the PARAMETER
-            // NAME: "something threw" would pass even if one seam's guard
-            // covered another's argument, which is precisely the mistake a
-            // six-argument constructor invites.
+            // Seven separate guards, seven separate assertions on the
+            // PARAMETER NAME: "something threw" would pass even if one seam's
+            // guard covered another's argument, which is precisely the mistake
+            // a seven-argument constructor invites.
+            var tracers = new TracerProjectiles(8);
             Assert.AreEqual("dedup",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(null, queue, clock, ghosts, policy, events)).ParamName);
+                    () => new ClientMatchReset(null, queue, clock, ghosts, policy, events, tracers)).ParamName);
             Assert.AreEqual("snapshotQueue",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy, events)).ParamName);
+                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy, events, tracers)).ParamName);
             Assert.AreEqual("renderClock",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy, events)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy, events, tracers)).ParamName);
             Assert.AreEqual("ghosts",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, null, policy, events)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, null, policy, events, tracers)).ParamName);
             Assert.AreEqual("stalePolicy",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null, events)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null, events, tracers)).ParamName);
             // The sixth seam (Task 44b), by the same rule as the five above.
             Assert.AreEqual("eventQueue",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, null)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, null, tracers)).ParamName);
+
+            // The seventh seam (bd `app-s0u`), by the same rule as the six above.
+            Assert.AreEqual("tracers",
+                Assert.Throws<ArgumentNullException>(
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, null))
+                    .ParamName);
 
             // Positive witness: a fully wired set constructs.
-            Assert.DoesNotThrow(() => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events),
-                "witness: all six seams present is the legal construction");
+            Assert.DoesNotThrow(
+                () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers),
+                "witness: all seven seams present is the legal construction");
         }
 
         [Test]
@@ -712,12 +741,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, (byte)MatchEndReason.MaxDurationReached);
         }
 
-        /// `eventQueue` is last and defaulted (Task 44b): every existing
-        /// call site keeps reading exactly as it did, and only the test that
-        /// is ABOUT the sixth seam has to name it.
+        /// `eventQueue` (Task 44b) and `tracers` (bd `app-s0u`) are last and
+        /// defaulted: every existing call site keeps reading exactly as it did,
+        /// and only the test that is ABOUT one of those seams has to name it.
         static ClientMatchReset NewReset(EventDedup dedup, SnapshotQueue queue, RenderClock clock,
-            GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue = null)
+            GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue = null,
+            TracerProjectiles tracers = null)
             => new ClientMatchReset(dedup, queue, clock, ghosts, stalePolicy,
-                eventQueue ?? NewEventQueue());
+                eventQueue ?? NewEventQueue(), tracers ?? new TracerProjectiles(8));
     }
 }

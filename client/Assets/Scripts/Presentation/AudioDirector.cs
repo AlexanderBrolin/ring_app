@@ -44,6 +44,34 @@ namespace Ring.Presentation
     /// voice actually played, never when the predicted attempt itself got
     /// gated out (armed-but-silent would wrongly consume the real event too,
     /// losing the shot's sound entirely instead of gating it once).
+    ///
+    /// bd `app-g21` GIVES THE DASH THE SAME TREATMENT, ON A GATE OF A
+    /// DIFFERENT SHAPE. `PredictDash` below plays `_dashClip` in the frame
+    /// this client's own dash starts, ahead of the `PlayerDashed` event that
+    /// confirms it — which on a networked client is ~170 ms of interpolation
+    /// buffer plus round trip behind a dash that lasts 90 ms, the owner's В1
+    /// complaint. `SimulationRunner.DashingThisFrame` is the shared source of
+    /// truth (`PersistentPropsDirector`'s floor mark is the other reader, and
+    /// the two must not disagree about when a dash began), and it is a LEVEL
+    /// over the predicted `PlayerState.DashTimer` rather than a guess at the
+    /// next tick's outcome: that property's own doc carries the whole
+    /// difference, including the one it makes to the latch — a dash's gate can
+    /// rise AFTER its own event rather than before it, always so on the local
+    /// backend, which is what `ImmediatePredictionLatch.NoteShownFromEvent`
+    /// answers and why `HandleEvent` below takes out that credit wherever a
+    /// dash of this client's own was actually heard from its event.
+    /// A SECOND `ImmediatePredictionLatch` INSTANCE holds it — one rule, one
+    /// instance per predicted THING. A shot's outstanding prediction and a
+    /// dash's have nothing to say to each other, and sharing one counter
+    /// between them would be two rules in one field: a dash would silence the
+    /// next round's predicted shot and the reverse.
+    ///
+    /// NO `GameFeelConfig` FLAG GATES THE DASH PAIR, and the asymmetry with
+    /// `ImmediateMuzzleFeedback` above is a decision rather than an oversight
+    /// (bd `app-g21`). Reusing that field would put a cosmetic it does not name
+    /// behind it — the owner may well want one without the other — and adding a
+    /// field would mean editing the balance asset for a switch nobody has asked
+    /// for. This task fixes a defect; it does not ship an option.
     public sealed class AudioDirector : MonoBehaviour
     {
         const int VoiceCount = 16;
@@ -81,8 +109,21 @@ namespace Ring.Presentation
         // `bool`/`float` pair here and its twin in MuzzleFlashView with ONE
         // shared class: the two had to agree, and two copies of a rule are two
         // rules. Still an independent INSTANCE per component (each owns its own
-        // predictions), exactly as before.
+        // predictions), exactly as before — and, since bd app-g21, per predicted
+        // THING as well: the dash below holds its own instance of the same class
+        // rather than sharing this counter.
         readonly ImmediatePredictionLatch _latch = new ImmediatePredictionLatch();
+
+        // bd app-g21: the dash's own latch — see the class doc for why a second
+        // instance rather than a second user of the one above. It holds both
+        // directions of this component's "one dash, one sound" rule: a
+        // predicted sound waiting for its event, and the credit an event that
+        // was heard first leaves for the edge still to come. `MinSfxInterval`
+        // is no substitute for the second of those — it drops a repeat within
+        // 0.03 s at the shipped balance, which a hitstop freeze outlasts, and
+        // it is a feel knob the owner may turn down to zero, which is no place
+        // to hang "is this dash heard twice" on.
+        readonly ImmediatePredictionLatch _dashLatch = new ImmediatePredictionLatch();
 
         // В3 fix-wave 2 (item 3c): last-play timestamp for the head-hover tick,
         // parallel to `_lastPlayTime` above but NOT indexed by `SimEventKind` —
@@ -160,9 +201,24 @@ namespace Ring.Presentation
             _lastHeadHoverTickTime = now;
         }
 
-        /// Task 28: per-frame prediction — see the class doc above and
-        /// `MuzzleFlashView.PredictBurst`'s doc for the shared heuristic's full
-        /// rationale. (Stage 2 Task 45c: this used to cite a
+        /// The two predicted sounds this component owns, each with its own gate,
+        /// its own latch and — deliberately — its own configuration rule (class
+        /// doc): the shot's sits behind `GameFeelConfig.ImmediateMuzzleFeedback`,
+        /// the dash's behind nothing at all.
+        ///
+        /// TWO NAMED METHODS RATHER THAN ONE BODY, because the flag test used to
+        /// be the first line of this method: appending the dash under it would
+        /// have put a dash's sound behind a toggle whose name promises the
+        /// muzzle, which is precisely the reuse bd `app-g21` refused.
+        void Update()
+        {
+            PredictShot();
+            PredictDash();
+        }
+
+        /// Task 28: per-frame prediction of the SHOT — see the class doc above
+        /// and `MuzzleFlashView.PredictBurst`'s doc for the shared heuristic's
+        /// full rationale. (Stage 2 Task 45c: this used to cite a
         /// `MuzzleFlashView.Update`; that class has had no `Update` since Task
         /// 45b's fix-round 1 moved its whole per-frame path into `LateUpdate`,
         /// behind `ViewRegistry`'s doll placement.) Fix-round (review #1,
@@ -177,7 +233,7 @@ namespace Ring.Presentation
         /// where a round comes down (`app-bej`). One formula, asked with this
         /// path's own aim: the last complete tick's `PlayerState.AimPoint`,
         /// exactly the value the hand-written version read.
-        void Update()
+        void PredictShot()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
             // Stage 2 Task 45b: one predicted sound per SHOT — the rising edge
@@ -200,6 +256,57 @@ namespace Ring.Presentation
             // once, from the event. It could only have lost a sound while the
             // latch held a QUEUE of predictions, where one shot's event could
             // consume a record another shot had left behind.
+        }
+
+        /// bd `app-g21`: the dash sound, in the frame this client's own dash
+        /// starts rather than the frame its event finishes crossing the wire.
+        /// `PersistentPropsDirector.PredictDashGlow` is the same rule for the
+        /// floor mark and reads the same gate — the two are fixed together on
+        /// purpose, since a mark on time beside a sound 170 ms late is the
+        /// original defect with an extra seam in it.
+        ///
+        /// THE LEVEL IS THE GATE AND THE LATCH IS THE EDGE, so `ShouldPredict`
+        /// is called on every frame this method reaches, sound or no sound —
+        /// the edge is a function of the previous frame's answer. That gate's
+        /// own doc explains why a dash needs no `WouldDashThisTick` to guess at
+        /// (the simulation states the fact in `DashTimer`), why a
+        /// reconciliation's second rising edge for one dash is harmless (the
+        /// latch's second fact), and why an event can beat the edge to the same
+        /// dash (the latch's third).
+        ///
+        /// IN SOLO THE SOUND STILL COMES FROM THE EVENT, and that is the point
+        /// of the third fact rather than a shortcoming: the local backend hands
+        /// `HandleEvent` this dash first, the voice starts there, and the credit
+        /// taken out there refuses the edge that follows — this frame's, or the
+        /// one a hitstop freeze delayed it into. The one solo case that DOES
+        /// reach `PlayClip` below is a dash whose event was dropped by the SFX
+        /// gates, which leaves no credit on purpose (`HandleEvent`'s own
+        /// comment): the attempt is then a sound arriving on time rather than a
+        /// duplicate — and it meets the same `MinSfxInterval`/`VoicesPerSfx`
+        /// state that just dropped the event, in the same frame, so it will
+        /// ordinarily be refused again.
+        ///
+        /// THE POSITION IS THE ONE THE MARK USES — `RenderCurr.Player.Pos`, the
+        /// point `PersistentPropsDirector.PredictDashGlow` puts its mark on, so
+        /// a dash is heard where it is seen; that method's own doc has how
+        /// closely it tracks the position the authoritative event carries, which
+        /// is "the same quantity one source earlier", not "the same number". Not
+        /// the muzzle: a dash comes off the body, and the `RenderMuzzleSimPos`
+        /// above answers a question about where a ROUND leaves from.
+        ///
+        /// `Arm` ONLY ON `true`, the G-4 rule of `PredictShot` above. The gates
+        /// inside `PlayClip` can refuse this attempt for a reason that has
+        /// nothing to do with this dash — another player's dash sounding within
+        /// `MinSfxInterval`, or this kind already at the `VoicesPerSfx` cap —
+        /// and an armed-but-silent latch would then swallow this dash's own
+        /// event on arrival, losing the sound outright instead of playing it
+        /// late.
+        void PredictDash()
+        {
+            if (!_dashLatch.ShouldPredict(_runner.DashingThisFrame, Time.unscaledTime)) return;
+
+            if (PlayClip(_dashClip, SimEventKind.PlayerDashed, _runner.RenderCurr.Player.Pos))
+                _dashLatch.Arm(Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds);
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer
@@ -233,16 +340,44 @@ namespace Ring.Presentation
                 && e.PlayerIndex == _runner.RenderCurr.LocalPlayerIndex
                 && _latch.TryConsume(Time.unscaledTime))
             {
-                // Already played this shot's sound ahead of time (Update above)
-                // — consume the prediction instead of a duplicate PlayOneShot
-                // (Task 28).
+                // Already played this shot's sound ahead of time (PredictShot
+                // above) — consume the prediction instead of a duplicate
+                // PlayOneShot (Task 28).
+                return;
+            }
+
+            // bd app-g21, the dash's half of the same rule, on its own latch and
+            // its own seat test. `SimEvent.PlayerIndex` is the ACTOR for this
+            // kind (that struct's own doc: the five "own-action" kinds), so this
+            // asks exactly "was this MY dash" — a stranger's dash must never
+            // consume my prediction, or their sound would be swallowed and mine
+            // would play twice (the app-ai2 shape, one kind over).
+            if (e.Kind == SimEventKind.PlayerDashed
+                && e.PlayerIndex == _runner.RenderCurr.LocalPlayerIndex
+                && _dashLatch.TryConsume(Time.unscaledTime))
+            {
+                // Already heard this dash ahead of its event (PredictDash above).
                 return;
             }
 
             // Task 22 (spec brief): zone-biased pitch — Head reads higher, Legs
             // lower, Body/None (and every non-blow kind, whose Zone defaults to
             // HitZone.None) stay at the plain PitchRange jitter.
-            PlayClip(ClipFor(e.Kind), e.Kind, e.Pos, ZonePitchOffset(e.Zone));
+            bool played = PlayClip(ClipFor(e.Kind), e.Kind, e.Pos, ZonePitchOffset(e.Zone));
+
+            // bd app-g21: this client's own dash has now been HEARD from its
+            // event, so the rising edge still to come for that same dash — this
+            // frame's, or the one a hitstop freeze delayed it into — has to be
+            // refused rather than double it (`ImmediatePredictionLatch.
+            // NoteShownFromEvent`). Conditioned on `played` and not on the call:
+            // a dash whose event was dropped by `MinSfxInterval`/`VoicesPerSfx`
+            // has not been heard at all, so a predicted attempt later in the
+            // same dash is a sound arriving late rather than a duplicate, and
+            // must not be refused (the G-4 rule `Arm` follows one method up).
+            if (played && e.Kind == SimEventKind.PlayerDashed
+                && e.PlayerIndex == _runner.RenderCurr.LocalPlayerIndex)
+                _dashLatch.NoteShownFromEvent(
+                    Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds);
         }
 
         /// Task 22: additive pitch bias layered on top of `PlayClip`'s ordinary
@@ -259,11 +394,15 @@ namespace Ring.Presentation
             }
         }
 
-        /// Shared by the event-driven `HandleEvent` and the predicted `Update`
-        /// path (Task 28): `MinSfxInterval`/`VoicesPerSfx` drop-only gates, then
-        /// the round-robin voice pick. Returns whether a voice actually started
-        /// playing — the predicted path only arms its suppression latch on
-        /// `true` (see `Update`'s doc above for why). `pitchOffset` (Task 22)
+        /// Shared by the event-driven `HandleEvent` and the two predicted paths
+        /// (Task 28, and bd `app-g21` for the dash):
+        /// `MinSfxInterval`/`VoicesPerSfx` drop-only gates, then the round-robin
+        /// voice pick. Returns whether a voice actually started playing — a
+        /// predicted path only arms its suppression latch on `true`, and
+        /// `HandleEvent` only takes out the reverse credit on `true`
+        /// (`PredictShot`/`PredictDash` above carry the reason; the doc that
+        /// used to be cited here was `Update`'s, before this task split its body
+        /// into those two). `pitchOffset` (Task 22)
         /// defaults to 0 for every call site that has no zone to bias by (the
         /// predicted-shot path above never passes one — a predicted shot has no
         /// SimEvent, hence no Zone, to read yet).

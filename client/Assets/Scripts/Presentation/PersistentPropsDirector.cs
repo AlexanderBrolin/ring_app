@@ -30,7 +30,17 @@ namespace Ring.Presentation
     /// because that is physically where it leaves. This is not an exception to
     /// the rule above and not its repeal: it is which of the two kinds each
     /// cosmetic is. Everything in this class except the casing is a trace, and
-    /// every one of them still takes its position from the event verbatim.
+    /// every one of them still takes its position from the event verbatim —
+    /// with ONE reading of the same quantity from an earlier source, which bd
+    /// `app-g21` added and which `PredictDashGlow` below carries in full: the
+    /// mark for this client's OWN dash is drawn in the frame the dash starts,
+    /// when its event does not exist yet, so the point comes from
+    /// `SimulationRunner.RenderCurr.Player.Pos` — this client's own predicted
+    /// state of the body that is dashing, and exactly where that body's doll is
+    /// drawn. Not an exception to the trace rule and not its repeal: the same
+    /// quantity about the same body, one source earlier. How close that lands
+    /// to the event's own number is a question with a real answer rather than
+    /// "identical", and `PredictDashGlow` gives it.
     ///
     /// For the casing that means `SpawnCasing` asks `ViewRegistry.
     /// TryGetPlayerView` for the shooter's doll and spawns from its
@@ -45,8 +55,27 @@ namespace Ring.Presentation
     /// Б1 milestone fix-wave 2 (app-9av, owner request) adds a fourth
     /// `RingBuffer&lt;T&gt;` kind, `DashGlowView` — a glowing floor mark at the
     /// dash start point that fades out over `GameFeelConfig.DashGlowSeconds`,
-    /// spawned on `PlayerDashed` the same way every other event here spawns
-    /// its own cosmetic.
+    /// spawned on `PlayerDashed` the way every other cosmetic here is spawned
+    /// — FOR EVERY DASH BUT THIS CLIENT'S OWN ON A NETWORKED CLIENT, which bd
+    /// `app-g21` moved off the event and onto the frame the dash actually
+    /// starts in. The owner's В1 playtest asked for it: the authoritative event
+    /// waits out half a round trip plus `NetConfig.InterpBufferTicks` (~170 ms
+    /// at the measured `rtt=147`, `behind=3`) while the dash it marks lasts
+    /// 90 ms (`HeroConfig.DashDuration`), so the mark lit up after the dash had
+    /// all but ended. `PredictDashGlow` below draws that one mark from this
+    /// client's own predicted state instead, and `SpawnDashGlow` swallows the
+    /// event that confirms it, so one dash still leaves one mark.
+    /// IN SOLO NOTHING CHANGED, and that is the same mechanism from the other
+    /// side rather than an exemption: the local backend fans a tick's events
+    /// out inside `SimulationRunner.Update`, before any view runs, so the mark
+    /// is drawn from the event exactly as it always was and the prediction that
+    /// follows is refused. There was no lateness to fix there — a solo dash and
+    /// its event land in the same frame (`SimulationRunner.DashingThisFrame`'s
+    /// doc has the ordering, `ImmediatePredictionLatch` has the refusal).
+    /// A STRANGER'S DASH IS UNTOUCHED, and not by omission: this client
+    /// predicts nothing about a body it does not drive (CR 3), so their mark
+    /// comes from their event, at their event's own position, exactly as
+    /// before.
     ///
     /// Task 24 (revised per `app-1zf`'s investigation — see `GibView`'s class
     /// doc for the full "primitives only" story) added a fifth kind,
@@ -234,6 +263,25 @@ namespace Ring.Presentation
         readonly int[] _pendingCasingSlots = new int[PendingCasingCapacity];
         int _pendingCasingCount;
 
+        /// bd `app-g21`: this component's whole "one dash, one mark" ledger —
+        /// at most one predicted mark outstanding waiting for the
+        /// `PlayerDashed` that confirms it, and, in the other direction, the
+        /// credit an event that got there first leaves for the edge still to
+        /// come (`ImmediatePredictionLatch`'s own doc carries the three facts
+        /// it enforces and what they cost). Held as this component's OWN
+        /// instance exactly as `MuzzleFlashView` and `AudioDirector` hold
+        /// theirs — an instance per predicted THING, not per component: this
+        /// one counts dashes, and nothing here predicts anything else.
+        ///
+        /// `Clear` DELIBERATELY DOES NOT TOUCH IT, unlike `_pendingCasingCount`
+        /// beside it (which names a doll slot of the match that just ended).
+        /// Everything this holds is forgotten by its own window within a
+        /// fraction of a second of a restart, and a restart zeroes every
+        /// `PlayerState` behind the gate anyway, so the first dash of the new
+        /// match gets a genuine rising edge either way — the latch's own
+        /// restart paragraph has this in full.
+        readonly ImmediatePredictionLatch _dashLatch = new ImmediatePredictionLatch();
+
         RingBuffer<CasingView> _casings;
         RingBuffer<DecalProjector> _decals;
         RingBuffer<CorpseView> _corpses;
@@ -381,11 +429,108 @@ namespace Ring.Presentation
         }
 
         /// The frame's recorded shots, turned into brass now that every doll
-        /// stands where this frame's snapshot puts it (fix-round 1, G-1).
+        /// stands where this frame's snapshot puts it (fix-round 1, G-1), and
+        /// this frame's own dash mark if the dash started in it (bd `app-g21`).
+        ///
+        /// THE PREDICTION IS HERE RATHER THAN IN AN `Update` OF ITS OWN, AND
+        /// NOT FOR `MuzzleFlashView`'s REASON. That class draws in `LateUpdate`
+        /// because its burst leaves a socket on a doll `ViewRegistry` has not
+        /// moved yet this frame (its own `[DefaultExecutionOrder]` block).
+        /// Nothing here reads a transform: the mark is placed from the facade's
+        /// own predicted state, which `SimulationRunner` (pinned -50) filled
+        /// before either phase, so both would draw the same mark in the same
+        /// rendered frame. This class already has a per-frame entry point and a
+        /// second one would only spread its per-frame work over two methods.
         void LateUpdate()
         {
             for (int i = 0; i < _pendingCasingCount; i++) SpawnCasing(_pendingCasingSlots[i]);
             _pendingCasingCount = 0;
+
+            PredictDashGlow();
+        }
+
+        /// The dash mark for THIS client's own dash, drawn in the frame the
+        /// dash starts instead of the frame its event arrives (bd `app-g21` —
+        /// the class doc has the owner's complaint and the numbers behind it).
+        ///
+        /// `SimulationRunner.DashingThisFrame` IS THE LEVEL AND THE LATCH IS
+        /// THE EDGE, which is why `ShouldPredict` is called on EVERY frame this
+        /// method reaches, mark or no mark: the edge is a function of the
+        /// previous frame's answer (`ImmediatePredictionLatch.ShouldPredict`'s
+        /// own doc). A dash cannot slip between two frames the way a shot can —
+        /// the level lasts the whole 90 ms dash rather than one 33 ms tick — so
+        /// the edge is missed only by a frame longer than the dash itself, or
+        /// than whatever part of it a hitstop freeze leaves visible (the
+        /// paragraph on that order below). Missing it is the harmless direction
+        /// either way: the mark then comes with the event, as it did before this
+        /// task.
+        ///
+        /// RECONCILIATION HANDS OUT A SECOND RISING EDGE FOR ONE DASH, AND THE
+        /// LATCH IS ALREADY WHY THAT IS HARMLESS. In a clean simulation
+        /// `DashTimer` goes positive exactly once per dash (`PlayerMovementSystem`
+        /// starts one in the branch that is unreachable while a dash runs, and
+        /// only decrements from there), but on a networked client
+        /// `PlayerPredictionCore.BeginReconcile` assigns the authoritative
+        /// state whole and the replay behind it can put the dash back on a tick
+        /// the client had already cleared: positive → 0 → positive, with no
+        /// second dash anywhere. That is defect G-2 of Task 28 in another
+        /// costume, and `ImmediatePredictionLatch`'s second fact — one
+        /// unconfirmed prediction at a time — closes it by construction,
+        /// because the correction always arrives while this dash's own event is
+        /// still crossing the interpolation buffer. Said out loud because no
+        /// test in this project can say it: `Ring.Presentation` is outside the
+        /// EditMode assembly's references (bd `app-8oz`).
+        ///
+        /// AN EVENT THAT CAME FIRST REFUSES THE EDGE, and the latch holds that
+        /// half of the rule too (`ImmediatePredictionLatch.NoteShownFromEvent`,
+        /// this task's fix-round; the gate's own doc has the ordering that makes
+        /// it necessary). On the local backend the event is fanned out before
+        /// any view runs at all, so solo NEVER draws from here: `SpawnDashGlow`
+        /// has already put the mark down and taken out the credit that refuses
+        /// the edge — which may arrive in the same frame or, under a hitstop
+        /// freeze, several frames later, and the credit's own window is what
+        /// covers both. That is why the refusal is not a bit of this class's
+        /// own cleared when the gate falls: the freeze clears the gate in the
+        /// middle of the very dash the bit had to remember, and the fix-round
+        /// this paragraph comes from was opened on the second mark that
+        /// produced.
+        ///
+        /// THE POINT IS `RenderCurr.Player.Pos` AND NOT `RenderPlayerWorldPos`,
+        /// and on the networked backend — the only one this method ever draws
+        /// on, per the paragraph above — the two are ordinarily the same
+        /// number: `NetworkSimBackend.BlendOwnPlayer` writes one blended pose
+        /// into BOTH halves of the render pair, so that property's lerp is an
+        /// identity there. The mark therefore lands where the doll is drawn,
+        /// which is what a mark under a body has to do. They part in exactly one
+        /// window, named here rather than left to be found: the catch-up ramp
+        /// after a hitstop freeze, where `RenderPrev` stays on the frozen half
+        /// while `RenderAlpha` eases 0 → 1 over
+        /// `GameFeelConfig.HitstopCatchUpSeconds` 0.05 s, so the doll is still
+        /// sliding back into the picture while this point is already at the
+        /// predicted pose. The choice stands through that window on purpose:
+        /// this is the very state `DashingThisFrame` is read from, so the mark
+        /// cannot disagree with the gate that decided to draw it, and the ramp
+        /// is a smoothing of what the camera and the dolls do, not a statement
+        /// about where the dash began.
+        ///
+        /// WHAT THE POINT IS NOT is "the same number the authoritative event
+        /// carries", and the earlier wording of this paragraph claimed exactly
+        /// that. The blended pose takes every field off the freshest predicted
+        /// state but lerps `Pos` from the previous predicted tick towards it by
+        /// the render phase, trailing it by `1 - phase` ticks
+        /// (`BlendOwnPlayer`'s own doc, half a tick on average), while the event
+        /// carries `PlayerState.Pos` as it stood at the end of the dash's first
+        /// tick (`SimulationWorld.TickMovement`). At `DashSpeed` 30 m/s and a
+        /// 1/30 s tick that is up to a meter apart, typically half of it —
+        /// against a mark `GameFeelConfig.DashGlowSize` 0.9 wide, and under the
+        /// doll either way. The trace rule of the class doc is satisfied by the
+        /// same quantity read one source earlier, not by an identical decimal.
+        void PredictDashGlow()
+        {
+            if (!_dashLatch.ShouldPredict(_runner.DashingThisFrame, Time.unscaledTime)) return;
+
+            SpawnDashGlowAt(SimSpace.ToWorld(_runner.RenderCurr.Player.Pos));
+            _dashLatch.Arm(Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds);
         }
 
         /// THE EJECTION DIRECTION IS HORIZONTAL, AND ONLY ITS HEADING COMES FROM
@@ -644,10 +789,56 @@ namespace Ring.Presentation
             }
         }
 
+        /// The authoritative mark, at the dashing player's own position on the
+        /// tick the dash began (`SimEvent.Pos`, the trace rule of the class
+        /// doc). Every stranger's dash reaches this and nothing else.
+        ///
+        /// THIS CLIENT'S OWN DASH IS THE ONE EXCEPTION, AND IT IS FILTERED BY
+        /// SEAT BEFORE ANYTHING ELSE (bd `app-g21`). Until this task the method
+        /// never read `e.PlayerIndex` at all — it drew for any `PlayerDashed`,
+        /// which was right while nothing was ever drawn ahead of the event; now
+        /// that `PredictDashGlow` draws one dash early, the mark for THAT dash
+        /// must not be drawn a second time when its event lands. `PlayerIndex`
+        /// on this kind is the ACTOR (`SimEvent`'s own doc: the five
+        /// "own-action" kinds), so the test is exactly "was this my dash".
+        /// The shape is `MuzzleFlashView.HandleEvent`'s, for the reason
+        /// recorded there: `ProjectileOwner.Player` used to mean "mine" and on
+        /// a networked client no longer does, so the seat is what a suppression
+        /// must key on — a stranger's dash consuming my prediction would drop
+        /// their mark AND double mine (bd `app-ai2`, one participant further
+        /// out).
+        ///
+        /// AND THE CREDIT FOR THE OTHER ORDER IS TAKEN OUT ONLY WHERE THE MARK
+        /// IS ACTUALLY DRAWN — below the `TryConsume` return, never above it.
+        /// Taking one out for an event that drew nothing would refuse the
+        /// prediction of a dash nothing has shown yet.
         void SpawnDashGlow(in SimEvent e)
         {
+            if (e.PlayerIndex == _runner.RenderCurr.LocalPlayerIndex)
+            {
+                // Already marked this dash ahead of its event (`PredictDashGlow`)
+                // — consume the prediction instead of drawing a visible
+                // duplicate a meter up the dash line.
+                if (_dashLatch.TryConsume(Time.unscaledTime)) return;
+                // Nothing was predicted and this mark is now on the floor, so
+                // the rising edge still to come for this same dash — this
+                // frame's, or the one the freeze delayed it into — has to be
+                // refused (`ImmediatePredictionLatch.NoteShownFromEvent`).
+                _dashLatch.NoteShownFromEvent(
+                    Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds);
+            }
+
+            SpawnDashGlowAt(SimSpace.ToWorld(e.Pos));
+        }
+
+        /// One home for renting a mark and dressing it in the owner's two
+        /// numbers, shared by the event above and the prediction (bd
+        /// `app-g21`) — the two differ in where the point comes from and in
+        /// nothing else.
+        void SpawnDashGlowAt(Vector3 worldPos)
+        {
             DashGlowView glow = _dashGlows.Rent();
-            glow.Spawn(SimSpace.ToWorld(e.Pos), _gameFeel.DashGlowSeconds, _gameFeel.DashGlowSize);
+            glow.Spawn(worldPos, _gameFeel.DashGlowSeconds, _gameFeel.DashGlowSize);
         }
 
         /// Task 22 (spec brief QA13/QC3): reuses the existing block-spark pool/
