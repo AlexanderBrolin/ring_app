@@ -1035,8 +1035,8 @@ namespace Ring.Presentation.Net
 
             // Р67: ghosts age against the PREDICTED tick, never the render
             // tick — they are the client's own rounds, born in the prediction
-            // domain. The expired ids the call hands back have no consumer
-            // until the tracer views exist (see `Curr`).
+            // domain. The expired ids the call hands back still have no consumer
+            // even now that the tracer views exist (see `Curr`).
             _ghosts.Advance(_nm.TimeManager.LocalTick);
 
             DrainDueEvents(renderTick);
@@ -1073,6 +1073,26 @@ namespace Ring.Presentation.Net
         /// therefore never disagree.
         void LogDiagnosticsTick(float unscaledDeltaTime, int renderTick)
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            _diagLogSeconds += unscaledDeltaTime;
+            if (_diagLogSeconds < DiagnosticsLogIntervalSeconds) return;
+            _diagLogSeconds = 0f;
+
+            if (!TryGetNetDiagnostics(out NetDiagnostics d)) return;
+
+            _nm.Log("NetDiag "
+                + $"render={(d.HasRenderTick ? d.RenderTick.ToString() : "-")} "
+                + $"newest={(d.HasNewestServerTick ? d.NewestServerTick.ToString() : "-")} "
+                + $"behind={(d.HasRenderTick && d.HasNewestServerTick ? (d.NewestServerTick - d.RenderTick).ToString() : "-")} "
+                + $"localTick={_nm.TimeManager.LocalTick} "
+                + $"rttMs={d.RoundTripMs} "
+                + $"slewSign={d.ClockSlewSign} snaps={d.ClockSnaps} "
+                + $"queue={d.SnapshotQueueCount}/{d.SnapshotQueueDepth} "
+                + $"dropped={d.DroppedSnapshots} stale={d.StaleSnapshots} dup={d.DuplicateSnapshots} "
+                + $"corrections={d.CorrectionCount} medianM={d.CorrectionMedianMeters:F3} "
+                + $"bytesDownPerSec={d.BytesDownPerSecond} "
+                + $"latSim={(d.LatencySimActive ? $"{d.LatencySimRttMs}ms/{d.LatencySimLossPercent:F1}%" : "off")}");
+#endif
         }
 
         /// Closes the window `Advance` opened, AFTER the facade has raised
@@ -2078,8 +2098,16 @@ namespace Ring.Presentation.Net
                     // purpose: this runs inside FishNet's batched parse, where a
                     // throw would abandon every message behind it (Р82/195).
                     // What it costs is one bullet not drawn.
+                    // The owner rides along because the wire carries it: the
+                    // same `PlayerIndex` that picked the radius and the ttl
+                    // above. Left on its defaults, every round -- a Gunner's
+                    // included -- would sit in the render snapshot signed as a
+                    // player's, and the first reader of that field would be
+                    // wrong through no fault of its own.
                     _tracers.TrySpawn(p.Id, (int)eventTick, decoded.Pos, p.Height, p.Dir,
-                        p.HorizSpeed, p.VelZ, radius, ttl);
+                        p.HorizSpeed, p.VelZ, radius, ttl,
+                        byPlayer ? ProjectileOwner.Player : ProjectileOwner.Mob,
+                        p.PlayerIndex);
                     break;
                 }
                 case SnapshotEventKind.ProjectileEnded:

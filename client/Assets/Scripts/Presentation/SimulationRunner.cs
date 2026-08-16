@@ -173,7 +173,6 @@ namespace Ring.Presentation
         public float ImmediatePredictionWindowSeconds
             => _backend.ImmediatePredictionWindowSeconds;
 
-
         /// This flush's event buffer, read by `SimEventRouter` inside
         /// `TicksFlushed` and dropped right after it returns (see `Update`).
         public int EventCount => _backend.EventCount;

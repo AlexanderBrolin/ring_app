@@ -91,7 +91,7 @@ namespace Ring.Networking.Client
         /// `ProjectileEnded` ever arrives for it. NOT AN OUTCOME AND NOT A
         /// PREDICTION — the round is already over by every account, this is
         /// what stops a LOST end from burning a table slot for the rest of the
-        /// match. The same defence `GhostProjectiles` was given for the same
+        /// match. The same defense `GhostProjectiles` was given for the same
         /// reason (`maxTrackTicks`), and it is needed here for three measured
         /// reasons: an end's redundancy is only `NetConfig.EventRedundancyTicks`
         /// frames, the assembler closes a spawn's subscription even when the

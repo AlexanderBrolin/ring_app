@@ -444,6 +444,7 @@ namespace Ring.Simulation.Tests
                 "and the first frame after that start places the clock on the NEW match's "
                 + "own target");
         }
+
         /// bd `app-s0u`, the seventh seam. Without this the mutation "delete
         /// `_tracers.Reset()` from `ResetForEpoch`" leaves the whole suite
         /// green while the rounds of the match that ended keep flying through
