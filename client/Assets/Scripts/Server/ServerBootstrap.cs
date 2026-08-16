@@ -9,6 +9,7 @@ using Ring.Data;
 using Ring.Networking;
 using Ring.Networking.Protocol;
 using Ring.Networking.Server;
+using Ring.Networking.Voice;
 using Ring.Simulation.Core;
 using UnityEngine;
 using Stopwatch = System.Diagnostics.Stopwatch;
@@ -906,6 +907,19 @@ namespace Ring.Server
                         return;
                     }
                     controllers[i] = controller;
+
+                    // Stage 2 Task 55: tell the voice seat which slot it is.
+                    // This is the only place in the project where that is a
+                    // fact rather than a guess — `i` is the same index that
+                    // picked the owning connection one line above — and it is
+                    // done AFTER `Spawn` because a SyncType is not initialized
+                    // before its object exists on the network.
+                    //
+                    // Absence is not a failure: the seat is optional scenery as
+                    // far as the match is concerned, and a prefab built before
+                    // Task 55 must still start a match rather than refuse one.
+                    if (instance.TryGetComponent(out VoiceAdapter voice))
+                        voice.ServerAssignSlot(i);
                 }
             }
             catch (Exception ex)
