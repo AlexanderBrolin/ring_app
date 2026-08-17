@@ -38,6 +38,9 @@
 
 ## Global Constraints (каждый таск обязан соблюдать)
 
+- ⚠ **ERRATA В КОНЦЕ ФАЙЛА ПЕРЕКРЫВАЕТ ТЕЛО ПЛАНА** и входит в бриф КАЖДОГО
+  таска наравне с этим разделом: исполнитель, читающий только свой таск, обязан
+  получить и её (E-1…E-8). План против errata — верить errata.
 - **Пути:** `APP_REPO="/home/brolin/Documents/!_MY_Proj/The Ring/app"`
   (bd — ТОЛЬКО отсюда); `WT="$APP_REPO/.worktrees/feature-app-5nu-stage2-network"`
   — cwd всех команд; ветка `feature/app-35g-stage3-extraction` от `origin/main`
@@ -190,6 +193,27 @@ internal void SetMatchForTest(in MatchState m);
 
 // PlayerState
 public bool Extracted;              // рядом с Alive; инвариант: !(Alive && Extracted)
+public byte ExtractKind;            // 0 = не извлечён, 1 = ранний портал, 2 = створ
+
+// ⚠ E-1: ВСЕ хешируемые поля этапа объявляются ЗДЕСЬ, инертными, иначе их
+// объявление в Ф3-Ф5 сдвинет golden вне обеих санкций (FNV: лишний Add двигает
+// дайджест даже при нулевом значении).
+public float LootTimer, RepairTimer, ExtractTimer;
+public int   LootTargetContainerId;
+public byte  LootTargetSlot;
+// WorldStats: + PickupSpawnsSkipped, ContainerSpawnsSkipped
+// MatchStats: + AmmoSpent, CellsPicked
+
+// E-2: конфиг фазы захода объявляется ЗДЕСЬ (Т21 его уже читает), SO-обвязка — Т12
+public struct MatchFlowSimConfig
+{
+    public float GateDelaySeconds;        // 90
+    public float ExtractChannelSeconds;   // 20
+    public int   RetinueCount;            // 2
+    public float RetinueRespawnSeconds;   // 25
+    public int   DirectorReserveSlots;    // 3
+}
+// SimConfig.Flow — новое поле
 
 // MatchEndPolicy — ТРЕТЬЕ значение добавляется В КОНЕЦ пиненного перечисления
 public enum MatchEndReason : byte
@@ -275,8 +299,14 @@ public class MatchFlowTests
   считает активных и передаёт `anyExtracted`.
 - [ ] **Step 4:** R-FILTER `MatchFlowTests` + `MatchLifecycleTests` +
   `DeterminismTests` → PASS, **оба golden на месте**; R-TEST → 987 + 6.
-- [ ] **Step 5:** R-COMMIT `feat(app-35g): Т1 — фаза захода, Extracted и третья
-  причина конца`.
+- [ ] **Step 5 (скип-лист, E-1/D-I1):** каждое объявленное здесь поле вносится
+  во **временный** `PendingHashFields` в `WorldLifecycleTests` с комментарием
+  `// TEMPORARY (T1 -> T6): enters the canonical hash at the sanctioned re-pin`.
+  Без него рефлексивный свип красный, и обещание «R-TEST PASS» — ложь.
+- [ ] **Step 6 (мутация):** поменять порядок проверок причин конца →
+  `Resolved_OutranksAllDead` красный; вернуть.
+- [ ] **Step 7:** R-COMMIT `feat(app-35g): Т1 — состав состояния захода, фаза и
+  третья причина конца`.
 
 ### Task Т2: боезапас — счётчик, трата в обоих путях, аварийный синтез
 
@@ -355,7 +385,8 @@ public void AtZero_FiresOnEmergencyInterval_AndSpendsNothing()
     var p = w.Player; p.Ammo = 0; w.SetPlayerForTest(p);
     var input = new SimInput { FireHeld = true, AimPoint = new float2(10f, 0f) };
     int fired = 0;
-    int ticks = (int)math.ceil(cfg.Weapon.EmergencyFireInterval / SimulationWorld.TickDt) + 2;
+    // E-4/A-C2: +2 даёт ДВА выстрела (t=0 и t=37 при V=1.25); -1 даёт ровно один
+    int ticks = (int)math.ceil(cfg.Weapon.EmergencyFireInterval / SimulationWorld.TickDt) - 1;
     for (int t = 0; t < ticks; t++)
     {
         if (WeaponSystem.WouldFireThisTick(w.Player, input, cfg.Weapon)) fired++;
@@ -393,6 +424,13 @@ public void RefillClampsEmergencyCooldownDown()
   `AddAmmoForTest`) → R-FILTER `AmmoTests` → **FAIL ассертов**.
 - [ ] **Step 3 (GREEN):** реализация; `WeaponConfig.cs` получает четыре поля с
   `[Range]`, **маркер-ключ переезжает** на последнее поле класса.
+  ⚠ **E-4/A-C3:** в `TestConfigs` задать **явной фикстурой `AmmoStart = AmmoMax
+  = 400`** с комментарием «число тестов, не зеркало C#-дефолта»: golden-сценарий
+  держит гашетку с p = 0.7 на тик и делает 245–277 выстрелов за 1000 тиков —
+  при 120 боезапас кончится и трасса разъедется прямо здесь.
+  ⚠ **E-6/C-I12:** страховочный кламп переезжает ВНУТРЬ `IntervalFor`:
+  `math.max(p.Ammo > 0 ? weapon.FireInterval : weapon.EmergencyFireInterval, 1e-3f)`;
+  `Advance` зовёт только его. Тест сверяет с тем же выражением.
 - [ ] **Step 4 (мутация — обязательный шаг):** убрать `p.Ammo--` из
   `AdvanceNoSpawn`, оставив в `Update` → `PredictionParityTests` обязан
   покраснеть. Вернуть. Записать наблюдение в отчёт таска.
@@ -472,9 +510,12 @@ public int PickupSpawnsSkipped;      // новое поле рядом с MobSpa
   подбор; вызов последним в `TickAll`; дроп в двух местах.
 - [ ] **Step 4 (мутация):** снять гвард «не извлечён» в подборе → тест
   `DeadInSameTick_PicksNothing` обязан покраснеть; вернуть.
-- [ ] **Step 5:** R-FILTER `PickupTests`+`AmmoTests`+`DeterminismTests` → PASS,
-  golden на месте (в `TestConfigs` `CellsOnDeath = 0`, поэтому сценарий не
-  меняется — проверить и записать); R-TEST.
+- [ ] **Step 5:** R-FILTER `PickupTests`+`AmmoTests` → PASS.
+  ⚠ **E-4/A-C4: `DeterminismTests` здесь ОЖИДАЕМО КРАСНЫЙ** — дроп с трупа
+  сборщика съедает `_nextEntityId` (четвёртый шаг хеша), а в мультиплеерном
+  сценарии игроки гибнут. Константы НЕ трогать, перепин в Т6; отметить в bd note
+  как ожидаемый. В `TestConfigs` задать `CorpseCellFraction = 0` и
+  `CellsPerMob = {0,0,0,0}`, чтобы сдвиг остался единственным и объяснимым.
 - [ ] **Step 6:** R-COMMIT `feat(app-35g): Т3 — энергоячейки, дроп и авто-подбор`.
 
 ### Task Т4: рюкзак — слот-очки, швы, состояние
@@ -1084,7 +1125,9 @@ internal byte ContainerSlotAt(int containerIndex, int slot);   // 0 = пусто
   адресуемый **позицией контейнера в массиве**; swap-remove обязан переносить и
   блок слотов (Р229 — иначе исчезнувший ящик оставит содержимое новому жильцу
   индекса).
-- `WorldStats.ContainerSpawnsSkipped` — по образцу `MobSpawnsSkipped`.
+- ⚠ **E-1: `WorldStats.ContainerSpawnsSkipped` объявлен в Ф1 (Т3) и уже в хеше
+  с Т6.** Здесь он только начинает инкрементироваться — нового поля состояния
+  этот таск НЕ вводит, иначе golden уедет вне санкций.
 
 - [ ] **Step 1 (RED):** `LootContainerTests.cs`:
 
@@ -1160,9 +1203,12 @@ internal byte ContainerSlotAt(int containerIndex, int slot);   // 0 = пусто
 **Files:**
 - Create: `client/Assets/Scripts/Simulation/Loot/LootOps.cs` (+ `.meta`),
   `client/Assets/Tests/EditMode/LootOpsTests.cs` (+ `.meta`)
-- Modify: `.../Core/SimStates.cs` (`PlayerState.LootTimer`,
-  `LootTargetContainerId`, `LootTargetSlot`, `InventoryOpen`),
-  `.../Core/SimulationWorld.cs`
+- Modify: `.../Core/SimInput.cs` (**`InventoryOpen` — заглушкой, без кодека;
+  бит провода в Т20**), `.../Core/SimulationWorld.cs`
+- ⚠ **E-1/E-5:** поля `LootTimer`/`LootTargetContainerId`/`LootTargetSlot` уже
+  объявлены в Ф1 (Т1) и уже в хеше с Т6 — здесь только поведение. Флаг окна
+  живёт в **`SimInput`**, а не в `PlayerState` (он влияет на предсказываемое
+  движение).
 
 **Interfaces:**
 
@@ -1265,8 +1311,11 @@ public static class LootOps
 
 ### Task Т19: ремкомплект
 
-**Files:** Modify `.../Simulation/Loot/LootOps.cs`, `.../Core/SimStates.cs`
-(`PlayerState.RepairTimer`), `LootOpsTests.cs`.
+**Files:** Modify `.../Simulation/Loot/LootOps.cs`, `LootOpsTests.cs`.
+⚠ **E-1:** `RepairTimer` объявлен в Ф1 (Т1) — здесь только поведение.
+⚠ **E-6/C-I7:** прерывание канала уроном заводится ОДНИМ домом
+`AbortChannels(ref PlayerState)` с **одним** вызовом в `DamagePlayer` — он же
+обслуживает `ExtractTimer` (Т23). Двух копий правила не заводить.
 
 **Interfaces:** `Use` на предмете `Kind == RepairKit` запускает канал
 `RepairKitChannelSeconds`; **урон канал прерывает** (в отличие от переноса) —
@@ -1408,9 +1457,11 @@ public struct MatchFlowSimConfig
 **Files:**
 - Create: `client/Assets/Scripts/Simulation/Objectives/ExtractionSystem.cs`
   (+ `.meta`), `client/Assets/Tests/EditMode/ExtractionTests.cs` (+ `.meta`)
-- Modify: `.../Core/SimStates.cs` (`PlayerState.ExtractTimer`),
-  `.../Core/SimulationWorld.cs` (`DamagePlayer` — обнуление, `TickAll` —
-  порядок), `.../Core/SimEvents.cs` (`PlayerExtracted`)
+- Modify: `.../Core/SimulationWorld.cs` (`AbortChannels` в `DamagePlayer`,
+  `TickAll` — порядок), `.../Core/SimEvents.cs` (`PlayerExtracted`)
+- ⚠ **E-1:** `ExtractTimer` и `ExtractKind` объявлены в Ф1 (Т1) — здесь только
+  поведение. Извлечение зовёт общий `ClearCombatTimers`, выделенный из
+  `KillPlayer` (E-6/C-I9), а не пишет `Alive = false` россыпью.
 
 **Interfaces:**
 
@@ -1452,10 +1503,20 @@ internal static class ExtractionSystem
 ### Task Т24: конец захода и запись результата
 
 **Files:**
-- Create: `client/Assets/Scripts/Server/MatchResult.cs` (+ `.meta`),
-  `client/Assets/Tests/EditMode/ResultsTests.cs` (+ `.meta`)
-- Modify: `client/Assets/Scripts/Networking/Server/MatchServer.cs`,
-  `client/Assets/Scripts/Networking/Protocol/MatchEndedNet.cs`
+- Create: `client/Assets/Tests/EditMode/ResultsTests.cs` (+ `.meta`)
+- Modify: `client/Assets/Scripts/Networking/Server/MatchServer.cs`
+  (`MatchSummary`, `BuildSummary`, `EndedNetFor`),
+  `client/Assets/Scripts/Networking/Protocol/MatchEndedNet.cs`,
+  `client/Assets/Scripts/Server/ServerBootstrap.cs` (`LogMatchSummary`)
+
+⚠ **E-3: НОВЫХ ФАЙЛОВ `MatchResult.cs`/`PlayerResult` НЕ ЗАВОДИТЬ.** Механизм
+итога захода существует целиком (`MatchServer.MatchSummary` :1409,
+`BuildSummary` :1309, `EndedNetFor` :1342, `ServerBootstrap.LogMatchSummary`
+:1005). Два независимых довода: (а) это было бы вторым сборщиком тех же чисел
+против Р151; (б) `Server.asmdef` ссылается на `Ring.Networking`, обратной ссылки
+нет — `MatchServer` физически не может звать код из `Ring.Server` и принимать
+`MatchRoster`. Плюс мир после `StopMatch` уже не читается (`ServerBootstrap.cs:996`).
+**Лог остаётся ОДНОЙ строкой на матч**, а не строкой на игрока.
 
 **Interfaces:**
 
@@ -1463,25 +1524,13 @@ internal static class ExtractionSystem
 public enum MatchOutcome : byte
 { Died = 0, ExtractedEarly = 1, ExtractedCore = 2, Disconnected = 3 }
 
-public readonly struct PlayerResult
-{
-    public readonly string PlayerId;
-    public readonly MatchOutcome Outcome;
-    public readonly int CreditsTotal;
-    public readonly int Kills, HeadshotKills, ShotsFired, ShotsHit;
-    public readonly float DamageTaken;
-    public readonly int AmmoSpent, CellsPicked, SurvivedSeconds;
-    public readonly byte[] Loot;          // id предметов рюкзака на момент исхода
-}
-
-public static class MatchResult
-{
-    public static PlayerResult[] Build(SimulationWorld w, MatchRoster roster,
-        int matchTicks, int tickRate);
-    /// Одна структурная строка на игрока — в формате будущей match_players
-    /// (ADR-002 §6) и тела /internal/match-result (§7).
-    public static string ToLogLine(in PlayerResult r);
-}
+// СУЩЕСТВУЮЩАЯ MatchSummary дополняется плоскими полями (по дисциплине
+// MatchEndedNet.cs:24 «flat fields, not an embedded MatchStats»):
+//   MatchOutcome[] Outcome;  int[] CreditsTotal;  byte[][] Loot;
+//   int[] AmmoSpent;  int[] CellsPicked;  int[] SurvivedSeconds;
+// Снимаются в BuildSummary ДО StopMatch — после него мир и ассемблер уже мертвы.
+// EndedNetFor(in MatchSummary, int slot) дополняется теми же полями.
+// ServerBootstrap.LogMatchSummary печатает их в СВОЕЙ единственной строке матча.
 ```
 
 - `ExtractedCore` — извлечение через створ, `ExtractedEarly` — через ранний
