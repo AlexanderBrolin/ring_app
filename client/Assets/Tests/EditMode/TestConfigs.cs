@@ -36,7 +36,23 @@ namespace Ring.Simulation.Tests
                     RecoilRecoveryRadPerSec = 0.03f, RecoilMaxRad = 0.07f,
                     MuzzleOffset = 0.6f, CanFireWhileDash = false,
                     CanFireWhileSlide = true, SpreadRunMult = 1.5f, SpreadSlideMult = 2.0f,
-                    RunSpreadSpeedFrac = 0.5f },
+                    RunSpreadSpeedFrac = 0.5f,
+                    // Stage 3 Task 2: ShotsPerCell/AmmoMax/EmergencyFireInterval
+                    // mirror WeaponConfig's C# defaults like every field above
+                    // (two-sources-of-numbers discipline — test/code-default
+                    // side). AmmoStart does NOT (errata E-4/A-C3) — this is
+                    // test numbers, not a mirror of the C# default (400, not
+                    // WeaponConfig's real starting magazine of 120), same
+                    // deliberate-mirror-break category as DefaultArena()'s own
+                    // BarrierTop below. The solo/multiplayer golden scenarios
+                    // (DeterminismTests) hold the trigger at p = 0.7/tick and
+                    // fire 245-277 rounds over 1000 ticks; at the real 120 the
+                    // magazine would run dry mid-replay, the emergency interval
+                    // would cut in, and the golden hash would shift outside
+                    // either sanctioned re-pin (Т6/Т12). 400 is comfortably
+                    // above the 245-277 range.
+                    ShotsPerCell = 10, AmmoStart = 400, AmmoMax = 400,
+                    EmergencyFireInterval = 1.25f },
                 Chaser = new MobSimConfig { MaxSpeed = 5.2f, Accel = 30f, Radius = 0.5f,
                     MaxHp = 30f, ContactDamage = 15f, AttackRange = 1.1f,
                     TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,

@@ -53,6 +53,23 @@ namespace Ring.Simulation.Core
         /// weapon can fire at all mid-slide (Task 2).
         public bool CanFireWhileSlide;
         public float SpreadRunMult, SpreadSlideMult, RunSpreadSpeedFrac;
+
+        /// Stage 3 Task 2 (spec Р261/Р225, errata E-6 D-I8): the ammo economy.
+        /// ShotsPerCell converts one picked-up energy cell into this many shots
+        /// (the pickup behavior itself is a later task — WeaponSystem.AddAmmo is
+        /// the shared conversion point it will call). AmmoStart seeds
+        /// PlayerState.Ammo at match start (SimulationWorld's constructor);
+        /// AmmoMax is the magazine ceiling SimulationWorld.ApplyConfig clamps
+        /// Ammo down to on a hot-tweak. EmergencyFireInterval is the slower
+        /// cooldown WeaponSystem.IntervalFor selects once Ammo reaches 0 — the
+        /// "emergency synthesis" keeps the weapon firing rather than going
+        /// silent. NOT part of SimConfigHash.Compute yet (deferred alongside
+        /// Flow — see SimConfigHashTests.SimConfig_CarriesExactlyEightSections
+        /// and its own PendingHashFields for where that decision is recorded).
+        public int ShotsPerCell;
+        public int AmmoStart;
+        public int AmmoMax;
+        public float EmergencyFireInterval;
     }
 
     /// Balance numbers shared by all mob archetypes (chaser/gunner use the same shape).

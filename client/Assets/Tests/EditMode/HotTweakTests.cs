@@ -105,6 +105,9 @@ namespace Ring.Simulation.Tests
                 ["DashSpeedCur"] = next.Hero.DashSpeed,
                 ["FireCooldown"] = next.Weapon.FireInterval,
                 ["RecoilOffset"] = float.PositiveInfinity, // clamped by WeaponSystem, not ApplyConfig
+                // Stage 3 Task 2: the magazine clamps down to the new AmmoMax
+                // ceiling, same contract as FireCooldown above.
+                ["Ammo"] = next.Weapon.AmmoMax,
                 // Task 10: slide timers.
                 ["SlideTimer"] = next.Hero.SlideDuration,
                 ["SlideBufferTimer"] = next.Hero.SlideBufferWindow,

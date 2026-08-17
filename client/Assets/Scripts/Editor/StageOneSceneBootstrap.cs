@@ -555,9 +555,18 @@ namespace Ring.Editor
             // `EdgeRequestMinTicks` as of Stage 2 Task 8/9 (edge-request rate
             // limiting) — was `LinkRefund` (В1 fix-wave 3, owner economy
             // rework) before that, `AimSettleSeconds` (Task 17) before THAT;
-            // WeaponConfig/MobConfig's marker fields are unchanged since Task
-            // 17, so any asset committed before that task predates them and
-            // self-heals on this Apply; ArenaConfig's marker is `BarrierTop`
+            // WeaponConfig's marker moves to `EmergencyFireInterval` as of
+            // Stage 3 Task 2 (spec Р261's ammo economy — the class's new last
+            // field) — was `RunSpreadSpeedFrac` (Task 17) before that. Owner
+            // decision R-4: the plan body assigned this relocation to Т12, but
+            // the marker is always the class's LAST declared field, so it has
+            // to move in the SAME task that appends the field or new fields
+            // silently fail to reach a committed `.asset` even with every
+            // test green (the errata E-7 precedent for Т3/Т4/Т8's own marker
+            // moves) — Т12 stays a values-only delivery task. MobConfig's
+            // marker field is unchanged since Task 17, so any asset committed
+            // before that task predates it and self-heals on this Apply;
+            // ArenaConfig's marker is `BarrierTop`
             // as of Stage 2 Task 46 (the interior barriers' modelled height,
             // the class's new last field) — was `PlayerSpawnRingFrac` (Stage 2
             // Task 4) from Stage 2 Task 9, when ArenaConfig joined the
@@ -565,7 +574,7 @@ namespace Ring.Editor
             // that key already, so leaving the marker there would have left
             // `BarrierTop` unable to reach the file at all).
             EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "EdgeRequestMinTicks"); // Stage 2 Task 9
-            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
+            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "EmergencyFireInterval"); // Stage 3 Task 2 (was RunSpreadSpeedFrac, Task 17)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "GunEjectLocalEuler"); // Stage 2 Task 45b

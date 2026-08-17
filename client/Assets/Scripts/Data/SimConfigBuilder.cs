@@ -75,7 +75,12 @@ namespace Ring.Data
                     CanFireWhileSlide = weapon.CanFireWhileSlide,
                     SpreadRunMult = weapon.SpreadRunMult,
                     SpreadSlideMult = weapon.SpreadSlideMult,
-                    RunSpreadSpeedFrac = weapon.RunSpreadSpeedFrac
+                    RunSpreadSpeedFrac = weapon.RunSpreadSpeedFrac,
+                    // Stage 3 Task 2: the ammo economy.
+                    ShotsPerCell = weapon.ShotsPerCell,
+                    AmmoStart = weapon.AmmoStart,
+                    AmmoMax = weapon.AmmoMax,
+                    EmergencyFireInterval = weapon.EmergencyFireInterval
                 },
                 Chaser = ToMobSimConfig(chaser),
                 Gunner = ToMobSimConfig(gunner),
@@ -219,6 +224,21 @@ namespace Ring.Data
             ReqNonNegative(errors, "Weapon.RecoilRecoveryRadPerSec", cfg.Weapon.RecoilRecoveryRadPerSec);
             ReqNonNegative(errors, "Weapon.RecoilMaxRad", cfg.Weapon.RecoilMaxRad);
             ReqNonNegative(errors, "Weapon.MuzzleOffset", cfg.Weapon.MuzzleOffset);
+
+            // Stage 3 Task 2 (spec Р261, errata E-6 D-I8): the ammo economy —
+            // home of the world's ammo validations (Р72), no second home.
+            ReqPositive(errors, "Weapon.ShotsPerCell", cfg.Weapon.ShotsPerCell);
+            if (cfg.Weapon.AmmoStart > cfg.Weapon.AmmoMax)
+            {
+                errors.Add("Weapon.AmmoStart must be <= Weapon.AmmoMax " +
+                    $"(got AmmoStart={cfg.Weapon.AmmoStart}, AmmoMax={cfg.Weapon.AmmoMax}).");
+            }
+            if (cfg.Weapon.EmergencyFireInterval <= cfg.Weapon.FireInterval)
+            {
+                errors.Add("Weapon.EmergencyFireInterval must be > Weapon.FireInterval " +
+                    $"(got EmergencyFireInterval={cfg.Weapon.EmergencyFireInterval:F3}, " +
+                    $"FireInterval={cfg.Weapon.FireInterval:F3}).");
+            }
 
             // Task 2 (spec stamina/slide/aim): stamina pool + action costs/regen.
             ReqPositive(errors, "Hero.StaminaMax", cfg.Hero.StaminaMax);

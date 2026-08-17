@@ -193,7 +193,12 @@ namespace Ring.Simulation.Core
                 // obstacle still overlaps a spawn point.
                 Geometry.Depenetrate(ref pos, ref vel, config.Hero.Radius, in config.Arena, 1);
                 _players[i] = new PlayerState
-                    { Pos = pos, Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true };
+                    {
+                        Pos = pos, Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true,
+                        // Stage 3 Task 2 (spec Р261): the magazine starts full at
+                        // the config's own starting count.
+                        Ammo = config.Weapon.AmmoStart
+                    };
             }
             // Wave director starts idle, counting down to the first wave (Task 22
             // Interfaces) — WavePhase.Waiting is the enum's zero value, but
@@ -377,6 +382,11 @@ namespace Ring.Simulation.Core
                 p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
                 p.DashBufferTimer = math.clamp(p.DashBufferTimer, 0f, next.Hero.DashBufferWindow);
                 p.FireCooldown = math.clamp(p.FireCooldown, 0f, next.Weapon.FireInterval);
+                // Stage 3 Task 2 (spec Interfaces): the magazine clamps down to
+                // the new AmmoMax ceiling, same hot-tweak contract as every
+                // other magnitude in this loop — never clamped UP, a hot-tweak
+                // raising AmmoMax does not hand out free ammo.
+                p.Ammo = math.min(p.Ammo, next.Weapon.AmmoMax);
                 // Task 10: slide timers, same clamp-to-new-ceiling contract as the
                 // dash timers above.
                 p.SlideTimer = math.clamp(p.SlideTimer, 0f, next.Hero.SlideDuration);
@@ -1092,6 +1102,15 @@ namespace Ring.Simulation.Core
         /// ahead of any test that needs to force a specific phase/
         /// DirectorDeathTick (Т21 onward; no test in this task uses it yet).
         internal void SetMatchForTest(in MatchState m) => _match = m;
+
+        /// Test-only seam (Stage 3 Task 2): exercises WeaponSystem.AddAmmo — the
+        /// cell-pickup refill's shared conversion/clamp point — ahead of the real
+        /// pickup behavior landing in a later task. Not a raw field write like
+        /// SetPlayerForTest above precisely because the clamp (AmmoMax ceiling,
+        /// FireCooldown clamp-down on the 0-to-positive edge) is the behavior
+        /// under test, not incidental to it.
+        internal void AddAmmoForTest(int index, int shots)
+            => WeaponSystem.AddAmmo(ref _players[index], _config.Weapon, shots);
 
         /// Test-only seam (Task 4): reads a live projectile slot back —
         /// SetProjectileForTest's counterpart, for tests asserting on

@@ -26,6 +26,10 @@ namespace Ring.Simulation.Tests
             // PlayerState (Task 1 Interfaces).
             "Extracted", "ExtractKind", "LootTimer", "RepairTimer", "ExtractTimer",
             "LootTargetContainerId", "LootTargetSlot",
+            // PlayerState (Task 2 Interfaces): the ammo counter — hashable
+            // behavior, but its own sanctioned entry point is still Т6, same
+            // as every other field in this set.
+            "Ammo",
             // MatchStats (Task 1 Interfaces, errata R-13 — NOT SurvivedSeconds,
             // which belongs to MatchSummary, Task 24, not to a hashed counter).
             "AmmoSpent", "CellsPicked",

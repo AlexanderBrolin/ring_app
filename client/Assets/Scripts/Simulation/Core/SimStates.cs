@@ -9,6 +9,29 @@ namespace Ring.Simulation.Core
         public float RecoilOffset,
             Hp, Stamina, StaminaRegenDelayTimer,
             DashTimer, DashCooldown, IframeTimer, DashBufferTimer, FireCooldown;
+
+        /// Stage 3 Task 2 (spec Р261/Р225): energy-cell-backed shot counter, in
+        /// SHOTS, not cells — WeaponSimConfig.ShotsPerCell is the conversion
+        /// factor a picked-up cell will apply (the pickup behavior itself is a
+        /// later task; SimulationWorld.AddAmmoForTest is this task's own stand-in
+        /// seam). WeaponSystem.Advance spends exactly one per shot fired while
+        /// Ammo > 0 — inside the ONE shared body both Update (server) and
+        /// AdvanceNoSpawn (prediction) call, so a predicting client depletes its
+        /// magazine in lockstep with the server (Р225: otherwise the client could
+        /// render a muzzle flash for a shot the server never fired at Ammo == 0).
+        /// At Ammo == 0 the weapon keeps firing on WeaponSimConfig.
+        /// EmergencyFireInterval (the emergency synthesis) and spends nothing —
+        /// WeaponSystem.IntervalFor is the single reader that picks the interval,
+        /// always off Ammo's value from BEFORE that shot's own spend (Р261: the
+        /// last round still leaves on the normal interval, only the NEXT shot,
+        /// with Ammo already at 0, is emergency). Clamped down to
+        /// WeaponSimConfig.AmmoMax by SimulationWorld.ApplyConfig, same
+        /// hot-tweak-ceiling contract as every other PlayerState magnitude
+        /// (HotTweakTests.ApplyConfig_ReflectiveClampPass...). Excluded from
+        /// StateHash until the sanctioned re-pin (Т6) — see
+        /// WorldLifecycleTests.PendingHashFields.
+        public int Ammo;
+
         /// Task 12: the dash's current speed — set to Hero.DashSpeed on dash
         /// start, then multiplied by Hero.RicochetRetention each time the dash
         /// mirrors off a wall/obstacle (PlayerMovementSystem), so consecutive

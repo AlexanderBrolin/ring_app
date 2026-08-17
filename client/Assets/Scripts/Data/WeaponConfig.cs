@@ -24,7 +24,18 @@ namespace Ring.Data
         public bool CanFireWhileSlide = true;
         [Range(1f, 5f)] public float SpreadRunMult = 1.5f;
         [Range(1f, 5f)] public float SpreadSlideMult = 2.0f;
-        [Range(0f, 1f)] public float RunSpreadSpeedFrac = 0.5f; // sync-marker key — keep LAST
+        [Range(0f, 1f)] public float RunSpreadSpeedFrac = 0.5f;
+
+        // Stage 3 Task 2 (spec Р261/Р225): the ammo economy — energy cells
+        // convert to shots, and the magazine fires slower once it runs dry
+        // rather than going silent (see WeaponSimConfig's own doc for the
+        // full mechanism). AmmoStart deliberately does NOT mirror into
+        // Ring.Simulation.Tests.TestConfigs.Default() — see that fixture's
+        // own comment (errata E-4/A-C3).
+        [Range(1, 100)] public int ShotsPerCell = 10;
+        [Range(0, 2000)] public int AmmoStart = 120;
+        [Range(1, 2000)] public int AmmoMax = 400;
+        [Range(0.01f, 10f)] public float EmergencyFireInterval = 1.25f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

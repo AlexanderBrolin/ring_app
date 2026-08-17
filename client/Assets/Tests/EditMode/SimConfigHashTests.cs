@@ -10,6 +10,26 @@ namespace Ring.Simulation.Tests
 {
     public class SimConfigHashTests
     {
+        // TEMPORARY (T2 -> T13): enters SimConfigHash when the stage's world
+        // numbers are wired there in one move. Owner decision R-17 (coordinator
+        // ledger): errata E-6 D-I9 lists "zones/doors/portals/catalog/backpack/
+        // ammo/drop and Flow" as the section's own deferred-wiring set, naming
+        // steps "Т8/Т10/Т13/Т22" — but of those four, only Т13 actually owns any
+        // of the WORLD-NUMBER sections this test touches (zones/doors/portals/
+        // catalog/backpack/ammo/drop); Т22 is Flow's own step, and Т1 already
+        // named Flow's addressee as itself, not this set. Two deferrals with no
+        // named owner is exactly the unbounded-skip-set failure mode this
+        // project has already paid for twice — so T13, and only T13, is the
+        // addressee: it removes this WHOLE SET unconditionally, in one move, not
+        // field by field (same discipline as WorldLifecycleTests.
+        // PendingHashFields, Т1 -> Т6) — removal proven by pulling one entry
+        // back out and watching AssertSectionAffectsHash name it. Weakening this
+        // guard itself (e.g. "only check the old fields") is not a fix.
+        static readonly System.Collections.Generic.HashSet<string> PendingHashFields = new()
+        {
+            "ShotsPerCell", "AmmoStart", "AmmoMax", "EmergencyFireInterval",
+        };
+
         [Test]
         public void EveryConfigNumberAffectsHash() // spec §3.8/§3.15, Р52 — flagman
         {
@@ -198,6 +218,16 @@ namespace Ring.Simulation.Tests
                 field.SetValue(section, Bump(field.GetValue(section)));
                 sectionField.SetValue(cfg, section);
                 var mutated = (SimConfig)cfg;
+                if (PendingHashFields.Contains(field.Name))
+                {
+                    // TEMPORARY (T2 -> T13, owner decision R-17): a positive
+                    // assertion, not a silent skip — proves the field is
+                    // genuinely still OUTSIDE SimConfigHash, not just unchecked
+                    // (same WorldLifecycleTests.PendingHashFields discipline).
+                    Assert.AreEqual(baseline, SimConfigHash.Compute(in mutated),
+                        $"{sectionName}.{field.Name} ещё не должен входить в SimConfigHash до Т13");
+                    continue;
+                }
                 Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
                     $"{sectionName}.{field.Name} is not in the hash");
             }

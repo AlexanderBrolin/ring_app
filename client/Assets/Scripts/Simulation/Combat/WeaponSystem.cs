@@ -82,10 +82,19 @@ namespace Ring.Simulation.Combat
                 return;
             }
 
-            // Safety net against an infinite loop if FireInterval is misconfigured to 0.
-            float interval = math.max(weapon.FireInterval, 1e-3f);
             while (p.FireCooldown <= 0f)
             {
+                // Stage 3 Task 2 (spec Р261): which interval THIS shot leaves on
+                // is decided by Ammo as it stands BEFORE the spend a few lines
+                // down — the last round still goes out on the normal interval,
+                // and only the shot AFTER it (Ammo already at 0) reads the
+                // emergency one. Recomputed every iteration rather than hoisted
+                // above the loop (a constant would have been wrong the moment
+                // Ammo could change mid-loop): FireInterval can be shorter than
+                // TickDt, so a single tick's while loop can walk Ammo from
+                // positive to zero and must pick a different interval for the
+                // shot that does.
+                float interval = IntervalFor(in p, in weapon);
                 if (worldOrNull != null)
                 {
                     // The overshoot is read off FireCooldown as it stands NOW —
@@ -94,6 +103,12 @@ namespace Ring.Simulation.Combat
                     SpawnShot(worldOrNull, in p, in input, in cfg, ownerIndex,
                         math.min(-p.FireCooldown, dt));
                 }
+                // Stage 3 Task 2 (spec Р225): spent in this ONE shared body —
+                // Update (server) and AdvanceNoSpawn (prediction) both run it, so
+                // a predicting client's magazine empties in lockstep with the
+                // server's. Guarded on Ammo > 0 rather than gated separately, so
+                // an emergency shot (Ammo already 0) spends nothing by construction.
+                if (p.Ammo > 0) p.Ammo--;
                 p.RecoilOffset = math.min(weapon.RecoilMaxRad, p.RecoilOffset + weapon.RecoilPerShotRad);
                 p.FireCooldown += interval;
             }
@@ -199,6 +214,43 @@ namespace Ring.Simulation.Combat
             in WeaponSimConfig weapon)
             => CanFire(in p, in input, in weapon)
                && (p.FireCooldown - SimulationWorld.TickDt) <= 0f;
+
+        /// Which cooldown interval the weapon fires on (spec Р261): the normal
+        /// WeaponSimConfig.FireInterval while a magazine remains (`p.Ammo > 0`),
+        /// the slower EmergencyFireInterval once it reaches 0 — the "emergency
+        /// synthesis" that keeps the weapon firing instead of going silent.
+        /// `Advance` is this method's only caller, and it reads `p.Ammo` BEFORE
+        /// that shot's own spend (Р261: the last round leaves on the normal
+        /// interval, the NEXT one is already emergency).
+        ///
+        /// The `1e-3f` floor (errata E-6/C-I12) is the SOLE safety net against
+        /// either interval being misconfigured to (near) zero and spinning
+        /// `Advance`'s `while` loop forever — it used to guard `FireInterval`
+        /// alone, inline in `Advance`; moved here so there is exactly one copy of
+        /// the rule for BOTH intervals, not one that silently stopped covering
+        /// the new one.
+        internal static float IntervalFor(in PlayerState p, in WeaponSimConfig weapon)
+            => math.max(p.Ammo > 0 ? weapon.FireInterval : weapon.EmergencyFireInterval, 1e-3f);
+
+        /// Cell-pickup ammo refill (spec Р261's clamp half, Stage 3 Task 2): adds
+        /// `shots` to `p.Ammo`, capped at `weapon.AmmoMax` (the same ceiling
+        /// SimulationWorld.ApplyConfig clamps against on a hot-tweak) — and, when
+        /// that addition takes Ammo from 0 to positive, clamps FireCooldown down
+        /// to FireInterval. Without that second clamp a refill picked up mid-
+        /// emergency-interval would leave the next shot waiting out the LONGER
+        /// interval it was scheduled under while the magazine was still empty,
+        /// even though ammo is available again right now.
+        ///
+        /// The real cell-pickup behavior (a later task) is expected to route
+        /// through this same method rather than reimplement the clamp (CR 2);
+        /// SimulationWorld.AddAmmoForTest is this task's only caller until then.
+        internal static void AddAmmo(ref PlayerState p, in WeaponSimConfig weapon, int shots)
+        {
+            bool wasEmpty = p.Ammo <= 0;
+            p.Ammo = math.min(p.Ammo + shots, weapon.AmmoMax);
+            if (wasEmpty && p.Ammo > 0)
+                p.FireCooldown = math.min(p.FireCooldown, weapon.FireInterval);
+        }
 
         /// The shot itself: everything the authoritative sink owns and a
         /// predicting client must not (CR 3) — the round, the spread draw that

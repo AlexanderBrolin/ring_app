@@ -131,6 +131,23 @@ namespace Ring.Simulation.Tests
 
             AssertHeroEqual(expected.Hero, cfg.Hero);
             AssertWeaponEqual(expected.Weapon, cfg.Weapon);
+            // Stage 3 Task 2 (errata E-4/A-C3): AmmoStart is the ONE Weapon
+            // field where the two number sources disagree on purpose — same
+            // documented-deviation category as ArenaConfig.BarrierTop below,
+            // so it cannot live inside AssertWeaponEqual. The SO's C# default
+            // (120, the real starting magazine) has to reach the builder
+            // untouched; the shared TestConfigs baseline deliberately
+            // overrides it to 400 so the solo/multiplayer golden scenarios
+            // (which hold the trigger for ~245-277 shots over 1000 ticks)
+            // never run the magazine dry outside a sanctioned re-pin
+            // (TestConfigs.Default()'s own Weapon comment).
+            Assert.AreEqual(w.AmmoStart, cfg.Weapon.AmmoStart,
+                "WeaponConfig.AmmoStart must reach WeaponSimConfig through the builder");
+            Assert.AreEqual(400, expected.Weapon.AmmoStart,
+                "the TestConfigs baseline must stay at its ammo-safe fixture value");
+            Assert.AreNotEqual(expected.Weapon.AmmoStart, w.AmmoStart,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
             AssertMobEqual(expected.Chaser, cfg.Chaser);
             AssertMobEqual(expected.Gunner, cfg.Gunner);
             AssertWaveEqual(expected.Wave, cfg.Wave);
@@ -1044,6 +1061,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.SpreadRunMult, a.SpreadRunMult, Eps);
             Assert.AreEqual(e.SpreadSlideMult, a.SpreadSlideMult, Eps);
             Assert.AreEqual(e.RunSpreadSpeedFrac, a.RunSpreadSpeedFrac, Eps);
+            // Stage 3 Task 2: AmmoStart is EXCLUDED here on purpose — see
+            // Build_DefaultAssets_MatchesTestConfigsBaseline's own comment,
+            // same documented-deviation category as ArenaConfig.BarrierTop.
+            Assert.AreEqual(e.ShotsPerCell, a.ShotsPerCell);
+            Assert.AreEqual(e.AmmoMax, a.AmmoMax);
+            Assert.AreEqual(e.EmergencyFireInterval, a.EmergencyFireInterval, Eps);
         }
 
         static void AssertMobEqual(MobSimConfig e, MobSimConfig a)
