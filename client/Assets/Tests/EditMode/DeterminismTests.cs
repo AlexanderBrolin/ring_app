@@ -500,7 +500,65 @@ namespace Ring.Simulation.Tests
             // already discharged there), no state field entered or left
             // PlayerState/MobState/ProjectileState/MatchStats, and no system's
             // per-tick order changed.
-            const ulong GoldenHash = 0x5BD8AC0DE1D0C454UL; // = 6618228828044051540
+            //
+            // Re-pinned by Stage 3 Т6 (repin #15, the FIRST of exactly TWO
+            // sanctioned golden shifts of the whole of stage 3 — spec С28/§4.
+            // The second is Т12, "the arena and its inhabitants". There is no
+            // third: any other movement of this constant is a stop-and-ask-
+            // the-owner event, not a re-pin).
+            //
+            // THE CAUSE IS NOT BEHAVIOR, IT IS THE COMPOSITION OF STATE. The
+            // extraction economy's fields were declared inert across Ф1
+            // (errata E-1's "structural rebuild": declare every hashable
+            // field in one phase so the digest moves ONCE instead of once per
+            // task), and all of them entered the canonical hash order (spec
+            // Р294) in this single task. Twelve positions, in that order:
+            //  (1) lootRng — a THIRD RNG stream (Р230), folded from the same
+            //      seed with its own constant, hashed right after waveRng;
+            //      its consumer (container layout) arrives in Т15, but a
+            //      stream outside the hash/save would diverge a replay at its
+            //      first draw;
+            //  (2) pickupCount + PickupState{Id, Pos, Kind, Amount, Ttl};
+            //  (3) containerCount — a ZERO count holding the containers'
+            //      position until Т14 declares the type. An FNV chain moves
+            //      when a step is ADDED, even at a zero value, so claiming
+            //      the slot now is exactly what keeps Т14 from needing a
+            //      third sanction that does not exist;
+            //  (4) MatchState{Phase, DirectorDeathTick};
+            //  (5) PlayerState.Ammo;
+            //  (6) PlayerState.Extracted and ExtractKind;
+            //  (7) PlayerState.LootTimer, RepairTimer, ExtractTimer;
+            //  (8) PlayerState.LootTargetContainerId and LootTargetSlot;
+            //  (9) MatchStats.AmmoSpent and CellsPicked;
+            // (10) WorldStats.PickupSpawnsSkipped and ContainerSpawnsSkipped;
+            // (11) ProjectileState.OwnerEntityId (Stage 3 Task 5's field,
+            //      declared inert there and admitted here);
+            // (12) inventories[0..n) — each backpack's item count and the
+            //      items it actually carries, LAST in the order, after the
+            //      statistics (spec Р294/Р231).
+            // Only (5) carries a LIVE value in this run: Scripted() holds the
+            // trigger and the run spends ~250-277 rounds over 1000 ticks.
+            // Every other position sits at its default here and the digest
+            // still moves, because each one adds a step to the FNV-1a chain
+            // whether or not the value behind it is zero.
+            //
+            // WHY THIS CONSTANT MOVES AT ALL, HAVING STOOD THROUGH Т1-Т5.
+            // Stage 3 Task 5 (mob friendly fire, Р252) moved only the
+            // multiplayer golden below, because a mob never hits another mob
+            // in the SOLO scenario — proven, not assumed, by that task's own
+            // mutation #3, which crashed on every mob-on-mob hit and left
+            // this test green. A change of state COMPOSITION is the opposite
+            // kind of cause: it is scenario-independent, so both constants
+            // move here. "The golden did not move" is a fact about a
+            // scenario, never about a change.
+            //
+            // ATTRIBUTION, so the shift is proven rather than asserted:
+            // Stage 3 Task 5's mutation #2 turned friendly fire off outright
+            // and BOTH goldens returned to their pre-Ф1 values BIT FOR BIT.
+            // Nothing else in Ф1 had leaked into the digest — not
+            // OwnerEntityId, not the signature changes that carried it — so
+            // this re-pin owns the list above and nothing besides it.
+            const ulong GoldenHash = 0x425A1D080761AECAUL; // = 4781165874727988938
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
@@ -572,7 +630,43 @@ namespace Ring.Simulation.Tests
             // is stated — §3.7 is the networking section and says nothing about
             // the hash at all), and no state field entered or left
             // PlayerState/MobState/ProjectileState/MatchStats.
-            const ulong MultiGoldenHash = 0x136FA6114112E44FUL; // = 1400520602171925583
+            //
+            // Re-pinned by Stage 3 Т6 (the THIRD re-pin of this constant, and
+            // the FIRST of exactly TWO sanctioned golden shifts of stage 3 —
+            // spec С28/§4; the second is Т12, and there is no third).
+            //
+            // THE PARAGRAPH ABOVE CALLED TASK 17 THE "SECOND AND LAST" RE-PIN,
+            // AND THAT WAS TRUE AS SCOPED: it spent the last of STAGE 2's own
+            // sanctions (spec §6e, owner decision Р113). Stage 3 opens a new,
+            // separately budgeted pair of its own (spec С28) — this is the
+            // first of those two, not an overrun of the exhausted stage-2
+            // budget. Stated here because the two claims read as a
+            // contradiction otherwise, and a reader who resolves that
+            // contradiction by assuming the newer text wins would also assume
+            // the budget is open-ended. It is not: after Т12 there are none
+            // left, and a third movement is a stop-and-ask-the-owner event.
+            //
+            // Cause: the TWELVE canonical-order positions listed on the solo
+            // golden above, which apply here in full — and apply three times
+            // over for the per-player halves, since players[0..n),
+            // stats[0..n) and inventories[0..n) each walk a three-player
+            // roster instead of one. Unlike Task 16 (wave scale) and Task 17
+            // (the damage matrix), this task has NO cause exclusive to the
+            // multiplayer run: a change of state COMPOSITION cannot be
+            // scenario-specific, which is exactly why the solo golden — which
+            // stood through Stage 3 Task 5 — moves alongside this one.
+            //
+            // THIS CONSTANT WAS ALREADY RED BEFORE THIS TASK, at
+            // 0x3158C0E72DE3AA4C: Stage 3 Task 5's own legitimate shift (mob
+            // friendly fire, Р252), left deliberately unpinned because the
+            // plan reserves every golden movement of Ф1 for this one task
+            // (errata E-6 D-I20: the phase's stop-condition reads "a shift
+            // outside Т5 and Т6"). That value is NOT what is pinned below —
+            // it predates the twelve positions. Both causes are folded into
+            // the single number here, and Task 5's mutation #2 (friendly fire
+            // off -> both goldens return to their pre-Ф1 values bit for bit)
+            // is what proves the pair is the whole of it.
+            const ulong MultiGoldenHash = 0x8F176E2D733A14EEUL; // = 10310831013373809902
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
