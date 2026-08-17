@@ -275,6 +275,202 @@ namespace Ring.Simulation.Core
             return hit;
         }
 
+        // --- Stage 3 Task 7: the arc barrier (spec §3.2, Р246/Р247) ---
+        //
+        // An arc is the ring of radius `ringR` and half-width `halfW` with an
+        // angular cutout per door, each cutout's corners closed off by a jamb
+        // circle of radius `halfW` — the same construction a stadium uses
+        // (a body plus rounded ends), wrapped around a circle instead of a
+        // segment. Every piece of arithmetic below is one of the existing
+        // primitives; the only genuinely new thing is the ANGULAR test.
+
+        /// Angular HALF-extent of a door's cutout. `doorFreeWidth` is the FREE
+        /// width in metres (ledger R-26), and each corner of the cutout is
+        /// filled back in by a jamb circle of radius halfW, so the cutout
+        /// itself measures `freeWidth + 2*halfW` of arc at radius `ringR` and
+        /// what actually passes between the two jambs is `freeWidth`.
+        static float DoorHalfCutout(float freeWidth, float ringR, float halfW)
+            => (freeWidth + 2f * halfW) / (2f * ringR);
+
+        /// Center of one of a door's two jamb circles: on radius `ringR`, at a
+        /// corner of the cutout. `side` is +1 (counter-clockwise corner) or -1.
+        static float2 JambCenter(float doorCenter, float freeWidth, float ringR,
+            float halfW, float side)
+        {
+            float angle = doorCenter + side * DoorHalfCutout(freeWidth, ringR, halfW);
+            return new float2(math.cos(angle), math.sin(angle)) * ringR;
+        }
+
+        /// Is `angle` inside some door's cutout? The one new test in the whole
+        /// primitive (spec §3.2's own "what is written fresh" list).
+        /// `doorCenter` comes from config in whatever winding the arena was
+        /// authored in (Stage 3 lands doors at 90/210/330°), while math.atan2
+        /// answers in [-π, π] — so the difference is wrapped before it is
+        /// compared, or a door past π would read as solid wall.
+        static bool InDoorCutout(float angle, float ringR, float halfW,
+            System.ReadOnlySpan<float> doorCenter, System.ReadOnlySpan<float> doorFreeWidth)
+        {
+            const float twoPi = 2f * math.PI;
+            for (int j = 0; j < doorCenter.Length; j++)
+            {
+                float delta = angle - doorCenter[j];
+                delta -= twoPi * math.round(delta / twoPi);
+                if (math.abs(delta) < DoorHalfCutout(doorFreeWidth[j], ringR, halfW))
+                    return true;
+            }
+            return false;
+        }
+
+        /// Does the circle (p, radius) reach the ring's band, doors ignored?
+        /// `lengthsq` against a squared radius is this file's canonical radial
+        /// test — CircleOverlap, SegmentCircle, SegmentCircleInterval,
+        /// OverlapsStadium and PushOutOfCircle all state it exactly this way,
+        /// and spec Р206 prescribes the same idiom for ZoneOf. Reusing the
+        /// idiom is not duplicating logic; routing it through a mutating
+        /// primitive (ClampInsideRing writes to pos and normal) used as a
+        /// predicate would be worse on every count.
+        ///
+        /// The inner limit is clamped at 0 for the degenerate `radius + halfW
+        /// >= ringR` config — a body that could never fit inside the ring at
+        /// all — where the hole in the middle simply does not exist.
+        static bool InArcBand(float2 p, float radius, float ringR, float halfW)
+        {
+            float outer = ringR + halfW + radius;
+            float inner = math.max(ringR - halfW - radius, 0f);
+            float distSq = math.lengthsq(p);
+            return distSq < outer * outer && distSq > inner * inner;
+        }
+
+        /// Which face of the ring a point in the band belongs to: the outward
+        /// radial on the outer half, the inward one (RingWallNormal itself) on
+        /// the inner half. Shared by SegmentArc's contact normal and
+        /// PushOutOfArc's face choice, so a contact and the depenetration that
+        /// follows it can never disagree about which side the body is on.
+        static float2 ArcFaceNormal(float2 p, float ringR)
+            => math.lengthsq(p) >= ringR * ringR ? -RingWallNormal(p) : RingWallNormal(p);
+
+        /// One candidate contact with the ring's BODY, kept only if it is
+        /// nearer than the best so far AND its angle is outside every door.
+        static void TryBandContact(float2 p0, float2 p1, float candidate, float ringR, float halfW,
+            System.ReadOnlySpan<float> doorCenter, System.ReadOnlySpan<float> doorFreeWidth,
+            ref float best, ref bool hit, ref float2 normal)
+        {
+            if (candidate >= best) return;
+            float2 contact = math.lerp(p0, p1, candidate);
+            if (InDoorCutout(math.atan2(contact.y, contact.x), ringR, halfW,
+                    doorCenter, doorFreeWidth)) return;
+            best = candidate; hit = true;
+            normal = ArcFaceNormal(contact, ringR);
+        }
+
+        /// One candidate contact with a jamb — a circle of radius halfW, so
+        /// the golden-pinned SegmentCircle answers it directly, exactly as
+        /// SegmentStadium's rounded end caps do. Its "start inside → t = 0"
+        /// branch is CORRECT here (unlike against the ring's own bounding
+        /// circles): a body starting inside the corner really is in contact.
+        static void TryJambContact(float2 p0, float2 p1, float padR, float2 jamb, float halfW,
+            ref float best, ref bool hit, ref float2 normal)
+        {
+            if (!SegmentCircle(p0, p1, padR, jamb, halfW, out float candidate)
+                || candidate >= best) return;
+            best = candidate; hit = true;
+            // Radial from the jamb's OWN center, the same normal SweepArena
+            // derives at a stadium's cap and at an obstacle circle.
+            normal = math.normalizesafe(math.lerp(p0, p1, candidate) - jamb, new float2(1f, 0f));
+        }
+
+        /// Static overlap of the circle (p, radius) with an arc barrier: used
+        /// for spawn-clearance rejection and config validation, and as the
+        /// shape the two functions below are stated against.
+        public static bool OverlapsArc(float2 p, float radius, float ringR, float halfW,
+            System.ReadOnlySpan<float> doorCenter, System.ReadOnlySpan<float> doorFreeWidth)
+        {
+            if (InArcBand(p, radius, ringR, halfW)
+                && !InDoorCutout(math.atan2(p.y, p.x), ringR, halfW, doorCenter, doorFreeWidth))
+                return true;
+
+            // Р246: the corners are jamb CIRCLES, not an angular pad. A body in
+            // the doorway sits radially inside the band and, drifting sideways,
+            // crosses neither bounding circle — without the jambs it ends up
+            // inside the wall, to be pushed out of an arbitrary side of it.
+            for (int j = 0; j < doorCenter.Length; j++)
+            {
+                if (CircleOverlap(p, radius,
+                        JambCenter(doorCenter[j], doorFreeWidth[j], ringR, halfW, +1f), halfW))
+                    return true;
+                if (CircleOverlap(p, radius,
+                        JambCenter(doorCenter[j], doorFreeWidth[j], ringR, halfW, -1f), halfW))
+                    return true;
+            }
+            return false;
+        }
+
+        /// First contact of the swept circle (p0→p1, inflated by padR) with the
+        /// arc barrier, t ∈ [0,1], plus the surface normal there. Candidate
+        /// protocol identical to SegmentStadium's: `best` starts at 1 and every
+        /// candidate must beat it with a strict `&lt;`, so a contact exactly at
+        /// t == 1 counts as a miss — the convention SweepArena applies over
+        /// this same geometry.
+        ///
+        /// The body of the ring is resolved as the outer interval MINUS the
+        /// inner one (spec §3.2, finding B-I2) rather than by calling
+        /// SegmentCircle against the bounding circles: SegmentCircle's "start
+        /// inside → t = 0" branch (:26) would report a contact in its own
+        /// point for every body standing anywhere INSIDE the ring, and
+        /// Targeting.HasLineOfFire — which has no side dispatcher — would call
+        /// every ray from inside a zone blocked, doorways included.
+        public static bool SegmentArc(float2 p0, float2 p1, float padR, float ringR, float halfW,
+            System.ReadOnlySpan<float> doorCenter, System.ReadOnlySpan<float> doorFreeWidth,
+            out float t, out float2 normal)
+        {
+            t = 0f; normal = float2.zero;
+            bool hit = false;
+            float best = 1f;
+
+            if (SegmentCircleInterval(p0, p1, padR, float2.zero, ringR + halfW,
+                    out float enterOuter, out float exitOuter))
+            {
+                // ⚠ THE SIGN IS LOAD-BEARING. This asks "when is the body
+                // ENTIRELY inside the core", i.e. |p| < (ringR - halfW) - padR,
+                // and SegmentCircleInterval solves for r = padR + cR — so the
+                // core's own interval takes -padR. With +padR it would solve a
+                // circle padR wider than the hole and report the wrong face
+                // (pinned by ZoneGeometryTests mutation M2). Neither the spec
+                // nor the plan states the sign; the geometry does.
+                bool core = SegmentCircleInterval(p0, p1, -padR, float2.zero, ringR - halfW,
+                    out float enterCore, out float exitCore);
+
+                // The two ways INTO the band, in ascending t: crossing the
+                // outer face inward, and leaving the core through the inner
+                // face. The matching exits are deliberately NOT candidates — a
+                // body sliding out of a doorway would otherwise be reported as
+                // hitting the wall it just left.
+                if (!core || enterOuter < enterCore)
+                    TryBandContact(p0, p1, enterOuter, ringR, halfW,
+                        doorCenter, doorFreeWidth, ref best, ref hit, ref normal);
+                if (core && exitCore <= exitOuter)
+                    TryBandContact(p0, p1, exitCore, ringR, halfW,
+                        doorCenter, doorFreeWidth, ref best, ref hit, ref normal);
+            }
+
+            // A body already inside the ring's body needs no branch of its own:
+            // its outer interval is clipped to enterOuter == 0, and the angular
+            // test at p0 either accepts that contact or hands the step to the
+            // jambs below — which is exactly what a body in a doorway wants.
+            for (int j = 0; j < doorCenter.Length; j++)
+            {
+                TryJambContact(p0, p1, padR,
+                    JambCenter(doorCenter[j], doorFreeWidth[j], ringR, halfW, +1f), halfW,
+                    ref best, ref hit, ref normal);
+                TryJambContact(p0, p1, padR,
+                    JambCenter(doorCenter[j], doorFreeWidth[j], ringR, halfW, -1f), halfW,
+                    ref best, ref hit, ref normal);
+            }
+
+            if (hit) t = best;
+            return hit;
+        }
+
         public static bool PushOutOfCircle(ref float2 pos, float radius,
             float2 c, float cR, out float2 normal)
         {
@@ -321,6 +517,96 @@ namespace Ring.Simulation.Core
             normal = StadiumNormal(pos, closest, a, b, pos);
             pos = closest + normal * (r + Skin);
             return true;
+        }
+
+        /// Depenetration out of the arc barrier (Stage 3 Task 7): the NEARER
+        /// face for a body buried in the ring's own body, the jamb's own radial
+        /// for one wedged into a door's corner. Both branches are the existing
+        /// primitives — PushOutOfCircle outward through `ringR + halfW`,
+        /// ClampInsideRing inward against `ringR - halfW`, PushOutOfCircle
+        /// again for the jamb (spec §3.2's reuse table).
+        ///
+        /// Picking the nearer face is what keeps a barrier a barrier: a
+        /// side-blind radial push would spit a body out of whichever side the
+        /// arithmetic happened to land on, handing out a free zone transition
+        /// through a wall the match is built around. A body in the DOORWAY is
+        /// not penetrating anything and must not be moved at all.
+        ///
+        /// ASSUMPTION, not a checked precondition: `radius + halfW &lt; ringR` —
+        /// a body that can actually fit inside the ring. Under it the band test
+        /// and the two primitives agree about what "inside" means, so whichever
+        /// push is chosen fires. Violate it and behavior is UNDEFINED, the same
+        /// way SegmentStadium's own negative-pad case is: ClampInsideRing would
+        /// be handed a limit at or below zero, which is not a meaningful clamp.
+        /// InArcBand's max(..., 0) only keeps the BAND well-formed there; it
+        /// does not make the push sensible, and the two must not be read as one
+        /// promise.
+        ///
+        /// Today the assumption holds by LAYOUT, not by code: zone walls sit at
+        /// R = 65 and 92 against bodies of at most 2.2 m. Nothing states it as a
+        /// rule — it is absent from the arc's validation list in the spec
+        /// (§3.2: zone radii, half-width, door width, non-overlapping doors,
+        /// zone reachability, spawn clearance), and this function cannot state
+        /// it either, since the arc's numbers reach it from config. Owner of
+        /// that gap is TASK 8, which brings zone-wall validation into
+        /// SimConfigBuilder.Validate — named here so the debt has one address
+        /// rather than none.
+        public static bool PushOutOfArc(ref float2 pos, float radius, float ringR, float halfW,
+            System.ReadOnlySpan<float> doorCenter, System.ReadOnlySpan<float> doorFreeWidth,
+            out float2 normal)
+        {
+            normal = float2.zero;
+
+            // The InArcBand half of this guard is DEFENSIVE-ONLY, not
+            // load-bearing — the same status SegmentStadium's own |d1-d0| and
+            // tb<=1f checks carry, and it is documented for the same reason.
+            //
+            // Why it decides nothing today: each of the two face branches
+            // repeats the band's own test inside the primitive it calls
+            // (PushOutOfCircle declines at distSq >= (radius + ringR + halfW)^2,
+            // ClampInsideRing at distSq <= (ringR - halfW - radius)^2), and the
+            // side discriminator below is the SAME comparison as band
+            // membership — so whichever side a body is on, the primitive that
+            // gets called is exactly the one that will either push it honestly
+            // or decline honestly. The jamb loop needs no band test either:
+            // jamb circles are inscribed in the band (centers on radius ringR,
+            // radius halfW), so overlapping one implies being in it. Verified,
+            // not assumed: the Task 7 mutation round replaced this call with
+            // `true` and not one verdict in ZoneGeometryTests moved, which is
+            // what identified it as an equivalent mutant in the first place.
+            //
+            // Why it stays: without it, PushOutOfArc's correctness rests on a
+            // NON-LOCAL property — two other functions' internal guards plus a
+            // geometric fact about where jambs sit. Nothing holds that property
+            // in place: no test can see it (every verdict is identical either
+            // way) and the compiler cannot either, so a future edit to
+            // PushOutOfCircle or ClampInsideRing would break this function
+            // silently. The guard states the contract locally: this function
+            // acts on bodies that overlap the arc, and on nothing else.
+            if (InArcBand(pos, radius, ringR, halfW)
+                && !InDoorCutout(math.atan2(pos.y, pos.x), ringR, halfW,
+                        doorCenter, doorFreeWidth))
+                return math.lengthsq(pos) >= ringR * ringR
+                    ? PushOutOfCircle(ref pos, radius, float2.zero, ringR + halfW, out normal)
+                    : ClampInsideRing(ref pos, radius, ringR - halfW, out normal);
+
+            // Wedged into a corner of a cutout: angularly the body is IN the
+            // doorway, so the faces decline it and only the jamb can free it —
+            // the depenetration half of Р246. The push runs along the jamb's
+            // own radial, which slides the body into the opening rather than
+            // across the ring.
+            for (int j = 0; j < doorCenter.Length; j++)
+            {
+                if (PushOutOfCircle(ref pos, radius,
+                        JambCenter(doorCenter[j], doorFreeWidth[j], ringR, halfW, +1f),
+                        halfW, out normal))
+                    return true;
+                if (PushOutOfCircle(ref pos, radius,
+                        JambCenter(doorCenter[j], doorFreeWidth[j], ringR, halfW, -1f),
+                        halfW, out normal))
+                    return true;
+            }
+            return false;
         }
 
         public static bool ClampInsideRing(ref float2 pos, float radius,
