@@ -35,6 +35,12 @@ namespace Ring.Simulation.Tests
             "AmmoSpent", "CellsPicked",
             // WorldStats (Task 1 Interfaces).
             "PickupSpawnsSkipped", "ContainerSpawnsSkipped",
+            // ProjectileState (Stage 3 Task 5 Interfaces, brief's own warning:
+            // the reflective sweep below reaches ProjectileState too, unlike
+            // the PlayerState/MatchStats/WorldStats-only precedent above — see
+            // that loop's own PendingHashFields check, added alongside this
+            // entry). Adressat Т6, same discipline as every field above.
+            "OwnerEntityId",
         };
 
         [Test]
@@ -148,21 +154,36 @@ namespace Ring.Simulation.Tests
             // from two passes to all five. T5 fix-round 1 M-1: the tally below
             // was internally inconsistent (components didn't sum to the stated
             // total) — recounted by actual typeof(X).GetFields() count, not
-            // restated from memory. Stage 3 Task 1 recount: PlayerState 31
-            // (Extracted, ExtractKind, LootTimer, RepairTimer, ExtractTimer,
-            // LootTargetContainerId, LootTargetSlot are new — all 7 PENDING
-            // below) x 2 players + MatchStats 10 (AmmoSpent, CellsPicked new,
-            // both PENDING) x 2 players + WorldStats 5 (PickupSpawnsSkipped,
-            // ContainerSpawnsSkipped new, both PENDING) + MobState 9 +
-            // ProjectileState 12 + WaveState 6 = 114 bumps swept: 94 asserted
-            // NOT to equal baseline (unchanged from Stage 2 Task 10's own
-            // recount — every field already in the hash stays in it) and 20
-            // asserted TO equal baseline (the 11 distinct PENDING field names,
-            // weighted by their per-player multiplicity: 7 x 2 + 2 x 2 + 2 x 1
-            // = 20) until Т6's re-pin flips them over. The loops below reflect
-            // over the live structs, so a new field is covered the moment it
-            // is declared; this tally is a receipt for the reader, not a
-            // bound the test enforces.
+            // restated from memory.
+            //
+            // Stage 3 Task 5 fix-round 1 (coordinator finding): the PREVIOUS
+            // version of this tally (Stage 3 Task 1) claimed PlayerState had
+            // 31 fields with 7 PENDING — a stale count, not a live one: a
+            // fresh `typeof(PlayerState).GetFields()` count (same discipline
+            // this paragraph already asks for) gives **32** fields, because
+            // Task 2's own `Ammo` (also PENDING, per this file's own
+            // `PendingHashFields` set two screens up) was never folded into
+            // this RECEIPT when Task 2 added it to the SET — only the set
+            // drifted out of sync with its own tally comment, never the test
+            // itself (the loops below read `PendingHashFields`/
+            // `GetFields()` directly, not this paragraph's arithmetic).
+            // Recounted whole, not incremented from the old number, per the
+            // coordinator's own instruction: PlayerState 32 (Extracted,
+            // ExtractKind, LootTimer, RepairTimer, ExtractTimer,
+            // LootTargetContainerId, LootTargetSlot, Ammo — 8 PENDING) x 2
+            // players + MatchStats 10 (AmmoSpent, CellsPicked — 2 PENDING)
+            // x 2 players + WorldStats 5 (PickupSpawnsSkipped,
+            // ContainerSpawnsSkipped — 2 PENDING) + MobState 9 +
+            // ProjectileState 13 (OwnerEntityId, Stage 3 Task 5 — 1 PENDING)
+            // + WaveState 6 = **117** bumps swept: **94** asserted NOT to
+            // equal baseline (unchanged throughout — every field already in
+            // the hash stays in it, no PENDING field was ever counted here)
+            // and **23** asserted TO equal baseline (13 distinct PENDING
+            // field names, weighted by their per-player multiplicity:
+            // 8 x 2 + 2 x 2 + 2 x 1 + 1 x 1 = 23) until Т6's re-pin flips
+            // them over. The loops below reflect over the live structs, so a
+            // new field is covered the moment it is declared; this tally is
+            // a receipt for the reader, not a bound the test enforces.
             foreach (var field in typeof(MobState).GetFields())
             {
                 w.RestoreState(save);
@@ -177,6 +198,17 @@ namespace Ring.Simulation.Tests
                 object boxed = w.Projectiles[0];
                 field.SetValue(boxed, Bump(field.GetValue(boxed)));
                 w.SetProjectileForTest(0, (ProjectileState)boxed);
+                if (PendingHashFields.Contains(field.Name))
+                {
+                    // TEMPORARY (T5 -> T6), same discipline as the
+                    // PlayerState/MatchStats/WorldStats passes above:
+                    // ProjectileState.OwnerEntityId is declared, inert, and
+                    // this is the FIRST pass over ProjectileState/MobState/
+                    // WaveState to need the PendingHashFields gate at all.
+                    Assert.AreEqual(baseline, w.StateHash(),
+                        $"ProjectileState.{field.Name} ещё не должен входить в хеш до Т6");
+                    continue;
+                }
                 Assert.AreNotEqual(baseline, w.StateHash(), $"ProjectileState.{field.Name} не в хеше");
             }
             foreach (var field in typeof(WaveState).GetFields())

@@ -5,13 +5,17 @@ namespace Ring.Simulation.Combat
 {
     /// Advances every live projectile by one tick (spec §3.5/§3.6): swept-circle
     /// collision against the ring wall, obstacles, and eligible targets under the
-    /// damage matrix. Stage 2 Task 17 completed that matrix: a Player-owned round
-    /// hits mobs AND every live player except its own owner (no self-damage by
-    /// construction — the owner is never gathered), a Mob-owned round hits every
-    /// live player and no mobs. Player targets are gated only on Alive here — the
-    /// i-frame check happens inside SimulationWorld.DamagePlayer, not here. A
-    /// projectile is single-target: it is consumed on its first contact, no
-    /// piercing.
+    /// damage matrix. Stage 2 Task 17 completed the player half of that matrix: a
+    /// Player-owned round hits mobs AND every live player except its own owner (no
+    /// self-damage by construction — the owner is never gathered). Stage 3 Task 5
+    /// (spec Р252) opened the mob half: a Mob-owned round now hits every OTHER
+    /// live mob too — a gunner's round can wound another mob standing in its line
+    /// of fire (ADR-003 §1's diegesis: machine dementia, not rebellion — no aggro
+    /// follows, the shooter's target selection is untouched) — excluding only its
+    /// own shooter (mobs[m].Id == proj.OwnerEntityId, below). Player targets are
+    /// gated only on Alive here — the i-frame check happens inside
+    /// SimulationWorld.DamagePlayer, not here. A projectile is single-target: it
+    /// is consumed on its first contact, no piercing.
     internal static class ProjectileSystem
     {
         // HitRingWall (Stage 2 Task 46) splits off the arena's outer boundary,
@@ -79,17 +83,27 @@ namespace Ring.Simulation.Combat
                     candidates[candCount++] = (tRing, HitRingWall, -1);
                 }
 
-                if (proj.Owner == ProjectileOwner.Player)
+                // Stage 3 Task 5 (spec Р252): the gate that used to read
+                // `if (proj.Owner == ProjectileOwner.Player)` is GONE — every
+                // round, mob-owned or player-owned, now gathers mob candidates.
+                // The one exclusion left is the round's OWN shooter:
+                // `mobs[m].Id == proj.OwnerEntityId` skips it so a gunner never
+                // wounds itself at the muzzle (MobAiSystem's own spawn point
+                // sits ON its shooter's collision circle — see its own comment).
+                // A Player-owned round's OwnerEntityId is always the literal 0
+                // (WeaponSystem's own call), and no live mob can ever have id 0
+                // (SimulationWorld._nextEntityId starts at 1), so this same
+                // check is a no-op for that branch — nothing changes for a
+                // player's own shot.
+                int mobCount = w.MobCount;
+                for (int m = 0; m < mobCount; m++)
                 {
-                    int mobCount = w.MobCount;
-                    for (int m = 0; m < mobCount; m++)
+                    if (mobs[m].Id == proj.OwnerEntityId) continue;
+                    float mobRadius = mobs[m].Type == MobType.Chaser ? chaserRadius : gunnerRadius;
+                    if (Geometry.SegmentCircle(startPos, target, proj.Radius,
+                            mobs[m].Pos, mobRadius, out float tm))
                     {
-                        float mobRadius = mobs[m].Type == MobType.Chaser ? chaserRadius : gunnerRadius;
-                        if (Geometry.SegmentCircle(startPos, target, proj.Radius,
-                                mobs[m].Pos, mobRadius, out float tm))
-                        {
-                            candidates[candCount++] = (tm, HitMob, m);
-                        }
+                        candidates[candCount++] = (tm, HitMob, m);
                     }
                 }
 

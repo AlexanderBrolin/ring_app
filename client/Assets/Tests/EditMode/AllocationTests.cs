@@ -21,10 +21,30 @@ namespace Ring.Simulation.Tests
         {
             var w = TestWorlds.Saturated(out SimConfig config);
             // Sanity-check the fixture itself before measuring: every mob slot
-            // must actually be filled (TestWorlds.Saturated's SpawnMobForTest
-            // loop emits one MobSpawned event per mob, still buffered — nothing
-            // in the 100-tick warm-up clears events).
-            Assert.AreEqual(config.Arena.MaxMobs, TestEvents.CountOf(w, SimEventKind.MobSpawned));
+            // must actually be filled AT THE MOMENT OF MEASUREMENT — live
+            // population, not cumulative spawn events. Stage 3 Task 5 fix-round
+            // 1 (spec Р252, coordinator R-22): the OLD proxy asserted
+            // `TestEvents.CountOf(w, SimEventKind.MobSpawned) ==
+            // config.Arena.MaxMobs`, reading "one MobSpawned per mob, nothing
+            // clears the buffer across the 100-tick warm-up" as "population is
+            // saturated" — friendly fire broke that reading (a Gunner's own
+            // round can now connect with a neighboring mob in Saturated's
+            // packed golden-angle crowd instead of sailing through untouched,
+            // and each wave refill of a dead slot is its own EXTRA
+            // MobSpawned), so the cumulative count legitimately exceeded the
+            // cap while nobody had checked whether the LIVE population still
+            // did. Fix-round 1 replaced the proxy with a direct `w.MobCount`
+            // read — CORRECT IN FORM, still WRONG IN VALUE that round
+            // (`92`, not `96`): the wave's own refill had not caught the
+            // friendly-fire losses within the 100-tick warm-up window, so the
+            // direct read just told the truth the proxy had been hiding — the
+            // fixture itself was no longer saturated on return, which is a
+            // real defect in `TestWorlds.Saturated`, not a wrong assertion.
+            // Fix-round 2 closes THAT gap inside `Saturated` itself (a second
+            // `SpawnMobsToCap` call right after the warm-up — see its own
+            // doc), so this read is now checking a promise the builder
+            // actually keeps, not working around one it doesn't.
+            Assert.AreEqual(config.Arena.MaxMobs, w.MobCount);
             // F-4 fix-round (ledger T29): the fixture's whole point is a world
             // under sustained fire — its 100-tick hold-fire warm-up must have
             // actually produced live projectiles for the allocation measurement

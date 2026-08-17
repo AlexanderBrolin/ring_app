@@ -317,7 +317,11 @@ namespace Ring.Simulation.Combat
             float height = muzzleH + overshoot * vel3.z;
             // ownerIndex (Stage 2 Task 7): this firing player's own index —
             // drives per-shooter ShotsHit/Kills credit (SimulationWorld.DamageMob).
-            w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, spawnPos, vel3.xy, height, vel3.z,
+            // ownerEntityId (Stage 3 Task 5): a player owns no MOB entity id —
+            // the literal 0, which no live mob can ever match
+            // (SimulationWorld._nextEntityId starts at 1), so ProjectileSystem's
+            // friendly-fire exclusion is a no-op for a player's own shot.
+            w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, 0, spawnPos, vel3.xy, height, vel3.z,
                 weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime);
             w.StatsRef(ownerIndex).ShotsFired++;
         }

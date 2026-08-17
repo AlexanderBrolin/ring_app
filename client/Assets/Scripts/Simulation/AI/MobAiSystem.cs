@@ -240,7 +240,13 @@ namespace Ring.Simulation.AI
                 // Height/VelZ (Task 4): flat trajectory for now — spawns at the
                 // gunner's muzzle height with zero vertical velocity. ownerIndex
                 // (Stage 2 Task 7): a mob never owns a player slot — NoOwner.
-                w.SpawnProjectile(ProjectileOwner.Mob, ProjectileIds.NoOwner, m.Pos + aimDir * cfg.Radius,
+                // ownerEntityId (Stage 3 Task 5, spec Р252): this gunner's OWN
+                // id, so ProjectileSystem's gather phase can exclude it from its
+                // own round's mob targets — the muzzle spawn point below sits ON
+                // this mob's own collision circle, so without the exclusion a
+                // gunner would wound itself at the moment it fires.
+                w.SpawnProjectile(ProjectileOwner.Mob, ProjectileIds.NoOwner, m.Id,
+                    m.Pos + aimDir * cfg.Radius,
                     aimDir * cfg.ProjectileSpeed, cfg.MuzzleHeight, 0f,
                     cfg.ProjectileDamage, cfg.ProjectileRadius,
                     cfg.ProjectileLifetime);

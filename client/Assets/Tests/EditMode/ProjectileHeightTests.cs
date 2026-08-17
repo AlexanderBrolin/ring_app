@@ -60,8 +60,18 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(1, w.MobCount);
             Assert.AreEqual(MobType.Chaser, w.Mobs[0].Type);
-            // the Chaser was passed over, not merely survived
-            Assert.AreEqual(cfg.Chaser.MaxHp, w.Mobs[0].Hp, 1e-4f);
+            // Stage 3 Task 5 (spec Р252, coordinator R-21 — legitimate consequence
+            // of friendly fire, reproduced arithmetically before touching this
+            // number): the Gunner sits at distance 9 m from the player, squarely
+            // inside its own PreferredRange +- RangeTolerance ([7.5, 10.5]), with
+            // clear LoS (Open() — no obstacles) and FireCooldown starting at 0 —
+            // it fires its own round back at the player BEFORE the player's
+            // headshot kills it, and that round's straight line back to the
+            // player passes through the very Chaser screening it (6.5 m out, same
+            // y = 0 line). Friendly fire lets THAT round connect, for the
+            // Gunner's own ProjectileDamage (8) — MaxHp 30 - 8 = 22, not the old
+            // "passed over, never touched" 30.
+            Assert.AreEqual(cfg.Chaser.MaxHp - cfg.Gunner.ProjectileDamage, w.Mobs[0].Hp, 1e-4f);
         }
 
         [Test]
@@ -75,8 +85,18 @@ namespace Ring.Simulation.Tests
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.AreEqual(2, w.MobCount); // nobody died
-            Assert.AreEqual(cfg.Chaser.MaxHp - cfg.Weapon.Damage * cfg.Chaser.BodyDamageMult,
-                w.Mobs[0].Hp, 1e-4f);       // the Chaser took the body hit
+            // Stage 3 Task 5 (spec Р252, coordinator R-21 — same mechanism as
+            // GunnerHeadOverCrowd_HitFromFarChaser above, reproduced
+            // arithmetically): the Chaser screens the player's own round (body
+            // hit, MaxHp - Weapon.Damage * BodyDamageMult) exactly as before —
+            // but the Gunner it shielded SURVIVES that screening (never hit by
+            // the player at all) and is itself in range (9 m) with clear LoS, so
+            // it fires its own round back at the player. That round's straight
+            // line passes through the SAME screening Chaser (2 m out, same
+            // y = 0 line) a second time, landing the Gunner's own
+            // ProjectileDamage (8) on top of the player's body hit.
+            Assert.AreEqual(cfg.Chaser.MaxHp - cfg.Weapon.Damage * cfg.Chaser.BodyDamageMult
+                - cfg.Gunner.ProjectileDamage, w.Mobs[0].Hp, 1e-4f);
             Assert.AreEqual(cfg.Gunner.MaxHp, w.Mobs[1].Hp, 1e-4f); // the Gunner is untouched
         }
 

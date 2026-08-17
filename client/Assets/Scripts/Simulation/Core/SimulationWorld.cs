@@ -76,11 +76,16 @@ namespace Ring.Simulation.Core
         // to MaxMobs + MaxPlayers + 2 — the exact worst case once the gather
         // fanned out over every live player instead of packing a single one:
         // one slot per live mob, one per live player, plus barrier and floor.
-        // Neither owner can reach that bound on its own (a Player-owned round
-        // skips its own shooter, a Mob-owned one gathers no mobs at all), so
-        // the array carries one slot of slack rather than being tight; sizing
-        // it to the union keeps the bound obvious instead of depending on
-        // which branch of the damage matrix a given round took.
+        // Neither owner reaches that bound on its own — a Player-owned round
+        // gathers every mob (its OwnerEntityId is always the literal 0, never a
+        // live mob id) but skips its own shooter among players, a Mob-owned one
+        // (Stage 3 Task 5, spec Р252: friendly fire) gathers every OTHER live
+        // mob (its own shooter excluded by id) and every player without
+        // exclusion — so BOTH branches land on exactly
+        // MaxMobs + MaxPlayers + 2 - 1 candidates, one short of the union.
+        // Sizing to the union keeps the bound obvious instead of depending on
+        // which branch of the damage matrix a given round took, at the cost of
+        // one slot of slack neither branch actually spends.
         // Stage 2 Task 46: + 3 rather than + 2 — the barrier is TWO slots now
         // (interior obstacles/walls, and the ring boundary separately, since
         // only the interior ones have a modelled top). The true worst case rose
@@ -701,9 +706,13 @@ namespace Ring.Simulation.Core
         /// `ownerIndex` (Stage 2 Task 7) is the shooter's own PlayerAt index for a
         /// Player-owned shot, else ProjectileIds.NoOwner — required (no default):
         /// both battle call sites (WeaponSystem, MobAiSystem) must say explicitly
-        /// who fired.
-        internal int SpawnProjectile(ProjectileOwner owner, byte ownerIndex, float2 pos, float2 vel,
-            float height, float velZ, float damage, float radius, float ttl)
+        /// who fired. `ownerEntityId` (Stage 3 Task 5, spec Р252) is the shooting
+        /// MOB's own entity id for a Mob-owned shot (MobAiSystem passes `m.Id`),
+        /// else 0 (WeaponSystem's own literal — see ProjectileState.OwnerEntityId's
+        /// own doc for why 0 can never collide with a live mob) — also required,
+        /// same "say explicitly" discipline as ownerIndex.
+        internal int SpawnProjectile(ProjectileOwner owner, byte ownerIndex, int ownerEntityId,
+            float2 pos, float2 vel, float height, float velZ, float damage, float radius, float ttl)
         {
             if (_projectileCount >= _projectiles.Length)
             {
@@ -714,7 +723,8 @@ namespace Ring.Simulation.Core
             int id = _nextEntityId++;
             _projectiles[_projectileCount++] = new ProjectileState
             {
-                Id = id, Owner = owner, OwnerIndex = ownerIndex, Pos = pos, PrevPos = pos, Vel = vel,
+                Id = id, Owner = owner, OwnerIndex = ownerIndex, OwnerEntityId = ownerEntityId,
+                Pos = pos, PrevPos = pos, Vel = vel,
                 Height = height, PrevHeight = height, VelZ = velZ,
                 Damage = damage, Radius = radius, Ttl = ttl
             };
@@ -1111,9 +1121,17 @@ namespace Ring.Simulation.Core
         /// part of StateHash from that task on, and the five Mob-owned fixtures
         /// that used to ride the `0` default (HitZoneTests.cs x2,
         /// ProjectileTests.cs x3) now pass ProjectileIds.NoOwner explicitly.
+        /// `ownerEntityId` (Stage 3 Task 5, errata E-6 A-I1/A-I2) is a NEW
+        /// trailing parameter with a default — every existing call site above
+        /// keeps compiling unchanged, defaulting to 0 ("no shooter to exclude"),
+        /// correct for a Player-owned fixture and for a Mob-owned one that is
+        /// not itself testing the friendly-fire exclusion
+        /// (MobFriendlyFireTests.MobRound_DoesNotDamageItsOwnShooter passes the
+        /// real shooter's own id explicitly).
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
-            float height, float velZ, float damage, float radius, float ttl, byte ownerIndex = 0)
-            => SpawnProjectile(owner, ownerIndex, pos, vel, height, velZ, damage, radius, ttl);
+            float height, float velZ, float damage, float radius, float ttl, byte ownerIndex = 0,
+            int ownerEntityId = 0)
+            => SpawnProjectile(owner, ownerIndex, ownerEntityId, pos, vel, height, velZ, damage, radius, ttl);
 
         /// Test-only seam (Task 19 Interfaces): kills the player outright via the
         /// normal damage path (overkill amount) so MobAiSystem's "player dead"

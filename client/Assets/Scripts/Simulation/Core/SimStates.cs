@@ -172,6 +172,21 @@ namespace Ring.Simulation.Core
         /// advances by VelZ each tick alongside the horizontal Pos update;
         /// PrevHeight mirrors PrevPos's role for interpolation.
         public float Height, PrevHeight, VelZ;
+
+        /// Stage 3 Task 5 (spec Р252): the shooting ENTITY's own id — a live
+        /// mob's MobState.Id for a Mob-owned round (MobAiSystem.UpdateGunner
+        /// passes `m.Id`), 0 ("nobody") for a Player-owned one
+        /// (WeaponSystem.SpawnShot's own literal — a player owns no mob
+        /// entity id, and SimulationWorld._nextEntityId starts at 1, so no
+        /// live mob can ever collide with the literal). Distinct from
+        /// OwnerIndex above: that field names a PLAYER slot and drives credit,
+        /// this one names a MOB entity and drives ProjectileSystem's
+        /// friendly-fire exclusion — a gunner's own round must never gather
+        /// its own shooter as a HitMob candidate. Declared here, inert
+        /// (errata E-1's "structural rebuild" discipline): excluded from
+        /// StateHash until the sanctioned re-pin (Т6) — see
+        /// WorldLifecycleTests.PendingHashFields.
+        public int OwnerEntityId;
     }
 
     /// Stage 3 Task 3 (spec §3.6): the one kind of pickup that exists today —

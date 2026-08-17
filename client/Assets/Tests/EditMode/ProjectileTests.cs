@@ -141,27 +141,26 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void DamageMatrix_MobShotIgnoresMobs_PlayerShotNoPiercing() // §3.5 negative cases
+        public void PlayerShot_NoPiercing() // §3.5 negative case
         {
+            // Stage 3 Task 5 (spec Р252): this test used to be named
+            // DamageMatrix_MobShotIgnoresMobs_PlayerShotNoPiercing and also
+            // covered "a mob's round ignores mobs" — that premise is gone now
+            // that a mob-owned round hits every OTHER live mob by design
+            // (MobFriendlyFireTests.GunnerRound_DamagesAnotherMob covers the
+            // positive case, MobRound_DoesNotDamageItsOwnShooter the one
+            // exclusion — CR 2, no point duplicating that coverage here). What
+            // survives is the unrelated "no piercing" half, unaffected by this
+            // task: an overkill PLAYER round is still single-target.
             var cfg = NoSpread();
             var w = new SimulationWorld(1, cfg);
             w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
             w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
-            // enemy projectile flies toward the player through two mobs — ignores the mobs
-            w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(10f, 0f),
-                new float2(-30f, 0f), 1f, 0f, 5f, 0.15f, 2f,
-                ownerIndex: ProjectileIds.NoOwner); // Stage 2 Task 10 (carryover-t10.md item 2)
-            for (int i = 0; i < 12; i++) w.Tick(default);
-            var snap = new RenderSnapshot(cfg.Arena);
-            w.CaptureSnapshot(snap);
-            Assert.AreEqual(2, snap.MobCount);
-            for (int m = 0; m < snap.MobCount; m++)
-                Assert.AreEqual(cfg.Chaser.MaxHp, snap.Mobs[m].Hp); // mobs untouched
-            Assert.Less(w.Player.Hp, cfg.Hero.MaxHp);               // player — hit
             // no piercing: an overkill player projectile only kills the nearest
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(3f, 0f),
                 new float2(35f, 0f), 1f, 0f, 1000f, 0.12f, 1f);
             for (int i = 0; i < 6; i++) w.Tick(default);
+            var snap = new RenderSnapshot(cfg.Arena);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(1, snap.MobCount);
             Assert.AreEqual(cfg.Chaser.MaxHp, snap.Mobs[0].Hp); // the far one is alive and unscathed

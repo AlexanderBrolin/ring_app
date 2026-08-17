@@ -27,6 +27,13 @@ namespace Ring.Simulation.Tests
         /// a caller starts measuring it (allocations, a "busy" golden tick,
         /// ...). Returns the config used so callers can read Arena caps etc.
         /// without reconstructing it.
+        ///
+        /// STILL AT CAP ON RETURN (Stage 3 Task 5 fix-round 2): the warm-up
+        /// can now thin the crowd (friendly fire — see this method's own
+        /// body), so a second SpawnMobsToCap call tops the population back up
+        /// to Arena.MaxMobs AFTER the 100 ticks, before returning — the name
+        /// "Saturated" is a promise about what the caller receives, not just
+        /// about what got built on tick 0.
         public static SimulationWorld Saturated(out SimConfig config)
         {
             config = TestConfigs.Default();
@@ -36,6 +43,23 @@ namespace Ring.Simulation.Tests
 
             var holdFire = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f) };
             for (int i = 0; i < 100; i++) world.Tick(holdFire);
+
+            // Stage 3 Task 5 fix-round 2 (spec Р252, coordinator finding): the
+            // crowd above is no longer guaranteed to still BE at cap after 100
+            // ticks under sustained fire — friendly fire means a Gunner among
+            // it can now connect with a neighboring mob instead of always
+            // sailing past it, so some of the 96 die during warm-up (their
+            // slots get replaced by the wave director too, but not
+            // necessarily all of them within this window). "Saturated" is a
+            // promise about the RETURNED world, not just the moment it was
+            // built, so top up here, with the SAME seam that built the crowd
+            // in the first place: SpawnMobsToCap's own SpawnMob cap-guard
+            // makes a second call an EXACT top-up, not an over-fill — it
+            // keeps spawning until _mobCount reaches MaxMobs again (however
+            // many that takes), then silently no-ops for the remainder of
+            // its own loop. This keeps the helper's name true for every
+            // caller, not just the one that happens to check.
+            SpawnMobsToCap(world);
 
             return world;
         }
