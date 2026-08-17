@@ -558,7 +558,39 @@ namespace Ring.Simulation.Tests
             // Nothing else in Ф1 had leaked into the digest — not
             // OwnerEntityId, not the signature changes that carried it — so
             // this re-pin owns the list above and nothing besides it.
-            const ulong GoldenHash = 0x425A1D080761AECAUL; // = 4781165874727988938
+            //
+            // MOVED A SECOND TIME INSIDE THE SAME SANCTION — Ф1 FIX-ROUND, NOT
+            // A THIRD RE-PIN (owner decision R-24). The two independent
+            // reviewers of Ф1 named the same defect first: positions (9) and
+            // (10) of the list above — MatchStats.AmmoSpent and CellsPicked —
+            // had entered the digest with NO WRITER anywhere in Scripts/. That
+            // is the very failure errata E-1 exists to prevent, merely
+            // deferred: a hashed field whose behavior arrives later moves this
+            // constant later, i.e. outside a sanction, since Т12 spends the
+            // only remaining one on the arena. The fix-round gave both fields
+            // their writers — AmmoSpent in WeaponSystem.Advance's own spend
+            // branch (so the emergency synthesis, which spends nothing, tallies
+            // nothing — spec Р226), CellsPicked in Loot.PickupSystem.Collect,
+            // in cells — and this constant absorbed the result. The SANCTION IS
+            // ONE LOGICAL EVENT, "the composition of state entered the hash at
+            // the end of Ф1", not one commit: two commits touch the number,
+            // one budget entry is spent, and Т12 is still the second and last.
+            //
+            // ATTRIBUTION OF THE SECOND MOVEMENT, by the same method as the
+            // first: mutation M-A removed the AmmoSpent increment and NOTHING
+            // else, and both goldens came back to their pre-fix-round values
+            // BIT FOR BIT (this constant to 0x425A1D080761AECA, the
+            // multiplayer one to 0x8F176E2D733A14EE — observed green against
+            // those still-pinned constants, 1038 tests, one red, the AmmoSpent
+            // test alone). So the whole of this second movement belongs to a
+            // single line. The same run proved two negatives worth recording:
+            // the CellsPicked writer is digest-inert in BOTH scenarios (owner
+            // decision R-18 zeroes the drop in TestConfigs, so no pickup is
+            // ever born and Collect never runs), and PickupSystem.AdvanceTtl's
+            // switch to the in-place `ref` idiom is digest-inert too (the hash
+            // walks `i < _pickupCount`, so the debris past the count that the
+            // switch leaves behind is read by nobody).
+            const ulong GoldenHash = 0xBE4276DEE79BD5D5UL; // = 13709650915409778133
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
@@ -666,7 +698,24 @@ namespace Ring.Simulation.Tests
             // the single number here, and Task 5's mutation #2 (friendly fire
             // off -> both goldens return to their pre-Ф1 values bit for bit)
             // is what proves the pair is the whole of it.
-            const ulong MultiGoldenHash = 0x8F176E2D733A14EEUL; // = 10310831013373809902
+            //
+            // MOVED A SECOND TIME INSIDE THE SAME SANCTION — Ф1 fix-round,
+            // owner decision R-24, exactly as the solo golden above describes
+            // in full: positions (9) and (10) of its list, MatchStats.
+            // AmmoSpent and CellsPicked, were hashed in Т6 without writers,
+            // and the fix-round supplied both rather than leaving the movement
+            // to a phase with no sanction left. Still the FIRST of stage 3's
+            // two shifts; Т12 is the second and last.
+            //
+            // The multiplayer run has no cause of its own here either — the
+            // writer is per-player, so all three MatchStats slots carry a live
+            // AmmoSpent instead of one, but that is the same cause counted
+            // three times, not a second one. Attribution: mutation M-A (the
+            // AmmoSpent increment removed, nothing else) returned this
+            // constant to 0x8F176E2D733A14EE bit for bit alongside the solo
+            // one — see the solo golden's own ATTRIBUTION paragraph for the
+            // two negatives that run also settled.
+            const ulong MultiGoldenHash = 0x973C5780C476AE61UL; // = 10897681408893300321
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
