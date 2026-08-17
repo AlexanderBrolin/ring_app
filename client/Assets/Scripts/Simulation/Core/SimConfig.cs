@@ -200,6 +200,26 @@ namespace Ring.Simulation.Core
         public float HearPositionGridMeters;
     }
 
+    /// Match-flow pacing config (Stage 3 Task 1 Interfaces, errata E-2):
+    /// declared here (not in Assets/Data yet) so Т21 (the phase state
+    /// machine, Ф4) can already read it. Its ScriptableObject home
+    /// (Data/MatchFlowConfig.cs), the `.asset` through
+    /// ApplyStageThreeBalance, and the SimConfigBuilder wiring are Т12's job
+    /// — the one task that delivers SO-backed data (errata E-2's full
+    /// account of why the two are split). Т22 only uses what is already
+    /// here. NOT part of SimConfigHash.Compute yet (errata E-6 I9 defers
+    /// that wiring to Т22 alongside zones/doors/portals/catalog/backpack/
+    /// ammo/drop) — see SimConfigHashTests.SimConfig_CarriesExactlyEightSections
+    /// for where that decision is recorded.
+    public struct MatchFlowSimConfig
+    {
+        public float GateDelaySeconds;
+        public float ExtractChannelSeconds;
+        public int RetinueCount;
+        public float RetinueRespawnSeconds;
+        public int DirectorReserveSlots;
+    }
+
     /// Full balance snapshot for one match — plain data, no ScriptableObjects.
     public struct SimConfig
     {
@@ -209,5 +229,9 @@ namespace Ring.Simulation.Core
         public WaveSimConfig Wave;
         public ArenaSimConfig Arena;
         public VisibilitySimConfig Visibility;
+        /// Stage 3 Task 1 (errata E-2): match-flow pacing (gate delay,
+        /// extract channel length, retinue respawn count/cadence, Director
+        /// reserve slots) — SO-backed default arrives in Т12.
+        public MatchFlowSimConfig Flow;
     }
 }

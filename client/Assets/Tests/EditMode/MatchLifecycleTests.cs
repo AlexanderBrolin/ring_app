@@ -212,7 +212,12 @@ namespace Ring.Simulation.Tests
         }
 
         // ------------------------------------------------------------------
-        // End conditions (§2.3, spec §3.10/§3.11).
+        // End conditions (§2.3, spec §3.10/§3.11). Stage 3 Task 1 added two
+        // parameters to Evaluate (activePlayers, anyExtracted) and a third
+        // reason (AllPlayersResolved, pinned by MatchFlowTests instead — see
+        // that file) — every call below passes activePlayers == alivePlayers
+        // and anyExtracted: false, preserving this file's original
+        // wipe/duration-only scenarios byte-for-byte.
         // ------------------------------------------------------------------
 
         [Test]
@@ -221,7 +226,8 @@ namespace Ring.Simulation.Tests
             // The positive witness the three end tests below are measured
             // against: an ordinary tick of an ordinary match ends nothing.
             var policy = new MatchEndPolicy(maxDurationTicks: 100);
-            Assert.AreEqual(MatchEndReason.None, policy.Evaluate(worldTick: 10, alivePlayers: 1),
+            Assert.AreEqual(MatchEndReason.None,
+                policy.Evaluate(worldTick: 10, alivePlayers: 1, activePlayers: 1, anyExtracted: false),
                 "a match with a living player and time left on the clock is not over");
         }
 
@@ -230,7 +236,7 @@ namespace Ring.Simulation.Tests
         {
             var policy = new MatchEndPolicy(maxDurationTicks: 100);
             Assert.AreEqual(MatchEndReason.AllPlayersDead,
-                policy.Evaluate(worldTick: 10, alivePlayers: 0),
+                policy.Evaluate(worldTick: 10, alivePlayers: 0, activePlayers: 0, anyExtracted: false),
                 "no living players is the end of the match, well before the timer");
         }
 
@@ -244,10 +250,11 @@ namespace Ring.Simulation.Tests
             // than one, deliberately: this test is about the CLOCK, and a
             // fixture sitting on the edge of the "everyone is dead" condition
             // would answer for both at once.
-            Assert.AreEqual(MatchEndReason.None, policy.Evaluate(worldTick: 99, alivePlayers: 2),
+            Assert.AreEqual(MatchEndReason.None,
+                policy.Evaluate(worldTick: 99, alivePlayers: 2, activePlayers: 2, anyExtracted: false),
                 "witness: one tick short of the limit the match is still running");
             Assert.AreEqual(MatchEndReason.MaxDurationReached,
-                policy.Evaluate(worldTick: 100, alivePlayers: 2),
+                policy.Evaluate(worldTick: 100, alivePlayers: 2, activePlayers: 2, anyExtracted: false),
                 "AT the limit the match is over — the boundary is >=, not >");
         }
 
@@ -260,7 +267,7 @@ namespace Ring.Simulation.Tests
             // observable outside the process and must be pinned.
             var policy = new MatchEndPolicy(maxDurationTicks: 100);
             Assert.AreEqual(MatchEndReason.AllPlayersDead,
-                policy.Evaluate(worldTick: 100, alivePlayers: 0),
+                policy.Evaluate(worldTick: 100, alivePlayers: 0, activePlayers: 0, anyExtracted: false),
                 "a match whose players are all dead ended in substance, not on the timer — "
                 + "AllPlayersDead is checked first and its exit code (0) is the one reported");
         }
@@ -295,6 +302,14 @@ namespace Ring.Simulation.Tests
                     case MatchEndReason.MaxDurationReached:
                         Assert.AreEqual(4, MatchEndPolicy.ExitCodeFor(reason),
                             "spec §3.11: an exhausted MatchMaxDurationSeconds exits 4");
+                        covered++;
+                        break;
+                    case MatchEndReason.AllPlayersResolved:
+                        // Stage 3 Task 1 (errata E-1/E-6 D-I2): a run everyone
+                        // walked away from is "played out" exactly like a wipe
+                        // is — same exit code as AllPlayersDead, spec §3.11.
+                        Assert.AreEqual(0, MatchEndPolicy.ExitCodeFor(reason),
+                            "spec §3.11: a fully resolved run exits 0, same as a wipe");
                         covered++;
                         break;
                     default:

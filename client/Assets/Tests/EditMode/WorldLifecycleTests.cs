@@ -6,13 +6,32 @@ namespace Ring.Simulation.Tests
 {
     public class WorldLifecycleTests
     {
-        // Stage 2 Task 10: the TEMPORARY PendingHashFields skip-list (T7 -> T10,
-        // holding ProjectileState.OwnerIndex out of the sweep until the
-        // sanctioned re-pin) is GONE — the field is in the hash now, so the
-        // sweep below asserts on it like on every other field. Removal proven,
-        // not assumed: with OwnerIndex (and, one at a time, each of the two new
-        // edge-request counters) temporarily pulled back out of the hash, this
-        // sweep goes red naming exactly that field — quoted in task-10-report.md.
+        // Stage 2 Task 10 (history): the PREVIOUS PendingHashFields skip-list
+        // (T7 -> T10, ProjectileState.OwnerIndex) was removed once that field
+        // joined the hash — removal proven, not assumed, by pulling it back
+        // out and watching the sweep name it (task-10-report.md).
+        //
+        // Stage 3 Task 1 (errata E-1/D-I1): a NEW, unrelated skip-list, same
+        // precedent and same discipline. Every field this task declares as
+        // inert Ф1 economy state joins the canonical hash at the sanctioned
+        // re-pin #1 (Т6) rather than immediately — otherwise the reflective
+        // sweep below would fault on a field the state hash deliberately
+        // excludes for five more tasks (errata E-1's "structural rebuild").
+        // TEMPORARY (T1 -> T6): enters the canonical hash at the sanctioned
+        // re-pin. Т6 removes this set UNCONDITIONALLY and proves the removal
+        // the same way Т10 proved its own (pull one field back OUT of the
+        // hash, one at a time, watch the sweep name it by name).
+        static readonly System.Collections.Generic.HashSet<string> PendingHashFields = new()
+        {
+            // PlayerState (Task 1 Interfaces).
+            "Extracted", "ExtractKind", "LootTimer", "RepairTimer", "ExtractTimer",
+            "LootTargetContainerId", "LootTargetSlot",
+            // MatchStats (Task 1 Interfaces, errata R-13 — NOT SurvivedSeconds,
+            // which belongs to MatchSummary, Task 24, not to a hashed counter).
+            "AmmoSpent", "CellsPicked",
+            // WorldStats (Task 1 Interfaces).
+            "PickupSpawnsSkipped", "ContainerSpawnsSkipped",
+        };
 
         [Test]
         public void SaveRestore_ReplaysToSameHash()
@@ -71,6 +90,16 @@ namespace Ring.Simulation.Tests
                     object boxed = w.PlayerAt(index);
                     field.SetValue(boxed, Bump(field.GetValue(boxed)));
                     w.SetPlayerForTest(index, (PlayerState)boxed);
+                    if (PendingHashFields.Contains(field.Name))
+                    {
+                        // TEMPORARY (T1 -> T6): a POSITIVE assertion, not a
+                        // silent skip — proves the field is genuinely still
+                        // OUTSIDE the hash, not just unchecked (same fix-round
+                        // 1 M-4 discipline Т7/Т10 established).
+                        Assert.AreEqual(baseline, w.StateHash(),
+                            $"PlayerState[{index}].{field.Name} ещё не должен входить в хеш до Т6");
+                        continue;
+                    }
                     Assert.AreNotEqual(baseline, w.StateHash(),
                         $"PlayerState[{index}].{field.Name} не в хеше");
                 }
@@ -80,6 +109,12 @@ namespace Ring.Simulation.Tests
                     object boxed = w.StatsAt(index);
                     field.SetValue(boxed, Bump(field.GetValue(boxed)));
                     w.SetStatsForTest(index, (MatchStats)boxed);
+                    if (PendingHashFields.Contains(field.Name))
+                    {
+                        Assert.AreEqual(baseline, w.StateHash(),
+                            $"MatchStats[{index}].{field.Name} ещё не должен входить в хеш до Т6");
+                        continue;
+                    }
                     Assert.AreNotEqual(baseline, w.StateHash(),
                         $"MatchStats[{index}].{field.Name} не в хеше");
                 }
@@ -95,6 +130,12 @@ namespace Ring.Simulation.Tests
                 object boxed = w.WorldStats;
                 field.SetValue(boxed, Bump(field.GetValue(boxed)));
                 w.SetWorldStatsForTest((WorldStats)boxed);
+                if (PendingHashFields.Contains(field.Name))
+                {
+                    Assert.AreEqual(baseline, w.StateHash(),
+                        $"WorldStats.{field.Name} ещё не должен входить в хеш до Т6");
+                    continue;
+                }
                 Assert.AreNotEqual(baseline, w.StateHash(), $"WorldStats.{field.Name} не в хеше");
             }
             // F-4 fix-round: the three passes the old comment here said were
@@ -103,12 +144,21 @@ namespace Ring.Simulation.Tests
             // from two passes to all five. T5 fix-round 1 M-1: the tally below
             // was internally inconsistent (components didn't sum to the stated
             // total) — recounted by actual typeof(X).GetFields() count, not
-            // restated from memory. Stage 2 Task 10 recount: PlayerState 24 (the
-            // two edge-request counters are new) x 2 players + MatchStats 8 x 2
-            // players + WorldStats 3 + MobState 9 + ProjectileState 12 +
-            // WaveState 6 = 94 asserted bumps. The loops below reflect over the
-            // live structs, so a new field is covered the moment it is declared;
-            // this tally is a receipt for the reader, not a bound the test enforces.
+            // restated from memory. Stage 3 Task 1 recount: PlayerState 31
+            // (Extracted, ExtractKind, LootTimer, RepairTimer, ExtractTimer,
+            // LootTargetContainerId, LootTargetSlot are new — all 7 PENDING
+            // below) x 2 players + MatchStats 10 (AmmoSpent, CellsPicked new,
+            // both PENDING) x 2 players + WorldStats 5 (PickupSpawnsSkipped,
+            // ContainerSpawnsSkipped new, both PENDING) + MobState 9 +
+            // ProjectileState 12 + WaveState 6 = 114 bumps swept: 94 asserted
+            // NOT to equal baseline (unchanged from Stage 2 Task 10's own
+            // recount — every field already in the hash stays in it) and 20
+            // asserted TO equal baseline (the 11 distinct PENDING field names,
+            // weighted by their per-player multiplicity: 7 x 2 + 2 x 2 + 2 x 1
+            // = 20) until Т6's re-pin flips them over. The loops below reflect
+            // over the live structs, so a new field is covered the moment it
+            // is declared; this tally is a receipt for the reader, not a
+            // bound the test enforces.
             foreach (var field in typeof(MobState).GetFields())
             {
                 w.RestoreState(save);

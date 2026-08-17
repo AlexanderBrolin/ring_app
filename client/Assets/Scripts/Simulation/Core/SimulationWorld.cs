@@ -71,6 +71,18 @@ namespace Ring.Simulation.Core
         // slack described above, kept rather than quietly spent.
         readonly (float t, int kind, int index)[] _projCandidates;
         WaveState _wave;
+        // Stage 3 Task 1 (spec Ф1, errata E-1/E-2): match-flow phase state —
+        // declared here, inert. Behavior (phase transitions, gate/portal
+        // timers) belongs to the state machine Т21 builds (Ф4); this task
+        // only gives the phase a home so every field the extraction economy
+        // needs enters StateHash together at the sanctioned re-pin (Т6)
+        // instead of dribbling in across later Ф1 tasks (errata E-1's
+        // structural rebuild). Defaults to Phase = Farm (the enum's zero
+        // value) and DirectorDeathTick = 0 ("Director alive or not yet
+        // activated") — both already correct as the C# struct default,
+        // unlike WaveState's PhaseTimer above, so no explicit constructor
+        // init is needed.
+        MatchState _match;
         int _nextEntityId = 1;
 
         readonly SimEvent[] _events;
@@ -86,6 +98,10 @@ namespace Ring.Simulation.Core
         /// Match counters that are counted once for the whole match, not per
         /// player (Stage 2 Task 5) — WavesCleared, MobSpawnsSkipped, ProjectileSpawnsSkipped.
         public WorldStats WorldStats => _worldStats;
+        /// The match's own flow phase (Stage 3 Task 1 Interfaces) — one per
+        /// match, same "single struct field" shape as WorldStats above.
+        /// Read-only here; Т21's state machine mutates it through MatchRef.
+        public MatchState Match => _match;
         /// Synonym for PlayerAt(0) (Stage 2 Task 4) — every solo call site that
         /// predates Stage 2 Task 4 keeps compiling unchanged.
         public PlayerState Player => PlayerAt(0);
@@ -549,6 +565,12 @@ namespace Ring.Simulation.Core
         /// ref-return pattern as SpreadRng/WaveRng, so the system mutates it in
         /// place instead of round-tripping copies every tick.
         internal ref WaveState WaveRef => ref _wave;
+
+        /// Т21's seam into the match's own flow state (Stage 3 Task 1
+        /// Interfaces) — same ref-return pattern as WaveRef above, so the
+        /// phase state machine mutates it in place instead of round-tripping
+        /// copies every tick.
+        internal ref MatchState MatchRef => ref _match;
 
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
         /// once full, spawns are skipped and counted rather than growing the array,
@@ -1065,6 +1087,11 @@ namespace Ring.Simulation.Core
         internal void SetMobForTest(int index, in MobState m) => _mobs[index] = m;
         internal void SetProjectileForTest(int index, in ProjectileState p) => _projectiles[index] = p;
         internal void SetWaveForTest(in WaveState w) => _wave = w;
+        /// Stage 3 Task 1 Interfaces: test-only seam for MatchState, same
+        /// contract as SetWaveForTest above — mutates the live slot directly,
+        /// ahead of any test that needs to force a specific phase/
+        /// DirectorDeathTick (Т21 onward; no test in this task uses it yet).
+        internal void SetMatchForTest(in MatchState m) => _match = m;
 
         /// Test-only seam (Task 4): reads a live projectile slot back —
         /// SetProjectileForTest's counterpart, for tests asserting on

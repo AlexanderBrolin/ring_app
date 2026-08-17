@@ -1090,10 +1090,28 @@ namespace Ring.Networking.Server
                 // C-1: `PlayerDied` above all) have no second chance to be
                 // sent.
                 int alivePlayers = 0;
+                // Stage 3 Task 1 (spec §3.10, errata E-1/R-13 decision): the
+                // two extraction-aware counts `MatchEndPolicy.Evaluate` now
+                // needs. "Active" is alive AND not yet extracted (spec's own
+                // definition); `anyExtracted` is whether at least one player
+                // left through a portal or the gate. `PlayerState.Extracted`
+                // has no writer yet (later Ф1 tasks give it one), so today
+                // `activePlayers` always equals `alivePlayers` and
+                // `anyExtracted` is always false on every production match —
+                // this loop exists now so `Evaluate`'s new parameters have a
+                // real caller from the moment they exist, not a placeholder.
+                int activePlayers = 0;
+                bool anyExtracted = false;
                 for (int i = 0; i < _world.PlayerCount; i++)
-                    if (_world.PlayerAt(i).Alive) alivePlayers++;
+                {
+                    PlayerState p = _world.PlayerAt(i);
+                    if (p.Alive) alivePlayers++;
+                    if (p.Alive && !p.Extracted) activePlayers++;
+                    if (p.Extracted) anyExtracted = true;
+                }
 
-                MatchEndReason reason = _endPolicy.Evaluate(postTickWorldTick, alivePlayers);
+                MatchEndReason reason =
+                    _endPolicy.Evaluate(postTickWorldTick, alivePlayers, activePlayers, anyExtracted);
 
                 // 3. One capture + wire-event expansion shared by every
                 // connection this tick (SnapshotAssembler.BeginTick's own doc).

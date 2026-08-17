@@ -56,6 +56,12 @@ namespace Ring.Simulation.Tests
                 else if (f.FieldType == typeof(float2)) f.SetValue(box, new float2(n, n + 0.5f));
                 else if (f.FieldType == typeof(bool)) f.SetValue(box, true);
                 else if (f.FieldType == typeof(int)) f.SetValue(box, (int)n);
+                // Stage 3 Task 1: PlayerState's first byte fields
+                // (ExtractKind, LootTargetSlot). `n` never exceeds the
+                // struct's own field count (in the thirties), well inside
+                // byte's range, so no wraparound risk here the way a longer
+                // run might have.
+                else if (f.FieldType == typeof(byte)) f.SetValue(box, (byte)n);
                 else
                     Assert.Fail($"PlayerState.{f.Name} has type {f.FieldType.Name}, which this "
                         + "filler cannot build a distinct value for — teach it that type together "
@@ -106,7 +112,10 @@ namespace Ring.Simulation.Tests
                     AssertFloatBitEqual(e2.x, a2.x, what + " (.x)");
                     AssertFloatBitEqual(e2.y, a2.y, what + " (.y)");
                 }
-                else if (e is bool || e is int) Assert.AreEqual(e, a, $"{what}: {e} vs {a}");
+                // Stage 3 Task 1: byte joins bool/int on the exact-equality
+                // branch — no NaN/-0f ambiguity for an integral type, so
+                // there is nothing bitwise about it to get wrong.
+                else if (e is bool || e is int || e is byte) Assert.AreEqual(e, a, $"{what}: {e} vs {a}");
                 else
                     Assert.Fail($"{what}: field type {f.FieldType.Name} is one this comparer "
                         + "cannot compare bitwise — teach it that type. A silently skipped field "

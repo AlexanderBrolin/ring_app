@@ -565,7 +565,7 @@ namespace Ring.Simulation.Tests
             // Fix-round finding F5: Decode builds a fresh SimInput with an
             // object initializer, so a field added in a later stage would
             // come back as default and no test would notice. Same guard shape
-            // as SimConfigHashTests.SimConfig_CarriesExactlySevenSections —
+            // as SimConfigHashTests.SimConfig_CarriesExactlyEightSections —
             // it does not prove a new field is carried, it forces whoever
             // adds one to come here and decide.
             string[] expected =

@@ -68,6 +68,14 @@ namespace Ring.Simulation.Tests
         /// through the "no map entry fails LOUDLY" guarantee entirely. Ceilings
         /// stay a float map: every int ceiling in play is small and exactly
         /// representable, and the comparison is the same "<= its new maximum".
+        ///
+        /// Stage 3 Task 1 extended it again: LootTimer/RepairTimer/
+        /// ExtractTimer/LootTargetContainerId map to float.PositiveInfinity
+        /// (declared inert this task, no ApplyConfig clamp until Т17/Т19/Т23
+        /// give them behavior), and `typeof(byte)` joined
+        /// `unmeasuredFieldTypes` below for ExtractKind/LootTargetSlot — the
+        /// struct's first byte fields, small discriminants rather than
+        /// magnitudes.
         [Test]
         public void ApplyConfig_ReflectiveClampPass_EveryFloatFieldWithinNewMax()
         {
@@ -108,6 +116,18 @@ namespace Ring.Simulation.Tests
                 // Stage 2 Task 10: the two edge-request tick counters.
                 ["DashRequestCooldownTicks"] = next.Hero.EdgeRequestMinTicks,
                 ["SlideRequestCooldownTicks"] = next.Hero.EdgeRequestMinTicks,
+                // Stage 3 Task 1: Ф1 channel timers — declared inert this
+                // task, not yet clamped by ApplyConfig (no behavior lands
+                // until Т17/Т19/Т23 give each its own tick/abort logic and,
+                // with it, its own ceiling here, same "add a line as part of
+                // that task's GREEN step" discipline this test's own doc asks
+                // for).
+                ["LootTimer"] = float.PositiveInfinity,
+                ["RepairTimer"] = float.PositiveInfinity,
+                ["ExtractTimer"] = float.PositiveInfinity,
+                // LootTargetContainerId: an entity id, not a magnitude —
+                // nothing for ApplyConfig to ever clamp it against.
+                ["LootTargetContainerId"] = float.PositiveInfinity,
             };
 
             var w = new SimulationWorld(5, cfg);
@@ -133,8 +153,14 @@ namespace Ring.Simulation.Tests
                 // ApplyConfig has no per-axis ceiling to clamp them to — arena
                 // containment is Geometry's job, every tick, not a hot-tweak's.
                 typeof(float2),
-                // Alive: a state flag, not a magnitude — nothing to clamp.
+                // Alive, Extracted: state flags, not magnitudes — nothing to clamp.
                 typeof(bool),
+                // Stage 3 Task 1: byte discriminants (ExtractKind: which
+                // extraction route; LootTargetSlot: which backpack slot a
+                // loot channel targets) — small fixed-range values, not
+                // magnitudes with a config-driven ceiling ApplyConfig would
+                // ever clamp against.
+                typeof(byte),
             };
 
             foreach (var field in typeof(PlayerState).GetFields())

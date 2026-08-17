@@ -116,18 +116,27 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void SimConfig_CarriesExactlySevenSections() // Р52 guard
+        public void SimConfig_CarriesExactlyEightSections() // Р52 guard
         {
-            // A network config (or any 8th section) landing inside
-            // SimConfig would enter SimConfigHash automatically, and a
-            // change like NetConfig's own LatencySimRttMs would then break
-            // a match on a balance-hash mismatch for a purely dev/deploy
-            // knob — that must be an OWNER decision (Р52), never a silent
-            // side effect of adding a field. This is a characterization
-            // guard: it pins the current field set by name, so an eighth
-            // section fails loudly and asks for that decision instead of
-            // shipping quietly.
-            string[] expected = { "Hero", "Weapon", "Chaser", "Gunner", "Wave", "Arena", "Visibility" };
+            // A network config (or any further section) landing inside
+            // SimConfig would enter SimConfigHash automatically if Compute()
+            // ever grew reflective, and a change like NetConfig's own
+            // LatencySimRttMs would then break a match on a balance-hash
+            // mismatch for a purely dev/deploy knob — that must be an OWNER
+            // decision (Р52), never a silent side effect of adding a field.
+            // This is a characterization guard: it pins the current field
+            // set by name, so a NINTH section fails loudly and asks for that
+            // decision instead of shipping quietly.
+            //
+            // Stage 3 Task 1 (errata E-2) is the EIGHTH section, `Flow`
+            // (MatchFlowSimConfig) — a RECORDED decision, not a silent
+            // addition: `SimConfigHash.Compute` does not read it yet (errata
+            // E-6 I9 defers that wiring to Т22, alongside zones/doors/
+            // portals/catalog/backpack/ammo/drop), so this test's rename
+            // (Seven -> Eight) and the updated `expected` list below are that
+            // record — the decision this guard exists to force, already made.
+            string[] expected =
+                { "Hero", "Weapon", "Chaser", "Gunner", "Wave", "Arena", "Visibility", "Flow" };
             FieldInfo[] fields = typeof(SimConfig).GetFields();
             string[] actual = new string[fields.Length];
             for (int i = 0; i < fields.Length; i++) actual[i] = fields[i].Name;

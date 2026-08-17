@@ -18,7 +18,24 @@ namespace Ring.Simulation.Core
         /// (Stage 2 Task 8) — because a stale nonzero speed with no active
         /// dash reads as inconsistent).
         public float DashSpeedCur;
-        public bool Alive;
+        /// Stage 3 Task 1 (spec Ф1, errata E-1): whether this player exited
+        /// the match through a portal or the gate. Declared next to Alive
+        /// (Interfaces) — the two share one invariant, `!(Alive &&
+        /// Extracted)`, though nothing in this task enforces it: no system
+        /// sets Extracted true until the extraction behavior itself lands
+        /// (Т23/Т24). Excluded from StateHash until the sanctioned re-pin
+        /// (Т6, errata E-1's "structural rebuild") — see
+        /// WorldLifecycleTests.PendingHashFields.
+        public bool Alive, Extracted;
+
+        /// Which route Extracted was earned through (Stage 3 Task 1, errata
+        /// E-1 item 1, A-I12): 0 = not extracted, 1 = the early portal
+        /// (ExtractedEarly), 2 = the gate (ExtractedCore) — Т24 needs the two
+        /// outcomes distinguishable for credits/summary. Meaningless while
+        /// Extracted is false; inert until Т23/Т24 give it a writer.
+        /// Excluded from StateHash until the sanctioned re-pin (Т6) — see
+        /// WorldLifecycleTests.PendingHashFields.
+        public byte ExtractKind;
 
         /// Aim-down-sights settle timer (Task 14): grows towards
         /// Hero.AimSettleSeconds while input.AimHeld, decays at 2x that
@@ -56,6 +73,25 @@ namespace Ring.Simulation.Core
         /// movement timers (SimulationWorld.KillPlayer) and clamped into
         /// [0, EdgeRequestMinTicks] by ApplyConfig, like every timer above.
         public int DashRequestCooldownTicks, SlideRequestCooldownTicks;
+
+        /// Stage 3 Task 1 (spec Ф1, errata E-1): channel timers for the run's
+        /// three hold-to-act interactions — looting a container (Т17),
+        /// repairing gear (Т19) and extracting through a portal/gate (Т23).
+        /// Declared here, inert, so every hashable field the phase needs
+        /// enters StateHash together at the sanctioned re-pin rather than
+        /// dribbling in across Ф3-Ф5 and shifting the golden digest more
+        /// than once (errata E-1's whole point). Behavior (start/tick/abort)
+        /// is each named task's own job. Excluded from StateHash until Т6 —
+        /// see WorldLifecycleTests.PendingHashFields.
+        public float LootTimer, RepairTimer, ExtractTimer;
+
+        /// Which container/slot LootTimer is currently channeling against
+        /// (Stage 3 Task 1; behavior in Т17). LootTargetContainerId is a
+        /// Container entity id, 0 meaning "no loot channel in progress"
+        /// (entity ids start at 1 — SimulationWorld._nextEntityId). Excluded
+        /// from StateHash until Т6 — see WorldLifecycleTests.PendingHashFields.
+        public int LootTargetContainerId;
+        public byte LootTargetSlot;
     }
 
     public enum MobType : byte { Chaser = 0, Gunner = 1 }
@@ -125,6 +161,30 @@ namespace Ring.Simulation.Core
         public float PhaseTimer;
     }
 
+    /// Match-flow phase (Stage 3 Task 1 Interfaces, spec Ф1/§3.10): Farm (only
+    /// wave combat, no Director/gate yet) -> DirectorActive (the boss has
+    /// been triggered) -> GateOpen (the boss died, the extraction window is
+    /// live) -> Ended. Declared here inert — the state machine advancing
+    /// through these phases is Т21's job (Ф4); this task only gives the
+    /// phase a home and a byte-stable wire shape.
+    public enum MatchPhase : byte { Farm = 0, DirectorActive = 1, GateOpen = 2, Ended = 3 }
+
+    /// Match-wide flow state (Stage 3 Task 1 Interfaces) — one per match, not
+    /// per player, same "single struct field" shape as WaveState/WorldStats.
+    /// DirectorDeathTick is 0 while the Director is alive or has not yet been
+    /// activated; Т21 sets it to the world tick the Director died on, which
+    /// is what the GateDelaySeconds countdown (SimConfig.Flow) counts from.
+    /// Excluded from StateHash/WorldSave/CaptureSnapshot until the sanctioned
+    /// re-pin (Т6) — unlike PlayerState/MatchStats/WorldStats' new fields,
+    /// this struct gets no reflective hash-sweep pass of its own in T1 either
+    /// (there is nothing yet to restore it against — see
+    /// SimulationWorld.SetMatchForTest's own doc).
+    public struct MatchState
+    {
+        public MatchPhase Phase;
+        public int DirectorDeathTick;
+    }
+
     /// Per-player match counters surfaced to DevOverlay/telemetry (Stage 2 Task 5:
     /// split from the former single per-match MatchStats — WavesCleared/
     /// MobSpawnsSkipped/ProjectileSpawnsSkipped moved out to WorldStats below,
@@ -139,6 +199,16 @@ namespace Ring.Simulation.Core
             DashesUsed, SlidesUsed, DeathTick;
         public float DamageTaken;
         // caps are observed separately (spec §3.15): what got clamped is visible in DevOverlay
+
+        /// Stage 3 Task 1 (errata E-1 + R-13): ammo consumed and cells picked
+        /// up this match — the two MatchStats fields Ф1's economy actually
+        /// owns. SurvivedSeconds is deliberately NOT here — despite errata
+        /// E-1 item 1 listing it beside these two, that is the errata's own
+        /// imprecision (owner decision R-13): SurvivedSeconds belongs to
+        /// MatchSummary (Т24, computed in BuildSummary from ticks), not to a
+        /// per-tick counter hashed every frame. Excluded from StateHash until
+        /// Т6 — see WorldLifecycleTests.PendingHashFields.
+        public int AmmoSpent, CellsPicked;
     }
 
     /// World-scoped match counters (Stage 2 Task 5) — counted once for the whole
@@ -148,5 +218,13 @@ namespace Ring.Simulation.Core
     public struct WorldStats
     {
         public int WavesCleared, MobSpawnsSkipped, ProjectileSpawnsSkipped;
+
+        /// Stage 3 Task 1 (errata E-1): shared arena-resource skip counters
+        /// for the extraction economy's own spawn caps (pickups, containers)
+        /// — same "world-scoped, not per-player" reasoning as the three
+        /// fields above; behavior (the actual spawn/skip decision) lands
+        /// with Ф1's later tasks. Excluded from StateHash until Т6 — see
+        /// WorldLifecycleTests.PendingHashFields.
+        public int PickupSpawnsSkipped, ContainerSpawnsSkipped;
     }
 }

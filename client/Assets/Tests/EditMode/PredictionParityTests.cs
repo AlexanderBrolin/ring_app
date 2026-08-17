@@ -146,6 +146,18 @@ namespace Ring.Simulation.Tests
                 {
                     Assert.AreEqual(e, a, $"{where}: world {e} vs predicted {a}");
                 }
+                // Stage 3 Task 1: byte joins bool/int on exact equality — an
+                // integral type has no NaN/-0f ambiguity, so there is nothing
+                // bitwise about it to get wrong. PlayerState.ExtractKind and
+                // LootTargetSlot are its first byte fields; neither is
+                // advanced by PlayerPrediction.Step (spec Р297 — prediction
+                // moves only movement/dash state), so both sides read the
+                // SAME zero value in every scenario here and this branch
+                // proves that equality instead of assuming it.
+                else if (e is byte)
+                {
+                    Assert.AreEqual(e, a, $"{where}: world {e} vs predicted {a}");
+                }
                 else
                 {
                     Assert.Fail($"{where}: field type {f.FieldType.Name} is one this " +
@@ -175,6 +187,10 @@ namespace Ring.Simulation.Tests
             if (f.FieldType == typeof(float2)) return new float2(1f, 0f);
             if (f.FieldType == typeof(bool)) return true;
             if (f.FieldType == typeof(int)) return 1;
+            // Stage 3 Task 1: PlayerState's first byte fields (ExtractKind,
+            // LootTargetSlot) — 1 differs from default(byte) (0), same
+            // "distinct from zero" contract every branch above already keeps.
+            if (f.FieldType == typeof(byte)) return (byte)1;
             Assert.Fail($"PlayerState.{f.Name} has type {f.FieldType.Name}, which this " +
                 "fixture cannot build a distinct value for — teach it that type together " +
                 "with AssertPlayerStateBitEqual.");
