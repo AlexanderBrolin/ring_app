@@ -6,8 +6,13 @@ using FishNet.Managing.Timing;
 using FishNet.Managing.Transporting;
 using FishNet.Object;
 using FishNet.Transporting.Tugboat;
+using MetaVoiceChat;
+using MetaVoiceChat.Input.Mic;
+using MetaVoiceChat.NetProviders.FishNet;
+using MetaVoiceChat.Output.AudioSource;
 using Ring.Data;
 using Ring.Networking;
+using Ring.Networking.Voice;
 using Ring.Presentation;
 using Ring.Presentation.Net;
 using Ring.Server;
@@ -90,6 +95,7 @@ namespace Ring.Editor
         const string NetworkManagerObjectName = "NetworkManager";
         const string BootstrapObjectName = "ServerBootstrap";
         const string ClientBootstrapObjectName = "ClientNetworkBootstrap";
+        const string VoiceDirectorObjectName = "VoiceDirector";
         const string PlayerPrefabName = "NetworkPlayer";
         const string GraphicalChildName = "Visual";
 
@@ -114,6 +120,13 @@ namespace Ring.Editor
             NetConfig net = Load<NetConfig>("NetConfig");
 
             NetworkObject playerPrefab = GetOrCreatePlayerPrefab();
+
+            // Stage 2 Task 55. Separate from the factory above on purpose: the
+            // factory only ever runs for a prefab that does not exist yet
+            // (`BuildPrefab` returns early otherwise), and the shipped prefab
+            // predates the voice seat by nine phases. This is the self-heal
+            // half — write-if-different, so a re-Apply is a no-op.
+            EnsureVoiceRigOnPrefab(PlayerPrefabPath);
 
             // Loaded, never created: the registry is FishNet's own asset and
             // FishNet's own generator owns its contents (see
@@ -261,6 +274,33 @@ namespace Ring.Editor
             if (clientChanged)
             {
                 clientSo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // Stage 2 Task 55: the voice proximity director. Its own root for
+            // the same reason the client bootstrap has one, and wired here
+            // rather than on the spawned seat because everything it reads lives
+            // in the scene — the seat is a runtime prefab and can hold no
+            // reference into it.
+            ViewRegistry registry = EditorBootstrapUtils.FindComponentInScene<ViewRegistry>(scene);
+            if (registry == null)
+                throw new System.InvalidOperationException(
+                    "StageTwoSceneBootstrap: no ViewRegistry in " + MainScenePath +
+                    " — run Ring/Bootstrap/Stage 1 Scene first.");
+
+            VisibilityConfig visibility = Load<VisibilityConfig>("VisibilityConfig");
+
+            GameObject voiceGo = GetOrCreateRoot(scene, VoiceDirectorObjectName, ref sceneDirty);
+            VoiceDirector voiceDirector = EnsureComponent<VoiceDirector>(voiceGo, ref sceneDirty);
+
+            var voiceSo = new SerializedObject(voiceDirector);
+            bool voiceChanged = false;
+            voiceChanged |= EditorBootstrapUtils.SetRef(voiceSo, "_runner", runner);
+            voiceChanged |= EditorBootstrapUtils.SetRef(voiceSo, "_registry", registry);
+            voiceChanged |= EditorBootstrapUtils.SetRef(voiceSo, "_visibility", visibility);
+            if (voiceChanged)
+            {
+                voiceSo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -436,6 +476,100 @@ namespace Ring.Editor
 
                 return root;
             });
+
+        /// Stage 2 Task 55: the voice seat, self-healed onto the player prefab.
+        ///
+        /// EVERYTHING SITS ON THE ROOT, not on a "Voice Chat" child the way the
+        /// package's tutorial draws it. The child buys nothing here — there is
+        /// no separate transform to place, because this seat's volume is
+        /// computed from the DRAWN positions by `VoiceDirector` rather than
+        /// from where the object stands — and it would cost the server a
+        /// `GetComponentInChildren` in the spawn loop to find the slot writer.
+        ///
+        /// THE AUDIO SOURCE IS 2D AND STARTS SILENT. `spatialBlend = 0` because
+        /// Unity's 3D rolloff would measure to the `AudioListener` on the
+        /// top-down camera and would never reach zero at `HearRadius`;
+        /// `volume = 0` because the director sets the real value on the first
+        /// `LateUpdate` and an unset seat must not blare at full volume for one
+        /// frame. `playOnAwake` off matches what `VcAudioClip` does at runtime
+        /// anyway — written here so the asset does not disagree with the code.
+        ///
+        /// WRITE-IF-DIFFERENT THROUGHOUT, so `R-IDEM` holds: a second `Apply`
+        /// changes nothing and the prefab is not re-saved.
+        static void EnsureVoiceRigOnPrefab(string prefabPath)
+        {
+            GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                bool changed = false;
+
+                // MetaVc first: `FishNetNetProvider` demands it by
+                // `[RequireComponent]`, and adding the provider to an object
+                // without it would add a second, unwired one.
+                AudioSource audioSource = EnsureComponent<AudioSource>(contents, ref changed);
+                MetaVc metaVc = EnsureComponent<MetaVc>(contents, ref changed);
+                VcMicAudioInput input = EnsureComponent<VcMicAudioInput>(contents, ref changed);
+                VcAudioSourceOutput output = EnsureComponent<VcAudioSourceOutput>(contents, ref changed);
+                PushToTalkVcFilter pushToTalk = EnsureComponent<PushToTalkVcFilter>(contents, ref changed);
+                EnsureComponent<FishNetNetProvider>(contents, ref changed);
+                EnsureComponent<VoiceAdapter>(contents, ref changed);
+
+                var metaSo = new SerializedObject(metaVc);
+                bool metaChanged = false;
+                metaChanged |= EditorBootstrapUtils.SetRef(metaSo, "audioInput", input);
+                metaChanged |= EditorBootstrapUtils.SetRef(metaSo, "audioOutput", output);
+                if (metaChanged)
+                {
+                    metaSo.ApplyModifiedPropertiesWithoutUndo();
+                    changed = true;
+                }
+
+                // The push-to-talk gate goes in as the FIRST input filter: the
+                // package's pipeline stops at the first filter that nulls the
+                // samples, which is exactly what "not talking" means here.
+                var inputSo = new SerializedObject(input);
+                bool inputChanged = false;
+                inputChanged |= EditorBootstrapUtils.SetRef(inputSo, "metaVc", metaVc);
+                inputChanged |= EditorBootstrapUtils.SetRef(inputSo, "optionalFirstInputFilter", pushToTalk);
+                if (inputChanged)
+                {
+                    inputSo.ApplyModifiedPropertiesWithoutUndo();
+                    changed = true;
+                }
+
+                var outputSo = new SerializedObject(output);
+                bool outputChanged = false;
+                outputChanged |= EditorBootstrapUtils.SetRef(outputSo, "metaVc", metaVc);
+                outputChanged |= EditorBootstrapUtils.SetRef(outputSo, "audioSource", audioSource);
+                if (outputChanged)
+                {
+                    outputSo.ApplyModifiedPropertiesWithoutUndo();
+                    changed = true;
+                }
+
+                if (audioSource.playOnAwake)
+                {
+                    audioSource.playOnAwake = false;
+                    changed = true;
+                }
+                if (!Mathf.Approximately(audioSource.spatialBlend, 0f))
+                {
+                    audioSource.spatialBlend = 0f;
+                    changed = true;
+                }
+                if (!Mathf.Approximately(audioSource.volume, 0f))
+                {
+                    audioSource.volume = 0f;
+                    changed = true;
+                }
+
+                if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
 
         /// Registers `Main.unity` and `Server.unity` in the Editor's build-scene
         /// list, in that fixed order, both enabled — and writes only when the

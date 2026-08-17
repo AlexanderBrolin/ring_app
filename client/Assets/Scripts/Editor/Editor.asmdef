@@ -3,7 +3,7 @@
     "rootNamespace": "Ring.Editor",
     "references": ["Ring.Simulation", "Ring.Data", "Ring.Presentation", "Ring.Presentation.Net",
                    "Ring.Networking",
-                   "Ring.Server", "FishNet.Runtime", "Unity.InputSystem",
+                   "Ring.Server", "FishNet.Runtime", "Unity.InputSystem", "MetaVoiceChat",
                    "Unity.Mathematics", "UnityEngine.UI", "Unity.TextMeshPro",
                    "Unity.RenderPipelines.Universal.Runtime"],
     "includePlatforms": ["Editor"],
