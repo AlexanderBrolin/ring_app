@@ -1,3 +1,4 @@
+using Ring.Simulation.Loot;
 using Unity.Mathematics;
 
 namespace Ring.Simulation.Core
@@ -24,6 +25,21 @@ namespace Ring.Simulation.Core
         /// Stage 2 Task 5: match-wide counters, not per player — a single field
         /// like Wave above, not an array.
         public WorldStats WorldStats;
+
+        /// Stage 3 Task 4 (spec §3.6 "Рюкзак"): one backpack per player,
+        /// same length/indexing contract as Players/PlayerCount above.
+        /// Inventory is a reference type, so SaveState/RestoreState
+        /// deep-copy element contents through Inventory.Clone/RestoreFrom
+        /// rather than aliasing the live array — see those methods' own
+        /// doc for why. DEBT for Т6 (owner decision, not this task's to
+        /// resolve): the canonical save/hash ORDER this field joins is
+        /// Т6's job (spec Р294) — Т6 must place backpacks LAST, after
+        /// MatchStats/WorldStats, when it wires this array into StateHash
+        /// at the sanctioned re-pin. Not yet part of StateHash — see
+        /// SimulationWorld.StateHash's own doc and SimConfigHashTests'
+        /// PendingHashFields precedent for the equivalent config-side
+        /// deferral.
+        public Inventory[] Inventories;
 
         // Stage 2 Task 10, deliberately ABSENT from this class: the tally of
         // edge requests the rate limit dropped (SimulationWorld.

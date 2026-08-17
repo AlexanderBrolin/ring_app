@@ -308,6 +308,38 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void HotTweak_InventoryCapacityChange_Throws()
+        {
+            // Stage 3 Task 4 (owner decision R-19, spec Р286): backpack
+            // slot-point capacity is topology — items are discrete, so a
+            // hot-tweak lowering InventoryCapacity below a player's
+            // currently occupied slot points has no sound continuous
+            // reconciliation (unlike Hp/Stamina, which just clamp down).
+            // ANY change forces a restart, same "ANY change throws" rule as
+            // HotTweak_MaxPlayersChange_Throws documents.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Hero.InventoryCapacity = c.Hero.InventoryCapacity + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_MaxInventoryItemsChange_Throws()
+        {
+            // Stage 3 Task 4 (owner decision R-19, spec Р287): MaxInventoryItems
+            // sizes Loot.Inventory's own backing array at construction — same
+            // "backing array sized at construction, cannot grow mid-match"
+            // reasoning as MaxPickups/MaxMobs/MaxProjectiles above
+            // (HotTweak_MaxPickupsChange_Throws precedent, Stage 3 Task 3).
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Hero.MaxInventoryItems = c.Hero.MaxInventoryItems + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
         public void HotTweak_PlayerSpawnRingFracChange_Throws()
         {
             // I-6 (fix-round T14): PlayerSpawnRingFrac had NO coverage at

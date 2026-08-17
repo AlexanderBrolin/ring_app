@@ -552,10 +552,12 @@ namespace Ring.Editor
             // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
             // field's own doc for the fuller history; HeroConfig's marker is
-            // `PickupRadius` as of Stage 3 Task 3 (auto-pickup collection
-            // radius, the class's new last field) — was `EdgeRequestMinTicks`
-            // (Stage 2 Task 8/9, edge-request rate limiting) before that,
-            // `LinkRefund` (В1 fix-wave 3, owner economy rework) before THAT,
+            // `MaxInventoryItems` as of Stage 3 Task 4 (the backpack's two
+            // capacity numbers, the class's new last field) — was
+            // `PickupRadius` (Stage 3 Task 3, auto-pickup collection radius)
+            // before that, `EdgeRequestMinTicks` (Stage 2 Task 8/9,
+            // edge-request rate limiting) before THAT, `LinkRefund` (В1
+            // fix-wave 3, owner economy rework) before THAT,
             // `AimSettleSeconds` (Task 17) before THAT;
             // WeaponConfig's marker moves to `EmergencyFireInterval` as of
             // Stage 3 Task 2 (spec Р261's ammo economy — the class's new last
@@ -576,7 +578,7 @@ namespace Ring.Editor
             // first time, before THAT — and the committed asset carries each
             // superseded key already, so leaving the marker on any of them
             // would have left the newer field unable to reach the file at all).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "PickupRadius"); // Stage 3 Task 3 (was EdgeRequestMinTicks, Stage 2 Task 9)
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "MaxInventoryItems"); // Stage 3 Task 4 (was PickupRadius, Stage 3 Task 3)
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "EmergencyFireInterval"); // Stage 3 Task 2 (was RunSpreadSpeedFrac, Task 17)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");

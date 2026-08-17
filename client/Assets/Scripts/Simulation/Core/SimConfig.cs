@@ -47,6 +47,21 @@ namespace Ring.Simulation.Core
         /// SimConfig_CarriesExactlyEightSections and its own PendingHashFields
         /// for where that decision is recorded.
         public float PickupRadius;
+
+        /// Stage 3 Task 4 (spec §3.6 "Рюкзак", errata E-6 D-I8): the
+        /// backpack's two capacity numbers. InventoryCapacity is measured
+        /// in SLOT POINTS (Loot.Inventory.TryAdd sums Loot.Inventory.
+        /// SlotCostOf across the carried items and refuses an add that
+        /// would push the total past it), NOT item count.
+        /// MaxInventoryItems is the hard ceiling on item COUNT that sizes
+        /// SimulationWorld's per-player Loot.Inventory backing array at
+        /// construction (independent of slot points, so a future catalog
+        /// of very cheap items still cannot outgrow it). NOT part of
+        /// SimConfigHash.Compute yet — see SimConfigHashTests.
+        /// PendingHashFields for where that decision is recorded (same
+        /// T4 -> T13 deferral as PickupRadius/MaxPickups above).
+        public int InventoryCapacity;
+        public int MaxInventoryItems;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).

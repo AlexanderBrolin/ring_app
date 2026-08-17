@@ -694,6 +694,36 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Validate_InventoryCapacityZero_Throws()
+        {
+            // Stage 3 Task 4 (errata E-6 D-I8): same ReqPositive convention
+            // as every other per-match capacity number on this class (e.g.
+            // Validate_MaxPickupsZero_Throws below).
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.InventoryCapacity = 0;
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("InventoryCapacity"));
+        }
+
+        [Test]
+        public void Validate_MaxInventoryItemsZero_Throws()
+        {
+            // Stage 3 Task 4: MaxInventoryItems sizes SimulationWorld's
+            // per-player Loot.Inventory backing array directly
+            // (`new byte[maxItems]`) — unlike a mere magnitude, a
+            // non-positive value here would not just refuse every add, it
+            // would leave a permanently zero-capacity backpack (0) or throw
+            // an opaque exception out of the array allocation itself
+            // (negative) instead of this clean, named validation error —
+            // the same reasoning InventoryCapacity's own test states for
+            // its half of errata E-6 D-I8's "if you deem it necessary" clause.
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.MaxInventoryItems = 0;
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("MaxInventoryItems"));
+        }
+
+        [Test]
         public void Validate_MaxPickupsZero_Throws()
         {
             // Stage 3 Task 3: same ReqPositive convention as every other
@@ -1073,6 +1103,12 @@ namespace Ring.Simulation.Tests
             // SimConfig (unlike CellsOnDeath/CorpseCellFraction, which have no
             // SO source yet, R-3), so it needs the same coverage.
             Assert.AreEqual(e.PickupRadius, a.PickupRadius, Eps);
+            // Stage 3 Task 4: same documented deviation as PickupRadius/
+            // EdgeRequestMinTicks above — InventoryCapacity/MaxInventoryItems
+            // genuinely flow SO -> builder -> SimConfig, so they need the
+            // same coverage.
+            Assert.AreEqual(e.InventoryCapacity, a.InventoryCapacity);
+            Assert.AreEqual(e.MaxInventoryItems, a.MaxInventoryItems);
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)

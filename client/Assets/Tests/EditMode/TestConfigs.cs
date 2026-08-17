@@ -30,7 +30,10 @@ namespace Ring.Simulation.Tests
                     EdgeRequestMinTicks = 3,
                     // Stage 3 Task 3: mirrors HeroConfig's C# default (two-sources-
                     // of-numbers discipline — test/code-default side).
-                    PickupRadius = 2f },
+                    PickupRadius = 2f,
+                    // Stage 3 Task 4: mirrors HeroConfig's C# defaults (two-sources-
+                    // of-numbers discipline — test/code-default side).
+                    InventoryCapacity = 8, MaxInventoryItems = 16 },
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
                     ProjectileRadius = 0.12f, ProjectileLifetime = 1.5f, Damage = 12f,
                     SpreadRad = 0.026f, RecoilPerShotRad = 0.006f,

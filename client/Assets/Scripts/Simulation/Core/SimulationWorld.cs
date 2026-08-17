@@ -47,6 +47,15 @@ namespace Ring.Simulation.Core
         // is a single struct — counted once for the whole match, not per player.
         readonly MatchStats[] _matchStats;
         WorldStats _worldStats;
+        // Stage 3 Task 4 (spec §3.6 "Рюкзак", Р232): one Inventory instance
+        // per player, next to _matchStats above — lives outside PlayerState
+        // (see PlayerState's own doc for why) so its backing byte array
+        // never rides along on a wholesale PlayerState copy
+        // (ReconcileData, snapshot fixtures, prediction). Length fixed to
+        // playerCount like every other per-player array in this class; each
+        // instance is itself sized to Hero.MaxInventoryItems at
+        // construction (below) and never resized.
+        readonly Inventory[] _inventories;
 
         // Entities appear in Phase 5/6 — arrays are preallocated to arena caps
         // now so the hot path never allocates once systems start filling them.
@@ -200,8 +209,14 @@ namespace Ring.Simulation.Core
             // per-player scratch and never resized — the roster is fixed for a
             // match (spec §3.1).
             _rejectedEdgeRequests = new int[playerCount];
+            // Stage 3 Task 4: one backpack per player, same "allocated with
+            // the rest of the per-player scratch, never resized" contract —
+            // each instance's own backing array is sized to
+            // Hero.MaxInventoryItems inside the loop below.
+            _inventories = new Inventory[playerCount];
             for (int i = 0; i < playerCount; i++)
             {
+                _inventories[i] = new Inventory(config.Hero.MaxInventoryItems);
                 float2 pos = Geometry.SpawnPosFor(i, playerCount, in config.Arena);
                 float2 vel = float2.zero; // fresh spawn, no inherited velocity
                 // Same depenetration seam PlayerMovementSystem/SeparationSystem
@@ -378,11 +393,12 @@ namespace Ring.Simulation.Core
         /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
         /// the tick boundary (caller must only invoke this between ticks). Arena
         /// topology — radius, obstacle count/positions/radii, wall count/endpoints/
-        /// half-width, player cap, spawn ring fraction, and the three per-match
-        /// entity caps (see ArenaTopologyMatches below for the full field list) —
-        /// must stay identical: a change there invalidates collision/spawn geometry
-        /// or array sizing that isn't reconciled here, so it throws instead;
-        /// Presentation reacts by restarting the world.
+        /// half-width, player cap, spawn ring fraction, the three per-match
+        /// entity caps, and (Stage 3 Task 4, owner decision R-19) the backpack's
+        /// two capacity numbers (see ArenaTopologyMatches below for the full
+        /// field list) — must stay identical: a change there invalidates
+        /// collision/spawn geometry or array sizing that isn't reconciled here,
+        /// so it throws instead; Presentation reacts by restarting the world.
         /// Migration: Hp clamps down to the new max, every player timer clamps into
         /// [0, its new max], wave-state (including WaveIndex) is left untouched.
         /// Stage 2 Task 4: migrates every player in the match, not just player 0 — for
@@ -390,11 +406,11 @@ namespace Ring.Simulation.Core
         /// single migration as before.
         public void ApplyConfig(in SimConfig next)
         {
-            if (!ArenaTopologyMatches(in _config.Arena, in next.Arena))
+            if (!ArenaTopologyMatches(in _config.Arena, in next.Arena, in _config.Hero, in next.Hero))
             {
                 throw new System.ArgumentException("SimulationWorld.ApplyConfig: arena topology " +
-                    "changed (radius/obstacles/walls/player cap/spawn ring/entity caps) — restart " +
-                    "the world instead of hot-tweaking it.");
+                    "changed (radius/obstacles/walls/player cap/spawn ring/entity caps/backpack " +
+                    "capacity) — restart the world instead of hot-tweaking it.");
             }
 
             _config = next;
@@ -445,7 +461,8 @@ namespace Ring.Simulation.Core
         /// constant (Task 3, same zero-guard as Task 1's single-stream version).
         static uint Fold(uint x) => x == 0 ? 0x9E3779B9u : x;
 
-        static bool ArenaTopologyMatches(in ArenaSimConfig a, in ArenaSimConfig b)
+        static bool ArenaTopologyMatches(in ArenaSimConfig a, in ArenaSimConfig b,
+            in HeroSimConfig heroA, in HeroSimConfig heroB)
         {
             if (a.Radius != b.Radius || a.ObstacleCount != b.ObstacleCount) return false;
             for (int i = 0; i < a.ObstacleCount; i++)
@@ -510,6 +527,22 @@ namespace Ring.Simulation.Core
             // picture and the collision out of step silently, which is exactly
             // the mine Task 14 closed one field over.
             if (a.BarrierTop != b.BarrierTop) return false;
+            // Stage 3 Task 4 (owner decision R-19, spec Р286/Р287): the
+            // backpack's two capacity numbers are topology too, despite
+            // living on HeroSimConfig rather than ArenaSimConfig — same
+            // "backing array sized at construction, cannot grow mid-match"
+            // reasoning as MaxPickups above (Stage 3 Task 3 precedent,
+            // HotTweak_MaxPickupsChange_Throws): MaxInventoryItems sizes
+            // Loot.Inventory's own byte[] directly. InventoryCapacity earns
+            // the same treatment for a different reason (Р286): unlike a
+            // float magnitude (Hp, Stamina, ...) that ApplyConfig clamps
+            // down continuously, backpack contents are DISCRETE items — a
+            // hot-tweak lowering InventoryCapacity below a player's
+            // currently occupied slot points has no sound reconciliation
+            // (there is no fractional item to partially evict), so ANY
+            // change to either number forces a restart instead.
+            if (heroA.InventoryCapacity != heroB.InventoryCapacity) return false;
+            if (heroA.MaxInventoryItems != heroB.MaxInventoryItems) return false;
             return true;
         }
 
@@ -595,6 +628,44 @@ namespace Ring.Simulation.Core
         /// — same shape as Projectiles/Mobs above.
         internal PickupState[] Pickups => _pickups;
         internal int PickupCount => _pickupCount;
+
+        /// Stage 3 Task 4 Interfaces: number of items currently carried by
+        /// one player's backpack.
+        public int InventoryCountOf(int playerIndex) => _inventories[playerIndex].Count;
+
+        /// Stage 3 Task 4 Interfaces: the item id at one backpack slot —
+        /// meaningful only for slot < InventoryCountOf(playerIndex), same
+        /// "no bounds guard beyond the backing array" contract as
+        /// PlayerAt/Pickups.
+        public byte InventoryItemAt(int playerIndex, int slot) => _inventories[playerIndex].ItemAt(slot);
+
+        /// Stage 3 Task 4 Interfaces: sum of Loot.Inventory.SlotCostOf
+        /// across every item this player carries — what TryAddItem checks
+        /// against Hero.InventoryCapacity, not InventoryCountOf itself.
+        public int InventoryUsedSlots(int playerIndex) => _inventories[playerIndex].UsedSlots();
+
+        /// Stage 3 Task 4 Interfaces: adds one item to a player's backpack,
+        /// refusing (false, backpack byte-for-byte unchanged) once the
+        /// item's own SlotCostOf would push UsedSlots past
+        /// Hero.InventoryCapacity, or the backing array is already at its
+        /// Hero.MaxInventoryItems ceiling. Capacity is read fresh off
+        /// _config every call, same "hot-tweak honored next call" contract
+        /// Loot.PickupSystem.Collect's own PickupRadius read follows.
+        internal bool TryAddItem(int playerIndex, byte itemId)
+            => _inventories[playerIndex].TryAdd(itemId, _config.Hero.InventoryCapacity);
+
+        /// Stage 3 Task 4 Interfaces: removes one item by backpack slot —
+        /// swap-remove, same idiom as RemovePickupAt/RemoveProjectileAt.
+        /// False (itemId left at its default) for a slot outside
+        /// [0, InventoryCountOf(playerIndex)).
+        internal bool TryRemoveItemAt(int playerIndex, int slot, out byte itemId)
+            => _inventories[playerIndex].TryRemoveAt(slot, out itemId);
+
+        /// Test-only seam (Stage 3 Task 4): overwrites a player's whole
+        /// backpack with exactly these items, same "direct write" contract
+        /// as SetPlayerForTest/SetPickupForTest above.
+        internal void SetInventoryForTest(int playerIndex, params byte[] items)
+            => _inventories[playerIndex].SetForTest(items);
 
         /// MobAiSystem's seam into the per-archetype balance numbers (Task 19).
         internal MobSimConfig MobConfigFor(MobType type)
@@ -1129,13 +1200,23 @@ namespace Ring.Simulation.Core
                 Projectiles = new ProjectileState[_projectiles.Length],
                 Wave = _wave,
                 Stats = new MatchStats[_matchStats.Length],
-                WorldStats = _worldStats
+                WorldStats = _worldStats,
+                // Stage 3 Task 4: one slot per player, same length contract
+                // as Players/Stats above.
+                Inventories = new Inventory[_inventories.Length]
             };
             System.Array.Copy(_players, save.Players, _players.Length);
             System.Array.Copy(_mobs, save.Mobs, _mobs.Length);
             System.Array.Copy(_projectiles, save.Projectiles, _projectiles.Length);
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
             System.Array.Copy(_matchStats, save.Stats, _matchStats.Length);
+            // Stage 3 Task 4: Inventory is a reference type — unlike the
+            // struct arrays above, System.Array.Copy would only copy
+            // REFERENCES, aliasing the live world's own backpacks into the
+            // save instead of deep-copying them (WorldSave's own "deep
+            // copy" contract, see this class's own doc). Clone() allocates
+            // a fresh instance per player instead.
+            for (int i = 0; i < _inventories.Length; i++) save.Inventories[i] = _inventories[i].Clone();
             return save;
         }
 
@@ -1169,6 +1250,15 @@ namespace Ring.Simulation.Core
                     $"SimulationWorld.RestoreState: save.Stats.Length ({save.Stats.Length}) must " +
                     $"match this world's PlayerCount ({_matchStats.Length}).", nameof(save));
             }
+            // Stage 3 Task 4: same cross-check as Players/Stats above,
+            // guarding the same hand-built-WorldSave scenario their own
+            // comments describe.
+            if (save.Inventories.Length != _inventories.Length)
+            {
+                throw new System.ArgumentException(
+                    $"SimulationWorld.RestoreState: save.Inventories.Length ({save.Inventories.Length}) " +
+                    $"must match this world's PlayerCount ({_inventories.Length}).", nameof(save));
+            }
             _tick = save.Tick;
             _spreadRng = save.SpreadRng;
             _waveRng = save.WaveRng;
@@ -1182,6 +1272,12 @@ namespace Ring.Simulation.Core
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
             System.Array.Copy(save.Stats, _matchStats, _matchStats.Length);
             _worldStats = save.WorldStats;
+            // Stage 3 Task 4: RestoreFrom copies INTO each live Inventory
+            // instance rather than replacing _inventories[i] with
+            // save.Inventories[i] directly — same "live objects keep their
+            // identity across a restore" contract SaveState's own Clone()
+            // doc states for the opposite direction.
+            for (int i = 0; i < _inventories.Length; i++) _inventories[i].RestoreFrom(save.Inventories[i]);
         }
 
         /// Test-only seam for EveryPlayerAndStatsFieldAffectsHash (spec §3.13 item 12).

@@ -59,7 +59,10 @@ namespace Ring.Data
                     AimSettleSeconds = hero.AimSettleSeconds,
                     EdgeRequestMinTicks = hero.EdgeRequestMinTicks,
                     // Stage 3 Task 3: auto-pickup collection radius.
-                    PickupRadius = hero.PickupRadius
+                    PickupRadius = hero.PickupRadius,
+                    // Stage 3 Task 4: the backpack's two capacity numbers.
+                    InventoryCapacity = hero.InventoryCapacity,
+                    MaxInventoryItems = hero.MaxInventoryItems
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -416,6 +419,17 @@ namespace Ring.Data
             // validate FROM yet, that wiring is Т13's job.
             ReqPositive(errors, "Arena.MaxPickups", cfg.Arena.MaxPickups);
             ReqPositive(errors, "Hero.PickupRadius", cfg.Hero.PickupRadius);
+            // Stage 3 Task 4 (errata E-6 D-I8): the backpack's own home for
+            // its two capacity numbers (Р72, no second home) — same
+            // ReqPositive convention as every other per-match capacity
+            // number above. MaxInventoryItems is validated too, not just
+            // InventoryCapacity: it sizes Loot.Inventory's backing array
+            // directly (`new byte[maxItems]`), so a non-positive value here
+            // would either construct a permanently zero-capacity backpack
+            // (0) or throw an opaque exception straight out of the array
+            // allocation (negative) instead of this clean, named error.
+            ReqPositive(errors, "Hero.InventoryCapacity", cfg.Hero.InventoryCapacity);
+            ReqPositive(errors, "Hero.MaxInventoryItems", cfg.Hero.MaxInventoryItems);
 
             for (int i = 0; i < cfg.Arena.ObstacleCount; i++)
             {

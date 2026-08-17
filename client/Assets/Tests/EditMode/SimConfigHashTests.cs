@@ -35,6 +35,10 @@ namespace Ring.Simulation.Tests
             // MobSimConfig instance each, same field name), CorpseCellFraction
             // (Weapon).
             "MaxPickups", "PickupRadius", "CellsOnDeath", "CorpseCellFraction",
+            // Stage 3 Task 4: same T13 addressee, same discipline — the
+            // backpack's two capacity numbers (Hero.InventoryCapacity,
+            // Hero.MaxInventoryItems).
+            "InventoryCapacity", "MaxInventoryItems",
         };
 
         [Test]
