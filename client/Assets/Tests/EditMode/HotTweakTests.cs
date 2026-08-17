@@ -294,6 +294,20 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void HotTweak_MaxPickupsChange_Throws()
+        {
+            // Stage 3 Task 3: MaxPickups joins the per-match entity caps
+            // above (MaxMobs/MaxProjectiles/MaxEventsPerFrame) — same
+            // "backing array sized at construction, cannot grow mid-match"
+            // reasoning, first coverage for this cap alongside those three.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.MaxPickups = c.Arena.MaxPickups + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
         public void HotTweak_PlayerSpawnRingFracChange_Throws()
         {
             // I-6 (fix-round T14): PlayerSpawnRingFrac had NO coverage at

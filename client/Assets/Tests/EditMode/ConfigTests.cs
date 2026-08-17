@@ -334,6 +334,18 @@ namespace Ring.Simulation.Tests
             Assert.DoesNotThrow(() => BuildWith(hero));
         }
 
+        [Test]
+        public void Validate_PickupRadiusZero_Throws()
+        {
+            // Stage 3 Task 3: same ReqPositive convention as every other
+            // radius/distance field on this class (e.g. Validate_
+            // ZeroStaminaRegen_Throws above).
+            var hero = ScriptableObject.CreateInstance<HeroConfig>();
+            hero.PickupRadius = 0f;
+            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
+            Assert.That(ex.Message, Does.Contain("PickupRadius"));
+        }
+
         // ------------------------------------------------------------------
         // Stage 2 Task 16 (spec §3.4/§3.15): the shipped arena layout and the
         // wall validation rules that guard a future tuning pass over it.
@@ -679,6 +691,20 @@ namespace Ring.Simulation.Tests
             var ex = Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("PerPlayerCountFrac"));
+        }
+
+        [Test]
+        public void Validate_MaxPickupsZero_Throws()
+        {
+            // Stage 3 Task 3: same ReqPositive convention as every other
+            // per-match entity cap on this class (MaxMobs/MaxProjectiles/
+            // MaxEventsPerFrame — no dedicated test exists for those three
+            // today, this is the first of Arena's caps to get one).
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            a.MaxPickups = 0;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("MaxPickups"));
         }
 
         // ------------------------------------------------------------------
@@ -1042,6 +1068,11 @@ namespace Ring.Simulation.Tests
             // below in this file) — without this the new field silently drops
             // out of Build_DefaultAssets_MatchesTestConfigsBaseline's coverage.
             Assert.AreEqual(e.EdgeRequestMinTicks, a.EdgeRequestMinTicks);
+            // Stage 3 Task 3: same documented deviation as EdgeRequestMinTicks
+            // right above — PickupRadius genuinely flows SO -> builder ->
+            // SimConfig (unlike CellsOnDeath/CorpseCellFraction, which have no
+            // SO source yet, R-3), so it needs the same coverage.
+            Assert.AreEqual(e.PickupRadius, a.PickupRadius, Eps);
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)
@@ -1136,6 +1167,9 @@ namespace Ring.Simulation.Tests
             // coverage (see task-4-report.md).
             Assert.AreEqual(e.MaxPlayers, a.MaxPlayers);
             Assert.AreEqual(e.PlayerSpawnRingFrac, a.PlayerSpawnRingFrac, Eps);
+            // Stage 3 Task 3: same documented deviation as MaxPlayers above —
+            // MaxPickups genuinely flows SO -> builder -> SimConfig.
+            Assert.AreEqual(e.MaxPickups, a.MaxPickups);
             for (int i = 0; i < e.ObstacleCount; i++)
             {
                 Assert.AreEqual(e.ObstaclePos[i].x, a.ObstaclePos[i].x, Eps);

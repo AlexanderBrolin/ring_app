@@ -174,6 +174,35 @@ namespace Ring.Simulation.Core
         public float Height, PrevHeight, VelZ;
     }
 
+    /// Stage 3 Task 3 (spec §3.6): the one kind of pickup that exists today —
+    /// declared as an enum, not a bare bool/const, because a second kind
+    /// (Data — recovered memory-core fragments, the next epic's own
+    /// currency) is already spec'd to follow, and adding it later would
+    /// otherwise force PickupState onto the wire a second time.
+    public enum PickupKind : byte { EnergyCell = 0 }
+
+    /// Live state of one ground pickup (spec §3.6) — same array/id/
+    /// swap-remove shape as MobState/ProjectileState above (rule 4: reuse
+    /// the established entity pattern rather than inventing a bespoke one).
+    /// `Amount` is `int`, not `ushort` (Р258, spec §3.6, finding D-9): the
+    /// reflective hash sweep (WorldLifecycleTests.Bump) only knows
+    /// float/int/bool/byte/float2/enum and would throw
+    /// NotSupportedException on an unhandled ushort the moment Pickups
+    /// joins StateHash at the sanctioned re-pin (Т6) — `Amount` rides the
+    /// wire separately, quantized, so the extra two bytes of in-memory size
+    /// buy nothing on that path either. Deliberately excluded from
+    /// StateHash/WorldSave/CaptureSnapshot for now, same "new top-level
+    /// entity, no consumer yet to restore it against" treatment
+    /// MatchState got in Stage 3 Task 1 — see that struct's own doc.
+    public struct PickupState
+    {
+        public int Id;
+        public float2 Pos;
+        public PickupKind Kind;
+        public int Amount;
+        public float Ttl;
+    }
+
     public enum WavePhase : byte { Waiting = 0, Active = 1 }
 
     /// Live state of the wave-spawning director.
@@ -245,9 +274,12 @@ namespace Ring.Simulation.Core
         /// Stage 3 Task 1 (errata E-1): shared arena-resource skip counters
         /// for the extraction economy's own spawn caps (pickups, containers)
         /// — same "world-scoped, not per-player" reasoning as the three
-        /// fields above; behavior (the actual spawn/skip decision) lands
-        /// with Ф1's later tasks. Excluded from StateHash until Т6 — see
-        /// WorldLifecycleTests.PendingHashFields.
+        /// fields above. PickupSpawnsSkipped gets its writer in Stage 3 Task
+        /// 3 (SimulationWorld.SpawnPickup's CAP-overflow branch only — a
+        /// zero-amount drop is refused silently and does not count as a
+        /// skip, see SpawnPickup's own doc, Р260); ContainerSpawnsSkipped
+        /// still awaits its own later task. Excluded from StateHash until
+        /// Т6 — see WorldLifecycleTests.PendingHashFields.
         public int PickupSpawnsSkipped, ContainerSpawnsSkipped;
     }
 }

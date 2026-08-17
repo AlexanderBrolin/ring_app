@@ -57,7 +57,9 @@ namespace Ring.Data
                     AimMoveSpeedFrac = hero.AimMoveSpeedFrac,
                     AimSlideSpeedMult = hero.AimSlideSpeedMult,
                     AimSettleSeconds = hero.AimSettleSeconds,
-                    EdgeRequestMinTicks = hero.EdgeRequestMinTicks
+                    EdgeRequestMinTicks = hero.EdgeRequestMinTicks,
+                    // Stage 3 Task 3: auto-pickup collection radius.
+                    PickupRadius = hero.PickupRadius
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -191,7 +193,9 @@ namespace Ring.Data
                 WallHalfWidth = wallHalfWidth,
                 // Stage 2 Task 46 (bd app-r8x): the one height every interior
                 // barrier — circles and walls alike — is simulated and drawn at.
-                BarrierTop = a.BarrierTop
+                BarrierTop = a.BarrierTop,
+                // Stage 3 Task 3: per-match pickup cap.
+                MaxPickups = a.MaxPickups
             };
         }
 
@@ -405,6 +409,13 @@ namespace Ring.Data
             // mirror ArenaConfig's own [Range(0, 20)] hint, which is never
             // enforced on a value reaching the builder from code or a test.
             ReqInRange(errors, "Arena.BarrierTop", cfg.Arena.BarrierTop, 0f, 20f);
+            // Stage 3 Task 3 (spec §3.6): the pickup economy's own home for
+            // its two production-wired numbers (Р72, no second home) —
+            // CellsOnDeath/CorpseCellFraction stay unvalidated here on
+            // purpose, R-3's temporary code-only fields have no SO source to
+            // validate FROM yet, that wiring is Т13's job.
+            ReqPositive(errors, "Arena.MaxPickups", cfg.Arena.MaxPickups);
+            ReqPositive(errors, "Hero.PickupRadius", cfg.Hero.PickupRadius);
 
             for (int i = 0; i < cfg.Arena.ObstacleCount; i++)
             {

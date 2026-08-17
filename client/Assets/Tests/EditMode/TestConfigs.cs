@@ -27,7 +27,10 @@ namespace Ring.Simulation.Tests
                     AimSettleSeconds = 0.5f,
                     // Stage 2 Task 8: mirrors HeroConfig's C# default (two-sources-
                     // of-numbers discipline — this is the test/code-default side).
-                    EdgeRequestMinTicks = 3 },
+                    EdgeRequestMinTicks = 3,
+                    // Stage 3 Task 3: mirrors HeroConfig's C# default (two-sources-
+                    // of-numbers discipline — test/code-default side).
+                    PickupRadius = 2f },
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
                     ProjectileRadius = 0.12f, ProjectileLifetime = 1.5f, Damage = 12f,
                     SpreadRad = 0.026f, RecoilPerShotRad = 0.006f,
@@ -52,7 +55,18 @@ namespace Ring.Simulation.Tests
                     // either sanctioned re-pin (Т6/Т12). 400 is comfortably
                     // above the 245-277 range.
                     ShotsPerCell = 10, AmmoStart = 400, AmmoMax = 400,
-                    EmergencyFireInterval = 1.25f },
+                    EmergencyFireInterval = 1.25f,
+                    // Stage 3 Task 3 (errata E-4/A-C4, owner decision R-18):
+                    // ZERO on purpose — NOT a mirror of WeaponConfig's real
+                    // C# default. A dead player's corpse would otherwise drop
+                    // energy cells and consume an entity id every time a
+                    // golden scenario kills one, moving both goldens outside
+                    // either sanctioned re-pin (Т6/Т12). Zeroing this (and
+                    // Chaser/Gunner.CellsOnDeath below) makes the sanctioned
+                    // R-18 premise literally true: no pickup is EVER born in
+                    // either golden scenario, so `_nextEntityId` never moves
+                    // and the digests stay bit-identical.
+                    CorpseCellFraction = 0f },
                 Chaser = new MobSimConfig { MaxSpeed = 5.2f, Accel = 30f, Radius = 0.5f,
                     MaxHp = 30f, ContactDamage = 15f, AttackRange = 1.1f,
                     TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,
@@ -60,7 +74,12 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 0.60f, BodyTop = 1.45f, HeadTop = 1.85f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
+                    // Stage 3 Task 3: ZERO on purpose, same golden-safety
+                    // reasoning as Weapon.CorpseCellFraction above (owner
+                    // decision R-18) — not a mirror of any real C# default,
+                    // MobConfig carries no SO field for this yet (R-3).
+                    CellsOnDeath = 0 },
                 // Gunner's LegsTop/BodyTop/HeadTop already carry the taller ranged-mech
                 // tower (Task 17 ships the same numbers into the real .asset via the
                 // marker mechanism, ahead of that this baseline is the source of truth,
@@ -74,7 +93,12 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
+                    // Stage 3 Task 3: ZERO on purpose, same golden-safety
+                    // reasoning as Weapon.CorpseCellFraction above (owner
+                    // decision R-18) — not a mirror of any real C# default,
+                    // MobConfig carries no SO field for this yet (R-3).
+                    CellsOnDeath = 0 },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f, WavePause = 4f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f, BaseCount = 4,
                     CountGrowth = 2, MaxMobsPerWave = 36, MaxSpawnAttempts = 16,
@@ -104,6 +128,9 @@ namespace Ring.Simulation.Tests
                     new float2(-40f, 8f), new float2(30f, 22f), new float2(-6f, -30f) },
                 ObstacleRadius = new[] { 2.2f, 1.8f, 2.5f, 2.0f, 1.6f, 3.0f, 2.8f, 3.2f },
                 MaxMobs = 96, MaxProjectiles = 384, MaxEventsPerFrame = 512,
+                // Stage 3 Task 3: same mirror discipline as the three caps
+                // above — ArenaConfig's own C# default.
+                MaxPickups = 256,
                 // Stage 2 Task 4: same values as ArenaConfig's C# defaults
                 // (two-sources-of-numbers discipline — this is the test/code-default side).
                 MaxPlayers = 3, PlayerSpawnRingFrac = 0.8f,

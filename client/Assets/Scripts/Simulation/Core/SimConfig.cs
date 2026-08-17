@@ -39,6 +39,14 @@ namespace Ring.Simulation.Core
         /// PlayerState's two counters against it in SimulationWorld.ApplyConfig.
         /// 0 disables the limit (every request is accepted).
         public int EdgeRequestMinTicks;
+
+        /// Stage 3 Task 3 (spec §3.6, R-4): auto-pickup collection radius —
+        /// Loot.PickupSystem.Update gathers energy cells within this
+        /// distance of a live, un-extracted player's Pos. NOT part of
+        /// SimConfigHash.Compute yet — see SimConfigHashTests.
+        /// SimConfig_CarriesExactlyEightSections and its own PendingHashFields
+        /// for where that decision is recorded.
+        public float PickupRadius;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).
@@ -70,6 +78,16 @@ namespace Ring.Simulation.Core
         public int AmmoStart;
         public int AmmoMax;
         public float EmergencyFireInterval;
+
+        /// Stage 3 Task 3 (spec §3.6, R-3): the fraction of a dead player's
+        /// remaining Ammo that rasps out as energy cells — Loot.LootDrops.
+        /// CorpseCells is the sole reader. TEMPORARY HOME (R-3): LootSimConfig
+        /// doesn't exist until Т13, which moves this into LootSimConfig.
+        /// CorpseCellFraction in one step (same move CellsOnDeath below makes).
+        /// NOT part of SimConfigHash.Compute yet — see
+        /// SimConfigHashTests.SimConfig_CarriesExactlyEightSections and its
+        /// own PendingHashFields for where that decision is recorded.
+        public float CorpseCellFraction;
     }
 
     /// Balance numbers shared by all mob archetypes (chaser/gunner use the same shape).
@@ -126,6 +144,17 @@ namespace Ring.Simulation.Core
         /// value, it just spends away the clearance guarantee itself — a
         /// config choice, not a validation bug.
         public float AvoidMargin;
+
+        /// Stage 3 Task 3 (spec §3.6 "Дроп ячеек", R-3): this archetype's
+        /// fixed energy-cell drop on death — one field per archetype
+        /// instance (Chaser's own value, Gunner's own value), read by
+        /// Loot.LootDrops.MobDeathCells. TEMPORARY HOME (R-3): LootSimConfig
+        /// doesn't exist until Т13, which moves this into LootSimConfig.
+        /// CellsPerMob (indexed by MobType) in one step. NOT part of
+        /// SimConfigHash.Compute yet — see SimConfigHashTests.
+        /// SimConfig_CarriesExactlyEightSections and its own PendingHashFields
+        /// for where that decision is recorded.
+        public int CellsOnDeath;
     }
 
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).
@@ -198,6 +227,17 @@ namespace Ring.Simulation.Core
         /// edge of the world, and a shot flying over it would leave the arena
         /// altogether — see ProjectileSystem's HitRingWall candidate.
         public float BarrierTop;
+
+        /// Stage 3 Task 3 (spec §3.6, R-4): per-match cap on live pickups
+        /// (energy cells today; Task 13's second Kind reuses this same
+        /// array/cap) — same swap-remove-capped-array shape as
+        /// MaxMobs/MaxProjectiles above. SimulationWorld's constructor sizes
+        /// its `Pickups` array off exactly this field, and ArenaTopologyMatches
+        /// rejects a hot-tweak that changes it, same contract as the three
+        /// caps above. NOT part of SimConfigHash.Compute yet — see
+        /// SimConfigHashTests.SimConfig_CarriesExactlyEightSections and its
+        /// own PendingHashFields for where that decision is recorded.
+        public int MaxPickups;
     }
 
     /// Server-side visibility filter numbers (Stage 2 Task 19, spec §3.5,

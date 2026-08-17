@@ -1,5 +1,6 @@
 using Ring.Simulation.AI;
 using Ring.Simulation.Combat;
+using Ring.Simulation.Loot;
 using Ring.Simulation.Movement;
 using Unity.Mathematics;
 
@@ -15,6 +16,15 @@ namespace Ring.Simulation.Core
     {
         /// ADR-002 T5: simulation runs at 30 Hz. The single source of dt.
         public const float TickDt = 1f / 30f;
+
+        /// Stage 3 Task 3 (spec §3.6): how long a ground pickup survives
+        /// before Loot.PickupSystem.Update ages it out. TEMPORARY CONSTANT
+        /// (R-3): SpawnPickup's own Interfaces signature (kind, pos, amount)
+        /// carries no ttl parameter, so this has to be a value SpawnPickup
+        /// knows on its own — LootSimConfig.PickupTtlSeconds (Т13) is
+        /// designed to be its permanent home, spelled identically so the
+        /// eventual move is a pure relocation, not a rename.
+        const float PickupTtlSeconds = 120f;
 
         int _tick;
         Random _spreadRng;
@@ -70,6 +80,13 @@ namespace Ring.Simulation.Core
         // array to its last slot and still not overflow. It is the one slot of
         // slack described above, kept rather than quietly spent.
         readonly (float t, int kind, int index)[] _projCandidates;
+        // Stage 3 Task 3 (spec §3.6): ground pickups — same capped-array/
+        // swap-remove shape as _mobs/_projectiles above (rule 4). Sized to
+        // Arena.MaxPickups at construction; ArenaTopologyMatches rejects a
+        // hot-tweak that changes the cap, same contract as MaxMobs/
+        // MaxProjectiles.
+        PickupState[] _pickups;
+        int _pickupCount;
         WaveState _wave;
         // Stage 3 Task 1 (spec Ф1, errata E-1/E-2): match-flow phase state —
         // declared here, inert. Behavior (phase transitions, gate/portal
@@ -210,6 +227,9 @@ namespace Ring.Simulation.Core
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
             _projCandidates = new (float t, int kind, int index)[
                 config.Arena.MaxMobs + config.Arena.MaxPlayers + 3];
+            // Stage 3 Task 3: same "preallocated to the arena cap, never
+            // grown" contract as _mobs/_projectiles above.
+            _pickups = new PickupState[config.Arena.MaxPickups];
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
         }
 
@@ -275,6 +295,18 @@ namespace Ring.Simulation.Core
             // movement/combat has settled — a mob spawned here doesn't get an
             // extra, unbudgeted movement/combat sub-step on its own spawn tick.
             WaveSystem.Update(this);
+            // Stage 3 Task 3 (owner decision R-2): the canonical Ф1 tail this
+            // task's own spec §3.6 wants is combat -> LootOps.Update (Т17) ->
+            // ExtractionSystem.Update (Т23) -> PickupSystem.Update (this
+            // call) -> MatchFlowSystem.Update (Т21) — but of those five only
+            // PickupSystem exists today, so it lands last for now. THE SLOT
+            // AFTER THIS CALL BELONGS TO MatchFlowSystem (Т21), NOT to
+            // whichever of LootOps/ExtractionSystem happens to land next —
+            // those two insert themselves BEFORE this call instead. Spec
+            // §3.6's own "подбор после машины фазы" phrasing disagrees with
+            // this order; R-2 resolves that disagreement in favor of Р256
+            // and Т21's own ordering, not the spec sentence.
+            PickupSystem.Update(this);
         }
 
         /// One player's movement sub-step of TickAll (Stage 2 Task 4 — split out of the
@@ -464,6 +496,11 @@ namespace Ring.Simulation.Core
             if (a.MaxMobs != b.MaxMobs || a.MaxProjectiles != b.MaxProjectiles
                 || a.MaxEventsPerFrame != b.MaxEventsPerFrame)
                 return false;
+            // Stage 3 Task 3: MaxPickups joins the three per-match entity
+            // caps above — same "backing array sized at construction, cannot
+            // grow mid-match" reasoning (the constructor sizes _pickups off
+            // exactly this field).
+            if (a.MaxPickups != b.MaxPickups) return false;
             // Stage 2 Task 46 (bd app-r8x): the interior barriers' modelled
             // height is topology for the same reason WallHalfWidth is — it
             // decides which shots the geometry stops, and there is nothing for
@@ -554,6 +591,11 @@ namespace Ring.Simulation.Core
         internal MobState[] Mobs => _mobs;
         internal int MobCount => _mobCount;
 
+        /// Loot.PickupSystem's seam into live pickup storage (Stage 3 Task 3)
+        /// — same shape as Projectiles/Mobs above.
+        internal PickupState[] Pickups => _pickups;
+        internal int PickupCount => _pickupCount;
+
         /// MobAiSystem's seam into the per-archetype balance numbers (Task 19).
         internal MobSimConfig MobConfigFor(MobType type)
             => type == MobType.Chaser ? _config.Chaser : _config.Gunner;
@@ -631,6 +673,48 @@ namespace Ring.Simulation.Core
             _projectiles[index] = _projectiles[--_projectileCount];
         }
 
+        /// Spawns a pickup (spec §3.6). `amount <= 0` is not a pathological
+        /// cap-overflow, it is "no drop at all" — refused silently, BEFORE
+        /// the cap check and BEFORE _nextEntityId is touched (owner decision
+        /// R-18): a drop source configured to zero (TestConfigs' own
+        /// CellsOnDeath/CorpseCellFraction, this task's own golden-safety
+        /// fixture) must burn no id and leave every hashed channel exactly
+        /// as it was — spawning a PickupState with Amount = 0 would still
+        /// advance _nextEntityId and, once Pickups joins StateHash (Т6),
+        /// shift the digest for a config that legitimately drops nothing.
+        /// Capped at Arena.MaxPickups exactly like SpawnMob/SpawnProjectile
+        /// above: past the cap the NEW drop is skipped and counted
+        /// (WorldStats.PickupSpawnsSkipped) — the OLD pickups already on the
+        /// ground are never evicted to make room (spec §3.6, Р260: eviction
+        /// would take back loot a player already earned). Ttl seeds at the
+        /// class's own PickupTtlSeconds constant — see that field's own doc
+        /// for why it isn't a parameter here.
+        internal int SpawnPickup(PickupKind kind, float2 pos, int amount)
+        {
+            if (amount <= 0) return -1;
+            if (_pickupCount >= _pickups.Length)
+            {
+                // Stage 3 Task 3: shared arena resource, world-scoped counter
+                // (same pattern as MobSpawnsSkipped/ProjectileSpawnsSkipped).
+                _worldStats.PickupSpawnsSkipped++;
+                return -1;
+            }
+            int id = _nextEntityId++;
+            _pickups[_pickupCount++] = new PickupState
+            {
+                Id = id, Pos = pos, Kind = kind, Amount = amount, Ttl = PickupTtlSeconds
+            };
+            return id;
+        }
+
+        /// Removes a pickup by swapping the last slot into its place — O(1),
+        /// same swap-remove pattern as RemoveProjectileAt above. Consumer:
+        /// Loot.PickupSystem (TTL expiry and auto-pickup collection).
+        internal void RemovePickupAt(int index)
+        {
+            _pickups[index] = _pickups[--_pickupCount];
+        }
+
         /// Applies projectile damage to a mob (spec Interfaces, Task 16); on death
         /// it swap-removes the mob the same way RemoveProjectileAt does for projectiles.
         /// The mob's Hp/death/MobDied event happen unconditionally — the world keeps
@@ -675,6 +759,20 @@ namespace Ring.Simulation.Core
                 }
                 Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg,
                     zone: zone, hitDir: dir, playerIndex: ownerIndex);
+                // Stage 3 Task 3 (spec §3.6, errata E-6 C-I10): energy-cell
+                // drop — arithmetic lives in the ONE shared home
+                // Loot.LootDrops.MobDeathCells, KillPlayer's own corpse drop
+                // below is the second caller. A zero-configured drop (every
+                // golden scenario, TestConfigs' own CellsOnDeath = 0) is
+                // refused by SpawnPickup itself before _nextEntityId moves —
+                // see that method's own doc. MobConfigFor's result is copied
+                // to a local first, same convention every other caller in
+                // this codebase already follows (SeparationSystem.Apply,
+                // MobAiSystem.Update) — its return is a BY-VALUE MobSimConfig,
+                // not a field, so `in MobConfigFor(...)` cannot bind a
+                // reference straight to a method call's result (CS8156).
+                MobSimConfig deadMobCfg = MobConfigFor(_mobs[index].Type);
+                SpawnPickup(PickupKind.EnergyCell, pos, LootDrops.MobDeathCells(in deadMobCfg));
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
@@ -837,6 +935,18 @@ namespace Ring.Simulation.Core
             p.SlideRequestCooldownTicks = 0;
             Emit(SimEventKind.PlayerDied, blowPos, index, default, 0f, zone: zone, hitDir: dir,
                 playerIndex: (byte)index);
+            // Stage 3 Task 3 (spec §3.6, errata E-6 C-I10): the corpse's
+            // remaining Ammo rasps out as energy cells — same shared home as
+            // DamageMob's drop above (Loot.LootDrops.CorpseCells). p.Ammo is
+            // deliberately NOT among the "clean corpse" timers zeroed above —
+            // it has no further meaning once Alive is false, but zeroing it
+            // BEFORE this line would erase the exact number this drop is
+            // computed from, so it still reads whatever the player was
+            // carrying at the moment of death. A zero-configured fraction
+            // (every golden scenario, TestConfigs' own CorpseCellFraction =
+            // 0) is refused by SpawnPickup itself before _nextEntityId moves
+            // — see that method's own doc (owner decision R-18).
+            SpawnPickup(PickupKind.EnergyCell, p.Pos, LootDrops.CorpseCells(p.Ammo, in _config.Weapon));
         }
 
         /// Stage 2 Task 8 Interfaces: exits a player from the match with no
@@ -1102,6 +1212,14 @@ namespace Ring.Simulation.Core
         /// ahead of any test that needs to force a specific phase/
         /// DirectorDeathTick (Т21 onward; no test in this task uses it yet).
         internal void SetMatchForTest(in MatchState m) => _match = m;
+
+        /// Test-only seam (Stage 3 Task 3), same contract as SetMobForTest/
+        /// SetProjectileForTest above — mutates a live slot directly. Also
+        /// PickupSystem's own writer for TTL decay (not test-only in
+        /// production use, unlike its name suggests — same "ForTest" naming
+        /// carried over from AddAmmoForTest's own precedent, see that
+        /// method's doc).
+        internal void SetPickupForTest(int index, in PickupState p) => _pickups[index] = p;
 
         /// Test-only seam (Stage 3 Task 2): exercises WeaponSystem.AddAmmo — the
         /// cell-pickup refill's shared conversion/clamp point — ahead of the real

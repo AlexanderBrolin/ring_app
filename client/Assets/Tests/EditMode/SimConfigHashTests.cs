@@ -28,6 +28,13 @@ namespace Ring.Simulation.Tests
         static readonly System.Collections.Generic.HashSet<string> PendingHashFields = new()
         {
             "ShotsPerCell", "AmmoStart", "AmmoMax", "EmergencyFireInterval",
+            // Stage 3 Task 3: same T13 addressee, same discipline — new config
+            // numbers, not new state fields (those go in WorldLifecycleTests'
+            // own PendingHashFields instead). MaxPickups (Arena),
+            // PickupRadius (Hero), CellsOnDeath (Chaser AND Gunner — one
+            // MobSimConfig instance each, same field name), CorpseCellFraction
+            // (Weapon).
+            "MaxPickups", "PickupRadius", "CellsOnDeath", "CorpseCellFraction",
         };
 
         [Test]

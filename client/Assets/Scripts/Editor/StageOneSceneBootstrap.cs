@@ -552,9 +552,11 @@ namespace Ring.Editor
             // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
             // field's own doc for the fuller history; HeroConfig's marker is
-            // `EdgeRequestMinTicks` as of Stage 2 Task 8/9 (edge-request rate
-            // limiting) — was `LinkRefund` (В1 fix-wave 3, owner economy
-            // rework) before that, `AimSettleSeconds` (Task 17) before THAT;
+            // `PickupRadius` as of Stage 3 Task 3 (auto-pickup collection
+            // radius, the class's new last field) — was `EdgeRequestMinTicks`
+            // (Stage 2 Task 8/9, edge-request rate limiting) before that,
+            // `LinkRefund` (В1 fix-wave 3, owner economy rework) before THAT,
+            // `AimSettleSeconds` (Task 17) before THAT;
             // WeaponConfig's marker moves to `EmergencyFireInterval` as of
             // Stage 3 Task 2 (spec Р261's ammo economy — the class's new last
             // field) — was `RunSpreadSpeedFrac` (Task 17) before that. Owner
@@ -566,19 +568,20 @@ namespace Ring.Editor
             // moves) — Т12 stays a values-only delivery task. MobConfig's
             // marker field is unchanged since Task 17, so any asset committed
             // before that task predates it and self-heals on this Apply;
-            // ArenaConfig's marker is `BarrierTop`
-            // as of Stage 2 Task 46 (the interior barriers' modelled height,
-            // the class's new last field) — was `PlayerSpawnRingFrac` (Stage 2
-            // Task 4) from Stage 2 Task 9, when ArenaConfig joined the
-            // mechanism for the first time, and the committed asset carries
-            // that key already, so leaving the marker there would have left
-            // `BarrierTop` unable to reach the file at all).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "EdgeRequestMinTicks"); // Stage 2 Task 9
+            // ArenaConfig's marker is `MaxPickups` as of Stage 3 Task 3
+            // (per-match pickup cap, the class's new last field) — was
+            // `BarrierTop` (Stage 2 Task 46, the interior barriers' modelled
+            // height) before that, `PlayerSpawnRingFrac` (Stage 2 Task 4) from
+            // Stage 2 Task 9, when ArenaConfig joined the mechanism for the
+            // first time, before THAT — and the committed asset carries each
+            // superseded key already, so leaving the marker on any of them
+            // would have left the newer field unable to reach the file at all).
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "PickupRadius"); // Stage 3 Task 3 (was EdgeRequestMinTicks, Stage 2 Task 9)
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "EmergencyFireInterval"); // Stage 3 Task 2 (was RunSpreadSpeedFrac, Task 17)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "GunEjectLocalEuler"); // Stage 2 Task 45b
-            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "BarrierTop"); // Stage 2 Task 46
+            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxPickups"); // Stage 3 Task 3 (was BarrierTop, Stage 2 Task 46)
             // WaveConfig joins the marker mechanism for the first time in Stage 2
             // Task 16, with PerPlayerCountFrac (the class's newest field) as its
             // marker — the per-extra-player wave scale is a NEW key, and new keys

@@ -109,7 +109,19 @@ namespace Ring.Data
         /// [Range] ceiling of 20 is the arena's own aim-height scale (the hero's
         /// MaxAimHeight is 3.8) with room for a tall future structure, not a
         /// balance statement.
-        [Range(0f, 20f)] public float BarrierTop = 3f; // sync-marker key — keep LAST
+        // Was the sync-marker key until Stage 3 Task 3's MaxPickups field
+        // below superseded it.
+        [Range(0f, 20f)] public float BarrierTop = 3f;
+
+        /// Stage 3 Task 3 (spec §3.6 table, owner decision R-4): per-match
+        /// cap on live pickups — energy cells today, a second Kind (Task 13)
+        /// reuses the same swap-remove-capped array — same shape as
+        /// MaxMobs/MaxProjectiles/MaxEventsPerFrame above. R-4 moves this
+        /// class's sync-marker onto this field in THIS task (errata E-7
+        /// precedent: Т3/Т4/Т8 move their own markers in the same task that
+        /// appends the field, not at Т12 as the plan body originally
+        /// assigned) — BarrierTop above was the marker until now.
+        [Range(1, 1000)] public int MaxPickups = 256; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // Arena topology (Radius/Obstacles) is a special case: SimulationRunner's
