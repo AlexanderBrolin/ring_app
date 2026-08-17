@@ -101,6 +101,38 @@ namespace Ring.Simulation.Tests
                 policy.Evaluate(10, 0, 0, anyExtracted: true));
         }
 
+        /// Ф1 fix-round (review B-I-6): the OTHER half of the priority
+        /// `Resolved_OutranksAllDead_WhenSomeoneExtracted` above pins. Every
+        /// `anyExtracted: true` call in this file ran at tick 10 against a
+        /// limit of 1000, so a refactor that moved the duration check to the
+        /// top of `Evaluate` survived the whole suite — and the difference is
+        /// visible from OUTSIDE the process: the last collector extracting on
+        /// the boundary tick would exit with code 4, "ran out of time", instead
+        /// of 0, "played out" (§3.11). Same shape as
+        /// `AllDeadWinsOverMaxDuration` (`MatchLifecycleTests`) gives the
+        /// neighboring pair.
+        [Test]
+        public void Resolved_OutranksMaxDuration_OnTheBoundaryTick()
+        {
+            const int Limit = 100;
+            var policy = new MatchEndPolicy(maxDurationTicks: Limit);
+
+            // Premise, checked for real: this tick genuinely IS the duration
+            // boundary — with nobody resolved, the very same call answers
+            // MaxDurationReached. Without it the assertion below could pass on
+            // a tick the timer never fired at.
+            Assert.AreEqual(MatchEndReason.MaxDurationReached,
+                policy.Evaluate(Limit, 1, 1, anyExtracted: false),
+                "premise: tick == maxDurationTicks must be the boundary the timer fires on");
+
+            Assert.AreEqual(MatchEndReason.AllPlayersResolved,
+                policy.Evaluate(Limit, 0, 0, anyExtracted: true),
+                "a run everyone finished outranks the clock even when both are true on the same tick");
+            Assert.AreEqual(0, MatchEndPolicy.ExitCodeFor(
+                    policy.Evaluate(Limit, 0, 0, anyExtracted: true)),
+                "…and that is worth an exit code of 0, not the timer's 4");
+        }
+
         [Test]
         public void AllDead_WhenNobodyExtracted()
         {

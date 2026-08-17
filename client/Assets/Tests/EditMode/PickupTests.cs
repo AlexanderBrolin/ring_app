@@ -55,6 +55,30 @@ namespace Ring.Simulation.Tests
                 "a corpse with ANY ammo must drop at least one cell");
         }
 
+        /// Ф1 fix-round (review B-I-4): the UNPROVEN half of CorpseCells' own
+        /// guard. `PlayerDeath_DropsHalfOfCarriedAmmo_AtLeastOne` above covers
+        /// the minimum, and the golden scenarios cover `fraction <= 0` (their
+        /// fixture zeroes it) — but nothing killed a player with an EMPTY
+        /// magazine at a live fraction, so deleting `ammo <= 0 ||` survived the
+        /// whole suite: floor(0 * 0.5 / 10) = 0 clamps up to 1, and a corpse
+        /// that carried nothing would scatter a phantom cell worth ten shots.
+        /// Suiciding dry would have paid.
+        [Test]
+        public void EmptyCorpse_DropsNothing_EvenAtALiveFraction()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Weapon.CorpseCellFraction = 0.5f;
+            var w = new SimulationWorld(1, cfg);
+            PlayerState p = w.Player; p.Ammo = 0; w.SetPlayerForTest(p);
+            Assert.AreEqual(0, w.PickupCount, "premise: nothing on the ground before the death");
+
+            w.KillPlayerNoDamage(0);
+
+            Assert.AreEqual(0, w.PickupCount,
+                "a corpse that carried no ammo must drop nothing — the guaranteed minimum " +
+                "applies to a near-dry corpse, not to an empty one");
+        }
+
         [Test]
         public void WalkingOver_PicksUpAndAddsAmmo()
         {
@@ -68,6 +92,42 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(0, w.PickupCount, "the pickup must be collected off the ground");
             Assert.AreEqual(50 + pickupAmount * cfg.Weapon.ShotsPerCell, w.Player.Ammo);
+        }
+
+        /// Ф1 fix-round (review C1 / B-I-1, owner decision R-24):
+        /// `MatchStats.CellsPicked` was declared in Т1 and hashed in Т6 with
+        /// no writer anywhere in `Scripts/` — a hashed field whose behavior
+        /// had been postponed past the phase that was supposed to own it.
+        ///
+        /// THE AMOUNT 3 TELLS ALL THREE CANDIDATE UNITS APART, which is the
+        /// point of choosing it: 3 means CELLS (PickupState.Amount, the unit
+        /// every producer speaks — LootDrops returns cells, SpawnPickup stores
+        /// them unconverted), 1 would mean piles walked over, and 30 would mean
+        /// the shots those cells bought, which is AmmoSpent's unit on the other
+        /// side of spec §3.10's ledger. Subject is player 1, not player 0
+        /// (lesson 227), so the counter also has to land on the COLLECTOR's own
+        /// slot rather than always on the first one — the same defect class
+        /// Stage 2 Task 7 removed from ShotsHit/Kills.
+        [Test]
+        public void Collecting_CountsCellsOnTheCollectorsOwnSlot()
+        {
+            const int Amount = 3;
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            PlayerState p0 = w.PlayerAt(0); p0.Pos = new float2(-30f, 0f); w.SetPlayerForTest(0, p0);
+            PlayerState p1 = w.PlayerAt(1); p1.Pos = new float2(10f, 0f); p1.Ammo = 50;
+            w.SetPlayerForTest(1, p1);
+            w.SpawnPickup(PickupKind.EnergyCell, new float2(10f, 0f), Amount);
+
+            w.TickAll(new SimInput[2]);
+
+            Assert.AreEqual(0, w.PickupCount, "premise: the pile must actually have been collected");
+            Assert.AreEqual(50 + Amount * cfg.Weapon.ShotsPerCell, w.PlayerAt(1).Ammo,
+                "premise: …by player 1, whose magazine is the one that grew");
+            Assert.AreEqual(Amount, w.StatsAt(1).CellsPicked,
+                "CellsPicked counts CELLS — three of them, not one pile and not thirty shots");
+            Assert.AreEqual(0, w.StatsAt(0).CellsPicked,
+                "…on the collector's own slot: the bystander's counter must stay at zero");
         }
 
         [Test]

@@ -738,6 +738,72 @@ namespace Ring.Simulation.Tests
         }
 
         // ------------------------------------------------------------------
+        // Stage 3 Task 2's own three validations (spec Р261, errata E-6 D-I8),
+        // added in the Ф1 fix-round (review A-I2 / B-I-3): they shipped with
+        // the four Stage 3 neighbors above but without a single test between
+        // them, so all three branches had never been observed failing. A sign
+        // slip in any of them (`>` for `>=`, `<=` for `<`) is silent — the
+        // compiler cannot object and nothing else looks — and the cost is paid
+        // by whoever authors the `.asset`: an AmmoStart above AmmoMax seeds
+        // every player above the ceiling ApplyConfig otherwise enforces, and
+        // an EmergencyFireInterval at or below FireInterval inverts С10
+        // outright, making the dry weapon the FASTER one.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void Validate_ShotsPerCellZero_Throws()
+        {
+            // Same ReqPositive convention as every other conversion factor on
+            // this class; zero would make a picked-up cell worth no shots at
+            // all, i.e. an economy with no income (spec §3.6).
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            w.ShotsPerCell = 0;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("ShotsPerCell"));
+        }
+
+        [Test]
+        public void Validate_AmmoStartAboveAmmoMax_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            w.AmmoStart = w.AmmoMax + 1;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("AmmoStart"));
+
+            // The boundary itself stays legal, and saying so pins WHICH
+            // comparison this is: "start the match on a full magazine" is a
+            // legitimate authoring choice, so the rule is `>`, not `>=`.
+            w.AmmoStart = w.AmmoMax;
+            Assert.DoesNotThrow(() => SimConfigBuilder.Build(h, w, c, g, wv, a, vis),
+                "AmmoStart == AmmoMax is a full starting magazine, not a misconfiguration");
+        }
+
+        [Test]
+        public void Validate_EmergencyFireIntervalNotAboveFireInterval_Throws()
+        {
+            // EQUAL is the subject, not merely "shorter": the rule is `<=`,
+            // because an emergency interval equal to the normal one means the
+            // synthesis costs nothing at all and С10's whole DPS penalty
+            // (Р226: the frequency IS the penalty, there is no damage
+            // multiplier) quietly disappears.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            w.EmergencyFireInterval = w.FireInterval;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("EmergencyFireInterval"));
+
+            // And the inversion — the emergency mode outrunning normal fire —
+            // is refused too, which is the failure an authoring slip actually
+            // produces.
+            w.EmergencyFireInterval = w.FireInterval * 0.5f;
+            Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis),
+                "a dry weapon must never fire FASTER than a loaded one");
+        }
+
+        // ------------------------------------------------------------------
         // Stage 2 Task 22 (spec §3.15/Р72; carryover-t22 §1): visibility
         // filter invariants. Each [Range]-bounded field gets two tests, one
         // per side of ReqInRange's `!minOk || value > max` — same convention

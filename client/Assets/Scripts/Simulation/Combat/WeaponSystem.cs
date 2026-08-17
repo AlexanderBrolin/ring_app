@@ -108,7 +108,30 @@ namespace Ring.Simulation.Combat
                 // a predicting client's magazine empties in lockstep with the
                 // server's. Guarded on Ammo > 0 rather than gated separately, so
                 // an emergency shot (Ammo already 0) spends nothing by construction.
-                if (p.Ammo > 0) p.Ammo--;
+                if (p.Ammo > 0)
+                {
+                    p.Ammo--;
+                    // Ф1 fix-round (review C1 / B-I-1, owner decision R-24):
+                    // the match tally of that same spend. It sits INSIDE this
+                    // branch, not beside SpawnShot's own ShotsFired++, so the
+                    // rule "did this shot cost a round" keeps exactly one home
+                    // (rule 2): an emergency shot never reaches this line, and
+                    // Р226's "synthesis spends nothing" therefore needs no
+                    // second reading of Ammo to stay true of the counter as
+                    // well as of the magazine. SpawnShot could not host it
+                    // without that second reading — it runs BEFORE the spend
+                    // and takes `p` by `in` on purpose.
+                    //
+                    // The null-sink gate is the same one ShotsFired lives
+                    // behind, for the same reason: MatchStats is a STAT, and
+                    // stats are one of the three things a predicting client
+                    // must never own (CR 3; PlayerPrediction's own doc names
+                    // them). AdvanceNoSpawn has no world to credit and no
+                    // MatchStats of its own, so "identical on both paths"
+                    // resolves here to what it already means for ShotsFired —
+                    // one body, one rule, one authoritative sink.
+                    if (worldOrNull != null) worldOrNull.StatsRef(ownerIndex).AmmoSpent++;
+                }
                 p.RecoilOffset = math.min(weapon.RecoilMaxRad, p.RecoilOffset + weapon.RecoilPerShotRad);
                 p.FireCooldown += interval;
             }
@@ -241,9 +264,11 @@ namespace Ring.Simulation.Combat
         /// interval it was scheduled under while the magazine was still empty,
         /// even though ammo is available again right now.
         ///
-        /// The real cell-pickup behavior (a later task) is expected to route
-        /// through this same method rather than reimplement the clamp (CR 2);
-        /// SimulationWorld.AddAmmoForTest is this task's only caller until then.
+        /// The real cell-pickup behavior routes through this same method
+        /// rather than reimplementing the clamp (CR 2): it landed in Т3, and
+        /// SimulationWorld.AddAmmo — the world-level seam that supplies the
+        /// player slot and the weapon config — is its only entry point, for
+        /// Loot.PickupSystem.Collect and for tests alike.
         internal static void AddAmmo(ref PlayerState p, in WeaponSimConfig weapon, int shots)
         {
             bool wasEmpty = p.Ammo <= 0;

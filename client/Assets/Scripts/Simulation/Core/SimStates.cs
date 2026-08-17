@@ -12,13 +12,16 @@ namespace Ring.Simulation.Core
 
         /// Stage 3 Task 2 (spec Р261/Р225): energy-cell-backed shot counter, in
         /// SHOTS, not cells — WeaponSimConfig.ShotsPerCell is the conversion
-        /// factor a picked-up cell will apply (the pickup behavior itself is a
-        /// later task; SimulationWorld.AddAmmoForTest is this task's own stand-in
-        /// seam). WeaponSystem.Advance spends exactly one per shot fired while
-        /// Ammo > 0 — inside the ONE shared body both Update (server) and
-        /// AdvanceNoSpawn (prediction) call, so a predicting client depletes its
-        /// magazine in lockstep with the server (Р225: otherwise the client could
-        /// render a muzzle flash for a shot the server never fired at Ammo == 0).
+        /// factor a picked-up cell applies through SimulationWorld.AddAmmo, the
+        /// world's one refill seam (Т3 gave it its production caller,
+        /// Loot.PickupSystem.Collect). WeaponSystem.Advance spends exactly one
+        /// per shot fired while Ammo > 0 — inside the ONE shared body both
+        /// Update (server) and AdvanceNoSpawn (prediction) call, so a predicting
+        /// client depletes its magazine in lockstep with the server (Р225:
+        /// otherwise the client could render a muzzle flash for a shot the
+        /// server never fired at Ammo == 0). The MATCH TALLY of that same spend
+        /// (MatchStats.AmmoSpent) is server-side only, for the reason its own
+        /// doc gives.
         /// At Ammo == 0 the weapon keeps firing on WeaponSimConfig.
         /// EmergencyFireInterval (the emergency synthesis) and spends nothing —
         /// WeaponSystem.IntervalFor is the single reader that picks the interval,
@@ -273,6 +276,22 @@ namespace Ring.Simulation.Core
         /// MatchSummary (Т24, computed in BuildSummary from ticks), not to a
         /// per-tick counter hashed every frame. Part of StateHash since Т6,
         /// after DamageTaken.
+        ///
+        /// WRITERS (Ф1 fix-round, review C1 / B-I-1, owner decision R-24 —
+        /// declared in Т1, hashed in Т6, and given their behavior in the same
+        /// phase so the digest moved ONCE, which is what errata E-1's
+        /// "structural rebuild" asked for). AmmoSpent: WeaponSystem.Advance,
+        /// inside the `Ammo > 0` spend branch, so the emergency synthesis
+        /// (Р226 — it spends nothing) never inflates it. CellsPicked:
+        /// Loot.PickupSystem.Collect, in CELLS (PickupState.Amount's own
+        /// unit), not in the shots those cells bought and not in piles walked
+        /// over. Both are personal counters credited to the acting player's
+        /// own slot, exactly like Kills/ShotsFired above, and both are
+        /// SERVER-side only for the same reason ShotsFired is: a predicting
+        /// client owns no MatchStats (CR 3, PlayerPrediction's own doc).
+        /// Т24's BuildSummary READS them (errata E-3), it does not compute
+        /// them — AmmoMax clamping makes AmmoSpent unrecoverable after the
+        /// fact from AmmoStart, refills and the surviving Ammo.
         public int AmmoSpent, CellsPicked;
     }
 

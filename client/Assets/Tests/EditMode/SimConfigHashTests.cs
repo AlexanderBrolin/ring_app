@@ -14,17 +14,17 @@ namespace Ring.Simulation.Tests
         // numbers are wired there in one move. Owner decision R-17 (coordinator
         // ledger): errata E-6 D-I9 lists "zones/doors/portals/catalog/backpack/
         // ammo/drop and Flow" as the section's own deferred-wiring set, naming
-        // steps "Т8/Т10/Т13/Т22" — but of those four, only Т13 actually owns any
-        // of the WORLD-NUMBER sections this test touches (zones/doors/portals/
-        // catalog/backpack/ammo/drop); Т22 is Flow's own step, and Т1 already
-        // named Flow's addressee as itself, not this set. Two deferrals with no
-        // named owner is exactly the unbounded-skip-set failure mode this
-        // project has already paid for twice — so T13, and only T13, is the
-        // addressee: it removes this WHOLE SET unconditionally, in one move, not
-        // field by field (same discipline as WorldLifecycleTests.
+        // steps "Т8/Т10/Т13/Т22" — four addressees for one debt, which is
+        // exactly the unbounded-skip-set failure mode this project has already
+        // paid for twice. R-17 collapses them into ONE: T13, and only T13, is
+        // the addressee. It removes this WHOLE SET unconditionally, in one
+        // move, not field by field (same discipline as WorldLifecycleTests.
         // PendingHashFields, Т1 -> Т6) — removal proven by pulling one entry
-        // back out and watching AssertSectionAffectsHash name it. Weakening this
-        // guard itself (e.g. "only check the old fields") is not a fix.
+        // back out and watching AssertSectionAffectsHash name it. By T13 every
+        // new world number exists: weapon (Т2), cells (Т3), backpack (Т4),
+        // zones/doors/portals/caps (Т8), elite and Director (Т10), Flow (Т12),
+        // catalog and loot (Т13). Weakening this guard itself (e.g. "only check
+        // the old fields") is not a fix.
         static readonly System.Collections.Generic.HashSet<string> PendingHashFields = new()
         {
             "ShotsPerCell", "AmmoStart", "AmmoMax", "EmergencyFireInterval",
@@ -39,6 +39,20 @@ namespace Ring.Simulation.Tests
             // backpack's two capacity numbers (Hero.InventoryCapacity,
             // Hero.MaxInventoryItems).
             "InventoryCapacity", "MaxInventoryItems",
+            // Ф1 fix-round (review A-I1 / B-I-2): the five `Flow` numbers, the
+            // ONE deferred set that had no executable stretch at all. The
+            // section was named in SimConfig_CarriesExactlyEightSections but
+            // AssertSectionAffectsHash was never called for it, so Т13 could
+            // have wired four of the five — or none — and nothing anywhere
+            // would have gone red; a config number outside the handshake hash
+            // is precisely how a client and a server come to disagree about
+            // the length of an extraction channel while agreeing on the hash
+            // (spec §3.12). Their SO and builder wiring arrive in Т12, their
+            // HASH wiring in Т13 with everything above — the "Т22 is Flow's
+            // own step" reading these entries replace was the second addressee
+            // R-17 exists to remove.
+            "GateDelaySeconds", "ExtractChannelSeconds", "RetinueCount",
+            "RetinueRespawnSeconds", "DirectorReserveSlots",
         };
 
         [Test]
@@ -66,6 +80,14 @@ namespace Ring.Simulation.Tests
             AssertSectionAffectsHash("Arena", // scalar fields only — arrays below
                 "ObstaclePos", "ObstacleRadius", "WallA", "WallB", "WallHalfWidth");
             AssertSectionAffectsHash("Visibility");
+            // Ф1 fix-round (review A-I1 / B-I-2): the EIGHTH section joins the
+            // sweep. Its five numbers all sit in PendingHashFields today, so
+            // every one of them is checked by the POSITIVE "still outside the
+            // hash" assertion rather than skipped — and the moment Т13 lifts
+            // that set, this line is what demands all five actually be in
+            // SimConfigHash.Compute. Without the call the whole section was
+            // invisible to the flagman, name and all.
+            AssertSectionAffectsHash("Flow");
 
             // Arena's five array fields: every element (both float2
             // components where relevant) AND the length itself (appending
@@ -161,11 +183,14 @@ namespace Ring.Simulation.Tests
             //
             // Stage 3 Task 1 (errata E-2) is the EIGHTH section, `Flow`
             // (MatchFlowSimConfig) — a RECORDED decision, not a silent
-            // addition: `SimConfigHash.Compute` does not read it yet (errata
-            // E-6 I9 defers that wiring to Т22, alongside zones/doors/
-            // portals/catalog/backpack/ammo/drop), so this test's rename
-            // (Seven -> Eight) and the updated `expected` list below are that
-            // record — the decision this guard exists to force, already made.
+            // addition: `SimConfigHash.Compute` does not read it yet, and Т13
+            // is the single addressee that wires it (owner decision R-17,
+            // over errata E-6 I9's four). This test's rename (Seven -> Eight)
+            // and the updated `expected` list below are that record — the
+            // decision this guard exists to force, already made. The deferral
+            // itself is no longer recorded HERE alone: PendingHashFields above
+            // carries the five names, and EveryConfigNumberAffectsHash sweeps
+            // the section (Ф1 fix-round, review A-I1/B-I-2).
             string[] expected =
                 { "Hero", "Weapon", "Chaser", "Gunner", "Wave", "Arena", "Visibility", "Flow" };
             FieldInfo[] fields = typeof(SimConfig).GetFields();

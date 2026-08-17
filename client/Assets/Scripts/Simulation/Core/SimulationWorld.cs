@@ -17,13 +17,19 @@ namespace Ring.Simulation.Core
         /// ADR-002 T5: simulation runs at 30 Hz. The single source of dt.
         public const float TickDt = 1f / 30f;
 
-        /// Stage 3 Task 3 (spec §3.6): how long a ground pickup survives
-        /// before Loot.PickupSystem.Update ages it out. TEMPORARY CONSTANT
-        /// (R-3): SpawnPickup's own Interfaces signature (kind, pos, amount)
-        /// carries no ttl parameter, so this has to be a value SpawnPickup
-        /// knows on its own — LootSimConfig.PickupTtlSeconds (Т13) is
-        /// designed to be its permanent home, spelled identically so the
-        /// eventual move is a pure relocation, not a rename.
+        /// Stage 3 Task 3 (spec §3.6, Р260): how long a ground pickup survives
+        /// before Loot.PickupSystem.Update ages it out. TEMPORARY HOME (R-3):
+        /// LootSimConfig doesn't exist until Т13, which moves this into
+        /// LootSimConfig.PickupTtlSeconds in one step — the very same one-step
+        /// move MobSimConfig.CellsOnDeath and WeaponSimConfig.CorpseCellFraction
+        /// (SimConfig.cs) are waiting on, and the THIRD entry of that one debt
+        /// rather than an exception of its own (Ф1 review A-I3: the ledger
+        /// listed only the other two). Spelled identically at both ends so the
+        /// move stays a pure relocation, not a rename. Spec Р260 puts the number
+        /// in an `.asset`, so a `const` here is the debt, not the design — it is
+        /// a constant only because SpawnPickup's own Interfaces signature (kind,
+        /// pos, amount) carries no ttl parameter, leaving the value one
+        /// SpawnPickup has to know on its own.
         const float PickupTtlSeconds = 120f;
 
         int _tick;
@@ -1401,20 +1407,27 @@ namespace Ring.Simulation.Core
         internal void SetMatchForTest(in MatchState m) => _match = m;
 
         /// Test-only seam (Stage 3 Task 3), same contract as SetMobForTest/
-        /// SetProjectileForTest above — mutates a live slot directly. Also
-        /// PickupSystem's own writer for TTL decay (not test-only in
-        /// production use, unlike its name suggests — same "ForTest" naming
-        /// carried over from AddAmmoForTest's own precedent, see that
-        /// method's doc).
+        /// SetProjectileForTest above — mutates a live slot directly, and
+        /// genuinely test-only again since the Ф1 fix-round (review B-I-5):
+        /// PickupSystem.AdvanceTtl used to write TTL decay through it and now
+        /// takes the `ref w.Pickups[i]` ProjectileSystem.Update has always
+        /// used, so the promise SetPlayerForTest's own doc makes — "no
+        /// *ForTest wrapper ships in the battle surface" — holds here too.
         internal void SetPickupForTest(int index, in PickupState p) => _pickups[index] = p;
 
-        /// Test-only seam (Stage 3 Task 2): exercises WeaponSystem.AddAmmo — the
-        /// cell-pickup refill's shared conversion/clamp point — ahead of the real
-        /// pickup behavior landing in a later task. Not a raw field write like
-        /// SetPlayerForTest above precisely because the clamp (AmmoMax ceiling,
-        /// FireCooldown clamp-down on the 0-to-positive edge) is the behavior
-        /// under test, not incidental to it.
-        internal void AddAmmoForTest(int index, int shots)
+        /// The world's own ammo-refill seam (Stage 3 Task 2, renamed out of a
+        /// `*ForTest` name in the Ф1 fix-round — review B-I-5): supplies the
+        /// player slot and the weapon config to WeaponSystem.AddAmmo, the ONE
+        /// home of the AmmoMax ceiling and of the FireCooldown clamp-down on
+        /// the 0-to-positive edge, so no caller restates either (CR 2).
+        /// Deliberately not a raw field write like SetPlayerForTest above —
+        /// that clamp is the whole point of routing through here.
+        ///
+        /// Production caller: Loot.PickupSystem.Collect (auto-pickup, Т3);
+        /// AmmoTests drives the same seam directly. The old name described the
+        /// one task before Т3 during which no production caller existed yet,
+        /// and stopped being true the moment Т3 landed.
+        internal void AddAmmo(int index, int shots)
             => WeaponSystem.AddAmmo(ref _players[index], _config.Weapon, shots);
 
         /// Test-only seam (Task 4): reads a live projectile slot back —
@@ -1622,8 +1635,13 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, s.DashesUsed); h = StateHash64.Add(h, s.SlidesUsed);
             h = StateHash64.Add(h, s.DeathTick); h = StateHash64.Add(h, s.DamageTaken);
             // Stage 3 Т6 (Task 1's fields, errata E-1): the run's own two
-            // economy counters. Still without writers — Т17/Т24 bring those —
-            // and hashed anyway, for the reason above.
+            // economy counters. Both got their writers in the Ф1 fix-round
+            // (review C1 / B-I-1, owner decision R-24) — AmmoSpent in
+            // WeaponSystem.Advance's spend branch, CellsPicked in
+            // Loot.PickupSystem.Collect — so this step is no longer a
+            // placeholder for behavior that had not arrived: the composition
+            // of state and the behavior behind it entered the digest in the
+            // same phase, which is what errata E-1 asked for.
             h = StateHash64.Add(h, s.AmmoSpent); h = StateHash64.Add(h, s.CellsPicked);
             return h;
         }

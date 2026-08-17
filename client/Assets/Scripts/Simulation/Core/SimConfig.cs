@@ -279,10 +279,13 @@ namespace Ring.Simulation.Core
     /// ApplyStageThreeBalance, and the SimConfigBuilder wiring are Т12's job
     /// — the one task that delivers SO-backed data (errata E-2's full
     /// account of why the two are split). Т22 only uses what is already
-    /// here. NOT part of SimConfigHash.Compute yet (errata E-6 I9 defers
-    /// that wiring to Т22 alongside zones/doors/portals/catalog/backpack/
-    /// ammo/drop) — see SimConfigHashTests.SimConfig_CarriesExactlyEightSections
-    /// for where that decision is recorded.
+    /// here. NOT part of SimConfigHash.Compute yet: errata E-6 I9 named
+    /// "Т8/Т10/Т13/Т22" for that whole deferred set, and owner decision R-17
+    /// collapsed the four addressees into ONE — Т13 lifts the skip-set whole,
+    /// these five numbers included. Recorded, and made executable, in
+    /// SimConfigHashTests.PendingHashFields, which asserts each of them is
+    /// still outside the hash and goes red the moment Т13 removes the set
+    /// without wiring them.
     public struct MatchFlowSimConfig
     {
         public float GateDelaySeconds;

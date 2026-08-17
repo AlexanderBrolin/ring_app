@@ -16,10 +16,10 @@ namespace Ring.Simulation.Tests
     ///
     /// ROOT CAUSE OF FIX-ROUND 1 (three of four tests below shipped red,
     /// coordinator's diagnosis, systematic-debugging Phase 1): a solo world's
-    /// OWN player spawns at the arena centre (`Geometry.SpawnPosFor` returns
+    /// OWN player spawns at the arena center (`Geometry.SpawnPosFor` returns
     /// `float2.zero` for `playerCount &lt;= 1`) — not out on the ring the way a
     /// multiplayer world's players do. The shooter/victim pair below straddles
-    /// that exact centre point on the y = 0 line, and a Mob-owned round is
+    /// that exact center point on the y = 0 line, and a Mob-owned round is
     /// ALWAYS eligible against every live player (no owner exclusion on that
     /// side of the gather, unaffected by this task) — so the round hit the
     /// player sitting at (0, 0), 4-9 m closer than the intended mob victim,

@@ -29,21 +29,30 @@ namespace Ring.Simulation.Loot
         /// interact with each other), so back-to-front is simply the
         /// established, already-proven-safe shape for a capped array this
         /// codebase swap-removes from mid-sweep.
+        ///
+        /// The decay itself is written through `ref w.Pickups[i]`, the SAME
+        /// in-place idiom ProjectileSystem.Update uses on its own TTL
+        /// (`ref ProjectileState proj = ref w.Projectiles[i]`) — Ф1 fix-round,
+        /// review B-I-5. It used to copy the struct out, edit the copy and
+        /// write it back through a `*ForTest` seam: two extra copies per
+        /// pickup per tick, and a battle-path call whose NAME said "test"
+        /// (rule 4 — one policy, not two).
         static void AdvanceTtl(SimulationWorld w)
         {
             for (int i = w.PickupCount - 1; i >= 0; i--)
             {
-                PickupState p = w.Pickups[i];
+                ref PickupState p = ref w.Pickups[i];
                 p.Ttl -= SimulationWorld.TickDt;
                 if (p.Ttl <= 0f)
                 {
                     // Spec §3.6: swap-remove WITHOUT an event — a pickup
                     // quietly aging out is not a VFX/SFX-relevant occurrence
-                    // the way PickupTaken (a later task) is.
+                    // the way PickupTaken (a later task) is. Safe under the
+                    // `ref` above for the same reason the back-to-front sweep
+                    // is: the slot this overwrites is never read again, in
+                    // this turn or any later one.
                     w.RemovePickupAt(i);
-                    continue;
                 }
-                w.SetPickupForTest(i, in p);
             }
         }
 
@@ -81,9 +90,10 @@ namespace Ring.Simulation.Loot
                 // pickups THIS player ends up collecting (every pickup
                 // within radius is collected regardless of visit order,
                 // and WeaponSystem.AddAmmo's clamped addition is
-                // order-independent — see AddAmmoForTest's own doc), so this
-                // is purely about matching spec §3.6's stated "ascending
-                // slot" contract as literally as a swap-remove sweep allows.
+                // order-independent — see SimulationWorld.AddAmmo's own doc),
+                // so this is purely about matching spec §3.6's stated
+                // "ascending slot" contract as literally as a swap-remove
+                // sweep allows.
                 int i = 0;
                 while (i < w.PickupCount)
                 {
@@ -91,10 +101,28 @@ namespace Ring.Simulation.Loot
                     if (math.distance(pickup.Pos, player.Pos) <= radius)
                     {
                         // Shared conversion/clamp seam (Global Constraints):
-                        // AddAmmoForTest is the ONE accounting for ammo, so
-                        // auto-pickup calls into it rather than reimplementing
-                        // the AmmoMax cap / emergency-cooldown clamp here.
-                        w.AddAmmoForTest(playerIndex, pickup.Amount * shotsPerCell);
+                        // SimulationWorld.AddAmmo is the ONE accounting for
+                        // ammo, so auto-pickup calls into it rather than
+                        // reimplementing the AmmoMax cap / emergency-cooldown
+                        // clamp here.
+                        w.AddAmmo(playerIndex, pickup.Amount * shotsPerCell);
+                        // Ф1 fix-round (review C1 / B-I-1, owner decision
+                        // R-24): the collector's own tally of what it picked
+                        // up, in CELLS — `Amount` is denominated in cells at
+                        // every producer (LootDrops.MobDeathCells and
+                        // CorpseCells both return cells, SpawnPickup stores
+                        // them unconverted), and MatchStats.CellsPicked's own
+                        // doc says "cells picked up this match". Deliberately
+                        // NOT the shots those cells bought (that is AmmoSpent's
+                        // unit on the other side of the ledger, spec §3.10
+                        // lists the two side by side) and NOT the number of
+                        // piles walked over, which would undercount a stack.
+                        // Credited AFTER the refill purely for reading order —
+                        // the two touch different memory, neither reads the
+                        // other — and it is credited whether or not the refill
+                        // itself hit the AmmoMax ceiling: the cells were picked
+                        // up either way.
+                        w.StatsRef(playerIndex).CellsPicked += pickup.Amount;
                         w.RemovePickupAt(i);
                     }
                     else
