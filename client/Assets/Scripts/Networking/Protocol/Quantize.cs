@@ -43,8 +43,10 @@ namespace Ring.Networking.Protocol
     /// `Pos(0, 0) == Pos(5, 0) == 65535`), while `PosBack` returns 0 for
     /// every code, so idempotency cannot hold. Neither is reachable through
     /// the shipped data
-    /// (`ArenaConfig.Radius` is `[Range(5, 100)]`, `HeroConfig.MaxAimHeight`
-    /// is `[Range(1, 6)]`), so no guard is spent here — but a caller
+    /// (`ArenaConfig.Radius` is `[Range(5, 150)]` as of Stage 3 Task 8 — was
+    /// `[Range(5, 100)]` before the Т12 three-zone arena needed more room —
+    /// `HeroConfig.MaxAimHeight` is `[Range(1, 6)]`), so no guard is spent
+    /// here — but a caller
     /// inventing its own scale must not pass zero. A negative `radius`
     /// merely mirrors the axis and stays idempotent.
     ///

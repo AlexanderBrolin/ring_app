@@ -134,6 +134,35 @@ namespace Ring.Simulation.Tests
                 // Stage 3 Task 3: same mirror discipline as the three caps
                 // above — ArenaConfig's own C# default.
                 MaxPickups = 256,
+                // Stage 3 Task 8: same mirror discipline — ArenaConfig's own
+                // C# defaults. Zone/door/portal arrays stay EMPTY (ZoneWallCount
+                // 0 gives the Stage 2 arena literally, same convention as
+                // WallCount == 0 for Open()) — TestConfigs gets zones in Т12,
+                // not here, and both golden scenarios depend on that: neither
+                // Geometry.SweepArena/Depenetrate nor any wave/loot system
+                // reads these fields yet, so leaving them off changes nothing
+                // observable, but shipping non-empty data now (while Radius is
+                // still 65, not the real layout's 113) would be inventing a
+                // geometry the spec ties to the Т12 re-pin, not this task.
+                // ExtractRadius/MaxContainers/MaxContainerSlots/DoorClearance
+                // are independent of the zone layout (only Hero.Radius/
+                // InventoryCapacity bound them), so they mirror the SO's real
+                // numbers like every other scalar in this method.
+                ZoneRadius = System.Array.Empty<float>(),
+                ZoneWallCount = 0,
+                ZoneWallRadius = System.Array.Empty<float>(),
+                ZoneWallHalfWidth = System.Array.Empty<float>(),
+                ZoneWallDoorStart = System.Array.Empty<int>(),
+                ZoneWallDoorCount = System.Array.Empty<int>(),
+                DoorCenterRad = System.Array.Empty<float>(),
+                DoorFreeWidth = System.Array.Empty<float>(),
+                DoorClearance = 1.0f,
+                ExtractPos = System.Array.Empty<float2>(),
+                ExtractZone = System.Array.Empty<byte>(),
+                ExtractKind = System.Array.Empty<byte>(),
+                ExtractRadius = 8f,
+                MaxContainers = 64,
+                MaxContainerSlots = 8,
                 // Stage 2 Task 4: same values as ArenaConfig's C# defaults
                 // (two-sources-of-numbers discipline — this is the test/code-default side).
                 MaxPlayers = 3, PlayerSpawnRingFrac = 0.8f,

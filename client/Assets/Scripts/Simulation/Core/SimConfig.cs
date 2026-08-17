@@ -189,6 +189,14 @@ namespace Ring.Simulation.Core
         public float PerPlayerCountFrac;
     }
 
+    /// Stage 3 Task 8 (spec §3.2, Р206): which of the arena's three concentric
+    /// rings a position falls in. A PURE function of position and
+    /// ArenaSimConfig.ZoneRadius (Geometry.ZoneOf) — nothing in PlayerState/
+    /// MobState stores "current zone": a stored duplicate would drift from
+    /// position and would enter the state hash for nothing (Р206). Computed
+    /// wherever it is needed instead — wave spawn, loot tier, portal gate.
+    public enum Zone : byte { Outer = 0, Middle = 1, Core = 2 }
+
     /// Arena geometry and per-match entity caps.
     public struct ArenaSimConfig
     {
@@ -253,6 +261,75 @@ namespace Ring.Simulation.Core
         /// SimConfigHashTests.SimConfig_CarriesExactlyEightSections and its
         /// own PendingHashFields for where that decision is recorded.
         public int MaxPickups;
+
+        /// Stage 3 Task 8 (spec §3.2, Р206): the two zone-boundary radii —
+        /// {65, 92} at the shipped layout (delivery is Т12's "перепин №2",
+        /// not this task). ALWAYS exactly two elements ("two boundaries,
+        /// three zones") — unlike WallCount/ObstacleCount this is not a
+        /// variable-length "0 disables" array, so Geometry.ZoneOf reads
+        /// index 0/1 directly rather than looping. Empty (never null) before
+        /// Т12 wires real numbers — same never-null convention as WallA/
+        /// WallB. NOT part of SimConfigHash.Compute yet — see
+        /// SimConfigHashTests.PendingHashFields (R-17: skip-set lifts whole,
+        /// addressee Т13).
+        public float[] ZoneRadius;
+
+        /// Stage 3 Task 8 (spec §3.2, Р207): the zone-boundary ARC BARRIERS —
+        /// same parallel-array shape as WallA/WallB/WallHalfWidth above, but
+        /// each entry here is a full ring (centered on the arena origin,
+        /// radius ZoneWallRadius[i]) with angular door cutouts instead of a
+        /// straight stadium segment (Geometry.OverlapsArc/SegmentArc/
+        /// PushOutOfArc, Task 7). ZoneWallCount == 0 gives the Stage 2 arena
+        /// literally, same convention as WallCount — every fixture before
+        /// Т12 (including TestConfigs.Default()) stays on this branch, which
+        /// is what keeps both golden scenarios green through this task.
+        public int ZoneWallCount;
+        public float[] ZoneWallRadius;
+        public float[] ZoneWallHalfWidth;
+
+        /// Doors live in one flat pair of arrays SHARED by every wall
+        /// (Р246: circular jambs, not an angular pad — see Geometry.cs'
+        /// Stage 3 Task 7 section). ZoneWallDoorStart[i]/ZoneWallDoorCount[i]
+        /// slice DoorCenterRad/DoorFreeWidth per wall — mirrors
+        /// Geometry.SegmentArc/OverlapsArc's own
+        /// ReadOnlySpan&lt;float&gt; doorCenter/doorFreeWidth parameters (Task 7).
+        /// Ledger R-26: DoorFreeWidth is the canonical name — spec §3.2's own
+        /// data table calls it DoorHalfWidthMeters, which is an error in the
+        /// spec's text against its own prose (Р246/Р247) and against Task
+        /// 7/8's shipped signatures.
+        public int[] ZoneWallDoorStart;
+        public int[] ZoneWallDoorCount;
+        public float[] DoorCenterRad;
+        public float[] DoorFreeWidth;
+
+        /// Stage 3 Task 8 (owner decision R-29): the manoeuvre-room term of
+        /// the door-width rule (spec Р247): DoorFreeWidth >= 2*(bodyRadius +
+        /// Geometry.Skin) + DoorClearance. .asset-sourced by CR 6 (a real
+        /// number belongs in data, not code) — Interfaces plan text omitted
+        /// it; this task adds the field, Т12 delivers the real value.
+        public float DoorClearance;
+
+        /// Stage 3 Task 8 (spec §3.15): portals and the extraction gate —
+        /// one flat triple of parallel arrays, same shape discipline as
+        /// ObstaclePos/ObstacleRadius. ExtractZone/ExtractKind are raw byte
+        /// (Zone, and Portal=0/Gate=1 respectively) rather than enum-typed,
+        /// matching PickupKind's own wire-friendly byte convention.
+        public float2[] ExtractPos;
+        public byte[] ExtractZone;
+        public byte[] ExtractKind;
+
+        /// Stage 3 Task 8 (spec §3.15): 8 at the shipped layout — validated
+        /// (Т12+) against Hero.Radius, same ReqPositive-adjacent per-match
+        /// geometry convention as the rest of this struct.
+        public float ExtractRadius;
+
+        /// Stage 3 Task 8 (spec §3.7/§3.13): per-match container caps, same
+        /// per-match-entity-cap convention as MaxPickups above.
+        /// MaxContainerSlots is R-5's corrected 8, not the spec table's
+        /// stale 4 — Р263 derives it from InventoryCapacity / min(SlotCost)
+        /// = 8/1, and §3.12 counts on a one-byte occupancy mask, exact at 8.
+        public int MaxContainers;
+        public int MaxContainerSlots;
     }
 
     /// Server-side visibility filter numbers (Stage 2 Task 19, spec §3.5,

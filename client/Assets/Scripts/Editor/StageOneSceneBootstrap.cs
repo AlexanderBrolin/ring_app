@@ -570,20 +570,22 @@ namespace Ring.Editor
             // moves) — Т12 stays a values-only delivery task. MobConfig's
             // marker field is unchanged since Task 17, so any asset committed
             // before that task predates it and self-heals on this Apply;
-            // ArenaConfig's marker is `MaxPickups` as of Stage 3 Task 3
-            // (per-match pickup cap, the class's new last field) — was
-            // `BarrierTop` (Stage 2 Task 46, the interior barriers' modelled
-            // height) before that, `PlayerSpawnRingFrac` (Stage 2 Task 4) from
-            // Stage 2 Task 9, when ArenaConfig joined the mechanism for the
-            // first time, before THAT — and the committed asset carries each
-            // superseded key already, so leaving the marker on any of them
-            // would have left the newer field unable to reach the file at all).
+            // ArenaConfig's marker is `MaxContainerSlots` as of Stage 3 Task 8
+            // (per-match container-slot cap, the class's new last field) —
+            // was `MaxPickups` (Stage 3 Task 3, per-match pickup cap) before
+            // that, `BarrierTop` (Stage 2 Task 46, the interior barriers'
+            // modelled height) before THAT, `PlayerSpawnRingFrac` (Stage 2
+            // Task 4) from Stage 2 Task 9, when ArenaConfig joined the
+            // mechanism for the first time, before THAT — and the committed
+            // asset carries each superseded key already, so leaving the
+            // marker on any of them would have left the newer field unable
+            // to reach the file at all).
             EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "MaxInventoryItems"); // Stage 3 Task 4 (was PickupRadius, Stage 3 Task 3)
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "EmergencyFireInterval"); // Stage 3 Task 2 (was RunSpreadSpeedFrac, Task 17)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "GunEjectLocalEuler"); // Stage 2 Task 45b
-            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxPickups"); // Stage 3 Task 3 (was BarrierTop, Stage 2 Task 46)
+            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joins the marker mechanism for the first time in Stage 2
             // Task 16, with PerPlayerCountFrac (the class's newest field) as its
             // marker — the per-extra-player wave scale is a NEW key, and new keys

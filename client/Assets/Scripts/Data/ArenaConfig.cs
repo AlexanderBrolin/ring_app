@@ -31,7 +31,12 @@ namespace Ring.Data
         // while a round covers ProjectileSpeed 52.5 x ProjectileLifetime 1.5 =
         // 78.75 m (numbers from the .asset — spec §0), i.e. every shot crosses
         // the whole map and no cover or visibility filter can ever matter.
-        [Range(5f, 100f)] public float Radius = 65f;
+        // Stage 3 Task 8 (spec §3.13, Р284): ceiling widened 100 -> 150 —
+        // Т12's three-zone arena needs 113, and an unwidened [Range] would
+        // let the owner's first Inspector touch silently snap it back to
+        // 100 and collapse the whole layout. Radius itself stays 65 in this
+        // task; Т12 (perepin #2) delivers 113.
+        [Range(5f, 150f)] public float Radius = 65f;
 
         /// The first five circles are the Stage 1 layout, kept FIRST and in
         /// order: SweepArena walks them by index and that order is part of the
@@ -66,9 +71,12 @@ namespace Ring.Data
         };
 
         // Stage 2 Task 16 (spec §3.4, arithmetic): three players on a 65 m arena.
-        [Range(1, 200)] public int MaxMobs = 96;
-        [Range(1, 1000)] public int MaxProjectiles = 384;
-        [Range(1, 1000)] public int MaxEventsPerFrame = 512;
+        // Stage 3 Task 8 (spec §3.13, Р284): ceilings widened for the same
+        // reason as Radius above — Т12's 288/1024/1024 need room, and the
+        // three numbers themselves stay unchanged in this task.
+        [Range(1, 400)] public int MaxMobs = 96;
+        [Range(1, 2000)] public int MaxProjectiles = 384;
+        [Range(1, 2000)] public int MaxEventsPerFrame = 512;
 
         /// Minimum clear distance an obstacle must keep from the player spawn point
         /// (arena center), on top of its own radius and the hero radius. Used only by
@@ -116,12 +124,59 @@ namespace Ring.Data
         /// Stage 3 Task 3 (spec §3.6 table, owner decision R-4): per-match
         /// cap on live pickups — energy cells today, a second Kind (Task 13)
         /// reuses the same swap-remove-capped array — same shape as
-        /// MaxMobs/MaxProjectiles/MaxEventsPerFrame above. R-4 moves this
-        /// class's sync-marker onto this field in THIS task (errata E-7
-        /// precedent: Т3/Т4/Т8 move their own markers in the same task that
-        /// appends the field, not at Т12 as the plan body originally
-        /// assigned) — BarrierTop above was the marker until now.
-        [Range(1, 1000)] public int MaxPickups = 256; // sync-marker key — keep LAST
+        /// MaxMobs/MaxProjectiles/MaxEventsPerFrame above.
+        // Was the sync-marker key until Stage 3 Task 8's MaxContainerSlots
+        // field below superseded it.
+        [Range(1, 1000)] public int MaxPickups = 256;
+
+        /// Stage 3 Task 8 (spec §3.2, Р206/Р207): zone boundaries and the
+        /// zone-wall arc barriers — mirrors ArenaSimConfig's own fields one
+        /// to one (Core/SimConfig.cs carries the full field-by-field
+        /// rationale). ALL of these stay at their "off" default in this
+        /// task — Т12 (perepin #2) is the one sanctioned point that turns
+        /// zones on, together with Radius 65 -> 113; shipping non-empty
+        /// zone data now, while Radius is still 65, would place a
+        /// ZoneWallRadius (92 at the real layout) outside the arena and
+        /// throw on every fresh SO instance, INCLUDING the ones this file's
+        /// own ConfigTests.MakeDefaults() builds.
+        public float[] ZoneRadius = System.Array.Empty<float>();
+        public int ZoneWallCount = 0;
+        public float[] ZoneWallRadius = System.Array.Empty<float>();
+        public float[] ZoneWallHalfWidth = System.Array.Empty<float>();
+        public int[] ZoneWallDoorStart = System.Array.Empty<int>();
+        public int[] ZoneWallDoorCount = System.Array.Empty<int>();
+        public float[] DoorCenterRad = System.Array.Empty<float>();
+        public float[] DoorFreeWidth = System.Array.Empty<float>();
+
+        /// Stage 3 Task 8 (owner decision R-29): manoeuvre-room term of the
+        /// door-width rule (spec Р247). Independent of the zone layout
+        /// above (only matters once a door exists), so it is safe to carry
+        /// the real spec number now rather than wait for Т12.
+        [Range(0f, 5f)] public float DoorClearance = 1.0f;
+
+        /// Stage 3 Task 8 (spec §3.15): portals and the extraction gate —
+        /// empty for the same "off until Т12" reason as the zone arrays
+        /// above (a portal position is meaningless without the zone
+        /// geometry it is placed relative to).
+        public Vector2[] ExtractPos = System.Array.Empty<Vector2>();
+        public byte[] ExtractZone = System.Array.Empty<byte>();
+        public byte[] ExtractKind = System.Array.Empty<byte>();
+
+        /// Stage 3 Task 8 (spec §3.15): 8 at the shipped layout. Independent
+        /// of the zone/portal arrays above (only Hero.Radius bounds it), so
+        /// the real number ships now.
+        [Range(0.1f, 20f)] public float ExtractRadius = 8f;
+
+        /// Stage 3 Task 8 (spec §3.7/§3.13, owner decision R-5): per-match
+        /// container caps — independent of the zone layout above (nothing
+        /// here references arc geometry), so the real numbers ship now.
+        /// MaxContainerSlots is R-5's corrected 8, not the spec table's
+        /// stale 4 (see the ArenaSimConfig field's own doc). Ceiling is 8,
+        /// not an arbitrary round number: R-5 ties the value to spec §3.12's
+        /// single-BYTE occupancy mask (one bit per slot) — a ceiling above 8
+        /// would invite a value the mask cannot represent.
+        [Range(1, 1000)] public int MaxContainers = 64;
+        [Range(1, 8)] public int MaxContainerSlots = 8; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // Arena topology (Radius/Obstacles) is a special case: SimulationRunner's

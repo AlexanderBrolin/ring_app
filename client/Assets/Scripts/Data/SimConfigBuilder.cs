@@ -179,6 +179,13 @@ namespace Ring.Data
                 wallHalfWidth[i] = a.Walls[i].HalfWidth;
             }
 
+            // Stage 3 Task 8 (spec §3.15): ExtractPos, same Vector2 -> float2
+            // conversion shape as the obstacle/wall loops above.
+            int en = a.ExtractPos?.Length ?? 0;
+            var extractPos = new float2[en];
+            for (int i = 0; i < en; i++)
+                extractPos[i] = new float2(a.ExtractPos[i].x, a.ExtractPos[i].y);
+
             return new ArenaSimConfig
             {
                 Radius = a.Radius,
@@ -198,7 +205,27 @@ namespace Ring.Data
                 // barrier — circles and walls alike — is simulated and drawn at.
                 BarrierTop = a.BarrierTop,
                 // Stage 3 Task 3: per-match pickup cap.
-                MaxPickups = a.MaxPickups
+                MaxPickups = a.MaxPickups,
+                // Stage 3 Task 8 (spec §3.2/§3.15): zone boundaries, zone-wall
+                // arc barriers, doors, portals and container caps — straight
+                // field-for-field plumbing, same convention as every prior
+                // section above (no business logic here; that is Validate's
+                // job below, once it exists).
+                ZoneRadius = a.ZoneRadius ?? System.Array.Empty<float>(),
+                ZoneWallCount = a.ZoneWallCount,
+                ZoneWallRadius = a.ZoneWallRadius ?? System.Array.Empty<float>(),
+                ZoneWallHalfWidth = a.ZoneWallHalfWidth ?? System.Array.Empty<float>(),
+                ZoneWallDoorStart = a.ZoneWallDoorStart ?? System.Array.Empty<int>(),
+                ZoneWallDoorCount = a.ZoneWallDoorCount ?? System.Array.Empty<int>(),
+                DoorCenterRad = a.DoorCenterRad ?? System.Array.Empty<float>(),
+                DoorFreeWidth = a.DoorFreeWidth ?? System.Array.Empty<float>(),
+                DoorClearance = a.DoorClearance,
+                ExtractPos = extractPos,
+                ExtractZone = a.ExtractZone ?? System.Array.Empty<byte>(),
+                ExtractKind = a.ExtractKind ?? System.Array.Empty<byte>(),
+                ExtractRadius = a.ExtractRadius,
+                MaxContainers = a.MaxContainers,
+                MaxContainerSlots = a.MaxContainerSlots
             };
         }
 
@@ -431,6 +458,28 @@ namespace Ring.Data
             ReqPositive(errors, "Hero.InventoryCapacity", cfg.Hero.InventoryCapacity);
             ReqPositive(errors, "Hero.MaxInventoryItems", cfg.Hero.MaxInventoryItems);
 
+            // Stage 3 Task 8 (spec §3.13, errata E-6 D-I8's Т8 share):
+            // ExtractRadius must exceed the body it extracts, and
+            // MaxContainerSlots must hold a full backpack transfer.
+            // minSlotCost is a HARDCODED 1 here — TEMPORARY HOME (same
+            // R-3/R-18 discipline as CellsOnDeath/CorpseCellFraction
+            // elsewhere in this file, owner decision R-5): Т13's
+            // ItemCatalog is the real per-item source once it exists.
+            if (cfg.Arena.ExtractRadius <= cfg.Hero.Radius)
+            {
+                errors.Add("Arena.ExtractRadius must be > Hero.Radius " +
+                    $"(got ExtractRadius={cfg.Arena.ExtractRadius:F3}, " +
+                    $"Hero.Radius={cfg.Hero.Radius:F3}).");
+            }
+            const int MinSlotCost = 1;
+            if (cfg.Arena.MaxContainerSlots < cfg.Hero.InventoryCapacity / MinSlotCost)
+            {
+                errors.Add("Arena.MaxContainerSlots must be >= Hero.InventoryCapacity / " +
+                    "min(SlotCost) " +
+                    $"(got MaxContainerSlots={cfg.Arena.MaxContainerSlots}, " +
+                    $"InventoryCapacity={cfg.Hero.InventoryCapacity}, min(SlotCost)={MinSlotCost}).");
+            }
+
             for (int i = 0; i < cfg.Arena.ObstacleCount; i++)
             {
                 var pos = cfg.Arena.ObstaclePos[i];
@@ -474,6 +523,7 @@ namespace Ring.Data
             }
 
             ValidateWalls(errors, in cfg, spawnClearance);
+            ValidateZoneWalls(errors, in cfg, spawnClearance);
 
             // Stage 2 Task 22 (spec §3.15/Р72; carryover-t22 §1): server-side
             // visibility filter invariants. Upper bounds mirror
@@ -500,6 +550,219 @@ namespace Ring.Data
 
             if (errors.Count > 0)
                 throw new ArgumentException("SimConfig validation failed:\n- " + string.Join("\n- ", errors));
+        }
+
+        /// Stage 3 Task 8 (owner decision R-28): the single home for "the
+        /// largest body that must fit through a door / clear of a zone
+        /// wall" — used by ValidateWalls' own rim rule above (refactored
+        /// onto this method, no behavior change) and ValidateZoneWalls
+        /// below (door-width rule Р247, R-37's interior-passability rule).
+        /// At Т8 this is Hero/Chaser/Gunner only: Elite and Director are
+        /// not SimConfig sections yet. Т10 IS THIS HELPER'S NAMED
+        /// ADDRESSEE for extending it with Elite.Radius/Director.Radius
+        /// once those sections exist — a second copy of this formula
+        /// anywhere else is exactly the mistake rule 2 (reuse >
+        /// duplication) exists to prevent, and R-28 exists to name a
+        /// single owner for the future extension instead of leaving it an
+        /// address-less debt (lesson 272).
+        static float MaxBodyRadius(in SimConfig cfg)
+            => math.max(cfg.Hero.Radius, math.max(cfg.Chaser.Radius, cfg.Gunner.Radius));
+
+        /// Stage 3 Task 8 (spec §3.2's own Validate paragraph; ledger
+        /// R-27/R-28/R-37): the zone-wall arc barriers and their doors.
+        /// ZoneWallCount == 0 means zones are off (Stage 2 arena
+        /// literally) — every loop below is then a no-op, which is what
+        /// keeps every fixture before Т12 (this task's own
+        /// TestConfigs.DefaultArena() included) clear of every rule here.
+        static void ValidateZoneWalls(List<string> errors, in SimConfig cfg, float spawnClearance)
+        {
+            float maxBodyRadius = MaxBodyRadius(in cfg);
+
+            // ZoneRadius is a fixed "two boundaries" shape (Geometry.ZoneOf
+            // reads index 0/1 directly), but the pairwise loop below states
+            // the rule generally rather than hard-coding index 0 vs 1 —
+            // this file's own convention (ValidateWalls/the obstacle loop
+            // above do the same for their own variable-length arrays).
+            for (int i = 1; i < cfg.Arena.ZoneRadius.Length; i++)
+            {
+                if (cfg.Arena.ZoneRadius[i] <= cfg.Arena.ZoneRadius[i - 1])
+                {
+                    errors.Add($"Arena.ZoneRadius[{i}] must be > Arena.ZoneRadius[{i - 1}] " +
+                        $"(got ZoneRadius[{i}]={cfg.Arena.ZoneRadius[i]:F3}, " +
+                        $"ZoneRadius[{i - 1}]={cfg.Arena.ZoneRadius[i - 1]:F3}).");
+                }
+            }
+
+            // Coordinator ledger (plan lines 790-795 + spec §3.2's own
+            // Validate paragraph): the const below is this method's one
+            // number for "half the ring, in radians" (the ring is a full
+            // 2*pi around) — named so every reader of the sum-of-doors rule
+            // sees the same quantity spelled out once, not recomputed twice.
+            const float HalfRingRad = math.PI;
+            float spawnClearanceNeeded = cfg.Hero.Radius + spawnClearance;
+
+            for (int i = 0; i < cfg.Arena.ZoneWallCount; i++)
+            {
+                string tag = $"Arena zone wall [{i}]";
+
+                // Plan Т8 ("…и меньше Radius") + spec §3.2 ("0 <
+                // ZoneWallRadius[i] < Radius"): two independent branches —
+                // R-25 non-overlapping kill sets, ledger-accepted split.
+                if (cfg.Arena.ZoneWallRadius[i] <= 0f)
+                {
+                    errors.Add($"Arena.ZoneWallRadius[{i}] must be > 0 " +
+                        $"(got {cfg.Arena.ZoneWallRadius[i]:F3}).");
+                }
+                if (cfg.Arena.ZoneWallRadius[i] >= cfg.Arena.Radius)
+                {
+                    errors.Add($"Arena.ZoneWallRadius[{i}] must be < Arena.Radius " +
+                        $"(got ZoneWallRadius[{i}]={cfg.Arena.ZoneWallRadius[i]:F3}, " +
+                        $"Arena.Radius={cfg.Arena.Radius:F3}).");
+                }
+
+                // Spec §3.2's own Validate paragraph: "HalfWidth > 0" — the
+                // door-width formula and R-37 below both consume this field
+                // but neither one validates it standing alone.
+                if (cfg.Arena.ZoneWallHalfWidth[i] <= 0f)
+                {
+                    errors.Add($"Arena.ZoneWallHalfWidth[{i}] must be > 0 " +
+                        $"(got {cfg.Arena.ZoneWallHalfWidth[i]:F3}).");
+                }
+
+                if (cfg.Arena.ZoneWallDoorCount[i] < 1)
+                {
+                    errors.Add($"{tag} has no door — every zone wall must have at least " +
+                        "one door for its zone to stay reachable.");
+                }
+
+                // R-37 (debt from Task 7's PushOutOfArc doc): a body of the
+                // largest current radius must still find room INSIDE the
+                // wall's own hole, or PushOutOfArc's documented assumption
+                // ("radius + halfW < ringR") is violated by config, not by
+                // a bug — the hole would not exist at all.
+                if (maxBodyRadius + cfg.Arena.ZoneWallHalfWidth[i] >= cfg.Arena.ZoneWallRadius[i])
+                {
+                    errors.Add($"{tag} leaves the ring's interior impassable " +
+                        $"(maxBodyRadius+HalfWidth=" +
+                        $"{maxBodyRadius + cfg.Arena.ZoneWallHalfWidth[i]:F3} >= " +
+                        $"ZoneWallRadius={cfg.Arena.ZoneWallRadius[i]:F3}) — no body could " +
+                        "ever reach it.");
+                }
+
+                // Plan Т8 ("двери не перекрываются") + spec §3.2 ("двери …
+                // суммарно занимают меньше половины кольца"): both rules
+                // read this wall's own door slice, by FULL angular cutout
+                // (Geometry.DoorHalfCutout, ledger-mandated reuse) — not by
+                // free width alone, since jamb-to-jamb overlap is a
+                // geometry defect regardless of what free width remains.
+                int start = cfg.Arena.ZoneWallDoorStart[i];
+                int count = cfg.Arena.ZoneWallDoorCount[i];
+                float totalAngularWidth = 0f;
+                for (int di = 0; di < count; di++)
+                {
+                    int doorI = start + di;
+                    float halfCutoutI = Geometry.DoorHalfCutout(cfg.Arena.DoorFreeWidth[doorI],
+                        cfg.Arena.ZoneWallRadius[i], cfg.Arena.ZoneWallHalfWidth[i]);
+                    totalAngularWidth += 2f * halfCutoutI;
+
+                    for (int dj = di + 1; dj < count; dj++)
+                    {
+                        int doorJ = start + dj;
+                        float halfCutoutJ = Geometry.DoorHalfCutout(cfg.Arena.DoorFreeWidth[doorJ],
+                            cfg.Arena.ZoneWallRadius[i], cfg.Arena.ZoneWallHalfWidth[i]);
+                        float delta = Geometry.WrapAngle(
+                            cfg.Arena.DoorCenterRad[doorI] - cfg.Arena.DoorCenterRad[doorJ]);
+                        if (math.abs(delta) < halfCutoutI + halfCutoutJ)
+                        {
+                            errors.Add($"{tag} doors [{doorI}] and [{doorJ}] overlap " +
+                                $"(angular gap={math.abs(delta):F3} rad < sum of half-cutouts=" +
+                                $"{halfCutoutI + halfCutoutJ:F3} rad).");
+                        }
+                    }
+                }
+                if (totalAngularWidth >= HalfRingRad)
+                {
+                    errors.Add($"{tag} doors together span {totalAngularWidth:F3} rad, " +
+                        $"which is >= half the ring ({HalfRingRad:F3} rad) — a zone wall's " +
+                        "doors must leave at least half the ring solid.");
+                }
+
+                // Spec §3.2's own Validate paragraph, last clause: "кольцо
+                // спавна игроков … не лежат в теле дуги" — SAME form as
+                // ValidateWalls' own CheckWallSpawnClearance loop just below
+                // (solo center + every ring size up to MaxPlayers via
+                // Geometry.SpawnPosFor), Geometry.OverlapsArc swapped in for
+                // the arc shape instead of OverlapsStadium. No second policy.
+                var doorCenter = new ReadOnlySpan<float>(cfg.Arena.DoorCenterRad, start, count);
+                var doorFreeWidth = new ReadOnlySpan<float>(cfg.Arena.DoorFreeWidth, start, count);
+                CheckZoneWallSpawnClearance(errors, tag, cfg.Arena.ZoneWallRadius[i],
+                    cfg.Arena.ZoneWallHalfWidth[i], doorCenter, doorFreeWidth,
+                    spawnClearanceNeeded, float2.zero, "solo center");
+                for (int n = 2; n <= cfg.Arena.MaxPlayers; n++)
+                {
+                    for (int s = 0; s < n; s++)
+                    {
+                        float2 spawnPos = Geometry.SpawnPosFor(s, n, in cfg.Arena);
+                        CheckZoneWallSpawnClearance(errors, tag, cfg.Arena.ZoneWallRadius[i],
+                            cfg.Arena.ZoneWallHalfWidth[i], doorCenter, doorFreeWidth,
+                            spawnClearanceNeeded, spawnPos, $"ring {n}/point {s}");
+                    }
+                }
+            }
+
+            // Ledger R-27: DoorFreeWidth >= 2*(bodyRadius+Skin)+DoorClearance
+            // — one flat loop over the shared door arrays (not per-wall),
+            // since the rule itself does not depend on which wall a door
+            // belongs to.
+            float requiredDoorWidth = 2f * (maxBodyRadius + Geometry.Skin) + cfg.Arena.DoorClearance;
+            for (int i = 0; i < cfg.Arena.DoorFreeWidth.Length; i++)
+            {
+                if (cfg.Arena.DoorFreeWidth[i] < requiredDoorWidth)
+                {
+                    errors.Add($"Arena.DoorFreeWidth[{i}] must be >= " +
+                        "2*(bodyRadius+Skin)+DoorClearance " +
+                        $"(got DoorFreeWidth[{i}]={cfg.Arena.DoorFreeWidth[i]:F3}, " +
+                        $"required={requiredDoorWidth:F3}, bodyRadius={maxBodyRadius:F3}).");
+                }
+            }
+
+            // Ledger note (Task 7): Geometry.OverlapsArc is the primitive —
+            // no new arithmetic here, same discipline as ValidateWalls' own
+            // reuse of Geometry.OverlapsStadium above.
+            for (int p = 0; p < cfg.Arena.ExtractPos.Length; p++)
+            {
+                for (int w = 0; w < cfg.Arena.ZoneWallCount; w++)
+                {
+                    int start = cfg.Arena.ZoneWallDoorStart[w];
+                    int count = cfg.Arena.ZoneWallDoorCount[w];
+                    var doorCenter = new ReadOnlySpan<float>(cfg.Arena.DoorCenterRad, start, count);
+                    var doorFreeWidth = new ReadOnlySpan<float>(cfg.Arena.DoorFreeWidth, start, count);
+                    if (Geometry.OverlapsArc(cfg.Arena.ExtractPos[p], cfg.Arena.ExtractRadius,
+                            cfg.Arena.ZoneWallRadius[w], cfg.Arena.ZoneWallHalfWidth[w],
+                            doorCenter, doorFreeWidth))
+                    {
+                        errors.Add($"Arena.ExtractPos[{p}] lies inside zone wall [{w}]'s arc " +
+                            "body — a portal must not overlap the wall it sits next to.");
+                    }
+                }
+            }
+        }
+
+        /// One zone-wall-vs-one-candidate-spawn-point check — mirrors
+        /// CheckWallSpawnClearance's exact form (same message shape, same
+        /// caller pattern), Geometry.OverlapsArc swapped in for the arc
+        /// shape (Stage 3 Task 8, coordinator ledger: "reuse the existing
+        /// form and home, do not stand up a second policy").
+        static void CheckZoneWallSpawnClearance(List<string> errors, string tag, float ringR,
+            float halfW, ReadOnlySpan<float> doorCenter, ReadOnlySpan<float> doorFreeWidth,
+            float clearanceNeeded, float2 spawnPos, string pointTag)
+        {
+            if (Geometry.OverlapsArc(spawnPos, clearanceNeeded, ringR, halfW,
+                    doorCenter, doorFreeWidth))
+            {
+                errors.Add($"{tag} covers the player spawn point ({pointTag}) " +
+                    $"(needs Hero.Radius+SpawnClearance={clearanceNeeded:F3} of clearance).");
+            }
         }
 
         /// Stage 2 Task 16 (spec §3.3/§3.15, carryover-t16 items 7b/7c): the
@@ -530,8 +793,7 @@ namespace Ring.Data
         /// WaveSystem.TryFindSpawnPos' RNG-free FallbackSlots grid.
         static void ValidateWalls(List<string> errors, in SimConfig cfg, float spawnClearance)
         {
-            float wallBodyRadius = math.max(cfg.Hero.Radius,
-                math.max(cfg.Chaser.Radius, cfg.Gunner.Radius));
+            float wallBodyRadius = MaxBodyRadius(in cfg);
             float rimLimit = cfg.Arena.Radius - wallBodyRadius;
             float spawnClearanceNeeded = cfg.Hero.Radius + spawnClearance;
 

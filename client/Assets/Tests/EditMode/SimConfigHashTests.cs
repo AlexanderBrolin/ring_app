@@ -53,6 +53,14 @@ namespace Ring.Simulation.Tests
             // R-17 exists to remove.
             "GateDelaySeconds", "ExtractChannelSeconds", "RetinueCount",
             "RetinueRespawnSeconds", "DirectorReserveSlots",
+            // Stage 3 Task 8: same T13 addressee, same discipline — five new
+            // SCALAR Arena numbers (zones/doors/portals/containers). Array
+            // fields (ZoneRadius, ZoneWallRadius/HalfWidth/DoorStart/
+            // DoorCount, DoorCenterRad/DoorFreeWidth, ExtractPos/Zone/Kind)
+            // are NOT listed here — see AssertSectionAffectsHash's own doc
+            // below for why arrays never reach this set at all, pending or not.
+            "ZoneWallCount", "DoorClearance", "ExtractRadius",
+            "MaxContainers", "MaxContainerSlots",
         };
 
         [Test]
@@ -77,8 +85,28 @@ namespace Ring.Simulation.Tests
             AssertSectionAffectsHash("Chaser");
             AssertSectionAffectsHash("Gunner");
             AssertSectionAffectsHash("Wave");
+            // Stage 3 Task 8: nine array fields join the skip set
+            // (ZoneRadius, ZoneWallRadius/HalfWidth/DoorStart/DoorCount,
+            // DoorCenterRad/DoorFreeWidth, ExtractPos/Zone/Kind — eleven
+            // names, matching AssertSectionAffectsHash's own extended
+            // type-skip check below). None of the eleven gets an
+            // AssertFloat2/FloatArrayFieldAffectsHash call the way WallA/
+            // WallB/WallHalfWidth do a few lines down: every one of them is
+            // still PENDING (T13, R-17 — see PendingHashFields above), so a
+            // positive "this array moves the hash" assertion would be
+            // false. What DOES hold today is the CollectionAssert below:
+            // every array field this section declares is accounted for by
+            // name, pending or not — a twelfth array field landing on
+            // ArenaSimConfig with no entry here fails this line loudly
+            // instead of the sweep silently ignoring it (same NotSupportedException
+            // gap analysis as this file's own array/Bump split — see this
+            // task's report).
             AssertSectionAffectsHash("Arena", // scalar fields only — arrays below
-                "ObstaclePos", "ObstacleRadius", "WallA", "WallB", "WallHalfWidth");
+                "ObstaclePos", "ObstacleRadius", "WallA", "WallB", "WallHalfWidth",
+                "ZoneRadius", "ZoneWallRadius", "ZoneWallHalfWidth",
+                "ZoneWallDoorStart", "ZoneWallDoorCount",
+                "DoorCenterRad", "DoorFreeWidth",
+                "ExtractPos", "ExtractZone", "ExtractKind");
             AssertSectionAffectsHash("Visibility");
             // Ф1 fix-round (review A-I1 / B-I-2): the EIGHTH section joins the
             // sweep. Its five numbers all sit in PendingHashFields today, so
@@ -99,6 +127,84 @@ namespace Ring.Simulation.Tests
             AssertFloat2ArrayFieldAffectsHash("Arena", "WallA");
             AssertFloat2ArrayFieldAffectsHash("Arena", "WallB");
             AssertFloatArrayFieldAffectsHash("Arena", "WallHalfWidth");
+        }
+
+        /// Stage 3 Task 8 (coordinator ledger, post-RED requirement): the
+        /// ten new Arena PENDING ARRAY fields (zones/doors/portals) had no
+        /// stretch at all — unlike the scalar PendingHashFields entries
+        /// above, whose positive assert flips the day Т13 wires the field
+        /// in, an untouched array field stays silent whether Т13
+        /// remembers it or forgets it (lesson 272/263: a debt with no
+        /// enforcement is the same failure mode a Ф1 review Critical
+        /// already cost this project once). This single test is that
+        /// enforcement — written by hand, not a parallel
+        /// AssertInt32/ByteArrayFieldAffectsHash mechanism (that
+        /// generalized helper belongs to Т13, the day these arrays
+        /// genuinely enter the hash).
+        ///
+        /// MUST GO RED THE DAY Т13 WIRES ANY of these ten arrays into
+        /// SimConfigHash.Compute — that is this test's whole purpose, not
+        /// a side effect to tolerate against. TestConfigs carries no zones
+        /// (Т12 wires them), so the fixture is built by hand here, with
+        /// two elements per array wherever the shape allows, so the
+        /// SECOND element (ledger 227) is always the one mutated.
+        [Test]
+        public void PendingArenaArrays_MutationDoesNotAffectHash_UntilT13WiresThem()
+        {
+            // CS8156 (same trap this project already hit in Т3 — ledger,
+            // SimulationWorld.cs:880-886): a method's return value cannot
+            // be passed by `in` directly, it must be copied into a local
+            // first — same fix as AssertSectionAffectsHash's own
+            // `baselineCfg` a few lines below.
+            var baselineCfg = MakeConfigWithZones();
+            ulong baseline = SimConfigHash.Compute(in baselineCfg);
+
+            AssertUnchanged(c => c.Arena.ZoneRadius[1] += 1f, "ZoneRadius");
+            AssertUnchanged(c => c.Arena.ZoneWallRadius[1] += 1f, "ZoneWallRadius");
+            AssertUnchanged(c => c.Arena.ZoneWallHalfWidth[1] += 1f, "ZoneWallHalfWidth");
+            AssertUnchanged(c => c.Arena.ZoneWallDoorStart[1] += 1, "ZoneWallDoorStart");
+            AssertUnchanged(c => c.Arena.ZoneWallDoorCount[1] += 1, "ZoneWallDoorCount");
+            AssertUnchanged(c => c.Arena.DoorCenterRad[1] += 1f, "DoorCenterRad");
+            AssertUnchanged(c => c.Arena.DoorFreeWidth[1] += 1f, "DoorFreeWidth");
+            AssertUnchanged(c => c.Arena.ExtractPos[1] += new float2(1f, 0f), "ExtractPos");
+            AssertUnchanged(c => c.Arena.ExtractZone[1] += 1, "ExtractZone");
+            AssertUnchanged(c => c.Arena.ExtractKind[1] += 1, "ExtractKind");
+
+            void AssertUnchanged(Action<SimConfig> mutate, string fieldName)
+            {
+                // MakeConfigWithZones() allocates fresh arrays on every
+                // call (same discipline TestConfigs.Default() itself
+                // relies on — see ArrayContentsNotIdentity_DecideTheHash
+                // above), so mutating this copy cannot alias `baseline`'s
+                // own arrays.
+                var cfg = MakeConfigWithZones();
+                mutate(cfg);
+                Assert.AreEqual(baseline, SimConfigHash.Compute(in cfg),
+                    $"Arena.{fieldName}[1]: должен ещё оставаться вне SimConfigHash до Т13 " +
+                    "(этот тест обязан покраснеть в день, когда Т13 заведёт зоны/двери/" +
+                    "порталы в хеш — это и есть его цель)");
+            }
+        }
+
+        /// Non-empty zone/door/portal fixture for the stretch test above —
+        /// TestConfigs.Default() itself stays zone-less until Т12
+        /// (TestConfigs.DefaultArena()'s own comment), so this is built by
+        /// hand. Two elements per array wherever the shape allows.
+        static SimConfig MakeConfigWithZones()
+        {
+            var cfg = TestConfigs.Default();
+            cfg.Arena.ZoneRadius = new[] { 20f, 40f };
+            cfg.Arena.ZoneWallCount = 2;
+            cfg.Arena.ZoneWallRadius = new[] { 20f, 40f };
+            cfg.Arena.ZoneWallHalfWidth = new[] { 1f, 1f };
+            cfg.Arena.ZoneWallDoorStart = new[] { 0, 1 };
+            cfg.Arena.ZoneWallDoorCount = new[] { 1, 1 };
+            cfg.Arena.DoorCenterRad = new[] { 0f, math.PI };
+            cfg.Arena.DoorFreeWidth = new[] { 6f, 6f };
+            cfg.Arena.ExtractPos = new[] { float2.zero, new float2(20f, 0f) };
+            cfg.Arena.ExtractZone = new byte[] { 0, 1 };
+            cfg.Arena.ExtractKind = new byte[] { 0, 1 };
+            return cfg;
         }
 
         [Test]
@@ -240,11 +346,36 @@ namespace Ring.Simulation.Tests
             var skippedArrayFields = new List<string>();
             foreach (FieldInfo field in sectionField.FieldType.GetFields())
             {
-                if (field.FieldType == typeof(float2[]) || field.FieldType == typeof(float[]))
+                // Stage 3 Task 8 finding: int[]/byte[] joined float2[]/
+                // float[] here (Arena's new ZoneWallDoorStart/DoorCount are
+                // int[], ExtractZone/ExtractKind are byte[]) — without this,
+                // Bump(object) below throws NotSupportedException the
+                // moment the sweep reaches one of them (its switch only
+                // handles boxed float/int/bool, not an array instance of
+                // any element type), crashing EveryConfigNumberAffectsHash
+                // outright rather than failing an assertion. This helper
+                // had no precedent for a non-float array field before this
+                // task — T2/T3/T4 only ever added SCALAR PendingHashFields
+                // entries — so unlike those three, an int[]/byte[] field
+                // reaching this method used to have no path through it at
+                // all. Recorded in skippedArrayFields exactly like
+                // float2[]/float[] — the CollectionAssert below still
+                // catches an unlisted array field by name — but (deliberate
+                // scope decision, see this task's report) NEITHER type gets
+                // a per-element "still excluded from the hash" POSITIVE
+                // check the way PendingHashFields gives every SCALAR
+                // pending field: no AssertInt32/ByteArrayFieldAffectsHash
+                // helper exists, and building one is outside what R-17 asks
+                // ("skip-set entries for new fields, same form already in
+                // this file") — flagged for the coordinator rather than
+                // invented silently.
+                if (field.FieldType == typeof(float2[]) || field.FieldType == typeof(float[])
+                    || field.FieldType == typeof(int[]) || field.FieldType == typeof(byte[]))
                 {
-                    // Handed to AssertFloat*ArrayFieldAffectsHash — and
-                    // recorded, so the caller's expected list proves it was
-                    // handed over rather than lost.
+                    // Handed to AssertFloat*ArrayFieldAffectsHash (for the
+                    // two float-shaped types) — and recorded either way, so
+                    // the caller's expected list proves it was handed over
+                    // or knowingly deferred, rather than lost.
                     skippedArrayFields.Add(field.Name);
                     continue;
                 }

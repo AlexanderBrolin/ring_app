@@ -1,0 +1,409 @@
+using NUnit.Framework;
+using Ring.Data;
+using Ring.Simulation.Core;
+using Unity.Mathematics;
+using UnityEngine;
+
+namespace Ring.Simulation.Tests
+{
+    /// Stage 3 Task 8 (spec §3.2, Р206/Р207/Р246/Р247, errata E-6 D-I8,
+    /// ledger R-5/R-17/R-26/R-27/R-28/R-29, R-37 debt from Task 7's
+    /// PushOutOfArc doc): Geometry.ZoneOf and the new zone/door/portal/
+    /// container validations in SimConfigBuilder.Validate.
+    ///
+    /// Mutation discipline (coordinator notes, ledger 244/245/227): every
+    /// array-shaped fixture below targets its SECOND element as the
+    /// violation, keeping a valid, non-violating entry at index 0 as a
+    /// control — a loop mutated to check only index 0, or an off-by-one
+    /// upper bound, cannot pass any of these fixtures.
+    public class ZoneConfigTests
+    {
+        // ------------------------------------------------------------------
+        // Geometry.ZoneOf — a pure function of position and ZoneRadius.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void ZoneOf_ReturnsCore_InsideFirstRadius()
+        {
+            // Mutation: swap ZoneRadius[0] for ZoneRadius[1] (wrong index),
+            // or drop the Core branch entirely and fall through to Middle —
+            // both keep every OTHER test's verdict but flip this one.
+            var arena = new ArenaSimConfig { ZoneRadius = new[] { 10f, 20f } };
+            Assert.AreEqual(Zone.Core, Geometry.ZoneOf(new float2(5f, 0f), in arena));
+        }
+
+        [Test]
+        public void ZoneOf_ReturnsMiddle_BetweenRadii()
+        {
+            var arena = new ArenaSimConfig { ZoneRadius = new[] { 10f, 20f } };
+            Assert.AreEqual(Zone.Middle, Geometry.ZoneOf(new float2(15f, 0f), in arena));
+        }
+
+        [Test]
+        public void ZoneOf_ReturnsOuter_BeyondSecondRadius()
+        {
+            var arena = new ArenaSimConfig { ZoneRadius = new[] { 10f, 20f } };
+            Assert.AreEqual(Zone.Outer, Geometry.ZoneOf(new float2(25f, 0f), in arena));
+        }
+
+        [Test]
+        public void ZoneOf_OnCoreBoundary_BelongsToCore()
+        {
+            // Coordinator note (post-GREEN review): the two boundaries used
+            // to share one test method with two sequential Assert.AreEqual
+            // calls — NUnit stops a method at its first failed assertion,
+            // so a mutation on the r0 comparison would silently mask
+            // whether the r1 comparison is guarded at all in the SAME run.
+            // A regression that breaks BOTH boundaries at once would then
+            // report only one, and only half would get fixed. Split, same
+            // reasoning already applied to "0 < ZoneWallRadius < Radius"
+            // (R-25/244/245): every independent branch gets its own guard,
+            // not a shared one that can go silent about its second half.
+            //
+            // This file's usual strict `<` "inside" idiom (CircleOverlap et
+            // al.) would push a boundary point to the OUTER of its two
+            // neighbouring zones; the contract here is the opposite.
+            var arena = new ArenaSimConfig { ZoneRadius = new[] { 10f, 20f } };
+            Assert.AreEqual(Zone.Core, Geometry.ZoneOf(new float2(10f, 0f), in arena),
+                "a point exactly on the Core/Middle boundary must count as Core");
+        }
+
+        [Test]
+        public void ZoneOf_OnMiddleBoundary_BelongsToMiddle()
+        {
+            // Sibling of ZoneOf_OnCoreBoundary_BelongsToCore — see its doc
+            // for why this is a separate test method rather than a second
+            // assertion sharing the same one.
+            var arena = new ArenaSimConfig { ZoneRadius = new[] { 10f, 20f } };
+            Assert.AreEqual(Zone.Middle, Geometry.ZoneOf(new float2(20f, 0f), in arena),
+                "a point exactly on the Middle/Outer boundary must count as Middle");
+        }
+
+        // ------------------------------------------------------------------
+        // SimConfigBuilder.Validate — new zone/door/portal/container rules.
+        // Validate itself is private; every fixture goes through the public
+        // Build(), same access pattern every other ConfigTests.Validate_*
+        // test already uses. MakeDefaults is ConfigTests' own helper
+        // (promoted to internal this task, reuse > duplication).
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void Validate_RejectsNonIncreasingZoneRadii()
+        {
+            // Mutation: relax the strict-increase check from `>` to `>=`.
+            // An EQUAL pair (20, 20) passes `>=` and fails only the strict
+            // rule — a genuinely-decreasing pair would also catch a `<`
+            // vs `<=` slip, conflating two mutants in one fixture (R-25).
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 20f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("ZoneRadius"));
+        }
+
+        [Test]
+        public void Validate_RejectsWallWithoutDoor()
+        {
+            // Wall 0 (control): one door, valid. Wall 1 (subject, index 1):
+            // zero doors — the rule "every wall reaches at least one door."
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 20f, 40f };
+            a.ZoneWallHalfWidth = new[] { 1f, 1f };
+            a.ZoneWallDoorStart = new[] { 0, 1 };
+            a.ZoneWallDoorCount = new[] { 1, 0 };
+            a.DoorCenterRad = new[] { 0f };
+            a.DoorFreeWidth = new[] { 6f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("door"));
+        }
+
+        [Test]
+        public void Validate_RejectsDoorNarrowerThanBiggestBody()
+        {
+            // Ledger R-28: maxBodyRadius at Т8 = max(Hero, Chaser, Gunner) —
+            // Elite/Director are not SimConfig sections until Т10. Ledger
+            // R-27: DoorFreeWidth >= 2*(bodyRadius+Skin)+DoorClearance. Door
+            // 0 (control) clears the formula exactly; door 1 (subject,
+            // index 1) misses by a hair — a loop checking only door 0, or a
+            // formula dropping the +DoorClearance term, cannot kill this.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            float maxBodyRadius = math.max(h.Radius, math.max(c.Radius, g.Radius));
+            float required = 2f * (maxBodyRadius + Geometry.Skin) + a.DoorClearance;
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 1;
+            a.ZoneWallRadius = new[] { 20f };
+            a.ZoneWallHalfWidth = new[] { 1f };
+            a.ZoneWallDoorStart = new[] { 0 };
+            a.ZoneWallDoorCount = new[] { 2 };
+            a.DoorCenterRad = new[] { 0f, 1f };
+            a.DoorFreeWidth = new[] { required, required - 0.01f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("DoorFreeWidth"));
+        }
+
+        [Test]
+        public void Validate_RejectsPortalInsideArcBody()
+        {
+            // Portal 0 (control) sits at (0,0) — the spec's own "створ"
+            // position, deep inside Core and nowhere near the wall at
+            // radius 20. Portal 1 (subject, index 1) sits ON the ring,
+            // angularly far from the only door (at PI), squarely inside the
+            // arc's solid body. Geometry.OverlapsArc (Task 7) is the
+            // primitive Validate is meant to call — ledger note: "own
+            // arithmetic is not written here."
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 1;
+            a.ZoneWallRadius = new[] { 20f };
+            a.ZoneWallHalfWidth = new[] { 1f };
+            a.ZoneWallDoorStart = new[] { 0 };
+            a.ZoneWallDoorCount = new[] { 1 };
+            a.DoorCenterRad = new[] { math.PI };
+            a.DoorFreeWidth = new[] { 6f };
+            a.ExtractPos = new[] { Vector2.zero, new Vector2(20f, 0f) };
+            a.ExtractZone = new byte[] { (byte)Zone.Core, (byte)Zone.Outer };
+            a.ExtractKind = new byte[] { 1, 0 }; // 0 = Portal, 1 = Gate
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Extract"));
+        }
+
+        [Test]
+        public void Validate_RejectsContainerSlotsBelowInventoryCapacity()
+        {
+            // Ledger R-5: min(SlotCost) = 1 at Т8 (no ItemCatalog until
+            // Т13), so the rule collapses to
+            // MaxContainerSlots >= InventoryCapacity. Scalar field — no
+            // array, no "second element" subject applies.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.MaxContainerSlots = h.InventoryCapacity - 1;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("MaxContainerSlots"));
+        }
+
+        [Test]
+        public void Validate_RejectsZoneWallThatLocksRingInterior()
+        {
+            // R-37 (debt from Task 7's PushOutOfArc doc): "radius + halfW <
+            // ringR" is an ASSUMPTION on PushOutOfArc, not a checked
+            // precondition — Т8 is its named addressee. Wall 0 (control)
+            // leaves plenty of interior room. Wall 1 (subject, index 1)
+            // closes the hole exactly: maxBodyRadius + HalfWidth == Radius,
+            // the boundary itself (this file's own boundary-is-a-branch
+            // discipline) — a body that size could never reach the interior
+            // at all, which is exactly what PushOutOfArc's doc assumes away.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            float maxBodyRadius = math.max(h.Radius, math.max(c.Radius, g.Radius));
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 20f, 1f };
+            a.ZoneWallHalfWidth = new[] { 1f, 1f - maxBodyRadius };
+            a.ZoneWallDoorStart = new[] { 0, 1 };
+            a.ZoneWallDoorCount = new[] { 1, 1 };
+            a.DoorCenterRad = new[] { 0f, 0f };
+            a.DoorFreeWidth = new[] { 6f, 0.4f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("interior"));
+        }
+
+        [Test]
+        public void Validate_RejectsExtractRadiusNotAboveHeroRadius()
+        {
+            // Spec §3.13's own "new world rules" list (Р72): "ExtractRadius
+            // > Hero.Radius" — this task's share of errata E-6 D-I8's eight
+            // missing validations, beyond the five zone/door/portal/
+            // container tests above. Equality is also a violation (strict
+            // >), same convention as e.g. ConfigTests'
+            // Validate_AmmoStartAboveAmmoMax_Throws boundary pin.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ExtractRadius = h.Radius;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("ExtractRadius"));
+        }
+
+        // ------------------------------------------------------------------
+        // Coordinator ledger (post-RED review): plan lines 790-795 name Т8's
+        // validation list literally — "радиусы зон строго возрастают И
+        // МЕНЬШЕ Radius; у каждой стены >= одной двери; ДВЕРИ НЕ
+        // ПЕРЕКРЫВАЮТСЯ; DoorFreeWidth >= …; ExtractRadius > Hero.Radius; ни
+        // один портал не лежит в теле дуги; MaxContainerSlots >= …" — seven
+        // items, five closed above. Spec §3.2's own "Валидация" paragraph
+        // adds two more that are squarely this same home (ZoneWallHalfWidth
+        // > 0, doors together < half the ring) plus a third the coordinator
+        // kept here rather than deferring to a range: the player spawn ring
+        // must not sit inside a zone wall's arc body. HONEST RED: no stub —
+        // ValidateZoneWalls already exists, these five rules are simply
+        // absent from it yet, so every fixture below throws nothing and
+        // Assert.Throws fails on its own, exactly like the first RED round.
+        //
+        // Item "0 < ZoneWallRadius[i] < Radius" is TWO branches, not one —
+        // a single fixture cannot pin both the lower-bound and upper-bound
+        // operators (mutating either one independently must be caught), so
+        // it is split into two tests below (coordinator's five bullets
+        // become six tests here; called out explicitly, not silently).
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void Validate_RejectsOverlappingZoneWallDoors()
+        {
+            // Plan Т8 (line ~792): "двери не перекрываются" — by FULL
+            // angular cutout (Geometry.DoorHalfCutout, now public), not by
+            // free width alone: two jambs can overlap even when the free
+            // passages themselves would not. Wall 0 (control) carries a
+            // single door — no pair exists, so no overlap is possible no
+            // matter how the rule is written. Wall 1 (subject, index 1)
+            // carries two doors 0.3 rad apart whose half-cutouts (0.2 rad
+            // each) sum to 0.4 rad > 0.3 — they overlap.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 20f, 20f };
+            a.ZoneWallHalfWidth = new[] { 1f, 1f };
+            a.ZoneWallDoorStart = new[] { 0, 1 };
+            a.ZoneWallDoorCount = new[] { 1, 2 };
+            a.DoorCenterRad = new[] { 0f, 0f, 0.3f };
+            a.DoorFreeWidth = new[] { 6f, 6f, 6f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("overlap"));
+        }
+
+        [Test]
+        public void Validate_RejectsZoneWallRadiusNotPositive()
+        {
+            // Plan Т8 + spec §3.2: "0 < ZoneWallRadius[i]" — lower-bound
+            // half of the compound rule. 0 exactly (not a negative number)
+            // pins the `> 0` vs `>= 0` boundary specifically. Wall 0
+            // (control, radius 20) stays valid; wall 1 (subject, index 1)
+            // is the violator.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 20f, 0f };
+            a.ZoneWallHalfWidth = new[] { 1f, 1f };
+            a.ZoneWallDoorStart = new[] { 0, 1 };
+            a.ZoneWallDoorCount = new[] { 1, 1 };
+            a.DoorCenterRad = new[] { 0f, 0f };
+            a.DoorFreeWidth = new[] { 6f, 6f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("must be > 0"));
+        }
+
+        [Test]
+        public void Validate_RejectsZoneWallRadiusNotBelowArenaRadius()
+        {
+            // Plan Т8: "…и меньше Radius" — upper-bound half of the same
+            // compound rule, isolated from the lower-bound test above (a
+            // mutant that drops ONLY the upper bound cannot be caught by
+            // ZoneWallRadius = 0, and vice versa — R-25 non-overlapping
+            // kill sets). Wall 1 (subject) sits exactly AT Arena.Radius —
+            // fixture arithmetic (a.Radius), not a copied literal;
+            // equality is the violation, same "strict <" convention as
+            // every boundary pin in this file.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 20f, a.Radius };
+            a.ZoneWallHalfWidth = new[] { 1f, 1f };
+            a.ZoneWallDoorStart = new[] { 0, 1 };
+            a.ZoneWallDoorCount = new[] { 1, 1 };
+            a.DoorCenterRad = new[] { 0f, 0f };
+            a.DoorFreeWidth = new[] { 6f, 6f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("must be < Arena.Radius"));
+        }
+
+        [Test]
+        public void Validate_RejectsZoneWallHalfWidthNotPositive()
+        {
+            // Spec §3.2's own Validate paragraph: "HalfWidth > 0" — plan
+            // Т8's own list never restates this (it inherits ZoneWallHalfWidth
+            // from the door-width formula's bodyRadius+HalfWidth arithmetic
+            // without ever validating the field alone), so it is a genuine
+            // gap, not a duplicate of any test above. Wall 1 (subject,
+            // radius 40 so R-37's interior check stays quiet regardless).
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 20f, 40f };
+            a.ZoneWallHalfWidth = new[] { 1f, 0f };
+            a.ZoneWallDoorStart = new[] { 0, 1 };
+            a.ZoneWallDoorCount = new[] { 1, 1 };
+            a.DoorCenterRad = new[] { 0f, 0f };
+            a.DoorFreeWidth = new[] { 6f, 6f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("ZoneWallHalfWidth"));
+        }
+
+        [Test]
+        public void Validate_RejectsZoneWallDoorsExceedingHalfTheRing()
+        {
+            // Spec §3.2: "двери … суммарно занимают меньше половины кольца"
+            // — SUM of every door's FULL angular width (2*DoorHalfCutout)
+            // on one wall must stay under pi radians (half of the 2*pi
+            // ring). Wall 0 (control) carries a single narrow door, nowhere
+            // near the cap. Wall 1 (subject, index 1) carries two doors on
+            // OPPOSITE sides of a small ring (centers 0 and pi, so they do
+            // NOT overlap each other — Validate_RejectsOverlappingZoneWallDoors
+            // above is a different branch) whose full widths (1.6 rad each)
+            // sum to 3.2 rad > pi (~3.14) — the budget violation, not an
+            // overlap.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 20f, 2f };
+            a.ZoneWallHalfWidth = new[] { 1f, 0.1f };
+            a.ZoneWallDoorStart = new[] { 0, 1 };
+            a.ZoneWallDoorCount = new[] { 1, 2 };
+            a.DoorCenterRad = new[] { 0f, 0f, math.PI };
+            a.DoorFreeWidth = new[] { 6f, 3f, 3f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("half the ring"));
+        }
+
+        [Test]
+        public void Validate_RejectsZoneWallOverPlayerSpawnRing()
+        {
+            // Spec §3.2's own Validate paragraph, last clause: "кольцо
+            // спавна игроков … не лежат в теле дуги". Reuses the existing
+            // CheckSpawnClearance/CheckWallSpawnClearance FORM (same loop —
+            // solo center + every ring size up to MaxPlayers via
+            // Geometry.SpawnPosFor — same message shape) with
+            // Geometry.OverlapsArc swapped in for the arc shape; no second
+            // policy. Wall 1 (subject) sits exactly on the multiplayer
+            // spawn ring (a.Radius * a.PlayerSpawnRingFrac — fixture
+            // arithmetic, not a copied literal) with its one door far away
+            // (pi/2) from every spawn angle (0, 2pi/3, 4pi/3 for the
+            // 3-player ring; 0, pi for the 2-player one), so every
+            // multiplayer spawn point falls inside the wall's solid body.
+            // The solo center (0,0) can never be a violation for ANY arc —
+            // InArcBand's own inner-radius clamp excludes the exact
+            // center — so this rule is only ever caught through the ring
+            // loop, with no separate "not just solo center" companion test
+            // needed (unlike the Stage 2 straight-wall precedent).
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 20f, a.Radius * a.PlayerSpawnRingFrac };
+            a.ZoneWallHalfWidth = new[] { 1f, 1f };
+            a.ZoneWallDoorStart = new[] { 0, 1 };
+            a.ZoneWallDoorCount = new[] { 1, 1 };
+            a.DoorCenterRad = new[] { 0f, math.PI / 2f };
+            a.DoorFreeWidth = new[] { 6f, 6f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("spawn point"));
+        }
+    }
+}

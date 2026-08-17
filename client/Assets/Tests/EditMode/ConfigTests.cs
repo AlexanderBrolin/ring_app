@@ -10,7 +10,10 @@ namespace Ring.Simulation.Tests
     {
         const float Eps = 1e-5f;
 
-        static (HeroConfig, WeaponConfig, MobConfig, MobConfig, WaveConfig, ArenaConfig, VisibilityConfig) MakeDefaults()
+        // Stage 3 Task 8: internal, not private — ZoneConfigTests.cs (same
+        // assembly, reuse > duplication) builds fixtures off the same seven
+        // fresh-SO tuple rather than re-declaring this construction.
+        internal static (HeroConfig, WeaponConfig, MobConfig, MobConfig, WaveConfig, ArenaConfig, VisibilityConfig) MakeDefaults()
         {
             var hero = ScriptableObject.CreateInstance<HeroConfig>();
             var weapon = ScriptableObject.CreateInstance<WeaponConfig>();
@@ -1272,6 +1275,40 @@ namespace Ring.Simulation.Tests
             // Stage 3 Task 3: same documented deviation as MaxPlayers above —
             // MaxPickups genuinely flows SO -> builder -> SimConfig.
             Assert.AreEqual(e.MaxPickups, a.MaxPickups);
+            // Stage 3 Task 8: same documented deviation as MaxPickups above —
+            // every new Arena field genuinely flows SO -> builder -> SimConfig,
+            // zone/door/portal arrays included (both sides are empty before
+            // Т12, so this is an equal-empty-arrays comparison today, not a
+            // vacuous one — TestConfigs.DefaultArena()'s own comment).
+            Assert.AreEqual(e.DoorClearance, a.DoorClearance, Eps);
+            Assert.AreEqual(e.ExtractRadius, a.ExtractRadius, Eps);
+            Assert.AreEqual(e.MaxContainers, a.MaxContainers);
+            Assert.AreEqual(e.MaxContainerSlots, a.MaxContainerSlots);
+            Assert.AreEqual(e.ZoneRadius.Length, a.ZoneRadius.Length);
+            for (int i = 0; i < e.ZoneRadius.Length; i++)
+                Assert.AreEqual(e.ZoneRadius[i], a.ZoneRadius[i], Eps);
+            Assert.AreEqual(e.ZoneWallCount, a.ZoneWallCount);
+            for (int i = 0; i < e.ZoneWallCount; i++)
+            {
+                Assert.AreEqual(e.ZoneWallRadius[i], a.ZoneWallRadius[i], Eps);
+                Assert.AreEqual(e.ZoneWallHalfWidth[i], a.ZoneWallHalfWidth[i], Eps);
+                Assert.AreEqual(e.ZoneWallDoorStart[i], a.ZoneWallDoorStart[i]);
+                Assert.AreEqual(e.ZoneWallDoorCount[i], a.ZoneWallDoorCount[i]);
+            }
+            Assert.AreEqual(e.DoorCenterRad.Length, a.DoorCenterRad.Length);
+            for (int i = 0; i < e.DoorCenterRad.Length; i++)
+            {
+                Assert.AreEqual(e.DoorCenterRad[i], a.DoorCenterRad[i], Eps);
+                Assert.AreEqual(e.DoorFreeWidth[i], a.DoorFreeWidth[i], Eps);
+            }
+            Assert.AreEqual(e.ExtractPos.Length, a.ExtractPos.Length);
+            for (int i = 0; i < e.ExtractPos.Length; i++)
+            {
+                Assert.AreEqual(e.ExtractPos[i].x, a.ExtractPos[i].x, Eps);
+                Assert.AreEqual(e.ExtractPos[i].y, a.ExtractPos[i].y, Eps);
+                Assert.AreEqual(e.ExtractZone[i], a.ExtractZone[i]);
+                Assert.AreEqual(e.ExtractKind[i], a.ExtractKind[i]);
+            }
             for (int i = 0; i < e.ObstacleCount; i++)
             {
                 Assert.AreEqual(e.ObstaclePos[i].x, a.ObstaclePos[i].x, Eps);

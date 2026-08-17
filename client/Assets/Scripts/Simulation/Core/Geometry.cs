@@ -275,6 +275,33 @@ namespace Ring.Simulation.Core
             return hit;
         }
 
+        // --- Stage 3 Task 8: which zone a position is in (spec §3.2, Р206) ---
+
+        /// Which of the arena's three concentric rings `pos` falls in — a
+        /// PURE function of position and arena.ZoneRadius, called wherever a
+        /// zone is needed (wave spawn, loot tier, portal gate) rather than
+        /// stored on any entity (see Zone's own doc, SimConfig.cs).
+        ///
+        /// Boundary convention (task-8-brief's own callout: "the boundary is
+        /// a branch, not decoration"): a position exactly ON a boundary
+        /// belongs to the INNER (smaller-radius) zone, which is why both
+        /// comparisons below are `&lt;=`, not this file's usual strict `&lt;`
+        /// "inside" idiom (CircleOverlap et al.) — a plain `&lt;` would push a
+        /// point exactly on ZoneRadius[0] past the Core check and into
+        /// Middle instead. ZoneConfigTests.ZoneOf_OnCoreBoundary_BelongsToCore
+        /// and .ZoneOf_OnMiddleBoundary_BelongsToMiddle pin the two
+        /// boundaries independently, as two separate test methods (not one
+        /// with two sequential asserts) — NUnit stops a method at its first
+        /// failed assertion, so sharing one method would let a mutation on
+        /// r0 mask whether r1 is guarded at all in the same run.
+        public static Zone ZoneOf(float2 pos, in ArenaSimConfig arena)
+        {
+            float distSq = math.lengthsq(pos);
+            if (distSq <= arena.ZoneRadius[0] * arena.ZoneRadius[0]) return Zone.Core;
+            if (distSq <= arena.ZoneRadius[1] * arena.ZoneRadius[1]) return Zone.Middle;
+            return Zone.Outer;
+        }
+
         // --- Stage 3 Task 7: the arc barrier (spec §3.2, Р246/Р247) ---
         //
         // An arc is the ring of radius `ringR` and half-width `halfW` with an
@@ -289,7 +316,14 @@ namespace Ring.Simulation.Core
         /// filled back in by a jamb circle of radius halfW, so the cutout
         /// itself measures `freeWidth + 2*halfW` of arc at radius `ringR` and
         /// what actually passes between the two jambs is `freeWidth`.
-        static float DoorHalfCutout(float freeWidth, float ringR, float halfW)
+        ///
+        /// Public since Stage 3 Task 8 (coordinator ledger, plan-vs-brief
+        /// gap fix): SimConfigBuilder.ValidateZoneWalls reuses this exact
+        /// formula for two rules — a wall's doors must not overlap and
+        /// must not together occupy half the ring or more — rather than
+        /// restating "(freeWidth + 2*halfW) / R" a second time (rule 2,
+        /// reuse > duplication). No behavior change to any existing caller.
+        public static float DoorHalfCutout(float freeWidth, float ringR, float halfW)
             => (freeWidth + 2f * halfW) / (2f * ringR);
 
         /// Center of one of a door's two jamb circles: on radius `ringR`, at a
@@ -301,6 +335,19 @@ namespace Ring.Simulation.Core
             return new float2(math.cos(angle), math.sin(angle)) * ringR;
         }
 
+        /// Wraps an angular delta into (-pi, pi]. Public since Stage 3 Task 8
+        /// (coordinator ledger): SimConfigBuilder.ValidateZoneWalls' door-
+        /// overlap rule needs the identical wrap to compare two door
+        /// centers' angular distance — pulled out of InDoorCutout's own
+        /// inline formula rather than restated a second time (rule 2). No
+        /// behavior change: InDoorCutout below now calls this instead of
+        /// computing the same two lines itself.
+        public static float WrapAngle(float delta)
+        {
+            const float twoPi = 2f * math.PI;
+            return delta - twoPi * math.round(delta / twoPi);
+        }
+
         /// Is `angle` inside some door's cutout? The one new test in the whole
         /// primitive (spec §3.2's own "what is written fresh" list).
         /// `doorCenter` comes from config in whatever winding the arena was
@@ -310,11 +357,9 @@ namespace Ring.Simulation.Core
         static bool InDoorCutout(float angle, float ringR, float halfW,
             System.ReadOnlySpan<float> doorCenter, System.ReadOnlySpan<float> doorFreeWidth)
         {
-            const float twoPi = 2f * math.PI;
             for (int j = 0; j < doorCenter.Length; j++)
             {
-                float delta = angle - doorCenter[j];
-                delta -= twoPi * math.round(delta / twoPi);
+                float delta = WrapAngle(angle - doorCenter[j]);
                 if (math.abs(delta) < DoorHalfCutout(doorFreeWidth[j], ringR, halfW))
                     return true;
             }
