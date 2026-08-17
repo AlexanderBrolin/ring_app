@@ -15,7 +15,23 @@ namespace Ring.Simulation.Core
         public MobState[] Mobs;
         public int ProjectileCount;
         public ProjectileState[] Projectiles;
+        /// Ground pickups of this tick (Stage 3 Т6) — same count-plus-array
+        /// pair as Mobs/Projectiles above, sized to Arena.MaxPickups. A LOCAL
+        /// world fills them from SimulationWorld.CaptureSnapshot; the
+        /// networked backend leaves the count at zero until the pickups block
+        /// reaches the wire (Т25), which reads as "this frame carries no
+        /// pickups" — the same thing every other count says when nothing was
+        /// decoded into it.
+        public int PickupCount;
+        public PickupState[] Pickups;
         public WaveState Wave;
+        /// The match's flow phase (Stage 3 Т6) — a single struct like Wave
+        /// above and WorldStats below, at the same canonical position it
+        /// holds in StateHash/WorldSave. Its consumers are the extraction UI
+        /// and the gate/portal views (Ф6-Ф7); like PickupCount above it stays
+        /// at its default on the networked path until Т25 puts the phase on
+        /// the wire.
+        public MatchState Match;
         /// Personal per-player match counters (Stage 2 Task 5) — name symmetric
         /// to Players above (both arrays indexed by player); Stats below is the
         /// synonym for the local player's own entry, same pattern as Player/Players.
@@ -101,6 +117,10 @@ namespace Ring.Simulation.Core
             Players = new PlayerState[arena.MaxPlayers];
             Mobs = new MobState[arena.MaxMobs];
             Projectiles = new ProjectileState[arena.MaxProjectiles];
+            // Stage 3 Т6: sized to the arena's own pickup cap, exactly like
+            // Mobs/Projectiles above — the same cap SimulationWorld sizes its
+            // live array from, so a capture can never overrun this one.
+            Pickups = new PickupState[arena.MaxPickups];
             PlayerStats = new MatchStats[arena.MaxPlayers];
             // Sized to the WHOLE roster, like Players/PlayerStats above and for
             // the same reason: the array index IS the player's slot, so a
@@ -146,7 +166,10 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < other.MobCount; i++) Mobs[i] = other.Mobs[i];
             ProjectileCount = other.ProjectileCount;
             for (int i = 0; i < other.ProjectileCount; i++) Projectiles[i] = other.Projectiles[i];
+            PickupCount = other.PickupCount;
+            for (int i = 0; i < other.PickupCount; i++) Pickups[i] = other.Pickups[i];
             Wave = other.Wave;
+            Match = other.Match;
             for (int i = 0; i < other.PlayerCount; i++) PlayerStats[i] = other.PlayerStats[i];
             WorldStats = other.WorldStats;
         }

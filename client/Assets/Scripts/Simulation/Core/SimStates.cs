@@ -27,9 +27,9 @@ namespace Ring.Simulation.Core
         /// with Ammo already at 0, is emergency). Clamped down to
         /// WeaponSimConfig.AmmoMax by SimulationWorld.ApplyConfig, same
         /// hot-tweak-ceiling contract as every other PlayerState magnitude
-        /// (HotTweakTests.ApplyConfig_ReflectiveClampPass...). Excluded from
-        /// StateHash until the sanctioned re-pin (Т6) — see
-        /// WorldLifecycleTests.PendingHashFields.
+        /// (HotTweakTests.ApplyConfig_ReflectiveClampPass...). Part of
+        /// StateHash since Т6 (the sanctioned re-pin #1), folded in right
+        /// after FireCooldown, the cooldown it shares a weapon with.
         public int Ammo;
 
         /// Task 12: the dash's current speed — set to Hero.DashSpeed on dash
@@ -46,9 +46,8 @@ namespace Ring.Simulation.Core
         /// (Interfaces) — the two share one invariant, `!(Alive &&
         /// Extracted)`, though nothing in this task enforces it: no system
         /// sets Extracted true until the extraction behavior itself lands
-        /// (Т23/Т24). Excluded from StateHash until the sanctioned re-pin
-        /// (Т6, errata E-1's "structural rebuild") — see
-        /// WorldLifecycleTests.PendingHashFields.
+        /// (Т23/Т24). Part of StateHash since Т6 (the sanctioned re-pin #1,
+        /// errata E-1's "structural rebuild"), hashed right after Alive.
         public bool Alive, Extracted;
 
         /// Which route Extracted was earned through (Stage 3 Task 1, errata
@@ -56,8 +55,8 @@ namespace Ring.Simulation.Core
         /// (ExtractedEarly), 2 = the gate (ExtractedCore) — Т24 needs the two
         /// outcomes distinguishable for credits/summary. Meaningless while
         /// Extracted is false; inert until Т23/Т24 give it a writer.
-        /// Excluded from StateHash until the sanctioned re-pin (Т6) — see
-        /// WorldLifecycleTests.PendingHashFields.
+        /// Part of StateHash since Т6, hashed right after the Extracted it
+        /// qualifies.
         public byte ExtractKind;
 
         /// Aim-down-sights settle timer (Task 14): grows towards
@@ -104,15 +103,15 @@ namespace Ring.Simulation.Core
         /// enters StateHash together at the sanctioned re-pin rather than
         /// dribbling in across Ф3-Ф5 and shifting the golden digest more
         /// than once (errata E-1's whole point). Behavior (start/tick/abort)
-        /// is each named task's own job. Excluded from StateHash until Т6 —
-        /// see WorldLifecycleTests.PendingHashFields.
+        /// is each named task's own job. Part of StateHash since Т6 — that
+        /// re-pin is where "enters together" was made good on.
         public float LootTimer, RepairTimer, ExtractTimer;
 
         /// Which container/slot LootTimer is currently channeling against
         /// (Stage 3 Task 1; behavior in Т17). LootTargetContainerId is a
         /// Container entity id, 0 meaning "no loot channel in progress"
-        /// (entity ids start at 1 — SimulationWorld._nextEntityId). Excluded
-        /// from StateHash until Т6 — see WorldLifecycleTests.PendingHashFields.
+        /// (entity ids start at 1 — SimulationWorld._nextEntityId). Part of
+        /// StateHash since Т6, beside the timer the pair belongs to.
         public int LootTargetContainerId;
         public byte LootTargetSlot;
     }
@@ -182,10 +181,10 @@ namespace Ring.Simulation.Core
         /// OwnerIndex above: that field names a PLAYER slot and drives credit,
         /// this one names a MOB entity and drives ProjectileSystem's
         /// friendly-fire exclusion — a gunner's own round must never gather
-        /// its own shooter as a HitMob candidate. Declared here, inert
-        /// (errata E-1's "structural rebuild" discipline): excluded from
-        /// StateHash until the sanctioned re-pin (Т6) — see
-        /// WorldLifecycleTests.PendingHashFields.
+        /// its own shooter as a HitMob candidate. Declared inert in Task 5
+        /// (errata E-1's "structural rebuild" discipline) and part of
+        /// StateHash since Т6, hashed right after the two owner fields it
+        /// completes.
         public int OwnerEntityId;
     }
 
@@ -202,13 +201,12 @@ namespace Ring.Simulation.Core
     /// `Amount` is `int`, not `ushort` (Р258, spec §3.6, finding D-9): the
     /// reflective hash sweep (WorldLifecycleTests.Bump) only knows
     /// float/int/bool/byte/float2/enum and would throw
-    /// NotSupportedException on an unhandled ushort the moment Pickups
-    /// joins StateHash at the sanctioned re-pin (Т6) — `Amount` rides the
-    /// wire separately, quantized, so the extra two bytes of in-memory size
-    /// buy nothing on that path either. Deliberately excluded from
-    /// StateHash/WorldSave/CaptureSnapshot for now, same "new top-level
-    /// entity, no consumer yet to restore it against" treatment
-    /// MatchState got in Stage 3 Task 1 — see that struct's own doc.
+    /// NotSupportedException on an unhandled ushort — which is no longer a
+    /// forecast but a live constraint, since Т6 gave this struct its own
+    /// sweep pass; `Amount` rides the wire separately, quantized, so the
+    /// extra two bytes of in-memory size buy nothing on that path either.
+    /// Part of StateHash/WorldSave/CaptureSnapshot since Т6 (the sanctioned
+    /// re-pin #1), at the canonical position right after the projectiles.
     public struct PickupState
     {
         public int Id;
@@ -241,11 +239,11 @@ namespace Ring.Simulation.Core
     /// DirectorDeathTick is 0 while the Director is alive or has not yet been
     /// activated; Т21 sets it to the world tick the Director died on, which
     /// is what the GateDelaySeconds countdown (SimConfig.Flow) counts from.
-    /// Excluded from StateHash/WorldSave/CaptureSnapshot until the sanctioned
-    /// re-pin (Т6) — unlike PlayerState/MatchStats/WorldStats' new fields,
-    /// this struct gets no reflective hash-sweep pass of its own in T1 either
-    /// (there is nothing yet to restore it against — see
-    /// SimulationWorld.SetMatchForTest's own doc).
+    /// Part of StateHash/WorldSave/CaptureSnapshot since Т6 (the sanctioned
+    /// re-pin #1), at the canonical position right after the wave — and, from
+    /// the same task, covered by a reflective hash-sweep pass of its own
+    /// (WorldLifecycleTests), which is what keeps the NEXT field added here
+    /// from joining the struct without joining the hash.
     public struct MatchState
     {
         public MatchPhase Phase;
@@ -273,8 +271,8 @@ namespace Ring.Simulation.Core
         /// E-1 item 1 listing it beside these two, that is the errata's own
         /// imprecision (owner decision R-13): SurvivedSeconds belongs to
         /// MatchSummary (Т24, computed in BuildSummary from ticks), not to a
-        /// per-tick counter hashed every frame. Excluded from StateHash until
-        /// Т6 — see WorldLifecycleTests.PendingHashFields.
+        /// per-tick counter hashed every frame. Part of StateHash since Т6,
+        /// after DamageTaken.
         public int AmmoSpent, CellsPicked;
     }
 
@@ -293,8 +291,8 @@ namespace Ring.Simulation.Core
         /// 3 (SimulationWorld.SpawnPickup's CAP-overflow branch only — a
         /// zero-amount drop is refused silently and does not count as a
         /// skip, see SpawnPickup's own doc, Р260); ContainerSpawnsSkipped
-        /// still awaits its own later task. Excluded from StateHash until
-        /// Т6 — see WorldLifecycleTests.PendingHashFields.
+        /// still awaits its own later task. Part of StateHash since Т6,
+        /// after the three counters above.
         public int PickupSpawnsSkipped, ContainerSpawnsSkipped;
     }
 }

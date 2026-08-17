@@ -812,6 +812,9 @@ namespace Ring.Simulation.Tests
             // exactly like Players/PlayerStats above.
             { nameof(RenderSnapshot.PlayerKnown), nameof(RenderSnapshot.PlayerCount) },
             { nameof(RenderSnapshot.PlayerAliveInMatch), nameof(RenderSnapshot.PlayerCount) },
+            // Stage 3 Т6: ground pickups, bounded by their own count exactly
+            // like Mobs/Projectiles above.
+            { nameof(RenderSnapshot.Pickups), nameof(RenderSnapshot.PickupCount) },
         };
 
         /// Fills every field of `s` with a distinct, non-default value so a
@@ -860,6 +863,22 @@ namespace Ring.Simulation.Tests
                     Pos = new float2(3f + i, 4f + i),
                     Damage = 9f + i,
                 };
+            // Stage 3 Т6: the pickup array and the match's flow state, the two
+            // fields RenderSnapshot grew with the extraction economy. Both are
+            // filled with values no constructor could have left behind
+            // (nonzero id/amount, a phase past Farm) so the guard below can
+            // tell "copied" from "never written".
+            s.PickupCount = math.min(2, arena.MaxPickups);
+            for (int i = 0; i < s.PickupCount; i++)
+                s.Pickups[i] = new PickupState
+                {
+                    Id = 300 + i,
+                    Pos = new float2(5f + i, 6f + i),
+                    Kind = PickupKind.EnergyCell,
+                    Amount = 7 + i,
+                    Ttl = 42.5f + i,
+                };
+            s.Match = new MatchState { Phase = MatchPhase.GateOpen, DirectorDeathTick = 77 };
             s.Wave = new WaveState
             {
                 Phase = WavePhase.Active,
@@ -887,10 +906,13 @@ namespace Ring.Simulation.Tests
         /// `value == default(T)` for a boxed value of any VALUE type the
         /// fixture might produce (int/uint/float/bool/byte, enums, `float2`,
         /// and the plain structs `PlayerState`/`MobState`/`ProjectileState`/
-        /// `WaveState`/`MatchStats`/`WorldStats` — none of them nest a
-        /// reference type, confirmed by inspection of `Simulation/Core/
-        /// SimStates.cs`, so comparing against a freshly-activated instance of
-        /// the same type is exact). A REFERENCE type this helper was never
+        /// `PickupState`/`WaveState`/`MatchState`/`MatchStats`/`WorldStats` —
+        /// none of them nest a reference type, confirmed by inspection of
+        /// `Simulation/Core/SimStates.cs`, so comparing against a
+        /// freshly-activated instance of the same type is exact. The one
+        /// piece of world state that IS a reference type, the backpack
+        /// (`Loot.Inventory`), deliberately never reaches a render frame —
+        /// see `SimulationWorld.CaptureSnapshot`'s own note on why. A REFERENCE type this helper was never
         /// taught to compare fails LOUDLY (fix-round 1, IMPORTANT #3:
         /// "unknown type = loud Fail demanding the filler be taught") rather
         /// than silently reporting a wrong answer.

@@ -1648,6 +1648,17 @@ namespace Ring.Presentation.Net
             }
             slot.MobCount = 0;
             slot.ProjectileCount = 0;
+            // Stage 3 Т6: the two fields `RenderSnapshot` grew with the
+            // extraction economy. Nothing decodes them yet — the pickups
+            // block and the match phase reach the wire in Т25 — and they are
+            // cleared here anyway, for the reason this method exists: the
+            // ring hands back a RECYCLED frame, so the moment a decoder does
+            // start writing them, a tick that carried pickups would otherwise
+            // leave them standing in the next tick that carries none. Adding
+            // the clear together with the fields costs one line; discovering
+            // it missing costs a ghost crate on the floor.
+            slot.PickupCount = 0;
+            slot.Match = default;
             slot.Wave = default;
             slot.WorldStats = default;
         }

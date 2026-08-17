@@ -6,11 +6,11 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.Core
 {
-    /// Deterministic world: fixed-dt ticks, two independent RNG streams seeded
-    /// from match-config (Task 3: split from the former single shared Random) —
-    /// weapon spread (_spreadRng) and wave director (_waveRng) draw from
-    /// separate streams so one system's RNG consumption never perturbs the
-    /// other's sequence.
+    /// Deterministic world: fixed-dt ticks, three independent RNG streams seeded
+    /// from match-config (Task 3: split from the former single shared Random;
+    /// Stage 3 Т6 added the third) — weapon spread (_spreadRng), wave director
+    /// (_waveRng) and loot placement (_lootRng) draw from separate streams so
+    /// one system's RNG consumption never perturbs the other's sequence.
     /// No UnityEngine (asmdef: noEngineReferences) — Critical Rule 1.
     public sealed class SimulationWorld
     {
@@ -29,6 +29,18 @@ namespace Ring.Simulation.Core
         int _tick;
         Random _spreadRng;
         Random _waveRng;
+        /// Stage 3 Т6 (spec Р230): the THIRD stream, for loot placement —
+        /// container layout at world start (Т15) and the drop rolls that
+        /// follow it. Declared here, ahead of its consumer, because it is
+        /// canonical world state the moment it exists: it enters StateHash
+        /// and WorldSave in this task (spec Р294), and a replay that
+        /// restored a save without it would diverge from the live world at
+        /// the first draw Т15 makes. Kept out of _waveRng for the reason
+        /// Р230 states outright — placing containers pulls RNG at world
+        /// start, so sharing the wave stream would make a purely numeric
+        /// balance change (one crate more) shift every later wave draw, i.e.
+        /// move the golden for no behavioral reason.
+        Random _lootRng;
         SimConfig _config;
         // Stage 2 Task 4: length is the match's fixed playerCount (constructor
         // param), not a cap — unlike _mobs/_projectiles below, the player
@@ -105,9 +117,9 @@ namespace Ring.Simulation.Core
         // Stage 3 Task 1 (spec Ф1, errata E-1/E-2): match-flow phase state —
         // declared here, inert. Behavior (phase transitions, gate/portal
         // timers) belongs to the state machine Т21 builds (Ф4); this task
-        // only gives the phase a home so every field the extraction economy
-        // needs enters StateHash together at the sanctioned re-pin (Т6)
-        // instead of dribbling in across later Ф1 tasks (errata E-1's
+        // only gave the phase a home so every field the extraction economy
+        // needs entered StateHash together at the sanctioned re-pin (Т6,
+        // done) instead of dribbling in across later Ф1 tasks (errata E-1's
         // structural rebuild). Defaults to Phase = Farm (the enum's zero
         // value) and DirectorDeathTick = 0 ("Director alive or not yet
         // activated") — both already correct as the C# struct default,
@@ -202,6 +214,10 @@ namespace Ring.Simulation.Core
             // are required so the XOR operands stay uint (PA9).
             _spreadRng = new Random(Fold(folded ^ 0xB5297A4Du));
             _waveRng = new Random(Fold(folded ^ 0x68E31DA4u));
+            // Stage 3 Т6 (spec Р230): the loot stream, folded from the SAME
+            // seed with its own constant, exactly like the two above — same
+            // per-stream zero-guard, same u-suffix requirement (PA9).
+            _lootRng = new Random(Fold(folded ^ 0x1B56C4E9u));
             _config = config;
             _players = new PlayerState[playerCount];
             _sanitizedInputs = new SimInput[playerCount];
@@ -611,6 +627,15 @@ namespace Ring.Simulation.Core
         /// from SpreadRng so weapon fire never shifts wave spawn draws.
         internal ref Random WaveRng => ref _waveRng;
 
+        /// The loot-placement stream's seam (Stage 3 Т6, spec Р230), same
+        /// ref-return shape as the two above so container layout mutates it in
+        /// place instead of round-tripping copies. Its production consumer is
+        /// Т15 (container placement); until then the only draws through it are
+        /// the ones WorldLifecycleTests makes to prove the stream is really
+        /// hashed and really saved — which is exactly the property Т15 will
+        /// depend on and cannot verify for itself after the fact.
+        internal ref Random LootRng => ref _lootRng;
+
         /// Combat systems' seam into one player's personal counters (ShotsFired, ...)
         /// (Stage 2 Task 5 — was a single-slot property, now indexed by shooter).
         internal ref MatchStats StatsRef(int index) => ref _matchStats[index];
@@ -761,7 +786,7 @@ namespace Ring.Simulation.Core
         /// CellsOnDeath/CorpseCellFraction, this task's own golden-safety
         /// fixture) must burn no id and leave every hashed channel exactly
         /// as it was — spawning a PickupState with Amount = 0 would still
-        /// advance _nextEntityId and, once Pickups joins StateHash (Т6),
+        /// advance _nextEntityId and, now that Pickups is in StateHash (Т6),
         /// shift the digest for a config that legitimately drops nothing.
         /// Capped at Arena.MaxPickups exactly like SpawnMob/SpawnProjectile
         /// above: past the cap the NEW drop is skipped and counted
@@ -1193,15 +1218,41 @@ namespace Ring.Simulation.Core
             System.Array.Copy(_mobs, target.Mobs, _mobCount);
             target.ProjectileCount = _projectileCount;
             System.Array.Copy(_projectiles, target.Projectiles, _projectileCount);
+            // Stage 3 Т6 (spec Р294): ground pickups take their canonical
+            // place right after the projectiles, same count-then-copy shape
+            // as the two entity arrays above.
+            target.PickupCount = _pickupCount;
+            System.Array.Copy(_pickups, target.Pickups, _pickupCount);
             target.Wave = _wave;
+            // Stage 3 Т6: the match's flow state, a single plain-struct
+            // assignment right after the wave — same shape as WorldStats
+            // below, and the same canonical position it holds in StateHash.
+            target.Match = _match;
             // Stage 2 Task 5: PlayerStats mirrors Players' array-copy pattern
             // above; WorldStats is a single plain-struct assignment, same as Wave.
             System.Array.Copy(_matchStats, target.PlayerStats, _matchStats.Length);
             target.WorldStats = _worldStats;
+            // Backpacks are deliberately NOT copied here (Stage 3 Т6). Every
+            // other field of RenderSnapshot is a struct or a struct array, so
+            // its CopyFrom is a plain assignment/indexed copy — an Inventory
+            // is a reference type, and putting one in the render frame would
+            // either alias the live world's own backpack into a frame the
+            // renderer keeps across ticks, or force a per-frame clone on a
+            // path whose whole contract is "no allocation". The backpack's
+            // own consumer is the inventory window (Т20), which reads the
+            // world/its reliable message rather than the interpolated render
+            // frame, so nothing is lost by leaving it out. StateHash and
+            // WorldSave — the two places backpacks ARE canonical state — do
+            // carry them, at the canonical order's own last position.
         }
 
         /// Deep-copies the full canonical state (config excluded) for rollback/replay.
         /// Allocates — call outside the hot tick path.
+        ///
+        /// Stage 3 Т6: the initializer below is written in the canonical order
+        /// of spec Р294, the same order StateHash folds the world in — so the
+        /// two lists can be read side by side and a field present in one but
+        /// missing from the other is visible by position, not only by search.
         public WorldSave SaveState()
         {
             var save = new WorldSave
@@ -1209,6 +1260,11 @@ namespace Ring.Simulation.Core
                 Tick = _tick,
                 SpreadRng = _spreadRng,
                 WaveRng = _waveRng,
+                // Stage 3 Т6 (spec Р230/Р294): the loot stream is saved with
+                // the other two. Without it a restore would rewind the world
+                // but not the stream Т15 draws container positions from, and
+                // the replay would diverge at the first draw after the load.
+                LootRng = _lootRng,
                 NextEntityId = _nextEntityId,
                 PlayerCount = _players.Length,
                 Players = new PlayerState[_players.Length],
@@ -1216,16 +1272,25 @@ namespace Ring.Simulation.Core
                 Mobs = new MobState[_mobs.Length],
                 ProjectileCount = _projectileCount,
                 Projectiles = new ProjectileState[_projectiles.Length],
+                // Stage 3 Т6: pickups join the two entity arrays above, same
+                // "whole backing array copied, live count carried beside it"
+                // contract.
+                PickupCount = _pickupCount,
+                Pickups = new PickupState[_pickups.Length],
                 Wave = _wave,
-                Stats = new MatchStats[_matchStats.Length],
+                // Stage 3 Т6: the match's flow state, right after the wave.
+                Match = _match,
                 WorldStats = _worldStats,
+                Stats = new MatchStats[_matchStats.Length],
                 // Stage 3 Task 4: one slot per player, same length contract
-                // as Players/Stats above.
+                // as Players/Stats above. LAST, per spec Р294 — see the
+                // field's own doc in WorldSave.
                 Inventories = new Inventory[_inventories.Length]
             };
             System.Array.Copy(_players, save.Players, _players.Length);
             System.Array.Copy(_mobs, save.Mobs, _mobs.Length);
             System.Array.Copy(_projectiles, save.Projectiles, _projectiles.Length);
+            System.Array.Copy(_pickups, save.Pickups, _pickups.Length);
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
             System.Array.Copy(_matchStats, save.Stats, _matchStats.Length);
             // Stage 3 Task 4: Inventory is a reference type — unlike the
@@ -1280,16 +1345,24 @@ namespace Ring.Simulation.Core
             _tick = save.Tick;
             _spreadRng = save.SpreadRng;
             _waveRng = save.WaveRng;
+            _lootRng = save.LootRng;
             _nextEntityId = save.NextEntityId;
             System.Array.Copy(save.Players, _players, _players.Length);
             _mobCount = save.MobCount;
             System.Array.Copy(save.Mobs, _mobs, _mobs.Length);
             _projectileCount = save.ProjectileCount;
             System.Array.Copy(save.Projectiles, _projectiles, _projectiles.Length);
+            // Stage 3 Т6: pickups restore exactly like the two entity arrays
+            // above — no length cross-check of their own, same as Mobs/
+            // Projectiles, whose backing arrays are sized from the same
+            // ArenaSimConfig caps ApplyConfig refuses to hot-tweak.
+            _pickupCount = save.PickupCount;
+            System.Array.Copy(save.Pickups, _pickups, _pickups.Length);
             _wave = save.Wave;
+            _match = save.Match;
+            _worldStats = save.WorldStats;
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
             System.Array.Copy(save.Stats, _matchStats, _matchStats.Length);
-            _worldStats = save.WorldStats;
             // Stage 3 Task 4: RestoreFrom copies INTO each live Inventory
             // instance rather than replacing _inventories[i] with
             // save.Inventories[i] directly — same "live objects keep their
@@ -1349,12 +1422,26 @@ namespace Ring.Simulation.Core
         /// post-tick projectile state (e.g. Height/PrevHeight after VelZ integration).
         internal ProjectileState GetProjectileForTest(int index) => _projectiles[index];
 
-        /// Canonical order (spec §3.3; Task 3 — split rng into spreadRng/waveRng;
-        /// Stage 2 Task 10 — multiplayer reorder, the one sanctioned golden re-pin
-        /// of the stage-2 network phase):
-        /// tick → spreadRng → waveRng → nextEntityId → playerCount → players[0..n)
-        /// → mobCount+mobs → projectileCount+projectiles → wave → worldStats
-        /// → stats[0..n).
+        /// Canonical order (spec §3.3 and, since Stage 3, spec Р294; Task 3 —
+        /// split rng into spreadRng/waveRng; Stage 2 Task 10 — multiplayer
+        /// reorder, the one sanctioned golden re-pin of the stage-2 network
+        /// phase; Stage 3 Т6 — the extraction economy's own state, the FIRST
+        /// of the two sanctioned golden re-pins of stage 3):
+        /// tick → spreadRng → waveRng → lootRng → nextEntityId → playerCount
+        /// → players[0..n) → mobCount+mobs → projectileCount+projectiles
+        /// → pickupCount+pickups → containerCount+containers+containerSlots
+        /// → wave → matchState → worldStats → stats[0..n) → inventories[0..n).
+        ///
+        /// THE CONTAINERS' STEP IS OCCUPIED NOW AND FILLED IN Т14 (spec Р294,
+        /// this task's own brief). `ContainerState` does not exist yet, so the
+        /// step below folds in a literal zero count and walks nothing. That is
+        /// not decoration: `StateHash64.Add` is an FNV-1a chain, so ADDING the
+        /// step later would shift the digest all by itself — even at a zero
+        /// count — and stage 3 has exactly two sanctioned golden movements
+        /// (this task and Т12). Claiming the position now is what keeps Т14
+        /// from needing a third one. Т14 replaces the literal with
+        /// `_containerCount` and adds the two walks after it; a world with no
+        /// containers hashes identically before and after that change.
         ///
         /// playerCount, _mobCount and _projectileCount are each hashed before
         /// their arrays for the same reason: a length is state in its own right,
@@ -1375,6 +1462,7 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, (ulong)_tick);
             h = StateHash64.Add(h, _spreadRng.state);
             h = StateHash64.Add(h, _waveRng.state);
+            h = StateHash64.Add(h, _lootRng.state);
             h = StateHash64.Add(h, _nextEntityId);
             h = StateHash64.Add(h, _players.Length);
             for (int i = 0; i < _players.Length; i++) h = HashPlayer(h, in _players[i]);
@@ -1382,12 +1470,26 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < _mobCount; i++) h = HashMob(h, in _mobs[i]);
             h = StateHash64.Add(h, _projectileCount);
             for (int i = 0; i < _projectileCount; i++) h = HashProjectile(h, in _projectiles[i]);
+            h = StateHash64.Add(h, _pickupCount);
+            for (int i = 0; i < _pickupCount; i++) h = HashPickup(h, in _pickups[i]);
+            // Containers (Т14) — the reserved step, see this method's own doc
+            // for why a zero count is folded in here instead of nothing at
+            // all. Named rather than written as a bare literal so the step
+            // says what it is at the call site, and so Т14's edit is a
+            // one-token substitution of the real `_containerCount`.
+            const int ContainerCount = 0;
+            h = StateHash64.Add(h, ContainerCount);
             h = HashWave(h, in _wave);
+            h = HashMatch(h, in _match);
             // Stage 2 Task 10: the match-wide counters get their own hash step at
             // their own canonical position instead of riding interleaved inside
             // HashStats as Task 5 temporarily left them.
             h = HashWorldStats(h, in _worldStats);
             for (int i = 0; i < _matchStats.Length; i++) h = HashStats(h, in _matchStats[i]);
+            // Backpacks LAST (spec Р294, and the debt Stage 3 Task 4 recorded
+            // on WorldSave.Inventories for this task to discharge): after the
+            // statistics, one entry per player, in player order.
+            for (int i = 0; i < _inventories.Length; i++) h = HashInventory(h, _inventories[i]);
             return h;
         }
 
@@ -1400,7 +1502,21 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.DashTimer); h = StateHash64.Add(h, p.DashCooldown);
             h = StateHash64.Add(h, p.IframeTimer); h = StateHash64.Add(h, p.DashBufferTimer);
             h = StateHash64.Add(h, p.DashSpeedCur); // Task 12: ricochet-retained dash speed
-            h = StateHash64.Add(h, p.FireCooldown); h = StateHash64.Add(h, p.Alive);
+            h = StateHash64.Add(h, p.FireCooldown);
+            // Stage 3 Т6 (Task 2's field, spec Р261): the magazine, folded in
+            // right after the cooldown it shares a weapon with — the pair is
+            // what decides whether the next tick fires at all and on which
+            // interval, so a replay that ignored either could take a
+            // different branch and still claim the same hash.
+            h = StateHash64.Add(h, p.Ammo);
+            h = StateHash64.Add(h, p.Alive);
+            // Stage 3 Т6 (Task 1's fields): Extracted rides next to Alive —
+            // the two carry one invariant between them, !(Alive && Extracted)
+            // — and ExtractKind next to Extracted, the field it qualifies
+            // (same "beside what it qualifies" placement Stage 2 Task 10 used
+            // for ProjectileState.OwnerIndex).
+            h = StateHash64.Add(h, p.Extracted);
+            h = StateHash64.Add(h, (int)p.ExtractKind);
             // Task 14: aim-down-sights settle progress.
             h = StateHash64.Add(h, p.AimSettleTimer);
             // Task 10: slide state.
@@ -1413,6 +1529,18 @@ namespace Ring.Simulation.Core
             // would diverge the moment a request lands.
             h = StateHash64.Add(h, p.DashRequestCooldownTicks);
             h = StateHash64.Add(h, p.SlideRequestCooldownTicks);
+            // Stage 3 Т6 (Task 1's fields): the three hold-to-act channel
+            // timers and the loot channel's own target, as one trailing group
+            // — a new subsystem with no existing neighbor to sit beside, kept
+            // in declaration order among themselves. Inert until Т17/Т19/Т23
+            // give them writers; hashed from today, which is the whole point
+            // of errata E-1 (a field that joins the hash later moves the
+            // digest later, and stage 3 has only two sanctioned movements).
+            h = StateHash64.Add(h, p.LootTimer);
+            h = StateHash64.Add(h, p.RepairTimer);
+            h = StateHash64.Add(h, p.ExtractTimer);
+            h = StateHash64.Add(h, p.LootTargetContainerId);
+            h = StateHash64.Add(h, (int)p.LootTargetSlot);
             return h;
         }
 
@@ -1436,6 +1564,12 @@ namespace Ring.Simulation.Core
             // player and still claim the same hash. Cast is explicit: byte has
             // implicit conversions to several StateHash64.Add overloads at once.
             h = StateHash64.Add(h, (int)p.OwnerIndex);
+            // Stage 3 Т6 (Stage 3 Task 5's field, spec Р252): the shooting
+            // ENTITY, beside the two owner fields it completes. It decides
+            // which mob a round may NOT damage, so a replay that dropped it
+            // could resolve a different friendly-fire outcome and still claim
+            // the same digest — the same argument OwnerIndex was admitted on.
+            h = StateHash64.Add(h, p.OwnerEntityId);
             h = StateHash64.Add(h, p.Pos); h = StateHash64.Add(h, p.PrevPos);
             h = StateHash64.Add(h, p.Vel); h = StateHash64.Add(h, p.Damage);
             h = StateHash64.Add(h, p.Radius); h = StateHash64.Add(h, p.Ttl);
@@ -1444,11 +1578,36 @@ namespace Ring.Simulation.Core
             return h;
         }
 
+        /// Stage 3 Т6: one ground pickup, fields in declaration order like
+        /// every other Hash* helper here. `Kind` is cast for the same reason
+        /// every other enum in this file is (MobState.Type/Ai,
+        /// WaveState.Phase): an enum has no implicit conversion to any
+        /// StateHash64.Add overload at all, so the cast is required, not
+        /// merely disambiguating the way the byte casts above are.
+        static ulong HashPickup(ulong h, in PickupState p)
+        {
+            h = StateHash64.Add(h, p.Id); h = StateHash64.Add(h, p.Pos);
+            h = StateHash64.Add(h, (int)p.Kind); h = StateHash64.Add(h, p.Amount);
+            h = StateHash64.Add(h, p.Ttl);
+            return h;
+        }
+
         static ulong HashWave(ulong h, in WaveState w)
         {
             h = StateHash64.Add(h, (int)w.Phase); h = StateHash64.Add(h, w.WaveIndex);
             h = StateHash64.Add(h, w.PendingChasers); h = StateHash64.Add(h, w.PendingGunners);
             h = StateHash64.Add(h, w.AliveCount); h = StateHash64.Add(h, w.PhaseTimer);
+            return h;
+        }
+
+        /// Stage 3 Т6: the match's own flow state, hashed once for the whole
+        /// world right after the wave — the two are the same kind of thing
+        /// (a single director-ish struct, one per match) and sit next to each
+        /// other in the canonical order for that reason.
+        static ulong HashMatch(ulong h, in MatchState m)
+        {
+            h = StateHash64.Add(h, (int)m.Phase);
+            h = StateHash64.Add(h, m.DirectorDeathTick);
             return h;
         }
 
@@ -1462,6 +1621,10 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, s.ShotsFired); h = StateHash64.Add(h, s.ShotsHit);
             h = StateHash64.Add(h, s.DashesUsed); h = StateHash64.Add(h, s.SlidesUsed);
             h = StateHash64.Add(h, s.DeathTick); h = StateHash64.Add(h, s.DamageTaken);
+            // Stage 3 Т6 (Task 1's fields, errata E-1): the run's own two
+            // economy counters. Still without writers — Т17/Т24 bring those —
+            // and hashed anyway, for the reason above.
+            h = StateHash64.Add(h, s.AmmoSpent); h = StateHash64.Add(h, s.CellsPicked);
             return h;
         }
 
@@ -1474,6 +1637,34 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, w.WavesCleared);
             h = StateHash64.Add(h, w.MobSpawnsSkipped);
             h = StateHash64.Add(h, w.ProjectileSpawnsSkipped);
+            h = StateHash64.Add(h, w.PickupSpawnsSkipped);
+            h = StateHash64.Add(h, w.ContainerSpawnsSkipped);
+            return h;
+        }
+
+        /// Stage 3 Т6: one player's backpack. NOT `in`, and not a struct: an
+        /// Inventory is a class (spec Р232 — it owns a byte array, and living
+        /// inside PlayerState would make every wholesale PlayerState copy
+        /// allocate), so this takes the reference itself.
+        ///
+        /// COUNT FIRST, THEN ONLY THE CARRIED ITEMS. The count is state in its
+        /// own right, folded in ahead of its contents for the same reason
+        /// playerCount/_mobCount/_projectileCount are. The walk then stops at
+        /// Count rather than running the whole MaxInventoryItems array,
+        /// because the bytes past Count are NOT state: Inventory.TryRemoveAt
+        /// is a swap-remove and leaves the vacated tail slot holding whatever
+        /// it held before, while SetForTest overwrites only a prefix. Hashing
+        /// that tail would make two backpacks that carry exactly the same
+        /// items disagree purely over how they got there — a false desync
+        /// between a live world and a replay that reached the same contents by
+        /// another route.
+        static ulong HashInventory(ulong h, Inventory inv)
+        {
+            int count = inv.Count;
+            h = StateHash64.Add(h, count);
+            // Explicit cast for the same overload-resolution reason as
+            // ProjectileState.OwnerIndex above.
+            for (int i = 0; i < count; i++) h = StateHash64.Add(h, (int)inv.ItemAt(i));
             return h;
         }
     }

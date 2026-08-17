@@ -6,42 +6,27 @@ namespace Ring.Simulation.Tests
 {
     public class WorldLifecycleTests
     {
-        // Stage 2 Task 10 (history): the PREVIOUS PendingHashFields skip-list
-        // (T7 -> T10, ProjectileState.OwnerIndex) was removed once that field
-        // joined the hash — removal proven, not assumed, by pulling it back
-        // out and watching the sweep name it (task-10-report.md).
+        // NO SKIP-LIST LIVES HERE, AND TWICE NOW IT HAS BEEN REMOVED RATHER
+        // THAN OUTGROWN (history, kept because the pattern recurs every time
+        // a phase declares state ahead of its sanctioned golden re-pin):
         //
-        // Stage 3 Task 1 (errata E-1/D-I1): a NEW, unrelated skip-list, same
-        // precedent and same discipline. Every field this task declares as
-        // inert Ф1 economy state joins the canonical hash at the sanctioned
-        // re-pin #1 (Т6) rather than immediately — otherwise the reflective
-        // sweep below would fault on a field the state hash deliberately
-        // excludes for five more tasks (errata E-1's "structural rebuild").
-        // TEMPORARY (T1 -> T6): enters the canonical hash at the sanctioned
-        // re-pin. Т6 removes this set UNCONDITIONALLY and proves the removal
-        // the same way Т10 proved its own (pull one field back OUT of the
-        // hash, one at a time, watch the sweep name it by name).
-        static readonly System.Collections.Generic.HashSet<string> PendingHashFields = new()
-        {
-            // PlayerState (Task 1 Interfaces).
-            "Extracted", "ExtractKind", "LootTimer", "RepairTimer", "ExtractTimer",
-            "LootTargetContainerId", "LootTargetSlot",
-            // PlayerState (Task 2 Interfaces): the ammo counter — hashable
-            // behavior, but its own sanctioned entry point is still Т6, same
-            // as every other field in this set.
-            "Ammo",
-            // MatchStats (Task 1 Interfaces, errata R-13 — NOT SurvivedSeconds,
-            // which belongs to MatchSummary, Task 24, not to a hashed counter).
-            "AmmoSpent", "CellsPicked",
-            // WorldStats (Task 1 Interfaces).
-            "PickupSpawnsSkipped", "ContainerSpawnsSkipped",
-            // ProjectileState (Stage 3 Task 5 Interfaces, brief's own warning:
-            // the reflective sweep below reaches ProjectileState too, unlike
-            // the PlayerState/MatchStats/WorldStats-only precedent above — see
-            // that loop's own PendingHashFields check, added alongside this
-            // entry). Adressat Т6, same discipline as every field above.
-            "OwnerEntityId",
-        };
+        // - Stage 2 T7 -> T10 held ProjectileState.OwnerIndex out of the hash
+        //   until Task 10's re-pin, then dropped the set — the removal proven,
+        //   not assumed, by pulling the field back out of the hash and
+        //   watching the sweep name it (task-10-report.md).
+        // - Stage 3 T1/T2/T5 -> Т6 held thirteen field names out the same way
+        //   (errata E-1's "structural rebuild": every hashable field of the
+        //   extraction economy is DECLARED in Ф1 so that all of them enter the
+        //   digest at ONE sanctioned re-pin instead of moving the golden once
+        //   per task). Т6 is that re-pin, so the set is gone UNCONDITIONALLY —
+        //   not shrunk field by field — and its removal is proven the same
+        //   way: task-6-report.md records three fields (PlayerState.Ammo,
+        //   MatchState.Phase, the backpacks) pulled back out of StateHash one
+        //   at a time, each time watching this file name the missing field.
+        //
+        // The other PendingHashFields in the suite — SimConfigHashTests' —
+        // is a DIFFERENT set with a different addressee (Т13) and is none of
+        // this file's business.
 
         [Test]
         public void SaveRestore_ReplaysToSameHash()
@@ -89,6 +74,15 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(1f, 0f), new float2(1f, 0f),
                 1f, 0f, 10f, 0.1f, 1f);
+            // Т6: one live pickup, for the PickupState pass this task adds
+            // (the debt Т3 recorded — a hashed struct with no completeness
+            // guard is a field waiting to go missing quietly). AT THE ARENA
+            // CENTER — deliberately, not incidentally: both players of a
+            // two-player world spawn on the ring (Geometry.SpawnPosFor), tens
+            // of meters away, so PickupSystem's own auto-collect radius
+            // (Hero.PickupRadius, 2 m in TestConfigs) cannot reach it during
+            // the tick below and delete the fixture this pass depends on.
+            w.SpawnPickup(PickupKind.EnergyCell, float2.zero, 3);
             w.TickAll(new SimInput[PlayerCount]);
             WorldSave save = w.SaveState();
             ulong baseline = w.StateHash();
@@ -100,16 +94,6 @@ namespace Ring.Simulation.Tests
                     object boxed = w.PlayerAt(index);
                     field.SetValue(boxed, Bump(field.GetValue(boxed)));
                     w.SetPlayerForTest(index, (PlayerState)boxed);
-                    if (PendingHashFields.Contains(field.Name))
-                    {
-                        // TEMPORARY (T1 -> T6): a POSITIVE assertion, not a
-                        // silent skip — proves the field is genuinely still
-                        // OUTSIDE the hash, not just unchecked (same fix-round
-                        // 1 M-4 discipline Т7/Т10 established).
-                        Assert.AreEqual(baseline, w.StateHash(),
-                            $"PlayerState[{index}].{field.Name} ещё не должен входить в хеш до Т6");
-                        continue;
-                    }
                     Assert.AreNotEqual(baseline, w.StateHash(),
                         $"PlayerState[{index}].{field.Name} не в хеше");
                 }
@@ -119,12 +103,6 @@ namespace Ring.Simulation.Tests
                     object boxed = w.StatsAt(index);
                     field.SetValue(boxed, Bump(field.GetValue(boxed)));
                     w.SetStatsForTest(index, (MatchStats)boxed);
-                    if (PendingHashFields.Contains(field.Name))
-                    {
-                        Assert.AreEqual(baseline, w.StateHash(),
-                            $"MatchStats[{index}].{field.Name} ещё не должен входить в хеш до Т6");
-                        continue;
-                    }
                     Assert.AreNotEqual(baseline, w.StateHash(),
                         $"MatchStats[{index}].{field.Name} не в хеше");
                 }
@@ -140,12 +118,6 @@ namespace Ring.Simulation.Tests
                 object boxed = w.WorldStats;
                 field.SetValue(boxed, Bump(field.GetValue(boxed)));
                 w.SetWorldStatsForTest((WorldStats)boxed);
-                if (PendingHashFields.Contains(field.Name))
-                {
-                    Assert.AreEqual(baseline, w.StateHash(),
-                        $"WorldStats.{field.Name} ещё не должен входить в хеш до Т6");
-                    continue;
-                }
                 Assert.AreNotEqual(baseline, w.StateHash(), $"WorldStats.{field.Name} не в хеше");
             }
             // F-4 fix-round: the three passes the old comment here said were
@@ -156,34 +128,30 @@ namespace Ring.Simulation.Tests
             // total) — recounted by actual typeof(X).GetFields() count, not
             // restated from memory.
             //
-            // Stage 3 Task 5 fix-round 1 (coordinator finding): the PREVIOUS
-            // version of this tally (Stage 3 Task 1) claimed PlayerState had
-            // 31 fields with 7 PENDING — a stale count, not a live one: a
-            // fresh `typeof(PlayerState).GetFields()` count (same discipline
-            // this paragraph already asks for) gives **32** fields, because
-            // Task 2's own `Ammo` (also PENDING, per this file's own
-            // `PendingHashFields` set two screens up) was never folded into
-            // this RECEIPT when Task 2 added it to the SET — only the set
-            // drifted out of sync with its own tally comment, never the test
-            // itself (the loops below read `PendingHashFields`/
-            // `GetFields()` directly, not this paragraph's arithmetic).
-            // Recounted whole, not incremented from the old number, per the
-            // coordinator's own instruction: PlayerState 32 (Extracted,
-            // ExtractKind, LootTimer, RepairTimer, ExtractTimer,
-            // LootTargetContainerId, LootTargetSlot, Ammo — 8 PENDING) x 2
-            // players + MatchStats 10 (AmmoSpent, CellsPicked — 2 PENDING)
-            // x 2 players + WorldStats 5 (PickupSpawnsSkipped,
-            // ContainerSpawnsSkipped — 2 PENDING) + MobState 9 +
-            // ProjectileState 13 (OwnerEntityId, Stage 3 Task 5 — 1 PENDING)
-            // + WaveState 6 = **117** bumps swept: **94** asserted NOT to
-            // equal baseline (unchanged throughout — every field already in
-            // the hash stays in it, no PENDING field was ever counted here)
-            // and **23** asserted TO equal baseline (13 distinct PENDING
-            // field names, weighted by their per-player multiplicity:
-            // 8 x 2 + 2 x 2 + 2 x 1 + 1 x 1 = 23) until Т6's re-pin flips
-            // them over. The loops below reflect over the live structs, so a
-            // new field is covered the moment it is declared; this tally is
-            // a receipt for the reader, not a bound the test enforces.
+            // Т6, RECOUNTED WHOLE (same discipline the Stage 3 Task 5
+            // fix-round imposed after this receipt was found running one field
+            // behind its own set — it is re-derived here from a fresh
+            // typeof(X).GetFields() reading of each struct, never incremented
+            // from the previous number):
+            //
+            //   PlayerState 32 x 2 players = 64
+            //   MatchStats 10 x 2 players  = 20
+            //   WorldStats 5, MobState 9, ProjectileState 13, PickupState 5,
+            //   WaveState 6, MatchState 2 = 40
+            //   -> 124 bumps swept, ALL asserted NOT to equal baseline.
+            //
+            // ZERO asserted TO equal it: the thirteen PENDING names are gone
+            // with the skip-list (see this file's header), which is the whole
+            // of what Т6 did to this test besides growing it two passes —
+            // PickupState (the debt Т3 recorded) and MatchState (the same
+            // hole, one struct over: both are top-level hashed state that
+            // until now had no completeness guard at all, so the next field
+            // appended to either would have joined the struct without joining
+            // the digest, silently).
+            //
+            // The loops below reflect over the live structs, so a new field is
+            // covered the moment it is declared; this tally is a receipt for
+            // the reader, not a bound the test enforces.
             foreach (var field in typeof(MobState).GetFields())
             {
                 w.RestoreState(save);
@@ -198,18 +166,21 @@ namespace Ring.Simulation.Tests
                 object boxed = w.Projectiles[0];
                 field.SetValue(boxed, Bump(field.GetValue(boxed)));
                 w.SetProjectileForTest(0, (ProjectileState)boxed);
-                if (PendingHashFields.Contains(field.Name))
-                {
-                    // TEMPORARY (T5 -> T6), same discipline as the
-                    // PlayerState/MatchStats/WorldStats passes above:
-                    // ProjectileState.OwnerEntityId is declared, inert, and
-                    // this is the FIRST pass over ProjectileState/MobState/
-                    // WaveState to need the PendingHashFields gate at all.
-                    Assert.AreEqual(baseline, w.StateHash(),
-                        $"ProjectileState.{field.Name} ещё не должен входить в хеш до Т6");
-                    continue;
-                }
                 Assert.AreNotEqual(baseline, w.StateHash(), $"ProjectileState.{field.Name} не в хеше");
+            }
+            // Т6 (the debt Т3 recorded, task-3-report.md §7.1): PickupState's
+            // own pass. Т3 deliberately added NO fictitious names to the
+            // skip-list for it — a name in a set no loop reads would have been
+            // an imitation of the discipline — and left the real obligation
+            // here instead: the array joins the hash in this task, so it gets
+            // the completeness guard in this task.
+            foreach (var field in typeof(PickupState).GetFields())
+            {
+                w.RestoreState(save);
+                object boxed = w.Pickups[0];
+                field.SetValue(boxed, Bump(field.GetValue(boxed)));
+                w.SetPickupForTest(0, (PickupState)boxed);
+                Assert.AreNotEqual(baseline, w.StateHash(), $"PickupState.{field.Name} не в хеше");
             }
             foreach (var field in typeof(WaveState).GetFields())
             {
@@ -218,6 +189,19 @@ namespace Ring.Simulation.Tests
                 field.SetValue(boxed, Bump(field.GetValue(boxed)));
                 w.SetWaveForTest((WaveState)boxed);
                 Assert.AreNotEqual(baseline, w.StateHash(), $"WaveState.{field.Name} не в хеше");
+            }
+            // Т6: MatchState's own pass, on the same reasoning as PickupState
+            // above — Т1 declared the struct with no hash pass because it was
+            // outside the hash entirely; from this task it is inside, so it
+            // needs the guard. SetMatchForTest (Т1's seam) finally has a
+            // caller.
+            foreach (var field in typeof(MatchState).GetFields())
+            {
+                w.RestoreState(save);
+                object boxed = w.Match;
+                field.SetValue(boxed, Bump(field.GetValue(boxed)));
+                w.SetMatchForTest((MatchState)boxed);
+                Assert.AreNotEqual(baseline, w.StateHash(), $"MatchState.{field.Name} не в хеше");
             }
         }
 
@@ -238,20 +222,168 @@ namespace Ring.Simulation.Tests
             // which is all callers need (they only check the value changed,
             // never a specific new one).
             byte b8 => (byte)(b8 + 1),
-            // MobType/MobAiState/WavePhase (F-4 fix-round): step to the next
-            // declared enum value, wrapping — every one of these enums has more
-            // than one member, so the wrapped value is always different from the
-            // original, which is all Bump's callers need (they only check the
-            // hash changed, never a specific new value).
+            // MobType/MobAiState/WavePhase/PickupKind/MatchPhase: step the
+            // enum's UNDERLYING value by one — see BumpEnum's own doc for why
+            // it no longer walks the declared-member list.
             System.Enum e => BumpEnum(e),
             _ => throw new System.NotSupportedException(v.GetType().Name)
         };
 
+        /// Т6: this used to step to the NEXT DECLARED member, wrapping, on the
+        /// stated grounds that "every one of these enums has more than one
+        /// member". PickupKind broke that premise the moment its struct
+        /// entered the hash: `enum PickupKind : byte { EnergyCell = 0 }` has
+        /// exactly one member, so wrapping the declared list handed back the
+        /// SAME value — a no-op bump, under an Assert.AreNotEqual that would
+        /// then fail while blaming HashPickup for a field it hashes perfectly
+        /// well. Stepping the underlying value instead is both correct for
+        /// every multi-member enum (identical result: they are all dense from
+        /// zero) and honest for the single-member one: an undeclared byte is a
+        /// value the struct can physically hold and the digest must react to,
+        /// and the day PickupKind.Data lands (spec §3.6) this bump becomes a
+        /// declared value again with no edit here.
+        ///
+        /// The +1 cannot overflow anything the sweep produces: every enum
+        /// field it reflects over is read out of a freshly restored world, so
+        /// the value is whatever the fixture set (0..5 today), never the
+        /// underlying type's maximum.
         static object BumpEnum(System.Enum e)
+            => System.Enum.ToObject(e.GetType(), System.Convert.ToInt64(e) + 1L);
+
+        /// Т6. The backpacks are the one piece of canonical state the
+        /// reflective sweep above CANNOT reach: Inventory is a class with
+        /// private fields (spec Р232 — it owns a byte array, and living
+        /// inside PlayerState would make every wholesale PlayerState copy
+        /// allocate), so `typeof(PlayerState).GetFields()` never sees it and
+        /// no bump/restore pass can be written for it. This is that pass,
+        /// written by hand: the four things about a backpack that are state
+        /// (that it has contents at all, WHOSE it is, WHICH item, HOW MANY)
+        /// and the round trip through a save.
+        [Test]
+        public void Backpack_IsHashedPerPlayer_AndRestoredWithTheSave()
         {
-            System.Array values = System.Enum.GetValues(e.GetType());
-            int index = System.Array.IndexOf(values, e);
-            return values.GetValue((index + 1) % values.Length);
+            const int PlayerCount = 2;
+            var w = new SimulationWorld(11, TestConfigs.Default(), PlayerCount);
+            WorldSave save = w.SaveState();
+            ulong empty = w.StateHash();
+
+            w.SetInventoryForTest(0, (byte)3);
+            ulong carried = w.StateHash();
+            Assert.AreNotEqual(empty, carried, "рюкзак игрока 0 не в хеше");
+
+            // WHOSE backpack it is. The canonical order walks
+            // inventories[0..n), so the same item in another player's hands
+            // must reach a different digest — the same argument that made
+            // Stage 2 Task 10 hash the whole players array instead of
+            // player 0 (a loop silently truncated to index 0 passes every
+            // single-player check ever written).
+            w.RestoreState(save);
+            w.SetInventoryForTest(1, (byte)3);
+            Assert.AreNotEqual(empty, w.StateHash(), "рюкзак игрока 1 не в хеше");
+            Assert.AreNotEqual(carried, w.StateHash(),
+                "хеш не различает, КТО несёт предмет — проход по inventories[0..n) свёрнут");
+
+            // WHICH item.
+            w.RestoreState(save);
+            w.SetInventoryForTest(0, (byte)4);
+            Assert.AreNotEqual(carried, w.StateHash(), "id предмета не в хеше");
+
+            // HOW MANY. Two of the same item must differ from one of it —
+            // this is the assertion the leading count step in HashInventory
+            // exists for.
+            w.RestoreState(save);
+            w.SetInventoryForTest(0, (byte)3, (byte)3);
+            Assert.AreNotEqual(carried, w.StateHash(), "число предметов в рюкзаке не в хеше");
+
+            w.RestoreState(save);
+            Assert.AreEqual(empty, w.StateHash(), "RestoreState не откатывает рюкзаки");
+        }
+
+        /// Т6. The other half of the backpack's hash contract, and the reason
+        /// HashInventory stops at Count instead of walking the whole
+        /// MaxInventoryItems array: Inventory.TryRemoveAt is a SWAP-remove, so
+        /// it leaves the vacated tail slot holding a copy of the item that
+        /// moved down. Two worlds carrying literally the same items must agree
+        /// on the digest no matter which route they took to get there —
+        /// otherwise a server and a replay that reached the same backpack by
+        /// different remove orders would report a desync that does not exist.
+        [Test]
+        public void BackpackHash_IgnoresSwapRemoveDebrisPastTheCount()
+        {
+            var viaEdits = new SimulationWorld(11, TestConfigs.Default());
+            Assert.IsTrue(viaEdits.TryAddItem(0, 1), "фикстура: первый предмет обязан влезть");
+            Assert.IsTrue(viaEdits.TryAddItem(0, 2), "фикстура: второй предмет обязан влезть");
+            Assert.IsTrue(viaEdits.TryRemoveItemAt(0, 0, out byte removed));
+            Assert.AreEqual(1, removed);
+
+            // Same contents, never any debris behind the count.
+            var direct = new SimulationWorld(11, TestConfigs.Default());
+            direct.SetInventoryForTest(0, (byte)2);
+
+            // Premise first: the two backpacks really are the same backpack.
+            Assert.AreEqual(direct.InventoryCountOf(0), viaEdits.InventoryCountOf(0));
+            Assert.AreEqual(direct.InventoryItemAt(0, 0), viaEdits.InventoryItemAt(0, 0));
+
+            Assert.AreEqual(direct.StateHash(), viaEdits.StateHash(),
+                "хеш рюкзака обязан читать только несомое (Count), а не хвост после swap-remove");
+        }
+
+        /// Т6 (spec Р230). The third RNG stream enters the hash and the save
+        /// here, three tasks before its own consumer (Т15, container layout).
+        /// Both halves are load-bearing on their own: a stream outside the
+        /// hash lets two worlds that have drawn different numbers of loot
+        /// samples claim the same digest, and a stream outside the save lets a
+        /// restored world keep drawing from where the LIVE run left off — a
+        /// replay divergence that would first appear as "the containers moved"
+        /// long after this task is history.
+        [Test]
+        public void LootRng_IsItsOwnStream_HashedAndSaved()
+        {
+            var w = new SimulationWorld(23, TestConfigs.Default());
+
+            // Р230's own premise, and the way it breaks in practice: a
+            // copy-pasted fold constant. A third stream seeded identically to
+            // either of the other two draws the same numbers in the same
+            // order, which re-couples container placement to exactly the
+            // sequence it was split off from.
+            Assert.AreNotEqual(w.SpreadRng.state, w.LootRng.state,
+                "поток лута совпал со спредом — свёрнут той же константой");
+            Assert.AreNotEqual(w.WaveRng.state, w.LootRng.state,
+                "поток лута совпал с волнами — ровно та связка, ради разрыва которой он заведён");
+
+            WorldSave save = w.SaveState();
+            ulong baseline = w.StateHash();
+
+            // Т15's placement search does this for real; here the seam is its
+            // own witness, since nothing else draws from the stream yet.
+            w.LootRng.NextFloat();
+            Assert.AreNotEqual(baseline, w.StateHash(), "состояние потока лута не в хеше");
+
+            w.RestoreState(save);
+            Assert.AreEqual(baseline, w.StateHash(), "RestoreState не откатывает поток лута");
+        }
+
+        /// Т6: the render frame's half of the new state. `CopyFrom`'s own
+        /// reflective guard (InterpolationBufferTests) proves a frame copies
+        /// every public field it has; nothing proved that CaptureSnapshot
+        /// FILLS the two new ones, and a forgotten line there is invisible to
+        /// that guard.
+        [Test]
+        public void Snapshot_CopiesPickupsAndMatchState()
+        {
+            var cfg = TestConfigs.Default();
+            var w = new SimulationWorld(5, cfg);
+            w.SpawnPickup(PickupKind.EnergyCell, new float2(30f, 0f), 4);
+            w.SetMatchForTest(new MatchState { Phase = MatchPhase.GateOpen, DirectorDeathTick = 17 });
+            var snap = new RenderSnapshot(cfg.Arena);
+
+            w.CaptureSnapshot(snap);
+
+            Assert.AreEqual(1, snap.PickupCount);
+            Assert.AreEqual(4, snap.Pickups[0].Amount);
+            Assert.AreEqual(PickupKind.EnergyCell, snap.Pickups[0].Kind);
+            Assert.AreEqual(MatchPhase.GateOpen, snap.Match.Phase);
+            Assert.AreEqual(17, snap.Match.DirectorDeathTick);
         }
 
         [Test]
