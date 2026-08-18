@@ -184,7 +184,7 @@ namespace Ring.Simulation.Tests
         {
             // Coordinator addition: Spawn_InsideWall_Rejected above only
             // exercises rejection via a wall's FLAT side. This fixture is a
-            // short wall ending a few metres short of the spawn ring, so a
+            // short wall ending a few meters short of the spawn ring, so a
             // candidate at that angle can only be rejected through the
             // ROUNDED END CAP (Geometry.ClosestPointOnSegment clamps to the
             // endpoint out there, not the flat band) — proving IsValidSpawn's

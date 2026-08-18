@@ -2939,7 +2939,7 @@ namespace Ring.Simulation.Tests
             // 3 + 288 * 9 = 2595 B, so the shipped cap truncates too, exactly
             // as spec Р217 predicted. The contrast is therefore restated
             // against a cap that really is roomy, and the shipped cap's own
-            // new behaviour is asserted rather than dropped — a claim that
+            // new behavior is asserted rather than dropped — a claim that
             // became false is replaced by the true one it turned into, not by
             // a weaker one.
             var shippedCap = ScriptableObject.CreateInstance<NetConfig>();

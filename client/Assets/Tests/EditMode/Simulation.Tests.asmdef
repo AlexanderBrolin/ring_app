@@ -8,6 +8,7 @@
         "Ring.Presentation",
         "Ring.Presentation.Net",
         "Ring.Server",
+        "Ring.Editor",
         "FishNet.Runtime",
         "Unity.Mathematics",
         "UnityEngine.TestRunner",

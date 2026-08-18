@@ -47,6 +47,24 @@ namespace Ring.Simulation.Tests
             c.Arena.WallHalfWidth = new[] { halfWidth };
         }
 
+        /// Ф2 fix-round (review A-3): the arc barrier, stated the same way its
+        /// two older siblings are. Spec §3.2 gives the zone rings NO height of
+        /// their own — "одно правило на все внутренние барьеры" — so the claim
+        /// that they obey Arena.BarrierTop is transitive, and until this round
+        /// no test executed it: a mutation removing the height gate from the
+        /// arc branch coloured nothing.
+        static void PutArc(ref SimConfig c, float ringR, float halfWidth, float doorCenterRad,
+            float doorFreeWidth)
+        {
+            c.Arena.ZoneWallCount = 1;
+            c.Arena.ZoneWallRadius = new[] { ringR };
+            c.Arena.ZoneWallHalfWidth = new[] { halfWidth };
+            c.Arena.ZoneWallDoorStart = new[] { 0 };
+            c.Arena.ZoneWallDoorCount = new[] { 1 };
+            c.Arena.DoorCenterRad = new[] { doorCenterRad };
+            c.Arena.DoorFreeWidth = new[] { doorFreeWidth };
+        }
+
         /// One round, stated as geometry: where it starts, how high, how fast it
         /// climbs or falls. Damage/radius/lifetime come off the world's own
         /// config, same contract as TestWorlds.FireAimed3D — a fixture here only
@@ -228,7 +246,10 @@ namespace Ring.Simulation.Tests
             // candidate standing for both would have been thrown away together
             // with the obstacle the round legitimately cleared.
             SimConfig c = Field(3f);
-            c.Arena.Radius = 20f; // inside the round's own reach, unlike the shipped 65
+            // Ф2 review B-m6: shrink the boundaries with the world (see
+            // TestConfigs.ShrinkArena) — 20 m is inside the round's own reach,
+            // unlike the shipped 113.
+            TestConfigs.ShrinkArena(ref c, 20f);
             const float obstacleX = 10f, obstacleRadius = 2f, flightHeight = 12f;
             PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
             Assert.Greater(flightHeight, CrownReach(in c),
@@ -410,7 +431,7 @@ namespace Ring.Simulation.Tests
             // (no modelled top), so the winner is visible only through the
             // normal the ending carries.
             SimConfig c = Field(0f);
-            c.Arena.Radius = 20f;
+            TestConfigs.ShrinkArena(ref c, 20f);
             // Start exactly on the boundary's own padded rim, moving outward:
             // SegmentRingWall then solves its crossing at t = 0. The expression
             // is the same one the solver uses, so the two agree bit for bit.
@@ -454,7 +475,7 @@ namespace Ring.Simulation.Tests
             // round would leave the arena through a boundary that has no top.
             // Same fixture as the tie above, with a real height added.
             SimConfig c = Field(3f);
-            c.Arena.Radius = 20f;
+            TestConfigs.ShrinkArena(ref c, 20f);
             float limit = c.Arena.Radius - c.Weapon.ProjectileRadius;
             var start = new float2(limit, 0f);
             PutObstacle(ref c, new float2(limit - 0.9f, 0f), 1f);
@@ -470,5 +491,80 @@ namespace Ring.Simulation.Tests
                 "and the ending is the RING's, which is what proves the two are separate slots");
             Assert.AreEqual(flightHeight, end.Amount, 1e-4f);
         }
+
+        [Test]
+        public void AboveTheTop_TheRoundClearsAZoneWallArcToo()
+        {
+            // Ф2 fix-round (review A-3): the arc joins the obstacle and the wall
+            // under the ONE BarrierTop (spec §3.2 — "одно правило на все
+            // внутренние барьеры", no height of its own). The pair is stated
+            // exactly like AboveTheTop_TheRoundClearsAWallSegmentToo above:
+            // over the top the round survives the crossing, at no modelled top
+            // the same geometry stops it.
+            const float ringR = 8f, halfWidth = 1f, top = 2f, flightHeight = 3f;
+            const int ticks = 12;
+
+            SimulationWorld Shoot(float barrierTop, out SimConfig cfg)
+            {
+                cfg = Field(barrierTop);
+                // Door on the far side (PI), so the round crossing along +X
+                // meets solid ring body, not the cutout.
+                PutArc(ref cfg, ringR, halfWidth, math.PI, 4f);
+                SimulationWorld world = Fire(in cfg, float2.zero, flightHeight, velZ: 0f);
+                Tick(world, ticks);
+                return world;
+            }
+
+            SimulationWorld cleared = Shoot(top, out SimConfig c);
+            Assert.Greater(flightHeight, CrownReach(in c),
+                "fixture premise: the round must fly clear of the crown, or it is not the "
+                + "height gate being measured");
+            Assert.AreEqual(0, TestEvents.CountOf(cleared, SimEventKind.ProjectileBlocked),
+                "a round above BarrierTop crosses the ring's body");
+            Assert.Greater(cleared.Projectiles[0].Pos.x, ringR + halfWidth + c.Weapon.ProjectileRadius,
+                "and it really is past the far face, not stopped short of it");
+
+            SimulationWorld blocked = Shoot(0f, out SimConfig noTop);
+            Assert.AreEqual(1, TestEvents.CountOf(blocked, SimEventKind.ProjectileBlocked),
+                "control: with no modelled top the same ring stops the same round");
+        }
+
+        [Test]
+        public void AboveTheTop_TheRoundClearsADoorJambToo()
+        {
+            // The jamb is a CIRCLE of halfWidth at the cutout's corner (Р246),
+            // resolved by SegmentCircle inside SegmentArc rather than by the
+            // band arithmetic — a different code path from the test above, and
+            // one a height gate could easily be applied to only halfway. The
+            // round is aimed along +X straight into a jamb: the door is centred
+            // so that its corner sits on the +X axis.
+            const float ringR = 8f, halfWidth = 1f, doorFreeWidth = 4f;
+            const float top = 2f, flightHeight = 3f;
+            const int ticks = 12;
+            float halfCutout = Geometry.DoorHalfCutout(doorFreeWidth, ringR, halfWidth);
+
+            SimulationWorld Shoot(float barrierTop, out SimConfig cfg)
+            {
+                cfg = Field(barrierTop);
+                // Cutout centred one half-cutout AWAY from +X, so +X lands on
+                // the jamb circle rather than in the free passage.
+                PutArc(ref cfg, ringR, halfWidth, halfCutout, doorFreeWidth);
+                SimulationWorld world = Fire(in cfg, float2.zero, flightHeight, velZ: 0f);
+                Tick(world, ticks);
+                return world;
+            }
+
+            SimulationWorld blocked = Shoot(0f, out SimConfig noTop);
+            Assert.AreEqual(1, TestEvents.CountOf(blocked, SimEventKind.ProjectileBlocked),
+                "fixture premise: with no modelled top the jamb must stop this round — otherwise "
+                + "the shot misses the jamb and the pair below proves nothing");
+
+            SimulationWorld cleared = Shoot(top, out SimConfig c);
+            Assert.Greater(flightHeight, CrownReach(in c),
+                "fixture premise: the round flies clear of the crown");
+            Assert.AreEqual(0, TestEvents.CountOf(cleared, SimEventKind.ProjectileBlocked),
+                "a round above BarrierTop crosses the jamb as well as the ring's body");
+        }
+
     }
 }

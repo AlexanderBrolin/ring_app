@@ -77,7 +77,7 @@ namespace Ring.Simulation.Tests
             //
             // This file's usual strict `<` "inside" idiom (CircleOverlap et
             // al.) would push a boundary point to the OUTER of its two
-            // neighbouring zones; the contract here is the opposite.
+            // neighboring zones; the contract here is the opposite.
             var arena = new ArenaSimConfig { ZoneRadius = new[] { 10f, 20f } };
             Assert.AreEqual(Zone.Core, Geometry.ZoneOf(new float2(10f, 0f), in arena),
                 "a point exactly on the Core/Middle boundary must count as Core");
@@ -199,6 +199,190 @@ namespace Ring.Simulation.Tests
             var ex = Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, director: director));
             Assert.That(ex.Message, Does.Contain("DoorFreeWidth"));
+        }
+
+        // --- Ф2 fix-round: the six rules the phase review found missing.
+        // Every fixture below keeps index 0 as a legal CONTROL and puts the
+        // violation on the SECOND element (ledger 227), so a loop mutated to
+        // check only the first entry cannot pass.
+
+        [Test]
+        public void Validate_NegativeZoneWeight_Throws()
+        {
+            // Ф2 review A-1 = B-I2.2 (two independent reviewers). The sum rule
+            // alone is satisfiable by a negative weight, and SplitByZones then
+            // hands WaveSystem a negative per-zone budget that PendingTotal can
+            // never discharge — the wave phase hangs for the rest of the match.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.ZoneWeights = new[] { 1.5f, -0.5f, 0f }; // sums to 1, second element illegal
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Wave.ZoneWeights[1]"));
+        }
+
+        [Test]
+        public void Validate_EliteShareMiddleAboveOne_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.EliteShareMiddle = 1.4f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Wave.EliteShareMiddle"));
+        }
+
+        [Test]
+        public void Validate_EliteShareOuterGrowthNegative_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.EliteShareOuterGrowth = -0.01f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Wave.EliteShareOuterGrowth"));
+        }
+
+        [Test]
+        public void Validate_EliteShareOuterCapAboveOne_Throws()
+        {
+            // The field R-60 turned from a code constant into config: before
+            // that change "the share is in [0,1]" was guaranteed by the literal
+            // 0.25; after it, by nothing at all until this rule.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.EliteShareOuterCap = 1.2f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Wave.EliteShareOuterCap"));
+        }
+
+        [Test]
+        public void Validate_ZoneRadiusOutsideArena_Throws()
+        {
+            // Ф2 review B-I2.1: plan Т8 asked for "и меньше Radius" and only
+            // ZoneWallRadius received it. Boundary 0 stays legal (control);
+            // boundary 1 sits outside the arena, where Geometry.
+            // ZoneSpawnRingRadius would put the Middle wave ring beyond the
+            // world and the zone's debt could never discharge.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 65f, a.Radius + 10f };
+            ClearPortals(a);
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Arena.ZoneRadius[1] must be < Arena.Radius"));
+        }
+
+        [Test]
+        public void Validate_ZoneWallArrayShorterThanCount_ThrowsNamedError()
+        {
+            // Ф2 review B-I2.3: R-64 applied in the builder's own house. Before
+            // this rule the same config crashed out of a ReadOnlySpan
+            // constructor with ArgumentOutOfRangeException, naming no field and
+            // no addressee. The assertion pins BOTH halves — that it throws the
+            // builder's own ArgumentException, and that the message says which
+            // array is short.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 65f }; // one short of the count
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("ZoneWallRadius=1"));
+        }
+
+        [Test]
+        public void Validate_DoorSliceOutOfBounds_ThrowsNamedError()
+        {
+            // Same rule, its second half: the per-wall slice into the shared
+            // door arrays. Wall 0's slice stays legal (control), wall 1 asks for
+            // doors past the end of DoorCenterRad.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneWallDoorCount = new[] { 3, 9 };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("zone wall [1] slices the door arrays out of bounds"));
+        }
+
+        [Test]
+        public void Validate_ArcAcrossTheFallbackRing_LocksIt()
+        {
+            // Ф2 fix-round, witness for review A-6. The "whole wave spawn ring
+            // is locked" rule walks RingSlotBlocked, whose doc has always
+            // claimed it mirrors WaveSystem.IsValidSpawn's geometry half — and
+            // the arcs were missing from it until this round. Nothing in the
+            // suite could tell: the arena-wide fallback ring sits at
+            // Radius - SpawnRingInset = 111, seventeen metres clear of the
+            // outer band, so the new loop is inert on every shipped fixture and
+            // a mutation deleting it would colour nothing.
+            //
+            // This fixture is the config that makes it visible: a doorless ring
+            // laid exactly ON the fallback ring, wide enough that every one of
+            // the 24 slots falls inside its body. Without the arc loop the
+            // builder declares that arena spawnable.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            float fallbackRing = a.Radius - wv.SpawnRingInset;
+            a.Obstacles = System.Array.Empty<ArenaConfig.Obstacle>();
+            a.Walls = System.Array.Empty<ArenaConfig.Wall>();
+            ClearPortals(a);
+            a.ZoneWallCount = 1;
+            a.ZoneWallRadius = new[] { fallbackRing };
+            a.ZoneWallHalfWidth = new[] { 4f }; // band [107, 115] swallows the ring at 111
+            a.ZoneWallDoorStart = new[] { 0 };
+            a.ZoneWallDoorCount = new[] { 1 };
+            // Door centred BETWEEN two fallback slots. The grid is 24 slots,
+            // one every 15 deg starting at 0; this door's own cutout is
+            // +-3.61 deg wide, so on slot 0 it would have freed exactly that
+            // slot and the rule would have found its free place. At 7.5 deg it
+            // covers no slot at all and every one of the 24 stays blocked.
+            a.DoorCenterRad = new[] { math.PI / 24f }; // 7.5 deg
+            a.DoorFreeWidth = new[] { 6f };
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("locks the whole wave spawn ring"));
+        }
+
+        [Test]
+        public void Validate_PortalInsideObstacle_Throws()
+        {
+            // Ф2 review A-2: the half of spec §3.13's portal rule ("не в теле
+            // дуги И НЕ В СТЕНЕ") that Т8 left out. Portal 0 is the gate at the
+            // core center — legal, and the control that keeps this from passing
+            // on a loop that only ever looks at index 0.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            Vector2 onCircle = a.Obstacles[6].Pos; // (30, 22), inside Core, clear of every wall
+            a.ExtractPos = new[] { new Vector2(0f, 0f), onCircle };
+            a.ExtractZone = new byte[] { (byte)Zone.Core, (byte)Zone.Core };
+            a.ExtractKind = new byte[] { (byte)ExitKind.Gate, (byte)ExitKind.Portal };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Arena.ExtractPos[1] overlaps Arena.Obstacles[6]"));
+        }
+
+        [Test]
+        public void Validate_PortalInsideInteriorWall_Throws()
+        {
+            // The stadium half of the same rule. (2, 34) sits on the lone wall
+            // that runs from (2, 24) to (2, 44) and is 26 m clear of every
+            // obstacle circle, so only the wall loop can produce this error.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ExtractPos = new[] { new Vector2(0f, 0f), new Vector2(2f, 34f) };
+            a.ExtractZone = new byte[] { (byte)Zone.Core, (byte)Zone.Core };
+            a.ExtractKind = new byte[] { (byte)ExitKind.Gate, (byte)ExitKind.Portal };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Arena.ExtractPos[1] overlaps Arena.Walls[4]"));
+        }
+
+        [Test]
+        public void Validate_SpawnRingInsetLeavesNegativeRing_Throws()
+        {
+            // Ф2 review B-I2 (adjacent finding), observed rather than imagined:
+            // WaveScalingTests' own arc fixture ran at inset 93 with Core and
+            // Middle rings at -28 and -1 m, and every band rule read that as
+            // "outside" and stayed silent. The inset is subtracted from every
+            // boundary, so it has to be checked against the smallest one.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.SpawnRingInset = a.ZoneRadius[0] + 5f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Core zone's wave spawn ring at radius"));
         }
 
         [Test]

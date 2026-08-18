@@ -364,7 +364,7 @@ namespace Ring.Simulation.Core
         // primitives; the only genuinely new thing is the ANGULAR test.
 
         /// Angular HALF-extent of a door's cutout. `doorFreeWidth` is the FREE
-        /// width in metres (ledger R-26), and each corner of the cutout is
+        /// width in meters (ledger R-26), and each corner of the cutout is
         /// filled back in by a jamb circle of radius halfW, so the cutout
         /// itself measures `freeWidth + 2*halfW` of arc at radius `ringR` and
         /// what actually passes between the two jambs is `freeWidth`.

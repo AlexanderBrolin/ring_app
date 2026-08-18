@@ -1955,7 +1955,7 @@ namespace Ring.Editor
         /// AttackRange, gunner outside) would park the Elite at 9 m and it
         /// would never close, which is a Gunner with more HP rather than
         /// Р214's enhanced chaser.
-        static bool ApplyEliteDefaults(MobConfig m)
+        internal static bool ApplyEliteDefaults(MobConfig m)
         {
             bool changed = false;
             changed |= SetIfDifferent(ref m.MaxSpeed, 4.2f);
@@ -2008,7 +2008,7 @@ namespace Ring.Editor
         /// would put the Director's head above anything a collector can aim
         /// at. Model scale (ASSETS-001 §2.3, x1.5-2) is Presentation's own
         /// number and does not touch this one.
-        static bool ApplyDirectorDefaults(MobConfig m)
+        internal static bool ApplyDirectorDefaults(MobConfig m)
         {
             bool changed = ApplyEliteDefaults(m);
             changed |= SetIfDifferent(ref m.MaxSpeed, 3.0f);

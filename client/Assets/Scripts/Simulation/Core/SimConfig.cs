@@ -358,7 +358,7 @@ namespace Ring.Simulation.Core
         public float[] DoorCenterRad;
         public float[] DoorFreeWidth;
 
-        /// Stage 3 Task 8 (owner decision R-29): the manoeuvre-room term of
+        /// Stage 3 Task 8 (owner decision R-29): the maneuvering room term of
         /// the door-width rule (spec Р247): DoorFreeWidth >= 2*(bodyRadius +
         /// Geometry.Skin) + DoorClearance. .asset-sourced by CR 6 (a real
         /// number belongs in data, not code) — Interfaces plan text omitted

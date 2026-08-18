@@ -36,13 +36,13 @@ namespace Ring.Simulation.Tests
             // corner exactly as documented and makes every ricochet number in
             // this file independent of arena tuning for good (file convention
             // C14/PD5, stated at the top of this method).
-            cfg.Arena.Radius = 35f;
+            TestConfigs.ShrinkArena(ref cfg, 35f);
             return cfg;
         }
 
         /// Fixture() plus a single obstacle head-on at (2,0): the dash's very
         /// first tick (1 m step) already reaches the obstacle's padded surface
-        /// (Hero.Radius 0.45 + ObstacleRadius 0.6 = 1.05 m from its centre, so
+        /// (Hero.Radius 0.45 + ObstacleRadius 0.6 = 1.05 m from its center, so
         /// contact lands at x ~= 0.95), giving a perfectly axial normal
         /// (-1, 0) — the contact tick is also the dash-start tick.
         static SimConfig ObstacleFixture()

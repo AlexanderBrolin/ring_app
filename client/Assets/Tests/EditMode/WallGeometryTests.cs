@@ -336,7 +336,7 @@ namespace Ring.Simulation.Tests
 
             // Evidence the cap actually engaged (Урок 64): the player's
             // straight-ahead SlideDir (1,0) runs along y=0, exactly 1.3 m
-            // below the cap centre (5,1.3) — inside its 1.45 m touch radius
+            // below the cap center (5,1.3) — inside its 1.45 m touch radius
             // (WallHalfWidth 1 + Hero.Radius 0.45) — so an unobstructed run
             // would have stayed at y=0 the entire time; the cap's push-out
             // must have nudged the player to negative y (away from it).

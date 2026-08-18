@@ -52,8 +52,16 @@ namespace Ring.Simulation.Tests
             MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility)
         {
             var (elite, director) = MakeShippedArchetypes();
+            // Ф2 review C1: the flow asset belongs here too, and leaving it out
+            // was this method's own founding defect repeated one parameter
+            // over. `Flow` reaching the simulation as five zeros is exactly the
+            // shape mutation M8 exposed for Elite: Т21/Т22 read GateDelaySeconds
+            // and ExtractChannelSeconds, and a gate test at GateDelaySeconds = 0
+            // would open in the same tick the Director dies and pass while
+            // proving nothing (class R-46/R-48).
+            var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
             return SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena, visibility,
-                elite, director);
+                elite, director, flow);
         }
 
         /// The two archetype assets Т12 ships, seeded from the shared
@@ -257,6 +265,7 @@ namespace Ring.Simulation.Tests
             // deliberately not a unit test (spec §0/Р56 keeps the two number
             // sources apart on purpose).
             AssertVisibilityEqual(expected.Visibility, cfg.Visibility);
+            AssertFlowEqual(expected.Flow, cfg.Flow);
 
             // The chaser/gunner archetypes must land in the matching SimConfig slot,
             // not get swapped by the builder's mapping.
@@ -1362,6 +1371,32 @@ namespace Ring.Simulation.Tests
             // new field silently drops out of
             // Build_DefaultAssets_MatchesTestConfigsBaseline's coverage.
             Assert.AreEqual(e.PerPlayerCountFrac, a.PerPlayerCountFrac, Eps);
+            // Ф2 review A-4: the four numbers Т11 added stopped here for a
+            // whole phase. Nothing else covers them — WaveZoneTests build their
+            // configs from TestConfigs and never touch the builder, and until
+            // this round the builder validated none of them — so deleting a
+            // copy line in Build left the whole suite green while the shipped
+            // game lost the middle zone's elites. That is Р251 verbatim, and
+            // AssertArenaEqual's own note warns about it three times over.
+            Assert.AreEqual(e.ZoneWeights.Length, a.ZoneWeights.Length);
+            for (int i = 0; i < e.ZoneWeights.Length; i++)
+                Assert.AreEqual(e.ZoneWeights[i], a.ZoneWeights[i], Eps, $"ZoneWeights[{i}]");
+            Assert.AreEqual(e.EliteShareMiddle, a.EliteShareMiddle, Eps);
+            Assert.AreEqual(e.EliteShareOuterGrowth, a.EliteShareOuterGrowth, Eps);
+            Assert.AreEqual(e.EliteShareOuterCap, a.EliteShareOuterCap, Eps);
+        }
+
+        /// Ф2 review C1: the five MatchFlowConfig numbers, pinned against the
+        /// TestConfigs baseline the way every other section here is. Mirrors
+        /// AssertVisibilityEqual's own role — without it the SO's C# defaults
+        /// and the test baseline are joined by nothing at all.
+        static void AssertFlowEqual(MatchFlowSimConfig e, MatchFlowSimConfig a)
+        {
+            Assert.AreEqual(e.GateDelaySeconds, a.GateDelaySeconds, Eps);
+            Assert.AreEqual(e.ExtractChannelSeconds, a.ExtractChannelSeconds, Eps);
+            Assert.AreEqual(e.RetinueCount, a.RetinueCount);
+            Assert.AreEqual(e.RetinueRespawnSeconds, a.RetinueRespawnSeconds, Eps);
+            Assert.AreEqual(e.DirectorReserveSlots, a.DirectorReserveSlots);
         }
 
         static void AssertArenaEqual(ArenaSimConfig e, ArenaSimConfig a)
@@ -1538,6 +1573,43 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void BootstrapArchetypeSeeds_MatchTheTestConfigsBaseline()
+        {
+            // Ф2 fix-round (review B-I1). The Elite and Director profiles exist
+            // TWICE: as ~30 literals each in StageOneSceneBootstrap's seeding
+            // methods, which is what reaches the shipped .asset, and again in
+            // TestConfigs.Default(), which is what every test runs on. Т12's
+            // SeedMob closed the drift BETWEEN the three test fixtures; it did
+            // nothing about the drift between the bootstrap and the baseline,
+            // and that one was held together by a one-off grep. This test is
+            // the binding.
+            //
+            // It deliberately does NOT merge the two sources: spec §0 keeps
+            // them apart so a divergence can be DELIBERATE (Weapon.AmmoStart is
+            // 120 in the asset and 400 in the baseline; Arena.BarrierTop is 3
+            // and 0), and each such case is pinned by its own named assertion
+            // in Build_DefaultAssets_MatchesTestConfigsBaseline. What this
+            // catches is the UNdocumented kind. If a deliberate divergence is
+            // ever wanted for these two archetypes, it belongs here as a named
+            // exception with its reason, exactly as those two have.
+            var elite = ScriptableObject.CreateInstance<MobConfig>();
+            var director = ScriptableObject.CreateInstance<MobConfig>();
+            Ring.Editor.StageOneSceneBootstrap.ApplyEliteDefaults(elite);
+            Ring.Editor.StageOneSceneBootstrap.ApplyDirectorDefaults(director);
+
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis, elite, director);
+            SimConfig expected = TestConfigs.Default();
+
+            AssertMobEqual(expected.Elite, cfg.Elite);
+            AssertMobEqual(expected.Director, cfg.Director);
+            // And the two profiles must stay distinguishable: a copier that
+            // seeded both from the same source would satisfy everything above.
+            Assert.AreNotEqual(cfg.Elite.MaxHp, cfg.Director.MaxHp);
+            Assert.AreNotEqual(cfg.Elite.Radius, cfg.Director.Radius);
+        }
+
+        [Test]
         public void Validate_ExtractZoneDisagreesWithPosition_Throws()
         {
             // Owner decision R-79: ExtractZone[i] and ExtractPos[i] describe
@@ -1638,13 +1710,13 @@ namespace Ring.Simulation.Tests
                     Geometry.SegmentArc(doorPos, float2.zero, 0f, cfg.Arena.ZoneWallRadius[0],
                         cfg.Arena.ZoneWallHalfWidth[0], innerDoorCenter, innerDoorFreeWidth,
                         out _, out _),
-                    $"the ray from outer door [{start + d}] to the core centre must cross the INNER "
+                    $"the ray from outer door [{start + d}] to the core center must cross the INNER "
                     + "ring's own body — the two rings' doors must not line up into a straight "
                     + "spawn-to-core corridor (spec §3.15)");
 
                 // The weaker companion, kept because it is also true and is
                 // what a player actually experiences: nothing at all lets a
-                // shot through from that door to the centre.
+                // shot through from that door to the center.
                 Assert.IsFalse(
                     Ring.Simulation.AI.Targeting.HasLineOfFire(doorPos, float2.zero, 0f, in cfg.Arena),
                     $"outer door [{start + d}] sees the core center — the doors of the two " +

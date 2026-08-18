@@ -102,7 +102,7 @@ namespace Ring.Simulation.Tests
             // circle into a phantom of radius |r| = 0.25 (padR -0.45 + cR
             // 0.2) — big enough to swallow the 0.1m offset below and falsely
             // block the ray. Clamped to padR' = max(padR, -cR) = -0.2,
-            // r' = 0: the circle degenerates to its own centre point, which
+            // r' = 0: the circle degenerates to its own center point, which
             // the ray — offset by 0.1, not colinear with it — genuinely misses.
             float2 circlePos = new float2(5f, 0.1f);
             float circleR = 0.2f;
@@ -535,7 +535,7 @@ namespace Ring.Simulation.Tests
             }
 
             // Sim B: identical setup/seed, independently tracking the first tick the
-            // raw centre-to-centre distance crosses AttackRange — using exactly the
+            // raw center-to-center distance crosses AttackRange — using exactly the
             // positions the entry check itself reads: the mob's position as it stood
             // BEFORE this tick's motion, against the player's position AFTER this
             // tick's movement (movement runs before the AI check inside Tick()).
@@ -790,7 +790,7 @@ namespace Ring.Simulation.Tests
             // inside the padded circle), `theta` becomes 90 degrees, and the
             // resulting tangent gives the mob its MAXIMUM possible axial
             // component, i.e. exactly the "commit to a detour along the
-            // wall" behaviour this test wants, not the churn it's meant to
+            // wall" behavior this test wants, not the churn it's meant to
             // catch. What DOES redden it: dropping the wall loop entirely
             // (SteerAround never even sees the wall, so the mob walks
             // straight into its flat side and the physical collide-and-slide
@@ -810,9 +810,9 @@ namespace Ring.Simulation.Tests
 
             var w = new SimulationWorld(1, c);
             var player = w.Player;
-            player.Pos = new float2(-6f, -1f); // west of the wall, off-centre like the chaser below
+            player.Pos = new float2(-6f, -1f); // west of the wall, off-center like the chaser below
             w.SetPlayerForTest(player);
-            // East of the wall, at the same off-centre offset — squarely on
+            // East of the wall, at the same off-center offset — squarely on
             // the flat side, far from either rounded end.
             w.SpawnMobForTest(MobType.Chaser, new float2(12f, -1f));
 
@@ -852,7 +852,7 @@ namespace Ring.Simulation.Tests
             // player" assertion would pass today too — the mob would simply
             // walk straight through the wall, uncollided, and get there fast.
             // The `everEmbeddedInSolidWall` guard below is what actually
-            // reddens: it fails the instant the mob's own centre is found
+            // reddens: it fails the instant the mob's own center is found
             // inside the wall's solid body (OverlapsArc true) at any tick,
             // which the current straight-line walk-through triggers almost
             // immediately (spawn angle 135 degrees is well outside the door's
@@ -868,7 +868,7 @@ namespace Ring.Simulation.Tests
             c.Arena.DoorFreeWidth = new[] { 4f };
 
             var w = new SimulationWorld(1, c);
-            // Player at the arena centre, inside the wall's hole. Chaser
+            // Player at the arena center, inside the wall's hole. Chaser
             // spawns outside, 135 degrees from the door, so one direction
             // around is unambiguously shorter — the direct line to the player
             // crosses the wall's SOLID body, so a "press into the arc" mob

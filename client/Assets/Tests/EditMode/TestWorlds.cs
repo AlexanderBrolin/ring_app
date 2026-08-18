@@ -41,10 +41,10 @@ namespace Ring.Simulation.Tests
 
             SpawnMobsToCap(world);
 
-            // Stage 3 Task 12: the shooter is moved off the arena centre, 7 m
+            // Stage 3 Task 12: the shooter is moved off the arena center, 7 m
             // inside the innermost zone wall — the SAME huddle radius (58)
             // TrioSaturated uses, and for the same reason, now that the crowd
-            // is three times denser (MaxMobs 96 -> 288). At the centre the
+            // is three times denser (MaxMobs 96 -> 288). At the center the
             // player stands INSIDE the spiral: 12 chasers reach it by tick 17
             // (the ring at radius 4 closes 2.9 m at 5.2 m/s) instead of the 4
             // that used to, the mobs then pile onto it at AttackRange, and
@@ -128,7 +128,7 @@ namespace Ring.Simulation.Tests
         /// arena and becomes 109.96 on the three-zone one — out in the OUTER
         /// zone, with two arc barriers between the huddle and the crowd. Every
         /// premise stated below would have quietly died there: player 2's long
-        /// shot toward the centre would be stopped by the outer ring at 92
+        /// shot toward the center would be stopped by the outer ring at 92
         /// (spec §3.15 offsets the two rings' doors precisely so that no
         /// straight ray from the outer zone reaches the core), so it would
         /// neither still be in flight at the end of warm-up nor ever reach a
@@ -138,7 +138,7 @@ namespace Ring.Simulation.Tests
         /// true; it is now tied to the zone wall that has to stay out of the
         /// firing line rather than to the spawn ring that moved. Two reasons: firing along the NATURAL ring's own
         /// player-to-player chord passes within Arena.Radius *
-        /// PlayerSpawnRingFrac * cos(60 deg) = 26 m of the centre — squarely
+        /// PlayerSpawnRingFrac * cos(60 deg) = 26 m of the center — squarely
         /// inside the mob crowd — so whether a round ever clears it to reach
         /// another player would depend on the crowd's exact layout rather than
         /// being a fixture guarantee; and moving clear of the crowd also means
@@ -150,7 +150,7 @@ namespace Ring.Simulation.Tests
         /// aiming at the other's own static position — hip fire's per-shot
         /// direction, WeaponSystem.Update's normalize(AimPoint - p.Pos), is
         /// therefore exact and unchanging shot after shot). Player 2 fires
-        /// the long way instead, back toward the arena centre and into the
+        /// the long way instead, back toward the arena center and into the
         /// mob crowd — the same "long sustained shot" role Saturated's own
         /// holdFire plays, so a live projectile is guaranteed at the end of
         /// warm-up regardless of the duel's own volley timing (the shot needs
@@ -256,7 +256,7 @@ namespace Ring.Simulation.Tests
         /// Moves a player to an exact spot through the SetPlayerForTest seam —
         /// a multiplayer world otherwise spawns its players on the ring
         /// (Geometry.SpawnPosFor), which is no use to a fixture that has to
-        /// state a firing line down to the metre. Stage 2 Task 17
+        /// state a firing line down to the meter. Stage 2 Task 17
         /// (PvpDamageTests) established this exact move under the name
         /// `PlaceAt`; Task 18 fix-round 1 (M-1) lifted it here — its only home
         /// now — so the two test files stop carrying byte-identical copies of

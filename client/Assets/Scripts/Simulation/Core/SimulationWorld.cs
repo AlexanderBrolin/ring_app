@@ -596,6 +596,16 @@ namespace Ring.Simulation.Core
             // spec, missed by Т9's own plan text — same coordinator finding
             // as ZoneRadius above.
             if (a.ExtractPos.Length != b.ExtractPos.Length) return false;
+            // Ф2 review B-m4: the three portal arrays are parallel by
+            // convention, and SimConfigBuilder enforces it — but a hand-built
+            // config never passes through the builder, and this comparator is
+            // reached from ApplyConfig on exactly such configs in tests. A
+            // comparator must answer false, not throw out of an index.
+            if (a.ExtractZone.Length != a.ExtractPos.Length
+                || a.ExtractKind.Length != a.ExtractPos.Length
+                || b.ExtractZone.Length != b.ExtractPos.Length
+                || b.ExtractKind.Length != b.ExtractPos.Length)
+                return false;
             for (int i = 0; i < a.ExtractPos.Length; i++)
             {
                 if (!math.all(a.ExtractPos[i] == b.ExtractPos[i])) return false;

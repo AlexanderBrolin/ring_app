@@ -41,7 +41,7 @@ namespace Ring.Server
     /// `Ring.Networking` precisely so this assembly cannot make that mistake by
     /// accident.
     ///
-    /// The seven `SimConfigBuilder.Build` assets are the same seven
+    /// The ten `SimConfigBuilder.Build` assets are the same ten
     /// `SimulationRunner` carries, in the same order, under the same field
     /// names — one balance source for the client and the server both (Critical
     /// Rule 6). `NetConfig` is separate on purpose (Р52): it never enters

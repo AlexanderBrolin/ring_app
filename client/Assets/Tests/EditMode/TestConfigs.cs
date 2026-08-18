@@ -111,11 +111,23 @@ namespace Ring.Simulation.Tests
                     PerPlayerCountFrac = 0.7f,
                     // Stage 3 Task 11: mirrors WaveConfig's C# defaults (two-
                     // sources-of-numbers discipline — test/code-default side).
-                    // Inert on this zoneless arena (ZoneRadius empty below —
-                    // Т12 wires zones) except for EliteShareOuterGrowth/Cap,
-                    // which DO apply on the Outer-only zoneless path
-                    // (coordinator R-53) and are exactly what moves both
-                    // golden scenarios this task (spec Р298).
+                    //
+                    // ⚠ REWRITTEN IN Т12 (Ф2 review B-I4): the Т11 text here
+                    // said this arena was ZONELESS and that
+                    // EliteShareOuterGrowth/Cap were "exactly what moves both
+                    // golden scenarios". Both halves are false since Т12, and
+                    // the second half was never true: DefaultArena() below
+                    // ships ZoneRadius {65, 92}, so the wave budget is split
+                    // three ways and EliteShareMiddle — not the Outer growth —
+                    // is what puts Elites into both golden runs; and Т11's own
+                    // mutations M4/M12 doubled the Outer growth rate and moved
+                    // NEITHER golden, because both scenarios live at
+                    // WaveIndex = 1 where the (WaveIndex - 1) factor is
+                    // identically zero. Leaving it stood was worse than a stale
+                    // number: DeterminismTests' pinned re-pin justification
+                    // says the opposite in as many words, so the repository
+                    // held two contradictory statements about its most
+                    // guarded constant.
                     ZoneWeights = new[] { 0.45f, 0.45f, 0.10f },
                     EliteShareMiddle = 0.35f, EliteShareOuterGrowth = 0.02f,
                     EliteShareOuterCap = 0.25f },
@@ -355,6 +367,31 @@ namespace Ring.Simulation.Tests
             c.Arena.DoorCenterRad = System.Array.Empty<float>();
             c.Arena.DoorFreeWidth = System.Array.Empty<float>();
             return c;
+        }
+
+        /// Ф2 fix-round (review B-m6, and the sweep it prompted): shrink the
+        /// arena AND the zone boundaries together.
+        ///
+        /// Several fixtures narrow the world to 20-35 m so a projectile or a
+        /// dash can reach its far wall inside the test's own tick budget. Since
+        /// Т12 the shared arena also carries ZoneRadius {65, 92}, and those
+        /// fixtures kept them — leaving boundaries wider than the world they
+        /// bound. Harmless while nothing reads them (Geometry.ZoneOf simply
+        /// answers Core everywhere inside 20 m), and NOT harmless from Т13 on,
+        /// where the loot tier is read off exactly that answer: every drop in
+        /// such a fixture would silently become a Core-tier drop. The builder's
+        /// own new rule (ZoneRadius[i] < Arena.Radius, Ф2 review B-I2.1) states
+        /// the same invariant for configs that go through it; these fixtures
+        /// construct SimulationWorld directly, so they need it stated here.
+        ///
+        /// The 0.5/0.8 split keeps three non-empty zones in proportion rather
+        /// than inventing a layout: no fixture using this cares WHERE the
+        /// boundaries are, only that they are inside the world.
+        public static void ShrinkArena(ref SimConfig c, float radius)
+        {
+            c.Arena.Radius = radius;
+            if (c.Arena.ZoneRadius.Length == 2)
+                c.Arena.ZoneRadius = new[] { radius * 0.5f, radius * 0.8f };
         }
 
         /// Open() with an extended slide (Task 10 — M16): SlideDuration 0.9s

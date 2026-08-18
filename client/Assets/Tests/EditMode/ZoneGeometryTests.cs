@@ -23,14 +23,20 @@ namespace Ring.Simulation.Tests
     /// element (lesson 227): a `j &lt; 1` / hard-coded-index mutant then dies on
     /// the door tests instead of surviving them.
     ///
-    /// This file moves neither golden hash: TestConfigs carries no arcs yet
+    /// ⚠ THE Т9 SENTENCE HERE EXPIRED IN Т12 (Ф2 review B-m1). It read "this
+    /// file moves neither golden hash: TestConfigs carries no arcs yet
     /// (ZoneWallCount == 0 until Task 12), so the golden scenarios never
-    /// execute a single line of the code under test here — the same relation
-    /// WallGeometryTests has to TestConfigs.Open().
+    /// execute a single line of the code under test here". Т12 turned the
+    /// zones on in TestConfigs.DefaultArena(), so BOTH golden scenarios now run
+    /// SegmentArc/OverlapsArc every tick, and the arc primitive is inside the
+    /// re-pinned digest rather than beside it. The tests below are unchanged
+    /// and still isolate the primitive on their own fixtures — what changed is
+    /// the consequence of breaking it: it is now a golden-moving change, not a
+    /// local one.
     public class ZoneGeometryTests
     {
         /// Angular HALF-extent of a door's cutout (ledger R-26, spec Р246):
-        /// `doorFreeWidth` is the FREE width in metres, and each side of the
+        /// `doorFreeWidth` is the FREE width in meters, and each side of the
         /// cutout is closed off by a jamb circle of radius halfW, so the full
         /// cutout measures `freeWidth + 2*halfW` of arc at radius ringR.
         /// A formula, not a fixture — the tests below need to know where the
@@ -640,9 +646,9 @@ namespace Ring.Simulation.Tests
         // --- Stage 3 Task 9 (bd app-35g): six consumers of the arc primitive.
         // SweepArena/Depenetrate grow an arc branch — order fixed by spec
         // §3.2/§3.3: circles -> stadiums -> arcs -> the ring boundary.
-        // TestConfigs carries ZoneWallCount == 0 until Т12, so neither golden
-        // scenario ever executes a line here — the same relation this whole
-        // file already has to TestConfigs.Default() (see the class doc above).
+        // Ф2 review B-m1: since Т12 both golden scenarios DO execute these
+        // consumers every tick (TestConfigs.DefaultArena() ships two rings) —
+        // see the corrected note in the class doc above.
 
         [Test]
         public void SweepArena_ContactOrder_StadiumBeforeArc()

@@ -177,10 +177,25 @@ namespace Ring.Simulation.Tests
             var c = TestConfigs.Default();
             c.Wave.FirstWaveDelay = 0.1f;
             c.Wave.MaxSpawnAttempts = 0; // fixed FallbackSlots grid only — no RNG luck
-            c.Wave.SpawnRingInset = c.Arena.Radius - 20f; // spawn ring lands at radius 20
+            //
+            // ⚠ PREMISE REPAIRED IN Ф2's FIX-ROUND (review B-I3) — the same
+            // class of defect Т12 found in TrioSaturated and failed to sweep
+            // for here. The inset is chosen against Arena.Radius so the OUTER
+            // ring lands at 20, dead center of the band below; but Т12 turned
+            // the zones on, and the same inset put the Middle ring at
+            // 92 - 93 = -1 and the Core ring at 65 - 93 = -28. The budget then
+            // split [2, 2, 0] by the shipped weights, and the Middle candidates
+            // were refused by MinSpawnDistanceToPlayer rather than by any arc:
+            // green by a foreign rule for two zones out of three, with this
+            // method's own sentence ("the whole ring sits inside its band")
+            // false for both. Routing the whole wave to Outer makes the
+            // sentence true again; the premise assertions below make it
+            // checkable rather than narrated.
+            c.Wave.ZoneWeights = new[] { 1f, 0f, 0f };
+            c.Wave.SpawnRingInset = c.Arena.Radius - 20f; // OUTER spawn ring lands at radius 20
             c.Arena.ZoneWallCount = 1;
             c.Arena.ZoneWallRadius = new[] { 20f };
-            c.Arena.ZoneWallHalfWidth = new[] { 5f }; // band covers [15,25] — the spawn ring sits dead centre
+            c.Arena.ZoneWallHalfWidth = new[] { 5f }; // band covers [15,25] — the spawn ring sits dead center
             c.Arena.ZoneWallDoorStart = new[] { 0 };
             c.Arena.ZoneWallDoorCount = new[] { 0 };
             c.Arena.DoorCenterRad = System.Array.Empty<float>();
@@ -189,6 +204,16 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(11, c);
             for (int i = 0; i < 200; i++) w.Tick(default);
 
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            int outerDebt = snap.Wave.PendingOuterChaser + snap.Wave.PendingOuterGunner
+                + snap.Wave.PendingOuterElite;
+            Assert.Greater(outerDebt, 0,
+                "fixture premise: the wave must actually owe mobs to the Outer zone, or the arc "
+                + "rejection below is never even attempted");
+            Assert.AreEqual(snap.Wave.PendingTotal, outerDebt,
+                "fixture premise: the WHOLE debt belongs to Outer — the Middle and Core rings sit "
+                + "at negative radii under this inset and are not what this test measures");
             Assert.AreEqual(0, w.MobCount,
                 "every fallback slot sits inside the zone wall's body — none should have spawned");
         }

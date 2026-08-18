@@ -34,26 +34,31 @@ namespace Ring.Data
         /// and the gate opening (ADR-001 §4.1's own "окно дележа"). A pure
         /// countdown compared against a stored death tick — nothing is sized
         /// by it and the client is told about the gate by event, so it is a
-        /// hot-tweak, not topology (R-77). Ceiling is the shipped match
-        /// length itself (NetConfig.MatchMaxDurationSeconds, 900 s) rounded
-        /// down to a tenth of it: a window longer than that could never
-        /// elapse inside a match at all.
+        /// hot-tweak, not topology (R-77). Ceiling 300 s is a THIRD of the
+        /// shipped match length (NetConfig.MatchMaxDurationSeconds, 900 s) —
+        /// a sharing window longer than that would eat the raid it belongs to.
+        /// (Ф2 review B-I5: this line used to call 300 "a tenth of 900", which
+        /// is 90 — the DEFAULT, not the ceiling.)
         [Range(0f, 300f)] public float GateDelaySeconds = 90f;
 
         /// Spec §3.5: how long a collector must hold an open portal to
         /// extract. SimulationWorld.ApplyConfig CLAMPS PlayerState.
         /// ExtractTimer down to this on a hot-tweak (spec §3.13's own
         /// hot-tweak paragraph names it), which is precisely why it is not
-        /// topology (R-77). Ceiling 120 s is two minutes of channel — an
-        /// eighth of the match, past any playable value.
+        /// topology (R-77). Ceiling 120 s is two full minutes of channelling —
+        /// six times the shipped 20 s and past any playable value. (Ф2 review
+        /// B-I5: it used to be called "an eighth of the match", which would be
+        /// 112.5 s.)
         [Range(0.1f, 120f)] public float ExtractChannelSeconds = 20f;
 
         /// Spec §3.3 Р215/§3.4: how many Elites the Director spawns on
         /// activation. Retinue mobs live in the world's existing _mobs array,
         /// sized by Arena.MaxMobs (which IS topology, and is checked there) —
         /// this number only decides how many of those slots the Director asks
-        /// for, so it migrates freely (R-77). Ceiling 16 is a full sixteenth
-        /// of MaxMobs 288, well past the "small escort" this is.
+        /// for, so it migrates freely (R-77). Ceiling 16 is eight times the
+        /// shipped escort of 2 and still under 6% of MaxMobs 288 — far past
+        /// anything that reads as a retinue rather than a second wave. (Ф2
+        /// review B-I5: it used to be called "a sixteenth of 288", which is 18.)
         [Range(0, 16)] public int RetinueCount = 2;
 
         /// Spec §3.3 Р215: cadence of retinue top-up while the Director is
@@ -66,7 +71,10 @@ namespace Ring.Data
         /// with the world at Arena.MaxMobs — the shipped value is Р254's own
         /// arithmetic, 1 + RetinueCount = 3. Read by WaveSystem as a
         /// subtrahend of MaxMobs, never as an array size (R-77). Ceiling 64
-        /// keeps the reserve well under MaxMobs' own floor.
+        /// is under a quarter of the shipped MaxMobs 288: past that, the
+        /// reserve would start starving the waves it is carved out of. (Ф2
+        /// review B-I5: it used to say "under MaxMobs' own floor", and that
+        /// floor is 1.)
         [Range(0, 64)] public int DirectorReserveSlots = 3; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.

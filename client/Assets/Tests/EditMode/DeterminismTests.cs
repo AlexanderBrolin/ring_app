@@ -325,7 +325,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void GoldenHash_ScriptedScenario()
         {
-            // Pin against a silent simulation-behaviour change (spec §3.13 item 14):
+            // Pin against a silent simulation-behavior change (spec §3.13 item 14):
             // world seed 42, scripted input from Random(123), 1000 ticks. First
             // run: the constant below is 0, this assert fails and NUnit prints
             // the actual hash — paste that value in and rerun for a green PASS.
@@ -369,7 +369,7 @@ namespace Ring.Simulation.Tests
             // alone; on top of that, Scripted()'s DashRequested (5% per tick)
             // has always been able to send a dash into one of the scripted
             // scenario's five obstacles, and a dash that does now mirrors
-            // instead of stopping dead — a further, real behaviour change.
+            // instead of stopping dead — a further, real behavior change.
             // Re-pinned by Task 13 (predictive telegraph entry): the Chaser's
             // Chase->Telegraph entry check now compares against
             // Targeting.PredictPos(player.Pos, player.Vel, ...) instead of the

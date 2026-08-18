@@ -490,7 +490,7 @@ namespace Ring.Simulation.Tests
             // The height gate resolves the zone from the chord through the
             // TARGET's own circle. Player 0 stands at the muzzle here, so a gate
             // still reading player 0's position would clip the chord to the
-            // round's first few centimetres and report the LAUNCH height (Head,
+            // round's first few centimeters and report the LAUNCH height (Head,
             // above the crown) instead of the height the round actually arrives
             // at 1.5 m downrange (Legs).
             var c = Range();

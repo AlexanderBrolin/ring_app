@@ -41,7 +41,7 @@ namespace Ring.Simulation.AI
         /// so a burst well above normal running speed (a dash) pulls the same lead
         /// a plain run at `maxSpeed` would, never further (A4/D2 — a dash must not
         /// bait the swing from farther away than running would). Then `maxLead`
-        /// bounds the resulting offset distance in metres, so the swing's
+        /// bounds the resulting offset distance in meters, so the swing's
         /// anticipation never reaches absurdly far even for a very fast target.
         public static float2 PredictPos(float2 pos, float2 vel, float maxSpeed,
             float seconds, float factor, float maxLead)

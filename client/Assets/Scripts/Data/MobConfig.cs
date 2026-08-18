@@ -58,7 +58,7 @@ namespace Ring.Data
         [Range(0f, 5f)] public float MuzzleHeight = 0.95f;
 
         // Task 1: melee swing-attack target lead — how far ahead of a moving target's
-        // position a Chaser's swing aims (Task 15+); capped in metres so a fast-fleeing
+        // position a Chaser's swing aims (Task 15+); capped in meters so a fast-fleeing
         // target does not pull the swing absurdly far off its own body.
         [Range(0f, 2f)] public float SwingLeadFactor = 1.0f;
         [Range(0f, 6f)] public float SwingLeadMaxMeters = 2.0f; // sync-marker key — keep LAST

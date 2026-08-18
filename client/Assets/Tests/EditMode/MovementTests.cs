@@ -87,7 +87,7 @@ namespace Ring.Simulation.Tests
             // twice over and stops 20 m short of the 113 m one — the run ended
             // at |pos| = 92.83 with the player still walking, and the assertion
             // below read that as "the wall is in the wrong place" (it is not:
-            // 92.83 = 93.3 minus the acceleration ramp, to the centimetre).
+            // 92.83 = 93.3 minus the acceleration ramp, to the centimeter).
             // + 30 ticks of slack covers the ramp and leaves the player pinned
             // against the rim rather than arriving exactly on the last tick.
             int runTicks = (int)math.ceil(rim / (cfg.Hero.MaxSpeed * SimulationWorld.TickDt)) + 30;

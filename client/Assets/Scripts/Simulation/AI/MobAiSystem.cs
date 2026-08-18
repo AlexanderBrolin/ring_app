@@ -108,10 +108,10 @@ namespace Ring.Simulation.AI
 
                 case MobAiState.Chase:
                 {
-                    // Entry criterion (Task 13/spec §3.6 v2): mob-centre to the
+                    // Entry criterion (Task 13/spec §3.6 v2): mob-center to the
                     // player's PREDICTED position (Targeting.PredictPos, fed
                     // Hero.MaxSpeed/TelegraphSeconds/SwingLeadFactor/
-                    // SwingLeadMaxMeters) <= AttackRange — not raw centre-to-centre.
+                    // SwingLeadMaxMeters) <= AttackRange — not raw center-to-center.
                     // A player closing in (running or dashing at the mob) gets a
                     // forward-shifted prediction, so the windup can start before
                     // raw contact and the strike below lands on a target that kept
@@ -125,13 +125,13 @@ namespace Ring.Simulation.AI
                     //
                     // This is intentionally NOT unified with the strike's hit
                     // criterion below (CircleOverlap, which folds in the hero's own
-                    // body radius: effectively centre-to-centre < AttackRange +
+                    // body radius: effectively center-to-center < AttackRange +
                     // hero.Radius) — which of the two is the looser check now
                     // depends on the player's velocity at the entry tick (the
                     // predictive lead can make entry the looser one while the
                     // player is closing fast; it reverts to the old
                     // always-tighter-than-the-hit-check relationship otherwise).
-                    // Either way, the strike still re-validates centre-to-centre
+                    // Either way, the strike still re-validates center-to-center
                     // distance honestly after TelegraphSeconds (see below) — an
                     // early predictive entry is never an automatic hit, only an
                     // earlier start of the windup clock.
@@ -304,17 +304,17 @@ namespace Ring.Simulation.AI
         ///
         /// Circle blocker: the exact external tangent from the mob's position
         /// to the obstacle's padded circle (classic point-to-circle tangent —
-        /// right triangle pos/tangent point/centre, hypotenuse `d` = distance
-        /// to centre, opposite side = padded radius, half-angle at pos =
+        /// right triangle pos/tangent point/center, hypotenuse `d` = distance
+        /// to center, opposite side = padded radius, half-angle at pos =
         /// `asin(radius / d)`). Unlike a pure sideways tangent, this direction
         /// still has a net component toward the target — a pure-tangent
-        /// version left zero radial velocity relative to the obstacle centre,
+        /// version left zero radial velocity relative to the obstacle center,
         /// so the mob settled into a stable circular orbit right at the
         /// lookahead trigger boundary and never closed in (found via the RED
         /// run of Chaser_BehindObstacle_SteersAroundNotStuck: it parked at
-        /// exactly obstacleRadius+padR+lookahead from the centre). Side is the
+        /// exactly obstacleRadius+padR+lookahead from the center). Side is the
         /// sign of the cross product of the approach direction and the
-        /// direction to the obstacle's centre; a dead-on approach (cross == 0)
+        /// direction to the obstacle's center; a dead-on approach (cross == 0)
         /// breaks the tie on the mob's Id parity so the choice stays
         /// deterministic without RNG.
         ///
@@ -495,7 +495,7 @@ namespace Ring.Simulation.AI
 
                 // Aim just OUTSIDE that end, offset off the wall's face on the
                 // mob's own side and past the cap along the axis. Steering at the
-                // end itself would aim at the cap's centre — into the wall.
+                // end itself would aim at the cap's center — into the wall.
                 float2 axis = math.normalizesafe(end - farEnd, dir);
                 float2 face = new float2(-axis.y, axis.x);
                 // I-2 (fix-round T14): the raw sign of this dot flips as the

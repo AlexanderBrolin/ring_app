@@ -58,10 +58,14 @@ namespace Ring.Data
             new Obstacle { Pos = new Vector2(30f, 22f), Radius = 2.8f },
             new Obstacle { Pos = new Vector2(-6f, -30f), Radius = 3.2f },
             // Stage 3 Task 12 (spec §3.15): six circles for the middle zone
-            // and six for the outer one, on rings 78 and 101. Angles avoid
-            // every door ray (inner 90/210/330 deg, outer 30/150/270 deg) by
-            // at least 20 deg so no doorway is ever choked, and the outer six
-            // clear every spawn point of every ring size by more than 30 m.
+            // and six for the outer one, on rings 78 and 101. The middle six
+            // clear every door ray (inner 90/210/330 deg, outer 30/150/270 deg)
+            // by 30 deg; the outer six by 10 deg — which at radius 101 is 17.5 m
+            // of lateral clearance against a door 6 m wide, so no doorway is
+            // choked (Ф2 review B-m2: the number here used to read "at least 20
+            // deg", true of the middle six and false of the outer six). Every
+            // one of the twelve clears every spawn point of every ring size by
+            // more than 30 m.
             // Radii stay inside the spec's own 2.5-4 band. Owner tuning
             // target at milestone В1 (spec §3.15's own wording).
             new Obstacle { Pos = new Vector2(78f, 0f), Radius = 3.0f },
@@ -140,8 +144,11 @@ namespace Ring.Data
         // Stage 3 Task 12 (spec §3.2 Р210): 0.8 -> 0.92. At Radius 113 the old
         // fraction would put the ring at 90.4 m — inside the MIDDLE zone, so
         // all three collectors would start behind a wall from the periphery,
-        // against ADR-001 §3. 0.92 gives 103.96 m: the outer zone, with 9.04 m
-        // of slack to the rim and 9.51 m to the middle zone's arc band.
+        // against ADR-001 §3. 0.92 gives 103.96 m: the outer zone, 9.04 m short
+        // of the rim and 10.96 m outside the middle zone's arc band (Ф2 review
+        // B-m3: the second figure used to read 9.51, which is the same gap
+        // MINUS Hero.Radius + SpawnClearance — the validator's own threshold,
+        // not a distance, and so not comparable with the first).
         [Range(1, 3)] public int MaxPlayers = 3;
         [Range(0.1f, 0.95f)] public float PlayerSpawnRingFrac = 0.92f;
 
@@ -224,7 +231,7 @@ namespace Ring.Data
         /// its own doors impassable and SimConfigBuilder rejects the arena.
         public float[] DoorFreeWidth = { 6f, 6f, 6f, 6f, 6f, 6f };
 
-        /// Stage 3 Task 8 (owner decision R-29): manoeuvre-room term of the
+        /// Stage 3 Task 8 (owner decision R-29): maneuvering room term of the
         /// door-width rule (spec Р247). Independent of the zone layout
         /// above (only matters once a door exists), so it is safe to carry
         /// the real spec number now rather than wait for Т12.

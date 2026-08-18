@@ -443,7 +443,14 @@ namespace Ring.Simulation.Combat
             }
             else if (kind == HitBarrier)
             {
-                // Interior barrier — an obstacle circle or a stadium wall
+                // Interior barrier — an obstacle circle, a stadium wall or,
+                // since Т9, a zone-wall ARC (Ф2 fix-round: this line named only
+                // the first two, and the omission is why spec §3.2's "одно
+                // правило на все внутренние барьеры" held transitively but was
+                // executed by no test until BarrierHeightTests grew its two arc
+                // cases). All three arrive through the one SweepArena call
+                // above as the one HitBarrier candidate, so there is no
+                // per-shape height branch here and none is wanted
                 // (Stage 2 Task 46, bd app-r8x). They share one modelled top,
                 // Arena.BarrierTop; a non-positive value means there is none,
                 // which is what every barrier did before this task and what

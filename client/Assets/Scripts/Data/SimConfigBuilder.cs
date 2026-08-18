@@ -482,7 +482,28 @@ namespace Ring.Data
                         $"(got {zoneWeightSum:F5}: [{cfg.Wave.ZoneWeights[0]:F3}, " +
                         $"{cfg.Wave.ZoneWeights[1]:F3}, {cfg.Wave.ZoneWeights[2]:F3}]).");
                 }
+                // Ф2 review A-1 = B-I2.2 (both reviewers, independently): the
+                // SUM alone is not the rule. {-0.5, 1.4, 0.1} sums to 1 and
+                // sails through — and SplitByZones then hands WaveSystem a
+                // NEGATIVE per-zone budget, which PendingTotal can never
+                // discharge, so the wave phase hangs for the rest of the match
+                // with no error anywhere. Per element, not just in aggregate.
+                for (int i = 0; i < cfg.Wave.ZoneWeights.Length; i++)
+                    ReqNonNegative(errors, $"Wave.ZoneWeights[{i}]", cfg.Wave.ZoneWeights[i]);
             }
+
+            // Ф2 review A-1 = B-I2.2: the three elite shares. Until R-60 turned
+            // the periphery cap into a config field, "the share is in [0,1]" was
+            // guaranteed by the constant 0.25 in code; after it, by nobody —
+            // and WaveSystem.EliteShareFor does not saturate its result, unlike
+            // the GunnerShare formula beside it. A share above 1 makes the
+            // chaser remainder negative, a share below 0 makes the elite debt
+            // negative, and either one stops the wave exactly as the weights do
+            // above. Same ReqInRange form (and same Р115 reasoning) as
+            // Wave.PerPlayerCountFrac right beneath the [Range] hints.
+            ReqInRange(errors, "Wave.EliteShareMiddle", cfg.Wave.EliteShareMiddle, 0f, 1f);
+            ReqInRange(errors, "Wave.EliteShareOuterGrowth", cfg.Wave.EliteShareOuterGrowth, 0f, 1f);
+            ReqInRange(errors, "Wave.EliteShareOuterCap", cfg.Wave.EliteShareOuterCap, 0f, 1f);
 
             ReqPositive(errors, "Arena.Radius", cfg.Arena.Radius);
             ReqPositive(errors, "Arena.MaxMobs", cfg.Arena.MaxMobs);
@@ -588,6 +609,11 @@ namespace Ring.Data
                 }
             }
 
+            // Ф2 fix-round (review B-I2.3): SHAPE before VALUES. This throws on
+            // the spot rather than adding to `errors`, and it must run before
+            // ValidateWalls too — that method reaches the zone arrays through
+            // RingSlotBlocked's arc loop.
+            ValidateZoneArrayShapes(in cfg);
             ValidateWalls(errors, in cfg, spawnClearance);
             ValidateZoneWalls(errors, in cfg, spawnClearance);
 
@@ -679,6 +705,73 @@ namespace Ring.Data
         /// one per wall per call.
         static readonly Zone[] AllZones = { Zone.Outer, Zone.Middle, Zone.Core };
 
+
+        /// Ф2 fix-round, second half of review B-I2.3. The rule itself was
+        /// right and its FIRST placement was wrong: it sat inside
+        /// ValidateZoneWalls, and ValidateWalls — which runs one line earlier —
+        /// reaches the very same arrays through RingSlotBlocked (Ф2 review A-6
+        /// gave that helper its arc loop in this same round). So a short array
+        /// still crashed, one frame earlier than before, with exactly the
+        /// nameless IndexOutOfRange/ArgumentOutOfRange this rule exists to
+        /// replace — caught by the rule's own two tests, which were right all
+        /// along.
+        ///
+        /// Hence: FIRST, before every consumer, and THROWING rather than
+        /// accumulating. Validate collects errors and reports them together,
+        /// which is the right shape for rules about VALUES; a rule about the
+        /// SHAPE of the data cannot do that, because every later rule would
+        /// then run against the same malformed arrays and crash before the
+        /// collected report is ever built. Same discipline as R-64 in
+        /// Geometry.ZoneSpawnRingRadius: the guard stands in front of the read,
+        /// not behind it.
+        static void ValidateZoneArrayShapes(in SimConfig cfg)
+        {
+            var errors = new List<string>();
+            // Ф2 review B-I2.3: R-64 applied in this file's OWN house. Every
+            // loop below indexes four parallel arrays by ZoneWallCount and
+            // slices DoorCenterRad/DoorFreeWidth by DoorStart+DoorCount; a
+            // config where those disagree does not fail a rule, it CRASHES —
+            // a bare ArgumentOutOfRangeException out of the ReadOnlySpan
+            // constructor, naming nothing and addressing nobody. That is the
+            // exact defect R-64 named in Geometry.ZoneSpawnRingRadius and the
+            // exact remedy: say which array is short, and say it first, before
+            // any loop can reach it.
+            if (cfg.Arena.ZoneWallRadius.Length < cfg.Arena.ZoneWallCount
+                || cfg.Arena.ZoneWallHalfWidth.Length < cfg.Arena.ZoneWallCount
+                || cfg.Arena.ZoneWallDoorStart.Length < cfg.Arena.ZoneWallCount
+                || cfg.Arena.ZoneWallDoorCount.Length < cfg.Arena.ZoneWallCount)
+            {
+                errors.Add($"Arena.ZoneWallCount is {cfg.Arena.ZoneWallCount} but its parallel " +
+                    $"arrays are shorter (ZoneWallRadius={cfg.Arena.ZoneWallRadius.Length}, " +
+                    $"ZoneWallHalfWidth={cfg.Arena.ZoneWallHalfWidth.Length}, " +
+                    $"ZoneWallDoorStart={cfg.Arena.ZoneWallDoorStart.Length}, " +
+                    $"ZoneWallDoorCount={cfg.Arena.ZoneWallDoorCount.Length}).");
+                throw new ArgumentException("SimConfig validation failed:\n- "
+                    + string.Join("\n- ", errors));
+            }
+            if (cfg.Arena.DoorFreeWidth.Length != cfg.Arena.DoorCenterRad.Length)
+            {
+                errors.Add("Arena.DoorCenterRad and Arena.DoorFreeWidth must be the same length " +
+                    $"(got DoorCenterRad={cfg.Arena.DoorCenterRad.Length}, " +
+                    $"DoorFreeWidth={cfg.Arena.DoorFreeWidth.Length}).");
+                throw new ArgumentException("SimConfig validation failed:\n- "
+                    + string.Join("\n- ", errors));
+            }
+            for (int i = 0; i < cfg.Arena.ZoneWallCount; i++)
+            {
+                int start = cfg.Arena.ZoneWallDoorStart[i];
+                int count = cfg.Arena.ZoneWallDoorCount[i];
+                if (start < 0 || count < 0 || start + count > cfg.Arena.DoorCenterRad.Length)
+                {
+                    errors.Add($"Arena zone wall [{i}] slices the door arrays out of bounds " +
+                        $"(DoorStart={start}, DoorCount={count}, " +
+                        $"DoorCenterRad.Length={cfg.Arena.DoorCenterRad.Length}).");
+                    throw new ArgumentException("SimConfig validation failed:\n- "
+                        + string.Join("\n- ", errors));
+                }
+            }
+        }
+
         /// Stage 3 Task 8 (spec §3.2's own Validate paragraph; ledger
         /// R-27/R-28/R-37): the zone-wall arc barriers and their doors.
         /// ZoneWallCount == 0 means zones are off (Stage 2 arena
@@ -721,6 +814,22 @@ namespace Ring.Data
             // the rule generally rather than hard-coding index 0 vs 1 —
             // this file's own convention (ValidateWalls/the obstacle loop
             // above do the same for their own variable-length arrays).
+            // Ф2 review B-I2.1: plan Т8 asked for "и меньше Radius" and only
+            // ZoneWallRadius got it. A boundary outside the arena is not an
+            // abstract worry — Geometry.ZoneSpawnRingRadius derives the wave
+            // ring from it, so ZoneRadius {65, 200} on a 113 m arena puts the
+            // Middle ring at 198, outside the world, where no candidate can
+            // ever be valid and the zone's debt never discharges.
+            for (int i = 0; i < cfg.Arena.ZoneRadius.Length; i++)
+            {
+                if (cfg.Arena.ZoneRadius[i] >= cfg.Arena.Radius)
+                {
+                    errors.Add($"Arena.ZoneRadius[{i}] must be < Arena.Radius " +
+                        $"(got ZoneRadius[{i}]={cfg.Arena.ZoneRadius[i]:F3}, " +
+                        $"Arena.Radius={cfg.Arena.Radius:F3}).");
+                }
+            }
+
             for (int i = 1; i < cfg.Arena.ZoneRadius.Length; i++)
             {
                 if (cfg.Arena.ZoneRadius[i] <= cfg.Arena.ZoneRadius[i - 1])
@@ -881,6 +990,23 @@ namespace Ring.Data
                     {
                         float ringRadius = Geometry.ZoneSpawnRingRadius(waveZone, in cfg.Arena,
                             cfg.Wave.SpawnRingInset);
+                        // Ф2 review B-I2 (adjacent finding): SpawnRingInset has
+                        // no upper bound of its own, and it is subtracted from
+                        // EVERY zone boundary — so an inset chosen against the
+                        // arena's own radius quietly drives the inner zones'
+                        // rings negative. Observed, not hypothesised:
+                        // WaveScalingTests' own arc fixture ran at inset 93 with
+                        // rings of -1 and -28 m, and every rule below read that
+                        // geometry as "outside the band" and said nothing. A
+                        // ring is a circle; a circle of negative radius is not a
+                        // stricter case, it is a meaningless one.
+                        if (ringRadius <= 0f)
+                        {
+                            errors.Add($"Wave.SpawnRingInset ({cfg.Wave.SpawnRingInset:F3}) leaves " +
+                                $"the {waveZone} zone's wave spawn ring at radius " +
+                                $"{ringRadius:F3} — a spawn ring must have positive radius.");
+                            continue;
+                        }
                         if (Geometry.InArcBand(new float2(ringRadius, 0f), maxWaveBodyRadius,
                                 cfg.Arena.ZoneWallRadius[i], cfg.Arena.ZoneWallHalfWidth[i]))
                         {
@@ -925,6 +1051,32 @@ namespace Ring.Data
                     {
                         errors.Add($"Arena.ExtractPos[{p}] lies inside zone wall [{w}]'s arc " +
                             "body — a portal must not overlap the wall it sits next to.");
+                    }
+                }
+
+                // Ф2 review A-2: spec §3.13 reads "порталы не в теле дуги И НЕ
+                // В СТЕНЕ", and only the first half shipped in Т8. The interior
+                // walls and the obstacle circles are exactly the geometry an
+                // owner moves at milestone В1, so "the layout happens to be
+                // clear today" is not the guarantee the rule is for. Same two
+                // primitives the checks above and below already use — no fresh
+                // arithmetic (the ledger note on Geometry.OverlapsArc).
+                for (int o = 0; o < cfg.Arena.ObstacleCount; o++)
+                {
+                    if (Geometry.CircleOverlap(cfg.Arena.ExtractPos[p], cfg.Arena.ExtractRadius,
+                            cfg.Arena.ObstaclePos[o], cfg.Arena.ObstacleRadius[o]))
+                    {
+                        errors.Add($"Arena.ExtractPos[{p}] overlaps Arena.Obstacles[{o}] — " +
+                            "a portal must stand clear of the barriers around it.");
+                    }
+                }
+                for (int wi = 0; wi < cfg.Arena.WallCount; wi++)
+                {
+                    if (Geometry.OverlapsStadium(cfg.Arena.ExtractPos[p], cfg.Arena.ExtractRadius,
+                            cfg.Arena.WallA[wi], cfg.Arena.WallB[wi], cfg.Arena.WallHalfWidth[wi]))
+                    {
+                        errors.Add($"Arena.ExtractPos[{p}] overlaps Arena.Walls[{wi}] — " +
+                            "a portal must stand clear of the barriers around it.");
                     }
                 }
 
@@ -1109,6 +1261,26 @@ namespace Ring.Data
                 if (Geometry.OverlapsStadium(pos, bodyRadius, arena.WallA[w], arena.WallB[w],
                         arena.WallHalfWidth[w]))
                     return true;
+            // Ф2 review A-6: the doc above promised "mirrors IsValidSpawn's
+            // geometry half" and the arcs were missing from it — IsValidSpawn
+            // has rejected candidates inside an arc body since Т9, and the
+            // test-side twin (ConfigTests.FreeRingSlots) grew the same loop in
+            // Т12. Behaviourally inert on the shipped layout (the arena-wide
+            // ring sits at Radius - SpawnRingInset = 111, seventeen metres clear
+            // of the outer band), which is exactly why it could stay missing:
+            // it only bites on a config that buries its own fallback ring in a
+            // zone wall, and that config would previously have been declared
+            // spawnable.
+            for (int z = 0; z < arena.ZoneWallCount; z++)
+            {
+                int start = arena.ZoneWallDoorStart[z];
+                int count = arena.ZoneWallDoorCount[z];
+                var doorCenter = new ReadOnlySpan<float>(arena.DoorCenterRad, start, count);
+                var doorFreeWidth = new ReadOnlySpan<float>(arena.DoorFreeWidth, start, count);
+                if (Geometry.OverlapsArc(pos, bodyRadius, arena.ZoneWallRadius[z],
+                        arena.ZoneWallHalfWidth[z], doorCenter, doorFreeWidth))
+                    return true;
+            }
             return false;
         }
 
