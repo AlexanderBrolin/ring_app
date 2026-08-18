@@ -330,6 +330,7 @@ namespace Ring.Simulation.AI
 
             int blockedCircleIdx = -1;
             int blockedWallIdx = -1;
+            int blockedZoneWallIdx = -1;
             float bestT = 1f;
             for (int o = 0; o < arena.ObstacleCount; o++)
             {
@@ -339,6 +340,7 @@ namespace Ring.Simulation.AI
                     bestT = t;
                     blockedCircleIdx = o;
                     blockedWallIdx = -1;
+                    blockedZoneWallIdx = -1;
                 }
             }
             for (int wIdx = 0; wIdx < arena.WallCount; wIdx++)
@@ -349,9 +351,69 @@ namespace Ring.Simulation.AI
                     bestT = t;
                     blockedWallIdx = wIdx;
                     blockedCircleIdx = -1;
+                    blockedZoneWallIdx = -1;
                 }
             }
-            if (blockedCircleIdx < 0 && blockedWallIdx < 0) return dir;
+            // Stage 3 Task 9 (spec §3.2): zone-wall arcs join the SAME
+            // "nearest blocker" competition, checked after obstacles/walls —
+            // the same fixed circle-then-wall-then-arc order SweepArena uses.
+            for (int zIdx = 0; zIdx < arena.ZoneWallCount; zIdx++)
+            {
+                var doorCenter = new System.ReadOnlySpan<float>(arena.DoorCenterRad,
+                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                var doorFreeWidth = new System.ReadOnlySpan<float>(arena.DoorFreeWidth,
+                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                if (Geometry.SegmentArc(pos, aheadEnd, padR, arena.ZoneWallRadius[zIdx],
+                        arena.ZoneWallHalfWidth[zIdx], doorCenter, doorFreeWidth,
+                        out float t, out _) && t < bestT)
+                {
+                    bestT = t;
+                    blockedZoneWallIdx = zIdx;
+                    blockedCircleIdx = -1;
+                    blockedWallIdx = -1;
+                }
+            }
+            if (blockedCircleIdx < 0 && blockedWallIdx < 0 && blockedZoneWallIdx < 0) return dir;
+
+            if (blockedZoneWallIdx >= 0)
+            {
+                // Р118: a full-circle barrier has no "end" a tangent could
+                // round — a tangent to it is a permanent mismatch with the
+                // arc's own curvature (the mob would skate the ring forever,
+                // never converging on the opening). The waypoint is instead
+                // the nearest DOOR of the blocking wall — "nearest" measured
+                // by total round-trip length (mob -> door -> target), the
+                // same detour-cost idiom the wall branch below uses for
+                // choosing an end. A near-tie (within Geometry.Skin) breaks
+                // on the mob's own Id parity, same stability reasoning as
+                // every other near-tie in this file (I-5/I-2 fix-round T14):
+                // a bare `<` comparison is one ULP of independent sqrt-chain
+                // rounding away from flipping which door two otherwise-
+                // identical mobs commit to.
+                int zIdx = blockedZoneWallIdx;
+                int doorStart = arena.ZoneWallDoorStart[zIdx];
+                int doorCount = arena.ZoneWallDoorCount[zIdx];
+                float ringR = arena.ZoneWallRadius[zIdx];
+
+                float2 bestDoorPoint = pos; // overwritten before use whenever doorCount > 0
+                float bestCost = float.MaxValue;
+                for (int j = 0; j < doorCount; j++)
+                {
+                    float doorAngle = arena.DoorCenterRad[doorStart + j];
+                    float2 doorPoint = ringR * new float2(math.cos(doorAngle), math.sin(doorAngle));
+                    float cost = math.distance(pos, doorPoint) + math.distance(doorPoint, targetPos);
+                    bool takeIt = j == 0
+                        || (math.abs(cost - bestCost) < Geometry.Skin ? (id & 1) == 0 : cost < bestCost);
+                    if (takeIt)
+                    {
+                        bestCost = cost;
+                        bestDoorPoint = doorPoint;
+                    }
+                }
+
+                float2 toDoor = bestDoorPoint - pos;
+                return math.normalizesafe(toDoor, dir);
+            }
 
             if (blockedWallIdx >= 0)
             {

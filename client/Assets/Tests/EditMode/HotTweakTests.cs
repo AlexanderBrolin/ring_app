@@ -355,6 +355,100 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void ArcTopologyChange_ThrowsOnApplyConfig()
+        {
+            // Stage 3 Task 9 (spec Р287): ArenaTopologyMatches grows a
+            // zone-wall/door comparison mirroring the existing interior-wall
+            // one (HotTweak_WallChange_Throws above) — Т4 already extended
+            // this same method once; this widens it again rather than adding
+            // a second comparator (rule 2).
+            var c = TestConfigs.Default();
+            c.Arena.ZoneWallCount = 1;
+            c.Arena.ZoneWallRadius = new[] { 65f };
+            c.Arena.ZoneWallHalfWidth = new[] { 1f };
+            c.Arena.ZoneWallDoorStart = new[] { 0 };
+            c.Arena.ZoneWallDoorCount = new[] { 1 };
+            c.Arena.DoorCenterRad = new[] { 0f };
+            c.Arena.DoorFreeWidth = new[] { 4f };
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.DoorFreeWidth = new[] { 5f }; // same wall/door count, moved door width
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void ZoneRadiusChange_ThrowsOnApplyConfig()
+        {
+            // Spec §3.13 (Р286/Р287): plan text for Т9 named only "arc/door
+            // arrays + caps" for ArenaTopologyMatches — an omission against
+            // the spec, found by the coordinator reading the diff (same
+            // shape as Т8's R-39). ZoneRadius feeds Geometry.ZoneOf, which
+            // decides loot tier and wave zone budget — a hot-tweak moving a
+            // boundary mid-match would silently change that semantic without
+            // a restart. Fixture numbers are test-only (not the shipped
+            // 65/92), same "two sources of numbers" discipline as the rest
+            // of this file.
+            var c = TestConfigs.Default();
+            c.Arena.ZoneRadius = new[] { 10f, 20f };
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.ZoneRadius = new[] { 10f, 25f }; // second element (lesson 227), not the first
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void PortalChange_ThrowsOnApplyConfig()
+        {
+            // Spec §3.13/§3.15 (Р186/Р287): portals are topology for the
+            // same reason BarrierTop is (HotTweak_BarrierTopChange_Throws
+            // above, Stage 2 Task 46 precedent) — the CLIENT draws them from
+            // its own copy of the config, so a hot-tweak moving one would
+            // desync the picture from the server exactly the way an
+            // unchecked BarrierTop change did (the lesson Р186 records).
+            var c = TestConfigs.Default();
+            c.Arena.ExtractPos = new[] { new float2(5f, 5f), new float2(-5f, -5f) };
+            c.Arena.ExtractZone = new byte[] { 0, 1 };
+            c.Arena.ExtractKind = new byte[] { 0, 1 };
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.ExtractPos = new[] { new float2(5f, 5f), new float2(-5f, -1f) }; // second portal (lesson 227), moved
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void PickupCapChange_ThrowsOnApplyConfig()
+        {
+            // Stage 3 Task 9 (spec Р287): ArenaTopologyMatches grows
+            // MaxContainers into the per-match entity cap comparison, same
+            // "backing array sized at construction, cannot grow mid-match"
+            // reasoning as MaxPickups (HotTweak_MaxPickupsChange_Throws
+            // above) and MaxMobs/MaxProjectiles/MaxEventsPerFrame before it.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.MaxContainers = c.Arena.MaxContainers + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void ContainerSlotCapChange_ThrowsOnApplyConfig()
+        {
+            // Sibling cap Р287 requires alongside MaxContainers — each
+            // per-match cap gets its own dedicated witness, same "MaxMobs/
+            // MaxProjectiles/MaxEventsPerFrame/MaxPickups are four separate
+            // tests, not one shared assertion" convention this file already
+            // follows (R-42 mutation-per-branch: a comparator that checks
+            // MaxContainers but not MaxContainerSlots needs its OWN failing
+            // test to be caught — added beyond the plan's literal single
+            // name for exactly this reason, see task-9 report).
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.MaxContainerSlots = c.Arena.MaxContainerSlots + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
         public void HotTweak_MaxPlayersChange_Throws()
         {
             // Carryover-t14.md #1 (deferred from Task 4's review, M-4): a

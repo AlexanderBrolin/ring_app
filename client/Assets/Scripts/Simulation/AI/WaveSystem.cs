@@ -196,6 +196,21 @@ namespace Ring.Simulation.AI
                         arena.WallHalfWidth[wIdx]))
                     return false;
 
+            // Stage 3 Task 9: zone-wall arcs, same "reuse the existing overlap
+            // primitive" idiom as the obstacle/wall checks above — a spawn
+            // candidate inside a zone wall's solid body (outside every door
+            // cutout) is rejected exactly like one inside an obstacle or wall.
+            for (int zIdx = 0; zIdx < arena.ZoneWallCount; zIdx++)
+            {
+                var doorCenter = new System.ReadOnlySpan<float>(arena.DoorCenterRad,
+                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                var doorFreeWidth = new System.ReadOnlySpan<float>(arena.DoorFreeWidth,
+                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                if (Geometry.OverlapsArc(pos, mobRadius, arena.ZoneWallRadius[zIdx],
+                        arena.ZoneWallHalfWidth[zIdx], doorCenter, doorFreeWidth))
+                    return false;
+            }
+
             MobState[] mobs = w.Mobs;
             int count = w.MobCount;
             for (int m = 0; m < count; m++)

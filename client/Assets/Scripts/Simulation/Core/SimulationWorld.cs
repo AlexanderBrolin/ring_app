@@ -535,6 +535,42 @@ namespace Ring.Simulation.Core
             // Radius is: they size arrays / define spawn geometry at
             // construction time, not something ApplyConfig reconciles
             // mid-match.
+            // Stage 3 Task 9 (spec Р287): zone walls and their doors are
+            // topology exactly like interior walls are (the same reasoning
+            // WallHalfWidth's own comment above states) — a hot-tweak moving
+            // a door would leave Depenetrate/SweepArena resolving collisions
+            // against the OLD opening while the config already claims the
+            // new one. The flat door arrays are compared as a whole rather
+            // than re-sliced per wall here — the per-wall start/count pair is
+            // already checked in the loop below, so re-deriving the same
+            // slice a second time would only restate that comparison (rule 2).
+            if (a.ZoneWallCount != b.ZoneWallCount) return false;
+            for (int i = 0; i < a.ZoneWallCount; i++)
+            {
+                if (a.ZoneWallRadius[i] != b.ZoneWallRadius[i]) return false;
+                if (a.ZoneWallHalfWidth[i] != b.ZoneWallHalfWidth[i]) return false;
+                if (a.ZoneWallDoorStart[i] != b.ZoneWallDoorStart[i]) return false;
+                if (a.ZoneWallDoorCount[i] != b.ZoneWallDoorCount[i]) return false;
+            }
+            if (a.DoorCenterRad.Length != b.DoorCenterRad.Length
+                || a.DoorFreeWidth.Length != b.DoorFreeWidth.Length)
+                return false;
+            for (int i = 0; i < a.DoorCenterRad.Length; i++)
+            {
+                if (a.DoorCenterRad[i] != b.DoorCenterRad[i]) return false;
+                if (a.DoorFreeWidth[i] != b.DoorFreeWidth[i]) return false;
+            }
+            // Spec §3.13 (Р286/Р287): the zone-boundary radii are topology
+            // alongside the zone-wall/door geometry just checked above —
+            // Geometry.ZoneOf reads them to decide loot tier and wave zone
+            // budget, so a hot-tweak moving a boundary mid-match would
+            // silently change that semantic without a restart. Named in the
+            // spec, missed by Т9's own plan text (coordinator finding,
+            // same shape as Т8's R-39 — plan text omits what the spec
+            // states).
+            if (a.ZoneRadius.Length != b.ZoneRadius.Length) return false;
+            for (int i = 0; i < a.ZoneRadius.Length; i++)
+                if (a.ZoneRadius[i] != b.ZoneRadius[i]) return false;
             if (a.MaxPlayers != b.MaxPlayers || a.PlayerSpawnRingFrac != b.PlayerSpawnRingFrac)
                 return false;
             if (a.MaxMobs != b.MaxMobs || a.MaxProjectiles != b.MaxProjectiles
@@ -545,6 +581,28 @@ namespace Ring.Simulation.Core
             // grow mid-match" reasoning (the constructor sizes _pickups off
             // exactly this field).
             if (a.MaxPickups != b.MaxPickups) return false;
+            // Stage 3 Task 9 (spec Р287): the container caps join MaxPickups
+            // above — same "backing array sized at construction, cannot grow
+            // mid-match" reasoning (Т13/loot's own containers array, once it
+            // exists, sizes off exactly these two fields).
+            if (a.MaxContainers != b.MaxContainers) return false;
+            if (a.MaxContainerSlots != b.MaxContainerSlots) return false;
+            // Spec §3.13/§3.15 (Р186/Р287): portals are topology for the
+            // same reason BarrierTop below is — the CLIENT draws them from
+            // its own copy of the config (Presentation reads ArenaSimConfig
+            // to place the greybox), so a hot-tweak moving one would desync
+            // the picture from the server exactly the way an unchecked
+            // BarrierTop change did (the lesson Р186 records). Named in the
+            // spec, missed by Т9's own plan text — same coordinator finding
+            // as ZoneRadius above.
+            if (a.ExtractPos.Length != b.ExtractPos.Length) return false;
+            for (int i = 0; i < a.ExtractPos.Length; i++)
+            {
+                if (!math.all(a.ExtractPos[i] == b.ExtractPos[i])) return false;
+                if (a.ExtractZone[i] != b.ExtractZone[i]) return false;
+                if (a.ExtractKind[i] != b.ExtractKind[i]) return false;
+            }
+            if (a.ExtractRadius != b.ExtractRadius) return false;
             // Stage 2 Task 46 (bd app-r8x): the interior barriers' modelled
             // height is topology for the same reason WallHalfWidth is — it
             // decides which shots the geometry stops, and there is nothing for

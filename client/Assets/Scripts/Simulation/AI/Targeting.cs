@@ -90,6 +90,24 @@ namespace Ring.Simulation.AI
                         arena.WallA[i], arena.WallB[i], arena.WallHalfWidth[i], out _))
                     return false;
             }
+            // Stage 3 Task 9 (spec Р64): zone-wall arcs, same per-barrier
+            // clamp discipline as the obstacle/wall loops above — each arc
+            // clamps padR to at least its OWN half-width's negation, inside
+            // the loop, per wall, not once for the whole call (lesson 268:
+            // this function has no side dispatcher, so an unclamped deeply
+            // negative padR inverts the arc's effective outer/inner radii and
+            // silently stops reporting any contact at all).
+            for (int i = 0; i < arena.ZoneWallCount; i++)
+            {
+                float arcPad = math.max(padR, -arena.ZoneWallHalfWidth[i]);
+                var doorCenter = new System.ReadOnlySpan<float>(arena.DoorCenterRad,
+                    arena.ZoneWallDoorStart[i], arena.ZoneWallDoorCount[i]);
+                var doorFreeWidth = new System.ReadOnlySpan<float>(arena.DoorFreeWidth,
+                    arena.ZoneWallDoorStart[i], arena.ZoneWallDoorCount[i]);
+                if (Geometry.SegmentArc(from, to, arcPad, arena.ZoneWallRadius[i],
+                        arena.ZoneWallHalfWidth[i], doorCenter, doorFreeWidth, out _, out _))
+                    return false;
+            }
             return true;
         }
 

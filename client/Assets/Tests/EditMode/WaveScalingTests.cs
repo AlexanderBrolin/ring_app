@@ -156,6 +156,35 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void SpawnCandidateInsideArc_IsRejected()
+        {
+            // Stage 3 Task 9: WaveSystem.IsValidSpawn grows an arc-overlap
+            // rejection (Geometry.OverlapsArc), the same "reuse the existing
+            // overlap primitive" idiom as the obstacle/wall checks above it
+            // (IsValidSpawn's own doc). A zone wall's body placed squarely ON
+            // the spawn ring, with NO doors, must reject every fallback-grid
+            // candidate — none of the RNG-free grid slots can land outside
+            // the wall's body when the whole ring sits inside its band.
+            var c = TestConfigs.Default();
+            c.Wave.FirstWaveDelay = 0.1f;
+            c.Wave.MaxSpawnAttempts = 0; // fixed FallbackSlots grid only — no RNG luck
+            c.Wave.SpawnRingInset = c.Arena.Radius - 20f; // spawn ring lands at radius 20
+            c.Arena.ZoneWallCount = 1;
+            c.Arena.ZoneWallRadius = new[] { 20f };
+            c.Arena.ZoneWallHalfWidth = new[] { 5f }; // band covers [15,25] — the spawn ring sits dead centre
+            c.Arena.ZoneWallDoorStart = new[] { 0 };
+            c.Arena.ZoneWallDoorCount = new[] { 0 };
+            c.Arena.DoorCenterRad = System.Array.Empty<float>();
+            c.Arena.DoorFreeWidth = System.Array.Empty<float>();
+
+            var w = new SimulationWorld(11, c);
+            for (int i = 0; i < 200; i++) w.Tick(default);
+
+            Assert.AreEqual(0, w.MobCount,
+                "every fallback slot sits inside the zone wall's body — none should have spawned");
+        }
+
+        [Test]
         public void NoAlivePlayers_WaveDirectorFreezes_PhaseAndTimerStandStill()
         {
             // Nobody alive => WaveSystem.Update returns before touching the

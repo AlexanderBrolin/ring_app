@@ -764,6 +764,29 @@ namespace Ring.Simulation.Core
                         arena.WallA[wIdx], arena.WallB[wIdx], p0);
                 }
 
+            // Stage 3 Task 9 (spec §3.2/§3.3): zone-wall arcs, traversed AFTER
+            // interior walls and BEFORE the ring boundary below — a fixed
+            // order, pinned by ZoneGeometryTests' SweepArena_ContactOrder_
+            // StadiumBeforeArc/_ArcBeforeRing (strict `tArc < t` means an
+            // exact tie is won by whichever ran first: stadiums beat arcs,
+            // arcs beat the ring). Each wall's own door slice — not the whole
+            // flat array — is passed to SegmentArc, mirroring
+            // ZoneWallDoorStart/Count's own doc (Task 7/8 ledger R-26).
+            for (int zIdx = 0; zIdx < arena.ZoneWallCount; zIdx++)
+            {
+                var doorCenter = new System.ReadOnlySpan<float>(arena.DoorCenterRad,
+                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                var doorFreeWidth = new System.ReadOnlySpan<float>(arena.DoorFreeWidth,
+                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                if (SegmentArc(p0, p1, padR, arena.ZoneWallRadius[zIdx], arena.ZoneWallHalfWidth[zIdx],
+                        doorCenter, doorFreeWidth, out float tArc, out float2 arcNormal)
+                    && tArc < t)
+                {
+                    t = tArc; hit = true;
+                    normal = arcNormal;
+                }
+            }
+
             if (includeWall && SegmentRingWall(p0, p1, padR, arena.Radius, out float tw)
                 && tw < t)
             {
@@ -809,6 +832,21 @@ namespace Ring.Simulation.Core
                     if (PushOutOfStadium(ref pos, radius, arena.WallA[wIdx], arena.WallB[wIdx],
                             arena.WallHalfWidth[wIdx], out float2 n))
                     { vel = Slide(vel, n); any = true; }
+
+                // Stage 3 Task 9: zone-wall arcs, after interior walls and
+                // before the ring clamp below — the same fixed order
+                // SweepArena above applies, and for the same reason (spec
+                // §3.2/§3.3, pinned by Depenetrate_OutOfArc_Terminates).
+                for (int zIdx = 0; zIdx < arena.ZoneWallCount; zIdx++)
+                {
+                    var doorCenter = new System.ReadOnlySpan<float>(arena.DoorCenterRad,
+                        arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                    var doorFreeWidth = new System.ReadOnlySpan<float>(arena.DoorFreeWidth,
+                        arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                    if (PushOutOfArc(ref pos, radius, arena.ZoneWallRadius[zIdx],
+                            arena.ZoneWallHalfWidth[zIdx], doorCenter, doorFreeWidth, out float2 an))
+                    { vel = Slide(vel, an); any = true; }
+                }
 
                 if (ClampInsideRing(ref pos, radius, arena.Radius, out float2 wn))
                 { vel = Slide(vel, wn); any = true; }

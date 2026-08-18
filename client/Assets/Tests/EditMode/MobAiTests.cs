@@ -268,6 +268,111 @@ namespace Ring.Simulation.Tests
                 0.15f, arena));
         }
 
+        // --- Stage 3 Task 9 (bd app-35g, spec Р64): HasLineOfFire grows an
+        // arc loop mirroring the existing obstacle/wall loops above. ---
+
+        [Test]
+        public void LineOfFire_BlockedByArcBody()
+        {
+            float ringR = 10f, halfW = 1f;
+            float[] doorCenter = { math.PI / 2f, 0f }; // index 1 = the door under test
+            float[] doorFreeWidth = { 4f, 4f };
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+                ZoneWallCount = 1,
+                ZoneWallRadius = new[] { ringR },
+                ZoneWallHalfWidth = new[] { halfW },
+                ZoneWallDoorStart = new[] { 0 },
+                ZoneWallDoorCount = new[] { 2 },
+                DoorCenterRad = doorCenter,
+                DoorFreeWidth = doorFreeWidth,
+            };
+            // Straight through the solid wall at angle pi — clear of both doors.
+            Assert.IsFalse(Targeting.HasLineOfFire(new float2(-2f, 0f), new float2(-14f, 0f),
+                0.15f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_PassesThroughDoor()
+        {
+            // Control for LineOfFire_BlockedByArcBody above (the
+            // ThroughDoor_NoContact idiom, ZoneGeometryTests.cs): without it,
+            // a mutant that always blocks (InDoorCutout disabled) or that
+            // simply forgets the door slicing would still pass the body test
+            // alone.
+            float ringR = 10f, halfW = 1f;
+            float[] doorCenter = { math.PI / 2f, 0f };
+            float[] doorFreeWidth = { 4f, 4f };
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+                ZoneWallCount = 1,
+                ZoneWallRadius = new[] { ringR },
+                ZoneWallHalfWidth = new[] { halfW },
+                ZoneWallDoorStart = new[] { 0 },
+                ZoneWallDoorCount = new[] { 2 },
+                DoorCenterRad = doorCenter,
+                DoorFreeWidth = doorFreeWidth,
+            };
+            // Dead down the middle of door 1 (angle 0) — clears the wall untouched.
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(2f, 0f), new float2(14f, 0f),
+                0.15f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_NegativePadClamped_ArcBody()
+        {
+            // Р64: same clamp discipline as LineOfFire_NegativePadClamped /
+            // _Wall above — a target's own radius passed as a negative padR
+            // must not phantom-inflate a zone wall's half-width past its own
+            // negation. Unclamped, halfW+padR = 0.2-0.45 = -0.25 (negative,
+            // undefined per PushOutOfArc/SegmentArc's own doc): the outer and
+            // inner effective radii INVERT (effective outer 9.75 < effective
+            // core 10.25, since SegmentCircleInterval folds padR into each
+            // one's own r), and neither of SegmentArc's two band candidates
+            // fires — hand-verified: the ray reads as clear when it must be
+            // blocked. Clamped, halfW+max(padR,-halfW) = 0 exactly:
+            // degenerate but well-ordered, and the ray is genuinely stopped.
+            float ringR = 10f, halfW = 0.2f;
+            float[] doorCenter = System.Array.Empty<float>();
+            float[] doorFreeWidth = System.Array.Empty<float>();
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+                ZoneWallCount = 1,
+                ZoneWallRadius = new[] { ringR },
+                ZoneWallHalfWidth = new[] { halfW },
+                ZoneWallDoorStart = new[] { 0 },
+                ZoneWallDoorCount = new[] { 0 },
+                DoorCenterRad = doorCenter,
+                DoorFreeWidth = doorFreeWidth,
+            };
+            Assert.IsFalse(Targeting.HasLineOfFire(new float2(2f, 0f), new float2(14f, 0f),
+                -0.45f, arena));
+        }
+
         [Test]
         public void NearestAlivePlayer_ZeroAlive_ReturnsFalseAndMinusOne()
         {
@@ -729,6 +834,67 @@ namespace Ring.Simulation.Tests
                 $"axial progress along the wall ({axialProgress:F2}) should track a " +
                 $"meaningful fraction of the total distance travelled ({pathLength:F2}) — " +
                 "a mob rubbing along the wall face instead of heading for its end would fail this");
+        }
+
+        [Test]
+        public void Chaser_FindsDoor_InsteadOfPressingIntoArc()
+        {
+            // Stage 3 Task 9 (spec Р118): SteerAround grows an arc branch —
+            // when the direct line to the target crosses a zone wall, the mob
+            // heads for a waypoint at the nearest DOOR (not the wall's own
+            // tangent — a tangent to a full-circle barrier never converges,
+            // the mob would skate the ring forever without finding the
+            // opening).
+            //
+            // RED-discipline note: physical collision (MoveWithCollisions ->
+            // SweepArena) is EQUALLY unaware of ZoneWallCount before this
+            // task's Step 3 lands, so a plain "did it eventually reach the
+            // player" assertion would pass today too — the mob would simply
+            // walk straight through the wall, uncollided, and get there fast.
+            // The `everEmbeddedInSolidWall` guard below is what actually
+            // reddens: it fails the instant the mob's own centre is found
+            // inside the wall's solid body (OverlapsArc true) at any tick,
+            // which the current straight-line walk-through triggers almost
+            // immediately (spawn angle 135 degrees is well outside the door's
+            // +-17 degree cutout).
+            var c = TestConfigs.Open();
+            float ringR = 10f, halfW = 1f;
+            c.Arena.ZoneWallCount = 1;
+            c.Arena.ZoneWallRadius = new[] { ringR };
+            c.Arena.ZoneWallHalfWidth = new[] { halfW };
+            c.Arena.ZoneWallDoorStart = new[] { 0 };
+            c.Arena.ZoneWallDoorCount = new[] { 1 };
+            c.Arena.DoorCenterRad = new[] { 0f }; // door on the +x side
+            c.Arena.DoorFreeWidth = new[] { 4f };
+
+            var w = new SimulationWorld(1, c);
+            // Player at the arena centre, inside the wall's hole. Chaser
+            // spawns outside, 135 degrees from the door, so one direction
+            // around is unambiguously shorter — the direct line to the player
+            // crosses the wall's SOLID body, so a "press into the arc" mob
+            // would either dead-stop (if collision respected it) or, today,
+            // walk straight through it (collision does not yet).
+            float dist = ringR + halfW + 3f;
+            float angle = 3f * math.PI / 4f;
+            float2 spawnPos = dist * new float2(math.cos(angle), math.sin(angle));
+            w.SpawnMobForTest(MobType.Chaser, spawnPos);
+
+            bool everEmbeddedInSolidWall = false;
+            for (int i = 0; i < 600; i++)
+            {
+                w.Tick(Idle);
+                float2 pos = w.Mobs[0].Pos;
+                if (Geometry.OverlapsArc(pos, c.Chaser.Radius, ringR, halfW,
+                        c.Arena.DoorCenterRad, c.Arena.DoorFreeWidth))
+                    everEmbeddedInSolidWall = true;
+            }
+
+            var snap = new RenderSnapshot(c.Arena);
+            w.CaptureSnapshot(snap);
+            Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), 3f); // reached it through the door
+            Assert.IsFalse(everEmbeddedInSolidWall,
+                "the chaser must never be caught embedded in the wall's solid body — " +
+                "collision and steering must both respect it, not just eventually arrive");
         }
 
         [Test]

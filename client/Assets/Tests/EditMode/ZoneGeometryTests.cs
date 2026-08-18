@@ -636,5 +636,197 @@ namespace Ring.Simulation.Tests
                 "while a body that fits still passes — the discriminator that keeps "
                 + "this test from being satisfied by 'the door is closed'");
         }
+
+        // --- Stage 3 Task 9 (bd app-35g): six consumers of the arc primitive.
+        // SweepArena/Depenetrate grow an arc branch — order fixed by spec
+        // §3.2/§3.3: circles -> stadiums -> arcs -> the ring boundary.
+        // TestConfigs carries ZoneWallCount == 0 until Т12, so neither golden
+        // scenario ever executes a line here — the same relation this whole
+        // file already has to TestConfigs.Default() (see the class doc above).
+
+        [Test]
+        public void SweepArena_ContactOrder_StadiumBeforeArc()
+        {
+            // RED-discipline note (mirrors SweepArena_TieBreak_CircleBeforeWall,
+            // GeometryTests.cs): this fixture is green even against a
+            // SweepArena that never looks at ZoneWallCount at all — the
+            // stadium wins trivially by the arc never being a candidate. It is
+            // NOT a RED-discipline witness by itself; its job is killing a
+            // "tArc <= t" or "arcs traversed before stadiums" mutant once the
+            // arc loop lands (mutation round), exactly as the existing pair of
+            // TieBreak tests does for circle/wall and wall/ring.
+            //
+            // An arc's inner face and a stadium wall's rounded cap produce an
+            // EXACT tie in t (both reduce to the same rational 0.5, correctly
+            // rounded to the same float32 bit pattern — small integers
+            // throughout, no tolerance needed on the t comparison).
+            float2 p0 = new float2(0f, 0f);
+            float2 p1 = new float2(16f, 0f);
+            float padR = 0f;
+
+            float ringR = 10f, halfW = 2f; // inner face at ringR - halfW = 8
+            float[] noDoorCenter = System.Array.Empty<float>();
+            float[] noDoorWidth = System.Array.Empty<float>();
+
+            float2 wallA = new float2(11f, 4f); // cap circle crosses the same sweep at t = 0.5
+            float2 wallB = new float2(11f, 20f); // far away — never the winning candidate
+            float wallHalfW = 5f;
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 1,
+                WallA = new[] { wallA },
+                WallB = new[] { wallB },
+                WallHalfWidth = new[] { wallHalfW },
+                ZoneWallCount = 1,
+                ZoneWallRadius = new[] { ringR },
+                ZoneWallHalfWidth = new[] { halfW },
+                ZoneWallDoorStart = new[] { 0 },
+                ZoneWallDoorCount = new[] { 0 },
+                DoorCenterRad = noDoorCenter,
+                DoorFreeWidth = noDoorWidth,
+            };
+
+            bool hit = Geometry.SweepArena(p0, p1, padR, in arena, includeWall: false,
+                out float t, out float2 normal);
+
+            Assert.IsTrue(hit);
+            Geometry.SegmentStadium(p0, p1, padR, wallA, wallB, wallHalfW, out float tWallExpected);
+            Geometry.SegmentArc(p0, p1, padR, ringR, halfW, noDoorCenter, noDoorWidth,
+                out float tArcExpected, out _);
+            Assert.AreEqual(tWallExpected, tArcExpected); // fixture precondition: exact tie
+            Assert.AreEqual(tWallExpected, t); // no tolerance — the tie itself is exact
+
+            // The winning normal must be the STADIUM's (radial from wallA's
+            // own cap centre), not the arc's (radial from the sim origin) —
+            // observably different at this contact.
+            float2 contact = math.lerp(p0, p1, t);
+            float2 expectedNormal = math.normalizesafe(contact - wallA, new float2(1f, 0f));
+            Assert.AreEqual(expectedNormal.x, normal.x, 1e-5f);
+            Assert.AreEqual(expectedNormal.y, normal.y, 1e-5f);
+        }
+
+        [Test]
+        public void SweepArena_ContactOrder_ArcBeforeRing()
+        {
+            // Companion order-pin: a zone wall NESTED inside the arena
+            // boundary must be found before the ring — the arc has to occupy
+            // its own slot ahead of `includeWall`'s block, not merely exist
+            // somewhere in the function.
+            //
+            // Unlike StadiumBeforeArc above, this fixture IS a genuine RED
+            // witness: today SweepArena never consults ZoneWallCount, so the
+            // ONLY candidate along this sweep is the ring wall at
+            // t ~ 0.534; once the arc loop lands, the nested zone wall's door
+            // jamb is reached first, at t ~ 0.254 — a different t AND a
+            // materially different (non-radial) normal, not a razor-thin tie
+            // a future refactor could land on by accident.
+            float ringR = 10f, halfW = 1f, padR = 0.5f;
+            float[] doorCenter = { math.PI / 2f, 0f }; // index 1 = the door under test
+            float[] doorFreeWidth = { 4f, 4f };
+            float2 p0 = new float2(10f, 0f);
+            float2 p1 = new float2(10f, 6f); // TangentialDriftIntoJamb's own drift (Task 7 fixture)
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 11f, // encloses the zone wall (outer face at ringR+halfW=11) with room to spare
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+                ZoneWallCount = 1,
+                ZoneWallRadius = new[] { ringR },
+                ZoneWallHalfWidth = new[] { halfW },
+                ZoneWallDoorStart = new[] { 0 },
+                ZoneWallDoorCount = new[] { 2 },
+                DoorCenterRad = doorCenter,
+                DoorFreeWidth = doorFreeWidth,
+            };
+
+            // Independent expectation through the already-pinned SegmentArc/
+            // SegmentRingWall primitives (Task 7).
+            Assert.IsTrue(Geometry.SegmentArc(p0, p1, padR, ringR, halfW, doorCenter, doorFreeWidth,
+                out float tArcExpected, out float2 normalArcExpected));
+            Assert.IsTrue(Geometry.SegmentRingWall(p0, p1, padR, arena.Radius, out float tRingExpected));
+            Assert.Less(tArcExpected, tRingExpected,
+                "fixture premise: the nested zone wall's door jamb is reached before the arena boundary");
+
+            bool hit = Geometry.SweepArena(p0, p1, padR, in arena, includeWall: true,
+                out float t, out float2 normal);
+
+            Assert.IsTrue(hit);
+            Assert.AreEqual(tArcExpected, t, 1e-5f);
+            Assert.AreEqual(normalArcExpected.x, normal.x, 1e-4f);
+            Assert.AreEqual(normalArcExpected.y, normal.y, 1e-4f);
+
+            // Discriminator: the ring's OWN normal at this exact contact point
+            // differs materially from the arc's — proves the arc supplied the
+            // winning candidate, not the ring.
+            float2 contact = math.lerp(p0, p1, t);
+            float2 ringNormalHere = Geometry.RingWallNormal(contact);
+            Assert.Greater(math.distance(normal, ringNormalHere), 0.1f,
+                "the winning normal must be the arc's door jamb, not the ring's own radial");
+        }
+
+        [Test]
+        public void Depenetrate_OutOfArc_Terminates()
+        {
+            // Stage 3 Task 9: Depenetrate grows an arc branch between walls
+            // and the ring clamp (same fixed order as SweepArena) — a body
+            // embedded in a zone wall's body must be pushed clear and STAY
+            // clear across further iterations, not oscillate or walk off
+            // indefinitely.
+            float ringR = 10f, halfW = 1f, radius = 0.5f;
+            float[] doorCenter = System.Array.Empty<float>();
+            float[] doorFreeWidth = System.Array.Empty<float>();
+            float2 start = new float2(-10.7f, 0f); // buried near the outer face (Task 7 fixture)
+
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+                ZoneWallCount = 1,
+                ZoneWallRadius = new[] { ringR },
+                ZoneWallHalfWidth = new[] { halfW },
+                ZoneWallDoorStart = new[] { 0 },
+                ZoneWallDoorCount = new[] { 0 },
+                DoorCenterRad = doorCenter,
+                DoorFreeWidth = doorFreeWidth,
+            };
+
+            float2 pos = start;
+            float2 vel = new float2(3f, -2f); // nonzero, to prove Slide() runs against the arc's normal
+            Geometry.Depenetrate(ref pos, ref vel, radius, in arena, 10);
+
+            // Independent expectation: PushOutOfArc alone resolves this in ONE
+            // call (same shape as PushOutOfCircle/PushOutOfStadium — no
+            // internal iteration of its own), so ten Depenetrate iterations
+            // must land EXACTLY where a single PushOutOfArc call would, not
+            // walk further with each pass (the termination this test's name
+            // names).
+            float2 expected = start;
+            Geometry.PushOutOfArc(ref expected, radius, ringR, halfW, doorCenter, doorFreeWidth,
+                out float2 expectedNormal);
+            Assert.AreEqual(expected.x, pos.x, 1e-5f);
+            Assert.AreEqual(expected.y, pos.y, 1e-5f);
+
+            Assert.IsFalse(Geometry.OverlapsArc(pos, radius, ringR, halfW, doorCenter, doorFreeWidth));
+            // Slide removed the into-surface component: the resting velocity's
+            // dot with the outward normal must no longer be negative.
+            Assert.GreaterOrEqual(math.dot(vel, expectedNormal), -1e-4f);
+        }
     }
 }
