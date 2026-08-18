@@ -126,7 +126,12 @@ namespace Ring.Data
                     FallbackSlots = wave.FallbackSlots,
                     GunnerShareBase = wave.GunnerShareBase,
                     GunnerShareGrowth = wave.GunnerShareGrowth,
-                    PerPlayerCountFrac = wave.PerPlayerCountFrac
+                    PerPlayerCountFrac = wave.PerPlayerCountFrac,
+                    // Stage 3 Task 11 (spec §3.3 Р211/Р212/Р298).
+                    ZoneWeights = wave.ZoneWeights,
+                    EliteShareMiddle = wave.EliteShareMiddle,
+                    EliteShareOuterGrowth = wave.EliteShareOuterGrowth,
+                    EliteShareOuterCap = wave.EliteShareOuterCap
                 },
                 Arena = ToArenaSimConfig(arena),
                 // Stage 2 Task 22 (spec §3.15): seventh Build() parameter —
@@ -441,6 +446,27 @@ namespace Ring.Data
             // fixture — same precedent as Arena.MaxPlayers (Task 4) and
             // Hero.EdgeRequestMinTicks (app-zx8).
             ReqInRange(errors, "Wave.PerPlayerCountFrac", cfg.Wave.PerPlayerCountFrac, 0f, 2f);
+            // Stage 3 Task 11 (spec §3.3 Р211, coordinator R-56): the zone
+            // budget weights — exactly three (Outer/Middle/Core, Zone's own
+            // declared order), summing to 1 within float epsilon (same
+            // допуск form as every other share-of-a-whole rule in this
+            // file).
+            if (cfg.Wave.ZoneWeights == null || cfg.Wave.ZoneWeights.Length != 3)
+            {
+                errors.Add("Wave.ZoneWeights must have exactly 3 elements (Outer, Middle, Core) " +
+                    $"(got {cfg.Wave.ZoneWeights?.Length ?? 0}).");
+            }
+            else
+            {
+                float zoneWeightSum = cfg.Wave.ZoneWeights[0] + cfg.Wave.ZoneWeights[1]
+                    + cfg.Wave.ZoneWeights[2];
+                if (math.abs(zoneWeightSum - 1f) > 1e-4f)
+                {
+                    errors.Add("Wave.ZoneWeights must sum to 1 " +
+                        $"(got {zoneWeightSum:F5}: [{cfg.Wave.ZoneWeights[0]:F3}, " +
+                        $"{cfg.Wave.ZoneWeights[1]:F3}, {cfg.Wave.ZoneWeights[2]:F3}]).");
+                }
+            }
 
             ReqPositive(errors, "Arena.Radius", cfg.Arena.Radius);
             ReqPositive(errors, "Arena.MaxMobs", cfg.Arena.MaxMobs);
@@ -592,9 +618,29 @@ namespace Ring.Data
         /// ZoneConfigTests.Validate_RejectsDoorNarrowerThanDirector is the
         /// one fixture that DOES supply a real Director radius (2.2, spec
         /// §3.13) and is what this extension exists to satisfy.
-        static float MaxBodyRadius(in SimConfig cfg)
-            => math.max(cfg.Hero.Radius, math.max(cfg.Chaser.Radius,
-                math.max(cfg.Gunner.Radius, math.max(cfg.Elite.Radius, cfg.Director.Radius))));
+        /// Stage 3 Task 11 (coordinator R-63): parametrized with
+        /// `waveArchetypesOnly` — the door-width rule (Р247) and the
+        /// zone-wall body-passability rule (R-37) need every archetype
+        /// including Hero and Director; the NEW wave spawn-ring clearance
+        /// rule below (R-55) needs ONLY the three archetypes a wave can
+        /// actually spawn (Chaser/Gunner/Elite) — Hero has its own,
+        /// separate player-spawn rule (Т8, CheckZoneWallSpawnClearance
+        /// below) and Director never spawns through a wave at all (Р248/
+        /// §3.4: the match-flow state machine drops it at the core's
+        /// center). One home, one shared computation (rule 2) — the
+        /// wave-only three-way max is reused as-is by the full five-way one
+        /// below, not a second math.max chain.
+        static float MaxBodyRadius(in SimConfig cfg, bool waveArchetypesOnly = false)
+        {
+            float waveMax = math.max(cfg.Chaser.Radius, math.max(cfg.Gunner.Radius, cfg.Elite.Radius));
+            return waveArchetypesOnly ? waveMax : math.max(cfg.Hero.Radius, math.max(waveMax, cfg.Director.Radius));
+        }
+
+        /// Stage 3 Task 11: the three zones in their own declared order
+        /// (Zone.Outer=0/Middle=1/Core=2) — shared by the wave spawn-ring
+        /// check inside ValidateZoneWalls below, one array, not a fresh
+        /// one per wall per call.
+        static readonly Zone[] AllZones = { Zone.Outer, Zone.Middle, Zone.Core };
 
         /// Stage 3 Task 8 (spec §3.2's own Validate paragraph; ledger
         /// R-27/R-28/R-37): the zone-wall arc barriers and their doors.
@@ -604,6 +650,33 @@ namespace Ring.Data
         /// TestConfigs.DefaultArena() included) clear of every rule here.
         static void ValidateZoneWalls(List<string> errors, in SimConfig cfg, float spawnClearance)
         {
+            // Stage 3 Task 11 (coordinator F4): "zones exist" (ZoneRadius)
+            // and "walls exist" (ZoneWallCount) became two INDEPENDENT
+            // facts this task — StartWave routes the whole wave budget by
+            // ZoneRadius.Length < 2 (R-53), the wave spawn-ring rule below
+            // self-gates on the same length, and walls live entirely by
+            // ZoneWallCount — nothing enforced the two agree. A config with
+            // walls but no ZoneRadius passed validation before this check
+            // and got, all at once: the whole wave budget routed to Outer,
+            // the new wave spawn-ring rule skipped outright (its own guard
+            // reads as "nothing to check"), and a crash at Geometry.ZoneOf's
+            // first caller (Т13's loot-tier lookup) — the same "code
+            // references a guarantee nobody gives" class as R-37.
+            // ZoneRadius is a fixed "two boundaries" shape (Geometry.ZoneOf
+            // reads index 0/1 directly) OR legitimately EMPTY (zoneless
+            // arena, R-53) — no third length is meaningful.
+            if (cfg.Arena.ZoneRadius.Length != 0 && cfg.Arena.ZoneRadius.Length != 2)
+            {
+                errors.Add("Arena.ZoneRadius must have exactly 0 (zoneless) or 2 (Core/Middle " +
+                    $"boundary) elements (got {cfg.Arena.ZoneRadius.Length}).");
+            }
+            if (cfg.Arena.ZoneWallCount > 0 && cfg.Arena.ZoneRadius.Length != 2)
+            {
+                errors.Add("Arena.ZoneWallCount > 0 requires Arena.ZoneRadius.Length == 2 -- " +
+                    $"walls imply zones (got ZoneWallCount={cfg.Arena.ZoneWallCount}, " +
+                    $"ZoneRadius.Length={cfg.Arena.ZoneRadius.Length}).");
+            }
+
             float maxBodyRadius = MaxBodyRadius(in cfg);
 
             // ZoneRadius is a fixed "two boundaries" shape (Geometry.ZoneOf
@@ -734,6 +807,45 @@ namespace Ring.Data
                         CheckZoneWallSpawnClearance(errors, tag, cfg.Arena.ZoneWallRadius[i],
                             cfg.Arena.ZoneWallHalfWidth[i], doorCenter, doorFreeWidth,
                             spawnClearanceNeeded, spawnPos, $"ring {n}/point {s}");
+                    }
+                }
+
+                // Stage 3 Task 11 (spec §3.2's rule extended to wave spawn
+                // rings, coordinator R-55/R-63): a zone's WAVE spawn ring is
+                // a full circle drawn at an ARBITRARY angle
+                // (WaveSystem.TryFindSpawnPos), unlike the discrete player
+                // spawn points just above — no door can ever save it, so
+                // this uses Geometry.InArcBand alone (radial-only, no door
+                // exception), not OverlapsArc. Threshold is
+                // halfW + max(Chaser,Gunner,Elite).Radius — NO SpawnClearance
+                // term (R-63's own arithmetic against the §3.15 starting
+                // layout: R=65/92, HalfWidth=1.0, SpawnRingInset=2 give a
+                // spawn ring exactly 2 m short of its own wall on both the
+                // core and middle rings; 1 + 0.8 = 1.8 clears with 0.2 m to
+                // spare, while adding SpawnClearance, 1.0, would raise the
+                // threshold to 2.8 and fail BOTH zones on delivery day).
+                // Director is excluded (never spawns through a wave, Р248/
+                // §3.4) and Hero is excluded (that is the check right above
+                // this one, a different policy, Т8) — MaxBodyRadius's
+                // `waveArchetypesOnly` flag carries exactly that subset.
+                // Checked once per zone, against every wall (not just the
+                // wall nominally "at" that zone's boundary) — same
+                // "check the ring against every wall" breadth the player
+                // spawn-ring loop right above already uses.
+                if (cfg.Arena.ZoneRadius.Length >= 2)
+                {
+                    float maxWaveBodyRadius = MaxBodyRadius(in cfg, waveArchetypesOnly: true);
+                    foreach (Zone waveZone in AllZones)
+                    {
+                        float ringRadius = Geometry.ZoneSpawnRingRadius(waveZone, in cfg.Arena,
+                            cfg.Wave.SpawnRingInset);
+                        if (Geometry.InArcBand(new float2(ringRadius, 0f), maxWaveBodyRadius,
+                                cfg.Arena.ZoneWallRadius[i], cfg.Arena.ZoneWallHalfWidth[i]))
+                        {
+                            errors.Add($"{tag} covers the {waveZone} zone's wave spawn ring " +
+                                $"(radius={ringRadius:F3}) — no door can save a full ring drawn " +
+                                "at an arbitrary angle.");
+                        }
                     }
                 }
             }

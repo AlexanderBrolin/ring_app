@@ -187,6 +187,42 @@ namespace Ring.Simulation.Core
         /// Ring.Simulation.AI.WaveSystem.CountForTest, the single seam that
         /// owns the formula. 0 keeps solo-sized waves at any player count.
         public float PerPlayerCountFrac;
+
+        /// Stage 3 Task 11 (spec §3.3 Р211/Р212/Р298): the zone budget and
+        /// elite-composition numbers. NOT yet part of SimConfigHash.Compute
+        /// (coordinator R-57/R-60/R-17: EliteShareMiddle/EliteShareOuterGrowth/
+        /// EliteShareOuterCap ride PendingHashFields, ZoneWeights rides the
+        /// array-shaped "pending" stretch test — SimConfigHashTests, both
+        /// addressee Т13) and NOT yet wired from a real `.asset` (Data/
+        /// WaveConfig.cs carries the SO-side default; SimConfigBuilder.Build
+        /// copies it through starting this task, same as every other Wave
+        /// scalar). ZoneWeights sums to 1 across exactly three elements
+        /// (Outer/Middle/Core, Zone's own declared order) — validated in
+        /// SimConfigBuilder (coordinator R-56), never assumed here.
+        public float[] ZoneWeights;
+
+        /// Elite's flat share of the Middle zone's own budget (spec's own
+        /// table, Р212) — a constant, does not grow with WaveIndex the way
+        /// the Outer share below does (the Core zone needs no field at all:
+        /// its share is always 1, spec's own table, Р212).
+        public float EliteShareMiddle;
+
+        /// Elite's share of the Outer zone's budget GROWS by this amount per
+        /// wave (`EliteShareOuterGrowth * (WaveIndex - 1)`, spec Р298) up to
+        /// EliteShareOuterCap below — "the periphery gets harder from the
+        /// clock, not from a static split" (ADR-001 §3.1, the exact clause
+        /// spec Р298 exists to satisfy).
+        public float EliteShareOuterGrowth;
+
+        /// Ceiling on the Outer zone's growing elite share above (spec's own
+        /// "потолок 0.25"). Coordinator decision R-60 (overrides an earlier
+        /// draft that treated 0.25 as a hardcoded formula constant): CRITICAL
+        /// RULE 6 (ADR-002 §4) puts every game balance number — wave numbers
+        /// named explicitly — in a ScriptableObject, not in code, precisely
+        /// so the owner can retune it on a milestone (В1's own "periphery
+        /// difficulty grows with the clock" playtest) without a recompile.
+        /// A fourth WaveSimConfig field, not a local const in WaveSystem.
+        public float EliteShareOuterCap;
     }
 
     /// Stage 3 Task 8 (spec §3.2, Р206): which of the arena's three concentric

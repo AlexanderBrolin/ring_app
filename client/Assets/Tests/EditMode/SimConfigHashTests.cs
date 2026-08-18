@@ -61,6 +61,13 @@ namespace Ring.Simulation.Tests
             // below for why arrays never reach this set at all, pending or not.
             "ZoneWallCount", "DoorClearance", "ExtractRadius",
             "MaxContainers", "MaxContainerSlots",
+            // Stage 3 Task 11 (spec §3.3, coordinator R-57/R-60): the three
+            // SCALAR elite-composition numbers. ZoneWeights (float[]) is NOT
+            // listed here — it goes through the array-shaped "pending"
+            // stretch test instead (PendingConfigArrays_..._UntilT13WiresThem
+            // below, R-57б), same split every other array field in this set
+            // already follows.
+            "EliteShareMiddle", "EliteShareOuterGrowth", "EliteShareOuterCap",
         };
 
         [Test]
@@ -84,7 +91,10 @@ namespace Ring.Simulation.Tests
             AssertSectionAffectsHash("Weapon");
             AssertSectionAffectsHash("Chaser");
             AssertSectionAffectsHash("Gunner");
-            AssertSectionAffectsHash("Wave");
+            // Stage 3 Task 11: ZoneWeights (float[]) joins the skip set —
+            // still PENDING (T13), same reasoning as Arena's eleven array
+            // fields below.
+            AssertSectionAffectsHash("Wave", "ZoneWeights");
             // Stage 3 Task 8: nine array fields join the skip set
             // (ZoneRadius, ZoneWallRadius/HalfWidth/DoorStart/DoorCount,
             // DoorCenterRad/DoorFreeWidth, ExtractPos/Zone/Kind — eleven
@@ -129,27 +139,31 @@ namespace Ring.Simulation.Tests
             AssertFloatArrayFieldAffectsHash("Arena", "WallHalfWidth");
         }
 
-        /// Stage 3 Task 8 (coordinator ledger, post-RED requirement): the
-        /// ten new Arena PENDING ARRAY fields (zones/doors/portals) had no
-        /// stretch at all — unlike the scalar PendingHashFields entries
-        /// above, whose positive assert flips the day Т13 wires the field
-        /// in, an untouched array field stays silent whether Т13
-        /// remembers it or forgets it (lesson 272/263: a debt with no
-        /// enforcement is the same failure mode a Ф1 review Critical
-        /// already cost this project once). This single test is that
-        /// enforcement — written by hand, not a parallel
-        /// AssertInt32/ByteArrayFieldAffectsHash mechanism (that
-        /// generalized helper belongs to Т13, the day these arrays
+        /// Stage 3 Task 8 (coordinator ledger, post-RED requirement); RENAMED
+        /// and EXTENDED by Stage 3 Task 11 (coordinator R-57б: "расширяй
+        /// существующий тест, не заводи второй" — a name that stopped
+        /// describing its body would itself be lesson 277's failure, so
+        /// Arena -> Config in the name alongside the Wave.ZoneWeights line
+        /// this task adds). The eleven PENDING ARRAY fields (Arena's ten
+        /// zone/door/portal arrays plus Wave.ZoneWeights) had no stretch at
+        /// all — unlike the scalar PendingHashFields entries above, whose
+        /// positive assert flips the day Т13 wires the field in, an
+        /// untouched array field stays silent whether Т13 remembers it or
+        /// forgets it (lesson 272/263: a debt with no enforcement is the
+        /// same failure mode a Ф1 review Critical already cost this project
+        /// once). This single test is that enforcement — written by hand,
+        /// not a parallel AssertInt32/ByteArrayFieldAffectsHash mechanism
+        /// (that generalized helper belongs to Т13, the day these arrays
         /// genuinely enter the hash).
         ///
-        /// MUST GO RED THE DAY Т13 WIRES ANY of these ten arrays into
+        /// MUST GO RED THE DAY Т13 WIRES ANY of these eleven arrays into
         /// SimConfigHash.Compute — that is this test's whole purpose, not
         /// a side effect to tolerate against. TestConfigs carries no zones
         /// (Т12 wires them), so the fixture is built by hand here, with
-        /// two elements per array wherever the shape allows, so the
+        /// two/three elements per array wherever the shape allows, so the
         /// SECOND element (ledger 227) is always the one mutated.
         [Test]
-        public void PendingArenaArrays_MutationDoesNotAffectHash_UntilT13WiresThem()
+        public void PendingConfigArrays_MutationDoesNotAffectHash_UntilT13WiresThem()
         {
             // CS8156 (same trap this project already hit in Т3 — ledger,
             // SimulationWorld.cs:880-886): a method's return value cannot
@@ -159,16 +173,20 @@ namespace Ring.Simulation.Tests
             var baselineCfg = MakeConfigWithZones();
             ulong baseline = SimConfigHash.Compute(in baselineCfg);
 
-            AssertUnchanged(c => c.Arena.ZoneRadius[1] += 1f, "ZoneRadius");
-            AssertUnchanged(c => c.Arena.ZoneWallRadius[1] += 1f, "ZoneWallRadius");
-            AssertUnchanged(c => c.Arena.ZoneWallHalfWidth[1] += 1f, "ZoneWallHalfWidth");
-            AssertUnchanged(c => c.Arena.ZoneWallDoorStart[1] += 1, "ZoneWallDoorStart");
-            AssertUnchanged(c => c.Arena.ZoneWallDoorCount[1] += 1, "ZoneWallDoorCount");
-            AssertUnchanged(c => c.Arena.DoorCenterRad[1] += 1f, "DoorCenterRad");
-            AssertUnchanged(c => c.Arena.DoorFreeWidth[1] += 1f, "DoorFreeWidth");
-            AssertUnchanged(c => c.Arena.ExtractPos[1] += new float2(1f, 0f), "ExtractPos");
-            AssertUnchanged(c => c.Arena.ExtractZone[1] += 1, "ExtractZone");
-            AssertUnchanged(c => c.Arena.ExtractKind[1] += 1, "ExtractKind");
+            AssertUnchanged(c => c.Arena.ZoneRadius[1] += 1f, "Arena.ZoneRadius");
+            AssertUnchanged(c => c.Arena.ZoneWallRadius[1] += 1f, "Arena.ZoneWallRadius");
+            AssertUnchanged(c => c.Arena.ZoneWallHalfWidth[1] += 1f, "Arena.ZoneWallHalfWidth");
+            AssertUnchanged(c => c.Arena.ZoneWallDoorStart[1] += 1, "Arena.ZoneWallDoorStart");
+            AssertUnchanged(c => c.Arena.ZoneWallDoorCount[1] += 1, "Arena.ZoneWallDoorCount");
+            AssertUnchanged(c => c.Arena.DoorCenterRad[1] += 1f, "Arena.DoorCenterRad");
+            AssertUnchanged(c => c.Arena.DoorFreeWidth[1] += 1f, "Arena.DoorFreeWidth");
+            AssertUnchanged(c => c.Arena.ExtractPos[1] += new float2(1f, 0f), "Arena.ExtractPos");
+            AssertUnchanged(c => c.Arena.ExtractZone[1] += 1, "Arena.ExtractZone");
+            AssertUnchanged(c => c.Arena.ExtractKind[1] += 1, "Arena.ExtractKind");
+            // Stage 3 Task 11 (coordinator R-57б): Wave.ZoneWeights joins
+            // the same stretch — three elements (Outer/Middle/Core), so
+            // index 1 (Middle) is still the "second element" subject.
+            AssertUnchanged(c => c.Wave.ZoneWeights[1] += 1f, "Wave.ZoneWeights");
 
             void AssertUnchanged(Action<SimConfig> mutate, string fieldName)
             {
@@ -180,16 +198,19 @@ namespace Ring.Simulation.Tests
                 var cfg = MakeConfigWithZones();
                 mutate(cfg);
                 Assert.AreEqual(baseline, SimConfigHash.Compute(in cfg),
-                    $"Arena.{fieldName}[1]: должен ещё оставаться вне SimConfigHash до Т13 " +
+                    $"{fieldName}[1]: должен ещё оставаться вне SimConfigHash до Т13 " +
                     "(этот тест обязан покраснеть в день, когда Т13 заведёт зоны/двери/" +
-                    "порталы в хеш — это и есть его цель)");
+                    "порталы/веса в хеш — это и есть его цель)");
             }
         }
 
         /// Non-empty zone/door/portal fixture for the stretch test above —
         /// TestConfigs.Default() itself stays zone-less until Т12
         /// (TestConfigs.DefaultArena()'s own comment), so this is built by
-        /// hand. Two elements per array wherever the shape allows.
+        /// hand. Two elements per array wherever the shape allows (Wave.
+        /// ZoneWeights is three — Outer/Middle/Core, Zone's own fixed
+        /// shape, coordinator R-56 — deliberately NOT {0.45,0.45,0.10}: a
+        /// literal lifted from the .asset would be a review finding, spec §0).
         static SimConfig MakeConfigWithZones()
         {
             var cfg = TestConfigs.Default();
@@ -204,6 +225,7 @@ namespace Ring.Simulation.Tests
             cfg.Arena.ExtractPos = new[] { float2.zero, new float2(20f, 0f) };
             cfg.Arena.ExtractZone = new byte[] { 0, 1 };
             cfg.Arena.ExtractKind = new byte[] { 0, 1 };
+            cfg.Wave.ZoneWeights = new[] { 0.3f, 0.3f, 0.4f };
             return cfg;
         }
 
@@ -317,7 +339,7 @@ namespace Ring.Simulation.Tests
         /// just recorded — a comment alone is a debt with no enforcement,
         /// the exact failure mode a prior Ф1 review already cost this
         /// project once (same reasoning as
-        /// PendingArenaArrays_MutationDoesNotAffectHash_UntilT13WiresThem
+        /// PendingConfigArrays_MutationDoesNotAffectHash_UntilT13WiresThem
         /// above). EveryConfigNumberAffectsHash deliberately does NOT call
         /// AssertSectionAffectsHash("Elite"/"Director") — that helper's
         /// PendingHashFields lookup is keyed by bare field NAME, and

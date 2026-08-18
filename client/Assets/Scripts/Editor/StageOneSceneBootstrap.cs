@@ -586,12 +586,15 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "GunEjectLocalEuler"); // Stage 2 Task 45b
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
-            // WaveConfig joins the marker mechanism for the first time in Stage 2
-            // Task 16, with PerPlayerCountFrac (the class's newest field) as its
-            // marker — the per-extra-player wave scale is a NEW key, and new keys
-            // are exactly what this mechanism is for (ApplyStageTwoBalance above
-            // only rewrites values that already exist on disk).
-            EditorBootstrapUtils.EnsureAssetHasKey(wave, $"{DataDir}/WaveConfig.asset", "PerPlayerCountFrac"); // Stage 2 Task 16
+            // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
+            // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
+            // R-58) moves it to EliteShareOuterCap — the class's newest
+            // field (zone budget + elite composition, spec §3.3) — same
+            // migration pattern as ArenaConfig/HeroConfig/WeaponConfig's own
+            // comments above: the committed asset already carries
+            // PerPlayerCountFrac, so leaving the marker there would leave
+            // the four new keys unable to reach the file at all.
+            EditorBootstrapUtils.EnsureAssetHasKey(wave, $"{DataDir}/WaveConfig.asset", "EliteShareOuterCap"); // Stage 3 Task 11 (was PerPlayerCountFrac, Stage 2 Task 16)
             // VisibilityConfig joins the marker mechanism for the first time
             // here, in Stage 2 Task 22, with HearPositionGridMeters (the
             // class's own newest/last field) as its marker — the asset is

@@ -1692,8 +1692,18 @@ namespace Ring.Simulation.Core
 
         static ulong HashWave(ulong h, in WaveState w)
         {
+            // Stage 3 Task 11 (coordinator R-50): nine Add steps replace the
+            // old two, SAME zone-major/archetype-minor order WaveState's own
+            // field declaration uses -- same position in the sequence
+            // (between WaveIndex and AliveCount) as the two fields they
+            // replace.
             h = StateHash64.Add(h, (int)w.Phase); h = StateHash64.Add(h, w.WaveIndex);
-            h = StateHash64.Add(h, w.PendingChasers); h = StateHash64.Add(h, w.PendingGunners);
+            h = StateHash64.Add(h, w.PendingOuterChaser); h = StateHash64.Add(h, w.PendingOuterGunner);
+            h = StateHash64.Add(h, w.PendingOuterElite);
+            h = StateHash64.Add(h, w.PendingMiddleChaser); h = StateHash64.Add(h, w.PendingMiddleGunner);
+            h = StateHash64.Add(h, w.PendingMiddleElite);
+            h = StateHash64.Add(h, w.PendingCoreChaser); h = StateHash64.Add(h, w.PendingCoreGunner);
+            h = StateHash64.Add(h, w.PendingCoreElite);
             h = StateHash64.Add(h, w.AliveCount); h = StateHash64.Add(h, w.PhaseTimer);
             return h;
         }

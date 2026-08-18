@@ -108,7 +108,17 @@ namespace Ring.Simulation.Tests
                     FallbackSlots = 24, GunnerShareBase = 0.2f, GunnerShareGrowth = 0.05f,
                     // Stage 2 Task 16: mirrors WaveConfig's C# default
                     // (two-sources-of-numbers discipline — test/code-default side).
-                    PerPlayerCountFrac = 0.7f },
+                    PerPlayerCountFrac = 0.7f,
+                    // Stage 3 Task 11: mirrors WaveConfig's C# defaults (two-
+                    // sources-of-numbers discipline — test/code-default side).
+                    // Inert on this zoneless arena (ZoneRadius empty below —
+                    // Т12 wires zones) except for EliteShareOuterGrowth/Cap,
+                    // which DO apply on the Outer-only zoneless path
+                    // (coordinator R-53) and are exactly what moves both
+                    // golden scenarios this task (spec Р298).
+                    ZoneWeights = new[] { 0.45f, 0.45f, 0.10f },
+                    EliteShareMiddle = 0.35f, EliteShareOuterGrowth = 0.02f,
+                    EliteShareOuterCap = 0.25f },
                 Arena = DefaultArena(),
                 // Stage 2 Task 19: mirrors VisibilityConfig's C# defaults
                 // (two-sources-of-numbers discipline — test/code-default side).

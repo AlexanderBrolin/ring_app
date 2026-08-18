@@ -1853,10 +1853,12 @@ namespace Ring.Presentation.Net
             return true;
         }
 
-        /// The wave director's public face. `PendingChasers`/`PendingGunners`/
-        /// `PhaseTimer` are not on the wire — they are the director's own
-        /// bookkeeping and no client draws them — so they stay at zero rather
-        /// than being guessed from the counts that are.
+        /// The wave director's public face. The nine zone/archetype
+        /// `Pending*` debt fields (Stage 3 Task 11 — was two,
+        /// PendingChasers/PendingGunners, before the zone budget split
+        /// them) and `PhaseTimer` are not on the wire — they are the
+        /// director's own bookkeeping and no client draws them — so they
+        /// stay at zero rather than being guessed from the counts that are.
         bool ReadWave(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
         {
             if (!SnapshotBlocks.TryReadWaveBlock(payload, out WavePhase phase, out ushort waveIndex,

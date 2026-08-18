@@ -238,11 +238,46 @@ namespace Ring.Simulation.Core
     public enum WavePhase : byte { Waiting = 0, Active = 1 }
 
     /// Live state of the wave-spawning director.
+    ///
+    /// Stage 3 Task 11 (spec Р211/Р212/Р250, coordinator R-50): the debt used
+    /// to be two named counters (PendingChasers/PendingGunners) split by
+    /// archetype only. Three zones x three wave archetypes (Chaser/Gunner/
+    /// Elite -- Director never spawns through a wave, Р248) do not fit that
+    /// shape, so the debt becomes a 3x3 matrix of NINE named fields --
+    /// `allowUnsafeCode: false` on Ring.Simulation.asmdef rules out a
+    /// `fixed` buffer (errata A-I5), so nine plain int fields it is. Order
+    /// is ZONE-MAJOR, archetype-minor (Zone's own declared order Outer=0/
+    /// Middle=1/Core=2, then MobType's Chaser=0/Gunner=1/Elite=2) -- the
+    /// SAME order HashWave below walks. The ONE place that maps a (zone,
+    /// type) pair onto one of these nine fields is WaveSystem.PendingRef
+    /// (coordinator R-51) -- nothing else, including this struct's own
+    /// callers, is allowed to grow a second mapping.
     public struct WaveState
     {
         public WavePhase Phase;
-        public int WaveIndex, PendingChasers, PendingGunners, AliveCount;
+        public int WaveIndex, AliveCount;
         public float PhaseTimer;
+
+        public int PendingOuterChaser, PendingOuterGunner, PendingOuterElite;
+        public int PendingMiddleChaser, PendingMiddleGunner, PendingMiddleElite;
+        public int PendingCoreChaser, PendingCoreGunner, PendingCoreElite;
+
+        /// Total outstanding wave-spawn debt across every zone and archetype
+        /// (coordinator R-52, spec Р206/Р219a): a DERIVED quantity, computed
+        /// wherever it is needed rather than stored -- deliberately NOT an
+        /// auto-property. An auto-property's compiler-generated backing
+        /// field would be a TENTH struct field invisible to both HashWave
+        /// (which lists the nine Pending fields by name) and the reflective
+        /// hash-completeness sweep (WorldLifecycleTests, which only walks
+        /// `typeof(WaveState).GetFields()` -- a private backing field never
+        /// shows up there), i.e. exactly the "hidden field bypasses both
+        /// guards" failure mode R-52 exists to rule out. WaveSystem.Update's
+        /// "is the wave cleared" check and WaveTests both read this instead
+        /// of summing nine fields by hand at each call site (one home,
+        /// lesson 279).
+        public int PendingTotal => PendingOuterChaser + PendingOuterGunner + PendingOuterElite
+            + PendingMiddleChaser + PendingMiddleGunner + PendingMiddleElite
+            + PendingCoreChaser + PendingCoreGunner + PendingCoreElite;
     }
 
     /// Match-flow phase (Stage 3 Task 1 Interfaces, spec Ф1/§3.10): Farm (only

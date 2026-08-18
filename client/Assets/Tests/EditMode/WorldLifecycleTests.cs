@@ -137,8 +137,16 @@ namespace Ring.Simulation.Tests
             //   PlayerState 32 x 2 players = 64
             //   MatchStats 10 x 2 players  = 20
             //   WorldStats 5, MobState 9, ProjectileState 13, PickupState 5,
-            //   WaveState 6, MatchState 2 = 40
-            //   -> 124 bumps swept, ALL asserted NOT to equal baseline.
+            //   WaveState 13, MatchState 2 = 47
+            //   -> 131 bumps swept, ALL asserted NOT to equal baseline.
+            //
+            // Stage 3 Task 11 (coordinator R-50/R-51): WaveState grew from
+            // 6 fields to 13 (two named Pending counters -> nine, one per
+            // zone x archetype pair) -- recounted from a fresh
+            // typeof(WaveState).GetFields() reading, not incremented from
+            // the previous 124 (the discipline this comment's own header
+            // names as the point of this receipt, and the exact mistake a
+            // prior fix-round already caught once).
             //
             // ZERO asserted TO equal it: the thirteen PENDING names are gone
             // with the skip-list (see this file's header), which is the whole

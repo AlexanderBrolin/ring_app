@@ -442,5 +442,92 @@ namespace Ring.Simulation.Tests
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("spawn point"));
         }
+
+        [Test]
+        public void Validate_RejectsZoneWeightsNotSummingToOne()
+        {
+            // Coordinator R-56 (spec §3.3 Р211): Wave.ZoneWeights must sum
+            // to 1 -- WaveConfig's own default {0.45, 0.45, 0.10} already
+            // does (every OTHER fixture in this file inherits it
+            // unexamined via ConfigTests.MakeDefaults()), so this is the
+            // one test that deliberately breaks it.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.ZoneWeights = new[] { 0.5f, 0.5f, 0.5f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("ZoneWeights"));
+        }
+
+        [Test]
+        public void Validate_RejectsWaveSpawnRingInsideZoneWallArc()
+        {
+            // Coordinator R-55/R-63: a zone's WAVE spawn ring is a full
+            // circle drawn at an ARBITRARY angle (WaveSystem.
+            // TryFindSpawnPos draws random angles, not a handful of fixed
+            // player spawn points) -- no door can save it, so the check is
+            // Geometry.InArcBand alone (radial-only), unlike
+            // Validate_RejectsZoneWallOverPlayerSpawnRing above which
+            // reuses OverlapsArc's door exception for discrete points.
+            // Threshold is halfW + max(Chaser,Gunner,Elite).Radius, with NO
+            // SpawnClearance term (R-63's own arithmetic against the
+            // §3.15 starting layout -- adding SpawnClearance would fail
+            // BOTH the core and middle rings on delivery day). Wall 0
+            // (control) sits at the Core boundary, nowhere near any zone's
+            // spawn ring. Wall 1 (subject, index 1) is centered exactly on
+            // the MIDDLE zone's own wave spawn ring (ZoneRadius[1] -
+            // Wave.SpawnRingInset = 40 - 2 = 38) with its one door far away
+            // (angle pi) -- proving the door cannot save a continuous ring
+            // the way it saves a discrete spawn point.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 2;
+            a.ZoneWallRadius = new[] { 20f, 40f - wv.SpawnRingInset };
+            a.ZoneWallHalfWidth = new[] { 1f, 1f };
+            a.ZoneWallDoorStart = new[] { 0, 1 };
+            a.ZoneWallDoorCount = new[] { 1, 1 };
+            a.DoorCenterRad = new[] { 0f, math.PI };
+            a.DoorFreeWidth = new[] { 6f, 6f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("wave spawn ring"));
+        }
+
+        [Test]
+        public void Validate_RejectsZoneRadiusWithWrongLength()
+        {
+            // Coordinator F4: "zones exist" and "walls exist" are two
+            // independent facts since this task (StartWave routes budget
+            // by ZoneRadius.Length, the wave spawn-ring rule self-gates on
+            // it, walls live by ZoneWallCount) -- ZoneRadius itself must
+            // still be exactly 0 (zoneless) or 2 (Core/Middle boundary,
+            // Geometry.ZoneOf indexes [0]/[1] directly) and nothing else.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = new[] { 20f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("ZoneRadius"));
+        }
+
+        [Test]
+        public void Validate_RejectsZoneWallsWithoutZoneRadius()
+        {
+            // Coordinator F4: a wall with no ZoneRadius passed validation
+            // before this rule and got, all at once: the whole wave budget
+            // routed to Outer (R-53), the wave spawn-ring rule skipped
+            // outright, and a crash at Geometry.ZoneOf's first caller
+            // (Т13's loot-tier lookup).
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = System.Array.Empty<float>();
+            a.ZoneWallCount = 1;
+            a.ZoneWallRadius = new[] { 20f };
+            a.ZoneWallHalfWidth = new[] { 1f };
+            a.ZoneWallDoorStart = new[] { 0 };
+            a.ZoneWallDoorCount = new[] { 1 };
+            a.DoorCenterRad = new[] { 0f };
+            a.DoorFreeWidth = new[] { 6f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("ZoneWallCount"));
+        }
     }
 }

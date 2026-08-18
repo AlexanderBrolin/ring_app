@@ -24,7 +24,23 @@ namespace Ring.Data
         // size is multiplied by (1 + (playerCount - 1) * PerPlayerCountFrac)
         // before the MaxMobsPerWave cap (WaveSystem.CountForTest). 0 keeps the
         // Stage 1 solo-sized waves at any player count.
-        [Range(0f, 2f)] public float PerPlayerCountFrac = 0.7f; // sync-marker key — keep LAST
+        [Range(0f, 2f)] public float PerPlayerCountFrac = 0.7f;
+
+        // Stage 3 Task 11 (spec §3.3 Р211/Р212/Р298, coordinator R-58): the
+        // zone budget and elite-composition numbers. Array element ranges
+        // are not expressible via [Range] (Unity's attribute clamps the
+        // whole field, not per-element) — SimConfigBuilder.Validate is the
+        // real gate for ZoneWeights (sums to 1, exactly three elements,
+        // coordinator R-56).
+        public float[] ZoneWeights = { 0.45f, 0.45f, 0.10f };
+        [Range(0f, 1f)] public float EliteShareMiddle = 0.35f;
+        [Range(0f, 1f)] public float EliteShareOuterGrowth = 0.02f;
+        // Coordinator R-60: the fourth wave field, not a code constant —
+        // CRITICAL RULE 6 (ADR-002 §4) puts every wave balance number in a
+        // ScriptableObject, this one included, so the owner can retune the
+        // periphery's difficulty ceiling on milestone В1 without a
+        // recompile.
+        [Range(0f, 1f)] public float EliteShareOuterCap = 0.25f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

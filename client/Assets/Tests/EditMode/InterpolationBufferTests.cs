@@ -879,12 +879,24 @@ namespace Ring.Simulation.Tests
                     Ttl = 42.5f + i,
                 };
             s.Match = new MatchState { Phase = MatchPhase.GateOpen, DirectorDeathTick = 77 };
+            // Stage 3 Task 11 (errata A-I6): the debt grew from two named
+            // fields to nine (zone x archetype) -- every one gets a
+            // distinct nonzero value here, same "no field left at its
+            // constructor default" discipline the rest of this filler
+            // follows.
             s.Wave = new WaveState
             {
                 Phase = WavePhase.Active,
                 WaveIndex = 3,
-                PendingChasers = 2,
-                PendingGunners = 1,
+                PendingOuterChaser = 2,
+                PendingOuterGunner = 1,
+                PendingOuterElite = 4,
+                PendingMiddleChaser = 6,
+                PendingMiddleGunner = 7,
+                PendingMiddleElite = 8,
+                PendingCoreChaser = 9,
+                PendingCoreGunner = 10,
+                PendingCoreElite = 11,
                 AliveCount = 5,
                 PhaseTimer = 1.25f,
             };

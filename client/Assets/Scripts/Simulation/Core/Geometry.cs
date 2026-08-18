@@ -302,6 +302,58 @@ namespace Ring.Simulation.Core
             return Zone.Outer;
         }
 
+        /// Radius of a zone's own WAVE spawn ring (coordinator R-54, spec
+        /// §3.3 Р249): the ring WaveSystem.TryFindSpawnPos draws candidates
+        /// on for that zone, literally "that zone's own outer boundary,
+        /// minus SpawnRingInset" — Core's boundary is ZoneRadius[0], Middle's
+        /// is ZoneRadius[1], Outer's is the arena's own Radius (which needs
+        /// no zone data at all — this is what keeps a zoneless arena,
+        /// ZoneRadius.Length &lt; 2, safe to call this for Outer specifically).
+        /// Public since this task — the same "chosen home is public because
+        /// both the sim and Ring.Data need it" precedent SpawnPosFor set
+        /// (that method's own doc): SimConfigBuilder.Validate (R-55's
+        /// spawn-ring-vs-arc-body rule) is Ring.Data, and WaveSystem is
+        /// internal to Ring.Simulation.
+        ///
+        /// ASSUMPTION this method leans on, DEFENSIVE guard below, not a
+        /// load-bearing branch (coordinator R-64, precedent R-36 —
+        /// PushOutOfArc's own "start inside" guard, kept and documented for
+        /// exactly this reason): callers never request Middle/Core on a
+        /// zoneless arena (ZoneRadius.Length &lt; 2). That promise is NONLOCAL
+        /// — held jointly by WaveSystem.StartWave's zoneless branch
+        /// (ZonelessWeights = {1,0,0}, R-53) and by SplitByZones' own
+        /// correctness (a bug in either can route debt to Middle/Core with
+        /// no zone data to serve it), neither of which this method can see
+        /// or re-derive. ADDRESSEE of a violation is whichever of those two
+        /// broke the routing promise, not this method — but this method is
+        /// where the broken promise would otherwise surface, four stack
+        /// frames deep in a hot loop, as a bare IndexOutOfRangeException
+        /// naming no rule at all (observed exactly this way, IndexOutOfRange
+        /// at ZoneRadius[0], when a rejected mutation batch routed debt to
+        /// Core on a zoneless fixture). Named here instead.
+        public static float ZoneSpawnRingRadius(Zone zone, in ArenaSimConfig arena, float spawnRingInset)
+        {
+            float boundary = zone switch
+            {
+                Zone.Core when arena.ZoneRadius.Length < 2 => throw new System.InvalidOperationException(
+                    "ZoneSpawnRingRadius(Zone.Core): Arena.ZoneRadius has fewer than 2 elements. " +
+                    "The zoneless-routing invariant (WaveSystem.StartWave's ZonelessWeights + " +
+                    "SplitByZones, coordinator R-53) promises wave debt never reaches Core/Middle " +
+                    "on such an arena -- something upstream of this call broke that promise."),
+                Zone.Middle when arena.ZoneRadius.Length < 2 => throw new System.InvalidOperationException(
+                    "ZoneSpawnRingRadius(Zone.Middle): Arena.ZoneRadius has fewer than 2 elements. " +
+                    "The zoneless-routing invariant (WaveSystem.StartWave's ZonelessWeights + " +
+                    "SplitByZones, coordinator R-53) promises wave debt never reaches Core/Middle " +
+                    "on such an arena -- something upstream of this call broke that promise."),
+                Zone.Core => arena.ZoneRadius[0],
+                Zone.Middle => arena.ZoneRadius[1],
+                Zone.Outer => arena.Radius,
+                _ => throw new System.ArgumentOutOfRangeException(nameof(zone), zone,
+                    "ZoneSpawnRingRadius: unknown zone"),
+            };
+            return boundary - spawnRingInset;
+        }
+
         // --- Stage 3 Task 7: the arc barrier (spec §3.2, Р246/Р247) ---
         //
         // An arc is the ring of radius `ringR` and half-width `halfW` with an
@@ -378,7 +430,17 @@ namespace Ring.Simulation.Core
         /// The inner limit is clamped at 0 for the degenerate `radius + halfW
         /// >= ringR` config — a body that could never fit inside the ring at
         /// all — where the hole in the middle simply does not exist.
-        static bool InArcBand(float2 p, float radius, float ringR, float halfW)
+        ///
+        /// Public since Stage 3 Task 11 (coordinator R-55): a zone's WAVE
+        /// spawn ring is a full circle drawn at an arbitrary angle
+        /// (WaveSystem.TryFindSpawnPos), not a handful of discrete points —
+        /// no door can ever "save" a candidate that could land anywhere on
+        /// the ring, so SimConfigBuilder.Validate's wave-spawn-ring rule
+        /// needs the RADIAL-ONLY band test in isolation, deliberately
+        /// WITHOUT OverlapsArc's door exception (which is correct only for
+        /// discrete points, like the existing player-spawn-ring rule this
+        /// one sits next to).
+        public static bool InArcBand(float2 p, float radius, float ringR, float halfW)
         {
             float outer = ringR + halfW + radius;
             float inner = math.max(ringR - halfW - radius, 0f);

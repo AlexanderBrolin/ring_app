@@ -66,7 +66,11 @@ namespace Ring.Simulation.Tests
             var snap = new RenderSnapshot(c.Arena);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(0, snap.MobCount);
-            Assert.Greater(snap.Wave.PendingChasers + snap.Wave.PendingGunners, 0);
+            // Stage 3 Task 11: the debt is nine fields now (zone x
+            // archetype) -- PendingTotal is the one computed home for
+            // "how much debt is outstanding" (coordinator R-52), not a
+            // hand-summed pair.
+            Assert.Greater(snap.Wave.PendingTotal, 0);
             // the debt clears once conditions allow it (spec §3.13 item 5)
             var relaxed = c;
             relaxed.Wave.MinSpawnDistanceToPlayer = 8f;
@@ -74,7 +78,7 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < 60; i++) w.Tick(default);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0);
-            Assert.AreEqual(0, snap.Wave.PendingChasers + snap.Wave.PendingGunners);
+            Assert.AreEqual(0, snap.Wave.PendingTotal);
         }
 
         [Test]
