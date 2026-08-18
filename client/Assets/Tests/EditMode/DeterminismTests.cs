@@ -590,7 +590,46 @@ namespace Ring.Simulation.Tests
             // switch to the in-place `ref` idiom is digest-inert too (the hash
             // walks `i < _pickupCount`, so the debris past the count that the
             // switch leaves behind is read by nobody).
-            const ulong GoldenHash = 0xBE4276DEE79BD5D5UL; // = 13709650915409778133
+            // T12 (Stage 3 re-pin #2, sanctioned): arena radius 113, three zones
+            // with arcs and doors, spawn ring 0.92, world caps, zonal wave
+            // budget, elite and director archetypes.
+            //
+            // RE-PIN #2 — THE SECOND AND LAST SANCTION OF STAGE 3 (spec
+            // С28/§4), "the arena and its inhabitants". WHAT MOVED, by name:
+            // Arena.Radius 65 -> 113; three zones {65, 92} carrying two arc
+            // walls, six doors and their jambs; PlayerSpawnRingFrac 0.8 -> 0.92
+            // (the multiplayer ring from 52 m out to 103.96); the caps MaxMobs
+            // 96 -> 288, MaxProjectiles 384 -> 1024, MaxEventsPerFrame 512 ->
+            // 1024; the zonal wave budget, live for the first time because
+            // ZoneRadius stopped being empty (ZoneWeights {0.45, 0.45, 0.10});
+            // and the Elite/Director sections of TestConfigs.Default() — with
+            // the Elite now genuinely SPAWNING in both scenarios, since the
+            // middle zone takes 45% of every wave at EliteShareMiddle 0.35.
+            //
+            // WHAT IS *NOT* IN THIS MOVEMENT, recorded because it was measured
+            // and not assumed: the wave-index-dependent half of the wave
+            // composition. Both scenarios live at WaveIndex = 1 for their whole
+            // 1000 ticks — FirstWaveDelay is 75 ticks and a gunner needs ~405
+            // more to reach its firing distance, so the first wave never closes
+            // — and every elite-share term carries the factor (WaveIndex - 1),
+            // identically zero there. Т11 established it by mutation rather
+            // than by arithmetic alone: M4 and M12 each doubled the elite
+            // growth rate and moved NEITHER golden.
+            //
+            // WHY Т11's OWN SHIFT IS NOT MIXED IN: it was STRUCTURAL, not
+            // numeric — seven extra StateHash64.Add calls in HashWave for the
+            // 3x3 debt matrix. The mirror evidence on this side is just as
+            // direct: the thirteen fixture repairs this task made, the two
+            // consts that became the ExitKind enum, and all eight mutations
+            // M1-M8 are digest-inert — three consecutive full runs returned
+            // this pair bit for bit.
+            //
+            // THE SANCTION BUDGET IS NOW SPENT (С28). Re-pin #1 (Т6, "the
+            // economy of the raid") and re-pin #2 (this one) are both used. The
+            // third constant — Т36's extraction-loop golden over 18 000 ticks —
+            // is a NEW pin and spends no sanction. Any further movement of any
+            // of the three is a stop and a question for the owner.
+            const ulong GoldenHash = 0x5349AE72AEFE860DUL; // = 6001519786033317389
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
@@ -715,7 +754,21 @@ namespace Ring.Simulation.Tests
             // constant to 0x8F176E2D733A14EE bit for bit alongside the solo
             // one — see the solo golden's own ATTRIBUTION paragraph for the
             // two negatives that run also settled.
-            const ulong MultiGoldenHash = 0x973C5780C476AE61UL; // = 10897681408893300321
+            // RE-PIN #2 (Т12, the second and last sanction — the solo golden
+            // above carries the full account: what moved, what provably did
+            // not, and why the budget is now spent). This scenario has no cause
+            // of its own. It runs the same arena, the same zonal budget and the
+            // same two new archetypes with three players instead of one, so
+            // every term is the solo cause counted three times over.
+            //
+            // One thing is worth recording separately: the multiplayer wave is
+            // the larger one (CountForTest gives 10 at index 1 against the
+            // solo's 4), so it is the run where an index-dependent elite term
+            // would have shown up first — round(14 * 0.04) = 1 against
+            // round(14 * 0.02) = 0 at wave index 2. It does not, and Т11's M12
+            // mutation covered this scenario as well and moved neither
+            // constant: the composition really is inert at WaveIndex = 1.
+            const ulong MultiGoldenHash = 0x03FD1C06FC2921DDUL; // = 287416767547515357
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
