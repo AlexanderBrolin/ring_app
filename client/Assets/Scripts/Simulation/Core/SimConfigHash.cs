@@ -30,10 +30,15 @@ namespace Ring.Simulation.Core
     /// the builder at all.
     ///
     /// Field order below mirrors SimConfig's own declaration order (Hero,
-    /// Weapon, Chaser, Gunner, Wave, Arena, Visibility) and, within each
-    /// section, that struct's own declared field order — same
-    /// canonical-order convention as SimulationWorld.StateHash()'s
-    /// Hash*/ helpers.
+    /// Weapon, Chaser, Gunner, Wave, Arena, Visibility, Flow, Elite,
+    /// Director, Loot, Items) and, within each section, that struct's own
+    /// declared field order — same canonical-order convention as
+    /// SimulationWorld.StateHash()'s Hash*/ helpers.
+    ///
+    /// Stage 3 Task 13 (owner decision R-17): `Compute` covers all twelve
+    /// fields — Flow/Elite/Director/Loot/Items joined this task, lifting
+    /// the deferred-wiring skip-set (SimConfigHashTests' former
+    /// PendingHashFields) in one move, arrays included.
     public static class SimConfigHash
     {
         public static ulong Compute(in SimConfig cfg)
@@ -46,6 +51,11 @@ namespace Ring.Simulation.Core
             h = HashWave(h, in cfg.Wave);
             h = HashArena(h, in cfg.Arena);
             h = HashVisibility(h, in cfg.Visibility);
+            h = HashFlow(h, in cfg.Flow);
+            h = HashMob(h, in cfg.Elite);
+            h = HashMob(h, in cfg.Director);
+            h = HashLoot(h, in cfg.Loot);
+            h = HashItemArray(h, cfg.Items);
             return h;
         }
 
@@ -73,6 +83,8 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.AimMoveSpeedFrac); h = StateHash64.Add(h, c.AimSlideSpeedMult);
             h = StateHash64.Add(h, c.AimSettleSeconds);
             h = StateHash64.Add(h, c.EdgeRequestMinTicks);
+            h = StateHash64.Add(h, c.PickupRadius);
+            h = StateHash64.Add(h, c.InventoryCapacity); h = StateHash64.Add(h, c.MaxInventoryItems);
             return h;
         }
 
@@ -87,6 +99,8 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.CanFireWhileSlide);
             h = StateHash64.Add(h, c.SpreadRunMult); h = StateHash64.Add(h, c.SpreadSlideMult);
             h = StateHash64.Add(h, c.RunSpreadSpeedFrac);
+            h = StateHash64.Add(h, c.ShotsPerCell); h = StateHash64.Add(h, c.AmmoStart);
+            h = StateHash64.Add(h, c.AmmoMax); h = StateHash64.Add(h, c.EmergencyFireInterval);
             return h;
         }
 
@@ -123,6 +137,9 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.FallbackSlots);
             h = StateHash64.Add(h, c.GunnerShareBase); h = StateHash64.Add(h, c.GunnerShareGrowth);
             h = StateHash64.Add(h, c.PerPlayerCountFrac);
+            h = HashFloatArray(h, c.ZoneWeights);
+            h = StateHash64.Add(h, c.EliteShareMiddle); h = StateHash64.Add(h, c.EliteShareOuterGrowth);
+            h = StateHash64.Add(h, c.EliteShareOuterCap);
             return h;
         }
 
@@ -139,9 +156,27 @@ namespace Ring.Simulation.Core
             h = HashFloat2Array(h, c.WallA);
             h = HashFloat2Array(h, c.WallB);
             h = HashFloatArray(h, c.WallHalfWidth);
-            // Stage 2 Task 46: last, because ArenaSimConfig declares it last —
-            // this method's contract is the struct's own field order.
             h = StateHash64.Add(h, c.BarrierTop);
+            // Stage 3 Task 13 (owner decision R-17): the zone/door/portal/
+            // container fields this task lifts out of the deferred-wiring
+            // skip-set — last, because ArenaSimConfig declares them last;
+            // this method's contract is the struct's own field order.
+            h = StateHash64.Add(h, c.MaxPickups);
+            h = HashFloatArray(h, c.ZoneRadius);
+            h = StateHash64.Add(h, c.ZoneWallCount);
+            h = HashFloatArray(h, c.ZoneWallRadius);
+            h = HashFloatArray(h, c.ZoneWallHalfWidth);
+            h = HashInt32Array(h, c.ZoneWallDoorStart);
+            h = HashInt32Array(h, c.ZoneWallDoorCount);
+            h = HashFloatArray(h, c.DoorCenterRad);
+            h = HashFloatArray(h, c.DoorFreeWidth);
+            h = StateHash64.Add(h, c.DoorClearance);
+            h = HashFloat2Array(h, c.ExtractPos);
+            h = HashByteArray(h, c.ExtractZone);
+            h = HashByteArray(h, c.ExtractKind);
+            h = StateHash64.Add(h, c.ExtractRadius);
+            h = StateHash64.Add(h, c.MaxContainers);
+            h = StateHash64.Add(h, c.MaxContainerSlots);
             return h;
         }
 
@@ -150,6 +185,53 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.SightRadius); h = StateHash64.Add(h, c.HearRadius);
             h = StateHash64.Add(h, c.ExitHysteresis); h = StateHash64.Add(h, c.LingerTicks);
             h = StateHash64.Add(h, c.HearPositionGridMeters);
+            h = StateHash64.Add(h, c.PickupRadiusForVisibility);
+            h = StateHash64.Add(h, c.ContainerRadiusForVisibility);
+            return h;
+        }
+
+        static ulong HashFlow(ulong h, in MatchFlowSimConfig c)
+        {
+            h = StateHash64.Add(h, c.GateDelaySeconds); h = StateHash64.Add(h, c.ExtractChannelSeconds);
+            h = StateHash64.Add(h, c.RetinueCount); h = StateHash64.Add(h, c.RetinueRespawnSeconds);
+            h = StateHash64.Add(h, c.DirectorReserveSlots);
+            return h;
+        }
+
+        /// Field order mirrors LootSimConfig's own declaration order.
+        static ulong HashLoot(ulong h, in LootSimConfig c)
+        {
+            h = HashFloatArray(h, c.DropChance);
+            h = StateHash64.Add(h, c.CrateCount); h = StateHash64.Add(h, c.CacheCountMiddle);
+            h = StateHash64.Add(h, c.CacheCountCore);
+            h = StateHash64.Add(h, c.RepairKitChance);
+            h = HashInt32Array(h, c.CellsPerMob);
+            h = StateHash64.Add(h, c.CorpseCellFraction);
+            h = StateHash64.Add(h, c.RepairKitHealAmount);
+            h = StateHash64.Add(h, c.RepairKitChannelSeconds);
+            h = HashFloatArray(h, c.TransferSeconds);
+            h = StateHash64.Add(h, c.LootSpawnAttempts); h = StateHash64.Add(h, c.LootFallbackSlots);
+            h = StateHash64.Add(h, c.PickupTtlSeconds); h = StateHash64.Add(h, c.ContainerTtlSeconds);
+            h = StateHash64.Add(h, c.LootRadius);
+            return h;
+        }
+
+        /// One entry's worth of ItemDef, in the struct's own declared field
+        /// order — same "length + every element" shape as HashFloatArray/
+        /// HashFloat2Array, so a catalog that only grows a tail record still
+        /// moves the hash.
+        static ulong HashItemArray(ulong h, ItemDef[] a)
+        {
+            h = StateHash64.Add(h, a == null ? -1 : a.Length);
+            if (a == null) return h;
+            for (int i = 0; i < a.Length; i++)
+            {
+                h = StateHash64.Add(h, a[i].Id);
+                h = StateHash64.Add(h, a[i].Tier);
+                h = StateHash64.Add(h, a[i].SlotCost);
+                h = StateHash64.Add(h, a[i].CreditValue);
+                h = StateHash64.Add(h, (int)a[i].Kind);
+            }
             return h;
         }
 
@@ -167,6 +249,26 @@ namespace Ring.Simulation.Core
         }
 
         static ulong HashFloat2Array(ulong h, float2[] a)
+        {
+            h = StateHash64.Add(h, a == null ? -1 : a.Length);
+            if (a == null) return h;
+            for (int i = 0; i < a.Length; i++) h = StateHash64.Add(h, a[i]);
+            return h;
+        }
+
+        /// Same shape as HashFloatArray, for int[] fields — Arena's
+        /// ZoneWallDoorStart/ZoneWallDoorCount and LootSimConfig.CellsPerMob.
+        static ulong HashInt32Array(ulong h, int[] a)
+        {
+            h = StateHash64.Add(h, a == null ? -1 : a.Length);
+            if (a == null) return h;
+            for (int i = 0; i < a.Length; i++) h = StateHash64.Add(h, a[i]);
+            return h;
+        }
+
+        /// Same shape as HashFloatArray, for byte[] fields — Arena's
+        /// ExtractZone/ExtractKind.
+        static ulong HashByteArray(ulong h, byte[] a)
         {
             h = StateHash64.Add(h, a == null ? -1 : a.Length);
             if (a == null) return h;

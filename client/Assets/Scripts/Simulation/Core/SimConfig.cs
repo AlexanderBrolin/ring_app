@@ -42,10 +42,9 @@ namespace Ring.Simulation.Core
 
         /// Stage 3 Task 3 (spec §3.6, R-4): auto-pickup collection radius —
         /// Loot.PickupSystem.Update gathers energy cells within this
-        /// distance of a live, un-extracted player's Pos. NOT part of
-        /// SimConfigHash.Compute yet — see SimConfigHashTests.
-        /// SimConfig_CarriesExactlyEightSections and its own PendingHashFields
-        /// for where that decision is recorded.
+        /// distance of a live, un-extracted player's Pos. Stage 3 Task 13
+        /// (owner decision R-17): part of SimConfigHash.Compute as of this
+        /// task.
         public float PickupRadius;
 
         /// Stage 3 Task 4 (spec §3.6 "Рюкзак", errata E-6 D-I8): the
@@ -56,10 +55,9 @@ namespace Ring.Simulation.Core
         /// MaxInventoryItems is the hard ceiling on item COUNT that sizes
         /// SimulationWorld's per-player Loot.Inventory backing array at
         /// construction (independent of slot points, so a future catalog
-        /// of very cheap items still cannot outgrow it). NOT part of
-        /// SimConfigHash.Compute yet — see SimConfigHashTests.
-        /// PendingHashFields for where that decision is recorded (same
-        /// T4 -> T13 deferral as PickupRadius/MaxPickups above).
+        /// of very cheap items still cannot outgrow it). Stage 3 Task 13
+        /// (owner decision R-17): part of SimConfigHash.Compute as of this
+        /// task, same move as PickupRadius/MaxPickups above.
         public int InventoryCapacity;
         public int MaxInventoryItems;
     }
@@ -86,23 +84,14 @@ namespace Ring.Simulation.Core
         /// Ammo down to on a hot-tweak. EmergencyFireInterval is the slower
         /// cooldown WeaponSystem.IntervalFor selects once Ammo reaches 0 — the
         /// "emergency synthesis" keeps the weapon firing rather than going
-        /// silent. NOT part of SimConfigHash.Compute yet (deferred alongside
-        /// Flow — see SimConfigHashTests.SimConfig_CarriesExactlyEightSections
-        /// and its own PendingHashFields for where that decision is recorded).
+        /// silent. Stage 3 Task 13 (owner decision R-17): part of
+        /// SimConfigHash.Compute as of this task — R-17 lifted the whole
+        /// deferred-wiring skip-set in one move (SimConfigHashTests no longer
+        /// carries a PendingHashFields entry for any of the four).
         public int ShotsPerCell;
         public int AmmoStart;
         public int AmmoMax;
         public float EmergencyFireInterval;
-
-        /// Stage 3 Task 3 (spec §3.6, R-3): the fraction of a dead player's
-        /// remaining Ammo that rasps out as energy cells — Loot.LootDrops.
-        /// CorpseCells is the sole reader. TEMPORARY HOME (R-3): LootSimConfig
-        /// doesn't exist until Т13, which moves this into LootSimConfig.
-        /// CorpseCellFraction in one step (same move CellsOnDeath below makes).
-        /// NOT part of SimConfigHash.Compute yet — see
-        /// SimConfigHashTests.SimConfig_CarriesExactlyEightSections and its
-        /// own PendingHashFields for where that decision is recorded.
-        public float CorpseCellFraction;
     }
 
     /// Balance numbers shared by all mob archetypes (chaser/gunner use the same shape).
@@ -159,17 +148,6 @@ namespace Ring.Simulation.Core
         /// value, it just spends away the clearance guarantee itself — a
         /// config choice, not a validation bug.
         public float AvoidMargin;
-
-        /// Stage 3 Task 3 (spec §3.6 "Дроп ячеек", R-3): this archetype's
-        /// fixed energy-cell drop on death — one field per archetype
-        /// instance (Chaser's own value, Gunner's own value), read by
-        /// Loot.LootDrops.MobDeathCells. TEMPORARY HOME (R-3): LootSimConfig
-        /// doesn't exist until Т13, which moves this into LootSimConfig.
-        /// CellsPerMob (indexed by MobType) in one step. NOT part of
-        /// SimConfigHash.Compute yet — see SimConfigHashTests.
-        /// SimConfig_CarriesExactlyEightSections and its own PendingHashFields
-        /// for where that decision is recorded.
-        public int CellsOnDeath;
     }
 
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).
@@ -189,14 +167,11 @@ namespace Ring.Simulation.Core
         public float PerPlayerCountFrac;
 
         /// Stage 3 Task 11 (spec §3.3 Р211/Р212/Р298): the zone budget and
-        /// elite-composition numbers. NOT yet part of SimConfigHash.Compute
-        /// (coordinator R-57/R-60/R-17: EliteShareMiddle/EliteShareOuterGrowth/
-        /// EliteShareOuterCap ride PendingHashFields, ZoneWeights rides the
-        /// array-shaped "pending" stretch test — SimConfigHashTests, both
-        /// addressee Т13) and NOT yet wired from a real `.asset` (Data/
-        /// WaveConfig.cs carries the SO-side default; SimConfigBuilder.Build
-        /// copies it through starting this task, same as every other Wave
-        /// scalar). ZoneWeights sums to 1 across exactly three elements
+        /// elite-composition numbers. Stage 3 Task 13 (owner decision R-17):
+        /// EliteShareMiddle/EliteShareOuterGrowth/EliteShareOuterCap and
+        /// ZoneWeights are part of SimConfigHash.Compute as of this task —
+        /// R-17 lifted the whole deferred-wiring skip-set in one move, arrays
+        /// included. ZoneWeights sums to 1 across exactly three elements
         /// (Outer/Middle/Core, Zone's own declared order) — validated in
         /// SimConfigBuilder (coordinator R-56), never assumed here.
         public float[] ZoneWeights;
@@ -313,9 +288,8 @@ namespace Ring.Simulation.Core
         /// MaxMobs/MaxProjectiles above. SimulationWorld's constructor sizes
         /// its `Pickups` array off exactly this field, and ArenaTopologyMatches
         /// rejects a hot-tweak that changes it, same contract as the three
-        /// caps above. NOT part of SimConfigHash.Compute yet — see
-        /// SimConfigHashTests.SimConfig_CarriesExactlyEightSections and its
-        /// own PendingHashFields for where that decision is recorded.
+        /// caps above. Stage 3 Task 13 (owner decision R-17): part of
+        /// SimConfigHash.Compute as of this task.
         public int MaxPickups;
 
         /// Stage 3 Task 8 (spec §3.2, Р206): the two zone-boundary radii —
@@ -325,9 +299,9 @@ namespace Ring.Simulation.Core
         /// variable-length "0 disables" array, so Geometry.ZoneOf reads
         /// index 0/1 directly rather than looping. Empty (never null) before
         /// Т12 wires real numbers — same never-null convention as WallA/
-        /// WallB. NOT part of SimConfigHash.Compute yet — see
-        /// SimConfigHashTests.PendingHashFields (R-17: skip-set lifts whole,
-        /// addressee Т13).
+        /// WallB. Stage 3 Task 13 (owner decision R-17): part of
+        /// SimConfigHash.Compute as of this task — the skip-set lifted
+        /// whole, arrays included.
         public float[] ZoneRadius;
 
         /// Stage 3 Task 8 (spec §3.2, Р207): the zone-boundary ARC BARRIERS —
@@ -404,6 +378,16 @@ namespace Ring.Simulation.Core
         public float SightRadius, HearRadius, ExitHysteresis;
         public int LingerTicks;
         public float HearPositionGridMeters;
+
+        /// Stage 3 Task 13 (spec §3.9, errata Р268 finding 3): the radius
+        /// term VisibilitySystem.Compute needs for a pickup/container target
+        /// — that method reads a mob's own radius off
+        /// `w.MobConfigFor(m.Type).Radius`, and neither of these two entity
+        /// classes has a MobConfig to read from. Both 0.4 m (spec's own
+        /// numbers). Consumer: Т26 (the visibility filter's own extension to
+        /// the two new entity classes) — this task only delivers the data.
+        public float PickupRadiusForVisibility;
+        public float ContainerRadiusForVisibility;
     }
 
     /// Match-flow pacing config (Stage 3 Task 1 Interfaces, errata E-2):
@@ -413,13 +397,11 @@ namespace Ring.Simulation.Core
     /// ApplyStageThreeBalance, and the SimConfigBuilder wiring are Т12's job
     /// — the one task that delivers SO-backed data (errata E-2's full
     /// account of why the two are split). Т22 only uses what is already
-    /// here. NOT part of SimConfigHash.Compute yet: errata E-6 I9 named
-    /// "Т8/Т10/Т13/Т22" for that whole deferred set, and owner decision R-17
-    /// collapsed the four addressees into ONE — Т13 lifts the skip-set whole,
-    /// these five numbers included. Recorded, and made executable, in
-    /// SimConfigHashTests.PendingHashFields, which asserts each of them is
-    /// still outside the hash and goes red the moment Т13 removes the set
-    /// without wiring them.
+    /// here. Stage 3 Task 13 (owner decision R-17): part of
+    /// SimConfigHash.Compute as of this task — errata E-6 I9 named
+    /// "Т8/Т10/Т13/Т22" for the whole deferred set, and R-17 collapsed the
+    /// four addressees into ONE, this task, which lifts the skip-set whole,
+    /// these five numbers included.
     public struct MatchFlowSimConfig
     {
         public float GateDelaySeconds;
@@ -427,6 +409,128 @@ namespace Ring.Simulation.Core
         public int RetinueCount;
         public float RetinueRespawnSeconds;
         public int DirectorReserveSlots;
+    }
+
+    /// Stage 3 Task 13 (spec §3.7): what one catalog entry IS — the ONLY
+    /// two kinds that exist today (the two branches Loot.LootConfig's own
+    /// Use-vs-everything-else split needs). A `const byte` pair would also
+    /// compile, but SimConfigHashTests walks every config section with
+    /// plain GetFields() and hands each value to a switch that understands
+    /// float/int/bool — a `const` field there is handed straight to that
+    /// switch and throws NotSupportedException (same reasoning as
+    /// ExitKind's own doc, right above this struct's sibling).
+    public enum ItemKind : byte { Trophy = 0, RepairKit = 1 }
+
+    /// Stage 3 Task 13 (spec §3.7): one catalog entry. `Id` is the wire
+    /// byte a container slot / backpack slot actually stores — everything
+    /// else here is metadata a reader resolves through
+    /// ItemCatalogLookup.Find, never carried alongside the id itself.
+    /// [System.Serializable] (plain BCL — not UnityEngine, so this stays
+    /// legal in an asmdef with `noEngineReferences`, CRITICAL RULE 1) lets
+    /// Ring.Data.ItemCatalog hold `ItemDef[]` directly as its own Inspector
+    /// array — no parallel Data-side DTO to keep in sync (rule 2).
+    [System.Serializable]
+    public struct ItemDef
+    {
+        public byte Id;
+        /// 1..4 for a tiered trophy (spec §3.7's own table); 0 for the
+        /// repair kit, which sits outside the tier ladder on purpose (spec:
+        /// "ремкомплект — вне тиров").
+        public byte Tier;
+        public byte SlotCost;
+        public ushort CreditValue;
+        public ItemKind Kind;
+    }
+
+    /// Stage 3 Task 13 (owner decision R-89): the ONE home for "item id ->
+    /// full catalog entry." Ids are NOT guaranteed to equal their index
+    /// (SimConfigBuilder.Validate rejects a duplicate id but not a gap —
+    /// R-89's own text), so every reader that needs a record back from an
+    /// id — Loot.Inventory's SlotCostOf/UsedSlots/TryAdd today,
+    /// SimConfigBuilder.Validate's min(SlotCost) rule, the future
+    /// tier-of-drop (Т16) and looting (Т17) — resolves it here, never with
+    /// its own copy of the search. Two homes of one lookup already cost
+    /// this project three passes on a single test (WaveSystem.PendingRef /
+    /// ProjectileSystem.MobRadiusFor's own docs record the lesson); this is
+    /// the same discipline applied before a second home has a chance to
+    /// grow.
+    public static class ItemCatalogLookup
+    {
+        /// Named refusal (coordinator ledger, R-64 precedent): the message
+        /// carries both the id that failed to resolve and the catalog's own
+        /// size, not a bare exception — a diagnostic a caller can act on
+        /// instead of a stack trace pointing at a search loop.
+        public static ItemDef Find(byte id, ItemDef[] catalog)
+        {
+            for (int i = 0; i < catalog.Length; i++)
+                if (catalog[i].Id == id) return catalog[i];
+            throw new System.ArgumentException(
+                $"item id {id} is not in the catalog ({catalog.Length} entries)");
+        }
+    }
+
+    /// Stage 3 Task 13 (spec §3.7/§3.8): loot-system balance numbers — drop
+    /// chances, container counts, the repair kit's own numbers, per-tier
+    /// transfer time, and the two entity TTLs. Field order below is the
+    /// canonical order SimConfigHash.Compute's HashLoot mirrors (class doc
+    /// convention, same as every other section in this file).
+    public struct LootSimConfig
+    {
+        /// [archetype * ZoneCount + zone] -> chance, flat 4x3 (owner
+        /// decision, errata E-6 A-I11). ZoneCount is 3 (Zone's own
+        /// Outer/Middle/Core order); the archetype axis is 4, indexed
+        /// exactly like MobType (Chaser/Gunner/Elite/Director), even though
+        /// the spec's own per-archetype/zone table (§3.7) has no row for
+        /// the Director — the Director's drop is the fixed "three
+        /// containers + one memory core" rule, not a chance roll — so every
+        /// reader indexes this array by MobType directly, with no
+        /// MobType-to-archetype remap anywhere (rule 2), and the Director's
+        /// own row simply stays unread.
+        /// ⚠ ASSUMPTION THIS FIELD CANNOT ENFORCE, WITH ITS ADDRESSEE NAMED
+        /// (coordinator R-96, same MinCatalogSlotCost/MaxBodyRadius shape):
+        /// no rule checks this array's length is 12 — it has no reader yet
+        /// (SimConfigBuilder.Validate's own ValidateLoot only covers
+        /// CellsPerMob, the one array with a live reader today, R-92). A
+        /// rule with no reader to protect is a rule with no witness.
+        /// ADDRESSEE — Т16, the drop-roll task, the day it becomes one.
+        /// Build's own omitted-`loot` branch still seeds a correctly-sized
+        /// all-zero array (coordinator R-96), so the ABSENCE of a rule
+        /// is not the same as the absence of a safe default.
+        public float[] DropChance;
+        public int CrateCount, CacheCountMiddle, CacheCountCore;
+        public float RepairKitChance;
+        /// Indexed by MobType (Chaser/Gunner/Elite/Director) — same
+        /// archetype-axis convention as DropChance above. Replaces the
+        /// TEMPORARY per-archetype MobSimConfig.CellsOnDeath field (R-3,
+        /// removed this task) with one flat array. Stage 3 Task 13
+        /// (coordinator R-96): the ONE Loot array with a REAL rule —
+        /// SimConfigBuilder.Validate's ValidateLoot requires exactly 4
+        /// elements, because LootDrops.MobDeathCells already indexes this
+        /// array by MobType with no bounds guard of its own (a live reader,
+        /// unlike DropChance/TransferSeconds below).
+        public int[] CellsPerMob;
+        public float CorpseCellFraction;
+        public float RepairKitHealAmount;
+        public float RepairKitChannelSeconds;
+        /// Indexed by tier - 1 (tier 1..4 -> index 0..3) — {0.3, 0.6, 0.9, 1.2}.
+        /// ⚠ ASSUMPTION THIS FIELD CANNOT ENFORCE, WITH ITS ADDRESSEE NAMED
+        /// (coordinator R-96): no rule checks this array's length is 4 — it
+        /// has no reader yet (Т18, the transfer-timer task, is the
+        /// addressee). Build's own omitted-`loot` branch still seeds a
+        /// correctly-sized all-zero array (coordinator R-96), same
+        /// DropChance precedent above.
+        public float[] TransferSeconds;
+        public int LootSpawnAttempts, LootFallbackSlots;
+        public float PickupTtlSeconds, ContainerTtlSeconds;
+        /// Stage 3 Task 13 (owner decision R-9, errata E-6 A-I8): spec
+        /// §3.13's own data table puts this on HeroConfig; the errata and
+        /// the coordinator ledger override that reading — one home next to
+        /// every other loot number rather than splitting the loot balance
+        /// sheet across two SOs. Consumer: Т17. Declared LAST (not at its
+        /// spec-table position) because it entered this struct after every
+        /// other field — same "append, don't reshuffle a hash-order
+        /// contract" convention the rest of this file already follows.
+        public float LootRadius;
     }
 
     /// Full balance snapshot for one match — plain data, no ScriptableObjects.
@@ -447,23 +551,30 @@ namespace Ring.Simulation.Core
         /// of the existing Ring.Data.MobConfig class each, spec §3.13: "не
         /// новые ассеты класса, а ассеты существующего класса"), read
         /// through the exact same seam (SimulationWorld.MobConfigFor's own
-        /// switch). `TestConfigs.Default()` deliberately leaves both at
-        /// their C# struct default (all-zero) until Т12 — see that
-        /// method's own doc — and neither section is wired into
-        /// SimConfigBuilder.Build's SO pipeline yet (Т12, errata E-6 I5)
-        /// except for the two OPTIONAL trailing parameters
-        /// SimConfigBuilder.Build grew this task purely so
-        /// ZoneConfigTests' own R-28 door-width test could drive a real
-        /// Director body radius through Validate without waiting on that
-        /// asset delivery. NOT part of SimConfigHash.Compute yet (owner
-        /// decision R-17) — MobSimConfig's field NAMES are shared 1:1 with
-        /// Chaser/Gunner's own already-hashed section, so the flat,
-        /// name-only SimConfigHashTests.PendingHashFields set cannot record
-        /// this deferral without also, incorrectly, exempting Chaser's/
-        /// Gunner's real numbers; see SimConfigHashTests.
-        /// EliteAndDirectorSections_DoNotAffectHash_UntilT13WiresThem for
-        /// the executable record of the decision instead, and
-        /// SimConfig_CarriesExactlyTenSections for the section-count guard.
+        /// switch). Wired into SimConfigBuilder.Build's SO pipeline since
+        /// Т12 (the two trailing optional `elite`/`director` parameters).
+        /// Stage 3 Task 13 (owner decision R-17): part of
+        /// SimConfigHash.Compute as of this task — MobSimConfig's field
+        /// NAMES are shared 1:1 with Chaser/Gunner's own already-hashed
+        /// section, so EveryConfigNumberAffectsHash sweeps this section by
+        /// its own dedicated AssertSectionAffectsHash("Elite"/"Director")
+        /// calls rather than the flat, name-only PendingHashFields set (that
+        /// set cannot express "Elite.MaxSpeed is exempt but Chaser.MaxSpeed
+        /// is not"). See SimConfig_CarriesExactlyTwelveFields for the
+        /// field-count guard.
         public MobSimConfig Elite, Director;
+        /// Stage 3 Task 13 (spec §3.7/§3.8): loot-system balance numbers.
+        public LootSimConfig Loot;
+        /// Stage 3 Task 13 (spec §3.7, owner decision R-82): a copy of the
+        /// item catalog, at most 255 records (the wire's byte Id caps it).
+        /// `ItemKind`/`ItemDef` live in Simulation/Core rather than Data
+        /// (CRITICAL RULE 1 — Simulation never references Ring.Data), so
+        /// this field IS the catalog as far as the sim is concerned; the
+        /// SO-side original (Ring.Data.ItemCatalog) never reaches
+        /// Simulation. Never null after SimConfigBuilder.Build (empty
+        /// instead — same never-null convention as every other array field
+        /// in this file); a hand-built test fixture may still leave it
+        /// null, same as ArenaSimConfig's arrays.
+        public ItemDef[] Items;
     }
 }

@@ -107,6 +107,10 @@ namespace Ring.Presentation
         [SerializeField] MobConfig _elite;
         [SerializeField] MobConfig _director;
         [SerializeField] MatchFlowConfig _flow;
+        // Stage 3 Task 13 (spec §3.7/§3.8): the item catalog and loot
+        // balance sheet — same reasoning as _elite/_director/_flow above.
+        [SerializeField] ItemCatalog _items;
+        [SerializeField] LootConfig _loot;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] CameraConfig _camera;
         [SerializeField] InputActionAsset _actionsAsset;
@@ -1077,7 +1081,7 @@ namespace Ring.Presentation
             {
                 _pendingApplyConfig = false;
                 SimConfig next = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave,
-                    _arena, _visibility, _elite, _director, _flow);
+                    _arena, _visibility, _elite, _director, _flow, _items, _loot);
                 try
                 {
                     _backend.ApplyConfig(next);
@@ -1526,7 +1530,7 @@ namespace Ring.Presentation
         public void Restart(long seed)
         {
             SimConfig cfg = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena,
-                _visibility, _elite, _director, _flow);
+                _visibility, _elite, _director, _flow, _items, _loot);
             // The seven balance SOs stay serialized on THIS component (spec
             // §3.12 is about whose config is authoritative, not about where the
             // assets are wired): the backend is handed the finished `SimConfig`

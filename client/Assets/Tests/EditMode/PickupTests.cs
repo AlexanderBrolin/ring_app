@@ -9,16 +9,17 @@ namespace Ring.Simulation.Tests
     /// deterministic refusal. TestConfigs.Open() is the base fixture
     /// throughout (same reasoning as AmmoTests/PredictionParityTests' own
     /// doc: waves pushed out of reach, no obstacle in the way), with
-    /// CellsOnDeath/CorpseCellFraction explicitly re-enabled per test (they
-    /// are zeroed in TestConfigs itself for golden safety, owner decision
-    /// R-18 — see TestConfigs.Default()'s own Weapon/Chaser/Gunner comments).
+    /// Loot.CellsPerMob/CorpseCellFraction explicitly re-enabled per test
+    /// (they are zeroed in TestConfigs itself for golden safety, owner
+    /// decision R-18 — see TestConfigs.Default()'s own Loot comment; the
+    /// two numbers lived on Chaser/Weapon before Т13 moved them, R-3).
     public class PickupTests
     {
         [Test]
         public void MobDeath_DropsConfiguredCells()
         {
             var cfg = TestConfigs.Open();
-            cfg.Chaser.CellsOnDeath = 3;
+            cfg.Loot.CellsPerMob[(int)MobType.Chaser] = 3;
             var w = new SimulationWorld(1, cfg);
             w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
 
@@ -35,7 +36,7 @@ namespace Ring.Simulation.Tests
         public void PlayerDeath_DropsHalfOfCarriedAmmo_AtLeastOne()
         {
             var cfg = TestConfigs.Open();
-            cfg.Weapon.CorpseCellFraction = 0.5f;
+            cfg.Loot.CorpseCellFraction = 0.5f;
 
             // General case: floor(ammo * CorpseCellFraction / ShotsPerCell).
             var w = new SimulationWorld(1, cfg);
@@ -67,7 +68,7 @@ namespace Ring.Simulation.Tests
         public void EmptyCorpse_DropsNothing_EvenAtALiveFraction()
         {
             var cfg = TestConfigs.Open();
-            cfg.Weapon.CorpseCellFraction = 0.5f;
+            cfg.Loot.CorpseCellFraction = 0.5f;
             var w = new SimulationWorld(1, cfg);
             PlayerState p = w.Player; p.Ammo = 0; w.SetPlayerForTest(p);
             Assert.AreEqual(0, w.PickupCount, "premise: nothing on the ground before the death");
@@ -236,7 +237,7 @@ namespace Ring.Simulation.Tests
             // WHOLESALE — not spawn a PickupState with Amount = 0 — or
             // _nextEntityId still advances and the golden hash moves outside
             // a sanctioned re-pin the moment a caller's drop math legitimately
-            // computes zero. TestConfigs' own CellsOnDeath/CorpseCellFraction
+            // computes zero. TestConfigs' own Loot.CellsPerMob/CorpseCellFraction
             // = 0 makes EVERY drop in the golden scenarios exactly this case,
             // which is the whole premise this task stays golden-safe without
             // either sanctioned re-pin (Т6/Т12).
@@ -255,6 +256,26 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(idBeforeGap + 1, idAfterGap,
                 "_nextEntityId must not have advanced between the two mob spawns — the " +
                 "zero-amount drop between them must not have consumed an id");
+        }
+
+        /// Stage 3 Task 13 (R-3, coordinator requirement): before this task
+        /// no existing test could tell PickupTtlSeconds apart from any other
+        /// number — TtlExpiry_RemovesWithoutEvent above sets PickupState.Ttl
+        /// directly (SetPickupForTest), bypassing SpawnPickup's own seeding
+        /// entirely. A fixture whose Loot.PickupTtlSeconds differs from the
+        /// removed SimulationWorld constant's old value (120) is the only
+        /// way to prove SpawnPickup reads the config rather than a literal.
+        [Test]
+        public void SpawnPickup_SeedsTtlFromLootConfig()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Loot.PickupTtlSeconds = 45f; // deliberately NOT 120 — see class doc
+            var w = new SimulationWorld(1, cfg);
+
+            w.SpawnPickup(PickupKind.EnergyCell, new float2(50f, 50f), 4);
+
+            Assert.AreEqual(45f, w.Pickups[0].Ttl,
+                "a freshly spawned pickup's Ttl must come from Loot.PickupTtlSeconds, not a literal");
         }
     }
 }

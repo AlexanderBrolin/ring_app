@@ -158,6 +158,8 @@ MonoBehaviour:
   _elite: {fileID: 11400000, guid: f4ad71c3aaffd060bac674bb69923f1e, type: 2}
   _director: {fileID: 11400000, guid: 3e889ee697e429f1784d88f81d3d3bf1, type: 2}
   _flow: {fileID: 11400000, guid: b60f76a62098853bb80020d20f470252, type: 2}
+  _items: {fileID: 11400000, guid: 9745168b5e773539b9fc21f1f586ac72, type: 2}
+  _loot: {fileID: 11400000, guid: 418d3abec4f5b3477ada44f3724d1649, type: 2}
   _net: {fileID: 11400000, guid: 651a65bd1f82245199607c45a5427037, type: 2}
   _playerPrefab: {fileID: 2552211895557894394, guid: 541badaf67fff32128e2775fa368e795, type: 3}
 --- !u!4 &1233571699

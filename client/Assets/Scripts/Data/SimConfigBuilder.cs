@@ -28,9 +28,15 @@ namespace Ring.Data
         /// ZoneConfigTests.Validate_RejectsDoorNarrowerThanDirector does,
         /// driving a door-width violation off a real Director radius
         /// in-memory, without waiting on Т12's asset delivery.
+        /// Stage 3 Task 13 (owner decision R-84): `items`/`loot` are two MORE
+        /// trailing optional parameters, same contract as `elite`/`director`/
+        /// `flow` above — every one of the 82 real existing call sites (this
+        /// task's own recount, coordinator ledger) keeps compiling unchanged,
+        /// silently getting an empty catalog and an all-zero LootSimConfig.
         public static SimConfig Build(HeroConfig hero, WeaponConfig weapon, MobConfig chaser,
             MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility,
-            MobConfig elite = null, MobConfig director = null, MatchFlowConfig flow = null)
+            MobConfig elite = null, MobConfig director = null, MatchFlowConfig flow = null,
+            ItemCatalog items = null, LootConfig loot = null)
         {
             var cfg = new SimConfig
             {
@@ -158,8 +164,69 @@ namespace Ring.Data
                     HearRadius = visibility.HearRadius,
                     ExitHysteresis = visibility.ExitHysteresis,
                     LingerTicks = visibility.LingerTicks,
-                    HearPositionGridMeters = visibility.HearPositionGridMeters
-                }
+                    HearPositionGridMeters = visibility.HearPositionGridMeters,
+                    // Stage 3 Task 13 (spec §3.9): pickup/container visibility radii.
+                    PickupRadiusForVisibility = visibility.PickupRadiusForVisibility,
+                    ContainerRadiusForVisibility = visibility.ContainerRadiusForVisibility
+                },
+                // Stage 3 Task 13: `items` CLONES into SimConfig.Items — not
+                // an alias — because the catalog is TOPOLOGY (spec §3.7
+                // Р264): ArenaTopologyMatches needs `_config.Items` to stay
+                // a stable snapshot of what the running match was built
+                // with, immune to a live Inspector edit on the SO mutating
+                // the SAME array object mid-match, ahead of any hot-tweak
+                // gate ever running (ItemCatalogTests.
+                // CatalogIsCopiedIntoSimConfig is the test side of this).
+                // `loot`'s own array fields (DropChance/CellsPerMob/
+                // TransferSeconds) are NOT cloned — same direct-alias
+                // convention Wave.ZoneWeights above already follows, since
+                // Loot is balance data, not topology (nothing in
+                // SimulationWorld's constructor sizes an array off it).
+                // `null` on either parameter means "no override," same
+                // contract as elite/director/flow.
+                Items = items != null ? (ItemDef[])items.Items.Clone() : System.Array.Empty<ItemDef>(),
+                Loot = loot != null
+                    ? new LootSimConfig
+                    {
+                        DropChance = loot.DropChance,
+                        CrateCount = loot.CrateCount,
+                        CacheCountMiddle = loot.CacheCountMiddle,
+                        CacheCountCore = loot.CacheCountCore,
+                        RepairKitChance = loot.RepairKitChance,
+                        CellsPerMob = loot.CellsPerMob,
+                        CorpseCellFraction = loot.CorpseCellFraction,
+                        RepairKitHealAmount = loot.RepairKitHealAmount,
+                        RepairKitChannelSeconds = loot.RepairKitChannelSeconds,
+                        TransferSeconds = loot.TransferSeconds,
+                        LootSpawnAttempts = loot.LootSpawnAttempts,
+                        LootFallbackSlots = loot.LootFallbackSlots,
+                        PickupTtlSeconds = loot.PickupTtlSeconds,
+                        ContainerTtlSeconds = loot.ContainerTtlSeconds,
+                        LootRadius = loot.LootRadius
+                    }
+                    // Stage 3 Task 13 (coordinator R-96): NOT `default` —
+                    // `default(LootSimConfig)` leaves CellsPerMob/DropChance/
+                    // TransferSeconds NULL, and LootDrops.MobDeathCells
+                    // indexes CellsPerMob by MobType with no bounds guard
+                    // (its own doc's premise, "always exactly four long," is
+                    // what ValidateLoot below now enforces WHEN a real
+                    // `loot` is supplied — but every one of the 82 call
+                    // sites that omit it entirely would still have handed a
+                    // null array straight to that index, crashing the FIRST
+                    // mob death with a bare NullReferenceException, R-37).
+                    // Correctly-SIZED all-zero arrays close that hole for
+                    // all three siblings alike (DropChance 4 archetypes x 3
+                    // zones, CellsPerMob 4 archetypes, TransferSeconds 4
+                    // tiers) — "no override" now means "the same
+                    // all-zero/no-drop behavior the golden-safety fixture
+                    // already relies on," not "a landmine for the first
+                    // reader."
+                    : new LootSimConfig
+                    {
+                        DropChance = new float[12],
+                        CellsPerMob = new int[4],
+                        TransferSeconds = new float[4]
+                    }
             };
 
             Validate(in cfg, arena.SpawnClearance);
@@ -548,24 +615,49 @@ namespace Ring.Data
             // Stage 3 Task 8 (spec §3.13, errata E-6 D-I8's Т8 share):
             // ExtractRadius must exceed the body it extracts, and
             // MaxContainerSlots must hold a full backpack transfer.
-            // minSlotCost is a HARDCODED 1 here — TEMPORARY HOME (same
-            // R-3/R-18 discipline as CellsOnDeath/CorpseCellFraction
-            // elsewhere in this file, owner decision R-5): Т13's
-            // ItemCatalog is the real per-item source once it exists.
             if (cfg.Arena.ExtractRadius <= cfg.Hero.Radius)
             {
                 errors.Add("Arena.ExtractRadius must be > Hero.Radius " +
                     $"(got ExtractRadius={cfg.Arena.ExtractRadius:F3}, " +
                     $"Hero.Radius={cfg.Hero.Radius:F3}).");
             }
-            const int MinSlotCost = 1;
-            if (cfg.Arena.MaxContainerSlots < cfg.Hero.InventoryCapacity / MinSlotCost)
+            // Stage 3 Task 13 (coordinator R-95): SHAPE before VALUES, same
+            // discipline as ValidateZoneArrayShapes below (Ф2 review
+            // B-I2.3) — MinCatalogSlotCost is a READER that divides by
+            // every item's own SlotCost, so a zero must be refused BEFORE
+            // that division runs, not accumulated into `errors` for a
+            // report the division never lives to reach
+            // (Validate_RejectsZeroSlotCost's own RED was a bare
+            // DivideByZeroException, not the named ArgumentException this
+            // call now throws).
+            ValidateItemSlotCosts(cfg.Items);
+            // Stage 3 Task 13 (spec §3.7 Р264, owner decision R-92): the
+            // catalog's remaining shape rules — duplicate id and the
+            // 255-record wire cap — neither one has a reader that crashes
+            // on violation, so both stay in the accumulating report (see
+            // ValidateItems's own doc).
+            ValidateItems(errors, cfg.Items);
+            // minSlotCost now comes from the real catalog (owner decision
+            // R-5) — MinCatalogSlotCost's own doc names the one case
+            // (empty catalog) it still assumes rather than enforces, same
+            // "silent default with a named addressee" shape MaxBodyRadius
+            // below already uses for elite/director.
+            int minSlotCost = MinCatalogSlotCost(cfg.Items);
+            if (cfg.Arena.MaxContainerSlots < cfg.Hero.InventoryCapacity / minSlotCost)
             {
                 errors.Add("Arena.MaxContainerSlots must be >= Hero.InventoryCapacity / " +
                     "min(SlotCost) " +
                     $"(got MaxContainerSlots={cfg.Arena.MaxContainerSlots}, " +
-                    $"InventoryCapacity={cfg.Hero.InventoryCapacity}, min(SlotCost)={MinSlotCost}).");
+                    $"InventoryCapacity={cfg.Hero.InventoryCapacity}, min(SlotCost)={minSlotCost}).");
             }
+            // Stage 3 Task 13 (coordinator R-96 finding): cfg.Loot carried
+            // NO rule at all before this — ValidateLoot's own doc has the
+            // full account of why exactly one of its three array fields
+            // earns one. Accumulating, not eager: unlike ValidateItemSlotCosts
+            // above, nothing later IN THIS METHOD reads Loot.CellsPerMob —
+            // its one reader (LootDrops.MobDeathCells) only runs during a
+            // live match, long after Validate returns.
+            ValidateLoot(errors, in cfg.Loot);
 
             for (int i = 0; i < cfg.Arena.ObstacleCount; i++)
             {
@@ -639,6 +731,14 @@ namespace Ring.Data
             ReqInRange(errors, "Visibility.HearPositionGridMeters",
                 cfg.Visibility.HearPositionGridMeters, 0f, 10f);
             ReqInRange(errors, "Visibility.LingerTicks", cfg.Visibility.LingerTicks, 0, 30);
+            // Stage 3 Task 13: a non-positive radius here means
+            // VisibilitySystem's future distance check (Т26) can never find
+            // a pickup/container visible — same consequence class Hero.
+            // PickupRadius's own ReqPositive already states for the auto-
+            // pickup radius right below.
+            ReqPositive(errors, "Visibility.PickupRadiusForVisibility", cfg.Visibility.PickupRadiusForVisibility);
+            ReqPositive(errors, "Visibility.ContainerRadiusForVisibility",
+                cfg.Visibility.ContainerRadiusForVisibility);
 
             if (errors.Count > 0)
                 throw new ArgumentException("SimConfig validation failed:\n- " + string.Join("\n- ", errors));
@@ -697,6 +797,115 @@ namespace Ring.Data
         {
             float waveMax = math.max(cfg.Chaser.Radius, math.max(cfg.Gunner.Radius, cfg.Elite.Radius));
             return waveArchetypesOnly ? waveMax : math.max(cfg.Hero.Radius, math.max(waveMax, cfg.Director.Radius));
+        }
+
+        /// Stage 3 Task 13 (coordinator R-95): SHAPE-before-values guard for
+        /// the ONE catalog rule a live reader depends on — MinCatalogSlotCost
+        /// divides InventoryCapacity by every item's own SlotCost, so a zero
+        /// (or negative) entry must be refused HERE, before that division
+        /// ever runs, not accumulated into a report the division doesn't
+        /// live to reach. Same "own local list, throw on the spot" shape as
+        /// ValidateZoneArrayShapes below (Ф2 review B-I2.3) — a rule about
+        /// what makes a READER safe cannot wait for Validate's own final
+        /// report, because the next reader crashes first.
+        static void ValidateItemSlotCosts(ItemDef[] items)
+        {
+            if (items == null) return;
+            for (int i = 0; i < items.Length; i++)
+            {
+                if (items[i].SlotCost <= 0)
+                {
+                    var errors = new List<string> { $"Items[{i}].SlotCost must be > 0 " +
+                        $"(got Id={items[i].Id}, SlotCost={items[i].SlotCost})." };
+                    throw new ArgumentException("SimConfig validation failed:\n- "
+                        + string.Join("\n- ", errors));
+                }
+            }
+        }
+
+        /// Stage 3 Task 13 (spec §3.7 Р264, owner decision R-92): the
+        /// catalog's remaining shape rules — the ones with a NAMED
+        /// consequence that no READER crashes on if left unenforced, so
+        /// they can accumulate here instead of throwing on the spot
+        /// (ValidateItemSlotCosts above is the one exception, R-95):
+        /// - a duplicate Id means two records answer the same
+        ///   ItemCatalogLookup.Find call — the SECOND one is simply
+        ///   unreachable, and a hand-tuned entry the owner believes is live
+        ///   silently never resolves;
+        /// - a catalog past 255 records cannot round-trip the wire's own
+        ///   byte Id (spec §3.7: "каталог ограничен 255 позициями").
+        static void ValidateItems(List<string> errors, ItemDef[] items)
+        {
+            if (items == null) return;
+            if (items.Length > 255)
+            {
+                errors.Add($"Items must have at most 255 records (wire Id is a byte) " +
+                    $"(got {items.Length}).");
+            }
+            for (int i = 0; i < items.Length; i++)
+            {
+                for (int j = i + 1; j < items.Length; j++)
+                {
+                    if (items[i].Id == items[j].Id)
+                    {
+                        errors.Add($"Items[{i}] and Items[{j}] share Id={items[i].Id} — " +
+                            "every catalog entry must have a unique id.");
+                    }
+                }
+            }
+        }
+
+        /// Stage 3 Task 13 (coordinator R-96): cfg.Loot's own shape rule —
+        /// R-92 restricts this to checks with a NAMED consequence, and of
+        /// Loot's three array fields exactly one has a live reader today.
+        /// - CellsPerMob is read by LootDrops.MobDeathCells, indexed by
+        ///   MobType (Chaser/Gunner/Elite/Director — Core/SimStates.cs'
+        ///   own four-value domain) with NO bounds guard of its own; a
+        ///   shorter array crashes the FIRST mob death with a bare
+        ///   IndexOutOfRangeException, naming nothing. Rule enforced here.
+        /// - DropChance and TransferSeconds have NO reader yet (Т16's drop
+        ///   roll, Т18's transfer timer) — a rule with no reader to protect
+        ///   is a rule with no witness (R-92), so neither gets one. Each
+        ///   carries an ASSUMPTION + ADDRESSEE doc instead, same
+        ///   MinCatalogSlotCost/MaxBodyRadius precedent above: see
+        ///   LootSimConfig's own field docs (Core/SimConfig.cs) for the
+        ///   full account.
+        /// Build's own omitted-`loot` branch (coordinator R-96) already
+        /// guarantees CellsPerMob is never null — this rule instead catches
+        /// a SUPPLIED-but-malformed LootConfig.asset (an Inspector edit
+        /// that shortens the array).
+        static void ValidateLoot(List<string> errors, in LootSimConfig loot)
+        {
+            if (loot.CellsPerMob == null || loot.CellsPerMob.Length != 4)
+            {
+                errors.Add("Loot.CellsPerMob must have exactly 4 elements (one per MobType — " +
+                    "Chaser/Gunner/Elite/Director), read by LootDrops.MobDeathCells with no " +
+                    $"bounds guard of its own (got {loot.CellsPerMob?.Length ?? 0}).");
+            }
+        }
+
+        /// Stage 3 Task 13 (owner decision R-5/R-84): the catalog's own
+        /// minimum SlotCost — real per-item data as of this task, replacing
+        /// the HARDCODED 1 this rule used before ItemCatalog existed.
+        /// ⚠ ASSUMPTION THIS METHOD CANNOT ENFORCE, WITH ITS ADDRESSEE NAMED
+        /// (same MaxBodyRadius precedent right above): an EMPTY catalog —
+        /// every one of the 82 call sites that predate `items`/`loot`, or a
+        /// caller that genuinely omits them — falls back to 1, the same
+        /// silent default this rule has always used, rather than refusing
+        /// outright. Making `items` REQUIRED is the fix and it cannot happen
+        /// here, for the same reason MaxBodyRadius's own doc gives for
+        /// `elite`/`director`: dozens of call sites pass neither.
+        /// ADDRESSEE — Т22, same as MaxBodyRadius's own debt. Until then, a
+        /// caller that means "the shipped configuration" must pass a real
+        /// catalog, which is what ConfigTests.BuildShipped exists to
+        /// guarantee on the test side.
+        static int MinCatalogSlotCost(ItemDef[] items)
+        {
+            if (items == null || items.Length == 0) return 1;
+            int min = items[0].SlotCost;
+            for (int i = 1; i < items.Length; i++)
+                if (items[i].SlotCost < min) min = items[i].SlotCost;
+            return min;
         }
 
         /// Stage 3 Task 11: the three zones in their own declared order

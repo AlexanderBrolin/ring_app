@@ -166,6 +166,11 @@ namespace Ring.Server
         [SerializeField] MobConfig _elite;
         [SerializeField] MobConfig _director;
         [SerializeField] MatchFlowConfig _flow;
+        // Stage 3 Task 13 (spec §3.7/§3.8): the item catalog and loot
+        // balance sheet — same "authoritative server's own copy" reasoning
+        // as _elite/_director/_flow above.
+        [SerializeField] ItemCatalog _items;
+        [SerializeField] LootConfig _loot;
 
         /// Network tuning, deliberately NOT a `SimConfigBuilder.Build`
         /// parameter — see the class doc.
@@ -516,6 +521,8 @@ namespace Ring.Server
             AppendIfMissing(missing, _elite, nameof(_elite));
             AppendIfMissing(missing, _director, nameof(_director));
             AppendIfMissing(missing, _flow, nameof(_flow));
+            AppendIfMissing(missing, _items, nameof(_items));
+            AppendIfMissing(missing, _loot, nameof(_loot));
             AppendIfMissing(missing, _net, nameof(_net));
             AppendIfMissing(missing, _playerPrefab, nameof(_playerPrefab));
             if (missing.Length > 0)
@@ -528,7 +535,7 @@ namespace Ring.Server
             try
             {
                 simConfig = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave,
-                    _arena, _visibility, _elite, _director, _flow);
+                    _arena, _visibility, _elite, _director, _flow, _items, _loot);
             }
             catch (Exception ex)
             {

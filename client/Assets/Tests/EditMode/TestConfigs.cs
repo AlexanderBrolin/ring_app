@@ -58,18 +58,7 @@ namespace Ring.Simulation.Tests
                     // either sanctioned re-pin (Т6/Т12). 400 is comfortably
                     // above the 245-277 range.
                     ShotsPerCell = 10, AmmoStart = 400, AmmoMax = 400,
-                    EmergencyFireInterval = 1.25f,
-                    // Stage 3 Task 3 (errata E-4/A-C4, owner decision R-18):
-                    // ZERO on purpose — NOT a mirror of WeaponConfig's real
-                    // C# default. A dead player's corpse would otherwise drop
-                    // energy cells and consume an entity id every time a
-                    // golden scenario kills one, moving both goldens outside
-                    // either sanctioned re-pin (Т6/Т12). Zeroing this (and
-                    // Chaser/Gunner.CellsOnDeath below) makes the sanctioned
-                    // R-18 premise literally true: no pickup is EVER born in
-                    // either golden scenario, so `_nextEntityId` never moves
-                    // and the digests stay bit-identical.
-                    CorpseCellFraction = 0f },
+                    EmergencyFireInterval = 1.25f },
                 Chaser = new MobSimConfig { MaxSpeed = 5.2f, Accel = 30f, Radius = 0.5f,
                     MaxHp = 30f, ContactDamage = 15f, AttackRange = 1.1f,
                     TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,
@@ -77,12 +66,7 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 0.60f, BodyTop = 1.45f, HeadTop = 1.85f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
-                    // Stage 3 Task 3: ZERO on purpose, same golden-safety
-                    // reasoning as Weapon.CorpseCellFraction above (owner
-                    // decision R-18) — not a mirror of any real C# default,
-                    // MobConfig carries no SO field for this yet (R-3).
-                    CellsOnDeath = 0 },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
                 // Gunner's LegsTop/BodyTop/HeadTop already carry the taller ranged-mech
                 // tower (Task 17 ships the same numbers into the real .asset via the
                 // marker mechanism, ahead of that this baseline is the source of truth,
@@ -96,12 +80,7 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
-                    // Stage 3 Task 3: ZERO on purpose, same golden-safety
-                    // reasoning as Weapon.CorpseCellFraction above (owner
-                    // decision R-18) — not a mirror of any real C# default,
-                    // MobConfig carries no SO field for this yet (R-3).
-                    CellsOnDeath = 0 },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f, WavePause = 4f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f, BaseCount = 4,
                     CountGrowth = 2, MaxMobsPerWave = 72, MaxSpawnAttempts = 16,
@@ -167,12 +146,14 @@ namespace Ring.Simulation.Tests
                 // Both are В1 tuning knobs. Radius 0.8 and 2.2 are NOT free
                 // knobs: 0.8 carries the wave spawn ring's 0.2 m margin and
                 // 2.2 carries the door width's 0.598 m.
-                // CellsOnDeath stays 0 for the same golden-safety reason
-                // Chaser/Gunner's does (owner decision R-18) — and it matters
-                // from this task on, because the zones this task turns on
+                // Energy-cell drop-on-death (formerly this struct's own
+                // CellsOnDeath field, moved to Loot.CellsPerMob this task,
+                // R-3) stays 0 for the same golden-safety reason
+                // Chaser/Gunner's does (owner decision R-18) — and it
+                // matters from Т12 on, because the zones that task turned on
                 // route 45% of every wave into the middle zone, where
                 // EliteShareMiddle 0.35 makes Elites spawn in both golden
-                // scenarios for the first time.
+                // scenarios.
                 Elite = new MobSimConfig { MaxSpeed = 4.2f, Accel = 30f, Radius = 0.8f,
                     MaxHp = 120f, ContactDamage = 25f, AttackRange = 1.4f,
                     TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,
@@ -183,8 +164,7 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
-                    CellsOnDeath = 0 },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
                 Director = new MobSimConfig { MaxSpeed = 3.0f, Accel = 30f, Radius = 2.2f,
                     MaxHp = 2500f, ContactDamage = 45f, AttackRange = 2.8f,
                     TelegraphSeconds = 1.1f, AttackCooldown = 0.9f,
@@ -195,8 +175,7 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
-                    CellsOnDeath = 0 },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
                 // Stage 3 Task 12 (errata E-2): mirrors MatchFlowConfig's C#
                 // defaults, same two-sources discipline as every section
                 // above. Inert in both golden scenarios — nothing reads Flow
@@ -204,11 +183,64 @@ namespace Ring.Simulation.Tests
                 Flow = new MatchFlowSimConfig { GateDelaySeconds = 90f,
                     ExtractChannelSeconds = 20f, RetinueCount = 2,
                     RetinueRespawnSeconds = 25f, DirectorReserveSlots = 3 },
+                // Stage 3 Task 13 (spec §3.7, owner decision R-91): mirrors
+                // Ring.Data.ItemCatalog's own C# defaults field for field —
+                // same two-sources-of-numbers discipline as DefaultArena()
+                // below, not five literals lifted from a shipped .asset
+                // (spec §0/Р56). Five records, not six — R-91's own account
+                // of why the spec's prose overstates its own table. SlotCost
+                // is already different across entries (1, 2, 3, 4, 1) by
+                // virtue of mirroring the real tier ladder, which is exactly
+                // what R-85 requires: without at least one pair of differing
+                // costs, the SlotCostOf stub-removal mutation (Т4 -> Т13)
+                // could not be caught by anything.
+                Items = new[]
+                {
+                    new ItemDef { Id = 0, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+                    new ItemDef { Id = 1, Tier = 2, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
+                    new ItemDef { Id = 2, Tier = 3, SlotCost = 3, CreditValue = 200, Kind = ItemKind.Trophy },
+                    new ItemDef { Id = 3, Tier = 4, SlotCost = 4, CreditValue = 1000, Kind = ItemKind.Trophy },
+                    new ItemDef { Id = 4, Tier = 0, SlotCost = 1, CreditValue = 0, Kind = ItemKind.RepairKit },
+                },
+                // Stage 3 Task 13 (spec §3.7/§3.8): loot-system numbers.
+                // Golden-safety zeros (owner decision R-18, same discipline
+                // Weapon.CorpseCellFraction/Chaser·Gunner·Elite·Director's
+                // former CellsOnDeath already followed): every field that
+                // can put a NEW pickup or container into a golden scenario —
+                // drop chances, crate/cache counts, the repair kit's own
+                // chance, and CellsPerMob — stays at exactly zero, so
+                // `_nextEntityId`/`_lootRng` never move and neither golden
+                // digest shifts outside its sanctioned re-pin. Every OTHER
+                // field mirrors LootConfig's real C# default, same
+                // two-sources discipline as Flow above — PickupTtlSeconds
+                // 120 in particular is a MIRROR of the just-removed
+                // SimulationWorld.PickupTtlSeconds constant (R-3): without
+                // this line the existing TTL fixtures in PickupTests would
+                // drift silently the moment Т13 moved the number (lesson
+                // class 296).
+                Loot = new LootSimConfig
+                {
+                    DropChance = new float[12], // 4 archetypes x 3 zones, all zero
+                    CrateCount = 0, CacheCountMiddle = 0, CacheCountCore = 0,
+                    RepairKitChance = 0f,
+                    CellsPerMob = new[] { 0, 0, 0, 0 },
+                    CorpseCellFraction = 0f,
+                    RepairKitHealAmount = 40f,
+                    RepairKitChannelSeconds = 2f,
+                    TransferSeconds = new[] { 0.3f, 0.6f, 0.9f, 1.2f },
+                    LootSpawnAttempts = 16, LootFallbackSlots = 24,
+                    PickupTtlSeconds = 120f, ContainerTtlSeconds = 180f,
+                    LootRadius = 3f
+                },
                 Arena = DefaultArena(),
                 // Stage 2 Task 19: mirrors VisibilityConfig's C# defaults
                 // (two-sources-of-numbers discipline — test/code-default side).
+                // Stage 3 Task 13: PickupRadiusForVisibility/
+                // ContainerRadiusForVisibility mirror the same SO's C#
+                // defaults too — inert until Т26 wires a consumer.
                 Visibility = new VisibilitySimConfig { SightRadius = 45f, HearRadius = 60f,
-                    ExitHysteresis = 3f, LingerTicks = 5, HearPositionGridMeters = 3f }
+                    ExitHysteresis = 3f, LingerTicks = 5, HearPositionGridMeters = 3f,
+                    PickupRadiusForVisibility = 0.4f, ContainerRadiusForVisibility = 0.4f }
             };
         }
 

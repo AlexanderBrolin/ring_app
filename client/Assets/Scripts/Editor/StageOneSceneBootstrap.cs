@@ -435,6 +435,12 @@ namespace Ring.Editor
             // ApplyGunnerDefaults/ApplyStageTwoBalance below, which backfill an
             // OLDER asset that predates a field.
             VisibilityConfig visibility = GetOrCreate<VisibilityConfig>("VisibilityConfig");
+            // Stage 3 Task 13 (spec §3.7/§3.8): the item catalog and the
+            // loot balance sheet — both brand-new SO CLASSES, same
+            // "C# defaults ARE the shipped numbers" precedent as
+            // MatchFlowConfig above.
+            ItemCatalog items = GetOrCreate<ItemCatalog>("ItemCatalog");
+            LootConfig loot = GetOrCreate<LootConfig>("LootConfig");
             // Stage 2 Task 23 (spec §3.8/§3.15, Р52): NetConfig is NOT a
             // SimConfigBuilder.Build() parameter (see its own class doc for
             // why) and carries no scene reference below — until Task 33
@@ -648,8 +654,14 @@ namespace Ring.Editor
             // brand new on this run, so this call is a one-time onboarding
             // exactly like ArenaConfig/WaveConfig's own first-join comments
             // above, not a migration of an older asset.
+            // Stage 3 Task 13 (owner decision R-88): the marker moves off
+            // HearPositionGridMeters onto ContainerRadiusForVisibility —
+            // this class's own new LAST field — same "append, don't
+            // reshuffle" migration lesson 40 has already cost this
+            // codebase four times (VisibilityConfig.cs's own doc has the
+            // fuller account).
             EditorBootstrapUtils.EnsureAssetHasKey(visibility, $"{DataDir}/VisibilityConfig.asset",
-                "HearPositionGridMeters"); // Stage 2 Task 22
+                "ContainerRadiusForVisibility"); // Stage 3 Task 13 (was HearPositionGridMeters, Stage 2 Task 22)
             // Stage 3 Task 12: the two new MobConfig assets join the same
             // mechanism their two older siblings use, with MobConfig's own
             // marker field — brand-new assets on this run, so these are
@@ -662,6 +674,15 @@ namespace Ring.Editor
                 "SwingLeadMaxMeters"); // Stage 3 Task 12
             EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
                 "DirectorReserveSlots"); // Stage 3 Task 12
+            // Stage 3 Task 13: the item catalog and loot balance sheet join
+            // for the first time — brand-new assets, one-time onboardings
+            // like MatchFlowConfig above. ItemCatalog's marker is its own
+            // sole field (Items); LootConfig's is LootRadius, its class's
+            // own last field.
+            EditorBootstrapUtils.EnsureAssetHasKey(items, $"{DataDir}/ItemCatalog.asset",
+                "Items"); // Stage 3 Task 13
+            EditorBootstrapUtils.EnsureAssetHasKey(loot, $"{DataDir}/LootConfig.asset",
+                "LootRadius"); // Stage 3 Task 13
             // NetConfig joins the marker mechanism for the first time here,
             // in Stage 2 Task 23, with MatchMaxDurationSeconds (the class's
             // own newest/last field) as its marker — brand-new asset on
@@ -775,6 +796,8 @@ namespace Ring.Editor
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_elite", elite);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_director", director);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_flow", flow);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_items", items);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_loot", loot);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_gameFeel", gameFeel);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_camera", camera);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_actionsAsset", actionsAsset);

@@ -133,8 +133,13 @@ namespace Ring.Editor
             MobConfig elite = Load<MobConfig>("MobEliteConfig");
             MobConfig director = Load<MobConfig>("MobDirectorConfig");
             MatchFlowConfig flow = Load<MatchFlowConfig>("MatchFlowConfig");
+            // Stage 3 Task 13: the catalog and loot balance sheet — same
+            // "measure the real battle config" reasoning as elite/director/
+            // flow above.
+            ItemCatalog items = Load<ItemCatalog>("ItemCatalog");
+            LootConfig loot = Load<LootConfig>("LootConfig");
             SimConfig cfg = SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena,
-                visibility, elite, director, flow);
+                visibility, elite, director, flow, items, loot);
             cfg.Hero.MaxHp = 1e9f;
             return cfg;
         }

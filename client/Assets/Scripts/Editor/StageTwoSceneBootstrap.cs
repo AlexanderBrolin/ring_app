@@ -127,6 +127,11 @@ namespace Ring.Editor
             MobConfig elite = Load<MobConfig>("MobEliteConfig");
             MobConfig director = Load<MobConfig>("MobDirectorConfig");
             MatchFlowConfig flow = Load<MatchFlowConfig>("MatchFlowConfig");
+            // Stage 3 Task 13: the item catalog and loot balance sheet —
+            // same LOADED-never-created convention as elite/director/flow
+            // above.
+            ItemCatalog items = Load<ItemCatalog>("ItemCatalog");
+            LootConfig loot = Load<LootConfig>("LootConfig");
 
             NetworkObject playerPrefab = GetOrCreatePlayerPrefab();
 
@@ -166,6 +171,8 @@ namespace Ring.Editor
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_elite", elite);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_director", director);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_flow", flow);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_items", items);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_loot", loot);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_net", net);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_playerPrefab",
                 playerPrefab.gameObject);

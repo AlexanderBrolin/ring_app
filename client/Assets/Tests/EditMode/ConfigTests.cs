@@ -60,8 +60,19 @@ namespace Ring.Simulation.Tests
             // would open in the same tick the Director dies and pass while
             // proving nothing (class R-46/R-48).
             var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
+            // Stage 3 Task 13 (coordinator R-84): the catalog and loot
+            // balance sheet join Flow above — the SAME founding defect this
+            // method exists to close (mutation M8, Т12) repeats itself one
+            // parameter further the day this method stops collecting every
+            // asset the game actually ships. Neither needs seeding the way
+            // MakeShippedArchetypes does: both are brand-new SO CLASSES
+            // whose own C# field initializers already ARE the shipped
+            // numbers (ItemCatalog.cs/LootConfig.cs's own doc, same
+            // precedent as MatchFlowConfig).
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            var loot = ScriptableObject.CreateInstance<LootConfig>();
             return SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena, visibility,
-                elite, director, flow);
+                elite, director, flow, items, loot);
         }
 
         /// The two archetype assets Т12 ships, seeded from the shared
@@ -1534,6 +1545,95 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
             Assert.AreEqual(0f, cfg.Flow.GateDelaySeconds, Eps);
             Assert.AreEqual(0, cfg.Flow.DirectorReserveSlots);
+        }
+
+        [Test]
+        public void Build_ItemCatalogAndLootConfig_ReachSimConfig()
+        {
+            // Stage 3 Task 13: same "reaches SimConfig" contract as
+            // Build_MatchFlowConfig_ReachesSimConfig above, for the two
+            // newest trailing parameters.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            var loot = ScriptableObject.CreateInstance<LootConfig>();
+
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis,
+                items: items, loot: loot);
+
+            Assert.AreEqual(items.Items.Length, cfg.Items.Length,
+                "ItemCatalog.Items must reach SimConfig.Items, record for record");
+            for (int i = 0; i < items.Items.Length; i++)
+            {
+                Assert.AreEqual(items.Items[i].Id, cfg.Items[i].Id, $"Items[{i}].Id");
+                Assert.AreEqual(items.Items[i].Tier, cfg.Items[i].Tier, $"Items[{i}].Tier");
+                Assert.AreEqual(items.Items[i].SlotCost, cfg.Items[i].SlotCost, $"Items[{i}].SlotCost");
+                Assert.AreEqual(items.Items[i].CreditValue, cfg.Items[i].CreditValue, $"Items[{i}].CreditValue");
+                Assert.AreEqual(items.Items[i].Kind, cfg.Items[i].Kind, $"Items[{i}].Kind");
+            }
+            Assert.AreEqual(loot.RepairKitHealAmount, cfg.Loot.RepairKitHealAmount, Eps,
+                "LootConfig.RepairKitHealAmount must reach LootSimConfig");
+            Assert.AreEqual(loot.LootRadius, cfg.Loot.LootRadius, Eps,
+                "LootConfig.LootRadius must reach LootSimConfig");
+            Assert.AreEqual(loot.CrateCount, cfg.Loot.CrateCount,
+                "LootConfig.CrateCount must reach LootSimConfig");
+        }
+
+        [Test]
+        public void Build_ItemCatalogAndLootOmitted_LeaveEmptyAndZero()
+        {
+            // The two parameters are TRAILING AND OPTIONAL, same contract as
+            // elite/director/flow — the 82 call sites that predate them
+            // (this task's own recount) keep compiling and keep getting an
+            // empty catalog and an all-zero Loot section.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(0, cfg.Items.Length);
+            Assert.AreEqual(0f, cfg.Loot.RepairKitHealAmount, Eps);
+            Assert.AreEqual(0, cfg.Loot.CrateCount);
+        }
+
+        [Test]
+        public void Validate_MaxContainerSlotsRuleUsesRealCatalogMinimum()
+        {
+            // Stage 3 Task 13 (owner decision R-5/R-84, mutation witness for
+            // "min(SlotCost) comes from the real catalog"): a fixture the
+            // OLD hardcoded-1 assumption and the REAL per-item minimum
+            // disagree on. Hero.InventoryCapacity is MakeDefaults' own
+            // default (8); Arena.MaxContainerSlots is forced to 4, BELOW the
+            // shipped 8. At the real catalog's min(SlotCost) = 2 the rule's
+            // own floor is 8/2 = 4, so 4 >= 4 passes; under the assumption
+            // of 1 (an empty/omitted catalog) the floor would be 8/1 = 8,
+            // and 4 < 8 would wrongly throw.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            a.MaxContainerSlots = 4;
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            items.Items = new[]
+            {
+                new ItemDef { Id = 0, Tier = 1, SlotCost = 2, CreditValue = 15, Kind = ItemKind.Trophy },
+            };
+
+            Assert.DoesNotThrow(() => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items),
+                "MaxContainerSlots=4 must satisfy InventoryCapacity(8)/min(SlotCost)(2)=4 " +
+                "under the REAL catalog minimum, not the empty-catalog assumption's 8");
+        }
+
+        [Test]
+        public void Validate_RejectsCellsPerMobWrongLength()
+        {
+            // Coordinator R-96: LootDrops.MobDeathCells indexes
+            // Loot.CellsPerMob by MobType (four archetypes) with no bounds
+            // guard of its own — a SUPPLIED LootConfig whose array was
+            // shortened (an Inspector edit, not the omitted-`loot` case
+            // Build's own branch already protects) must be refused here,
+            // named, rather than crashing IndexOutOfRangeException on the
+            // first mob death.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var loot = ScriptableObject.CreateInstance<LootConfig>();
+            loot.CellsPerMob = new[] { 1, 1, 4 }; // three, not four — missing Director's own slot
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+            StringAssert.Contains("CellsPerMob must have exactly 4 elements", ex.Message);
         }
 
         [Test]

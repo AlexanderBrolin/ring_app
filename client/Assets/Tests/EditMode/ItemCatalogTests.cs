@@ -1,0 +1,132 @@
+using NUnit.Framework;
+using Ring.Data;
+using Ring.Simulation.Core;
+using UnityEngine;
+
+namespace Ring.Simulation.Tests
+{
+    /// Stage 3 Task 13 (spec §3.7): the item catalog — SO -> SimConfig
+    /// copy semantics, catalog-shape validation, and the one id -> record
+    /// lookup (ItemCatalogLookup.Find, owner decision R-89) every reader
+    /// shares. Hot-tweak behavior (catalog is topology) lives in
+    /// HotTweakTests.CatalogChange_ThrowsOnApplyConfig instead (coordinator
+    /// R-87 — same file every other "…Change_ThrowsOnApplyConfig" test in
+    /// this codebase already lives in).
+    public class ItemCatalogTests
+    {
+        [Test]
+        public void CatalogIsCopiedIntoSimConfig()
+        {
+            // Proves a CLONE, not an alias — SimConfigBuilder.Build must not
+            // hand SimConfig.Items the SO's own live array (same
+            // "ArrayContentsNotIdentity_DecideTheHash" discipline every
+            // other array-shaped section already follows, e.g. Arena.
+            // ObstaclePos). A build that aliased the source would let a
+            // later Inspector edit of the SO silently reach into an
+            // already-built SimConfig.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            byte originalFirstId = items.Items[0].Id;
+
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items);
+
+            // Coordinator R-94: the length premise comes FIRST, as an
+            // assertion — a test that indexes cfg.Items[0] without it dies
+            // by IndexOutOfRangeException while the copy is still a stub,
+            // which diagnoses nothing and, on RED, is indistinguishable
+            // from a failed compile (two of those already cost this stage a
+            // stop). Build_ItemCatalogAndLootConfig_ReachSimConfig (Config
+            // Tests.cs) is the sibling this form is borrowed from.
+            Assert.AreEqual(items.Items.Length, cfg.Items.Length,
+                "premise: SimConfig.Items must carry every record before this test can say " +
+                "anything about whether they were cloned");
+            Assert.AreNotSame(items.Items, cfg.Items,
+                "SimConfig.Items must be an independent array, not the SO's own live one");
+            items.Items[0].Id = (byte)(originalFirstId + 1);
+            Assert.AreEqual(originalFirstId, cfg.Items[0].Id,
+                "mutating the SO's array after Build must not reach the already-built SimConfig");
+        }
+
+        [Test]
+        public void SlotCostComesFromCatalog_NotFromStub()
+        {
+            // TestConfigs.Default().Items carries five records with
+            // DIFFERENT SlotCost (1, 2, 3, 4, 1) — coordinator R-85's own
+            // requirement: a catalog of all-1s could never tell a real
+            // per-item lookup apart from the T4 -> T13 stub that always
+            // returned 1. Id 0 costs 1, Id 1 costs 2 (spec §3.7 table, Т1/Т2).
+            var w = new SimulationWorld(1, TestConfigs.Default());
+
+            Assert.IsTrue(w.TryAddItem(0, 0), "premise: the first add (Id 0, cost 1) must fit");
+            Assert.IsTrue(w.TryAddItem(0, 1), "premise: the second add (Id 1, cost 2) must fit");
+
+            Assert.AreEqual(3, w.InventoryUsedSlots(0),
+                "two items costing 1 and 2 slot points must total 3 — a stub returning a flat " +
+                "1 per item would total 2 instead");
+        }
+
+        [Test]
+        public void Validate_RejectsDuplicateItemId()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            items.Items = new[]
+            {
+                new ItemDef { Id = 5, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 5, Tier = 2, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
+            };
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+            StringAssert.Contains("share Id", ex.Message);
+        }
+
+        [Test]
+        public void Validate_RejectsZeroSlotCost()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            items.Items = new[]
+            {
+                new ItemDef { Id = 0, Tier = 1, SlotCost = 0, CreditValue = 15, Kind = ItemKind.Trophy },
+            };
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+            StringAssert.Contains("SlotCost must be > 0", ex.Message);
+        }
+
+        [Test]
+        public void Validate_RejectsCatalogOver255Entries()
+        {
+            // Spec §3.7: "каталог ограничен 255 позициями" — the wire's own
+            // byte Id. 256 unique ids (0..255) is one past the cap.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            var overCap = new ItemDef[256];
+            for (int i = 0; i < overCap.Length; i++)
+                overCap[i] = new ItemDef { Id = (byte)i, Tier = 1, SlotCost = 1, CreditValue = 1, Kind = ItemKind.Trophy };
+            items.Items = overCap;
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+            StringAssert.Contains("at most 255", ex.Message);
+        }
+
+        [Test]
+        public void Find_UnknownId_ThrowsNamingIdAndCatalogSize()
+        {
+            // Coordinator ledger (R-64 precedent, fork on R-89): the message
+            // names BOTH the id that failed to resolve and the catalog's
+            // own size, not a bare exception.
+            var catalog = new[]
+            {
+                new ItemDef { Id = 0, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+            };
+
+            var ex = Assert.Throws<System.ArgumentException>(() => ItemCatalogLookup.Find(7, catalog));
+            StringAssert.Contains("7", ex.Message);
+            StringAssert.Contains("1", ex.Message); // catalog's own size (one entry)
+        }
+    }
+}

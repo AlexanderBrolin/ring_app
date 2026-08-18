@@ -340,6 +340,26 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void CatalogChange_ThrowsOnApplyConfig()
+        {
+            // Stage 3 Task 13 (spec §3.7 Р264, coordinator R-87): the item
+            // catalog is topology — its length and every record's SlotCost
+            // decide what a wire byte Id and an occupied slot point MEAN in
+            // a live world (same "backing array sized at construction,
+            // cannot grow mid-match" class of reasoning as MaxContainerSlots
+            // above, plus a meaning-of-the-bytes argument InventoryCapacity's
+            // own test doesn't need). Second element (lesson 227), not the
+            // first — TestConfigs.Default().Items carries five records.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            var items = (ItemDef[])c.Items.Clone();
+            items[1].SlotCost += 1;
+            next.Items = items;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
         public void HotTweak_PlayerSpawnRingFracChange_Throws()
         {
             // I-6 (fix-round T14): PlayerSpawnRingFrac had NO coverage at

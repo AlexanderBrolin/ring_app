@@ -1,10 +1,11 @@
+using Ring.Simulation.Core;
+
 namespace Ring.Simulation.Loot
 {
     /// One player's backpack (Stage 3 Task 4, spec §3.6 "Рюкзак") — a flat
-    /// array of item ids, no catalog metadata yet (Т13). Capacity is
-    /// measured in SLOT POINTS, not item count: TryAdd sums SlotCostOf
-    /// across the carried items and refuses an add that would push the
-    /// total past the caller-supplied capacity.
+    /// array of item ids. Capacity is measured in SLOT POINTS, not item
+    /// count: TryAdd sums SlotCostOf across the carried items and refuses
+    /// an add that would push the total past the caller-supplied capacity.
     ///
     /// Lives outside PlayerState (owner decision Р232, spec Interfaces):
     /// PlayerState is copied wholesale into ReconcileData, snapshot
@@ -40,12 +41,17 @@ namespace Ring.Simulation.Loot
 
         /// Sum of SlotCostOf across every carried item — what TryAdd checks
         /// against the caller's capacity, not Count itself (a heavier item
-        /// can cost more than one slot point once the real catalog lands
-        /// in Т13).
-        public int UsedSlots()
+        /// can cost more than one slot point per the real catalog, Т13).
+        /// `catalog` is a parameter rather than a stored field for the same
+        /// "read fresh from SimConfig every call" reason `capacity` in
+        /// TryAdd already is (owner decision R-89) — a hot-tweak is
+        /// impossible for the catalog itself (it is topology,
+        /// ArenaTopologyMatches rejects any change), but the seam stays
+        /// uniform with every other per-call config read in this class.
+        public int UsedSlots(ItemDef[] catalog)
         {
             int total = 0;
-            for (int i = 0; i < _count; i++) total += SlotCostOf(_items[i]);
+            for (int i = 0; i < _count; i++) total += SlotCostOf(_items[i], catalog);
             return total;
         }
 
@@ -57,10 +63,10 @@ namespace Ring.Simulation.Loot
         /// Hero.InventoryCapacity is honored the next call, same
         /// "read fresh from SimConfig every time" contract
         /// Loot.PickupSystem.Collect's own PickupRadius read follows.
-        public bool TryAdd(byte itemId, int capacity)
+        public bool TryAdd(byte itemId, int capacity, ItemDef[] catalog)
         {
             if (_count >= _items.Length) return false;
-            if (UsedSlots() + SlotCostOf(itemId) > capacity) return false;
+            if (UsedSlots(catalog) + SlotCostOf(itemId, catalog) > capacity) return false;
             _items[_count++] = itemId;
             return true;
         }
@@ -119,7 +125,11 @@ namespace Ring.Simulation.Loot
             _count = source._count;
         }
 
-        /// TEMPORARY (T4 -> T13): the real cost comes from ItemCatalog.
-        public static int SlotCostOf(byte itemId) => 1;
+        /// Stage 3 Task 13 (R-89): thin wrapper over the ONE id -> record
+        /// lookup (ItemCatalogLookup.Find) — not a second search of its
+        /// own. Replaces the T4 -> T13 stub that returned a flat 1 for
+        /// every id regardless of catalog.
+        public static int SlotCostOf(byte itemId, ItemDef[] catalog)
+            => ItemCatalogLookup.Find(itemId, catalog).SlotCost;
     }
 }

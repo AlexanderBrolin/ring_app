@@ -17,3 +17,5 @@ MonoBehaviour:
   ExitHysteresis: 3
   LingerTicks: 5
   HearPositionGridMeters: 3
+  PickupRadiusForVisibility: 0.4
+  ContainerRadiusForVisibility: 0.4

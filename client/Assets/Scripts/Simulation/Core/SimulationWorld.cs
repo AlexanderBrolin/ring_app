@@ -17,20 +17,6 @@ namespace Ring.Simulation.Core
         /// ADR-002 T5: simulation runs at 30 Hz. The single source of dt.
         public const float TickDt = 1f / 30f;
 
-        /// Stage 3 Task 3 (spec §3.6, Р260): how long a ground pickup survives
-        /// before Loot.PickupSystem.Update ages it out. TEMPORARY HOME (R-3):
-        /// LootSimConfig doesn't exist until Т13, which moves this into
-        /// LootSimConfig.PickupTtlSeconds in one step — the very same one-step
-        /// move MobSimConfig.CellsOnDeath and WeaponSimConfig.CorpseCellFraction
-        /// (SimConfig.cs) are waiting on, and the THIRD entry of that one debt
-        /// rather than an exception of its own (Ф1 review A-I3: the ledger
-        /// listed only the other two). Spelled identically at both ends so the
-        /// move stays a pure relocation, not a rename. Spec Р260 puts the number
-        /// in an `.asset`, so a `const` here is the debt, not the design — it is
-        /// a constant only because SpawnPickup's own Interfaces signature (kind,
-        /// pos, amount) carries no ttl parameter, leaving the value one
-        /// SpawnPickup has to know on its own.
-        const float PickupTtlSeconds = 120f;
 
         int _tick;
         Random _spreadRng;
@@ -421,8 +407,9 @@ namespace Ring.Simulation.Core
         /// the tick boundary (caller must only invoke this between ticks). Arena
         /// topology — radius, obstacle count/positions/radii, wall count/endpoints/
         /// half-width, player cap, spawn ring fraction, the three per-match
-        /// entity caps, and (Stage 3 Task 4, owner decision R-19) the backpack's
-        /// two capacity numbers (see ArenaTopologyMatches below for the full
+        /// entity caps, (Stage 3 Task 4, owner decision R-19) the backpack's
+        /// two capacity numbers, and (Stage 3 Task 13, spec §3.7 Р264) the
+        /// item catalog itself (see ArenaTopologyMatches below for the full
         /// field list) — must stay identical: a change there invalidates
         /// collision/spawn geometry or array sizing that isn't reconciled here,
         /// so it throws instead; Presentation reacts by restarting the world.
@@ -433,11 +420,12 @@ namespace Ring.Simulation.Core
         /// single migration as before.
         public void ApplyConfig(in SimConfig next)
         {
-            if (!ArenaTopologyMatches(in _config.Arena, in next.Arena, in _config.Hero, in next.Hero))
+            if (!ArenaTopologyMatches(in _config.Arena, in next.Arena, in _config.Hero, in next.Hero,
+                    _config.Items, next.Items))
             {
                 throw new System.ArgumentException("SimulationWorld.ApplyConfig: arena topology " +
                     "changed (radius/obstacles/walls/player cap/spawn ring/entity caps/backpack " +
-                    "capacity) — restart the world instead of hot-tweaking it.");
+                    "capacity/item catalog) — restart the world instead of hot-tweaking it.");
             }
 
             _config = next;
@@ -489,7 +477,7 @@ namespace Ring.Simulation.Core
         static uint Fold(uint x) => x == 0 ? 0x9E3779B9u : x;
 
         static bool ArenaTopologyMatches(in ArenaSimConfig a, in ArenaSimConfig b,
-            in HeroSimConfig heroA, in HeroSimConfig heroB)
+            in HeroSimConfig heroA, in HeroSimConfig heroB, ItemDef[] itemsA, ItemDef[] itemsB)
         {
             if (a.Radius != b.Radius || a.ObstacleCount != b.ObstacleCount) return false;
             for (int i = 0; i < a.ObstacleCount; i++)
@@ -638,6 +626,28 @@ namespace Ring.Simulation.Core
             // change to either number forces a restart instead.
             if (heroA.InventoryCapacity != heroB.InventoryCapacity) return false;
             if (heroA.MaxInventoryItems != heroB.MaxInventoryItems) return false;
+            // Stage 3 Task 13 (spec §3.7 Р264, owner decision): the item
+            // catalog is topology — its length and every record's SlotCost
+            // decide what a wire byte Id and an occupied slot point MEAN in
+            // a live world, so a hot-tweak changing it desyncs meaning, not
+            // just a number (same reasoning MaxContainerSlots/MaxContainers
+            // above already state for the arrays they size). Null-safe by
+            // the same "answer false, not throw" contract ExtractZone/
+            // ExtractKind's own comparison above follows (Ф2 review B-m4) —
+            // a hand-built fixture can reach this comparator with a null
+            // array, and a length of -1 (never a real array's length) makes
+            // "one null, one not" compare unequal without a special case.
+            int itemsALength = itemsA?.Length ?? -1;
+            int itemsBLength = itemsB?.Length ?? -1;
+            if (itemsALength != itemsBLength) return false;
+            for (int i = 0; i < itemsALength; i++)
+            {
+                if (itemsA[i].Id != itemsB[i].Id || itemsA[i].Tier != itemsB[i].Tier
+                    || itemsA[i].SlotCost != itemsB[i].SlotCost
+                    || itemsA[i].CreditValue != itemsB[i].CreditValue
+                    || itemsA[i].Kind != itemsB[i].Kind)
+                    return false;
+            }
             return true;
         }
 
@@ -746,7 +756,12 @@ namespace Ring.Simulation.Core
         /// Stage 3 Task 4 Interfaces: sum of Loot.Inventory.SlotCostOf
         /// across every item this player carries — what TryAddItem checks
         /// against Hero.InventoryCapacity, not InventoryCountOf itself.
-        public int InventoryUsedSlots(int playerIndex) => _inventories[playerIndex].UsedSlots();
+        /// Stage 3 Task 13: the catalog is read fresh off _config.Items
+        /// every call, same "hot-tweak honored next call" contract Capacity
+        /// below already follows (moot for the catalog itself — it is
+        /// topology, ArenaTopologyMatches rejects any change — but the seam
+        /// stays uniform).
+        public int InventoryUsedSlots(int playerIndex) => _inventories[playerIndex].UsedSlots(_config.Items);
 
         /// Stage 3 Task 4 Interfaces: adds one item to a player's backpack,
         /// refusing (false, backpack byte-for-byte unchanged) once the
@@ -756,7 +771,7 @@ namespace Ring.Simulation.Core
         /// _config every call, same "hot-tweak honored next call" contract
         /// Loot.PickupSystem.Collect's own PickupRadius read follows.
         internal bool TryAddItem(int playerIndex, byte itemId)
-            => _inventories[playerIndex].TryAdd(itemId, _config.Hero.InventoryCapacity);
+            => _inventories[playerIndex].TryAdd(itemId, _config.Hero.InventoryCapacity, _config.Items);
 
         /// Stage 3 Task 4 Interfaces: removes one item by backpack slot —
         /// swap-remove, same idiom as RemovePickupAt/RemoveProjectileAt.
@@ -874,18 +889,21 @@ namespace Ring.Simulation.Core
         /// cap-overflow, it is "no drop at all" — refused silently, BEFORE
         /// the cap check and BEFORE _nextEntityId is touched (owner decision
         /// R-18): a drop source configured to zero (TestConfigs' own
-        /// CellsOnDeath/CorpseCellFraction, this task's own golden-safety
-        /// fixture) must burn no id and leave every hashed channel exactly
-        /// as it was — spawning a PickupState with Amount = 0 would still
-        /// advance _nextEntityId and, now that Pickups is in StateHash (Т6),
-        /// shift the digest for a config that legitimately drops nothing.
+        /// Loot.CellsPerMob/CorpseCellFraction, this task's own
+        /// golden-safety fixture) must burn no id and leave every hashed
+        /// channel exactly as it was — spawning a PickupState with
+        /// Amount = 0 would still advance _nextEntityId and, now that
+        /// Pickups is in StateHash (Т6), shift the digest for a config that
+        /// legitimately drops nothing.
         /// Capped at Arena.MaxPickups exactly like SpawnMob/SpawnProjectile
         /// above: past the cap the NEW drop is skipped and counted
         /// (WorldStats.PickupSpawnsSkipped) — the OLD pickups already on the
         /// ground are never evicted to make room (spec §3.6, Р260: eviction
-        /// would take back loot a player already earned). Ttl seeds at the
-        /// class's own PickupTtlSeconds constant — see that field's own doc
-        /// for why it isn't a parameter here.
+        /// would take back loot a player already earned). Ttl seeds at
+        /// Loot.PickupTtlSeconds (moved off this class's own TEMPORARY
+        /// const, Т13, R-3) — not a parameter here for the same reason it
+        /// never was: SpawnPickup's own Interfaces signature (kind, pos,
+        /// amount) carries no ttl parameter.
         internal int SpawnPickup(PickupKind kind, float2 pos, int amount)
         {
             if (amount <= 0) return -1;
@@ -899,7 +917,7 @@ namespace Ring.Simulation.Core
             int id = _nextEntityId++;
             _pickups[_pickupCount++] = new PickupState
             {
-                Id = id, Pos = pos, Kind = kind, Amount = amount, Ttl = PickupTtlSeconds
+                Id = id, Pos = pos, Kind = kind, Amount = amount, Ttl = _config.Loot.PickupTtlSeconds
             };
             return id;
         }
@@ -960,16 +978,15 @@ namespace Ring.Simulation.Core
                 // drop — arithmetic lives in the ONE shared home
                 // Loot.LootDrops.MobDeathCells, KillPlayer's own corpse drop
                 // below is the second caller. A zero-configured drop (every
-                // golden scenario, TestConfigs' own CellsOnDeath = 0) is
-                // refused by SpawnPickup itself before _nextEntityId moves —
-                // see that method's own doc. MobConfigFor's result is copied
-                // to a local first, same convention every other caller in
-                // this codebase already follows (SeparationSystem.Apply,
-                // MobAiSystem.Update) — its return is a BY-VALUE MobSimConfig,
-                // not a field, so `in MobConfigFor(...)` cannot bind a
-                // reference straight to a method call's result (CS8156).
-                MobSimConfig deadMobCfg = MobConfigFor(_mobs[index].Type);
-                SpawnPickup(PickupKind.EnergyCell, pos, LootDrops.MobDeathCells(in deadMobCfg));
+                // golden scenario, TestConfigs' own Loot.CellsPerMob = all
+                // zero) is refused by SpawnPickup itself before
+                // _nextEntityId moves — see that method's own doc.
+                // Stage 3 Task 13 (R-3): MobDeathCells now indexes
+                // Loot.CellsPerMob by archetype directly — no MobSimConfig
+                // copy needed at this call site any more (CellsOnDeath
+                // itself is gone from that struct).
+                SpawnPickup(PickupKind.EnergyCell, pos,
+                    LootDrops.MobDeathCells(_mobs[index].Type, in _config.Loot));
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
@@ -1140,10 +1157,14 @@ namespace Ring.Simulation.Core
             // BEFORE this line would erase the exact number this drop is
             // computed from, so it still reads whatever the player was
             // carrying at the moment of death. A zero-configured fraction
-            // (every golden scenario, TestConfigs' own CorpseCellFraction =
-            // 0) is refused by SpawnPickup itself before _nextEntityId moves
-            // — see that method's own doc (owner decision R-18).
-            SpawnPickup(PickupKind.EnergyCell, p.Pos, LootDrops.CorpseCells(p.Ammo, in _config.Weapon));
+            // (every golden scenario, TestConfigs' own Loot.CorpseCellFraction
+            // = 0) is refused by SpawnPickup itself before _nextEntityId
+            // moves — see that method's own doc (owner decision R-18).
+            // Stage 3 Task 13 (R-3): CorpseCellFraction moved off
+            // WeaponSimConfig into Loot — ShotsPerCell stays on Weapon (the
+            // ammo economy, not loot), so the call now takes both sections.
+            SpawnPickup(PickupKind.EnergyCell, p.Pos,
+                LootDrops.CorpseCells(p.Ammo, in _config.Weapon, in _config.Loot));
         }
 
         /// Stage 2 Task 8 Interfaces: exits a player from the match with no
