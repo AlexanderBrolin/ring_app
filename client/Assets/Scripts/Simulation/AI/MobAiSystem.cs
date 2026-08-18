@@ -59,9 +59,36 @@ namespace Ring.Simulation.AI
                 // into the line of fire), so an index parameter there would be
                 // carried and never read.
                 if (m.Type == MobType.Chaser)
+                {
                     UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt);
-                else
+                }
+                else if (m.Type == MobType.Gunner)
+                {
                     UpdateGunner(w, ref m, in cfg, in player, in arena, dt);
+                }
+                else
+                {
+                    // Elite/Director (Stage 3 Task 10, spec Р214/Р248,
+                    // fourth of the fourteen two-way branches): "an
+                    // enhanced chaser with ranged finishing" — no new
+                    // sub-FSM, UpdateChaser/UpdateGunner are reused
+                    // wholesale (rule 2), picked by DISTANCE to the
+                    // current target: inside AttackRange it fights like a
+                    // Chaser (melee windup + strike, Chase/Telegraph/
+                    // Recover); outside it holds/kites like a Gunner
+                    // (Reposition to PreferredRange, Fire under LoS). Both
+                    // archetypes share this same six-value MobAiState the
+                    // other two already use (Р214) — MaxMobAiStateValue
+                    // does not move. Director never leaving the arena core
+                    // (Р248) is Т22's own leash/activation logic, not this
+                    // dispatch — this switch only decides HOW it fights
+                    // once a target is already in range, the same as any
+                    // other archetype here.
+                    if (math.distance(m.Pos, player.Pos) <= cfg.AttackRange)
+                        UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt);
+                    else
+                        UpdateGunner(w, ref m, in cfg, in player, in arena, dt);
+                }
             }
         }
 

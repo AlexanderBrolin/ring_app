@@ -111,23 +111,37 @@ namespace Ring.Networking.Protocol
         /// test that says in words that the wire domain moved, rather than
         /// silently making legal traffic unparseable. A wire domain change is
         /// also a ProtocolVersion bump (see ProtocolVersion's own doc).
-        public const byte MaxMobTypeValue = (byte)MobType.Gunner;
+        ///
+        /// Stage 3 Task 10 (spec Р213/Р251): `MobType` grew Elite/Director,
+        /// so this moves from `Gunner` to `Director` — exactly the
+        /// ProtocolVersion-bump case the doc above already named. MobAiState/
+        /// WavePhase are unchanged (Р214: Elite/Director reuse the existing
+        /// six-state FSM, no new state).
+        public const byte MaxMobTypeValue = (byte)MobType.Director;
         public const byte MaxMobAiStateValue = (byte)MobAiState.Fire;
         public const byte MaxWavePhaseValue = (byte)WavePhase.Active;
 
-        /// The `MaxHp` a mob record's HP byte is quantized against — Chaser
-        /// and Gunner do NOT share a cap, so the record's own type decides
+        /// The `MaxHp` a mob record's HP byte is quantized against — no two
+        /// archetypes share a cap, so the record's own type decides
         /// (task-27-brief §2.7). One home for the rule, called by both sides
         /// (fix-round M1): it was written out twice, and a third `MobType` in
         /// Stage 3 would have needed both edits with neither a compile error
-        /// nor a red test to demand the second — the new type would simply
-        /// have decoded against the Gunner's cap.
+        /// nor a red test to demand the second — Stage 3 Task 10 is that
+        /// third (and fourth) `MobType`, exactly as predicted.
         ///
-        /// The two-way branch is safe because both call sites reject anything
-        /// above `MaxMobTypeValue` first, and that constant is pinned by the
-        /// test named above.
-        public static float MaxHpFor(MobType type, in SimConfig cfg)
-            => type == MobType.Chaser ? cfg.Chaser.MaxHp : cfg.Gunner.MaxHp;
+        /// The four-way switch is safe because both call sites reject
+        /// anything above `MaxMobTypeValue` first, and that constant is
+        /// pinned by the test named above — the `_` arm below is
+        /// unreachable in practice, not a real fallback, same reasoning as
+        /// ProjectileSystem.Update's own radius switch.
+        public static float MaxHpFor(MobType type, in SimConfig cfg) => type switch
+        {
+            MobType.Chaser => cfg.Chaser.MaxHp,
+            MobType.Gunner => cfg.Gunner.MaxHp,
+            MobType.Elite => cfg.Elite.MaxHp,
+            MobType.Director => cfg.Director.MaxHp,
+            _ => cfg.Gunner.MaxHp,
+        };
 
         /// Decoded Players record (task-27-brief §2.2, §2.4). `Pos`/`Dir`/
         /// `Hp` are the DECODED values (Quantize's *Back methods), not wire

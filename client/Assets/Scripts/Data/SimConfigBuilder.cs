@@ -10,8 +10,27 @@ namespace Ring.Data
     /// migration of a running SimulationWorld is NOT here — see SimulationWorld.ApplyConfig.
     public static class SimConfigBuilder
     {
+        /// Stage 3 Task 10 (spec §3.13, ledger R-28): `elite`/`director` are
+        /// two NEW TRAILING OPTIONAL parameters (Global Constraints: a new
+        /// parameter on an existing helper is tail-only, with a default) —
+        /// every one of the 46+ existing 7-argument call sites (ConfigTests.
+        /// MakeDefaults et al., ServerBootstrap, the Editor scene
+        /// bootstraps, ...) keeps compiling unchanged, silently defaulting
+        /// both new SimConfig sections to an all-zero MobSimConfig. `null`
+        /// on either one is "no override," not "an error": neither
+        /// MobEliteConfig nor MobDirectorConfig is a new SO CLASS (spec
+        /// §3.13 corrects that reading — they are new ASSETS of this same
+        /// MobConfig class), and their real `.asset` instances plus the
+        /// scene-bootstrap wiring that feeds them here are Т12's job
+        /// (errata E-6 I5), not this one. This task only needs
+        /// MaxBodyRadius (below) to have something to read when a caller
+        /// DOES supply one — which is exactly what
+        /// ZoneConfigTests.Validate_RejectsDoorNarrowerThanDirector does,
+        /// driving a door-width violation off a real Director radius
+        /// in-memory, without waiting on Т12's asset delivery.
         public static SimConfig Build(HeroConfig hero, WeaponConfig weapon, MobConfig chaser,
-            MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility)
+            MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility,
+            MobConfig elite = null, MobConfig director = null)
         {
             var cfg = new SimConfig
             {
@@ -89,6 +108,11 @@ namespace Ring.Data
                 },
                 Chaser = ToMobSimConfig(chaser),
                 Gunner = ToMobSimConfig(gunner),
+                // Stage 3 Task 10: see this method's own doc above for why
+                // `null` (every EXISTING call site) means "no override"
+                // rather than a crash.
+                Elite = elite != null ? ToMobSimConfig(elite) : default,
+                Director = director != null ? ToMobSimConfig(director) : default,
                 Wave = new WaveSimConfig
                 {
                     FirstWaveDelay = wave.FirstWaveDelay,
@@ -557,16 +581,20 @@ namespace Ring.Data
         /// wall" — used by ValidateWalls' own rim rule above (refactored
         /// onto this method, no behavior change) and ValidateZoneWalls
         /// below (door-width rule Р247, R-37's interior-passability rule).
-        /// At Т8 this is Hero/Chaser/Gunner only: Elite and Director are
-        /// not SimConfig sections yet. Т10 IS THIS HELPER'S NAMED
-        /// ADDRESSEE for extending it with Elite.Radius/Director.Radius
-        /// once those sections exist — a second copy of this formula
-        /// anywhere else is exactly the mistake rule 2 (reuse >
-        /// duplication) exists to prevent, and R-28 exists to name a
-        /// single owner for the future extension instead of leaving it an
-        /// address-less debt (lesson 272).
+        /// Stage 3 Task 10 extends it with Elite.Radius/Director.Radius —
+        /// THE SAME HOME, not a second copy (rule 2), exactly what R-28
+        /// named this method's own future addressee for (lesson 272). Both
+        /// new terms are harmless for every fixture built through
+        /// SimConfigBuilder.Build BEFORE a caller supplies a non-null
+        /// `elite`/`director` argument (that method's own doc): `cfg.Elite`/
+        /// `cfg.Director` stay `default(MobSimConfig)` — Radius 0f — so
+        /// `math.max(..., 0f)` never changes the pre-Task-10 answer.
+        /// ZoneConfigTests.Validate_RejectsDoorNarrowerThanDirector is the
+        /// one fixture that DOES supply a real Director radius (2.2, spec
+        /// §3.13) and is what this extension exists to satisfy.
         static float MaxBodyRadius(in SimConfig cfg)
-            => math.max(cfg.Hero.Radius, math.max(cfg.Chaser.Radius, cfg.Gunner.Radius));
+            => math.max(cfg.Hero.Radius, math.max(cfg.Chaser.Radius,
+                math.max(cfg.Gunner.Radius, math.max(cfg.Elite.Radius, cfg.Director.Radius))));
 
         /// Stage 3 Task 8 (spec §3.2's own Validate paragraph; ledger
         /// R-27/R-28/R-37): the zone-wall arc barriers and their doors.

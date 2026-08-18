@@ -165,13 +165,14 @@ namespace Ring.Simulation.Tests
             var writer = new SnapshotWriter(buffer);
             writer.WriteHeader(Epoch, Tick, Flags);
 
-            // Literal 2, not ProtocolVersion.Current: comparing the writer
+            // Literal 3, not ProtocolVersion.Current: comparing the writer
             // against the very constant it wrote would pass under a version
             // bump that silently broke every peer. The literal is therefore
             // MEANT to be edited by hand on a bump — it moved 1 → 2 with
-            // Task 44a's ProjectileEndKind growth, alongside the pin in
-            // ProtocolVersion_Current_IsPinnedToTwo below.
-            Assert.AreEqual((byte)2, buffer[0], "byte 0: protocol version");
+            // Task 44a's ProjectileEndKind growth, then 2 → 3 with Stage 3
+            // Task 10's MobType growth, alongside the pin in
+            // ProtocolVersion_Current_IsPinnedToThree below.
+            Assert.AreEqual((byte)3, buffer[0], "byte 0: protocol version");
             Assert.AreEqual((byte)0x34, buffer[1], "byte 1: epoch low byte (little-endian)");
             Assert.AreEqual((byte)0x12, buffer[2], "byte 2: epoch high byte (little-endian)");
             Assert.AreEqual((byte)0xEF, buffer[3], "byte 3: tick byte 0 (little-endian)");
@@ -458,18 +459,26 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void ProtocolVersion_Current_IsPinnedToTwo()
+        public void ProtocolVersion_Current_IsPinnedToThree()
         {
             // A silent bump would part client and server with no red test
             // anywhere: the version is compared in the handshake (Task 39)
             // and on every snapshot, and both sides read the same constant.
-            Assert.AreEqual((byte)2, ProtocolVersion.Current,
-                "protocol version 2 is the wire contract of Stage 2 — changing it is a "
-                + "compatibility break that must be a deliberate, reviewed edit. It became 2 in "
-                + "Task 44a, when ProjectileEndKind grew HitPlayer = 4: a version-1 reader "
-                + "validates that payload byte against its own bound of 3 and throws the whole "
-                + "ProjectileEnded event out as MalformedContent, and SimConfigHash does not "
-                + "cover the enum, so nothing but this version byte separates the two builds");
+            //
+            // Stage 3 Task 10 (R-6, errata E-6 B-I7): renamed from
+            // …IsPinnedToTwo — the old name was already lying about which
+            // literal it pinned the moment MobType grew Elite/Director; a
+            // test named after a stale value is worse than an unnamed one.
+            Assert.AreEqual((byte)3, ProtocolVersion.Current,
+                "protocol version 3 is the wire contract from Stage 3 Task 10 on — changing it "
+                + "is a compatibility break that must be a deliberate, reviewed edit. It became "
+                + "3 when MobType grew Elite = 2 and Director = 3: a version-2 reader validates "
+                + "a Mobs record's type nibble against its own MaxMobTypeValue bound of 1 "
+                + "(Gunner) and throws the whole record out as MalformedContent, and "
+                + "SimConfigHash does not cover Elite's/Director's MobSimConfig sections yet "
+                + "(R-17, Т13 wires them), so nothing but this version byte separates the two "
+                + "builds. It became 2 in Task 44a, when ProjectileEndKind grew HitPlayer = 4 — "
+                + "see ProtocolVersion's own HISTORY doc for that entry.");
         }
 
         // ---- 8. Failure is sticky ----
@@ -1539,11 +1548,23 @@ namespace Ring.Simulation.Tests
             // which says in words that the wire domain moved and needs a
             // ProtocolVersion bump, instead of silently making legal Stage 3
             // traffic unparseable by a decoder nobody thought to update.
-            Assert.AreEqual((byte)1, SnapshotBlocks.MaxMobTypeValue, "MobType tops out at Gunner");
+            //
+            // Stage 3 Task 10 (spec Р213/Р251) is exactly that: MobType
+            // gained Elite AND Director, so the two MobType-shaped
+            // assertions below move from Gunner/2 to Director/4 — this IS
+            // the tripwire firing, on schedule, not a defect to silence.
+            // SnapshotBlocks.MaxMobTypeValue now reads
+            // `(byte)MobType.Director`, alongside the ProtocolVersion bump
+            // its own HISTORY entry records (ProtocolVersion_Current_
+            // IsPinnedToThree, this file, updates in the same commit — see
+            // that test's own doc). MobAiState/WavePhase are UNCHANGED
+            // (Р214: Elite/Director reuse the existing six-state FSM, no
+            // new state) — only the MobType pair below moved.
+            Assert.AreEqual((byte)3, SnapshotBlocks.MaxMobTypeValue, "MobType tops out at Director");
             Assert.AreEqual((byte)5, SnapshotBlocks.MaxMobAiStateValue, "MobAiState tops out at Fire");
             Assert.AreEqual((byte)1, SnapshotBlocks.MaxWavePhaseValue, "WavePhase tops out at Active");
 
-            Assert.AreEqual(2, System.Enum.GetValues(typeof(MobType)).Length,
+            Assert.AreEqual(4, System.Enum.GetValues(typeof(MobType)).Length,
                 "MobType gained or lost a member — the wire domain moved");
             Assert.AreEqual(6, System.Enum.GetValues(typeof(MobAiState)).Length,
                 "MobAiState gained or lost a member — the wire domain moved");
@@ -1575,7 +1596,16 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual(0, count, $"{what}: the whole block is rejected, no record is yielded");
             }
 
-            AssertPackedByteRefused(0x20, "type nibble 2, one past Gunner");
+            // Stage 3 Task 10 coordinator finding: this fixture used to be
+            // the hardcoded literal 0x20 ("type nibble 2, one past
+            // Gunner") — MobType growing Elite/Director on to that exact
+            // value would have turned a refusal fixture into a silent
+            // false negative (the domain widened, so nibble 2 decodes
+            // clean now). Built off MaxMobTypeValue itself so the NEXT
+            // MobType growth cannot repeat this without the fixture moving
+            // with it.
+            AssertPackedByteRefused((byte)((SnapshotBlocks.MaxMobTypeValue + 1) << 4),
+                "type nibble one past MaxMobTypeValue");
             AssertPackedByteRefused(0xF0, "type nibble 15");
             AssertPackedByteRefused(0x06, "ai nibble 6, one past Fire");
             AssertPackedByteRefused(0x0F, "ai nibble 15");
@@ -1588,10 +1618,10 @@ namespace Ring.Simulation.Tests
             legal[2] = (byte)((SnapshotBlocks.MaxMobTypeValue << 4) | SnapshotBlocks.MaxMobAiStateValue);
             var dest = new SnapshotBlocks.MobRecord[1];
             Assert.IsTrue(SnapshotBlocks.TryReadMobsBlock(legal, SnapCfg, dest, out int okCount, out SnapshotBlockError okErr),
-                "Gunner/Fire is the top of both domains and must be accepted");
+                "Director/Fire is the top of both domains and must be accepted");
             Assert.AreEqual(1, okCount);
             Assert.AreEqual(SnapshotBlockError.None, okErr);
-            Assert.AreEqual(MobType.Gunner, dest[0].Type);
+            Assert.AreEqual(MobType.Director, dest[0].Type);
             Assert.AreEqual(MobAiState.Fire, dest[0].Ai);
         }
 
@@ -1866,6 +1896,38 @@ namespace Ring.Simulation.Tests
             float expectedGunnerHp = 200f / 255f * SnapGunnerMaxHp;
             Assert.That(destination[0].Hp, Is.EqualTo(expectedChaserHp).Within(SnapChaserMaxHp / 255f / 2f + 1e-4f));
             Assert.That(destination[1].Hp, Is.EqualTo(expectedGunnerHp).Within(SnapGunnerMaxHp / 255f / 2f + 1e-4f));
+        }
+
+        // Stage 3 Task 10 fixture numbers, same "checked against every
+        // .asset, appears in none" discipline as SnapChaserMaxHp/
+        // SnapGunnerMaxHp above — distinct from both of those AND from each
+        // other, so a mutation that quietly reused Gunner's own cap for
+        // either new archetype cannot hide behind an accidental match.
+        const float SnapEliteMaxHp = 58f;
+        const float SnapDirectorMaxHp = 91f;
+
+        [Test]
+        public void MaxHpFor_DecodesAgainstOwnArchetypeCap()
+        {
+            // MaxHpFor's own doc (SnapshotBlocks.cs) predicted this exact
+            // moment: "a third MobType in Stage 3 would have needed both
+            // edits with neither a compile error nor a red test to demand
+            // the second". Elite and Director are the third AND fourth
+            // archetype in one task — each needs its OWN cap read out, not
+            // a shared Gunner fallback.
+            //
+            // Called DIRECTLY rather than through TryReadMobsBlock (unlike
+            // MobHp_DecodedByOwnType_NotAlwaysChaserMaxHp above): MaxHpFor
+            // is the unit under test, and isolating it needs no detour
+            // through the decoder's own domain gate (`MaxMobTypeValue`,
+            // now Director-wide) or the packed-byte record layout — a
+            // direct call pins the exact function this task's fourteen-
+            // branch table names, nothing upstream of it.
+            var cfg = SnapCfg;
+            cfg.Elite = new MobSimConfig { MaxHp = SnapEliteMaxHp };
+            cfg.Director = new MobSimConfig { MaxHp = SnapDirectorMaxHp };
+            Assert.AreEqual(SnapEliteMaxHp, SnapshotBlocks.MaxHpFor(MobType.Elite, in cfg));
+            Assert.AreEqual(SnapDirectorMaxHp, SnapshotBlocks.MaxHpFor(MobType.Director, in cfg));
         }
 
         // ---- T27.18. Player flag bit positions, each pinned individually ----

@@ -385,5 +385,28 @@ namespace Ring.Simulation.Core
         /// extract channel length, retinue respawn count/cadence, Director
         /// reserve slots) — SO-backed default arrives in Т12.
         public MatchFlowSimConfig Flow;
+        /// Stage 3 Task 10 (spec Р213): the third and fourth mob archetype
+        /// — same MobSimConfig shape Chaser/Gunner already use (one asset
+        /// of the existing Ring.Data.MobConfig class each, spec §3.13: "не
+        /// новые ассеты класса, а ассеты существующего класса"), read
+        /// through the exact same seam (SimulationWorld.MobConfigFor's own
+        /// switch). `TestConfigs.Default()` deliberately leaves both at
+        /// their C# struct default (all-zero) until Т12 — see that
+        /// method's own doc — and neither section is wired into
+        /// SimConfigBuilder.Build's SO pipeline yet (Т12, errata E-6 I5)
+        /// except for the two OPTIONAL trailing parameters
+        /// SimConfigBuilder.Build grew this task purely so
+        /// ZoneConfigTests' own R-28 door-width test could drive a real
+        /// Director body radius through Validate without waiting on that
+        /// asset delivery. NOT part of SimConfigHash.Compute yet (owner
+        /// decision R-17) — MobSimConfig's field NAMES are shared 1:1 with
+        /// Chaser/Gunner's own already-hashed section, so the flat,
+        /// name-only SimConfigHashTests.PendingHashFields set cannot record
+        /// this deferral without also, incorrectly, exempting Chaser's/
+        /// Gunner's real numbers; see SimConfigHashTests.
+        /// EliteAndDirectorSections_DoNotAffectHash_UntilT13WiresThem for
+        /// the executable record of the decision instead, and
+        /// SimConfig_CarriesExactlyTenSections for the section-count guard.
+        public MobSimConfig Elite, Director;
     }
 }

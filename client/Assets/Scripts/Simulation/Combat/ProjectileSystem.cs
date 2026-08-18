@@ -37,8 +37,6 @@ namespace Ring.Simulation.Combat
             float dt = SimulationWorld.TickDt;
             SimConfig config = w.Config;
             ArenaSimConfig arena = config.Arena;
-            float chaserRadius = config.Chaser.Radius;
-            float gunnerRadius = config.Gunner.Radius;
             float heroRadius = config.Hero.Radius;
             (float t, int kind, int index)[] candidates = w.ProjCandidates;
 
@@ -99,7 +97,7 @@ namespace Ring.Simulation.Combat
                 for (int m = 0; m < mobCount; m++)
                 {
                     if (mobs[m].Id == proj.OwnerEntityId) continue;
-                    float mobRadius = mobs[m].Type == MobType.Chaser ? chaserRadius : gunnerRadius;
+                    float mobRadius = MobRadiusFor(mobs[m].Type, in config);
                     if (Geometry.SegmentCircle(startPos, target, proj.Radius,
                             mobs[m].Pos, mobRadius, out float tm))
                     {
@@ -326,6 +324,48 @@ namespace Ring.Simulation.Combat
                 }
             }
         }
+
+        /// Stage 3 Task 10 (coordinator finding, Pack B): the body radius the
+        /// GATHER phase's candidate scan uses — its own home, deliberately
+        /// SEPARATE from SimulationWorld.MobConfigFor (AcceptCandidate below,
+        /// MobAiSystem, WaveSystem, SeparationSystem, VisibilitySystem all go
+        /// through that one instead). The split is a Stage 2 decision, not an
+        /// oversight: a per-mob MobConfigFor(...) call here would copy the
+        /// whole MobSimConfig struct (~30 floats) once per candidate in the
+        /// hottest loop in the simulation, where this needs exactly one of
+        /// them. `in SimConfig cfg` avoids copying SimConfig itself (a larger
+        /// struct still — Hero/Weapon/Chaser/Gunner/Wave/Arena/Visibility/
+        /// Flow/Elite/Director); the field reads below (`cfg.Chaser.Radius`
+        /// etc.) touch only the one float each returns, never materializing a
+        /// MobSimConfig copy — so this extraction changes nothing about that
+        /// Stage 2 tradeoff, only NAMES the switch that used to live inline
+        /// as four precomputed locals, so ProjectileGatherAndMobConfigForTests.
+        /// MobRadiusFor_AgreesWith_MobConfigFor_ForEveryArchetype can call it
+        /// directly and prove the two homes stay in sync.
+        ///
+        /// `default` THROWS, unlike SnapshotBlocks.MaxHpFor's own `_` arm:
+        /// that one is gated upstream by the wire's own MaxMobTypeValue check
+        /// (TryReadMobsBlock refuses an out-of-domain byte before MaxHpFor is
+        /// ever called), an independent gate that does not depend on this
+        /// switch's own case list staying current. This one has no such
+        /// second gate — SimulationWorld.SpawnMob's own MobConfigFor(type)
+        /// call keeps every LIVE mob's Type inside today's four archetypes,
+        /// but that guarantee is only as good as THIS switch being kept in
+        /// sync with MobConfigFor's, which is exactly the coordination the
+        /// agreement test above exists to enforce. A future archetype added
+        /// to MobConfigFor and forgotten here must fail loudly (a crash that
+        /// names the archetype) rather than silently render it Gunner-sized
+        /// for the rest of the match — the same lesson the `0x20` sentinel
+        /// literal (R-47) already cost this task once.
+        internal static float MobRadiusFor(MobType type, in SimConfig cfg) => type switch
+        {
+            MobType.Chaser => cfg.Chaser.Radius,
+            MobType.Gunner => cfg.Gunner.Radius,
+            MobType.Elite => cfg.Elite.Radius,
+            MobType.Director => cfg.Director.Radius,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
 
         /// Height gate + zone resolution for the candidate the min-scan just
         /// picked (Task 6). Returns false when the shot passes clear over (or

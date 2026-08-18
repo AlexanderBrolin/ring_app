@@ -119,7 +119,23 @@ namespace Ring.Simulation.Core
         public byte LootTargetSlot;
     }
 
-    public enum MobType : byte { Chaser = 0, Gunner = 1 }
+    /// Stage 3 Task 10 (spec Р213/Р251): Elite and Director are the third
+    /// and fourth archetype — a wire-domain growth that ripples through
+    /// FOURTEEN two-way branches across Simulation/Networking/Presentation
+    /// (spec's own table, Р251), not just this declaration. `SimConfig`
+    /// gains matching `Elite`/`Director` MobSimConfig sections
+    /// (Core/SimConfig.cs), `SimulationWorld.MobConfigFor`/`SpawnMob`'s own
+    /// Hp branch/`Combat/ProjectileSystem`'s candidate radius/
+    /// `AI/MobAiSystem`'s FSM dispatch/`Protocol/SnapshotBlocks.MaxHpFor`+
+    /// `MaxMobTypeValue` all stop being two-way. The domain move is also a
+    /// `ProtocolVersion` bump (see its own HISTORY). Elite reuses the
+    /// EXISTING `MobAiState` six-value FSM below wholesale — no new state,
+    /// see that enum's own doc — and Director never leaves the arena core
+    /// (Р248, enforced in Т22, not here). Neither archetype gets a stored
+    /// "is retinue"/"is boss" flag: Director-ness and retinue-ness are both
+    /// derived from `Type` alone (rule 2 — a derived value does not enter
+    /// state or hash a second time).
+    public enum MobType : byte { Chaser = 0, Gunner = 1, Elite = 2, Director = 3 }
 
     /// Vertical hit-zone a shot landed in (Task 6). Lives in Core next to MobType
     /// because it crosses every layer: Simulation classifies it, SimEvent carries

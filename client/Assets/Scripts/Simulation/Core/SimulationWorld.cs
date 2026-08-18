@@ -762,8 +762,25 @@ namespace Ring.Simulation.Core
             => _inventories[playerIndex].SetForTest(items);
 
         /// MobAiSystem's seam into the per-archetype balance numbers (Task 19).
-        internal MobSimConfig MobConfigFor(MobType type)
-            => type == MobType.Chaser ? _config.Chaser : _config.Gunner;
+        /// Stage 3 Task 10 (spec Р213/Р251): four-way switch, not the old
+        /// Chaser/"everything else" ternary — Elite and Director are the
+        /// third and fourth archetype, each with their OWN section
+        /// (Core/SimConfig.cs). `default` throws rather than silently
+        /// falling back to Gunner: a `MobState.Type` can only ever be one
+        /// of the four values SpawnMob below constructs (this is the
+        /// single choke point that does), so an unmatched value here means
+        /// something upstream is already broken — the same "refuse loudly"
+        /// contract SnapshotBlocks.MaxHpFor's own decode-time domain gate
+        /// documents, applied at the call site instead of the wire.
+        internal MobSimConfig MobConfigFor(MobType type) => type switch
+        {
+            MobType.Chaser => _config.Chaser,
+            MobType.Gunner => _config.Gunner,
+            MobType.Elite => _config.Elite,
+            MobType.Director => _config.Director,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
 
         /// SeparationSystem's seam into its preallocated per-tick force buffer
         /// (Task 20) — sized to Arena.MaxMobs, recomputed every tick, never grown.
@@ -1173,11 +1190,21 @@ namespace Ring.Simulation.Core
                 _worldStats.MobSpawnsSkipped++;
                 return -1;
             }
+            // Stage 3 Task 10 (spec Р251, second of the fourteen two-way
+            // branches — the one that briefly masked
+            // ProjectileGather_UsesArchetypeRadius_ForElite on RED):
+            // resolved through MobConfigFor, not a second, independent
+            // ternary — one home for "which archetype's numbers", per rule
+            // 2. Read BEFORE _nextEntityId/_mobCount are touched:
+            // MobConfigFor throws for an unrecognized type, and resolving
+            // it first keeps a rejected spawn from leaking an entity id or
+            // committing a half-built array slot.
+            float maxHp = MobConfigFor(type).MaxHp;
             int id = _nextEntityId++;
             _mobs[_mobCount++] = new MobState
             {
                 Id = id, Type = type, Pos = pos,
-                Hp = type == MobType.Chaser ? _config.Chaser.MaxHp : _config.Gunner.MaxHp,
+                Hp = maxHp,
                 Ai = MobAiState.Idle,
                 // Deterministic handedness for Gunner strafe / SteerAround's dead-on
                 // tangent tiebreak (Task 19 Interfaces) — no RNG needed.

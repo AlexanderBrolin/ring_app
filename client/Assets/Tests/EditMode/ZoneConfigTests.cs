@@ -123,11 +123,16 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Validate_RejectsDoorNarrowerThanBiggestBody()
         {
-            // Ledger R-28: maxBodyRadius at Т8 = max(Hero, Chaser, Gunner) —
-            // Elite/Director are not SimConfig sections until Т10. Ledger
-            // R-27: DoorFreeWidth >= 2*(bodyRadius+Skin)+DoorClearance. Door
-            // 0 (control) clears the formula exactly; door 1 (subject,
-            // index 1) misses by a hair — a loop checking only door 0, or a
+            // Ledger R-28: maxBodyRadius at Т8 = max(Hero, Chaser, Gunner).
+            // Since Т10, MaxBodyRadius also folds in Elite/Director — this
+            // fixture's own Build(...) call passes neither (7-arg form), so
+            // both read the struct default (Radius 0f) and
+            // math.max(..., 0f) leaves the Т8 answer exactly as it was; see
+            // Validate_RejectsDoorNarrowerThanDirector below for the
+            // fixture that DOES exercise the Т10 terms. Ledger R-27:
+            // DoorFreeWidth >= 2*(bodyRadius+Skin)+DoorClearance. Door 0
+            // (control) clears the formula exactly; door 1 (subject, index
+            // 1) misses by a hair — a loop checking only door 0, or a
             // formula dropping the +DoorClearance term, cannot kill this.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             float maxBodyRadius = math.max(h.Radius, math.max(c.Radius, g.Radius));
@@ -142,6 +147,38 @@ namespace Ring.Simulation.Tests
             a.DoorFreeWidth = new[] { required, required - 0.01f };
             var ex = Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("DoorFreeWidth"));
+        }
+
+        [Test]
+        public void Validate_RejectsDoorNarrowerThanDirector()
+        {
+            // Ledger R-28 (the debt SimConfigBuilder.MaxBodyRadius's own doc
+            // names Т10 as the addressee for, right next to this file's
+            // sibling test above): at Т8, maxBodyRadius = max(Hero, Chaser,
+            // Gunner) — a door "passable for the gunner" (this test's own
+            // name) could still be too narrow for a body Elite/Director add
+            // to that max(). Director's own radius (2.2, spec §3.13's
+            // MobDirectorConfig table) is FAR bigger than every existing
+            // archetype's default (~0.5), so door 1 (subject, index 1) is
+            // built to clear the OLD three-way formula by a wide margin —
+            // genuinely passable for Hero/Chaser/Gunner — while still
+            // missing the formula once Director's own body joins the max().
+            // Door 0 (index 0) stays the control, clearing both formulas.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            var director = ScriptableObject.CreateInstance<MobConfig>();
+            director.Radius = 2.2f; // spec §3.13's MobDirectorConfig table
+            float newRequired = 2f * (director.Radius + Geometry.Skin) + a.DoorClearance;
+            a.ZoneRadius = new[] { 20f, 40f };
+            a.ZoneWallCount = 1;
+            a.ZoneWallRadius = new[] { 20f };
+            a.ZoneWallHalfWidth = new[] { 1f };
+            a.ZoneWallDoorStart = new[] { 0 };
+            a.ZoneWallDoorCount = new[] { 2 };
+            a.DoorCenterRad = new[] { 0f, 1f };
+            a.DoorFreeWidth = new[] { newRequired + 1f, newRequired - 0.01f };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, director: director));
             Assert.That(ex.Message, Does.Contain("DoorFreeWidth"));
         }
 

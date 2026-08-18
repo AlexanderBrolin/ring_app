@@ -275,7 +275,7 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void SimConfig_CarriesExactlyEightSections() // Р52 guard
+        public void SimConfig_CarriesExactlyTenSections() // Р52 guard
         {
             // A network config (or any further section) landing inside
             // SimConfig would enter SimConfigHash automatically if Compute()
@@ -284,25 +284,73 @@ namespace Ring.Simulation.Tests
             // mismatch for a purely dev/deploy knob — that must be an OWNER
             // decision (Р52), never a silent side effect of adding a field.
             // This is a characterization guard: it pins the current field
-            // set by name, so a NINTH section fails loudly and asks for that
-            // decision instead of shipping quietly.
+            // set by name, so an ELEVENTH section fails loudly and asks for
+            // that decision instead of shipping quietly.
             //
-            // Stage 3 Task 1 (errata E-2) is the EIGHTH section, `Flow`
-            // (MatchFlowSimConfig) — a RECORDED decision, not a silent
-            // addition: `SimConfigHash.Compute` does not read it yet, and Т13
-            // is the single addressee that wires it (owner decision R-17,
-            // over errata E-6 I9's four). This test's rename (Seven -> Eight)
-            // and the updated `expected` list below are that record — the
-            // decision this guard exists to force, already made. The deferral
-            // itself is no longer recorded HERE alone: PendingHashFields above
-            // carries the five names, and EveryConfigNumberAffectsHash sweeps
-            // the section (Ф1 fix-round, review A-I1/B-I-2).
+            // Stage 3 Task 1 (errata E-2) was the EIGHTH section, `Flow`.
+            // Stage 3 Task 10 (spec Р213) adds the NINTH and TENTH, `Elite`
+            // and `Director` — same RECORDED-decision discipline: this
+            // test's rename (Eight -> Ten) and the widened `expected` list
+            // below ARE that record. Unlike Flow, Elite/Director's deferral
+            // from SimConfigHash is NOT carried by PendingHashFields above
+            // (that flat, name-only set cannot express "Elite.MaxSpeed is
+            // pending but Chaser.MaxSpeed is not" — the two sections share
+            // MobSimConfig's own field names 1:1 with the already-hashed
+            // Chaser/Gunner) — see
+            // EliteAndDirectorSections_DoNotAffectHash_UntilT13WiresThem
+            // below for the executable record of that deferral instead, and
+            // SimConfig.Elite/Director's own doc (Core/SimConfig.cs) for the
+            // full reasoning trail.
             string[] expected =
-                { "Hero", "Weapon", "Chaser", "Gunner", "Wave", "Arena", "Visibility", "Flow" };
+            {
+                "Hero", "Weapon", "Chaser", "Gunner", "Wave", "Arena", "Visibility", "Flow",
+                "Elite", "Director",
+            };
             FieldInfo[] fields = typeof(SimConfig).GetFields();
             string[] actual = new string[fields.Length];
             for (int i = 0; i < fields.Length; i++) actual[i] = fields[i].Name;
             CollectionAssert.AreEquivalent(expected, actual);
+        }
+
+        /// Stage 3 Task 10 (spec Р213, owner decision R-17): the executable
+        /// half of the deferral SimConfig_CarriesExactlyTenSections' own doc
+        /// just recorded — a comment alone is a debt with no enforcement,
+        /// the exact failure mode a prior Ф1 review already cost this
+        /// project once (same reasoning as
+        /// PendingArenaArrays_MutationDoesNotAffectHash_UntilT13WiresThem
+        /// above). EveryConfigNumberAffectsHash deliberately does NOT call
+        /// AssertSectionAffectsHash("Elite"/"Director") — that helper's
+        /// PendingHashFields lookup is keyed by bare field NAME, and
+        /// MobSimConfig's fields (MaxSpeed, Radius, MaxHp, ...) are the same
+        /// identifiers Chaser/Gunner's own, already-wired sections use, so
+        /// adding them to the flat set would also, silently, exempt
+        /// Chaser's/Gunner's real numbers from the sweep. This test sweeps
+        /// both new sections field-by-field with its own local helper
+        /// instead, asserting every one of them still leaves the hash
+        /// UNCHANGED. MUST GO RED THE DAY Т13 WIRES EITHER SECTION into
+        /// SimConfigHash.Compute — that is this test's whole purpose.
+        [Test]
+        public void EliteAndDirectorSections_DoNotAffectHash_UntilT13WiresThem()
+        {
+            AssertSectionDoesNotYetAffectHash("Elite");
+            AssertSectionDoesNotYetAffectHash("Director");
+        }
+
+        static void AssertSectionDoesNotYetAffectHash(string sectionName)
+        {
+            var baselineCfg = TestConfigs.Default();
+            ulong baseline = SimConfigHash.Compute(in baselineCfg);
+            FieldInfo sectionField = Section(sectionName);
+            foreach (FieldInfo field in sectionField.FieldType.GetFields())
+            {
+                object cfg = TestConfigs.Default();
+                object section = sectionField.GetValue(cfg);
+                field.SetValue(section, Bump(field.GetValue(section)));
+                sectionField.SetValue(cfg, section);
+                var mutated = (SimConfig)cfg;
+                Assert.AreEqual(baseline, SimConfigHash.Compute(in mutated),
+                    $"{sectionName}.{field.Name} должен ещё оставаться вне SimConfigHash до Т13");
+            }
         }
 
         [Test]
