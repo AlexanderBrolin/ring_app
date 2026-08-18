@@ -702,7 +702,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(tWallExpected, t); // no tolerance — the tie itself is exact
 
             // The winning normal must be the STADIUM's (radial from wallA's
-            // own cap centre), not the arc's (radial from the sim origin) —
+            // own cap center), not the arc's (radial from the sim origin) —
             // observably different at this contact.
             float2 contact = math.lerp(p0, p1, t);
             float2 expectedNormal = math.normalizesafe(contact - wallA, new float2(1f, 0f));
@@ -827,6 +827,43 @@ namespace Ring.Simulation.Tests
             // Slide removed the into-surface component: the resting velocity's
             // dot with the outward normal must no longer be negative.
             Assert.GreaterOrEqual(math.dot(vel, expectedNormal), -1e-4f);
+        }
+
+        [Test]
+        public void OpenFixture_HasNoBarrierThroughCenter()
+        {
+            // Stage 3 Task 12 (owner decision R-76). TestConfigs.Open() is the
+            // fixture dozens of movement/combat tests call "the open field",
+            // and Т12 gave DefaultArena() two zone rings — so "open" stopped
+            // being self-evident and became a property that has to be
+            // asserted, not read off a diff. A sweep straight across the arena
+            // through the center meets every barrier there is, at every radius
+            // there is: circles, interior walls and the two arcs alike.
+            //
+            // Both halves matter. The control arm (Default(), same sweep)
+            // proves the assertion can fail at all — without it, an Open()
+            // that silently stopped clearing anything would still pass.
+            var open = TestConfigs.Open();
+            float2 from = new float2(-open.Arena.Radius + 1f, 0f);
+            float2 to = new float2(open.Arena.Radius - 1f, 0f);
+
+            Assert.AreEqual(0, open.Arena.ZoneWallCount, "Open() must carry no zone walls");
+            Assert.AreEqual(0, open.Arena.ObstacleCount, "Open() must carry no circles");
+            Assert.AreEqual(0, open.Arena.WallCount, "Open() must carry no interior walls");
+            Assert.AreEqual(2, open.Arena.ZoneRadius.Length,
+                "Open() must KEEP the zone boundaries — they are not barriers, and " +
+                "Geometry.ZoneOf reads them directly (R-76)");
+            Assert.IsFalse(
+                Geometry.SweepArena(from, to, open.Hero.Radius, in open.Arena,
+                    includeWall: false, out _, out _),
+                "a sweep straight across Open() must meet no barrier at all");
+
+            var closed = TestConfigs.Default();
+            Assert.IsTrue(
+                Geometry.SweepArena(from, to, closed.Hero.Radius, in closed.Arena,
+                    includeWall: false, out _, out _),
+                "control: the same sweep across Default() must be stopped by the zone rings — " +
+                "otherwise the assertion above proves nothing");
         }
     }
 }

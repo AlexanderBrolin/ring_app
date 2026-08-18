@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 39230840e4cee19e88a1b3184a7d8e3d, type: 3}
   m_Name: ArenaConfig
   m_EditorClassIdentifier: Ring.Data::Ring.Data.ArenaConfig
-  Radius: 65
+  Radius: 113
   Obstacles:
   - Pos: {x: 10, y: 4}
     Radius: 2.2
@@ -30,6 +30,30 @@ MonoBehaviour:
     Radius: 2.8
   - Pos: {x: -6, y: -30}
     Radius: 3.2
+  - Pos: {x: 78, y: 0}
+    Radius: 3
+  - Pos: {x: 39, y: 67.55}
+    Radius: 2.5
+  - Pos: {x: -39, y: 67.55}
+    Radius: 4
+  - Pos: {x: -78, y: 0}
+    Radius: 3.5
+  - Pos: {x: -39, y: -67.55}
+    Radius: 2.5
+  - Pos: {x: 39, y: -67.55}
+    Radius: 3
+  - Pos: {x: 77.37, y: 64.92}
+    Radius: 3
+  - Pos: {x: 17.54, y: 99.47}
+    Radius: 2.5
+  - Pos: {x: -94.91, y: 34.54}
+    Radius: 4
+  - Pos: {x: -94.91, y: -34.54}
+    Radius: 3.5
+  - Pos: {x: 17.54, y: -99.47}
+    Radius: 2.5
+  - Pos: {x: 77.37, y: -64.92}
+    Radius: 3
   Walls:
   - A: {x: -28, y: 10}
     B: {x: -8, y: 10}
@@ -49,10 +73,72 @@ MonoBehaviour:
   - A: {x: -34, y: -20}
     B: {x: -16, y: -34}
     HalfWidth: 0.6
-  MaxMobs: 96
-  MaxProjectiles: 384
-  MaxEventsPerFrame: 512
+  - A: {x: 74, y: -10}
+    B: {x: 74, y: 10}
+    HalfWidth: 0.8
+  - A: {x: 81.6, y: -10}
+    B: {x: 81.6, y: 10}
+    HalfWidth: 0.8
+  - A: {x: -74, y: -10}
+    B: {x: -74, y: 10}
+    HalfWidth: 0.8
+  - A: {x: -81.6, y: -10}
+    B: {x: -81.6, y: 10}
+    HalfWidth: 0.8
+  - A: {x: -10, y: 97}
+    B: {x: 10, y: 97}
+    HalfWidth: 0.8
+  - A: {x: -10, y: 104.6}
+    B: {x: 10, y: 104.6}
+    HalfWidth: 0.8
+  - A: {x: -10, y: -97}
+    B: {x: 10, y: -97}
+    HalfWidth: 0.8
+  - A: {x: -10, y: -104.6}
+    B: {x: 10, y: -104.6}
+    HalfWidth: 0.8
+  MaxMobs: 288
+  MaxProjectiles: 1024
+  MaxEventsPerFrame: 1024
   SpawnClearance: 1
   MaxPlayers: 3
-  PlayerSpawnRingFrac: 0.8
+  PlayerSpawnRingFrac: 0.92
   BarrierTop: 3
+  MaxPickups: 256
+  ZoneRadius:
+  - 65
+  - 92
+  ZoneWallCount: 2
+  ZoneWallRadius:
+  - 65
+  - 92
+  ZoneWallHalfWidth:
+  - 1
+  - 1
+  ZoneWallDoorStart: 0000000003000000
+  ZoneWallDoorCount: 0300000003000000
+  DoorCenterRad:
+  - 1.5707964
+  - 3.6651914
+  - 5.7595863
+  - 0.5235988
+  - 2.6179938
+  - 4.712389
+  DoorFreeWidth:
+  - 6
+  - 6
+  - 6
+  - 6
+  - 6
+  - 6
+  DoorClearance: 1
+  ExtractPos:
+  - {x: 51, y: 88.33459}
+  - {x: 51, y: -88.33459}
+  - {x: 0, y: 78}
+  - {x: 0, y: 0}
+  ExtractZone: 00000102
+  ExtractKind: 00000001
+  ExtractRadius: 8
+  MaxContainers: 64
+  MaxContainerSlots: 8

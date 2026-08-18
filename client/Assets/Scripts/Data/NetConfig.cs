@@ -147,7 +147,11 @@ namespace Ring.Data
 
         [Range(0, 60)] public int MatchEndLingerSeconds = 10;
 
-        [Range(60, 7200)] public int MatchMaxDurationSeconds = 1800;
+        // Stage 3 Task 12 (spec §3.13, Р255): 1800 -> 900. ADR-001 sets a
+        // raid at 15-20 minutes and Stage 3 gives the match its own timeline
+        // (Director, gate, extraction); 900 s is the upper end of that band
+        // and the number the extraction loop is paced against.
+        [Range(60, 7200)] public int MatchMaxDurationSeconds = 900;
 
         // Stage 2 Task 41 (spec §3.10; Task 40 brief §2.7): once EVERY client
         // has disconnected, the server process waits this long before exiting

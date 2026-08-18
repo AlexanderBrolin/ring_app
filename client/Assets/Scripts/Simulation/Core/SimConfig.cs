@@ -233,6 +233,26 @@ namespace Ring.Simulation.Core
     /// wherever it is needed instead — wave spawn, loot tier, portal gate.
     public enum Zone : byte { Outer = 0, Middle = 1, Core = 2 }
 
+    /// Stage 3 Task 12: the two ExtractKind values, named once (rule 2 — the
+    /// convention was prose only until this task put real data behind it).
+    /// Same shape as Zone above: the enum names the values, ArenaSimConfig
+    /// keeps the raw wire-friendly `byte[]`, and call sites cast.
+    ///
+    /// Named ExitKind, not ExtractKind, on purpose — twice over. It must not
+    /// be read as PlayerState.ExtractKind, whose byte means something else
+    /// entirely (0 = "not extracted at all", errata E-1); and a type sharing
+    /// ArenaSimConfig.ExtractKind's own name would be a lookup trap at every
+    /// call site that touches both.
+    ///
+    /// It is an ENUM rather than two consts on ArenaSimConfig, and that is
+    /// not a style choice: SimConfigHashTests walks every config section with
+    /// plain GetFields(), which returns STATIC and CONST fields alongside
+    /// instance ones — a `const byte` there is handed straight to that
+    /// sweep's Bump(), which knows float/int/bool and throws
+    /// NotSupportedException on anything else. Config sections hold hashable
+    /// instance numbers and nothing else; the registry enforces it.
+    public enum ExitKind : byte { Portal = 0, Gate = 1 }
+
     /// Arena geometry and per-match entity caps.
     public struct ArenaSimConfig
     {
@@ -353,6 +373,7 @@ namespace Ring.Simulation.Core
         public float2[] ExtractPos;
         public byte[] ExtractZone;
         public byte[] ExtractKind;
+
 
         /// Stage 3 Task 8 (spec §3.15): 8 at the shipped layout — validated
         /// (Т12+) against Hero.Radius, same ReqPositive-adjacent per-match

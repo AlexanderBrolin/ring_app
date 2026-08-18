@@ -155,6 +155,9 @@ MonoBehaviour:
   _wave: {fileID: 11400000, guid: f70885052f0dd008f913f7c35ecee849, type: 2}
   _arena: {fileID: 11400000, guid: 867e8c92b82842b1e997ed0f876471d0, type: 2}
   _visibility: {fileID: 11400000, guid: d762a04f487c5bba39991b86e506805b, type: 2}
+  _elite: {fileID: 11400000, guid: f4ad71c3aaffd060bac674bb69923f1e, type: 2}
+  _director: {fileID: 11400000, guid: 3e889ee697e429f1784d88f81d3d3bf1, type: 2}
+  _flow: {fileID: 11400000, guid: b60f76a62098853bb80020d20f470252, type: 2}
   _net: {fileID: 11400000, guid: 651a65bd1f82245199607c45a5427037, type: 2}
   _playerPrefab: {fileID: 2552211895557894394, guid: 541badaf67fff32128e2775fa368e795, type: 3}
 --- !u!4 &1233571699
@@ -264,7 +267,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 34e4a322dca349547989b14021da4e23, type: 3}
   m_Name: 
   m_EditorClassIdentifier: FishNet.Runtime::FishNet.Managing.Transporting.TransportManager
-  Transport: {fileID: 0}
+  Transport: {fileID: 1507940235}
   _maximumClientPacketSize: 20480
   _intermediateLayer: {fileID: 0}
   _latencySimulator:

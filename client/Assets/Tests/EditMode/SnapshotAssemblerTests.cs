@@ -179,10 +179,11 @@ namespace Ring.Simulation.Tests
             return net;
         }
 
-        /// Open arena (no obstacles, no walls, waves pushed out of reach) with
-        /// the three players placed by hand — Geometry.SpawnPosFor would put
-        /// them on the spawn ring at radius 52, where every distance a
-        /// visibility fixture states would be incidental.
+        /// Open arena (no obstacles, no walls, no zone walls, waves pushed out
+        /// of reach) with the three players placed by hand — Geometry.
+        /// SpawnPosFor would put them on the spawn ring (radius 103.96 since
+        /// Stage 3 Task 12, 52 before it), where every distance a visibility
+        /// fixture states would be incidental.
         static SimulationWorld Trio(out SimConfig cfg, float2 p0, float2 p1, float2 p2)
         {
             cfg = TestConfigs.Open();
@@ -930,7 +931,23 @@ namespace Ring.Simulation.Tests
         {
             SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
             TestWorlds.SpawnMobsToCap(w);
-            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 3);
+            // Stage 3 Task 12: a roomier BYTE CAP than the shipped 1000, and
+            // the reason is this fixture's own crowd. SpawnMobsToCap fills the
+            // world to Arena.MaxMobs, which went 96 -> 288 (spec Р216), and
+            // every one of them sits inside the observers' sight — 3 + 288 * 9
+            // = 2595 B of mobs against a 1000 B frame. The assembler's
+            // documented precedence then does exactly what it promises
+            // (fixed part, then mobs into the remainder, then events into what
+            // is left): mobs consume everything and the frame carries NO
+            // events, which is what the "events must actually ride" premise
+            // below reported. That precedence is intended and is not what this
+            // test measures — GC allocation in steady state is — so the
+            // fixture buys room for both blocks (38 fixed + 2595 mobs + 275
+            // events = 2908) instead of thinning the crowd it exists to
+            // measure. The shipped 1000 stays honest in production, where an
+            // observer sees the mobs within SightRadius 45 (about 46 of the
+            // 288 at even density, 417 B), not all of them.
+            var asm = new SnapshotAssembler(cfg, Net(maxBytes: 4000), connectionCount: 3);
 
             void EmitFixture()
             {
@@ -1781,7 +1798,11 @@ namespace Ring.Simulation.Tests
         {
             SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
             TestWorlds.SpawnMobsToCap(w);
-            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 3);
+            // Same roomier cap, same reason as
+            // BeginTickAndBuildFor_DoNotAllocateGCMemory above: at the shipped
+            // 1000 B the 288-mob crowd leaves nothing for events, and a resend
+            // is an event.
+            var asm = new SnapshotAssembler(cfg, Net(maxBytes: 4000), connectionCount: 3);
             var idle = new SimInput[3];
 
             // Three ticks of events, so every connection's history is populated

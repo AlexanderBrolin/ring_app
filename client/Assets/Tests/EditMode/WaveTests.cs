@@ -60,7 +60,14 @@ namespace Ring.Simulation.Tests
         {
             var c = TestConfigs.Open();
             c.Wave.FirstWaveDelay = 0.1f;
-            c.Wave.MinSpawnDistanceToPlayer = 100f; // no valid points at all
+            // Stage 3 Task 12: "no valid points at all" is a claim about EVERY
+            // zone's spawn ring now, not about one. The literal 100 blocked the
+            // single 63 m ring of the Stage 2 arena; on the three-zone one the
+            // rings are 63 / 90 / 111, and 111 > 100 left the OUTER ring legal
+            // — the wave duly seated round(BaseCount 4 * ZoneWeights[Outer]
+            // 0.45) = 2 mobs there, which is exactly what this assertion saw.
+            // Derived from the arena so it can never fall behind a ring again.
+            c.Wave.MinSpawnDistanceToPlayer = c.Arena.Radius + 10f; // no valid points on ANY ring
             var w = new SimulationWorld(11, c);
             for (int i = 0; i < 60; i++) w.Tick(default); // not hanging is already success
             var snap = new RenderSnapshot(c.Arena);
@@ -85,6 +92,15 @@ namespace Ring.Simulation.Tests
         public void WaveComposition_FollowsGunnerShare()
         {
             var c = TestConfigs.Default();
+            // Stage 3 Task 12: this test's subject is the GUNNER SHARE, which
+            // is a within-zone number — so the fixture states one zone
+            // outright instead of inheriting the shipped three-way split. Left
+            // implicit, the wave now divides 4 mobs into Outer 2 / Middle 2,
+            // the middle pair spends its EliteShareMiddle 0.35 on an Elite,
+            // and round(2 * 0.2) rounds to zero gunners in both zones — the
+            // arithmetic below would be measuring zone routing (WaveZoneTests'
+            // subject, Т11) rather than the share it names.
+            c.Wave.ZoneWeights = new[] { 1f, 0f, 0f };
             var w = new SimulationWorld(11, c);
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);

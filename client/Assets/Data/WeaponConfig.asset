@@ -27,3 +27,7 @@ MonoBehaviour:
   SpreadRunMult: 1.5
   SpreadSlideMult: 2
   RunSpreadSpeedFrac: 0.5
+  ShotsPerCell: 10
+  AmmoStart: 120
+  AmmoMax: 400
+  EmergencyFireInterval: 1.25

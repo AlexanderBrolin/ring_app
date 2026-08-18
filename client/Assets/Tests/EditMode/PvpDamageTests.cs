@@ -818,14 +818,27 @@ namespace Ring.Simulation.Tests
             TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, TargetX)); // bystander, still inside the wide sweep
 
             // Wide enough to swallow the whole crowd from the launch point
-            // below, which sits ~8 m out rather than at the origin.
-            const float sweepRadius = 57f;
+            // below. Stage 3 Task 12 turned this from a literal into the
+            // inequality it always was: the launch sits just inside the padded
+            // rim, at Arena.Radius - sweepRadius - launchBack, so growing the
+            // arena pushes the launch AWAY from the crowd and a fixed sweep
+            // stops reaching it. At Radius 113 the old 57 launched from
+            // (55.7, 0) and left the far side of the spiral 59.64 m out — the
+            // premise assert below caught it. Solving
+            // (Radius - launchBack - sweepRadius) + crowdReach <= sweepRadius
+            // gives sweepRadius >= 72.15 here; the margin makes it 76.35.
+            // tFloor is unaffected: launchHeight - sweepRadius is 0.5 whatever
+            // the sweep, so (Radius - Height) / (VelZ * TickDt) stays 0.25.
+            const float crowdReach = 32f; // SpawnMobsToCap's spiral: 4 + 23 * 1.2 = 31.6
+            const float sweepMargin = 4f;
+            const float launchBack = 0.3f;
+            float sweepRadius = (c.Arena.Radius - launchBack + crowdReach) / 2f + sweepMargin;
             const float plungeVelZ = -60f;  // tFloor = (Radius - Height) / (VelZ * TickDt) = 0.25
-            const float launchHeight = sweepRadius + 0.5f;
+            float launchHeight = sweepRadius + 0.5f;
             // Just inside the boundary's own padded rim (Arena.Radius -
             // sweepRadius), moving outward, so SegmentRingWall's crossing lands
-            // inside this step instead of dozens of steps away.
-            const float launchBack = 0.3f;
+            // inside this step instead of dozens of steps away. `launchBack`
+            // is declared with the sweep arithmetic above, which needs it.
             float ringLimit = c.Arena.Radius - sweepRadius;
             var launchPos = new float2(ringLimit - launchBack, 0f);
             Assert.Less(launchBack, c.Weapon.ProjectileSpeed * SimulationWorld.TickDt,

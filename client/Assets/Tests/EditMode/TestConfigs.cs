@@ -104,7 +104,7 @@ namespace Ring.Simulation.Tests
                     CellsOnDeath = 0 },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f, WavePause = 4f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f, BaseCount = 4,
-                    CountGrowth = 2, MaxMobsPerWave = 36, MaxSpawnAttempts = 16,
+                    CountGrowth = 2, MaxMobsPerWave = 72, MaxSpawnAttempts = 16,
                     FallbackSlots = 24, GunnerShareBase = 0.2f, GunnerShareGrowth = 0.05f,
                     // Stage 2 Task 16: mirrors WaveConfig's C# default
                     // (two-sources-of-numbers discipline — test/code-default side).
@@ -119,6 +119,79 @@ namespace Ring.Simulation.Tests
                     ZoneWeights = new[] { 0.45f, 0.45f, 0.10f },
                     EliteShareMiddle = 0.35f, EliteShareOuterGrowth = 0.02f,
                     EliteShareOuterCap = 0.25f },
+                // Stage 3 Task 12 (spec §3.13/§3.4, owner decision R-75): the
+                // third and fourth archetypes, delivered as assets of the
+                // existing MobConfig class. Numbers and their sources, one
+                // by one — everything the spec names verbatim is marked so,
+                // everything else is derived from an already-shipped number
+                // rather than invented:
+                //   Elite: MaxHp 120, Radius 0.8, ContactDamage 25,
+                //     MaxSpeed 4.2 — spec §3.13 verbatim. Hit-zone belts,
+                //     multipliers, muzzle and the whole ranged block are the
+                //     Gunner's ("по образцу ганнера", §3.13 verbatim).
+                //     Accel/Telegraph/Cooldown/separation/swing-lead are the
+                //     Chaser's (Р214: "усиленный чейзер"). AttackRange 1.4 is
+                //     DERIVED: the Chaser reaches 1.1 - 0.5 = 0.6 m past its
+                //     own hull, and 0.8 + 0.6 keeps that same reach — the
+                //     field is center-to-center (MobAiSystem's Chase entry),
+                //     so a wider body needs a wider number for the same
+                //     fight. PreferredRange 2.5 is DERIVED for the same
+                //     reason: MobAiSystem dispatches Elite/Director by
+                //     distance (chaser inside AttackRange, gunner outside),
+                //     so at the Gunner's own 9 the Elite would park at 9 m
+                //     and never close — a Gunner with more HP, not Р214's
+                //     "enhanced chaser". 2.5 puts the hold band just outside
+                //     melee (1.0..4.0 with the Gunner's tolerance), so it
+                //     closes, fires while closing, and finishes in melee.
+                //   Director: MaxHp 2500, Radius 2.2, ContactDamage 45,
+                //     MaxSpeed 3.0, TelegraphSeconds 1.1 — spec §3.13
+                //     verbatim; everything else is the ELITE profile (spec
+                //     §3.4: "Elite-профиль с числами Директора"), except
+                //     AttackRange 2.8 by the same surface-reach derivation
+                //     (2.2 + 0.6) and PreferredRange back at the Gunner's 9,
+                //     because §3.4 gives the Director the ranged stance
+                //     outright ("дистанционный залп на Reposition/Fire") and
+                //     Р248 keeps it in the core anyway.
+                // Both are В1 tuning knobs. Radius 0.8 and 2.2 are NOT free
+                // knobs: 0.8 carries the wave spawn ring's 0.2 m margin and
+                // 2.2 carries the door width's 0.598 m.
+                // CellsOnDeath stays 0 for the same golden-safety reason
+                // Chaser/Gunner's does (owner decision R-18) — and it matters
+                // from this task on, because the zones this task turns on
+                // route 45% of every wave into the middle zone, where
+                // EliteShareMiddle 0.35 makes Elites spawn in both golden
+                // scenarios for the first time.
+                Elite = new MobSimConfig { MaxSpeed = 4.2f, Accel = 30f, Radius = 0.8f,
+                    MaxHp = 120f, ContactDamage = 25f, AttackRange = 1.4f,
+                    TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,
+                    PreferredRange = 2.5f, RangeTolerance = 1.5f, StrafeSpeed = 3f,
+                    FireInterval = 1.6f, ProjectileSpeed = 14f, ProjectileRadius = 0.15f,
+                    ProjectileLifetime = 3f, ProjectileDamage = 8f, LeadFactor = 0.8f,
+                    SeparationRadius = 1.2f, SeparationStrength = 6f, AvoidLookahead = 3f,
+                    AvoidMargin = 1f,
+                    LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
+                    LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
+                    CellsOnDeath = 0 },
+                Director = new MobSimConfig { MaxSpeed = 3.0f, Accel = 30f, Radius = 2.2f,
+                    MaxHp = 2500f, ContactDamage = 45f, AttackRange = 2.8f,
+                    TelegraphSeconds = 1.1f, AttackCooldown = 0.9f,
+                    PreferredRange = 9f, RangeTolerance = 1.5f, StrafeSpeed = 3f,
+                    FireInterval = 1.6f, ProjectileSpeed = 14f, ProjectileRadius = 0.15f,
+                    ProjectileLifetime = 3f, ProjectileDamage = 8f, LeadFactor = 0.8f,
+                    SeparationRadius = 1.2f, SeparationStrength = 6f, AvoidLookahead = 3f,
+                    AvoidMargin = 1f,
+                    LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
+                    LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
+                    CellsOnDeath = 0 },
+                // Stage 3 Task 12 (errata E-2): mirrors MatchFlowConfig's C#
+                // defaults, same two-sources discipline as every section
+                // above. Inert in both golden scenarios — nothing reads Flow
+                // until Т21/Т22 build the phase machine.
+                Flow = new MatchFlowSimConfig { GateDelaySeconds = 90f,
+                    ExtractChannelSeconds = 20f, RetinueCount = 2,
+                    RetinueRespawnSeconds = 25f, DirectorReserveSlots = 3 },
                 Arena = DefaultArena(),
                 // Stage 2 Task 19: mirrors VisibilityConfig's C# defaults
                 // (two-sources-of-numbers discipline — test/code-default side).
@@ -135,12 +208,28 @@ namespace Ring.Simulation.Tests
                 // defaults field for field — the golden scenarios run off THIS
                 // struct, so an arena change that skipped it would leave the
                 // golden hash pinned to the old layout while the game moved.
-                Radius = 65f, ObstacleCount = 8,
+                // Stage 3 Task 12 (sanctioned re-pin #2): the whole block below
+                // moves to the three-zone arena, field for field with
+                // ArenaConfig's own C# defaults — Radius 113, twelve more
+                // circles and eight more walls for the middle and outer
+                // zones, the raised caps, the 0.92 spawn ring, the zone
+                // walls with their doors and the four exits. THIS is the
+                // mechanism of the re-pin: the golden scenarios run off this
+                // struct, so the arena moving here is what moves both
+                // digests.
+                Radius = 113f, ObstacleCount = 20,
                 ObstaclePos = new[] { new float2(10f, 4f), new float2(-8f, 9f),
                     new float2(2f, -12f), new float2(-13f, -6f), new float2(14f, -9f),
-                    new float2(-40f, 8f), new float2(30f, 22f), new float2(-6f, -30f) },
-                ObstacleRadius = new[] { 2.2f, 1.8f, 2.5f, 2.0f, 1.6f, 3.0f, 2.8f, 3.2f },
-                MaxMobs = 96, MaxProjectiles = 384, MaxEventsPerFrame = 512,
+                    new float2(-40f, 8f), new float2(30f, 22f), new float2(-6f, -30f),
+                    new float2(78f, 0f), new float2(39f, 67.55f), new float2(-39f, 67.55f),
+                    new float2(-78f, 0f), new float2(-39f, -67.55f), new float2(39f, -67.55f),
+                    new float2(77.37f, 64.92f), new float2(17.54f, 99.47f),
+                    new float2(-94.91f, 34.54f), new float2(-94.91f, -34.54f),
+                    new float2(17.54f, -99.47f), new float2(77.37f, -64.92f) },
+                ObstacleRadius = new[] { 2.2f, 1.8f, 2.5f, 2.0f, 1.6f, 3.0f, 2.8f, 3.2f,
+                    3.0f, 2.5f, 4.0f, 3.5f, 2.5f, 3.0f,
+                    3.0f, 2.5f, 4.0f, 3.5f, 2.5f, 3.0f },
+                MaxMobs = 288, MaxProjectiles = 1024, MaxEventsPerFrame = 1024,
                 // Stage 3 Task 3: same mirror discipline as the three caps
                 // above — ArenaConfig's own C# default.
                 MaxPickups = 256,
@@ -158,33 +247,47 @@ namespace Ring.Simulation.Tests
                 // are independent of the zone layout (only Hero.Radius/
                 // InventoryCapacity bound them), so they mirror the SO's real
                 // numbers like every other scalar in this method.
-                ZoneRadius = System.Array.Empty<float>(),
-                ZoneWallCount = 0,
-                ZoneWallRadius = System.Array.Empty<float>(),
-                ZoneWallHalfWidth = System.Array.Empty<float>(),
-                ZoneWallDoorStart = System.Array.Empty<int>(),
-                ZoneWallDoorCount = System.Array.Empty<int>(),
-                DoorCenterRad = System.Array.Empty<float>(),
-                DoorFreeWidth = System.Array.Empty<float>(),
+                ZoneRadius = new[] { 65f, 92f },
+                ZoneWallCount = 2,
+                ZoneWallRadius = new[] { 65f, 92f },
+                ZoneWallHalfWidth = new[] { 1f, 1f },
+                ZoneWallDoorStart = new[] { 0, 3 },
+                ZoneWallDoorCount = new[] { 3, 3 },
+                DoorCenterRad = new[] { math.radians(90f), math.radians(210f), math.radians(330f),
+                    math.radians(30f), math.radians(150f), math.radians(270f) },
+                DoorFreeWidth = new[] { 6f, 6f, 6f, 6f, 6f, 6f },
                 DoorClearance = 1.0f,
-                ExtractPos = System.Array.Empty<float2>(),
-                ExtractZone = System.Array.Empty<byte>(),
-                ExtractKind = System.Array.Empty<byte>(),
+                // Owner decisions R-65 (radius 100 -> 102) and R-72 (angle
+                // 180 -> 300 deg) — ArenaConfig's own field carries the full
+                // arithmetic for both.
+                ExtractPos = new[] { new float2(51f, 88.33459f), new float2(51f, -88.33459f),
+                    new float2(0f, 78f), float2.zero },
+                ExtractZone = new byte[] { 0, 0, 1, 2 },
+                ExtractKind = new byte[] { 0, 0, 0, 1 },
                 ExtractRadius = 8f,
                 MaxContainers = 64,
                 MaxContainerSlots = 8,
                 // Stage 2 Task 4: same values as ArenaConfig's C# defaults
                 // (two-sources-of-numbers discipline — this is the test/code-default side).
-                MaxPlayers = 3, PlayerSpawnRingFrac = 0.8f,
+                MaxPlayers = 3, PlayerSpawnRingFrac = 0.92f,
                 // Stage 2 Task 16: interior walls, same mirror discipline.
-                WallCount = 6,
+                WallCount = 14,
                 WallA = new[] { new float2(-28f, 10f), new float2(-28f, 17.6f),
                     new float2(12f, -6f), new float2(12f, -13.6f),
-                    new float2(2f, 24f), new float2(-34f, -20f) },
+                    new float2(2f, 24f), new float2(-34f, -20f),
+                    new float2(74f, -10f), new float2(81.6f, -10f),
+                    new float2(-74f, -10f), new float2(-81.6f, -10f),
+                    new float2(-10f, 97f), new float2(-10f, 104.6f),
+                    new float2(-10f, -97f), new float2(-10f, -104.6f) },
                 WallB = new[] { new float2(-8f, 10f), new float2(-8f, 17.6f),
                     new float2(34f, -6f), new float2(34f, -13.6f),
-                    new float2(2f, 44f), new float2(-16f, -34f) },
-                WallHalfWidth = new[] { 0.8f, 0.8f, 0.8f, 0.8f, 0.6f, 0.6f },
+                    new float2(2f, 44f), new float2(-16f, -34f),
+                    new float2(74f, 10f), new float2(81.6f, 10f),
+                    new float2(-74f, 10f), new float2(-81.6f, 10f),
+                    new float2(10f, 97f), new float2(10f, 104.6f),
+                    new float2(10f, -97f), new float2(10f, -104.6f) },
+                WallHalfWidth = new[] { 0.8f, 0.8f, 0.8f, 0.8f, 0.6f, 0.6f,
+                    0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f },
                 // Stage 2 Task 46 — THE ONE FIELD WHERE THIS MIRROR IS BROKEN
                 // ON PURPOSE. ArenaConfig's own C# default is 3 m (the height
                 // the game plays at); this baseline stays at 0, "no modelled
@@ -229,6 +332,28 @@ namespace Ring.Simulation.Tests
             c.Arena.WallA = System.Array.Empty<float2>();
             c.Arena.WallB = System.Array.Empty<float2>();
             c.Arena.WallHalfWidth = System.Array.Empty<float>();
+            // Stage 3 Task 12 (owner decision R-76): "without obstacles" now
+            // also means without the ZONE WALLS DefaultArena() ships, for the
+            // very same reason it has always dropped the circles and (since
+            // Stage 2 Task 16) the interior walls — an open-field fixture must
+            // not have its geometry silently rewritten by an arena-layout
+            // pass. Without this, every Open()-based movement/combat fixture
+            // would suddenly be fenced in by two rings.
+            //
+            // ZoneRadius and the portals deliberately STAY. They are not
+            // barriers: nothing collides with a zone boundary or an exit, and
+            // Geometry.ZoneOf reads ZoneRadius[0]/[1] directly — zeroing them
+            // would hand every Т13+ consumer a zoneless arena nobody asked
+            // for, and crash ZoneSpawnRingRadius (R-53's own invariant) in the
+            // bargain. ZoneGeometryTests.OpenFixture_HasNoBarrierThroughCenter
+            // is what proves "open" is still literally true.
+            c.Arena.ZoneWallCount = 0;
+            c.Arena.ZoneWallRadius = System.Array.Empty<float>();
+            c.Arena.ZoneWallHalfWidth = System.Array.Empty<float>();
+            c.Arena.ZoneWallDoorStart = System.Array.Empty<int>();
+            c.Arena.ZoneWallDoorCount = System.Array.Empty<int>();
+            c.Arena.DoorCenterRad = System.Array.Empty<float>();
+            c.Arena.DoorFreeWidth = System.Array.Empty<float>();
             return c;
         }
 

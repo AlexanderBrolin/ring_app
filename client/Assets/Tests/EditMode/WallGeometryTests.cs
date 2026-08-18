@@ -212,9 +212,10 @@ namespace Ring.Simulation.Tests
             Assert.Less(w.Player.Pos.y, 1.5f,
                 "test setup: must still be constrained by the wall's flat side at this checkpoint");
 
-            // Capped well short of the arena's own outer ring (radius 65,
-            // TestConfigs.Open()'s default — reached only well past this
-            // test's own 100-tick budget) — this test's job is the CORRIDOR
+            // Capped well short of the arena's own outer ring (radius 113,
+            // TestConfigs.Open()'s default since Stage 3 Task 12; 65 before it
+            // — reached only well past this test's own 100-tick budget either
+            // way, and the margin only grew) — this test's job is the CORRIDOR
             // wall's own seam (crossed by ~tick 24), not an incidental second
             // collision against unrelated ring geometry.
             const int ticks = 100;

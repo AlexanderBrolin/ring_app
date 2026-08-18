@@ -102,6 +102,15 @@ namespace Ring.Simulation.Tests
             // of this test green).
             c.Wave.BaseCount = c.Wave.FallbackSlots;
             c.Wave.MaxMobsPerWave = c.Wave.FallbackSlots * 2;
+            // Stage 3 Task 12: the closing assertion counts the wave against
+            // ONE ring's worth of slots, so the fixture now says so instead of
+            // inheriting the shipped three-way split. With three rings the
+            // grid offers 3 * FallbackSlots = 72 seats, the two-player wave of
+            // round(24 * 1.7) = 41 fitted into them without a single refusal,
+            // and the distance rule this test exists for was never exercised —
+            // the assertion said exactly that ("no ring slot was refused at
+            // all", 41 against 24) and was right.
+            c.Wave.ZoneWeights = new[] { 1f, 0f, 0f };
             float ringRadius = c.Arena.Radius - c.Wave.SpawnRingInset;
             // Half the spawn ring's radius: comfortably larger than the gap
             // between a player parked on the ring and the ring itself, so the

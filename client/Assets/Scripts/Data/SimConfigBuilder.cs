@@ -30,7 +30,7 @@ namespace Ring.Data
         /// in-memory, without waiting on Т12's asset delivery.
         public static SimConfig Build(HeroConfig hero, WeaponConfig weapon, MobConfig chaser,
             MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility,
-            MobConfig elite = null, MobConfig director = null)
+            MobConfig elite = null, MobConfig director = null, MatchFlowConfig flow = null)
         {
             var cfg = new SimConfig
             {
@@ -134,6 +134,22 @@ namespace Ring.Data
                     EliteShareOuterCap = wave.EliteShareOuterCap
                 },
                 Arena = ToArenaSimConfig(arena),
+                // Stage 3 Task 12 (errata E-2): the match-flow pacing block.
+                // `null` means "no override" exactly as it does for
+                // elite/director above — every call site that predates this
+                // parameter keeps getting an all-zero Flow, which is what
+                // ConfigTests.Build_MatchFlowConfigOmitted_LeavesFlowAtZero
+                // states outright.
+                Flow = flow != null
+                    ? new MatchFlowSimConfig
+                    {
+                        GateDelaySeconds = flow.GateDelaySeconds,
+                        ExtractChannelSeconds = flow.ExtractChannelSeconds,
+                        RetinueCount = flow.RetinueCount,
+                        RetinueRespawnSeconds = flow.RetinueRespawnSeconds,
+                        DirectorReserveSlots = flow.DirectorReserveSlots
+                    }
+                    : default,
                 // Stage 2 Task 22 (spec §3.15): seventh Build() parameter —
                 // field names mirror VisibilitySimConfig one to one.
                 Visibility = new VisibilitySimConfig
@@ -630,6 +646,27 @@ namespace Ring.Data
         /// center). One home, one shared computation (rule 2) — the
         /// wave-only three-way max is reused as-is by the full five-way one
         /// below, not a second math.max chain.
+        /// ⚠ ASSUMPTION THIS METHOD CANNOT ENFORCE, WITH ITS ADDRESSEE NAMED
+        /// (Stage 3 Task 12, coordinator finding on mutation M8): its answer —
+        /// and therefore the STRENGTH of every rule built on it — depends on
+        /// whether the caller handed Build the `elite`/`director` assets at
+        /// all. Both parameters are trailing and optional, so a call that
+        /// omits them gets `default(MobSimConfig)`, Radius 0, and a max() that
+        /// silently drops 2.2 m of Director and 0.8 m of Elite: the door-width
+        /// rule falls from 5.402 to 2.002, and the wave spawn-ring band
+        /// narrows from (63.2, 66.8) to (63.5, 66.5) — enough for a spawn ring
+        /// at 63.5 to read as legal on one path and illegal on another.
+        /// Measured, not imagined: mutation M8 moved the Core ring exactly
+        /// there, and the rule fired only where the assets were supplied.
+        ///
+        /// Making them REQUIRED is the fix and it cannot happen here: 70+ call
+        /// sites pass neither, and every one of them would start throwing on
+        /// numbers that are legitimately absent today. ADDRESSEE — **Т22**,
+        /// where the Director first spawns and the same task already owes
+        /// ValidateMob/ValidateZones coverage for these two sections (Т12
+        /// report's own debt list). Until then, a caller that means "the
+        /// shipped configuration" must pass them, which is what
+        /// ConfigTests.BuildShipped exists to guarantee on the test side.
         static float MaxBodyRadius(in SimConfig cfg, bool waveArchetypesOnly = false)
         {
             float waveMax = math.max(cfg.Chaser.Radius, math.max(cfg.Gunner.Radius, cfg.Elite.Radius));
@@ -832,6 +869,11 @@ namespace Ring.Data
                 // wall nominally "at" that zone's boundary) — same
                 // "check the ring against every wall" breadth the player
                 // spawn-ring loop right above already uses.
+                // ⚠ This rule is only as strong as the bodies it is given —
+                // see MaxBodyRadius's own doc: without the Elite asset the
+                // band it draws is 0.3 m narrower on each side, and a spawn
+                // ring parked in that 0.3 m reads as legal. Addressee of the
+                // fix is Т22, named there.
                 if (cfg.Arena.ZoneRadius.Length >= 2)
                 {
                     float maxWaveBodyRadius = MaxBodyRadius(in cfg, waveArchetypesOnly: true);
@@ -885,6 +927,38 @@ namespace Ring.Data
                             "body — a portal must not overlap the wall it sits next to.");
                     }
                 }
+
+                // Stage 3 Task 12 (owner decision R-79): ExtractZone[p] and
+                // ExtractPos[p] state the same fact — which zone this exit
+                // stands in — and Geometry.ZoneOf is the only arbiter of it.
+                // Т21/Т23 gate portal availability off the declared BYTE, so
+                // a disagreement would open a "middle" portal standing in the
+                // outer band with nothing anywhere to notice. Self-gated on
+                // zones existing at all: ZoneOf reads ZoneRadius[0]/[1]
+                // directly, and a zoneless arena (R-53) has no zone to name.
+                if (cfg.Arena.ZoneRadius.Length == 2 && p < cfg.Arena.ExtractZone.Length)
+                {
+                    float2 extractPos = cfg.Arena.ExtractPos[p];
+                    Zone actual = Geometry.ZoneOf(extractPos, in cfg.Arena);
+                    if (cfg.Arena.ExtractZone[p] != (byte)actual)
+                    {
+                        errors.Add($"Arena.ExtractZone[{p}] says {(Zone)cfg.Arena.ExtractZone[p]} " +
+                            $"but Arena.ExtractPos[{p}] ({extractPos.x:F3}, {extractPos.y:F3}) " +
+                            $"lies in {actual} — the declared zone must match the geometry.");
+                    }
+                }
+            }
+
+            // Stage 3 Task 12: the three portal arrays are parallel, same
+            // convention as ObstaclePos/ObstacleRadius — a short one would
+            // make the rule above silently skip entries instead of failing.
+            if (cfg.Arena.ExtractZone.Length != cfg.Arena.ExtractPos.Length
+                || cfg.Arena.ExtractKind.Length != cfg.Arena.ExtractPos.Length)
+            {
+                errors.Add("Arena.ExtractZone and Arena.ExtractKind must be the same length as " +
+                    $"Arena.ExtractPos (got ExtractPos={cfg.Arena.ExtractPos.Length}, " +
+                    $"ExtractZone={cfg.Arena.ExtractZone.Length}, " +
+                    $"ExtractKind={cfg.Arena.ExtractKind.Length}).");
             }
         }
 

@@ -27,7 +27,7 @@ MonoBehaviour:
   LatencySimLossPercent: 5
   JoinTimeoutSeconds: 120
   MatchEndLingerSeconds: 10
-  MatchMaxDurationSeconds: 1800
+  MatchMaxDurationSeconds: 900
   MatchAbandonGraceSeconds: 30
   SpectatorSwitchCooldownSeconds: 0.35
   EntityFadeTicks: 15

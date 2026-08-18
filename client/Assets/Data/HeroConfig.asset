@@ -53,3 +53,6 @@ MonoBehaviour:
   AimSettleSeconds: 0.5
   LinkRefund: 10
   EdgeRequestMinTicks: 3
+  PickupRadius: 2
+  InventoryCapacity: 8
+  MaxInventoryItems: 16

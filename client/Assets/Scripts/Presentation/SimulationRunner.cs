@@ -98,6 +98,15 @@ namespace Ring.Presentation
         [SerializeField] ArenaConfig _arena;
         // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter.
         [SerializeField] VisibilityConfig _visibility;
+        // Stage 3 Task 12 (errata E-6 I5, owner decision R-73): the two new
+        // mob archetypes and the match-flow pacing block. Without them the
+        // shipped game builds SimConfig with Elite/Director/Flow all zero —
+        // and waves have been spawning Elites since Т11, so a zero-HP,
+        // zero-radius Elite would reach milestone В1 in silence. Assigned by
+        // StageOneSceneBootstrap like every reference above.
+        [SerializeField] MobConfig _elite;
+        [SerializeField] MobConfig _director;
+        [SerializeField] MatchFlowConfig _flow;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] CameraConfig _camera;
         [SerializeField] InputActionAsset _actionsAsset;
@@ -1067,7 +1076,8 @@ namespace Ring.Presentation
             if (_pendingApplyConfig)
             {
                 _pendingApplyConfig = false;
-                SimConfig next = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
+                SimConfig next = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave,
+                    _arena, _visibility, _elite, _director, _flow);
                 try
                 {
                     _backend.ApplyConfig(next);
@@ -1515,7 +1525,8 @@ namespace Ring.Presentation
         /// playing.
         public void Restart(long seed)
         {
-            SimConfig cfg = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
+            SimConfig cfg = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena,
+                _visibility, _elite, _director, _flow);
             // The seven balance SOs stay serialized on THIS component (spec
             // §3.12 is about whose config is authoritative, not about where the
             // assets are wired): the backend is handed the finished `SimConfig`

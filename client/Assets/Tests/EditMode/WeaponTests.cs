@@ -110,6 +110,19 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             cfg.Weapon.ProjectileLifetime = 60f; // projectiles never expire
             cfg.Weapon.FireInterval = 0.001f;    // flood the cap instantly
+            // Stage 3 Task 12: the flood has to outlast the cap, and since
+            // Т2 it is the MAGAZINE that decides how long it lasts. At
+            // FireInterval 0.001 against TickDt the while loop fires 33 rounds
+            // a tick, so the fixture's 400 rounds are gone by tick 12 and the
+            // emergency interval (1.25 s) adds barely two more over the
+            // remaining 48 — about 402 rounds against a cap that went 384 ->
+            // 1024 (spec Р216). The cap was simply never reached and
+            // ProjectileSpawnsSkipped stayed 0. Tying the magazine to the cap
+            // makes the flood outlast it by construction, whatever either
+            // number becomes later: 1124 rounds at 33 a tick fill 1024 slots
+            // by tick 31, inside this run's own 60.
+            cfg.Weapon.AmmoStart = cfg.Arena.MaxProjectiles + 100;
+            cfg.Weapon.AmmoMax = cfg.Weapon.AmmoStart;
             static ulong Run(SimConfig c2)
             {
                 var w2 = new SimulationWorld(1, c2);

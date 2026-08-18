@@ -14,7 +14,12 @@ namespace Ring.Data
         [Range(1, 50)] public int BaseCount = 4;
         [Range(0, 20)] public int CountGrowth = 2;
         // Stage 2 Task 16 (spec §3.4): 24 -> 36, headroom for the x2.4 three-player scale.
-        [Range(1, 100)] public int MaxMobsPerWave = 36;
+        // Stage 3 Task 12 (spec §3.13): 36 -> 72. The arena is three zones
+        // now and a wave is split across all three by ZoneWeights — at 36 the
+        // core's 10% share rounds to three or four mobs and the periphery
+        // never fills at all, so a wave could not populate the arena it is
+        // spread over.
+        [Range(1, 100)] public int MaxMobsPerWave = 72;
         [Range(1, 100)] public int MaxSpawnAttempts = 16;
         [Range(0, 100)] public int FallbackSlots = 24;
         [Range(0f, 1f)] public float GunnerShareBase = 0.2f;

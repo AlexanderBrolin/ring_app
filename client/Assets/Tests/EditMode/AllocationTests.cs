@@ -265,8 +265,8 @@ namespace Ring.Simulation.Tests
                 + "scan is a realistically long one rather than a near-empty array");
             // Observer 0 into the middle of the crowd (SpawnMobsToCap spreads
             // mobs over radii ~4…31 around the origin) — the natural
-            // three-player spawn ring sits at radius 52, from where very
-            // little is visible at all.
+            // three-player spawn ring sits at radius 103.96 (Stage 3 Task 12;
+            // 52 before it), from where very little is visible at all.
             TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
 
             var setA = new VisibilitySet(TestWorlds.Capacity(config));
@@ -275,7 +275,7 @@ namespace Ring.Simulation.Tests
 
             // A subject the observer genuinely sees, taken from the set itself
             // rather than assumed: DefaultArena()'s obstacles and walls decide
-            // which of the 96 mobs clear LoS, and this measurement has no
+            // which of the Arena.MaxMobs mobs clear LoS, and this measurement has no
             // business restating that geometry.
             int visibleMobId = 0;
             float2 visibleMobPos = float2.zero;

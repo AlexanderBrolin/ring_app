@@ -81,7 +81,17 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.Open();
             float rim = cfg.Arena.Radius - cfg.Hero.Radius;
             var w = World();
-            for (int i = 0; i < 400; i++) w.Tick(Move(1f, 0f)); // run into the wall
+            // Stage 3 Task 12: the RUN LENGTH is a fixture expression now, for
+            // exactly the reason the ring radius already was. 400 ticks covered
+            // 400 * MaxSpeed * TickDt = 93.3 m, which crossed the 65 m arena
+            // twice over and stops 20 m short of the 113 m one — the run ended
+            // at |pos| = 92.83 with the player still walking, and the assertion
+            // below read that as "the wall is in the wrong place" (it is not:
+            // 92.83 = 93.3 minus the acceleration ramp, to the centimetre).
+            // + 30 ticks of slack covers the ramp and leaves the player pinned
+            // against the rim rather than arriving exactly on the last tick.
+            int runTicks = (int)math.ceil(rim / (cfg.Hero.MaxSpeed * SimulationWorld.TickDt)) + 30;
+            for (int i = 0; i < runTicks; i++) w.Tick(Move(1f, 0f)); // run into the wall
             float2 atWall = w.Player.Pos;
             Assert.AreEqual(rim, math.length(atWall), 0.05f);
             for (int i = 0; i < 30; i++) w.Tick(Move(1f, 1f)); // diagonal into the wall -> slides

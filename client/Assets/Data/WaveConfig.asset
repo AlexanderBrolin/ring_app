@@ -18,9 +18,16 @@ MonoBehaviour:
   MinSpawnDistanceToPlayer: 8
   BaseCount: 4
   CountGrowth: 2
-  MaxMobsPerWave: 36
+  MaxMobsPerWave: 72
   MaxSpawnAttempts: 16
   FallbackSlots: 24
   GunnerShareBase: 0.2
   GunnerShareGrowth: 0.05
   PerPlayerCountFrac: 0.7
+  ZoneWeights:
+  - 0.45
+  - 0.45
+  - 0.1
+  EliteShareMiddle: 0.35
+  EliteShareOuterGrowth: 0.02
+  EliteShareOuterCap: 0.25

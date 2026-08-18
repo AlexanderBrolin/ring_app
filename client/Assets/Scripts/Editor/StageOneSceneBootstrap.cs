@@ -411,8 +411,23 @@ namespace Ring.Editor
                 .ReadAllText($"{DataDir}/MobGunnerConfig.asset")
                 .Contains("SwingLeadMaxMeters");
 
+            // Stage 3 Task 12 (spec §3.13, errata E-6 I5): the Elite and the
+            // Director are new ASSETS of the existing MobConfig class, not a
+            // new class — so they are seeded exactly the way the gunner is
+            // (ApplyGunnerDefaults' own first-creation contract): a brand-new
+            // asset gets the archetype numbers once, and an owner hand-tune at
+            // milestone В1 survives every later re-run.
+            MobConfig elite = GetOrCreate<MobConfig>("MobEliteConfig", out bool eliteCreated);
+            MobConfig director = GetOrCreate<MobConfig>("MobDirectorConfig", out bool directorCreated);
+            if (eliteCreated && ApplyEliteDefaults(elite)) EditorUtility.SetDirty(elite);
+            if (directorCreated && ApplyDirectorDefaults(director)) EditorUtility.SetDirty(director);
+
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
+            // Stage 3 Task 12 (errata E-2): match-flow pacing — a brand-new SO
+            // CLASS, so its C# field initializers ARE the shipped numbers and
+            // no seeding method is needed (VisibilityConfig's own precedent).
+            MatchFlowConfig flow = GetOrCreate<MatchFlowConfig>("MatchFlowConfig");
             // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter — a
             // brand-new asset, so its C# defaults ARE the shipped numbers
             // (VisibilityConfig.cs's own doc: they mirror
@@ -525,9 +540,41 @@ namespace Ring.Editor
                 waveChanged |= waveDelta;
                 feelChanged |= feelDelta;
             }
+
+            // Stage 3 Task 12 (spec §3.13, plan Т12): the Stage 2 gate above is
+            // CLOSED FOR GOOD (Р120) — it reads "Walls:", a key Task 16
+            // committed — so the sanctioned Stage 3 edits of EXISTING values
+            // need a gate of their own, measured the same way: on the
+            // ArenaConfig.asset TEXT, snapshotted BEFORE the EnsureAssetHasKey
+            // /SaveAssets block below can change it, and keyed on a field that
+            // cannot appear in the file until this very task writes it.
+            // "ZoneRadius:" is that field (Т8 declared it, deliberately empty,
+            // and an empty array still serializes the key — so this reads true
+            // exactly once, on the delivery run, and false in every clone
+            // afterwards).
+            //
+            // NEW keys are NOT this block's business, then or now: they arrive
+            // through the EnsureAssetHasKey marker mechanism (ArenaConfig's
+            // marker is MaxContainerSlots, WaveConfig's EliteShareOuterCap —
+            // both already moved by the tasks that appended those fields,
+            // errata E-7/owner decision R-4), which is why this method touches
+            // only values that already exist on disk.
+            bool stageThreePending = !System.IO.File
+                .ReadAllText($"{DataDir}/ArenaConfig.asset")
+                .Contains("ZoneRadius:");
+
+            bool netChanged = false;
+            if (stageThreePending)
+            {
+                arenaChanged |= ApplyStageThreeBalance(arena, wave, net,
+                    out bool waveThreeDelta, out bool netDelta);
+                waveChanged |= waveThreeDelta;
+                netChanged |= netDelta;
+            }
             if (arenaChanged) EditorUtility.SetDirty(arena);
             if (waveChanged) EditorUtility.SetDirty(wave);
             if (feelChanged) EditorUtility.SetDirty(gameFeel);
+            if (netChanged) EditorUtility.SetDirty(net);
 
             // Task 27 review fix-round (extended by the milestone-4 DoD
             // iteration, generalized to five assets by Task 17): an already-
@@ -603,6 +650,18 @@ namespace Ring.Editor
             // above, not a migration of an older asset.
             EditorBootstrapUtils.EnsureAssetHasKey(visibility, $"{DataDir}/VisibilityConfig.asset",
                 "HearPositionGridMeters"); // Stage 2 Task 22
+            // Stage 3 Task 12: the two new MobConfig assets join the same
+            // mechanism their two older siblings use, with MobConfig's own
+            // marker field — brand-new assets on this run, so these are
+            // one-time onboardings, not migrations. MatchFlowConfig joins for
+            // the first time with DirectorReserveSlots, its class's own last
+            // field.
+            EditorBootstrapUtils.EnsureAssetHasKey(elite, $"{DataDir}/MobEliteConfig.asset",
+                "SwingLeadMaxMeters"); // Stage 3 Task 12
+            EditorBootstrapUtils.EnsureAssetHasKey(director, $"{DataDir}/MobDirectorConfig.asset",
+                "SwingLeadMaxMeters"); // Stage 3 Task 12
+            EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
+                "DirectorReserveSlots"); // Stage 3 Task 12
             // NetConfig joins the marker mechanism for the first time here,
             // in Stage 2 Task 23, with MatchMaxDurationSeconds (the class's
             // own newest/last field) as its marker — brand-new asset on
@@ -710,6 +769,12 @@ namespace Ring.Editor
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_wave", wave);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_arena", arena);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_visibility", visibility);
+            // Stage 3 Task 12 (owner decision R-73): without these three the
+            // PlayMode scene would build SimConfig with Elite/Director/Flow at
+            // zero — and waves have spawned Elites since Т11.
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_elite", elite);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_director", director);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_flow", flow);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_gameFeel", gameFeel);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_camera", camera);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_actionsAsset", actionsAsset);
@@ -1805,6 +1870,155 @@ namespace Ring.Editor
                 Object.DestroyImmediate(waveDefaults);
                 Object.DestroyImmediate(feelDefaults);
             }
+        }
+
+        /// Stage 3 Task 12 (spec §3.13/§3.15): the ONE-TIME delivery of Stage
+        /// 3's sanctioned edits of EXISTING values into the already-committed
+        /// `.asset`s — the exact role ApplyStageTwoBalance played for Stage 2,
+        /// behind a gate of its own (see the call site for why the Stage 2
+        /// gate could not be reused, spec Р120).
+        ///
+        /// The VALUES are not restated here either: a pristine
+        /// `CreateInstance` of each class supplies them (spec §0 — the C#
+        /// field initializer is the starting-balance source of truth), and
+        /// this method only decides WHICH fields are sanctioned to move.
+        /// The sanctioned list, spec §3.13's own table plus the layout of
+        /// §3.15: ArenaConfig's Radius (65 -> 113), MaxMobs (96 -> 288),
+        /// MaxProjectiles (384 -> 1024), MaxEventsPerFrame (512 -> 1024),
+        /// PlayerSpawnRingFrac (0.8 -> 0.92) and the two layout arrays that
+        /// grow with the arena (Obstacles 8 -> 20, Walls 6 -> 14);
+        /// WaveConfig's MaxMobsPerWave (36 -> 72); NetConfig's
+        /// MatchMaxDurationSeconds (1800 -> 900, spec Р255). NOTHING else on
+        /// those three assets moves — SpawnClearance, MaxPlayers, BarrierTop,
+        /// wave pacing and every network number the owner tuned across Stage
+        /// 2 are deliberately left alone.
+        ///
+        /// The zone walls, doors, portals and container caps are absent on
+        /// purpose: they are NEW keys, and new keys travel by the
+        /// EnsureAssetHasKey marker mechanism, which this method never
+        /// duplicates (ApplyStageTwoBalance's own PerPlayerCountFrac note).
+        ///
+        /// Two `out` flags for the same reason ApplyStageTwoBalance has them
+        /// (fix-round 1, I-2): MaxMobsPerWave lives on WaveConfig and
+        /// MatchMaxDurationSeconds on NetConfig, so one dirty flag on `arena`
+        /// would silently drop both.
+        static bool ApplyStageThreeBalance(ArenaConfig arena, WaveConfig wave, NetConfig net,
+            out bool waveChanged, out bool netChanged)
+        {
+            var arenaDefaults = ScriptableObject.CreateInstance<ArenaConfig>();
+            var waveDefaults = ScriptableObject.CreateInstance<WaveConfig>();
+            var netDefaults = ScriptableObject.CreateInstance<NetConfig>();
+            try
+            {
+                bool arenaChanged = false;
+                arenaChanged |= SetIfDifferent(ref arena.Radius, arenaDefaults.Radius);
+                arenaChanged |= SetIfDifferent(ref arena.MaxMobs, arenaDefaults.MaxMobs);
+                arenaChanged |= SetIfDifferent(ref arena.MaxProjectiles, arenaDefaults.MaxProjectiles);
+                arenaChanged |= SetIfDifferent(ref arena.MaxEventsPerFrame,
+                    arenaDefaults.MaxEventsPerFrame);
+                arenaChanged |= SetIfDifferent(ref arena.PlayerSpawnRingFrac,
+                    arenaDefaults.PlayerSpawnRingFrac);
+                arenaChanged |= SetIfDifferent(ref arena.Obstacles, arenaDefaults.Obstacles);
+                arenaChanged |= SetIfDifferent(ref arena.Walls, arenaDefaults.Walls);
+
+                waveChanged = SetIfDifferent(ref wave.MaxMobsPerWave, waveDefaults.MaxMobsPerWave);
+                netChanged = SetIfDifferent(ref net.MatchMaxDurationSeconds,
+                    netDefaults.MatchMaxDurationSeconds);
+
+                return arenaChanged;
+            }
+            finally
+            {
+                Object.DestroyImmediate(arenaDefaults);
+                Object.DestroyImmediate(waveDefaults);
+                Object.DestroyImmediate(netDefaults);
+            }
+        }
+
+        /// Stage 3 Task 12 (spec §3.13/§3.3 Р214): the Elite archetype's own
+        /// numbers, seeded into a brand-new MobEliteConfig.asset. Same
+        /// first-creation-only contract as ApplyGunnerDefaults above, and the
+        /// same reason: this is a balance sheet the owner tunes at milestone
+        /// В1, not something the bootstrap keeps overwriting.
+        ///
+        /// Source of every number, since a reader will ask (owner decision
+        /// R-75): MaxSpeed/Radius/MaxHp/ContactDamage are spec §3.13 verbatim;
+        /// the hit-zone belts, the multipliers, the muzzle and the whole
+        /// ranged block are the Gunner's ("по образцу ганнера", §3.13
+        /// verbatim); Accel, the melee timings, separation and swing lead are
+        /// the Chaser's (Р214 — "усиленный чейзер"). Two numbers are DERIVED
+        /// rather than copied, and both because MobAiSystem measures
+        /// center-to-center: AttackRange 1.4 keeps the Chaser's own 0.6 m of
+        /// reach past its hull (1.1 - 0.5, now 0.8 + 0.6), and PreferredRange
+        /// 2.5 puts the ranged hold band just OUTSIDE melee — at the Gunner's
+        /// own 9 the distance dispatch (MobAiSystem: chaser inside
+        /// AttackRange, gunner outside) would park the Elite at 9 m and it
+        /// would never close, which is a Gunner with more HP rather than
+        /// Р214's enhanced chaser.
+        static bool ApplyEliteDefaults(MobConfig m)
+        {
+            bool changed = false;
+            changed |= SetIfDifferent(ref m.MaxSpeed, 4.2f);
+            changed |= SetIfDifferent(ref m.Accel, 30f);
+            changed |= SetIfDifferent(ref m.Radius, 0.8f);
+            changed |= SetIfDifferent(ref m.MaxHp, 120f);
+            changed |= SetIfDifferent(ref m.ContactDamage, 25f);
+            changed |= SetIfDifferent(ref m.AttackRange, 1.4f);
+            changed |= SetIfDifferent(ref m.TelegraphSeconds, 0.35f);
+            changed |= SetIfDifferent(ref m.AttackCooldown, 0.9f);
+            changed |= SetIfDifferent(ref m.PreferredRange, 2.5f);
+            changed |= SetIfDifferent(ref m.RangeTolerance, 1.5f);
+            changed |= SetIfDifferent(ref m.StrafeSpeed, 3f);
+            changed |= SetIfDifferent(ref m.FireInterval, 1.6f);
+            changed |= SetIfDifferent(ref m.ProjectileSpeed, 14f);
+            changed |= SetIfDifferent(ref m.ProjectileRadius, 0.15f);
+            changed |= SetIfDifferent(ref m.ProjectileLifetime, 3f);
+            changed |= SetIfDifferent(ref m.ProjectileDamage, 8f);
+            changed |= SetIfDifferent(ref m.LeadFactor, 0.8f);
+            changed |= SetIfDifferent(ref m.SeparationRadius, 1.2f);
+            changed |= SetIfDifferent(ref m.SeparationStrength, 6f);
+            changed |= SetIfDifferent(ref m.AvoidLookahead, 3f);
+            changed |= SetIfDifferent(ref m.AvoidMargin, 1f);
+            changed |= SetIfDifferent(ref m.LegsTop, 1.10f);
+            changed |= SetIfDifferent(ref m.BodyTop, 2.70f);
+            changed |= SetIfDifferent(ref m.HeadTop, 3.50f);
+            changed |= SetIfDifferent(ref m.LegsDamageMult, 0.75f);
+            changed |= SetIfDifferent(ref m.BodyDamageMult, 1.0f);
+            changed |= SetIfDifferent(ref m.HeadDamageMult, 1.7f);
+            changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
+            changed |= SetIfDifferent(ref m.SwingLeadFactor, 1.0f);
+            changed |= SetIfDifferent(ref m.SwingLeadMaxMeters, 2.0f);
+            return changed;
+        }
+
+        /// Stage 3 Task 12 (spec §3.13/§3.4): the Director's numbers. Spec
+        /// §3.4 states the archetype outright — "Elite-профиль с числами
+        /// Директора" — so this IS ApplyEliteDefaults with the five numbers
+        /// §3.13 names overridden (MaxHp 2500, Radius 2.2, ContactDamage 45,
+        /// MaxSpeed 3.0, TelegraphSeconds 1.1), plus the same two derived
+        /// ones: AttackRange 2.8 (2.2 + the Chaser's 0.6 m of reach past its
+        /// hull) and PreferredRange back at the Gunner's 9, because §3.4 gives
+        /// the Director the ranged stance in as many words ("дистанционный
+        /// залп на Reposition/Fire") and Р248 keeps it inside the core anyway.
+        /// Calling ApplyEliteDefaults first is the point (rule 2): the shared
+        /// profile has ONE home, and only the differences are written here.
+        ///
+        /// HeadTop stays at the Gunner's 3.50 deliberately, tall as this
+        /// archetype is: Hero.MaxAimHeight is 3.8, so a taller silhouette
+        /// would put the Director's head above anything a collector can aim
+        /// at. Model scale (ASSETS-001 §2.3, x1.5-2) is Presentation's own
+        /// number and does not touch this one.
+        static bool ApplyDirectorDefaults(MobConfig m)
+        {
+            bool changed = ApplyEliteDefaults(m);
+            changed |= SetIfDifferent(ref m.MaxSpeed, 3.0f);
+            changed |= SetIfDifferent(ref m.Radius, 2.2f);
+            changed |= SetIfDifferent(ref m.MaxHp, 2500f);
+            changed |= SetIfDifferent(ref m.ContactDamage, 45f);
+            changed |= SetIfDifferent(ref m.TelegraphSeconds, 1.1f);
+            changed |= SetIfDifferent(ref m.AttackRange, 2.8f);
+            changed |= SetIfDifferent(ref m.PreferredRange, 9f);
+            return changed;
         }
 
         static bool SetIfDifferent(ref float field, float value)

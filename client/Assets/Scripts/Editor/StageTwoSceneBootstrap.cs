@@ -118,6 +118,15 @@ namespace Ring.Editor
             ArenaConfig arena = Load<ArenaConfig>("ArenaConfig");
             VisibilityConfig visibility = Load<VisibilityConfig>("VisibilityConfig");
             NetConfig net = Load<NetConfig>("NetConfig");
+            // Stage 3 Task 12 (owner decision R-73): the two new archetype
+            // assets and the match-flow one. These are LOADED, never created —
+            // StageOneSceneBootstrap owns the creation of every balance asset
+            // (this scene's own convention, see Load's doc), so a missing file
+            // here means Stage 1's bootstrap has not been run and is meant to
+            // fail loudly rather than write a second empty asset.
+            MobConfig elite = Load<MobConfig>("MobEliteConfig");
+            MobConfig director = Load<MobConfig>("MobDirectorConfig");
+            MatchFlowConfig flow = Load<MatchFlowConfig>("MatchFlowConfig");
 
             NetworkObject playerPrefab = GetOrCreatePlayerPrefab();
 
@@ -150,6 +159,13 @@ namespace Ring.Editor
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_wave", wave);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_arena", arena);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_visibility", visibility);
+            // Stage 3 Task 12 (owner decision R-73): ServerBootstrap refuses to
+            // start with any serialized reference unfilled (TryBuildSimConfig's
+            // own AppendIfMissing list), so these three have to be wired here
+            // or the headless server exits with ExitBadConfig.
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_elite", elite);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_director", director);
+            bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_flow", flow);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_net", net);
             bootstrapChanged |= EditorBootstrapUtils.SetRef(bootstrapSo, "_playerPrefab",
                 playerPrefab.gameObject);

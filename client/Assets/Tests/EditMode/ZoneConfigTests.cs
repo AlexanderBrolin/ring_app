@@ -18,6 +18,21 @@ namespace Ring.Simulation.Tests
     /// upper bound, cannot pass any of these fixtures.
     public class ZoneConfigTests
     {
+        /// Stage 3 Task 12 (owner decision R-79): a fixture that redefines the
+        /// zone BOUNDARIES must drop the shipped layout's portals with them.
+        /// Those four exits are placed against boundaries 65/92 and each
+        /// declares the zone it stands in; under any other pair of boundaries
+        /// the declaration stops matching Geometry.ZoneOf and the builder
+        /// rejects the arena — the new consistency rule doing precisely its
+        /// job, on data these zone-wall fixtures never meant to state. One
+        /// helper rather than three lines per fixture (rule 2).
+        static void ClearPortals(ArenaConfig a)
+        {
+            a.ExtractPos = System.Array.Empty<UnityEngine.Vector2>();
+            a.ExtractZone = System.Array.Empty<byte>();
+            a.ExtractKind = System.Array.Empty<byte>();
+        }
+
         // ------------------------------------------------------------------
         // Geometry.ZoneOf — a pure function of position and ZoneRadius.
         // ------------------------------------------------------------------
@@ -96,6 +111,7 @@ namespace Ring.Simulation.Tests
             // vs `<=` slip, conflating two mutants in one fixture (R-25).
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 20f };
+            ClearPortals(a);
             var ex = Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ZoneRadius"));
@@ -108,6 +124,7 @@ namespace Ring.Simulation.Tests
             // zero doors — the rule "every wall reaches at least one door."
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 20f, 40f };
             a.ZoneWallHalfWidth = new[] { 1f, 1f };
@@ -138,6 +155,7 @@ namespace Ring.Simulation.Tests
             float maxBodyRadius = math.max(h.Radius, math.max(c.Radius, g.Radius));
             float required = 2f * (maxBodyRadius + Geometry.Skin) + a.DoorClearance;
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 1;
             a.ZoneWallRadius = new[] { 20f };
             a.ZoneWallHalfWidth = new[] { 1f };
@@ -170,6 +188,7 @@ namespace Ring.Simulation.Tests
             director.Radius = 2.2f; // spec §3.13's MobDirectorConfig table
             float newRequired = 2f * (director.Radius + Geometry.Skin) + a.DoorClearance;
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 1;
             a.ZoneWallRadius = new[] { 20f };
             a.ZoneWallHalfWidth = new[] { 1f };
@@ -194,6 +213,7 @@ namespace Ring.Simulation.Tests
             // arithmetic is not written here."
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 1;
             a.ZoneWallRadius = new[] { 20f };
             a.ZoneWallHalfWidth = new[] { 1f };
@@ -237,6 +257,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             float maxBodyRadius = math.max(h.Radius, math.max(c.Radius, g.Radius));
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 20f, 1f };
             a.ZoneWallHalfWidth = new[] { 1f, 1f - maxBodyRadius };
@@ -300,6 +321,7 @@ namespace Ring.Simulation.Tests
             // each) sum to 0.4 rad > 0.3 — they overlap.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 20f, 20f };
             a.ZoneWallHalfWidth = new[] { 1f, 1f };
@@ -322,6 +344,7 @@ namespace Ring.Simulation.Tests
             // is the violator.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 20f, 0f };
             a.ZoneWallHalfWidth = new[] { 1f, 1f };
@@ -347,6 +370,7 @@ namespace Ring.Simulation.Tests
             // every boundary pin in this file.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 20f, a.Radius };
             a.ZoneWallHalfWidth = new[] { 1f, 1f };
@@ -370,6 +394,7 @@ namespace Ring.Simulation.Tests
             // radius 40 so R-37's interior check stays quiet regardless).
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 20f, 40f };
             a.ZoneWallHalfWidth = new[] { 1f, 0f };
@@ -397,6 +422,7 @@ namespace Ring.Simulation.Tests
             // overlap.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 20f, 2f };
             a.ZoneWallHalfWidth = new[] { 1f, 0.1f };
@@ -431,6 +457,7 @@ namespace Ring.Simulation.Tests
             // needed (unlike the Stage 2 straight-wall precedent).
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 20f, a.Radius * a.PlayerSpawnRingFrac };
             a.ZoneWallHalfWidth = new[] { 1f, 1f };
@@ -480,6 +507,7 @@ namespace Ring.Simulation.Tests
             // the way it saves a discrete spawn point.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
+            ClearPortals(a);
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 20f, 40f - wv.SpawnRingInset };
             a.ZoneWallHalfWidth = new[] { 1f, 1f };

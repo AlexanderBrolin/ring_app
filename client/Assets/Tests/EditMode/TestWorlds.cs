@@ -41,7 +41,25 @@ namespace Ring.Simulation.Tests
 
             SpawnMobsToCap(world);
 
-            var holdFire = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f) };
+            // Stage 3 Task 12: the shooter is moved off the arena centre, 7 m
+            // inside the innermost zone wall — the SAME huddle radius (58)
+            // TrioSaturated uses, and for the same reason, now that the crowd
+            // is three times denser (MaxMobs 96 -> 288). At the centre the
+            // player stands INSIDE the spiral: 12 chasers reach it by tick 17
+            // (the ring at radius 4 closes 2.9 m at 5.2 m/s) instead of the 4
+            // that used to, the mobs then pile onto it at AttackRange, and
+            // every round is absorbed in its own muzzle — the fixture's own
+            // "sustained fire" premise (ProjectileCount > 0 on return) died
+            // silently, which is what AllocationTests.Tick_DoesNotAllocateGC
+            // reported. From 58 the arithmetic is provable rather than lucky:
+            // the nearest mob is 26.4 m away and needs 5.1 s (152 ticks) to
+            // close it, so nothing touches the shooter inside a 100-tick
+            // warm-up; a round covers that gap in 22 ticks against a 45-tick
+            // lifetime, so rounds are always both in flight AND reaching the
+            // crowd (the HitMob branch every caller of this fixture measures).
+            float shooterRadius = config.Arena.ZoneWallRadius[0] - 7f;
+            RelocatePlayerForTest(world, 0, new float2(0f, shooterRadius));
+            var holdFire = new SimInput { FireHeld = true, AimPoint = float2.zero };
             for (int i = 0; i < 100; i++) world.Tick(holdFire);
 
             // Stage 3 Task 5 fix-round 2 (spec Р252, coordinator finding): the
@@ -77,7 +95,11 @@ namespace Ring.Simulation.Tests
             const float goldenAngleRad = 2.399963f; // even angular spread, no periodicity
             for (int i = 0; i < cap; i++)
             {
-                float radius = 4f + (i % 24) * 1.2f; // well inside Arena.Radius (65 since Stage 2 Task 16)
+                // Radii 4…31.6 regardless of `cap` — the modulo keeps the
+                // spiral inside the CORE zone whatever MaxMobs is (96 through
+                // Stage 2, 288 since Stage 3 Task 12's own arena), which is
+                // what every caller's geometry doc below leans on.
+                float radius = 4f + (i % 24) * 1.2f;
                 float angle = i * goldenAngleRad;
                 float2 pos = radius * new float2(math.cos(angle), math.sin(angle));
                 world.SpawnMobForTest((i & 1) == 0 ? MobType.Chaser : MobType.Gunner, pos);
@@ -93,12 +115,28 @@ namespace Ring.Simulation.Tests
         /// PvpDamageTests' own trio fixture use) and all three players fire
         /// continuously — but the three are relocated off the natural spawn
         /// ring (Geometry.SpawnPosFor, radius Arena.Radius *
-        /// PlayerSpawnRingFrac = 52) via the shared RelocatePlayerForTest seam
-        /// below, out to a small huddle at radius (Arena.Radius *
-        /// PlayerSpawnRingFrac + 6) — 58 on TestConfigs.Default() — clear of
+        /// PlayerSpawnRingFrac = 103.96 since Stage 3 Task 12) via the shared
+        /// RelocatePlayerForTest seam below, out to a small huddle 7 m inside
+        /// the innermost zone wall — 58 on TestConfigs.Default() — clear of
         /// both the mob crowd (SpawnMobsToCap's own doc: radii roughly 4…31)
         /// and every DefaultArena() obstacle/wall (all inside radius ~44) with
-        /// room to spare. Two reasons: firing along the NATURAL ring's own
+        /// room to spare.
+        ///
+        /// Stage 3 Task 12 re-derived that radius, and the reason is the whole
+        /// point of the fixture rather than tidying. It used to read
+        /// `Radius * PlayerSpawnRingFrac + 6`, which was 58 on the Stage 2
+        /// arena and becomes 109.96 on the three-zone one — out in the OUTER
+        /// zone, with two arc barriers between the huddle and the crowd. Every
+        /// premise stated below would have quietly died there: player 2's long
+        /// shot toward the centre would be stopped by the outer ring at 92
+        /// (spec §3.15 offsets the two rings' doors precisely so that no
+        /// straight ray from the outer zone reaches the core), so it would
+        /// neither still be in flight at the end of warm-up nor ever reach a
+        /// mob — the HitMob branch of the candidate scratch would stop being
+        /// exercised at all, with every assertion in this file still green.
+        /// 58 is the same number as before and keeps every sentence below
+        /// true; it is now tied to the zone wall that has to stay out of the
+        /// firing line rather than to the spawn ring that moved. Two reasons: firing along the NATURAL ring's own
         /// player-to-player chord passes within Arena.Radius *
         /// PlayerSpawnRingFrac * cos(60 deg) = 26 m of the centre — squarely
         /// inside the mob crowd — so whether a round ever clears it to reach
@@ -163,7 +201,13 @@ namespace Ring.Simulation.Tests
             // bare literal (Task 18 fix-round 1, M-3), so a future
             // arena-layout tuning pass that moves the ring moves this huddle
             // right along with it instead of leaving it silently stranded.
-            float huddleRadius = config.Arena.Radius * config.Arena.PlayerSpawnRingFrac + 6f;
+            // Stage 3 Task 12: 7 m inside the innermost zone wall (58 on
+            // TestConfigs.Default()) — see this method's own doc for why the
+            // pre-Stage-3 expression, tied to the player spawn ring, silently
+            // stopped meaning what it said. Still config-derived, not a bare
+            // literal (Task 18 fix-round 1, M-3): an owner retune of the core
+            // boundary moves this huddle with it.
+            float huddleRadius = config.Arena.ZoneWallRadius[0] - 7f;
             var p0 = new float2(-1.5f, huddleRadius);
             var p1 = new float2(1.5f, huddleRadius);
             var p2 = new float2(0f, huddleRadius + 1.5f);

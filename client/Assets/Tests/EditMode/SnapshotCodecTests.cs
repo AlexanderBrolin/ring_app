@@ -2783,14 +2783,27 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(8, header, "8");
             Assert.AreEqual(3 + 2 * 8, players, "3 + 2 records * 8 B = 19");
             Assert.AreEqual(3 + 1, liveness, "3 + 1 mask byte = 4");
-            Assert.AreEqual(3 + 96 * 9, mobs, "3 + 96 records * 9 B = 867");
+            // Stage 3 Task 12: 96 was a literal of the Stage 2 cap. The whole
+            // point of this test is that the calculators agree with the
+            // arithmetic, so the arithmetic reads the same cap the calculator
+            // was handed — at MaxMobs 288 that is 3 + 288 * 9 = 2595 B.
+            Assert.AreEqual(3 + shipped.Arena.MaxMobs * 9, mobs,
+                $"3 + {shipped.Arena.MaxMobs} records * 9 B = {3 + shipped.Arena.MaxMobs * 9}");
             Assert.AreEqual(3 + 4, wave, "3 + 4 = 7");
             Assert.AreEqual(3 + 16 * 9 + 16 * 8, eventsBytes, "3 + 16 * (9 header + 8 payload) = 275");
 
             int total = header + players + liveness + mobs + wave + eventsBytes;
-            Assert.AreEqual(1180, total,
-                "8 + 19 + 4 + 867 + 7 + 275 — the live worst-case frame at the shipped caps. Task 27's "
-                + "1116 assumed 4 B of event payload; the real catalog's widest is 8");
+            // Stage 3 Task 12: 1180 was that same Stage 2 cap carried into the
+            // sum (8 + 19 + 4 + 867 + 7 + 275). At MaxMobs 288 the live
+            // worst-case frame is 8 + 19 + 4 + 2595 + 7 + 275 = 2908 B — and
+            // spec Р217 named this consequence before the numbers landed:
+            // "блок мобов худшего случая — 288 x 9 = 2592 Б против
+            // SnapshotMaxBytes 1000", i.e. entity truncation stops being
+            // unreachable and becomes the ordinary shape of a saturated frame.
+            Assert.AreEqual(8 + 19 + 4 + (3 + shipped.Arena.MaxMobs * 9) + 7 + 275, total,
+                $"8 + 19 + 4 + {3 + shipped.Arena.MaxMobs * 9} + 7 + 275 — the live worst-case frame at "
+                + "the shipped caps. Task 27's 1116 assumed 4 B of event payload; the real catalog's "
+                + "widest is 8");
             Assert.Greater(total, net.SnapshotMaxBytes,
                 "and it still exceeds our own cap, which is why the budget exists at all");
 
@@ -2800,25 +2813,59 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(38, fixedPart, "8 + 19 + 4 + 7");
             Assert.Less(fixedPart, net.SnapshotMaxBytes);
 
-            // FINDING, pinned here rather than left as a sentence. Spec §3.8
-            // argues the truncation branch is reachable because the worst case
-            // exceeds SnapshotMaxBytes — but the frame is not built worst-case
-            // first: mobs are budgeted BEFORE events (task-28-brief §2.8 items
-            // 3-4), and at the shipped numbers every mob fits with room to
-            // spare. Entity truncation is therefore NOT reachable at the
-            // defaults; it becomes reachable on a smaller cap or a larger mob
-            // cap, which is what WorstCase_ByCaps_TriggersTruncation configures.
+            // THE STAGE 2 FINDING, TURNED OVER BY STAGE 3 TASK 12 AND RE-PINNED
+            // RATHER THAN DELETED — the arithmetic is the same, the verdict is
+            // the opposite, and both halves are worth keeping on the record.
+            //
+            // Stage 2 pinned here that spec §3.8's argument for the truncation
+            // branch ("the worst case exceeds SnapshotMaxBytes, therefore
+            // truncation is reachable") did not hold at the shipped numbers:
+            // the frame is not built worst-case first — mobs are budgeted
+            // BEFORE events (task-28-brief §2.8 items 3-4) — so with MaxMobs 96
+            // every mob fitted (864 B of a 956 B record budget) and what the
+            // cap actually squeezed out was EVENTS, never entities.
+            //
+            // At MaxMobs 288 the same three numbers say the opposite, and spec
+            // Р217 said in advance that they would: the record budget is
+            // unchanged at 1000 - 44 = 956 B, a full crowd now needs
+            // 288 * 9 = 2592 B, so 106 mobs ride and 182 are dropped. Entity
+            // truncation IS reachable at the shipped defaults now.
+            //
+            // The precedence the Stage 2 finding named does not soften that —
+            // it sharpens it. Mobs overrun the whole record budget, so a
+            // saturated frame has nothing left for events AT ALL, which is a
+            // STRONGER statement than the "cannot carry a full budget" this
+            // block used to close on, and the assertion below says the stronger
+            // thing rather than the surviving weaker one.
+            //
+            // Cross-check, deliberately stated: the sibling
+            // WorstCase_ByCaps_TriggersTruncation decodes a real frame at this
+            // same shipped cap and counts 106 mobs. That is this block's
+            // 956 / 9 computed from the other end — from an assembled frame
+            // rather than from the calculators. If the two ever disagree, one
+            // of them is lying about the cap and neither may be believed.
             int fixedWithEmptyBlocks = fixedPart
                 + SnapshotWriter.MobsBlockBytes(0) + SnapshotWriter.EventsBlockBytes(0, 0);
             Assert.AreEqual(44, fixedWithEmptyBlocks, "38 + 3 + 3 — all five blocks always ride");
             int roomForRecords = net.SnapshotMaxBytes - fixedWithEmptyBlocks;
-            Assert.GreaterOrEqual(roomForRecords, shipped.Arena.MaxMobs * SnapshotBlocks.MobRecordBytes,
-                "at the shipped defaults every mob fits, so entity truncation never fires there — "
-                + "the spec's 'worst case exceeds the cap, therefore truncation is reachable' skips "
-                + "the fact that events are the ones squeezed out first");
-            int leftoverForEvents = roomForRecords - shipped.Arena.MaxMobs * SnapshotBlocks.MobRecordBytes;
-            Assert.Less(leftoverForEvents, eventsBytes - SnapshotWriter.EventsBlockBytes(0, 0),
-                "and what is left over cannot carry a full event budget — events defer, entities do not");
+            int roomMobsNeed = shipped.Arena.MaxMobs * SnapshotBlocks.MobRecordBytes;
+            Assert.Less(roomForRecords, roomMobsNeed,
+                $"at the shipped defaults a saturated frame no longer fits — {roomForRecords} B of "
+                + $"record room against {shipped.Arena.MaxMobs} * {SnapshotBlocks.MobRecordBytes} = "
+                + $"{roomMobsNeed} B of mobs (spec Р217) — so entity truncation fires there, which is "
+                + "the Stage 2 finding above turned over rather than restated");
+            int mobsThatFit = roomForRecords / SnapshotBlocks.MobRecordBytes;
+            Assert.Less(mobsThatFit, shipped.Arena.MaxMobs,
+                "the cut is real: fewer mobs ride than the world holds");
+            Assert.Greater(mobsThatFit, 0,
+                "and it is a CUT, not a collapse — the frame still carries mobs, which is what makes "
+                + "the drop order (nearest survive) a question worth asking at all");
+            int leftoverForEvents = roomForRecords - roomMobsNeed;
+            Assert.Less(leftoverForEvents, 0,
+                $"and the overrun ({leftoverForEvents} B) leaves NOTHING for events: entities outrank "
+                + "them, so a saturated frame carries no event at all — not merely an incomplete "
+                + "budget. This is why SnapshotAssemblerTests' own allocation fixtures have to buy a "
+                + "roomier cap to keep measuring a frame with both blocks in it");
         }
 
         // ---- T28.14. Truncation, by the caps (plan) ----
@@ -2884,16 +2931,41 @@ namespace Ring.Simulation.Tests
                 Assert.IsFalse(f.ContainsMob(ranked[i].id),
                     $"the {i}-th nearest mob (id {ranked[i].id}) is past the cut and must be gone");
 
-            // At the SHIPPED cap the very same world truncates nothing — the
-            // finding WorstCaseFrame_RecomputedFromTheCalculators states.
+            // This arm exists to prove the cut above came from the CAP and not
+            // from something else in the assembler. Until Stage 3 Task 12 it
+            // said so by showing the shipped 1000 B held everything — "a
+            // bigger arena" was named as the hypothetical that would change
+            // that, and Т12 is that arena: at MaxMobs 288 a full crowd is
+            // 3 + 288 * 9 = 2595 B, so the shipped cap truncates too, exactly
+            // as spec Р217 predicted. The contrast is therefore restated
+            // against a cap that really is roomy, and the shipped cap's own
+            // new behaviour is asserted rather than dropped — a claim that
+            // became false is replaced by the true one it turned into, not by
+            // a weaker one.
+            var shippedCap = ScriptableObject.CreateInstance<NetConfig>();
+            var asmShipped = new SnapshotAssembler(cfg, shippedCap, connectionCount: 1);
+            asmShipped.BeginTick(w);
+            AssembledFrame shippedFrame = AssembledFrame.Decode(asmShipped.BufferFor(0),
+                asmShipped.BuildFor(0, 0, 0, Epoch), cfg);
+            Assert.Less(shippedFrame.MobCount, cfg.Arena.MaxMobs,
+                "spec Р217: at MaxMobs 288 a saturated frame no longer fits the shipped "
+                + "SnapshotMaxBytes, so entity truncation is now the ordinary shape of one");
+            Assert.IsTrue(shippedFrame.Truncated);
+            Assert.Greater(asmShipped.StatsFor(0).DroppedEntities, 0);
+
             var roomy = ScriptableObject.CreateInstance<NetConfig>();
+            // Provably enough: the shipped 1000 B already held the fixed part
+            // plus 106 records, so the same cap plus one full record per mob
+            // cannot be short.
+            roomy.SnapshotMaxBytes = shippedCap.SnapshotMaxBytes
+                + SnapshotBlocks.MobRecordBytes * cfg.Arena.MaxMobs;
             var asm2 = new SnapshotAssembler(cfg, roomy, connectionCount: 1);
             asm2.BeginTick(w);
             AssembledFrame full = AssembledFrame.Decode(asm2.BufferFor(0),
                 asm2.BuildFor(0, 0, 0, Epoch), cfg);
             Assert.AreEqual(cfg.Arena.MaxMobs, full.MobCount,
-                "at SnapshotMaxBytes 1000 every mob still fits — entity truncation is a mechanism for a "
-                + "tighter cap or a bigger arena, not the ordinary shape of a full frame");
+                "given room for every record, every mob still rides — the cut above is the cap's "
+                + "doing and nothing else's");
             Assert.IsFalse(full.Truncated);
             Assert.AreEqual(0, asm2.StatsFor(0).DroppedEntities);
         }

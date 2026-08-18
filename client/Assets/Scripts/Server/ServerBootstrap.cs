@@ -156,6 +156,16 @@ namespace Ring.Server
         [SerializeField] WaveConfig _wave;
         [SerializeField] ArenaConfig _arena;
         [SerializeField] VisibilityConfig _visibility;
+        // Stage 3 Task 12 (errata E-6 I5, owner decision R-73): the two new
+        // mob archetypes and the match-flow pacing block. These are the
+        // AUTHORITATIVE server's copy — waves have spawned Elites since Т11,
+        // so leaving them unwired would put a zero-HP Elite into every real
+        // match while every EditMode test stayed green (the tests build
+        // SimConfig from TestConfigs, not from this scene). Checked in
+        // TryBuildSimConfig below like every other reference here.
+        [SerializeField] MobConfig _elite;
+        [SerializeField] MobConfig _director;
+        [SerializeField] MatchFlowConfig _flow;
 
         /// Network tuning, deliberately NOT a `SimConfigBuilder.Build`
         /// parameter — see the class doc.
@@ -503,6 +513,9 @@ namespace Ring.Server
             AppendIfMissing(missing, _wave, nameof(_wave));
             AppendIfMissing(missing, _arena, nameof(_arena));
             AppendIfMissing(missing, _visibility, nameof(_visibility));
+            AppendIfMissing(missing, _elite, nameof(_elite));
+            AppendIfMissing(missing, _director, nameof(_director));
+            AppendIfMissing(missing, _flow, nameof(_flow));
             AppendIfMissing(missing, _net, nameof(_net));
             AppendIfMissing(missing, _playerPrefab, nameof(_playerPrefab));
             if (missing.Length > 0)
@@ -515,7 +528,7 @@ namespace Ring.Server
             try
             {
                 simConfig = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave,
-                    _arena, _visibility);
+                    _arena, _visibility, _elite, _director, _flow);
             }
             catch (Exception ex)
             {

@@ -26,6 +26,95 @@ namespace Ring.Simulation.Tests
             return (hero, weapon, chaser, gunner, wave, arena, visibility);
         }
 
+        /// Stage 3 Task 12 (coordinator finding on mutation M8): the FULL
+        /// shipped asset set, and the reason it has to exist is a defect this
+        /// file carried the moment Т12 added two assets to the game.
+        ///
+        /// `MakeDefaults` returns the SEVEN SOs `SimConfigBuilder.Build` took
+        /// before this task. Every test that means "the configuration the game
+        /// actually ships" kept calling Build with those seven, so
+        /// `SimConfig.Elite`/`Director` arrived all-zero — a configuration that
+        /// exists nowhere but in this file. That is not cosmetic: the wave
+        /// spawn-ring rule (R-55) sizes its forbidden band with
+        /// MaxBodyRadius(waveArchetypesOnly), which is max(Chaser, Gunner,
+        /// Elite) — 0.8 with the Elite asset, 0.5 without it. Mutation M8
+        /// (SpawnRingInset 2 -> 1.5) put the Core spawn ring at 63.5, INSIDE
+        /// the real band (63.2, 66.8) and exactly ON the boundary of the
+        /// weakened one (63.5, 66.5), where InArcBand's strict `>` reads it as
+        /// outside. The rule stayed silent, and the layout tests passed a
+        /// mutation aimed straight at them — green because a default had
+        /// weakened the rule, not because the layout was sound.
+        ///
+        /// The seven-argument form stays for the ~45 tests that vary ONE field
+        /// to prove ONE rule: those are unit tests of a rule, not statements
+        /// about the shipped arena.
+        static SimConfig BuildShipped(HeroConfig hero, WeaponConfig weapon, MobConfig chaser,
+            MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility)
+        {
+            var (elite, director) = MakeShippedArchetypes();
+            return SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena, visibility,
+                elite, director);
+        }
+
+        /// The two archetype assets Т12 ships, seeded from the shared
+        /// TestConfigs baseline. Same discipline the gunner has needed since
+        /// Stage 1 and for the same reason: MobEliteConfig/MobDirectorConfig
+        /// are assets of the shared MobConfig class, whose C# initializers are
+        /// the CHASER's numbers, so a fresh CreateInstance is a chaser and the
+        /// archetype numbers have to be put on it. The bootstrap
+        /// (StageOneSceneBootstrap.ApplyEliteDefaults/ApplyDirectorDefaults)
+        /// seeds the real .asset from its own literals; this is the test side
+        /// of the same two-sources split (spec §0).
+        internal static (MobConfig elite, MobConfig director) MakeShippedArchetypes()
+        {
+            SimConfig expected = TestConfigs.Default();
+            var elite = ScriptableObject.CreateInstance<MobConfig>();
+            var director = ScriptableObject.CreateInstance<MobConfig>();
+            SeedMob(elite, in expected.Elite);
+            SeedMob(director, in expected.Director);
+            return (elite, director);
+        }
+
+        /// Copies a MobSimConfig onto a MobConfig asset, field for field — one
+        /// home for what used to be a 28-line block inside
+        /// Build_DefaultAssets_MatchesTestConfigsBaseline (rule 2). Every field
+        /// SimConfigBuilder.ToMobSimConfig reads is set here; if that method
+        /// grows a field and this one does not, the baseline test's own
+        /// AssertMobEqual is what goes red.
+        internal static void SeedMob(MobConfig target, in MobSimConfig source)
+        {
+            target.MaxSpeed = source.MaxSpeed;
+            target.Accel = source.Accel;
+            target.Radius = source.Radius;
+            target.MaxHp = source.MaxHp;
+            target.ContactDamage = source.ContactDamage;
+            target.AttackRange = source.AttackRange;
+            target.TelegraphSeconds = source.TelegraphSeconds;
+            target.AttackCooldown = source.AttackCooldown;
+            target.PreferredRange = source.PreferredRange;
+            target.RangeTolerance = source.RangeTolerance;
+            target.StrafeSpeed = source.StrafeSpeed;
+            target.FireInterval = source.FireInterval;
+            target.ProjectileSpeed = source.ProjectileSpeed;
+            target.ProjectileRadius = source.ProjectileRadius;
+            target.ProjectileLifetime = source.ProjectileLifetime;
+            target.ProjectileDamage = source.ProjectileDamage;
+            target.LeadFactor = source.LeadFactor;
+            target.SeparationRadius = source.SeparationRadius;
+            target.SeparationStrength = source.SeparationStrength;
+            target.AvoidLookahead = source.AvoidLookahead;
+            target.AvoidMargin = source.AvoidMargin;
+            target.LegsTop = source.LegsTop;
+            target.BodyTop = source.BodyTop;
+            target.HeadTop = source.HeadTop;
+            target.LegsDamageMult = source.LegsDamageMult;
+            target.BodyDamageMult = source.BodyDamageMult;
+            target.HeadDamageMult = source.HeadDamageMult;
+            target.MuzzleHeight = source.MuzzleHeight;
+            target.SwingLeadFactor = source.SwingLeadFactor;
+            target.SwingLeadMaxMeters = source.SwingLeadMaxMeters;
+        }
+
         /// Builds a SimConfig from a caller-supplied hero and default everything else —
         /// for zone-validation tests (Task 1) that only need to vary Hero fields.
         static SimConfig BuildWith(HeroConfig hero)
@@ -38,7 +127,7 @@ namespace Ring.Simulation.Tests
         public void Build_DefaultAssets_ProducesValidConfig()
         {
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.Greater(cfg.Hero.MaxSpeed, 0f);
             Assert.AreEqual(a.Obstacles.Length, cfg.Arena.ObstacleCount);
         }
@@ -46,9 +135,16 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Build_ObstacleOutsideArena_Throws()
         {
+            // Stage 3 Task 12: the position is FIXTURE ARITHMETIC off
+            // a.Radius, not the literal 100 it used to be. At Radius 65 that
+            // literal put the circle 37 m past the rim; at 113 it lands 11 m
+            // INSIDE, and the test would have gone green on an arena that
+            // never violated the rule at all (this file's own convention
+            // elsewhere — see Validate_WallOverRingSpawnPoint's SpawnPosFor
+            // note — and the reason the number is derived here for good).
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.Obstacles = new[] { new ArenaConfig.Obstacle
-                { Pos = new Vector2(100f, 0f), Radius = 2f } };
+                { Pos = new Vector2(a.Radius, 0f), Radius = 2f } };
             Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
         }
@@ -101,36 +197,13 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             var expected = TestConfigs.Default();
 
-            g.MaxSpeed = expected.Gunner.MaxSpeed;
-            g.Accel = expected.Gunner.Accel;
-            g.Radius = expected.Gunner.Radius;
-            g.MaxHp = expected.Gunner.MaxHp;
-            g.ContactDamage = expected.Gunner.ContactDamage;
-            g.AttackRange = expected.Gunner.AttackRange;
-            g.TelegraphSeconds = expected.Gunner.TelegraphSeconds;
-            g.AttackCooldown = expected.Gunner.AttackCooldown;
-            g.PreferredRange = expected.Gunner.PreferredRange;
-            g.RangeTolerance = expected.Gunner.RangeTolerance;
-            g.StrafeSpeed = expected.Gunner.StrafeSpeed;
-            g.FireInterval = expected.Gunner.FireInterval;
-            g.ProjectileSpeed = expected.Gunner.ProjectileSpeed;
-            g.ProjectileRadius = expected.Gunner.ProjectileRadius;
-            g.ProjectileLifetime = expected.Gunner.ProjectileLifetime;
-            g.ProjectileDamage = expected.Gunner.ProjectileDamage;
-            g.LeadFactor = expected.Gunner.LeadFactor;
-            g.SeparationRadius = expected.Gunner.SeparationRadius;
-            g.SeparationStrength = expected.Gunner.SeparationStrength;
-            g.AvoidLookahead = expected.Gunner.AvoidLookahead;
-            g.AvoidMargin = expected.Gunner.AvoidMargin;
-            g.LegsTop = expected.Gunner.LegsTop;
-            g.BodyTop = expected.Gunner.BodyTop;
-            g.HeadTop = expected.Gunner.HeadTop;
-            g.LegsDamageMult = expected.Gunner.LegsDamageMult;
-            g.BodyDamageMult = expected.Gunner.BodyDamageMult;
-            g.HeadDamageMult = expected.Gunner.HeadDamageMult;
-            g.MuzzleHeight = expected.Gunner.MuzzleHeight;
+            // Stage 3 Task 12: the 28 hand-written assignments that stood here
+            // are now SeedMob's job — the same copier MakeShippedArchetypes
+            // uses for the Elite and the Director, so all three archetype
+            // fixtures stay in step by construction (rule 2).
+            SeedMob(g, in expected.Gunner);
 
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
 
             AssertHeroEqual(expected.Hero, cfg.Hero);
             AssertWeaponEqual(expected.Weapon, cfg.Weapon);
@@ -369,9 +442,22 @@ namespace Ring.Simulation.Tests
         /// `bodyRadius` could still occupy — mirrors WaveSystem.TryFindSpawnPos'
         /// RNG-free grid and IsValidSpawn's geometry half (obstacles + walls),
         /// which is exactly what "the wave spawn ring is not locked" means.
-        static int FreeRingSlots(in SimConfig cfg, float bodyRadius)
+        /// Stage 3 Task 12: `ringRadiusOrNaN` is a TRAILING OPTIONAL parameter
+        /// (Global Constraints) — left out, the ring is the arena-wide one
+        /// SimConfigBuilder's own "the whole spawn ring is locked" rule walks;
+        /// supplied, it is one zone's own wave spawn ring
+        /// (Geometry.ZoneSpawnRingRadius). The ARC loop is new in the same
+        /// task and unconditional: it mirrors WaveSystem.IsValidSpawn, which
+        /// has rejected candidates inside an arc body since Т9, and it cannot
+        /// change the pre-Т12 caller's answer — that ring sits at
+        /// Radius - SpawnRingInset, outside every arc band by construction
+        /// (Т12's own layout arithmetic: 17.2 m of margin at the shipped
+        /// numbers).
+        static int FreeRingSlots(in SimConfig cfg, float bodyRadius, float ringRadiusOrNaN = float.NaN)
         {
-            float ringRadius = cfg.Arena.Radius - cfg.Wave.SpawnRingInset;
+            float ringRadius = float.IsNaN(ringRadiusOrNaN)
+                ? cfg.Arena.Radius - cfg.Wave.SpawnRingInset
+                : ringRadiusOrNaN;
             int free = 0;
             for (int i = 0; i < cfg.Wave.FallbackSlots; i++)
             {
@@ -384,6 +470,15 @@ namespace Ring.Simulation.Tests
                 for (int wIdx = 0; wIdx < cfg.Arena.WallCount && !blocked; wIdx++)
                     blocked = Geometry.OverlapsStadium(p, bodyRadius,
                         cfg.Arena.WallA[wIdx], cfg.Arena.WallB[wIdx], cfg.Arena.WallHalfWidth[wIdx]);
+                for (int zIdx = 0; zIdx < cfg.Arena.ZoneWallCount && !blocked; zIdx++)
+                {
+                    int start = cfg.Arena.ZoneWallDoorStart[zIdx];
+                    int count = cfg.Arena.ZoneWallDoorCount[zIdx];
+                    var doorCenter = new System.ReadOnlySpan<float>(cfg.Arena.DoorCenterRad, start, count);
+                    var doorFreeWidth = new System.ReadOnlySpan<float>(cfg.Arena.DoorFreeWidth, start, count);
+                    blocked = Geometry.OverlapsArc(p, bodyRadius, cfg.Arena.ZoneWallRadius[zIdx],
+                        cfg.Arena.ZoneWallHalfWidth[zIdx], doorCenter, doorFreeWidth);
+                }
                 if (!blocked) free++;
             }
             return free;
@@ -396,7 +491,7 @@ namespace Ring.Simulation.Tests
             // be unable to see each other from the very first tick, so a
             // three-way match does not open with everyone in everyone's sights.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             float2[] pts = SpawnPoints(in cfg.Arena);
             Assert.GreaterOrEqual(pts.Length, 2, "a full lobby needs at least two spawn points");
 
@@ -410,35 +505,45 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Layout_P0P1PairBlockedSpecificallyByWalls()
+        public void Layout_P0P1PairBlockedSpecificallyByZoneWall()
         {
-            // Fixwave Ф3 item 4: Layout_SomeSpawnPairHasNoLineOfSight above
-            // passes even at Walls = {} — the circle obstacle at (-6,-30)
-            // r3.2 happens to block the P0-P2 pair on its own (perpendicular
-            // distance 3.019 m against its own 3.2 m radius, a scant 0.18 m
-            // margin), so spec §3.4 (a) was satisfied by pure coincidence,
-            // with no evidence the walls (spec §3.15's own comment: "one lone
-            // wall breaking line of sight between the P0 and P1 spawn
-            // points") contribute anything at all. This test pins the SPECIFIC
-            // pair the spec's wall comment names (P0-P1) and proves a WALL is
-            // what blocks it: blocked with the shipped walls in place, then
-            // visible again on the identical layout with Walls = {} (circles
-            // unchanged) — a circle alone cannot be the cause of THIS pair's
-            // block if removing every wall restores it.
+            // Fixwave Ф3 item 4 pinned this pair against the INTERIOR WALLS,
+            // because at Radius 65 spec §3.15's "one lone wall breaking line
+            // of sight between the P0 and P1 spawn points" was the only thing
+            // standing between them. Stage 3 Task 12 moves the spawn ring from
+            // 52 m to 103.96 m and the walls stay where they were: no stadium
+            // comes near that chord any more (the nearest, (2,24)-(2,44),
+            // misses it by 14.9 m), and what breaks the pair now is the zone
+            // wall the same task ships. Owner decision R-74: the test follows
+            // its subject and is RENAMED after it (lesson 277 — a name must
+            // promise exactly what the body asserts), keeping both the §3.4(a)
+            // requirement and the sensitivity arm the old test was built
+            // around. The arm is what makes this more than a tautology:
+            // removing every zone wall, and nothing else, restores visibility,
+            // so the block provably belongs to the arc and not to a circle or
+            // a stadium that happens to sit nearby.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
-            SimConfig cfgWithWalls = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
-            float2[] ptsWithWalls = SpawnPoints(in cfgWithWalls.Arena);
+            SimConfig cfgWithZones = BuildShipped(h, w, c, g, wv, a, vis);
+            float2[] ptsWithZones = SpawnPoints(in cfgWithZones.Arena);
             Assert.IsFalse(
-                Ring.Simulation.AI.Targeting.HasLineOfFire(ptsWithWalls[0], ptsWithWalls[1], 0f, in cfgWithWalls.Arena),
-                "P0-P1 must be blocked with the shipped walls in place");
+                Ring.Simulation.AI.Targeting.HasLineOfFire(ptsWithZones[0], ptsWithZones[1], 0f,
+                    in cfgWithZones.Arena),
+                "P0-P1 must be blocked with the shipped zone walls in place");
 
-            a.Walls = System.Array.Empty<ArenaConfig.Wall>();
-            SimConfig cfgNoWalls = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
-            float2[] ptsNoWalls = SpawnPoints(in cfgNoWalls.Arena);
+            a.ZoneWallCount = 0;
+            a.ZoneWallRadius = System.Array.Empty<float>();
+            a.ZoneWallHalfWidth = System.Array.Empty<float>();
+            a.ZoneWallDoorStart = System.Array.Empty<int>();
+            a.ZoneWallDoorCount = System.Array.Empty<int>();
+            a.DoorCenterRad = System.Array.Empty<float>();
+            a.DoorFreeWidth = System.Array.Empty<float>();
+            SimConfig cfgNoZones = BuildShipped(h, w, c, g, wv, a, vis);
+            float2[] ptsNoZones = SpawnPoints(in cfgNoZones.Arena);
             Assert.IsTrue(
-                Ring.Simulation.AI.Targeting.HasLineOfFire(ptsNoWalls[0], ptsNoWalls[1], 0f, in cfgNoWalls.Arena),
-                "removing every wall must restore P0-P1 visibility — the block must come from " +
-                "a wall, not a circle obstacle");
+                Ring.Simulation.AI.Targeting.HasLineOfFire(ptsNoZones[0], ptsNoZones[1], 0f,
+                    in cfgNoZones.Arena),
+                "removing every zone wall must restore P0-P1 visibility — the block must come " +
+                "from an arc, not from a circle obstacle or an interior wall");
         }
 
         [Test]
@@ -453,7 +558,7 @@ namespace Ring.Simulation.Tests
             const float MinCorridorGap = 6f;
 
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
 
             bool found = false;
             for (int i = 0; i < cfg.Arena.WallCount && !found; i++)
@@ -512,7 +617,7 @@ namespace Ring.Simulation.Tests
             // actually carries walls — an arena with none passes this trivially,
             // so the wall count is asserted first.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.Greater(cfg.Arena.WallCount, 0,
                 "the shipped layout must carry interior walls for this requirement to mean anything");
 
@@ -1328,6 +1433,258 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual(e.WallB[i].x, a.WallB[i].x, Eps);
                 Assert.AreEqual(e.WallB[i].y, a.WallB[i].y, Eps);
                 Assert.AreEqual(e.WallHalfWidth[i], a.WallHalfWidth[i], Eps);
+            }
+        }
+
+        // --- Stage 3 Task 12: the three-zone arena in data (spec §3.2/§3.13/
+        // §3.15, owner decisions R-72/R-77/R-79). Everything below reads the
+        // C# DEFAULTS through the builder, never the shipped .asset (spec §0's
+        // two-sources discipline, MakeDefaults' own contract).
+
+        /// Every candidate player spawn point the world can ever use, with a
+        /// tag naming it — the solo center plus every point of every ring
+        /// size from 2 up to MaxPlayers. Deliberately WIDER than SpawnPoints
+        /// above (which walks one ring, the full lobby): rings of different
+        /// sizes are not nested, and SimConfigBuilder.Validate's own
+        /// obstacle/wall/arc clearance loops walk exactly this set — a rule
+        /// stated against the full lobby alone would miss the two-player
+        /// layout, which is how the 180 degree portal of spec §3.15 came to
+        /// sit 1.96 m from a real spawn point (owner decision R-72).
+        static (float2 Pos, string Tag)[] AllSpawnPoints(in ArenaSimConfig arena)
+        {
+            var pts = new System.Collections.Generic.List<(float2, string)>
+            {
+                (float2.zero, "solo center")
+            };
+            for (int n = 2; n <= arena.MaxPlayers; n++)
+                for (int s = 0; s < n; s++)
+                    pts.Add((Geometry.SpawnPosFor(s, n, in arena), $"ring {n}/point {s}"));
+            return pts.ToArray();
+        }
+
+        [Test]
+        public void Build_MatchFlowConfig_ReachesSimConfig()
+        {
+            // Errata E-2: the struct and SimConfig.Flow landed in Т1, the SO
+            // and this wiring in Т12. Without the wiring every number below
+            // reaches the simulation as a zero — the gate would open the
+            // instant the Director died and the extraction channel would
+            // complete in a single tick, both silently.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
+
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis, flow: flow);
+
+            Assert.AreEqual(flow.GateDelaySeconds, cfg.Flow.GateDelaySeconds, Eps,
+                "MatchFlowConfig.GateDelaySeconds must reach MatchFlowSimConfig");
+            Assert.AreEqual(flow.ExtractChannelSeconds, cfg.Flow.ExtractChannelSeconds, Eps,
+                "MatchFlowConfig.ExtractChannelSeconds must reach MatchFlowSimConfig");
+            Assert.AreEqual(flow.RetinueCount, cfg.Flow.RetinueCount,
+                "MatchFlowConfig.RetinueCount must reach MatchFlowSimConfig");
+            Assert.AreEqual(flow.RetinueRespawnSeconds, cfg.Flow.RetinueRespawnSeconds, Eps,
+                "MatchFlowConfig.RetinueRespawnSeconds must reach MatchFlowSimConfig");
+            Assert.AreEqual(flow.DirectorReserveSlots, cfg.Flow.DirectorReserveSlots,
+                "MatchFlowConfig.DirectorReserveSlots must reach MatchFlowSimConfig");
+        }
+
+        [Test]
+        public void Build_MatchFlowConfigOmitted_LeavesFlowAtZero()
+        {
+            // The parameter is TRAILING AND OPTIONAL (Global Constraints), so
+            // the 70-odd call sites that predate it keep compiling and keep
+            // getting an all-zero Flow — stated as a test rather than assumed,
+            // the same contract SimConfigBuilder.Build's own doc gives
+            // elite/director.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(0f, cfg.Flow.GateDelaySeconds, Eps);
+            Assert.AreEqual(0, cfg.Flow.DirectorReserveSlots);
+        }
+
+        [Test]
+        public void Build_EliteAndDirectorAssets_ReachSimConfig()
+        {
+            // Errata E-6 I5: MobEliteConfig/MobDirectorConfig are new ASSETS
+            // of the existing MobConfig class, so their numbers cannot come
+            // from that class's C# initializers (those are the chaser's) —
+            // exactly the gunner's own situation, and handled the same way
+            // (StageOneSceneBootstrap seeds the asset, the shared TestConfigs
+            // baseline carries the test numbers). Director is the SUBJECT
+            // here (ledger 227: the second element of the pair); Elite is
+            // asserted alongside so a slot swap cannot pass.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var expected = TestConfigs.Default();
+            var elite = ScriptableObject.CreateInstance<MobConfig>();
+            var director = ScriptableObject.CreateInstance<MobConfig>();
+            elite.MaxHp = expected.Elite.MaxHp;
+            elite.Radius = expected.Elite.Radius;
+            director.MaxHp = expected.Director.MaxHp;
+            director.Radius = expected.Director.Radius;
+
+            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis, elite, director);
+
+            Assert.AreEqual(expected.Director.MaxHp, cfg.Director.MaxHp, Eps,
+                "MobDirectorConfig.MaxHp must reach SimConfig.Director");
+            Assert.AreEqual(expected.Director.Radius, cfg.Director.Radius, Eps,
+                "MobDirectorConfig.Radius must reach SimConfig.Director");
+            Assert.AreEqual(expected.Elite.MaxHp, cfg.Elite.MaxHp, Eps,
+                "MobEliteConfig.MaxHp must reach SimConfig.Elite");
+            Assert.AreEqual(expected.Elite.Radius, cfg.Elite.Radius, Eps,
+                "MobEliteConfig.Radius must reach SimConfig.Elite");
+            Assert.AreNotEqual(cfg.Gunner.MaxHp, cfg.Elite.MaxHp,
+                "an Elite that reads the Gunner's numbers is the exact defect this pins");
+            Assert.AreNotEqual(cfg.Elite.MaxHp, cfg.Director.MaxHp,
+                "and the two new archetypes must not collapse onto each other either");
+        }
+
+        [Test]
+        public void Validate_ExtractZoneDisagreesWithPosition_Throws()
+        {
+            // Owner decision R-79: ExtractZone[i] and ExtractPos[i] describe
+            // the same fact twice (which zone a portal stands in), and
+            // Geometry.ZoneOf is the only arbiter. Т21/Т23 gate portal
+            // availability off the declared byte, so a silent disagreement
+            // would open a "middle" portal standing in the outer band —
+            // a data defect no other rule in this file can see.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            Assert.GreaterOrEqual(a.ExtractZone.Length, 1,
+                "the shipped layout must carry at least one portal for this rule to bite");
+            byte honest = a.ExtractZone[0];
+            a.ExtractZone[0] = (byte)(honest == (byte)Zone.Core ? Zone.Outer : Zone.Core);
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            StringAssert.Contains("ExtractZone", ex.Message);
+        }
+
+        [Test]
+        public void Layout_PortalsKeepClearOfEverySpawnPoint()
+        {
+            // Spec §3.15 in its own words: "портал под ногами стартующего
+            // обесценил бы решение уйти или остаться с первой же секунды
+            // захода". Owner decision R-72: the rule is checked against EVERY
+            // ring size, not just the full lobby — the spec's own 180 degree
+            // portal cleared the three-player ring and landed 1.96 m from the
+            // two-player one. The GATE is exempt by construction: spec §3.15
+            // puts it at the core center, which IS the solo spawn point, and
+            // it stays shut until the Director dies.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
+            Assert.GreaterOrEqual(cfg.Arena.ExtractPos.Length, 2,
+                "the shipped layout must carry portals besides the gate");
+
+            float needed = cfg.Arena.ExtractRadius + cfg.Hero.Radius;
+            var spawns = AllSpawnPoints(in cfg.Arena);
+            for (int p = 0; p < cfg.Arena.ExtractPos.Length; p++)
+            {
+                if (cfg.Arena.ExtractKind[p] == (byte)ExitKind.Gate) continue;
+                foreach (var (pos, tag) in spawns)
+                {
+                    float d = math.distance(cfg.Arena.ExtractPos[p], pos);
+                    Assert.GreaterOrEqual(d, needed,
+                        $"portal [{p}] stands {d:F3} m from spawn point {tag}, " +
+                        $"needs ExtractRadius+Hero.Radius={needed:F3}");
+                }
+            }
+        }
+
+        [Test]
+        public void Layout_NoDirectRayFromAnyOuterDoorToCore()
+        {
+            // Spec §3.15: "из внешней двери не видно внутреннюю, прямого
+            // коридора «спавн → ядро» нет, и это проверяется тестом (луч из
+            // любой внешней двери в центр пересекает тело внутреннего
+            // кольца)". The control arm below proves the block belongs to the
+            // INNER ring and not to whatever else stands in the middle zone:
+            // the same ray, stopped just outside that ring, is clear.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(2, cfg.Arena.ZoneWallCount,
+                "the shipped layout must carry both zone walls");
+
+            int outerWall = cfg.Arena.ZoneWallCount - 1;
+            float ringR = cfg.Arena.ZoneWallRadius[outerWall];
+            float controlR = cfg.Arena.ZoneWallRadius[0] + cfg.Arena.ZoneWallHalfWidth[0] + 2f;
+            int start = cfg.Arena.ZoneWallDoorStart[outerWall];
+            int count = cfg.Arena.ZoneWallDoorCount[outerWall];
+            int innerStart = cfg.Arena.ZoneWallDoorStart[0];
+            int innerCount = cfg.Arena.ZoneWallDoorCount[0];
+            Assert.GreaterOrEqual(count, 1, "the outer zone wall must carry doors");
+
+            for (int d = 0; d < count; d++)
+            {
+                float ang = cfg.Arena.DoorCenterRad[start + d];
+                float2 dir = new float2(math.cos(ang), math.sin(ang));
+                float2 doorPos = dir * ringR;
+
+                // THE SPEC'S OWN SENTENCE, and deliberately not a weaker
+                // paraphrase of it: §3.15 says "луч из любой внешней двери в
+                // центр пересекает ТЕЛО ВНУТРЕННЕГО КОЛЬЦА". The first draft of
+                // this test asserted only that the ray fails to REACH the core,
+                // which is a different claim and a much cheaper one — mutation
+                // M5 (aligning the two rings' doors, i.e. deleting the very
+                // offset this test exists to pin) showed it survives: at
+                // 30 deg the ray is stopped by obstacle circle 0, at 150 deg by
+                // interior wall 0 (by 0.01 m!), at 270 deg by circle 2. Three
+                // coincidences of the Stage 1/2 core layout, none of them the
+                // door offset, and all three free to move at the owner's next
+                // tuning pass. Asking Geometry.SegmentArc about the INNER RING
+                // ALONE removes every coincidence from the answer.
+                var innerDoorCenter =
+                    new System.ReadOnlySpan<float>(cfg.Arena.DoorCenterRad, innerStart, innerCount);
+                var innerDoorFreeWidth =
+                    new System.ReadOnlySpan<float>(cfg.Arena.DoorFreeWidth, innerStart, innerCount);
+                Assert.IsTrue(
+                    Geometry.SegmentArc(doorPos, float2.zero, 0f, cfg.Arena.ZoneWallRadius[0],
+                        cfg.Arena.ZoneWallHalfWidth[0], innerDoorCenter, innerDoorFreeWidth,
+                        out _, out _),
+                    $"the ray from outer door [{start + d}] to the core centre must cross the INNER "
+                    + "ring's own body — the two rings' doors must not line up into a straight "
+                    + "spawn-to-core corridor (spec §3.15)");
+
+                // The weaker companion, kept because it is also true and is
+                // what a player actually experiences: nothing at all lets a
+                // shot through from that door to the centre.
+                Assert.IsFalse(
+                    Ring.Simulation.AI.Targeting.HasLineOfFire(doorPos, float2.zero, 0f, in cfg.Arena),
+                    $"outer door [{start + d}] sees the core center — the doors of the two " +
+                    "rings must not line up into a straight spawn-to-core corridor");
+                Assert.IsTrue(
+                    Ring.Simulation.AI.Targeting.HasLineOfFire(doorPos, dir * controlR, 0f, in cfg.Arena),
+                    $"outer door [{start + d}] cannot even see the outside of the inner ring — " +
+                    "the block above would then belong to the middle zone, not to the inner ring");
+            }
+        }
+
+        [Test]
+        public void Layout_EveryZoneWaveSpawnRingHasAFreeSlot()
+        {
+            // Spec §3.15's third layout requirement, in its own words:
+            // "кольцо спавна ни одной зоны не заперто полностью". The two
+            // rules SimConfigBuilder already carries cover only the ARC bodies
+            // (R-55) and the arena-wide fallback ring — neither one looks at
+            // what the middle and outer zones' own circles and walls do to
+            // the per-zone rings this task ships them onto.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
+            Assert.AreEqual(2, cfg.Arena.ZoneRadius.Length, "the shipped layout must carry zones");
+
+            // The biggest body a WAVE can seat — the same three archetypes
+            // SimConfigBuilder.MaxBodyRadius(waveArchetypesOnly: true) takes,
+            // Elite included. Leaving the Elite out here would have understated
+            // the body by 0.3 m and made this scan agree with the weakened rule
+            // instead of the real one (coordinator finding on mutation M8).
+            float bodyRadius = math.max(cfg.Chaser.Radius,
+                math.max(cfg.Gunner.Radius, cfg.Elite.Radius));
+            foreach (Zone zone in new[] { Zone.Outer, Zone.Middle, Zone.Core })
+            {
+                float ringRadius = Geometry.ZoneSpawnRingRadius(zone, in cfg.Arena,
+                    cfg.Wave.SpawnRingInset);
+                int free = FreeRingSlots(in cfg, bodyRadius, ringRadius);
+                Assert.Greater(free, 0,
+                    $"the {zone} zone's wave spawn ring (radius {ringRadius:F3}) is locked: " +
+                    $"0 of {cfg.Wave.FallbackSlots} fallback slots can hold a mob of radius " +
+                    $"{bodyRadius:F3} — no wave could ever spawn in that zone");
             }
         }
 
