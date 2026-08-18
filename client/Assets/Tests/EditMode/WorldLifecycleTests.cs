@@ -83,6 +83,15 @@ namespace Ring.Simulation.Tests
             // (Hero.PickupRadius, 2 m in TestConfigs) cannot reach it during
             // the tick below and delete the fixture this pass depends on.
             w.SpawnPickup(PickupKind.EnergyCell, float2.zero, 3);
+            // Т14: one live container, for the ContainerState pass this task
+            // adds — same "hashed struct needs a completeness guard the
+            // moment it enters the digest" reasoning as the pickup above.
+            // Crate (permanent Ttl, coordinator R-100/ContainerStore's own
+            // InitialTtlFor) rather than Ground: the fixture must survive
+            // the TickAll below regardless of how many ticks this test ever
+            // grows to run, without depending on a TTL race the way a
+            // decaying kind would.
+            w.SpawnContainer(ContainerKind.Crate, float2.zero, new byte[] { 5 });
             w.TickAll(new SimInput[PlayerCount]);
             WorldSave save = w.SaveState();
             ulong baseline = w.StateHash();
@@ -137,8 +146,8 @@ namespace Ring.Simulation.Tests
             //   PlayerState 32 x 2 players = 64
             //   MatchStats 10 x 2 players  = 20
             //   WorldStats 5, MobState 9, ProjectileState 13, PickupState 5,
-            //   WaveState 13, MatchState 2 = 47
-            //   -> 131 bumps swept, ALL asserted NOT to equal baseline.
+            //   WaveState 13, MatchState 2, ContainerState 5 = 52
+            //   -> 136 bumps swept, ALL asserted NOT to equal baseline.
             //
             // Stage 3 Task 11 (coordinator R-50/R-51): WaveState grew from
             // 6 fields to 13 (two named Pending counters -> nine, one per
@@ -147,6 +156,10 @@ namespace Ring.Simulation.Tests
             // the previous 124 (the discipline this comment's own header
             // names as the point of this receipt, and the exact mistake a
             // prior fix-round already caught once).
+            //
+            // Stage 3 Task 14: ContainerState is new (Id/Pos/Kind/SlotCount/
+            // Ttl, five fields, same shape as PickupState) -- 131 -> 136,
+            // recounted the same way, not incremented from memory.
             //
             // ZERO asserted TO equal it: the thirteen PENDING names are gone
             // with the skip-list (see this file's header), which is the whole
@@ -189,6 +202,18 @@ namespace Ring.Simulation.Tests
                 field.SetValue(boxed, Bump(field.GetValue(boxed)));
                 w.SetPickupForTest(0, (PickupState)boxed);
                 Assert.AreNotEqual(baseline, w.StateHash(), $"PickupState.{field.Name} не в хеше");
+            }
+            // Т14: ContainerState's own pass, same reasoning as PickupState
+            // above (Т6's own precedent) — the array joins the hash in this
+            // task, so it gets the completeness guard in this task, via
+            // SetContainerForTest (this task's own seam).
+            foreach (var field in typeof(ContainerState).GetFields())
+            {
+                w.RestoreState(save);
+                object boxed = w.Containers[0];
+                field.SetValue(boxed, Bump(field.GetValue(boxed)));
+                w.SetContainerForTest(0, (ContainerState)boxed);
+                Assert.AreNotEqual(baseline, w.StateHash(), $"ContainerState.{field.Name} не в хеше");
             }
             foreach (var field in typeof(WaveState).GetFields())
             {
@@ -371,6 +396,39 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(baseline, w.StateHash(), "RestoreState не откатывает поток лута");
         }
 
+        /// Т14. The reflective sweep above proves ContainerState's own
+        /// STRUCT fields are hashed; it cannot reach the flat
+        /// `_containerSlots` byte array (no `typeof` reflects over it —
+        /// it isn't a field of ContainerState, same reason Inventory's
+        /// content needed Backpack_IsHashedPerPlayer_AndRestoredWithTheSave
+        /// above rather than relying on the reflective sweep alone). This
+        /// is that proof for containers: taking an item changes NO struct
+        /// field (Id/Pos/Kind/SlotCount/Ttl all stay put — only the byte at
+        /// that slot position goes from 5 to 0), so a digest that moved
+        /// only from this take is a digest that reads slot CONTENT, not
+        /// just the struct around it. The second half proves the save/
+        /// restore round-trip covers the same content — Containers AND
+        /// ContainerSlots both roll back together.
+        [Test]
+        public void ContainerState_IsHashedAndRestoredWithTheSave()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(5, cfg);
+            int id = w.SpawnContainer(ContainerKind.Crate, new float2(3f, 0f), new byte[] { 5, 9 });
+            Assert.AreNotEqual(-1, id, "premise: the container must actually exist");
+            WorldSave save = w.SaveState();
+            ulong baseline = w.StateHash();
+
+            Assert.IsTrue(w.TryTakeFromContainer(id, 0, out byte taken));
+            Assert.AreEqual(5, taken, "premise: the take must remove the FIRST item, not the second");
+            Assert.AreNotEqual(baseline, w.StateHash(),
+                "taking an item must change the digest — slot content isn't hashed");
+
+            w.RestoreState(save);
+            Assert.AreEqual(baseline, w.StateHash(),
+                "RestoreState must roll back both the container and its slot content");
+        }
+
         /// Т6: the render frame's half of the new state. `CopyFrom`'s own
         /// reflective guard (InterpolationBufferTests) proves a frame copies
         /// every public field it has; nothing proved that CaptureSnapshot
@@ -392,6 +450,27 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(PickupKind.EnergyCell, snap.Pickups[0].Kind);
             Assert.AreEqual(MatchPhase.GateOpen, snap.Match.Phase);
             Assert.AreEqual(17, snap.Match.DirectorDeathTick);
+        }
+
+        /// Т14, same reasoning as Snapshot_CopiesPickupsAndMatchState above:
+        /// InterpolationBufferTests' reflective guard proves CopyFrom copies
+        /// every RenderSnapshot field it has — it says nothing about
+        /// whether CaptureSnapshot FILLS this one from the live world, and a
+        /// forgotten line there is invisible to that guard.
+        [Test]
+        public void Snapshot_CopiesContainers()
+        {
+            var cfg = TestConfigs.Default();
+            var w = new SimulationWorld(5, cfg);
+            w.SpawnContainer(ContainerKind.Crate, new float2(30f, 0f), new byte[] { 4 });
+            Assert.AreEqual(1, w.ContainerCount, "premise: the container must actually exist");
+            var snap = new RenderSnapshot(cfg.Arena);
+
+            w.CaptureSnapshot(snap);
+
+            Assert.AreEqual(1, snap.ContainerCount);
+            Assert.AreEqual(ContainerKind.Crate, snap.Containers[0].Kind);
+            Assert.AreEqual(new float2(30f, 0f), snap.Containers[0].Pos);
         }
 
         [Test]

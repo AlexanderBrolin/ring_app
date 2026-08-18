@@ -24,6 +24,17 @@ namespace Ring.Simulation.Core
         /// decoded into it.
         public int PickupCount;
         public PickupState[] Pickups;
+        /// Container METADATA of this tick (Stage 3 Т14) — same count-plus-
+        /// array pair as Pickups above, sized to Arena.MaxContainers. Slot
+        /// CONTENT is deliberately absent from this class, same reasoning
+        /// as the backpack note on SimulationWorld.CaptureSnapshot: it
+        /// isn't drawn by the interpolated frame, only opened through a
+        /// reliable message a later task adds. A LOCAL world fills this
+        /// from CaptureSnapshot; the networked backend leaves the count at
+        /// zero until containers reach the wire, same "zero means nothing
+        /// decoded yet" convention PickupCount's own doc states.
+        public int ContainerCount;
+        public ContainerState[] Containers;
         public WaveState Wave;
         /// The match's flow phase (Stage 3 Т6) — a single struct like Wave
         /// above and WorldStats below, at the same canonical position it
@@ -121,6 +132,9 @@ namespace Ring.Simulation.Core
             // Mobs/Projectiles above — the same cap SimulationWorld sizes its
             // live array from, so a capture can never overrun this one.
             Pickups = new PickupState[arena.MaxPickups];
+            // Stage 3 Т14: sized to the arena's own container cap, exactly
+            // like Pickups above.
+            Containers = new ContainerState[arena.MaxContainers];
             PlayerStats = new MatchStats[arena.MaxPlayers];
             // Sized to the WHOLE roster, like Players/PlayerStats above and for
             // the same reason: the array index IS the player's slot, so a
@@ -168,6 +182,8 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < other.ProjectileCount; i++) Projectiles[i] = other.Projectiles[i];
             PickupCount = other.PickupCount;
             for (int i = 0; i < other.PickupCount; i++) Pickups[i] = other.Pickups[i];
+            ContainerCount = other.ContainerCount;
+            for (int i = 0; i < other.ContainerCount; i++) Containers[i] = other.Containers[i];
             Wave = other.Wave;
             Match = other.Match;
             for (int i = 0; i < other.PlayerCount; i++) PlayerStats[i] = other.PlayerStats[i];

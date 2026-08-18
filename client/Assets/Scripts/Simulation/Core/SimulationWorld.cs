@@ -105,6 +105,19 @@ namespace Ring.Simulation.Core
         // MaxProjectiles.
         PickupState[] _pickups;
         int _pickupCount;
+        // Stage 3 Task 14 (spec §3.7, Р229): containers — same capped-
+        // array/swap-remove shape as _pickups above, PLUS the flat
+        // per-container slot content. `_containerSlots` is ONE array for
+        // every container, sized MaxContainers * MaxContainerSlots and
+        // addressed by a container's POSITION in `_containers` (its index,
+        // times the fixed block width) — never by `Id`, and never resized:
+        // RemoveContainerAt's swap-remove copies the moved container's own
+        // block across when it relocates a struct, see that method's own
+        // doc. Sized at construction, same ArenaTopologyMatches-guarded
+        // immutable-cap contract as every other entity array here.
+        ContainerState[] _containers;
+        int _containerCount;
+        byte[] _containerSlots;
         WaveState _wave;
         // Stage 3 Task 1 (spec Ф1, errata E-1/E-2): match-flow phase state —
         // declared here, inert. Behavior (phase transitions, gate/portal
@@ -258,6 +271,13 @@ namespace Ring.Simulation.Core
             // Stage 3 Task 3: same "preallocated to the arena cap, never
             // grown" contract as _mobs/_projectiles above.
             _pickups = new PickupState[config.Arena.MaxPickups];
+            // Stage 3 Task 14: same contract — _containers preallocated to
+            // MaxContainers, _containerSlots preallocated to the full
+            // MaxContainers * MaxContainerSlots block grid, both zero-
+            // valued at start (no container, no item, exactly like the
+            // arrays above).
+            _containers = new ContainerState[config.Arena.MaxContainers];
+            _containerSlots = new byte[config.Arena.MaxContainers * config.Arena.MaxContainerSlots];
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
         }
 
@@ -323,6 +343,21 @@ namespace Ring.Simulation.Core
             // movement/combat has settled — a mob spawned here doesn't get an
             // extra, unbudgeted movement/combat sub-step on its own spawn tick.
             WaveSystem.Update(this);
+            // Stage 3 Task 14 (coordinator R-101): container TTL decay slots
+            // in HERE, BEFORE PickupSystem — not after. The slot after
+            // PickupSystem is reserved for MatchFlowSystem (Т21, see that
+            // call's own R-2 doc immediately below): "THE SLOT AFTER THIS
+            // CALL BELONGS TO MatchFlowSystem (Т21)… those two [LootOps/
+            // ExtractionSystem] insert themselves BEFORE this call
+            // instead" — ContainerStore is a third system in that same
+            // "inserts before PickupSystem" set, not a fourth claimant on
+            // Т21's own slot. Digest-inert today (no fixture spawns a
+            // container before this tick runs), which is exactly why the
+            // order has to be fixed by doc now rather than left for
+            // whichever call compiles first and then have Т21 need to
+            // shift a step that already sits at its position — a re-pin
+            // with both sanctions already spent.
+            ContainerStore.Update(this);
             // Stage 3 Task 3 (owner decision R-2): the canonical Ф1 tail this
             // task's own spec §3.6 wants is combat -> LootOps.Update (Т17) ->
             // ExtractionSystem.Update (Т23) -> PickupSystem.Update (this
@@ -743,6 +778,15 @@ namespace Ring.Simulation.Core
         internal PickupState[] Pickups => _pickups;
         internal int PickupCount => _pickupCount;
 
+        /// Loot.ContainerStore's seam into live container storage (Stage 3
+        /// Task 14) — same shape as Pickups/PickupCount above. Slot
+        /// CONTENT has no array-typed accessor of its own: every reader
+        /// goes through ContainerSlotAt/TryTakeFromContainer, which resolve
+        /// the position-addressed offset once rather than handing out the
+        /// flat backing array for every caller to re-derive.
+        internal ContainerState[] Containers => _containers;
+        internal int ContainerCount => _containerCount;
+
         /// Stage 3 Task 4 Interfaces: number of items currently carried by
         /// one player's backpack.
         public int InventoryCountOf(int playerIndex) => _inventories[playerIndex].Count;
@@ -929,6 +973,124 @@ namespace Ring.Simulation.Core
         {
             _pickups[index] = _pickups[--_pickupCount];
         }
+
+        // ---------------------------------------------------------------
+        // Stage 3 Task 14 (spec §3.7, Р229): containers.
+        // ---------------------------------------------------------------
+
+        /// Spawns a container (spec §3.7). `SlotCount` is set to
+        /// `items.Length` — the caller (a future task's drop table / corpse
+        /// dump) decides how many slots this instance actually offers,
+        /// simply by how many items it hands in; the storage layer carries
+        /// no per-Kind policy of its own (coordinator R-100 — `Kind` is
+        /// read exactly once, by ContainerStore.InitialTtlFor below, never
+        /// here). Coordinator R-99 (named refusal, checked and tested):
+        /// `items.Length` past `MaxContainerSlots` is refused BEFORE any
+        /// mutation — same "guard first, touch nothing on refusal"
+        /// contract TickAll's own inputs.Length check follows — because an
+        /// unchecked write would run past this container's own reserved
+        /// block and corrupt the NEXT container's slots on this flat
+        /// array, with no exception and no other observable sign.
+        ///
+        /// Capped at Arena.MaxContainers exactly like SpawnPickup above:
+        /// past the cap the spawn is skipped and counted
+        /// (WorldStats.ContainerSpawnsSkipped) — no id consumed, same
+        /// "refuse before touching _nextEntityId" contract SpawnPickup's
+        /// own doc states for a zero-amount drop.
+        internal int SpawnContainer(ContainerKind kind, float2 pos, System.ReadOnlySpan<byte> items)
+        {
+            if (items.Length > _config.Arena.MaxContainerSlots)
+            {
+                throw new System.ArgumentException(
+                    $"SimulationWorld.SpawnContainer: items.Length ({items.Length}) exceeds " +
+                    $"Arena.MaxContainerSlots ({_config.Arena.MaxContainerSlots}) — writing past " +
+                    "this container's own block would corrupt its neighbour's slots.", nameof(items));
+            }
+            if (_containerCount >= _containers.Length)
+            {
+                _worldStats.ContainerSpawnsSkipped++;
+                return -1;
+            }
+            int id = _nextEntityId++;
+            int index = _containerCount++;
+            _containers[index] = new ContainerState
+            {
+                Id = id, Pos = pos, Kind = kind, SlotCount = (byte)items.Length,
+                Ttl = ContainerStore.InitialTtlFor(kind, in _config.Loot)
+            };
+            int offset = index * _config.Arena.MaxContainerSlots;
+            for (int i = 0; i < items.Length; i++) _containerSlots[offset + i] = items[i];
+            return id;
+        }
+
+        /// Removes a container by swapping the last slot into its place —
+        /// O(1), same swap-remove idiom as RemovePickupAt, PLUS the slot
+        /// BLOCK (spec Р229): the moved container's own content must
+        /// follow it to its new array position, or the position it
+        /// vacates keeps stale bytes that the NEXT spawn (or, worse,
+        /// nothing at all — the position simply stops being read once the
+        /// count shrinks past it) would leave silently attributed to
+        /// whichever struct now lives at that index. `Array.Copy` handles
+        /// the `index == last` case (removing the LAST container) as a
+        /// same-range no-op, same as the struct-array swap one line above.
+        internal void RemoveContainerAt(int index)
+        {
+            int last = --_containerCount;
+            _containers[index] = _containers[last];
+            int slotWidth = _config.Arena.MaxContainerSlots;
+            System.Array.Copy(_containerSlots, last * slotWidth, _containerSlots, index * slotWidth, slotWidth);
+        }
+
+        /// Takes one item out of a container slot (spec §3.7/§3.8).
+        /// Addressed by the container's own `Id` (a linear search, same
+        /// named-refusal-adjacent idiom as ItemCatalogLookup.Find, though
+        /// "not found" reads as an ordinary `false` here rather than a
+        /// thrown exception — a stale id from a container that already
+        /// expired/emptied is exactly as ordinary an outcome as an empty
+        /// slot, not a caller bug), then reads/writes by the found
+        /// container's POSITION (Р229) — never by `containerId` itself,
+        /// which would silently misread a container that isn't at the
+        /// position matching its own id (true for every container after
+        /// the FIRST one any world ever spawns, since ids start at 1 and
+        /// positions start at 0). Consuming: a successful take zeroes the
+        /// slot, so a second take of the same slot reads back "empty"
+        /// (spec: 0 = пусто) instead of handing out the same item twice.
+        internal bool TryTakeFromContainer(int containerId, int slot, out byte itemId)
+        {
+            for (int i = 0; i < _containerCount; i++)
+            {
+                if (_containers[i].Id != containerId) continue;
+                int offset = i * _config.Arena.MaxContainerSlots + slot;
+                byte item = _containerSlots[offset];
+                if (item == 0)
+                {
+                    itemId = 0;
+                    return false;
+                }
+                _containerSlots[offset] = 0;
+                itemId = item;
+                return true;
+            }
+            itemId = 0;
+            return false;
+        }
+
+        /// Reads a container's slot content by the container's own
+        /// POSITION in the array (spec Р229) — 0 = empty. Same "no bounds
+        /// guard beyond the backing array" contract as Loot.Inventory.
+        /// ItemAt: callers stay within [0, SlotCount) for the container at
+        /// `containerIndex`, exactly as every other indexed read in this
+        /// codebase already assumes of its own caller.
+        internal byte ContainerSlotAt(int containerIndex, int slot)
+            => _containerSlots[containerIndex * _config.Arena.MaxContainerSlots + slot];
+
+        /// Test-only seam (Stage 3 Task 14), same contract as
+        /// SetPickupForTest/SetMobForTest above — mutates a live slot
+        /// directly, for the reflective hash sweep
+        /// (WorldLifecycleTests.EveryPlayerAndStatsFieldAffectsHash) and for
+        /// fixtures that need to force a specific Ttl without going through
+        /// SpawnContainer's own seeding.
+        internal void SetContainerForTest(int index, in ContainerState c) => _containers[index] = c;
 
         /// Applies projectile damage to a mob (spec Interfaces, Task 16); on death
         /// it swap-removes the mob the same way RemoveProjectileAt does for projectiles.
@@ -1345,6 +1507,14 @@ namespace Ring.Simulation.Core
             // as the two entity arrays above.
             target.PickupCount = _pickupCount;
             System.Array.Copy(_pickups, target.Pickups, _pickupCount);
+            // Stage 3 Т14: container METADATA only (position/kind/etc, for
+            // drawing the prop) — same count-then-copy shape as Pickups
+            // above. Slot CONTENT is deliberately NOT copied here, on the
+            // same reasoning CaptureSnapshot's own backpack note gives
+            // below: it isn't rendered by the interpolated frame, only
+            // opened through a reliable message a later task (Т17) adds.
+            target.ContainerCount = _containerCount;
+            System.Array.Copy(_containers, target.Containers, _containerCount);
             target.Wave = _wave;
             // Stage 3 Т6: the match's flow state, a single plain-struct
             // assignment right after the wave — same shape as WorldStats
@@ -1399,6 +1569,14 @@ namespace Ring.Simulation.Core
                 // contract.
                 PickupCount = _pickupCount,
                 Pickups = new PickupState[_pickups.Length],
+                // Stage 3 Т14: containers join the entity arrays above, same
+                // "whole backing array copied, live count carried beside it"
+                // contract — the slot content array copies whole too
+                // (ContainerSlots), not just up to any one container's
+                // SlotCount, so a restore doesn't have to re-derive offsets.
+                ContainerCount = _containerCount,
+                Containers = new ContainerState[_containers.Length],
+                ContainerSlots = new byte[_containerSlots.Length],
                 Wave = _wave,
                 // Stage 3 Т6: the match's flow state, right after the wave.
                 Match = _match,
@@ -1413,6 +1591,8 @@ namespace Ring.Simulation.Core
             System.Array.Copy(_mobs, save.Mobs, _mobs.Length);
             System.Array.Copy(_projectiles, save.Projectiles, _projectiles.Length);
             System.Array.Copy(_pickups, save.Pickups, _pickups.Length);
+            System.Array.Copy(_containers, save.Containers, _containers.Length);
+            System.Array.Copy(_containerSlots, save.ContainerSlots, _containerSlots.Length);
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
             System.Array.Copy(_matchStats, save.Stats, _matchStats.Length);
             // Stage 3 Task 4: Inventory is a reference type — unlike the
@@ -1480,6 +1660,13 @@ namespace Ring.Simulation.Core
             // ArenaSimConfig caps ApplyConfig refuses to hot-tweak.
             _pickupCount = save.PickupCount;
             System.Array.Copy(save.Pickups, _pickups, _pickups.Length);
+            // Stage 3 Т14: containers restore exactly like Pickups above —
+            // no length cross-check of their own, same immutable-topology
+            // reasoning (MaxContainers/MaxContainerSlots are guarded by
+            // ArenaTopologyMatches, same as every other entity cap here).
+            _containerCount = save.ContainerCount;
+            System.Array.Copy(save.Containers, _containers, _containers.Length);
+            System.Array.Copy(save.ContainerSlots, _containerSlots, _containerSlots.Length);
             _wave = save.Wave;
             _match = save.Match;
             _worldStats = save.WorldStats;
@@ -1561,16 +1748,23 @@ namespace Ring.Simulation.Core
         /// → pickupCount+pickups → containerCount+containers+containerSlots
         /// → wave → matchState → worldStats → stats[0..n) → inventories[0..n).
         ///
-        /// THE CONTAINERS' STEP IS OCCUPIED NOW AND FILLED IN Т14 (spec Р294,
-        /// this task's own brief). `ContainerState` does not exist yet, so the
-        /// step below folds in a literal zero count and walks nothing. That is
-        /// not decoration: `StateHash64.Add` is an FNV-1a chain, so ADDING the
-        /// step later would shift the digest all by itself — even at a zero
-        /// count — and stage 3 has exactly two sanctioned golden movements
-        /// (this task and Т12). Claiming the position now is what keeps Т14
-        /// from needing a third one. Т14 replaces the literal with
-        /// `_containerCount` and adds the two walks after it; a world with no
-        /// containers hashes identically before and after that change.
+        /// THE CONTAINERS' STEP WAS RESERVED BY Т6 AND IS FILLED HERE, Т14
+        /// (spec Р294). Two walks follow `_containerCount`, both bounded by
+        /// it and neither carrying a length marker of its own: walk A hashes
+        /// each live `ContainerState` (HashContainer, same one-helper-per-
+        /// entity shape as HashPickup); walk B hashes the flat
+        /// `_containerSlots` content, per container bounded by THAT
+        /// container's own `SlotCount` (already folded into the digest
+        /// inside walk A) rather than the fixed `MaxContainerSlots` block
+        /// width — the same "walk only what's counted, not the backing
+        /// array" contract HashInventory below already follows for the
+        /// exact same reason (a container's block can carry a previous
+        /// occupant's leftover bytes past its own SlotCount, same as a
+        /// swap-removed backpack slot). At `_containerCount == 0` both walks
+        /// run zero iterations, so a world with no containers hashes
+        /// identically to before this task — `StateHash64.Add` is an FNV-1a
+        /// chain, and stage 3's two sanctioned golden movements (Т6, Т12)
+        /// are both already spent.
         ///
         /// playerCount, _mobCount and _projectileCount are each hashed before
         /// their arrays for the same reason: a length is state in its own right,
@@ -1601,13 +1795,17 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < _projectileCount; i++) h = HashProjectile(h, in _projectiles[i]);
             h = StateHash64.Add(h, _pickupCount);
             for (int i = 0; i < _pickupCount; i++) h = HashPickup(h, in _pickups[i]);
-            // Containers (Т14) — the reserved step, see this method's own doc
-            // for why a zero count is folded in here instead of nothing at
-            // all. Named rather than written as a bare literal so the step
-            // says what it is at the call site, and so Т14's edit is a
-            // one-token substitution of the real `_containerCount`.
-            const int ContainerCount = 0;
-            h = StateHash64.Add(h, ContainerCount);
+            // Containers (Т14) — the reserved step, see this method's own
+            // doc for the shape of the two walks and why they stay
+            // digest-neutral at zero containers.
+            h = StateHash64.Add(h, _containerCount);
+            for (int i = 0; i < _containerCount; i++) h = HashContainer(h, in _containers[i]);
+            for (int i = 0; i < _containerCount; i++)
+            {
+                int offset = i * _config.Arena.MaxContainerSlots;
+                for (int s = 0; s < _containers[i].SlotCount; s++)
+                    h = StateHash64.Add(h, (int)_containerSlots[offset + s]);
+            }
             h = HashWave(h, in _wave);
             h = HashMatch(h, in _match);
             // Stage 2 Task 10: the match-wide counters get their own hash step at
@@ -1718,6 +1916,24 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.Id); h = StateHash64.Add(h, p.Pos);
             h = StateHash64.Add(h, (int)p.Kind); h = StateHash64.Add(h, p.Amount);
             h = StateHash64.Add(h, p.Ttl);
+            return h;
+        }
+
+        /// Stage 3 Т14: one container's own struct fields — walk A of the
+        /// two StateHash() adds for this task (see that method's own doc).
+        /// `SlotCount` is included here, NOT re-added by walk B — walk B
+        /// only uses it as a loop bound, so the field's own value already
+        /// entering the digest here is what stands in for it, same
+        /// "walked in the count position instead of a redundant marker"
+        /// role _containerCount itself plays one level up. `Kind` and
+        /// `SlotCount` both cast for the reasons HashPickup's own doc gives
+        /// (enum has no implicit Add overload; byte matches every other
+        /// byte field this file hashes, e.g. ProjectileState.OwnerIndex).
+        static ulong HashContainer(ulong h, in ContainerState c)
+        {
+            h = StateHash64.Add(h, c.Id); h = StateHash64.Add(h, c.Pos);
+            h = StateHash64.Add(h, (int)c.Kind); h = StateHash64.Add(h, (int)c.SlotCount);
+            h = StateHash64.Add(h, c.Ttl);
             return h;
         }
 

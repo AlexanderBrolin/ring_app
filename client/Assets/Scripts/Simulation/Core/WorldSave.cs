@@ -41,12 +41,17 @@ namespace Ring.Simulation.Core
         /// backing-array shape as Mobs/Projectiles above.
         public int PickupCount;
         public PickupState[] Pickups;
-        // Containers (Т14) belong between the pickups above and the wave
-        // below — the position spec Р294 gives them, and the one
-        // SimulationWorld.StateHash already reserves with a zero count.
-        // Nothing is declared here yet because, unlike the hash, a missing
-        // field in this class costs nothing until the type exists: adding
-        // one later changes no digest.
+        /// Stage 3 Т14 (spec Р229/Р294): containers, between the pickups
+        /// above and the wave below — the position spec Р294 gives them,
+        /// and the one SimulationWorld.StateHash reserved with a zero count
+        /// since Т6. `ContainerSlots` is the WHOLE flat backing array
+        /// (MaxContainers * MaxContainerSlots), copied in full by
+        /// SaveState/RestoreState same as every other array in this class —
+        /// not trimmed to any one container's own SlotCount, so a restore
+        /// is a straight Array.Copy with no offset re-derivation.
+        public int ContainerCount;
+        public ContainerState[] Containers;
+        public byte[] ContainerSlots;
         public WaveState Wave;
         /// Stage 3 Т6: the match's flow state (Stage 3 Task 1's struct),
         /// saved right after the wave — one per match, not per player.

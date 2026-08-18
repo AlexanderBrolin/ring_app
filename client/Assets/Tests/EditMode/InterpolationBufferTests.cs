@@ -815,6 +815,8 @@ namespace Ring.Simulation.Tests
             // Stage 3 Т6: ground pickups, bounded by their own count exactly
             // like Mobs/Projectiles above.
             { nameof(RenderSnapshot.Pickups), nameof(RenderSnapshot.PickupCount) },
+            // Stage 3 Т14: containers, same bounded-by-their-own-count shape.
+            { nameof(RenderSnapshot.Containers), nameof(RenderSnapshot.ContainerCount) },
         };
 
         /// Fills every field of `s` with a distinct, non-default value so a
@@ -878,6 +880,19 @@ namespace Ring.Simulation.Tests
                     Amount = 7 + i,
                     Ttl = 42.5f + i,
                 };
+            // Stage 3 Т14: the container array RenderSnapshot grew for the
+            // container economy — same "distinct nonzero values, never a
+            // constructor default" discipline as Pickups above.
+            s.ContainerCount = math.min(2, arena.MaxContainers);
+            for (int i = 0; i < s.ContainerCount; i++)
+                s.Containers[i] = new ContainerState
+                {
+                    Id = 400 + i,
+                    Pos = new float2(8f + i, 9f + i),
+                    Kind = ContainerKind.Crate,
+                    SlotCount = (byte)(1 + i),
+                    Ttl = 12.5f + i,
+                };
             s.Match = new MatchState { Phase = MatchPhase.GateOpen, DirectorDeathTick = 77 };
             // Stage 3 Task 11 (errata A-I6): the debt grew from two named
             // fields to nine (zone x archetype) -- every one gets a
@@ -918,8 +933,9 @@ namespace Ring.Simulation.Tests
         /// `value == default(T)` for a boxed value of any VALUE type the
         /// fixture might produce (int/uint/float/bool/byte, enums, `float2`,
         /// and the plain structs `PlayerState`/`MobState`/`ProjectileState`/
-        /// `PickupState`/`WaveState`/`MatchState`/`MatchStats`/`WorldStats` —
-        /// none of them nest a reference type, confirmed by inspection of
+        /// `PickupState`/`ContainerState`/`WaveState`/`MatchState`/
+        /// `MatchStats`/`WorldStats` — none of them nest a reference type,
+        /// confirmed by inspection of
         /// `Simulation/Core/SimStates.cs`, so comparing against a
         /// freshly-activated instance of the same type is exact. The one
         /// piece of world state that IS a reference type, the backpack

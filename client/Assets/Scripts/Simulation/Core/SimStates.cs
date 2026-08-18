@@ -235,6 +235,49 @@ namespace Ring.Simulation.Core
         public float Ttl;
     }
 
+    /// Stage 3 Task 14 (spec §3.7, С16/Р229): the container's SKIN and spawn
+    /// table only — behavior never branches on it (spec: "на поведение он
+    /// не влияет… три механизма вместо одного дали бы три state-машины и
+    /// три набора гонок"). Coordinator R-100: `Kind` is read exactly ONCE
+    /// in the whole codebase, by `Loot.ContainerStore.InitialTtlFor` — a
+    /// future task that needs a second branch on it is reopening that
+    /// spec decision, not extending a precedent.
+    public enum ContainerKind : byte { Ground = 0, Crate = 1, Cache = 2, MobCorpse = 3, PlayerCorpse = 4 }
+
+    /// Live state of one container (spec §3.7) — the ONE entity type for
+    /// every ground drop/crate/cache/corpse (С16). Same array/id/
+    /// swap-remove shape as PickupState above, PLUS a fixed-width block of
+    /// `SimulationWorld._containerSlots` this struct's own array position
+    /// pairs with — Р229: content is addressed by the container's POSITION
+    /// in the array, never by `Id` (an id survives a swap-remove, a
+    /// position does not), which is why `RemoveContainerAt`'s swap-remove
+    /// must carry the slot block along with the struct — see that method's
+    /// own doc.
+    ///
+    /// `SlotCount` is this container's own usable width inside the fixed
+    /// `MaxContainerSlots` block — set once at `SpawnContainer` time from
+    /// the caller's `items` span length; slots at or past it are never
+    /// read (same "walk only what's counted" contract `Loot.Inventory`'s
+    /// own Count already follows, HashInventory's own doc).
+    ///
+    /// `Ttl` — spec's own field list (§3.7) omits it; the plan's Interfaces
+    /// add it with "0 = не истекает", and `LootSimConfig.ContainerTtlSeconds`
+    /// (shipped Т13) would otherwise have no reader at all — amendment to
+    /// spec §3.7 recorded in this task's own report. 0 means "never
+    /// expires" (ящик/тайник/труп сборщика); every other kind seeds from
+    /// `Loot.ContainerTtlSeconds` via `ContainerStore.InitialTtlFor`.
+    /// Part of StateHash/WorldSave/CaptureSnapshot from this task on, at
+    /// the canonical position right after the pickups (spec Р294 —
+    /// SimulationWorld.StateHash's own doc reserved the step in Т6).
+    public struct ContainerState
+    {
+        public int Id;
+        public float2 Pos;
+        public ContainerKind Kind;
+        public byte SlotCount;
+        public float Ttl;
+    }
+
     public enum WavePhase : byte { Waiting = 0, Active = 1 }
 
     /// Live state of the wave-spawning director.
