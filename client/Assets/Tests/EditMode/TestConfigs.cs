@@ -439,5 +439,21 @@ namespace Ring.Simulation.Tests
             c.Hero.StaminaRegenDelay = 0.3f;
             return c;
         }
+
+        /// Stage 3 Task 15 (spec §4 Р296 smoke-test fixture, coordinator §4):
+        /// Default() with non-zero container counts — the cheapest fixture
+        /// that actually exercises Loot.ContainerStore.PlaceStartingContainers
+        /// (every other fixture in this file keeps the golden-safety zeros).
+        /// Named for what it adds over Default() (containers), NOT
+        /// `Extraction()` — that name belongs to Т36's own third-golden
+        /// fixture (spec §4), a different scenario entirely.
+        public static SimConfig Populated()
+        {
+            var c = Default();
+            c.Loot.CrateCount = 3;
+            c.Loot.CacheCountMiddle = 2;
+            c.Loot.CacheCountCore = 1;
+            return c;
+        }
     }
 }

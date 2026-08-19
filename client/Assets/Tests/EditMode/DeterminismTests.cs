@@ -103,6 +103,41 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(HashAfterTicks(42, Ticks), HashAfterTicks(42, Ticks));
         }
 
+        /// Stage 3 Task 15 (spec §4 Р296, coordinator §4): the cheap
+        /// "two worlds on one seed give an equal hash" smoke test, extended
+        /// to a fixture that actually exercises the loot-placement systems
+        /// this task adds — SameSeed_SameHash_After1000Ticks above (and
+        /// ScriptedRun_SameSeed_SameHash/MultiPlayerScriptedRun_SameSeed_
+        /// SameHash below) all run TestConfigs.Default(), whose Loot counts
+        /// stay at their golden-safety zeros (Т13), so none of them has ever
+        /// placed a single container. Non-empty PREMISE required first
+        /// (lessons 267/302, coordinator §4's own explicit warning): without
+        /// it this collapses into the already-existing zero-container smoke
+        /// test above and proves nothing new.
+        /// Fixture editors: Т16 (non-zero drop chances put ITEMS inside
+        /// these containers), Т36 (the third golden, a completely separate
+        /// scenario — TestConfigs.Populated() is not that fixture).
+        [Test]
+        public void SameSeed_SameHash_WithContainers()
+        {
+            SimConfig cfg = TestConfigs.Populated();
+            Assert.Greater(cfg.Loot.CrateCount + cfg.Loot.CacheCountMiddle + cfg.Loot.CacheCountCore, 0,
+                "premise: the fixture itself must actually request non-zero container counts");
+
+            var w1 = new SimulationWorld(42, cfg);
+            var w2 = new SimulationWorld(42, cfg);
+            Assert.Greater(w1.ContainerCount, 0,
+                "premise: the world must have actually PLACED containers, not merely been asked to");
+
+            for (int i = 0; i < Ticks; i++)
+            {
+                w1.Tick(default);
+                w2.Tick(default);
+            }
+
+            Assert.AreEqual(w1.StateHash(), w2.StateHash());
+        }
+
         [Test]
         public void DifferentSeed_DifferentHash()
         {

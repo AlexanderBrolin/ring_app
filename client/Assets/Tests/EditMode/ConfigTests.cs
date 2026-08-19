@@ -473,6 +473,19 @@ namespace Ring.Simulation.Tests
         /// Radius - SpawnRingInset, outside every arc band by construction
         /// (Т12's own layout arithmetic: 17.2 m of margin at the shipped
         /// numbers).
+        /// Stage 3 Task 15 (coordinator R-102/R-111): the BLOCKED check below
+        /// delegates to SpawnPlacement.GeometryBlocked (doorsPassable: true,
+        /// same door policy as WaveSystem.IsValidSpawn/SimConfigBuilder.
+        /// RingSlotBlocked) — the third of the three copies R-111's own
+        /// ledger names collapsing onto the one shared home. The grid-ANGLE
+        /// formula (coordinator R-115, a SEPARATE finding from R-111 above —
+        /// it is bit-sensitive per R-103, and three copies of it had
+        /// survived R-111's own first pass) now comes from
+        /// SpawnPlacement.FallbackSlotPos too, not restated a third time
+        /// here — that function's own doc explains why it is its OWN home
+        /// rather than folded into SpawnPlacement.TryFind: this method never
+        /// draws from an RNG stream at all, it just counts free FIXED slots,
+        /// which is not a search.
         static int FreeRingSlots(in SimConfig cfg, float bodyRadius, float ringRadiusOrNaN = float.NaN)
         {
             float ringRadius = float.IsNaN(ringRadiusOrNaN)
@@ -481,25 +494,12 @@ namespace Ring.Simulation.Tests
             int free = 0;
             for (int i = 0; i < cfg.Wave.FallbackSlots; i++)
             {
-                float angle = 2f * math.PI * i / cfg.Wave.FallbackSlots;
-                float2 p = ringRadius * new float2(math.cos(angle), math.sin(angle));
-                bool blocked = false;
-                for (int o = 0; o < cfg.Arena.ObstacleCount && !blocked; o++)
-                    blocked = Geometry.CircleOverlap(p, bodyRadius,
-                        cfg.Arena.ObstaclePos[o], cfg.Arena.ObstacleRadius[o]);
-                for (int wIdx = 0; wIdx < cfg.Arena.WallCount && !blocked; wIdx++)
-                    blocked = Geometry.OverlapsStadium(p, bodyRadius,
-                        cfg.Arena.WallA[wIdx], cfg.Arena.WallB[wIdx], cfg.Arena.WallHalfWidth[wIdx]);
-                for (int zIdx = 0; zIdx < cfg.Arena.ZoneWallCount && !blocked; zIdx++)
-                {
-                    int start = cfg.Arena.ZoneWallDoorStart[zIdx];
-                    int count = cfg.Arena.ZoneWallDoorCount[zIdx];
-                    var doorCenter = new System.ReadOnlySpan<float>(cfg.Arena.DoorCenterRad, start, count);
-                    var doorFreeWidth = new System.ReadOnlySpan<float>(cfg.Arena.DoorFreeWidth, start, count);
-                    blocked = Geometry.OverlapsArc(p, bodyRadius, cfg.Arena.ZoneWallRadius[zIdx],
-                        cfg.Arena.ZoneWallHalfWidth[zIdx], doorCenter, doorFreeWidth);
-                }
-                if (!blocked) free++;
+                // Coordinator R-115: the slot angle formula is now the one
+                // shared SpawnPlacement.FallbackSlotPos home, not a third
+                // copy — see that method's own doc for why it is bit-sensitive.
+                float2 p = SpawnPlacement.FallbackSlotPos(ringRadius, i, cfg.Wave.FallbackSlots);
+                if (!SpawnPlacement.GeometryBlocked(in cfg.Arena, p, bodyRadius, doorsPassable: true))
+                    free++;
             }
             return free;
         }

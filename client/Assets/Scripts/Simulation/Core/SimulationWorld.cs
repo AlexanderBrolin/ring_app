@@ -279,6 +279,14 @@ namespace Ring.Simulation.Core
             _containers = new ContainerState[config.Arena.MaxContainers];
             _containerSlots = new byte[config.Arena.MaxContainers * config.Arena.MaxContainerSlots];
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
+
+            // Stage 3 Task 15 (spec §3.7, Interfaces): the ONE legal call
+            // site, last line of the constructor — every entity array this
+            // task's search touches (_containers/_containerSlots above) and
+            // every other one (players, mobs, ...) already exists by this
+            // point, and player depenetration (the loop above, spec's own
+            // "after player depenetration" requirement) has already run.
+            ContainerStore.PlaceStartingContainers(this);
         }
 
         /// Solo overload (Stage 2 Task 4) — throws for a multiplayer world (spec §3.2): the

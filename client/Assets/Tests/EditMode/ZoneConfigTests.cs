@@ -741,5 +741,48 @@ namespace Ring.Simulation.Tests
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ZoneWallCount"));
         }
+
+        /// Stage 3 Task 15 (coordinator R-109, §8 of the brief): same F4
+        /// family as the two rules right above (a config's OWN arrays must
+        /// agree on whether zones exist), one more independent fact that can
+        /// disagree — "zones exist" (ZoneRadius) vs "Loot wants a Middle/Core
+        /// cache" (Loot.CacheCountMiddle/CacheCountCore). Without this rule
+        /// the disagreement surfaces four stack frames deeper and much later
+        /// than Build() — inside SimulationWorld's OWN constructor, at
+        /// Geometry.ZoneSpawnRingRadius's named refusal (R-64) — the very
+        /// failure mode F4's other two rules exist to catch earlier.
+        ///
+        /// Coordinator R-116: MakeDefaults()'s own ArenaConfig carries the
+        /// shipped ZoneWallCount=2 (mirrors ArenaConfig's own C# defaults,
+        /// same as every other MakeDefaults() field) — zeroing ONLY
+        /// ZoneRadius leaves those walls in place, which ALSO trips the
+        /// existing "ZoneWallCount > 0 requires ZoneRadius.Length == 2"
+        /// rule (ValidateZoneWalls) at the same time, and that rule's own
+        /// message happens to contain the substring "ZoneRadius" too — so
+        /// the second assert below would pass even if THIS task's own rule
+        /// had a bug, proving nothing. The zone walls are zeroed here too
+        /// (same fields TestConfigs.Open() clears) so a zoneless arena
+        /// WITHOUT walls — legal under F4 on its own — is the only
+        /// remaining violation, and both asserts pin THIS rule's own text.
+        [Test]
+        public void Validate_RejectsCacheCountsOnZonelessArena()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = System.Array.Empty<float>();
+            a.ZoneWallCount = 0;
+            a.ZoneWallRadius = System.Array.Empty<float>();
+            a.ZoneWallHalfWidth = System.Array.Empty<float>();
+            a.ZoneWallDoorStart = System.Array.Empty<int>();
+            a.ZoneWallDoorCount = System.Array.Empty<int>();
+            a.DoorCenterRad = System.Array.Empty<float>();
+            a.DoorFreeWidth = System.Array.Empty<float>();
+            var loot = ScriptableObject.CreateInstance<LootConfig>();
+            loot.CacheCountMiddle = 1;
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+            Assert.That(ex.Message, Does.Contain("CacheCountMiddle"));
+            Assert.That(ex.Message, Does.Contain("ZoneRadius"));
+        }
     }
 }

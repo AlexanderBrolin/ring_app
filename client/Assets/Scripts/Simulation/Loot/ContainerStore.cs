@@ -1,4 +1,5 @@
 using Ring.Simulation.Core;
+using Unity.Mathematics;
 
 namespace Ring.Simulation.Loot
 {
@@ -56,6 +57,133 @@ namespace Ring.Simulation.Loot
                 if (c.Ttl <= 0f) continue; // permanent kind — never decays
                 c.Ttl -= SimulationWorld.TickDt;
                 if (c.Ttl <= 0f) w.RemoveContainerAt(i);
+            }
+        }
+
+        /// Stage 3 Task 15 (spec §3.7, Р262): the constructor's OWN startup
+        /// placement — CrateCount crates in Outer, CacheCountMiddle/
+        /// CacheCountCore caches in Middle/Core. Called ONCE, from
+        /// SimulationWorld's constructor, after every entity array
+        /// (including _containers/_containerSlots) exists and after player
+        /// depenetration has already run.
+        ///
+        /// Zone-major order (Outer, then Middle, then Core — Zone's own
+        /// enum order, coordinator R-50): the SAME order WaveSystem's own
+        /// zone loop and HashWave already use. Not a style choice — it is
+        /// the order _lootRng is drawn from and _nextEntityId is handed
+        /// out, both of which enter the replay/save contract, so the order
+        /// is part of this method's contract, not an implementation detail.
+        ///
+        /// No item content is placed here (coordinator R-107): every
+        /// container PlaceStartingContainers creates is EMPTY
+        /// (SpawnContainer's own `items` argument is
+        /// System.ReadOnlySpan&lt;byte&gt;.Empty below) — "1-2 items of the
+        /// zone's own tier, plus a repair kit at 25% chance" (spec §3.7) is
+        /// Т16's own job, together with the tier->item mapping and
+        /// DropChance it needs. Placing a real roll here would invent both
+        /// ahead of that task's own open question to the owner (R-91).
+        internal static void PlaceStartingContainers(SimulationWorld w)
+        {
+            ArenaSimConfig arena = w.Config.Arena;
+            LootSimConfig loot = w.Config.Loot;
+            float spawnRingInset = w.Config.Wave.SpawnRingInset;
+
+            PlaceZone(w, in arena, in loot, spawnRingInset, Zone.Outer, ContainerKind.Crate, loot.CrateCount);
+            PlaceZone(w, in arena, in loot, spawnRingInset, Zone.Middle, ContainerKind.Cache, loot.CacheCountMiddle);
+            PlaceZone(w, in arena, in loot, spawnRingInset, Zone.Core, ContainerKind.Cache, loot.CacheCountCore);
+        }
+
+        /// One zone's own share of the startup placement — `count`
+        /// independent searches, each through the shared
+        /// Core.SpawnPlacement.TryFind (coordinator R-102/R-11), the SAME
+        /// "candidates from RNG -> RNG-free fallback grid -> refusal" home
+        /// WaveSystem's own mob spawns go through.
+        ///
+        /// Coordinator R-108: the zero-count guard runs BEFORE
+        /// Geometry.ZoneSpawnRingRadius — that method throws a named
+        /// refusal for Middle/Core on a zoneless arena (Arena.ZoneRadius.
+        /// Length &lt; 2, R-64's own guard), and a zoneless arena that asks
+        /// for zero Middle/Core containers (every fixture in the suite
+        /// before this task, and any real match with Loot.CacheCountMiddle/
+        /// CacheCountCore left at 0) must stay legal.
+        static void PlaceZone(SimulationWorld w, in ArenaSimConfig arena, in LootSimConfig loot,
+            float spawnRingInset, Zone zone, ContainerKind kind, int count)
+        {
+            if (count <= 0) return; // R-108 — guard BEFORE the call below
+
+            // Coordinator R-105: the zone's own spawn ring, the SAME
+            // arithmetic WaveSystem.TryFindSpawnPos and SimConfigBuilder's
+            // own wave-spawn-ring rule already use — one home, not a
+            // parallel copy (Geometry.ZoneSpawnRingRadius).
+            float ringRadius = Geometry.ZoneSpawnRingRadius(zone, in arena, spawnRingInset);
+            // Coordinator R-104: the container's own body radius for
+            // clearance purposes is Hero.Radius — primitives are monotonic
+            // in radius, and the zonal spawn ring is already validated
+            // clear for a LARGER body (0.8, ZoneConfigTests.
+            // Layout_EveryZoneWaveSpawnRingHasAFreeSlot), so the RNG-free
+            // fallback grid is guaranteed to find room. No new balance
+            // number is introduced (the Ф3 data-delivery gate is spent,
+            // Т13; CR 6 forbids a balance number living in code instead).
+            float radius = w.Config.Hero.Radius;
+
+            for (int i = 0; i < count; i++)
+            {
+                ref Random rng = ref w.LootRng;
+                var filter = new ContainerSpawnFilter(w, in arena, radius);
+                if (SpawnPlacement.TryFind(ref rng, loot.LootSpawnAttempts, loot.LootFallbackSlots,
+                        ringRadius, in filter, out float2 pos))
+                {
+                    w.SpawnContainer(kind, pos, System.ReadOnlySpan<byte>.Empty);
+                }
+                else
+                {
+                    // Coordinator: the SEARCH's own skip counter — a SECOND,
+                    // independent path to the same WorldStats field exists
+                    // inside SimulationWorld.SpawnContainer itself (the
+                    // MaxContainers cap) — both are legal, but they are TWO
+                    // branches, each with its own mutation witness.
+                    w.WorldStatsRef.ContainerSpawnsSkipped++;
+                }
+            }
+        }
+
+        /// Stage 3 Task 15 (coordinator R-102/R-106): the container's own
+        /// ISpawnFilter. The geometry half (obstacles, walls, zone-wall
+        /// arcs) delegates to Core.SpawnPlacement.GeometryBlocked with
+        /// `doorsPassable: false` — Geometry.InArcBand, a pure RADIAL band
+        /// test with NO angular door exception — because a container, unlike
+        /// a mob, must not be allowed to sit inside a doorway and block it
+        /// (coordinator R-106; the test name `NoContainerInsideArcOrDoor`
+        /// reads literally). The half that does NOT come from
+        /// WaveSystem's own filter — distance-to-player, live-mob overlap —
+        /// is replaced by this filter's own concern: overlap with an
+        /// ALREADY-PLACED container (coordinator §2: "контейнерный фильтр
+        /// добавляет своё: перекрытие с другим контейнером").
+        readonly struct ContainerSpawnFilter : ISpawnFilter
+        {
+            readonly SimulationWorld _w;
+            readonly ArenaSimConfig _arena;
+            readonly float _radius;
+
+            public ContainerSpawnFilter(SimulationWorld w, in ArenaSimConfig arena, float radius)
+            {
+                _w = w;
+                _arena = arena;
+                _radius = radius;
+            }
+
+            public bool IsValid(float2 pos)
+            {
+                if (SpawnPlacement.GeometryBlocked(in _arena, pos, _radius, doorsPassable: false))
+                    return false;
+
+                ContainerState[] containers = _w.Containers;
+                int count = _w.ContainerCount;
+                for (int i = 0; i < count; i++)
+                    if (Geometry.CircleOverlap(pos, _radius, containers[i].Pos, _radius))
+                        return false;
+
+                return true;
             }
         }
     }

@@ -282,6 +282,17 @@ namespace Ring.Simulation.AI
         /// fallback triggers or not never changes how much RNG state a candidate
         /// search consumes, keeping RNG consumption a pure function of world state
         /// (pending counts, live mobs, arena) rather than of luck.
+        ///
+        /// Stage 3 Task 15 (coordinator R-102/R-11): the search loop itself now
+        /// lives in SpawnPlacement.TryFind, shared with container placement
+        /// (Loot.ContainerStore) — this method only resolves the zone's own
+        /// ring radius/mob radius and hands them, plus a WaveSpawnFilter
+        /// closing over this call's own world/config/mob radius, to that
+        /// shared home. `ref Random rng = ref w.WaveRng;` — same "local ref
+        /// alias, then pass the LOCAL onward" idiom Update already uses for
+        /// `ref WaveState wave = ref w.WaveRef;` above — the shared search
+        /// mutates the SAME stream this call has always drawn from, not a
+        /// copy (coordinator danger #1).
         static bool TryFindSpawnPos(SimulationWorld w, in WaveSimConfig cfg, Zone zone, MobType type,
             out float2 pos)
         {
@@ -293,30 +304,10 @@ namespace Ring.Simulation.AI
             float ringRadius = Geometry.ZoneSpawnRingRadius(zone, in arena, cfg.SpawnRingInset);
             float mobRadius = w.MobConfigFor(type).Radius;
 
-            for (int i = 0; i < cfg.MaxSpawnAttempts; i++)
-            {
-                float angle = w.WaveRng.NextFloat(0f, 2f * math.PI);
-                float2 candidate = ringRadius * new float2(math.cos(angle), math.sin(angle));
-                if (IsValidSpawn(w, in arena, in cfg, candidate, mobRadius))
-                {
-                    pos = candidate;
-                    return true;
-                }
-            }
-
-            for (int i = 0; i < cfg.FallbackSlots; i++)
-            {
-                float angle = 2f * math.PI * i / cfg.FallbackSlots;
-                float2 candidate = ringRadius * new float2(math.cos(angle), math.sin(angle));
-                if (IsValidSpawn(w, in arena, in cfg, candidate, mobRadius))
-                {
-                    pos = candidate;
-                    return true;
-                }
-            }
-
-            pos = default;
-            return false;
+            ref Random rng = ref w.WaveRng;
+            var filter = new WaveSpawnFilter(w, in arena, cfg.MinSpawnDistanceToPlayer, mobRadius);
+            return SpawnPlacement.TryFind(ref rng, cfg.MaxSpawnAttempts, cfg.FallbackSlots,
+                ringRadius, in filter, out pos);
         }
 
         /// Rejects on obstacle overlap, wall overlap (Stage 2 Task 14, spec
@@ -326,57 +317,73 @@ namespace Ring.Simulation.AI
         /// radius, the same CircleOverlap idiom used elsewhere for attack
         /// range / projectile hits) and distance-to-player below
         /// MinSpawnDistanceToPlayer.
-        static bool IsValidSpawn(SimulationWorld w, in ArenaSimConfig arena,
-            in WaveSimConfig cfg, float2 pos, float mobRadius)
+        ///
+        /// Stage 3 Task 15 (coordinator R-102): the circles+stadiums+arcs
+        /// half now runs through SpawnPlacement.GeometryBlocked(doorsPassable:
+        /// true) — a candidate inside a door cutout stays forgiven, exactly as
+        /// before (a mob walks through doors; only a container may not,
+        /// coordinator R-106 — Loot.ContainerStore's own filter passes
+        /// `false` there instead). The two halves that stay HERE —
+        /// distance-to-player, live-mob overlap — are wave-specific: a
+        /// container has no "nearest player" rule and no other mobs to
+        /// avoid, only other containers (coordinator §2: "половина
+        /// отбраковки, которая не переезжает").
+        readonly struct WaveSpawnFilter : ISpawnFilter
         {
-            // Stage 2 Task 8: distance-to-player check now respects EVERY
-            // alive player via NearestAlivePlayer(from the candidate spawn
-            // point) instead of the old solo-only w.Player.Pos — a candidate
-            // must clear MinSpawnDistanceToPlayer from whichever alive player
-            // is closest to IT specifically (not the Update-level "nearest to
-            // arena center" player — a candidate can be close to a player who
-            // isn't the one nearest the center, so this is recomputed per
-            // candidate, not threaded down from Update). `!NearestAlivePlayer`
-            // can't actually happen here (Update's own early exit above
-            // already returns before this is ever reached), but the
-            // short-circuit still reads correctly on its own terms: no alive
-            // player means no distance constraint to violate.
-            if (Targeting.NearestAlivePlayer(w, pos, out int nearestIdx)
-                && math.distance(pos, w.PlayerAt(nearestIdx).Pos) < cfg.MinSpawnDistanceToPlayer)
-                return false;
+            readonly SimulationWorld _w;
+            // Coordinator R-114 (Ф2-precedent R-49/Т10, ProjectileSystem.cs:46 —
+            // that hot loop already refused to copy a WHOLE MobSimConfig for a
+            // single field): ONE copy of the struct per SEARCH CALL (i.e. per
+            // TryFindSpawnPos invocation, not per candidate inside it — the
+            // candidate/fallback loops both run against this SAME already-copied
+            // value) — cheap and unavoidable, C# 9 has no ref-typed struct
+            // fields, and GeometryBlocked genuinely needs the whole struct
+            // (every array field). MinSpawnDistanceToPlayer below is the OPPOSITE
+            // case: a single float read out of WaveSimConfig, so the filter
+            // holds just that float instead of a second whole-struct copy.
+            readonly ArenaSimConfig _arena;
+            readonly float _minSpawnDistanceToPlayer;
+            readonly float _mobRadius;
 
-            for (int o = 0; o < arena.ObstacleCount; o++)
-                if (Geometry.CircleOverlap(pos, mobRadius, arena.ObstaclePos[o], arena.ObstacleRadius[o]))
-                    return false;
-
-            for (int wIdx = 0; wIdx < arena.WallCount; wIdx++)
-                if (Geometry.OverlapsStadium(pos, mobRadius, arena.WallA[wIdx], arena.WallB[wIdx],
-                        arena.WallHalfWidth[wIdx]))
-                    return false;
-
-            // Stage 3 Task 9: zone-wall arcs, same "reuse the existing overlap
-            // primitive" idiom as the obstacle/wall checks above — a spawn
-            // candidate inside a zone wall's solid body (outside every door
-            // cutout) is rejected exactly like one inside an obstacle or wall.
-            for (int zIdx = 0; zIdx < arena.ZoneWallCount; zIdx++)
+            public WaveSpawnFilter(SimulationWorld w, in ArenaSimConfig arena,
+                float minSpawnDistanceToPlayer, float mobRadius)
             {
-                var doorCenter = new System.ReadOnlySpan<float>(arena.DoorCenterRad,
-                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
-                var doorFreeWidth = new System.ReadOnlySpan<float>(arena.DoorFreeWidth,
-                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
-                if (Geometry.OverlapsArc(pos, mobRadius, arena.ZoneWallRadius[zIdx],
-                        arena.ZoneWallHalfWidth[zIdx], doorCenter, doorFreeWidth))
-                    return false;
+                _w = w;
+                _arena = arena;
+                _minSpawnDistanceToPlayer = minSpawnDistanceToPlayer;
+                _mobRadius = mobRadius;
             }
 
-            MobState[] mobs = w.Mobs;
-            int count = w.MobCount;
-            for (int m = 0; m < count; m++)
-                if (Geometry.CircleOverlap(pos, mobRadius, mobs[m].Pos,
-                        w.MobConfigFor(mobs[m].Type).Radius))
+            public bool IsValid(float2 pos)
+            {
+                // Stage 2 Task 8: distance-to-player check now respects EVERY
+                // alive player via NearestAlivePlayer(from the candidate spawn
+                // point) instead of the old solo-only w.Player.Pos — a candidate
+                // must clear MinSpawnDistanceToPlayer from whichever alive player
+                // is closest to IT specifically (not the Update-level "nearest to
+                // arena center" player — a candidate can be close to a player who
+                // isn't the one nearest the center, so this is recomputed per
+                // candidate, not threaded down from Update). `!NearestAlivePlayer`
+                // can't actually happen here (Update's own early exit above
+                // already returns before this is ever reached), but the
+                // short-circuit still reads correctly on its own terms: no alive
+                // player means no distance constraint to violate.
+                if (Targeting.NearestAlivePlayer(_w, pos, out int nearestIdx)
+                    && math.distance(pos, _w.PlayerAt(nearestIdx).Pos) < _minSpawnDistanceToPlayer)
                     return false;
 
-            return true;
+                if (SpawnPlacement.GeometryBlocked(in _arena, pos, _mobRadius, doorsPassable: true))
+                    return false;
+
+                MobState[] mobs = _w.Mobs;
+                int count = _w.MobCount;
+                for (int m = 0; m < count; m++)
+                    if (Geometry.CircleOverlap(pos, _mobRadius, mobs[m].Pos,
+                            _w.MobConfigFor(mobs[m].Type).Radius))
+                        return false;
+
+                return true;
+            }
         }
     }
 }

@@ -657,7 +657,7 @@ namespace Ring.Data
             // above, nothing later IN THIS METHOD reads Loot.CellsPerMob —
             // its one reader (LootDrops.MobDeathCells) only runs during a
             // live match, long after Validate returns.
-            ValidateLoot(errors, in cfg.Loot);
+            ValidateLoot(errors, in cfg.Loot, in cfg.Arena);
 
             for (int i = 0; i < cfg.Arena.ObstacleCount; i++)
             {
@@ -874,13 +874,32 @@ namespace Ring.Data
         /// guarantees CellsPerMob is never null — this rule instead catches
         /// a SUPPLIED-but-malformed LootConfig.asset (an Inspector edit
         /// that shortens the array).
-        static void ValidateLoot(List<string> errors, in LootSimConfig loot)
+        static void ValidateLoot(List<string> errors, in LootSimConfig loot, in ArenaSimConfig arena)
         {
             if (loot.CellsPerMob == null || loot.CellsPerMob.Length != 4)
             {
                 errors.Add("Loot.CellsPerMob must have exactly 4 elements (one per MobType — " +
                     "Chaser/Gunner/Elite/Director), read by LootDrops.MobDeathCells with no " +
                     $"bounds guard of its own (got {loot.CellsPerMob?.Length ?? 0}).");
+            }
+
+            // Stage 3 Task 15 (coordinator R-109): same F4 shape family as
+            // ValidateZoneWalls' own two rules (ZoneRadius.Length in {0,2};
+            // ZoneWallCount > 0 requires Length == 2) — one more
+            // independent fact that must agree with "zones exist": Loot
+            // wanting a Middle/Core cache. Without this rule the
+            // disagreement surfaces four stack frames deeper and much
+            // later than Build() — inside SimulationWorld's OWN
+            // constructor, at Geometry.ZoneSpawnRingRadius's own named
+            // refusal (R-64) — the very failure mode this rule exists to
+            // catch earlier, same reasoning as ValidateZoneWalls' own doc.
+            if ((loot.CacheCountMiddle > 0 || loot.CacheCountCore > 0) && arena.ZoneRadius.Length != 2)
+            {
+                errors.Add("Loot.CacheCountMiddle/CacheCountCore > 0 requires Arena.ZoneRadius.Length == " +
+                    "2 -- Loot.ContainerStore.PlaceStartingContainers calls Geometry.ZoneSpawnRingRadius" +
+                    "(Zone.Middle/Core, ...), which throws a named refusal on a zoneless arena " +
+                    $"(got CacheCountMiddle={loot.CacheCountMiddle}, CacheCountCore={loot.CacheCountCore}, " +
+                    $"ZoneRadius.Length={arena.ZoneRadius.Length}).");
             }
         }
 
@@ -1433,10 +1452,14 @@ namespace Ring.Data
             if (ringRadius <= 0f || slots <= 0) return;
 
             float bodyRadius = math.max(cfg.Chaser.Radius, cfg.Gunner.Radius);
+            // Coordinator R-115: the slot ANGLE formula is the one shared
+            // SpawnPlacement.FallbackSlotPos home now — this loop only still
+            // owns "which one of the fallbackSlots angles" (the search
+            // aspect, RingSlotBlocked, stays a private mirror per that
+            // method's own doc: it depends on world-less builder state).
             for (int i = 0; i < slots; i++)
             {
-                float angle = 2f * math.PI * i / slots;
-                float2 candidate = ringRadius * new float2(math.cos(angle), math.sin(angle));
+                float2 candidate = SpawnPlacement.FallbackSlotPos(ringRadius, i, slots);
                 if (!RingSlotBlocked(in cfg.Arena, candidate, bodyRadius)) return; // a free slot exists
             }
 
@@ -1461,37 +1484,19 @@ namespace Ring.Data
         /// Mirrors WaveSystem.IsValidSpawn's geometry half (circles then walls) —
         /// the player-distance and live-mob halves depend on world state the
         /// builder has none of.
+        ///
+        /// Stage 3 Task 15 (coordinator R-102/R-111): pure delegation to
+        /// Ring.Simulation.Core.SpawnPlacement.GeometryBlocked
+        /// (doorsPassable: true — same door policy as WaveSystem.IsValidSpawn:
+        /// a spawn candidate inside a door cutout is forgiven, correct for a
+        /// mob) — the three loops below (obstacles, walls, zone-wall arcs
+        /// with the Ф2 review A-6 fix already folded in) were already a
+        /// byte-for-byte copy of that method's own geometry half; this is
+        /// the second of the three copies R-111's own ledger names collapsing
+        /// onto the one shared home, not a rewrite (no arithmetic line
+        /// changed).
         static bool RingSlotBlocked(in ArenaSimConfig arena, float2 pos, float bodyRadius)
-        {
-            for (int o = 0; o < arena.ObstacleCount; o++)
-                if (Geometry.CircleOverlap(pos, bodyRadius, arena.ObstaclePos[o], arena.ObstacleRadius[o]))
-                    return true;
-            for (int w = 0; w < arena.WallCount; w++)
-                if (Geometry.OverlapsStadium(pos, bodyRadius, arena.WallA[w], arena.WallB[w],
-                        arena.WallHalfWidth[w]))
-                    return true;
-            // Ф2 review A-6: the doc above promised "mirrors IsValidSpawn's
-            // geometry half" and the arcs were missing from it — IsValidSpawn
-            // has rejected candidates inside an arc body since Т9, and the
-            // test-side twin (ConfigTests.FreeRingSlots) grew the same loop in
-            // Т12. Behaviourally inert on the shipped layout (the arena-wide
-            // ring sits at Radius - SpawnRingInset = 111, seventeen metres clear
-            // of the outer band), which is exactly why it could stay missing:
-            // it only bites on a config that buries its own fallback ring in a
-            // zone wall, and that config would previously have been declared
-            // spawnable.
-            for (int z = 0; z < arena.ZoneWallCount; z++)
-            {
-                int start = arena.ZoneWallDoorStart[z];
-                int count = arena.ZoneWallDoorCount[z];
-                var doorCenter = new ReadOnlySpan<float>(arena.DoorCenterRad, start, count);
-                var doorFreeWidth = new ReadOnlySpan<float>(arena.DoorFreeWidth, start, count);
-                if (Geometry.OverlapsArc(pos, bodyRadius, arena.ZoneWallRadius[z],
-                        arena.ZoneWallHalfWidth[z], doorCenter, doorFreeWidth))
-                    return true;
-            }
-            return false;
-        }
+            => SpawnPlacement.GeometryBlocked(in arena, pos, bodyRadius, doorsPassable: true);
 
         /// Shared hit-zone body validated for Hero, Chaser and Gunner alike (PC5):
         /// the three vertical zone tops must be strictly increasing and the per-zone
