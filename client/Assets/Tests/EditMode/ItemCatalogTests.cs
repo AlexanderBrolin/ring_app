@@ -54,11 +54,13 @@ namespace Ring.Simulation.Tests
             // DIFFERENT SlotCost (1, 2, 3, 4, 1) — coordinator R-85's own
             // requirement: a catalog of all-1s could never tell a real
             // per-item lookup apart from the T4 -> T13 stub that always
-            // returned 1. Id 0 costs 1, Id 1 costs 2 (spec §3.7 table, Т1/Т2).
+            // returned 1. Id 1 costs 1, Id 2 costs 2 (spec §3.7 table, Т1/Т2;
+            // coordinator fix-round Ф3 review C1 shifted ids up by one, 0 is
+            // now reserved as the container slot's own "empty" sentinel).
             var w = new SimulationWorld(1, TestConfigs.Default());
 
-            Assert.IsTrue(w.TryAddItem(0, 0), "premise: the first add (Id 0, cost 1) must fit");
-            Assert.IsTrue(w.TryAddItem(0, 1), "premise: the second add (Id 1, cost 2) must fit");
+            Assert.IsTrue(w.TryAddItem(0, 1), "premise: the first add (Id 1, cost 1) must fit");
+            Assert.IsTrue(w.TryAddItem(0, 2), "premise: the second add (Id 2, cost 2) must fit");
 
             Assert.AreEqual(3, w.InventoryUsedSlots(0),
                 "two items costing 1 and 2 slot points must total 3 — a stub returning a flat " +
@@ -141,10 +143,14 @@ namespace Ring.Simulation.Tests
         {
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            // Coordinator fix-round (Ф3 review C1, hygiene renumber —
+            // mechanism unchanged): ids 1/2, not 0/1 — no new code should
+            // use the now-reserved Id 0, even in a fixture Build() would
+            // reject for an unrelated reason first if it did.
             items.Items = new[]
             {
-                new ItemDef { Id = 0, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
-                new ItemDef { Id = 1, Tier = 1, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 1, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 2, Tier = 1, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
             };
 
             var ex = Assert.Throws<System.ArgumentException>(
@@ -157,7 +163,7 @@ namespace Ring.Simulation.Tests
         {
             var catalog = TestConfigs.Default().Items;
             ItemDef found = ItemCatalogLookup.FindByTier(2, catalog);
-            Assert.AreEqual(1, found.Id, "tier 2 must resolve to TestConfigs' own Id=1 record");
+            Assert.AreEqual(2, found.Id, "tier 2 must resolve to TestConfigs' own Id=2 record");
         }
 
         [Test]
@@ -178,7 +184,27 @@ namespace Ring.Simulation.Tests
         {
             var catalog = TestConfigs.Default().Items;
             ItemDef found = ItemCatalogLookup.FindRepairKit(catalog);
-            Assert.AreEqual(4, found.Id, "the repair kit must resolve to TestConfigs' own Id=4 record");
+            Assert.AreEqual(5, found.Id, "the repair kit must resolve to TestConfigs' own Id=5 record");
+        }
+
+        /// Coordinator fix-round (Ф3 review C1): 0 is the container slot's
+        /// own "empty" sentinel (SimulationWorld.TryTakeFromContainer) — a
+        /// catalog record claiming Id 0 would be permanently unreachable
+        /// through the one take shim in the codebase. Same ValidateItems
+        /// home as the duplicate-id/duplicate-tier/255-cap rules.
+        [Test]
+        public void Validate_RejectsZeroId()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            items.Items = new[]
+            {
+                new ItemDef { Id = 0, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+            };
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+            StringAssert.Contains("must not be 0", ex.Message);
         }
     }
 }

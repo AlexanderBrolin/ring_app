@@ -394,8 +394,11 @@ namespace Ring.Simulation.Tests
                 $"{sectionName}.{fieldName}.Length is not in the hash");
         }
 
-        /// Stage 3 Task 13 (their dom by SimConfigHashTests' own prior doc):
-        /// same shape as AssertFloatArrayFieldAffectsHash, for int[] fields.
+        /// Stage 3 Task 13 (coordinator fix-round Ф3 review m3 — rewritten
+        /// for clarity, content unchanged): same shape as
+        /// AssertFloatArrayFieldAffectsHash right above — see that method's
+        /// own doc for the full per-element/length reasoning — for int[]
+        /// fields.
         static void AssertInt32ArrayFieldAffectsHash(string sectionName, string fieldName)
         {
             var baselineCfg = TestConfigs.Default();
@@ -432,8 +435,10 @@ namespace Ring.Simulation.Tests
                 $"{sectionName}.{fieldName}.Length is not in the hash");
         }
 
-        /// Stage 3 Task 13 (their dom by SimConfigHashTests' own prior doc):
-        /// same shape as AssertFloatArrayFieldAffectsHash, for byte[]
+        /// Stage 3 Task 13 (coordinator fix-round Ф3 review m3 — rewritten
+        /// for clarity, content unchanged): same shape as
+        /// AssertFloatArrayFieldAffectsHash above — see that method's own
+        /// doc for the full per-element/length reasoning — for byte[]
         /// fields.
         static void AssertByteArrayFieldAffectsHash(string sectionName, string fieldName)
         {

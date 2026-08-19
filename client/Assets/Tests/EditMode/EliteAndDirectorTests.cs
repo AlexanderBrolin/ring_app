@@ -316,11 +316,16 @@ namespace Ring.Simulation.Tests
         /// spec §4's own EliteAndDirectorTests assignment, not
         /// LootContainerTests.cs): the Director's own drop is a FIXED
         /// rule, never a DropChance read — three tier-3 containers (1-2
-        /// items each, TestConfigs' own Id=2 record) plus one separate
-        /// tier-4 memory-core container (TestConfigs' own Id=3 record).
+        /// items each, TestConfigs' own Id=3 record) plus one separate
+        /// tier-4 memory-core container (TestConfigs' own Id=4 record).
         /// TestConfigs.Open() keeps DropChance at Default()'s all-zero,
         /// proving this path never reads it (the Director's own row is
-        /// never touched — coordinator R-126).
+        /// never touched — coordinator R-126). Kind = Cache, Ttl = 0f
+        /// (coordinator fix-round Ф3 review A-1 — corrects this task's own
+        /// original MobCorpse/180s choice, see SimulationWorld.DamageMob's
+        /// own doc for the full account): spec §3.6 names the corpse/
+        /// crate/cache trio "not-expiring… there lies what was earned",
+        /// and the Director's guaranteed boss drop is exactly that.
         [Test]
         public void Director_DropsExactlyOneMemoryCore()
         {
@@ -336,17 +341,18 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < w.ContainerCount; i++)
             {
                 ContainerState c = w.Containers[i];
-                Assert.AreEqual(ContainerKind.MobCorpse, c.Kind);
+                Assert.AreEqual(ContainerKind.Cache, c.Kind);
                 Assert.AreEqual(pos, c.Pos, "every one of the four must sit at the death position (R-129)");
+                Assert.AreEqual(0f, c.Ttl, $"container {i}: a Director drop must never expire (R-129/A-1)");
                 byte first = w.ContainerSlotAt(i, 0);
-                if (first == 3) // TestConfigs' own Id=3 Trophy tier-4 record
+                if (first == 4) // TestConfigs' own Id=4 Trophy tier-4 record
                 {
                     Assert.AreEqual(1, c.SlotCount, "the memory-core container must hold exactly one item");
                     memoryCoreContainers++;
                 }
                 else
                 {
-                    Assert.AreEqual(2, first, "a tier-3 container must hold TestConfigs' own Id=2 record");
+                    Assert.AreEqual(3, first, "a tier-3 container must hold TestConfigs' own Id=3 record");
                     Assert.That(c.SlotCount, Is.EqualTo(1).Or.EqualTo(2),
                         $"container {i}: a tier-3 container must hold 1 or 2 items");
                     tierThreeContainers++;

@@ -8,9 +8,12 @@ namespace Ring.Simulation.Tests
     /// Stage 3 Task 1 (spec Ф1 "economy of the run", errata E-1/E-2/E-6 D-I2):
     /// the first task of the extraction-loop stage declares the whole new
     /// composition of world/match state (MatchState, MatchPhase, PlayerState.
-    /// Extracted/ExtractKind and Ф1's other new fields — see SimStates.cs and
-    /// WorldLifecycleTests.PendingHashFields) and the third reason a match can
-    /// end: a run everyone walked away from, `MatchEndReason.AllPlayersResolved`.
+    /// Extracted/ExtractKind and Ф1's other new fields — see SimStates.cs;
+    /// coordinator fix-round Ф3 review m4: this used to also point at
+    /// WorldLifecycleTests.PendingHashFields, removed unconditionally at the
+    /// Т6 re-pin, historical reference dropped) and the third reason a match
+    /// can end: a run everyone walked away from, `MatchEndReason.
+    /// AllPlayersResolved`.
     ///
     /// EVERYTHING HERE IS INERT ON PURPOSE. No system yet sets Extracted, ticks
     /// LootTimer/RepairTimer/ExtractTimer, or advances MatchState.Phase past

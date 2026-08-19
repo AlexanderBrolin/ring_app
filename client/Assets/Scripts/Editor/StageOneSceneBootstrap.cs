@@ -1,6 +1,7 @@
 using System.Linq;
 using Ring.Data;
 using Ring.Presentation;
+using Ring.Simulation.Core;
 using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -683,6 +684,19 @@ namespace Ring.Editor
                 "Items"); // Stage 3 Task 13
             EditorBootstrapUtils.EnsureAssetHasKey(loot, $"{DataDir}/LootConfig.asset",
                 "LootRadius"); // Stage 3 Task 13
+            // Coordinator fix-round (Ф3 review C1): a VALUE rewrite, not a
+            // missing key — EnsureAssetHasKey's own marker mechanism (just
+            // above) only backfills a field the .asset text lacks entirely,
+            // and every one of these five records was already on disk with
+            // the wrong number. Same "text-read gate, one-time apply" shape
+            // as ApplyStageThreeBalance's own `stageThreePending` (R-112),
+            // sized to this ONE asset instead of three: the marker string
+            // is "Id: 0" (YAML for the FIRST record's own field), present
+            // only on a catalog this fix-round has not touched yet.
+            bool itemIdsPending = System.IO.File
+                .ReadAllText($"{DataDir}/ItemCatalog.asset")
+                .Contains("Id: 0");
+            if (itemIdsPending && ApplyItemCatalogIdShift(items)) EditorUtility.SetDirty(items);
             // NetConfig joins the marker mechanism for the first time here,
             // in Stage 2 Task 23, with MatchMaxDurationSeconds (the class's
             // own newest/last field) as its marker — brand-new asset on
@@ -1956,6 +1970,34 @@ namespace Ring.Editor
                 Object.DestroyImmediate(waveDefaults);
                 Object.DestroyImmediate(netDefaults);
             }
+        }
+
+        /// Coordinator fix-round (Ф3 review C1): rewrites all five
+        /// ItemCatalog.asset records to the corrected Id numbering (1..5,
+        /// not 0..4) — 0 is reserved as the container slot's own "empty"
+        /// sentinel (SimulationWorld.TryTakeFromContainer), so the Tier-1
+        /// record's own Id 0 made it permanently unreachable through the
+        /// one take shim in the codebase. Same "own local defaults instance,
+        /// SetIfDifferent, destroy in a finally" shape as
+        /// ApplyStageThreeBalance above, but for a SINGLE struct array
+        /// field: SetIfDifferent's own generic `T[]` overload already does
+        /// element-wise comparison (EqualityComparer&lt;T&gt;.Default,
+        /// ItemDef has no custom IEquatable, so this falls back to
+        /// reflection-based value equality — fine for a five-record,
+        /// once-per-editor-session call), so replacing the whole array in
+        /// one call is simpler and no less precise than five separate
+        /// per-field pokes.
+        static bool ApplyItemCatalogIdShift(ItemCatalog items)
+        {
+            var corrected = new[]
+            {
+                new ItemDef { Id = 1, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 2, Tier = 2, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 3, Tier = 3, SlotCost = 3, CreditValue = 200, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 4, Tier = 4, SlotCost = 4, CreditValue = 1000, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 5, Tier = 0, SlotCost = 1, CreditValue = 0, Kind = ItemKind.RepairKit },
+            };
+            return SetIfDifferent(ref items.Items, corrected);
         }
 
         /// Stage 3 Task 12 (spec §3.13/§3.3 Р214): the Elite archetype's own

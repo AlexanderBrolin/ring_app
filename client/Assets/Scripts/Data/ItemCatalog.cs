@@ -31,19 +31,27 @@ namespace Ring.Data
     {
         public ItemDef[] Items =
         {
-            // Т1 — logistics scrap (spec §3.7 table).
-            new ItemDef { Id = 0, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+            // Т1 — logistics scrap (spec §3.7 table). Id 1, not 0 — 0 is
+            // reserved as the container slot's own "empty" sentinel
+            // (SimulationWorld.TryTakeFromContainer, coordinator fix-round
+            // Ф3 review C1) since Т16 gave this catalog a live take-path;
+            // every id below shifted up by one for the same reason.
+            new ItemDef { Id = 1, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
             // Т2 — power/comms assemblies.
-            new ItemDef { Id = 1, Tier = 2, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
+            new ItemDef { Id = 2, Tier = 2, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
             // Т3 — corporate assets.
-            new ItemDef { Id = 2, Tier = 3, SlotCost = 3, CreditValue = 200, Kind = ItemKind.Trophy },
-            // Т4 — the Director's memory core (spec: "один за заход" — the
-            // one-per-match cap is a spawn-side rule, Т16's job, not a
-            // catalog-side one; the catalog only states the record).
-            new ItemDef { Id = 3, Tier = 4, SlotCost = 4, CreditValue = 1000, Kind = ItemKind.Trophy },
+            new ItemDef { Id = 3, Tier = 3, SlotCost = 3, CreditValue = 200, Kind = ItemKind.Trophy },
+            // Т4 — the Director's memory core (spec: "один за заход"). The
+            // one-per-match cap is held by the invariant "the Director
+            // spawns at most once per match" — that invariant does not
+            // exist yet (it arrives with the Director's own spawn, Т22);
+            // Т16 only implemented "exactly one core per Director DEATH",
+            // which is the same guarantee for as long as there is at most
+            // one Director. The catalog itself states only the record.
+            new ItemDef { Id = 4, Tier = 4, SlotCost = 4, CreditValue = 1000, Kind = ItemKind.Trophy },
             // The repair kit — outside the tier ladder (Tier 0), no credit
             // value (spec §3.7 table: "0").
-            new ItemDef { Id = 4, Tier = 0, SlotCost = 1, CreditValue = 0, Kind = ItemKind.RepairKit },
+            new ItemDef { Id = 5, Tier = 0, SlotCost = 1, CreditValue = 0, Kind = ItemKind.RepairKit },
         }; // sync-marker key — keep LAST (this class's only field)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.

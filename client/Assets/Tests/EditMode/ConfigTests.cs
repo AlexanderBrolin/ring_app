@@ -277,6 +277,75 @@ namespace Ring.Simulation.Tests
             // sources apart on purpose).
             AssertVisibilityEqual(expected.Visibility, cfg.Visibility);
             AssertFlowEqual(expected.Flow, cfg.Flow);
+            // Coordinator fix-round (Ф3 review I1 — third occurrence of this
+            // class of gap this stage, Ф2-C1/I1 the first two): Loot/Items
+            // silently dropped out of this test's own coverage since Т13.
+            // LootConfig/ItemCatalog are not top-level MakeDefaults()
+            // parameters (BuildShipped creates its own instances internally,
+            // same as Flow/Elite/Director) — a FRESH instance read here for
+            // its own C# defaults is the same "real SO, not the builder's
+            // copy" source AmmoStart/BarrierTop's own `w`/`a` parameters
+            // already are, just not thread through a return value.
+            var realLoot = ScriptableObject.CreateInstance<LootConfig>();
+            var realItems = ScriptableObject.CreateInstance<ItemCatalog>();
+            // AssertLootEqual covers the EIGHT fields that genuinely mirror
+            // LootConfig.cs's own C# defaults; the other SEVEN are
+            // deliberately golden-safety-zeroed in TestConfigs (same
+            // documented-deviation category as AmmoStart/BarrierTop right
+            // above — reviewer B's own "15 полей блочно" framing was wider
+            // than the fact: a blanket comparator would fail on those seven
+            // immediately). Each of the seven gets the SAME triple form
+            // AmmoStart/BarrierTop already use: the real SO reaches the
+            // builder untouched, TestConfigs stays at its own deliberate
+            // zero, and the two provably differ.
+            AssertLootEqual(expected.Loot, cfg.Loot);
+            CollectionAssert.AreEqual(realLoot.CellsPerMob, cfg.Loot.CellsPerMob,
+                "LootConfig.CellsPerMob must reach LootSimConfig through the builder");
+            CollectionAssert.AreEqual(new[] { 0, 0, 0, 0 }, expected.Loot.CellsPerMob,
+                "the TestConfigs baseline must stay at golden-safety zero");
+            CollectionAssert.AreNotEqual(expected.Loot.CellsPerMob, cfg.Loot.CellsPerMob,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            CollectionAssert.AreEqual(realLoot.DropChance, cfg.Loot.DropChance,
+                "LootConfig.DropChance must reach LootSimConfig through the builder");
+            bool realDropChanceHasNonzero = false;
+            foreach (float share in cfg.Loot.DropChance) if (share > 0f) realDropChanceHasNonzero = true;
+            Assert.IsTrue(realDropChanceHasNonzero,
+                "premise: LootConfig.DropChance's own real shares must actually be non-zero, or " +
+                "the golden-safety comparison right below proves nothing");
+            foreach (float share in expected.Loot.DropChance)
+                Assert.AreEqual(0f, share, "the TestConfigs baseline must stay at golden-safety zero");
+            Assert.AreEqual(realLoot.CrateCount, cfg.Loot.CrateCount,
+                "LootConfig.CrateCount must reach LootSimConfig through the builder");
+            Assert.AreEqual(0, expected.Loot.CrateCount, "the TestConfigs baseline must stay at golden-safety zero");
+            Assert.AreNotEqual(expected.Loot.CrateCount, cfg.Loot.CrateCount,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            Assert.AreEqual(realLoot.CacheCountMiddle, cfg.Loot.CacheCountMiddle,
+                "LootConfig.CacheCountMiddle must reach LootSimConfig through the builder");
+            Assert.AreEqual(0, expected.Loot.CacheCountMiddle, "the TestConfigs baseline must stay at golden-safety zero");
+            Assert.AreNotEqual(expected.Loot.CacheCountMiddle, cfg.Loot.CacheCountMiddle,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            Assert.AreEqual(realLoot.CacheCountCore, cfg.Loot.CacheCountCore,
+                "LootConfig.CacheCountCore must reach LootSimConfig through the builder");
+            Assert.AreEqual(0, expected.Loot.CacheCountCore, "the TestConfigs baseline must stay at golden-safety zero");
+            Assert.AreNotEqual(expected.Loot.CacheCountCore, cfg.Loot.CacheCountCore,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            Assert.AreEqual(realLoot.RepairKitChance, cfg.Loot.RepairKitChance, Eps,
+                "LootConfig.RepairKitChance must reach LootSimConfig through the builder");
+            Assert.AreEqual(0f, expected.Loot.RepairKitChance, Eps, "the TestConfigs baseline must stay at golden-safety zero");
+            Assert.AreNotEqual(expected.Loot.RepairKitChance, cfg.Loot.RepairKitChance,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            Assert.AreEqual(realLoot.CorpseCellFraction, cfg.Loot.CorpseCellFraction, Eps,
+                "LootConfig.CorpseCellFraction must reach LootSimConfig through the builder");
+            Assert.AreEqual(0f, expected.Loot.CorpseCellFraction, Eps, "the TestConfigs baseline must stay at golden-safety zero");
+            Assert.AreNotEqual(expected.Loot.CorpseCellFraction, cfg.Loot.CorpseCellFraction,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            AssertItemsEqual(realItems.Items, cfg.Items);
 
             // The chaser/gunner archetypes must land in the matching SimConfig slot,
             // not get swapped by the builder's mapping.
@@ -1294,8 +1363,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.EdgeRequestMinTicks, a.EdgeRequestMinTicks);
             // Stage 3 Task 3: same documented deviation as EdgeRequestMinTicks
             // right above — PickupRadius genuinely flows SO -> builder ->
-            // SimConfig (unlike CellsOnDeath/CorpseCellFraction, which have no
-            // SO source yet, R-3), so it needs the same coverage.
+            // SimConfig, so it needs the same coverage. Coordinator
+            // fix-round (Ф3 review A-9/m4): this doc used to contrast
+            // PickupRadius against "CellsOnDeath/CorpseCellFraction, which
+            // have no SO source yet, R-3" — Т13 shipped; both now live in
+            // LootSimConfig and are covered by AssertLootEqual below, not
+            // this parenthetical.
             Assert.AreEqual(e.PickupRadius, a.PickupRadius, Eps);
             // Stage 3 Task 4: same documented deviation as PickupRadius/
             // EdgeRequestMinTicks above — InventoryCapacity/MaxInventoryItems
@@ -1408,6 +1481,48 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.RetinueCount, a.RetinueCount);
             Assert.AreEqual(e.RetinueRespawnSeconds, a.RetinueRespawnSeconds, Eps);
             Assert.AreEqual(e.DirectorReserveSlots, a.DirectorReserveSlots);
+        }
+
+        /// Coordinator fix-round (Ф3 review I1): the EIGHT LootSimConfig
+        /// fields that genuinely mirror LootConfig.cs's own C# defaults —
+        /// the other seven (DropChance/CrateCount/CacheCountMiddle/
+        /// CacheCountCore/RepairKitChance/CellsPerMob/CorpseCellFraction)
+        /// are deliberately golden-safety-zeroed in TestConfigs and get
+        /// their own triple-form assertions at this method's own call site
+        /// instead (same AmmoStart/BarrierTop shape). Field order mirrors
+        /// LootSimConfig's own declared order, the same convention every
+        /// other AssertXEqual in this file follows.
+        static void AssertLootEqual(LootSimConfig e, LootSimConfig a)
+        {
+            Assert.AreEqual(e.RepairKitHealAmount, a.RepairKitHealAmount, Eps);
+            Assert.AreEqual(e.RepairKitChannelSeconds, a.RepairKitChannelSeconds, Eps);
+            Assert.AreEqual(e.TransferSeconds.Length, a.TransferSeconds.Length);
+            for (int i = 0; i < e.TransferSeconds.Length; i++)
+                Assert.AreEqual(e.TransferSeconds[i], a.TransferSeconds[i], Eps, $"TransferSeconds[{i}]");
+            Assert.AreEqual(e.LootSpawnAttempts, a.LootSpawnAttempts);
+            Assert.AreEqual(e.LootFallbackSlots, a.LootFallbackSlots);
+            Assert.AreEqual(e.PickupTtlSeconds, a.PickupTtlSeconds, Eps);
+            Assert.AreEqual(e.ContainerTtlSeconds, a.ContainerTtlSeconds, Eps);
+            Assert.AreEqual(e.LootRadius, a.LootRadius, Eps);
+        }
+
+        /// Coordinator fix-round (Ф3 review I1/C1): the 25 catalog literals
+        /// (five records x five fields) were duplicated ItemCatalog.cs <->
+        /// TestConfigs.cs with no executable link at all — an owner adding
+        /// a sixth record or moving a SlotCost would not redden a single
+        /// test. Length first (index-out-of-range on a short array
+        /// diagnoses nothing), then every field of every record.
+        static void AssertItemsEqual(ItemDef[] e, ItemDef[] a)
+        {
+            Assert.AreEqual(e.Length, a.Length, "ItemCatalog.Items.Length must reach SimConfig.Items");
+            for (int i = 0; i < e.Length; i++)
+            {
+                Assert.AreEqual(e[i].Id, a[i].Id, $"Items[{i}].Id");
+                Assert.AreEqual(e[i].Tier, a[i].Tier, $"Items[{i}].Tier");
+                Assert.AreEqual(e[i].SlotCost, a[i].SlotCost, $"Items[{i}].SlotCost");
+                Assert.AreEqual(e[i].CreditValue, a[i].CreditValue, $"Items[{i}].CreditValue");
+                Assert.AreEqual(e[i].Kind, a[i].Kind, $"Items[{i}].Kind");
+            }
         }
 
         static void AssertArenaEqual(ArenaSimConfig e, ArenaSimConfig a)
@@ -1609,7 +1724,7 @@ namespace Ring.Simulation.Tests
             var items = ScriptableObject.CreateInstance<ItemCatalog>();
             items.Items = new[]
             {
-                new ItemDef { Id = 0, Tier = 1, SlotCost = 2, CreditValue = 15, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 1, Tier = 1, SlotCost = 2, CreditValue = 15, Kind = ItemKind.Trophy },
             };
 
             Assert.DoesNotThrow(() => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items),
@@ -1874,6 +1989,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.ExitHysteresis, a.ExitHysteresis, Eps);
             Assert.AreEqual(e.LingerTicks, a.LingerTicks);
             Assert.AreEqual(e.HearPositionGridMeters, a.HearPositionGridMeters, Eps);
+            // Stage 3 Task 13 (coordinator fix-round Ф3 review I1): the two
+            // radii VisibilitySystem.Compute needs for a pickup/container
+            // target — silently dropped out of this method's own coverage
+            // since the task that added them, same class of gap as the rest
+            // of this fix-round's I1 work.
+            Assert.AreEqual(e.PickupRadiusForVisibility, a.PickupRadiusForVisibility, Eps);
+            Assert.AreEqual(e.ContainerRadiusForVisibility, a.ContainerRadiusForVisibility, Eps);
         }
     }
 }

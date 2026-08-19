@@ -3,17 +3,18 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.Loot
 {
-    /// Stage 3 Task 14 (spec §3.7, Р229): the container's own policy — how
-    /// long a freshly spawned container lives before it's the one shared
-    /// home of "how long does a container of THIS kind live" (mirrors
-    /// LootDrops' role for pickup-amount policy) and the per-tick TTL-decay
-    /// pass (mirrors PickupSystem.AdvanceTtl's shape) — the two live
-    /// together in one file because Т14 is a single task standing up both,
-    /// unlike pickups' own history where LootDrops (Т3) and PickupSystem
-    /// (also Т3, but a separate concern from day one) were already two
-    /// files. A future task is free to split this one the same way if it
-    /// grows a third responsibility (rule 4 — split when outgrown, not
-    /// pre-emptively).
+    /// Stage 3 Task 14 (spec §3.7, Р229): the container's own policy —
+    /// coordinator fix-round (Ф3 review m3) rewrites this header for
+    /// clarity, content unchanged. The ONE shared home for two things: (1)
+    /// "how long does a freshly spawned container of THIS Kind live"
+    /// (mirrors LootDrops' own role for pickup-amount policy) and (2) the
+    /// per-tick TTL-decay pass (mirrors PickupSystem.AdvanceTtl's shape).
+    /// The two live together in one file because Т14 is a single task
+    /// standing up both, unlike pickups' own history where LootDrops (Т3)
+    /// and PickupSystem (also Т3, but a separate concern from day one) were
+    /// already two files. A future task is free to split this one the same
+    /// way if it grows a third responsibility (rule 4 — split when
+    /// outgrown, not pre-emptively).
     public static class ContainerStore
     {
         /// The Ttl a freshly spawned container of `kind` starts at (spec
@@ -126,27 +127,36 @@ namespace Ring.Simulation.Loot
             // Т13; CR 6 forbids a balance number living in code instead).
             float radius = w.Config.Hero.Radius;
             // Stage 3 Task 16 (spec §3.7): the zone's own tier — Outer=1,
-            // Middle=2, Core=3 (Zone's own declared order). Unlike the
-            // archetype drop roll (LootDrops.TryRollMobItemTier), this is
-            // NOT gated by DropChance at all — a crate/cache's content is
-            // an UNCONDITIONAL "1-2 items", DropChance only governs whether
-            // a Chaser/Gunner/Elite drops an item on death (coordinator
+            // Middle=2, Core=3 (LootDrops.TierOfZone, coordinator fix-round
+            // m6 — ONE home shared with the archetype drop roll below it,
+            // a second copy of the same +1 had drifted apart silently
+            // before this round). Unlike the archetype drop roll
+            // (LootDrops.TryRollMobItemTier), this is NOT gated by
+            // DropChance at all — a crate/cache's content is an
+            // UNCONDITIONAL "1-2 items", DropChance only governs whether a
+            // Chaser/Gunner/Elite drops an item on death (coordinator
             // finding, session 30: the spec table lists "1-2 предмета" as
             // a count rule for containers, a percentage only for
             // archetypes). The gate that keeps this golden-safe is the
             // EXISTING zero-count guard above (R-108), not a new one.
-            byte tier = (byte)((int)zone + 1);
+            byte tier = LootDrops.TierOfZone(zone);
             // Coordinator R-131: one stack buffer for the whole zone's
             // loop, hoisted OUTSIDE the per-container loop below rather
             // than allocated per-iteration — 2 trophies + a possible
             // repair kit, same "call outside the hot path, reuse the
             // buffer" shape SplitByZones' own stackalloc follows.
             System.Span<byte> items = stackalloc byte[3];
+            // Coordinator fix-round (Ф3 review m7): the filter is
+            // IMMUTABLE across the loop (same w/arena/radius every
+            // iteration) — hoisted outside for the same "not in the loop"
+            // reason R-131's own buffer just above already follows; a
+            // fresh `ContainerSpawnFilter` per container copied the whole
+            // ArenaSimConfig on every iteration for nothing.
+            var filter = new ContainerSpawnFilter(w, in arena, radius);
 
             for (int i = 0; i < count; i++)
             {
                 ref Random rng = ref w.LootRng;
-                var filter = new ContainerSpawnFilter(w, in arena, radius);
                 if (SpawnPlacement.TryFind(ref rng, loot.LootSpawnAttempts, loot.LootFallbackSlots,
                         ringRadius, in filter, out float2 pos))
                 {

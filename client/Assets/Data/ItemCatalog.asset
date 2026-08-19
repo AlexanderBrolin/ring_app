@@ -13,27 +13,27 @@ MonoBehaviour:
   m_Name: ItemCatalog
   m_EditorClassIdentifier: Ring.Data::Ring.Data.ItemCatalog
   Items:
-  - Id: 0
+  - Id: 1
     Tier: 1
     SlotCost: 1
     CreditValue: 15
     Kind: 0
-  - Id: 1
+  - Id: 2
     Tier: 2
     SlotCost: 2
     CreditValue: 60
     Kind: 0
-  - Id: 2
+  - Id: 3
     Tier: 3
     SlotCost: 3
     CreditValue: 200
     Kind: 0
-  - Id: 3
+  - Id: 4
     Tier: 4
     SlotCost: 4
     CreditValue: 1000
     Kind: 0
-  - Id: 4
+  - Id: 5
     Tier: 0
     SlotCost: 1
     CreditValue: 0

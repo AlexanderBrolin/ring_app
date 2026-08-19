@@ -827,7 +827,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = System.Array.Empty<float>();
             a.DoorFreeWidth = System.Array.Empty<float>();
             var loot = ScriptableObject.CreateInstance<LootConfig>();
-            // Coordinator fix-round (dословный повтор R-116/Т15): LootConfig's
+            // Coordinator fix-round (дословный повтор R-116/Т15): LootConfig's
             // own C# defaults carry CrateCount 8 / CacheCountMiddle 5 /
             // CacheCountCore 2 — left in place, those would ALSO trip the
             // EXISTING R-109 rule (CacheCount* > 0 requires ZoneRadius.Length

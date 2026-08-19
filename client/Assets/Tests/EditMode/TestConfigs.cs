@@ -194,13 +194,18 @@ namespace Ring.Simulation.Tests
                 // what R-85 requires: without at least one pair of differing
                 // costs, the SlotCostOf stub-removal mutation (Т4 -> Т13)
                 // could not be caught by anything.
+                // Coordinator fix-round (Ф3 review C1): Id 1..5, not
+                // 0..4 — 0 is reserved as the container slot's own "empty"
+                // sentinel (SimulationWorld.TryTakeFromContainer); a Tier-1
+                // record at Id 0 was unrecoverable through the one take
+                // shim in the codebase. Mirrors ItemCatalog.cs's own shift.
                 Items = new[]
                 {
-                    new ItemDef { Id = 0, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
-                    new ItemDef { Id = 1, Tier = 2, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
-                    new ItemDef { Id = 2, Tier = 3, SlotCost = 3, CreditValue = 200, Kind = ItemKind.Trophy },
-                    new ItemDef { Id = 3, Tier = 4, SlotCost = 4, CreditValue = 1000, Kind = ItemKind.Trophy },
-                    new ItemDef { Id = 4, Tier = 0, SlotCost = 1, CreditValue = 0, Kind = ItemKind.RepairKit },
+                    new ItemDef { Id = 1, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+                    new ItemDef { Id = 2, Tier = 2, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
+                    new ItemDef { Id = 3, Tier = 3, SlotCost = 3, CreditValue = 200, Kind = ItemKind.Trophy },
+                    new ItemDef { Id = 4, Tier = 4, SlotCost = 4, CreditValue = 1000, Kind = ItemKind.Trophy },
+                    new ItemDef { Id = 5, Tier = 0, SlotCost = 1, CreditValue = 0, Kind = ItemKind.RepairKit },
                 },
                 // Stage 3 Task 13 (spec §3.7/§3.8): loot-system numbers.
                 // Golden-safety zeros (owner decision R-18, same discipline

@@ -140,7 +140,10 @@ namespace Ring.Simulation.Loot
         /// slot AND _inventories[index]) and BOTH copies are hashed/saved
         /// (SimulationWorld.StateHash's own inventories[0..n) walk,
         /// WorldSave.Inventories) — the same class of defect
-        /// SwapRemove_DoesNotTransferState closes for containers.
+        /// SwapRemove_DoesNotTransferSlotsToNeighbor closes for containers
+        /// (coordinator fix-round Ф3 review m9: this doc named the wrong
+        /// test — SwapRemove_DoesNotTransferState is a Stage 2 visibility
+        /// test, not the container one).
         public void Clear() => _count = 0;
     }
 }

@@ -302,11 +302,11 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(ContainerKind.MobCorpse, c.Kind);
             Assert.AreEqual(pos, c.Pos, "the corpse container must sit at the death position (R-129)");
             Assert.AreEqual(1, c.SlotCount);
-            Assert.AreEqual(1, w.ContainerSlotAt(0, 0), "Middle => tier 2 => TestConfigs' own Id=1 record");
+            Assert.AreEqual(2, w.ContainerSlotAt(0, 0), "Middle => tier 2 => TestConfigs' own Id=2 record");
         }
 
         /// Companion to EliteInMiddle_DropsTierTwo above — Core maps to
-        /// tier 3, TestConfigs' own Id=2 Trophy record. Together the pair
+        /// tier 3, TestConfigs' own Id=3 Trophy record. Together the pair
         /// is also the plan-mandated mutation target (Т16 Step 4): "tier
         /// from archetype instead of tier from zone" must turn THIS test
         /// red (subject = second element, lesson 227).
@@ -326,7 +326,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(ContainerKind.MobCorpse, c.Kind);
             Assert.AreEqual(pos, c.Pos);
             Assert.AreEqual(1, c.SlotCount);
-            Assert.AreEqual(2, w.ContainerSlotAt(0, 0), "Core => tier 3 => TestConfigs' own Id=2 record");
+            Assert.AreEqual(3, w.ContainerSlotAt(0, 0), "Core => tier 3 => TestConfigs' own Id=3 record");
         }
 
         /// Coordinator golden risk §1(а)/R-120: the archetype's own

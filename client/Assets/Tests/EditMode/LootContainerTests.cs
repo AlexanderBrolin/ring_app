@@ -45,7 +45,7 @@ namespace Ring.Simulation.Tests
         /// so it is the one whose content can be silently swapped for its
         /// predecessor's stale leftover if the block copy is missing.
         [Test]
-        public void SwapRemove_DoesNotTransferSlotsToNeighbour()
+        public void SwapRemove_DoesNotTransferSlotsToNeighbor()
         {
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
@@ -100,7 +100,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(5, w.ContainerSlotAt(0, 0), "…and it must still be the original one, untouched");
         }
 
-        /// Interfaces doc, dословно: "0 = не истекает (ящик, тайник, труп
+        /// Interfaces doc, дословно: "0 = не истекает (ящик, тайник, труп
         /// сборщика)" — Crate and PlayerCorpse are two of the three
         /// permanent kinds (Cache is the third, sharing the same branch,
         /// no test of its own needed — same code path).
@@ -496,8 +496,8 @@ namespace Ring.Simulation.Tests
         {
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
-            Assert.IsTrue(w.TryAddItem(0, 0), "premise: the first item (Id 0) must actually fit");
-            Assert.IsTrue(w.TryAddItem(0, 1), "premise: the second item (Id 1) must actually fit");
+            Assert.IsTrue(w.TryAddItem(0, 1), "premise: the first item (Id 1) must actually fit");
+            Assert.IsTrue(w.TryAddItem(0, 2), "premise: the second item (Id 2) must actually fit");
             Assert.AreEqual(2, w.InventoryCountOf(0), "premise: both items must actually have been added");
 
             w.KillPlayerNoDamage(0);
@@ -506,8 +506,8 @@ namespace Ring.Simulation.Tests
             ContainerState c = w.Containers[0];
             Assert.AreEqual(ContainerKind.PlayerCorpse, c.Kind);
             Assert.AreEqual(2, c.SlotCount, "the corpse must carry the WHOLE backpack, not a subset");
-            Assert.AreEqual(0, w.ContainerSlotAt(0, 0));
-            Assert.AreEqual(1, w.ContainerSlotAt(0, 1));
+            Assert.AreEqual(1, w.ContainerSlotAt(0, 0));
+            Assert.AreEqual(2, w.ContainerSlotAt(0, 1));
             Assert.AreEqual(0, w.InventoryCountOf(0),
                 "the live backpack must be emptied (R-128) — the container is now the sole owner " +
                 "of these item ids, or the same item would be hashed/saved twice");
@@ -581,7 +581,7 @@ namespace Ring.Simulation.Tests
                 Assert.That(c.SlotCount, Is.EqualTo(1).Or.EqualTo(2),
                     $"seed {seed}: a crate must hold 1 or 2 items, this one holds {c.SlotCount}");
                 for (int s = 0; s < c.SlotCount; s++)
-                    Assert.AreEqual(0, w.ContainerSlotAt(0, s), "Outer's own tier (1) maps to TestConfigs' Id=0 record");
+                    Assert.AreEqual(1, w.ContainerSlotAt(0, s), "Outer's own tier (1) maps to TestConfigs' Id=1 record");
                 observedCounts.Add(c.SlotCount);
             }
             Assert.That(observedCounts, Is.EquivalentTo(new[] { 1, 2 }),
@@ -608,7 +608,7 @@ namespace Ring.Simulation.Tests
                 ContainerState c = w.Containers[0];
                 bool hasKit = false;
                 for (int s = 0; s < c.SlotCount; s++)
-                    if (w.ContainerSlotAt(0, s) == 4) hasKit = true; // TestConfigs' own Id=4 RepairKit record
+                    if (w.ContainerSlotAt(0, s) == 5) hasKit = true; // TestConfigs' own Id=5 RepairKit record
                 if (hasKit) sawRepairKit = true; else sawWithout = true;
             }
             Assert.IsTrue(sawRepairKit, "the repair kit must appear at least once across seeds at chance 0.5");
@@ -632,7 +632,59 @@ namespace Ring.Simulation.Tests
             ContainerState c = w.Containers[0];
             Assert.AreEqual(ContainerKind.Cache, c.Kind);
             Assert.GreaterOrEqual(c.SlotCount, 1);
-            Assert.AreEqual(2, w.ContainerSlotAt(0, 0), "Core's own tier (3) maps to TestConfigs' Id=2 record");
+            Assert.AreEqual(3, w.ContainerSlotAt(0, 0), "Core's own tier (3) maps to TestConfigs' Id=3 record");
+        }
+
+        // --- Coordinator fix-round (Ф3 gate, review C1/A-2) ---
+
+        /// Review C1: Id 0 collides with the container slot's own "0 =
+        /// empty" sentinel (SimulationWorld.TryTakeFromContainer) — the
+        /// Tier-1 item, the single most common drop in the game, was
+        /// UNRECOVERABLE through the one take shim in the codebase.
+        /// Fixture EXPRESSION (ItemCatalogLookup.FindByTier), not a literal
+        /// (R-56): this exact test body is both today's RED witness (the
+        /// catalog's own Tier-1 record is Id 0) and tomorrow's GREEN proof
+        /// (Id 1, once the catalog shift lands) — no test-code change
+        /// crosses the fix. Every OTHER take-test in this file deliberately
+        /// used ids 5/9, stepping around the hole; this is the one that
+        /// doesn't.
+        [Test]
+        public void TakeFromContainer_ResolvesATierOneItem()
+        {
+            var cfg = TestConfigs.Open();
+            byte tierOneId = ItemCatalogLookup.FindByTier(1, cfg.Items).Id;
+            var w = new SimulationWorld(1, cfg);
+            int id = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new[] { tierOneId });
+
+            bool taken = w.TryTakeFromContainer(id, 0, out byte item);
+
+            Assert.IsTrue(taken, "a Tier-1 item must be retrievable through the container's own take shim");
+            Assert.AreEqual(tierOneId, item);
+        }
+
+        /// Review A-2/I2: the flat slot block is never cleared past
+        /// `items.Length` on spawn — a container with a SMALLER SlotCount
+        /// landing on an array position a LARGER one just vacated reads the
+        /// larger one's own leftover tail byte as a phantom item. Mirrors
+        /// R-99's own "writing past this container's own block would
+        /// corrupt its neighbor's slots" reasoning, from the read side
+        /// instead of the write side.
+        [Test]
+        public void SpawnContainer_ZeroesTailWhenSmallerContainerReusesTheSlot()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            int firstId = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new byte[] { 7, 8 });
+            Assert.AreNotEqual(-1, firstId, "premise: the two-item container must actually exist");
+            w.RemoveContainerAt(0);
+            Assert.AreEqual(0, w.ContainerCount, "premise: the array position must actually be free again");
+
+            int secondId = w.SpawnContainer(ContainerKind.Crate, new float2(2f, 0f), new byte[] { 9 });
+
+            Assert.AreNotEqual(-1, secondId, "premise: the one-item container must actually reuse the freed position");
+            Assert.AreEqual(9, w.ContainerSlotAt(0, 0));
+            Assert.AreEqual(0, w.ContainerSlotAt(0, 1),
+                "the tail slot must read empty — the first container's own leftover byte must not survive");
         }
     }
 }

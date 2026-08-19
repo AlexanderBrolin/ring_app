@@ -24,9 +24,13 @@ namespace Ring.Simulation.Tests
         //   MatchState.Phase, the backpacks) pulled back out of StateHash one
         //   at a time, each time watching this file name the missing field.
         //
-        // The other PendingHashFields in the suite — SimConfigHashTests' —
-        // is a DIFFERENT set with a different addressee (Т13) and is none of
-        // this file's business.
+        // Coordinator fix-round (Ф3 review A-9/m4): this used to point at
+        // "the other PendingHashFields in the suite — SimConfigHashTests'
+        // own — a DIFFERENT set with a different addressee (Т13)" — Т13
+        // shipped and removed that skip-set entirely (SimConfigHashTests'
+        // own twelve sectional sweeps replaced it, no skip-list left
+        // anywhere in the suite). Historical note only, kept so a reader
+        // following an old cross-reference lands somewhere true.
 
         [Test]
         public void SaveRestore_ReplaysToSameHash()

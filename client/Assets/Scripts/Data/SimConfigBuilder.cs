@@ -593,11 +593,14 @@ namespace Ring.Data
             // mirror ArenaConfig's own [Range(0, 20)] hint, which is never
             // enforced on a value reaching the builder from code or a test.
             ReqInRange(errors, "Arena.BarrierTop", cfg.Arena.BarrierTop, 0f, 20f);
-            // Stage 3 Task 3 (spec §3.6): the pickup economy's own home for
-            // its two production-wired numbers (Р72, no second home) —
-            // CellsOnDeath/CorpseCellFraction stay unvalidated here on
-            // purpose, R-3's temporary code-only fields have no SO source to
-            // validate FROM yet, that wiring is Т13's job.
+            // Stage 3 Task 3 (spec §3.6): the pickup economy's own home
+            // for its two production-wired numbers (Р72, no second home).
+            // Coordinator fix-round (Ф3 review A-9/m4): this doc used to say
+            // CellsOnDeath/CorpseCellFraction were "R-3's temporary
+            // code-only fields, no SO source yet, Т13's job" — Т13 shipped;
+            // both now live in LootSimConfig (CellsPerMob/
+            // CorpseCellFraction) and are validated by ValidateLoot, not
+            // here.
             ReqPositive(errors, "Arena.MaxPickups", cfg.Arena.MaxPickups);
             ReqPositive(errors, "Hero.PickupRadius", cfg.Hero.PickupRadius);
             // Stage 3 Task 4 (errata E-6 D-I8): the backpack's own home for
@@ -841,6 +844,22 @@ namespace Ring.Data
             {
                 errors.Add($"Items must have at most 255 records (wire Id is a byte) " +
                     $"(got {items.Length}).");
+            }
+            // Coordinator fix-round (Ф3 review C1): 0 is the container
+            // slot's own "empty" sentinel (SimulationWorld.
+            // TryTakeFromContainer treats a 0 byte as unset) — a catalog
+            // record claiming Id 0 would be permanently unreachable through
+            // the one take shim in the codebase, indistinguishable from an
+            // already-emptied slot even in StateHash. Named refusal, same
+            // home as the rules right below it.
+            for (int i = 0; i < items.Length; i++)
+            {
+                if (items[i].Id == 0)
+                {
+                    errors.Add($"Items[{i}].Id must not be 0 — 0 is reserved as the container " +
+                        "slot's own \"empty\" sentinel (SimulationWorld.TryTakeFromContainer treats " +
+                        "a 0 byte as unset).");
+                }
             }
             for (int i = 0; i < items.Length; i++)
             {

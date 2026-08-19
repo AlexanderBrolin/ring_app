@@ -1012,7 +1012,7 @@ namespace Ring.Simulation.Core
                 throw new System.ArgumentException(
                     $"SimulationWorld.SpawnContainer: items.Length ({items.Length}) exceeds " +
                     $"Arena.MaxContainerSlots ({_config.Arena.MaxContainerSlots}) — writing past " +
-                    "this container's own block would corrupt its neighbour's slots.", nameof(items));
+                    "this container's own block would corrupt its neighbor's slots.", nameof(items));
             }
             if (_containerCount >= _containers.Length)
             {
@@ -1028,6 +1028,17 @@ namespace Ring.Simulation.Core
             };
             int offset = index * _config.Arena.MaxContainerSlots;
             for (int i = 0; i < items.Length; i++) _containerSlots[offset + i] = items[i];
+            // Coordinator fix-round (Ф3 review A-2/I2): this array position
+            // may hold a PREVIOUS occupant's leftover tail bytes past
+            // `items.Length` — RemoveContainerAt moves a container's FULL
+            // slot-width block, not just its own SlotCount, so a smaller
+            // container spawned into a position a larger one just vacated
+            // would otherwise read the larger one's own stale byte as a
+            // phantom item. `ContainerState`'s own doc ("slots at or past
+            // it are never read") is a promise about READERS staying
+            // within SlotCount, not a guarantee those bytes are actually
+            // zero — this loop is what makes it true regardless.
+            for (int i = items.Length; i < _config.Arena.MaxContainerSlots; i++) _containerSlots[offset + i] = 0;
             return id;
         }
 
@@ -1063,6 +1074,22 @@ namespace Ring.Simulation.Core
         /// positions start at 0). Consuming: a successful take zeroes the
         /// slot, so a second take of the same slot reads back "empty"
         /// (spec: 0 = пусто) instead of handing out the same item twice.
+        ///
+        /// ⚠ ASSUMPTION THIS METHOD CANNOT ENFORCE, WITH ITS ADDRESSEE NAMED
+        /// (coordinator fix-round Ф3 review A-2/I2, same MaxBodyRadius/
+        /// MinCatalogSlotCost shape): `slot` is NOT checked against
+        /// `SlotCount` or `Arena.MaxContainerSlots` — a value in
+        /// [SlotCount, MaxContainerSlots) reads a guaranteed-zeroed tail
+        /// byte (SpawnContainer's own zeroing, R-99's mirror fix) and
+        /// correctly returns false, but a value >= MaxContainerSlots reads
+        /// (and, on a would-be successful take, ZEROES) a NEIGHBORING
+        /// container's own slot — the exact cross-block corruption
+        /// SpawnContainer's own named refusal (R-99) exists to prevent from
+        /// the write side. `slot` is meant to arrive over the wire as
+        /// `LootRequestNet.Slot` (spec §3.8) from an untrusted client — the
+        /// server is authoritative (CR 3) and the range check belongs to
+        /// that request's own validation. ADDRESSEE — Т17 (spec §3.8 point
+        /// 5: "Slot ∈ [0, SlotCount)").
         internal bool TryTakeFromContainer(int containerId, int slot, out byte itemId)
         {
             for (int i = 0; i < _containerCount; i++)
@@ -1166,18 +1193,25 @@ namespace Ring.Simulation.Core
                 // LootDrops.TryRollMobItemTier, whose own doc carries the
                 // golden-risk guard-before-ZoneOf requirement (R-120).
                 //
-                // Kind = MobCorpse for all four (not Cache): the Director
-                // IS a mob (MobType.Director) and these are corpse loot from
-                // its own death, the same relationship every other
-                // archetype's single corpse container has to Kind (Р229:
-                // Kind is skin/spawn-table only, never behavior) — Crate/
-                // Cache are the WORLD-START placement's own kinds
-                // (ContainerStore.PlaceStartingContainers), a different
-                // origin entirely. The one behavioral consequence of the
-                // choice: Ttl = ContainerTtlSeconds (expiring), not the
-                // permanent 0f Crate/Cache/PlayerCorpse get
-                // (ContainerStore.InitialTtlFor) — matches every other
-                // mob's own corpse loot, not a boss-specific exception.
+                // Kind = Cache for all four (coordinator fix-round, Ф3
+                // review A-1 — corrects this task's own original choice of
+                // MobCorpse, recorded here for the reader who follows an
+                // old cross-reference). Spec §3.6 names the non-expiring
+                // trio "труп сборщика, ящик и тайник… там лежит
+                // заработанное" — the guaranteed boss drop and the
+                // 1000-credit, once-per-match memory core are exactly that,
+                // and MobCorpse's own Ttl (ContainerTtlSeconds, 180s) would
+                // let the core expire roughly 90s after the gate opens
+                // (GateDelaySeconds). Spec §3.7 itself calls these "three
+                // containers" and "a separate container with the memory
+                // core", never "a corpse" — "труп моба" in that same
+                // section names what an ORDINARY archetype leaves behind
+                // when an item drops, a different case entirely (the
+                // `else if` branch below, still Kind = MobCorpse). Kind
+                // remains skin/spawn-table only (Р229) — Cache is not a
+                // new state machine, just the existing permanent-Ttl kind
+                // (ContainerStore.InitialTtlFor) applied to a death instead
+                // of world-start placement.
                 //
                 // All four containers land at the SAME `pos` (R-129, spec
                 // silent on a spread radius — a new balance number in code
@@ -1191,11 +1225,11 @@ namespace Ring.Simulation.Core
                     for (int c = 0; c < 3; c++)
                     {
                         int n = LootDrops.RollTierItems(3, _config.Items, ref _lootRng, trophyBuf);
-                        SpawnContainer(ContainerKind.MobCorpse, pos, trophyBuf.Slice(0, n));
+                        SpawnContainer(ContainerKind.Cache, pos, trophyBuf.Slice(0, n));
                     }
                     System.Span<byte> core = stackalloc byte[1];
                     core[0] = ItemCatalogLookup.FindByTier(4, _config.Items).Id;
-                    SpawnContainer(ContainerKind.MobCorpse, pos, core);
+                    SpawnContainer(ContainerKind.Cache, pos, core);
                 }
                 else if (LootDrops.TryRollMobItemTier(_mobs[index].Type, pos, in _config.Arena,
                              in _config.Loot, ref _lootRng, out byte tier))

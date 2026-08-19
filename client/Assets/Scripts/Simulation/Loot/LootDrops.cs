@@ -94,13 +94,18 @@ namespace Ring.Simulation.Loot
                 tier = 0;
                 return false;
             }
-            // Р228: "тир предмета — тир зоны смерти", Zone's own declared
-            // order (Outer=0/Middle=1/Core=2) maps onto tier 1..3 by a
-            // plain +1 — no separate table, the SAME arithmetic
-            // ContainerStore.PlaceZone uses for its own zone parameter.
-            tier = (byte)((int)zone + 1);
+            tier = TierOfZone(zone);
             return true;
         }
+
+        /// Stage 3 Task 16 (Р228: "тир предмета — тир зоны смерти"),
+        /// coordinator fix-round (Ф3 review m6): the ONE home for "zone ->
+        /// tier" — Zone's own declared order (Outer=0/Middle=1/Core=2) maps
+        /// onto tier 1..3 by a plain +1, no separate table. Shared by this
+        /// method's own roll above and ContainerStore.PlaceZone's starting
+        /// crate/cache content — a second copy of the same +1 had drifted
+        /// silently between the two before this fix-round noticed it (m6).
+        public static byte TierOfZone(Zone zone) => (byte)((int)zone + 1);
 
         /// Stage 3 Task 16 (spec §3.7): rolls 1 or 2 copies of the ONE
         /// Trophy item mapped to `tier` (ItemCatalogLookup.FindByTier,
