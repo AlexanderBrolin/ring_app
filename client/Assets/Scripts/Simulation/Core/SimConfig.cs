@@ -586,16 +586,18 @@ namespace Ring.Simulation.Core
         /// differently, which is a trap unless one function owns the
         /// difference.
         ///
-        /// RECORDED SIMPLIFICATION (coordinator decision D-1, open owner
+        /// OWNER DECISION, SETTLED (R-158, 2026-08-19 — supersedes the
+        /// coordinator's D-1 simplification, which was recorded as an open
         /// question for milestone В1): the repair kit is deliberately OUTSIDE
         /// the tier ladder — ItemDef.Tier is 0 for it (spec §3.7: "ремкомплект
         /// — вне тиров") — yet taking one out of a container is a perfectly
-        /// legal Take that needs a duration. A duration of its own cannot be
-        /// invented here: a balance number living in code violates CR 6, and
-        /// the phase's data-delivery gate (Т13) is spent. So the tier is
-        /// CLAMPED into [1, 4] and the kit borrows tier one's time, the
-        /// cheapest on the table. Whether it deserves an entry of its own is
-        /// the owner's call, recorded rather than quietly decided.
+        /// legal Take that needs a duration. The owner ruled it takes the SAME
+        /// time as the cheapest tier, so the clamp below is now the intended
+        /// rule rather than a stand-in: the tier is CLAMPED into [1, 4] and the
+        /// kit borrows tier one's time. No entry of its own is coming, and no
+        /// balance number is owed here — which also keeps CR 6 satisfied
+        /// (a duration invented in code would violate it) without depending on
+        /// the phase's spent data-delivery gate.
         ///
         /// No bounds guard on the array itself: SimConfigBuilder.ValidateLoot
         /// enforces exactly four elements (Stage 3 Task 17), which is the rule
