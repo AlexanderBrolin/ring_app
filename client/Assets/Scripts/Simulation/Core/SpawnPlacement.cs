@@ -27,6 +27,20 @@ namespace Ring.Simulation.Core
     /// copies (RingSlotBlocked, coordinator R-111).
     public static class SpawnPlacement
     {
+        /// Coordinator fix-round (Ф3 gate tail 1, handoff-mandated —
+        /// originally scoped for the fix-round, misrouted to backlog on
+        /// review, corrected here): the ONE home for "ring radius + angle
+        /// -> position", `ringRadius * new float2(math.cos(angle),
+        /// math.sin(angle))` — the same bit-sensitive expression
+        /// FallbackSlotPos below and TryFind's own candidate draw each
+        /// carried as a separate copy twenty lines apart. R-103/lesson 307:
+        /// extracted SYMBOL FOR SYMBOL, same order (vector = scalar *
+        /// float2(cos, sin)) — proven digest-inert by its own dedicated
+        /// full R-TEST before any other work, same discipline the Т15
+        /// three-copy angle formula already went through.
+        static float2 OnRing(float ringRadius, float angle)
+            => ringRadius * new float2(math.cos(angle), math.sin(angle));
+
         /// Coordinator R-115: the ONE home for "fixed fallback slot index ->
         /// position on a ring" — this formula is BIT-SENSITIVE (R-103's own
         /// digest-inert proof for the whole search rests on it being this
@@ -44,7 +58,7 @@ namespace Ring.Simulation.Core
         public static float2 FallbackSlotPos(float ringRadius, int slotIndex, int slots)
         {
             float angle = 2f * math.PI * slotIndex / slots;
-            return ringRadius * new float2(math.cos(angle), math.sin(angle));
+            return OnRing(ringRadius, angle);
         }
 
         /// Up to `maxAttempts` candidates drawn from `rng` (a RING-radius
@@ -67,7 +81,7 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < maxAttempts; i++)
             {
                 float angle = rng.NextFloat(0f, 2f * math.PI);
-                float2 candidate = ringRadius * new float2(math.cos(angle), math.sin(angle));
+                float2 candidate = OnRing(ringRadius, angle);
                 if (filter.IsValid(candidate))
                 {
                     pos = candidate;
