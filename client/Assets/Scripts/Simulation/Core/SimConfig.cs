@@ -537,12 +537,21 @@ namespace Ring.Simulation.Core
         public float RepairKitHealAmount;
         public float RepairKitChannelSeconds;
         /// Indexed by tier - 1 (tier 1..4 -> index 0..3) — {0.3, 0.6, 0.9, 1.2}.
-        /// ⚠ ASSUMPTION THIS FIELD CANNOT ENFORCE, WITH ITS ADDRESSEE NAMED
-        /// (coordinator R-96): no rule checks this array's length is 4 — it
-        /// has no reader yet (Т18, the transfer-timer task, is the
-        /// addressee). Build's own omitted-`loot` branch still seeds a
-        /// correctly-sized all-zero array (coordinator R-96), same
-        /// DropChance precedent above.
+        /// ⚠ NOT indexed the way CellsPerMob above is: that one is a DIRECT
+        /// MobType index (Chaser 0 .. Director 3), this one carries a SHIFT,
+        /// because tiers are numbered from one in spec §3.7's own table while
+        /// arrays are numbered from zero. Two conventions in one struct have
+        /// to be named or the next reader picks the wrong one — which is
+        /// exactly why neither call site does the arithmetic itself:
+        /// LootTransferTimes below is the ONE home of the shift.
+        ///
+        /// Stage 3 Task 17: this field HAS a live reader now
+        /// (LootTransferTimes.ForTier, called by Loot.LootOps.Begin and by
+        /// SimulationWorld.ApplyConfig's own clamp), so the ASSUMPTION +
+        /// ADDRESSEE doc it used to carry is replaced by a real rule in
+        /// SimConfigBuilder.ValidateLoot — R-92 in its plain form: a rule is
+        /// earned by the reader it protects, and it arrives with that reader.
+        /// Same history CellsPerMob had in Т13 and DropChance in Т16.
         public float[] TransferSeconds;
         public int LootSpawnAttempts, LootFallbackSlots;
         public float PickupTtlSeconds, ContainerTtlSeconds;
@@ -555,6 +564,65 @@ namespace Ring.Simulation.Core
         /// other field — same "append, don't reshuffle a hash-order
         /// contract" convention the rest of this file already follows.
         public float LootRadius;
+    }
+
+    /// Stage 3 Task 17 (spec §3.8 "таймер переноса", coordinator decision
+    /// D-3): the ONE home of "how long does moving THIS item take", and of
+    /// the only aggregate over that table anyone needs. Two readers, one
+    /// mapping — Loot.LootOps.Begin asks for a specific tier's time,
+    /// SimulationWorld.ApplyConfig asks for the ceiling — and neither writes
+    /// the `tier - 1` shift itself. Same "one lookup, never a second copy of
+    /// the search" discipline ItemCatalogLookup above already states, and for
+    /// the same recorded reason: two homes of one mapping have already cost
+    /// this project three passes on a single test.
+    public static class LootTransferTimes
+    {
+        /// The transfer time for an item of `tier`, in seconds.
+        ///
+        /// THE SHIFT LIVES HERE AND NOWHERE ELSE: tiers run 1..4 (spec §3.7),
+        /// the array runs 0..3, so the index is `tier - 1`. Contrast
+        /// LootSimConfig.CellsPerMob, indexed DIRECTLY by MobType with no
+        /// shift at all — the two arrays sit in the same struct and are read
+        /// differently, which is a trap unless one function owns the
+        /// difference.
+        ///
+        /// RECORDED SIMPLIFICATION (coordinator decision D-1, open owner
+        /// question for milestone В1): the repair kit is deliberately OUTSIDE
+        /// the tier ladder — ItemDef.Tier is 0 for it (spec §3.7: "ремкомплект
+        /// — вне тиров") — yet taking one out of a container is a perfectly
+        /// legal Take that needs a duration. A duration of its own cannot be
+        /// invented here: a balance number living in code violates CR 6, and
+        /// the phase's data-delivery gate (Т13) is spent. So the tier is
+        /// CLAMPED into [1, 4] and the kit borrows tier one's time, the
+        /// cheapest on the table. Whether it deserves an entry of its own is
+        /// the owner's call, recorded rather than quietly decided.
+        ///
+        /// No bounds guard on the array itself: SimConfigBuilder.ValidateLoot
+        /// enforces exactly four elements (Stage 3 Task 17), which is the rule
+        /// this reader is what earned.
+        public static float ForTier(byte tier, in LootSimConfig loot)
+            => loot.TransferSeconds[math.clamp((int)tier, 1, 4) - 1];
+
+        /// The longest transfer any tier can ask for — the only honest ceiling
+        /// a hot-tweak can clamp a running channel against, since the channel's
+        /// own target tier is not recoverable at ApplyConfig time (the
+        /// container may already be gone).
+        ///
+        /// A MAX OVER THE TABLE, deliberately not `TransferSeconds[3]`:
+        /// nothing anywhere guarantees the table is monotonic, and a ceiling
+        /// resting on "the last one is the largest" would go silently wrong
+        /// the first time the owner reorders these numbers on a balance pass.
+        /// Null-safe for the same reason ValidateLoot exists at all — a
+        /// malformed config must produce a named refusal from the builder, not
+        /// a NullReferenceException from a clamp.
+        public static float Longest(in LootSimConfig loot)
+        {
+            float[] table = loot.TransferSeconds;
+            if (table == null) return 0f;
+            float longest = 0f;
+            for (int i = 0; i < table.Length; i++) longest = math.max(longest, table[i]);
+            return longest;
+        }
     }
 
     /// Full balance snapshot for one match — plain data, no ScriptableObjects.

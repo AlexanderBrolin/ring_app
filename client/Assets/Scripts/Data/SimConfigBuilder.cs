@@ -903,11 +903,14 @@ namespace Ring.Data
         ///   own two shape rules (R-121a/R-121b) are enforced below,
         ///   replacing the ASSUMPTION+ADDRESSEE doc this field carried
         ///   before a reader existed.
-        /// - TransferSeconds still has NO reader (Т18's transfer timer) —
-        ///   a rule with no reader to protect is a rule with no witness
-        ///   (R-92), so it keeps its ASSUMPTION + ADDRESSEE doc instead,
-        ///   same MinCatalogSlotCost/MaxBodyRadius precedent above: see
-        ///   LootSimConfig's own field doc (Core/SimConfig.cs).
+        /// - TransferSeconds gained its live reader in Stage 3 Task 17
+        ///   (Core.LootTransferTimes.ForTier, indexed by the target item's
+        ///   own tier as `tier - 1` with no bounds guard of its own, called
+        ///   from Loot.LootOps.Begin and from SimulationWorld.ApplyConfig's
+        ///   clamp) — so the ASSUMPTION + ADDRESSEE doc it used to carry is
+        ///   replaced by the rule below, exactly as DropChance's was in Т16.
+        ///   R-92 in its plain form: a rule is earned by the reader it
+        ///   protects, and arrives with it.
         /// Build's own omitted-`loot` branch (coordinator R-96) already
         /// guarantees CellsPerMob/DropChance are never null — these rules
         /// instead catch a SUPPLIED-but-malformed LootConfig.asset (an
@@ -919,6 +922,19 @@ namespace Ring.Data
                 errors.Add("Loot.CellsPerMob must have exactly 4 elements (one per MobType — " +
                     "Chaser/Gunner/Elite/Director), read by LootDrops.MobDeathCells with no " +
                     $"bounds guard of its own (got {loot.CellsPerMob?.Length ?? 0}).");
+            }
+
+            // Stage 3 Task 17 (coordinator decision D-4): the same shape as
+            // CellsPerMob's rule above, for the same reason and against a
+            // DIFFERENT index convention — CellsPerMob is indexed DIRECTLY by
+            // MobType, TransferSeconds by `tier - 1` (tiers run 1..4). Four
+            // elements, one per tier; the repair kit is outside the ladder and
+            // borrows tier one's time (LootTransferTimes.ForTier's own doc).
+            if (loot.TransferSeconds == null || loot.TransferSeconds.Length != 4)
+            {
+                errors.Add("Loot.TransferSeconds must have exactly 4 elements (one per item tier " +
+                    "1..4), read by Core.LootTransferTimes.ForTier as [tier - 1] with no bounds " +
+                    $"guard of its own (got {loot.TransferSeconds?.Length ?? 0}).");
             }
 
             // Stage 3 Task 15 (coordinator R-109): same F4 shape family as

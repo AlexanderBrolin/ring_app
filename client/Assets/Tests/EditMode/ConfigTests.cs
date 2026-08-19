@@ -1752,6 +1752,28 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Validate_RejectsTransferSecondsWrongLength()
+        {
+            // Stage 3 Task 17: TransferSeconds finally has a live reader —
+            // Loot.LootOps.Begin indexes it by the target item's own tier
+            // (tier - 1, tiers 1..4) with no bounds guard of its own. R-92
+            // says a rule is earned by the reader it protects, so the rule
+            // arrives with the reader, exactly as CellsPerMob's above did in
+            // Т13 and DropChance's did in Т16. A SUPPLIED LootConfig with a
+            // shortened array (an Inspector edit — Build's own omitted-`loot`
+            // branch already seeds a correct float[4]) must be refused here,
+            // named, instead of crashing IndexOutOfRangeException on the first
+            // container the player opens.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var loot = ScriptableObject.CreateInstance<LootConfig>();
+            loot.TransferSeconds = new[] { 0.3f, 0.6f, 0.9f }; // three, not four — tier 4 has no time
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+            StringAssert.Contains("TransferSeconds must have exactly 4 elements", ex.Message);
+        }
+
+        [Test]
         public void Build_EliteAndDirectorAssets_ReachSimConfig()
         {
             // Errata E-6 I5: MobEliteConfig/MobDirectorConfig are new ASSETS

@@ -65,10 +65,28 @@ namespace Ring.Simulation.Loot
         /// Loot.PickupSystem.Collect's own PickupRadius read follows.
         public bool TryAdd(byte itemId, int capacity, ItemDef[] catalog)
         {
-            if (_count >= _items.Length) return false;
-            if (UsedSlots(catalog) + SlotCostOf(itemId, catalog) > capacity) return false;
+            if (!CanAdd(itemId, capacity, catalog)) return false;
             _items[_count++] = itemId;
             return true;
+        }
+
+        /// Stage 3 Task 17: the same question TryAdd above asks itself, asked
+        /// WITHOUT the add — Loot.LootOps.Validate has to answer "would this
+        /// item fit" before anything is moved, and a validation that answered
+        /// it by trying the add and undoing it would be a second, drifting
+        /// copy of the rule (rule 2). Extracted rather than duplicated for
+        /// exactly that reason: TryAdd is now its only other caller, so the
+        /// two can never disagree.
+        ///
+        /// Both halves of the refusal live here, and LootOps reports both as
+        /// the single LootRefusal.NotEnoughSlots: the SLOT-POINT budget
+        /// (`capacity`) and the hard MaxInventoryItems ceiling of the backing
+        /// array — whichever bites first. Two codes for "your backpack is
+        /// full" would be a distinction the player cannot act on differently.
+        public bool CanAdd(byte itemId, int capacity, ItemDef[] catalog)
+        {
+            if (_count >= _items.Length) return false;
+            return UsedSlots(catalog) + SlotCostOf(itemId, catalog) <= capacity;
         }
 
         /// Swap-remove — same idiom as SimulationWorld.RemovePickupAt/

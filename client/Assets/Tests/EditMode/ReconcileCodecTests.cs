@@ -144,6 +144,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(expected.DashRequested, actual.DashRequested, $"{where}: DashRequested");
             Assert.AreEqual(expected.AimHeld, actual.AimHeld, $"{where}: AimHeld");
             Assert.AreEqual(expected.SlideRequested, actual.SlideRequested, $"{where}: SlideRequested");
+            // Stage 3 Task 17: compared like every field above even though the
+            // wire does not carry it yet (Т20 owns the bit) — so the day it
+            // starts being carried, every round trip in this file is already
+            // watching it. Today both sides are false on every sample, which
+            // is the honest reading of "not on the wire", not a skipped check.
+            Assert.AreEqual(expected.InventoryOpen, actual.InventoryOpen, $"{where}: InventoryOpen");
         }
 
         /// The field list `AssertSimInputEqual` above checks by hand. A field a
@@ -156,6 +162,8 @@ namespace Ring.Simulation.Tests
             nameof(SimInput.MoveDir), nameof(SimInput.AimPoint), nameof(SimInput.AimHeight),
             nameof(SimInput.FireHeld), nameof(SimInput.DashRequested),
             nameof(SimInput.AimHeld), nameof(SimInput.SlideRequested),
+            // Stage 3 Task 17 — see AssertSimInputEqual's own line for it.
+            nameof(SimInput.InventoryOpen),
         };
 
         /// Three frames whose wire bytes are all different from one another:

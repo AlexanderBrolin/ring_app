@@ -71,8 +71,10 @@ namespace Ring.Simulation.Tests
         ///
         /// Stage 3 Task 1 extended it again: LootTimer/RepairTimer/
         /// ExtractTimer/LootTargetContainerId map to float.PositiveInfinity
-        /// (declared inert this task, no ApplyConfig clamp until Т17/Т19/Т23
-        /// give them behavior), and `typeof(byte)` joined
+        /// (declared inert that task, no ApplyConfig clamp until Т17/Т19/Т23
+        /// give them behavior — Т17 has since paid that debt for LootTimer,
+        /// which now maps to the longest transfer in the new tier table),
+        /// and `typeof(byte)` joined
         /// `unmeasuredFieldTypes` below for ExtractKind/LootTargetSlot — the
         /// struct's first byte fields, small discriminants rather than
         /// magnitudes.
@@ -90,6 +92,23 @@ namespace Ring.Simulation.Tests
             next.Hero.StaminaRegenDelay = 0.2f;
             next.Hero.EdgeRequestMinTicks = 2; // reduced from TestConfigs' 3 — the clamp must bite
             next.Weapon.FireInterval = 0.04f;
+
+            // Stage 3 Task 17: the loot channel's ceiling is an AGGREGATE over
+            // the new config's own tier table, not a single named number like
+            // every other ceiling in this map — a running channel's target
+            // tier is not recoverable at hot-tweak time (the container may
+            // already be gone), so the longest transfer any tier can ask for
+            // is the only honest bound. Computed HERE, by this test's own
+            // loop, deliberately NOT through the production aggregate
+            // (LootTransferTimes.Longest): a test that reused the very
+            // function under test would move with it and stop being able to
+            // see it break.
+            float longestTransfer = 0f;
+            foreach (float seconds in next.Loot.TransferSeconds)
+                longestTransfer = math.max(longestTransfer, seconds);
+            Assert.Greater(longestTransfer, 0f,
+                "premise: the fixture's tier table must contain a real transfer time, or the " +
+                "LootTimer ceiling below would be a vacuous zero");
 
             var ceilingByField = new Dictionary<string, float>
             {
@@ -119,13 +138,13 @@ namespace Ring.Simulation.Tests
                 // Stage 2 Task 10: the two edge-request tick counters.
                 ["DashRequestCooldownTicks"] = next.Hero.EdgeRequestMinTicks,
                 ["SlideRequestCooldownTicks"] = next.Hero.EdgeRequestMinTicks,
-                // Stage 3 Task 1: Ф1 channel timers — declared inert this
-                // task, not yet clamped by ApplyConfig (no behavior lands
-                // until Т17/Т19/Т23 give each its own tick/abort logic and,
-                // with it, its own ceiling here, same "add a line as part of
-                // that task's GREEN step" discipline this test's own doc asks
-                // for).
-                ["LootTimer"] = float.PositiveInfinity,
+                // Stage 3 Task 17: LootTimer got its behavior (LootOps.Begin
+                // sets it from Loot.TransferSeconds), so it gets its ceiling
+                // here — the "add a line as part of that task's GREEN step"
+                // discipline this test's own doc asks for, paid on the task
+                // that doc named. RepairTimer/ExtractTimer stay uncapped
+                // until Т19/Т23 do the same for theirs.
+                ["LootTimer"] = longestTransfer,
                 ["RepairTimer"] = float.PositiveInfinity,
                 ["ExtractTimer"] = float.PositiveInfinity,
                 // LootTargetContainerId: an entity id, not a magnitude —

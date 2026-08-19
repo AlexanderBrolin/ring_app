@@ -351,6 +351,16 @@ namespace Ring.Simulation.Core
             // movement/combat has settled — a mob spawned here doesn't get an
             // extra, unbudgeted movement/combat sub-step on its own spawn tick.
             WaveSystem.Update(this);
+            // Stage 3 Task 17 (owner decision R-149): the loot channel ticks
+            // HERE — after combat, before ContainerStore/PickupSystem. R-2's
+            // canonical tail (see PickupSystem's call below) orders LootOps
+            // against those two and against MatchFlowSystem; WaveSystem is not
+            // in that chain at all and carries its own recorded requirement to
+            // run last among the combat systems, so inserting BEFORE it would
+            // reopen that decision without writing anything down. Nothing is
+            // shared either way: looting never reads mobs, spawning never
+            // reads loot timers.
+            LootOps.Update(this);
             // Stage 3 Task 14 (coordinator R-101): container TTL decay slots
             // in HERE, BEFORE PickupSystem — not after. The slot after
             // PickupSystem is reserved for MatchFlowSystem (Т21, see that
@@ -511,6 +521,25 @@ namespace Ring.Simulation.Core
                     math.clamp(p.DashRequestCooldownTicks, 0, next.Hero.EdgeRequestMinTicks);
                 p.SlideRequestCooldownTicks =
                     math.clamp(p.SlideRequestCooldownTicks, 0, next.Hero.EdgeRequestMinTicks);
+                // Stage 3 Task 17 (errata E-6 A-I8): the loot channel clamps
+                // down to the new tier table's longest transfer, same
+                // clamp-to-the-new-ceiling contract as every timer above.
+                // Its ceiling is an AGGREGATE, not one named number, which is
+                // the one way this line differs from its neighbors — the
+                // channel's own target tier is not recoverable here (the
+                // container may already be gone), so the longest time any
+                // tier can ask for is the only honest bound. The aggregate
+                // itself lives in LootTransferTimes.Longest, next to the
+                // table, and its own doc says why it is a max rather than the
+                // last element. Called inside the loop like every neighbor
+                // reads its own ceiling inside the loop — hoisting it would
+                // make this the ONE line here with a precomputed operand, and
+                // there is nothing to buy: ApplyConfig runs on a hot-tweak,
+                // not on the tick, over at most Arena.MaxPlayers players and a
+                // four-element table. RepairTimer/ExtractTimer stay unclamped
+                // until Т19/Т23 give them behavior and, with it, their
+                // ceilings.
+                p.LootTimer = math.clamp(p.LootTimer, 0f, LootTransferTimes.Longest(in next.Loot));
                 _players[i] = p;
             }
         }
@@ -767,6 +796,15 @@ namespace Ring.Simulation.Core
         /// (Stage 2 Task 5 — was a single-slot property, now indexed by shooter).
         internal ref MatchStats StatsRef(int index) => ref _matchStats[index];
 
+        /// Stage 3 Task 17: a system's seam into live player storage, same
+        /// ref-return shape as StatsRef above and as the `ref _players[i]`
+        /// TickAll already hands WeaponSystem. Loot.LootOps.Update needs to
+        /// write one field of every player without copying the whole struct
+        /// out and back, and it must NOT reach for SetPlayerForTest to do it —
+        /// a battle path calling a method named "ForTest" is the exact defect
+        /// Loot.PickupSystem.AdvanceTtl's own doc records being fixed.
+        internal ref PlayerState PlayerRef(int index) => ref _players[index];
+
         /// WaveSystem's (and future shared-resource systems') seam into the
         /// match's world-scoped counters (WavesCleared, spawn-skip counts) —
         /// Stage 2 Task 5, same ref-return pattern as StatsRef above, just
@@ -824,6 +862,14 @@ namespace Ring.Simulation.Core
         /// Loot.PickupSystem.Collect's own PickupRadius read follows.
         internal bool TryAddItem(int playerIndex, byte itemId)
             => _inventories[playerIndex].TryAdd(itemId, _config.Hero.InventoryCapacity, _config.Items);
+
+        /// Stage 3 Task 17: "would this item fit", asked without adding it —
+        /// spec §3.8 check 8. Delegates to Loot.Inventory.CanAdd, the SAME
+        /// predicate TryAddItem's own add is gated on (see that method's doc),
+        /// reading capacity and catalog fresh off _config exactly as TryAddItem
+        /// does, so a hot-tweak is honored the next call for both alike.
+        internal bool CanAddItem(int playerIndex, byte itemId)
+            => _inventories[playerIndex].CanAdd(itemId, _config.Hero.InventoryCapacity, _config.Items);
 
         /// Stage 3 Task 4 Interfaces: removes one item by backpack slot —
         /// swap-remove, same idiom as RemovePickupAt/RemoveProjectileAt.
@@ -1090,24 +1136,51 @@ namespace Ring.Simulation.Core
         /// server is authoritative (CR 3) and the range check belongs to
         /// that request's own validation. ADDRESSEE — Т17 (spec §3.8 point
         /// 5: "Slot ∈ [0, SlotCount)").
+        ///
+        /// Stage 3 Task 17 — THE ADDRESSEE HAS PAID. Loot.LootOps.Validate
+        /// refuses `slot` outside [0, SlotCount) with its own
+        /// LootRefusal.SlotOutOfRange BEFORE the byte is ever read, and the
+        /// wire path (Т20) reaches this method only through that validation.
+        /// The assumption stands as an assumption — this method still checks
+        /// nothing itself, and a future SECOND caller would inherit the same
+        /// obligation — but it now names a check that exists rather than one
+        /// that is owed.
         internal bool TryTakeFromContainer(int containerId, int slot, out byte itemId)
         {
-            for (int i = 0; i < _containerCount; i++)
+            int index = IndexOfContainer(containerId);
+            if (index < 0)
             {
-                if (_containers[i].Id != containerId) continue;
-                int offset = i * _config.Arena.MaxContainerSlots + slot;
-                byte item = _containerSlots[offset];
-                if (item == 0)
-                {
-                    itemId = 0;
-                    return false;
-                }
-                _containerSlots[offset] = 0;
-                itemId = item;
-                return true;
+                itemId = 0;
+                return false;
             }
-            itemId = 0;
-            return false;
+            int offset = index * _config.Arena.MaxContainerSlots + slot;
+            byte item = _containerSlots[offset];
+            if (item == 0)
+            {
+                itemId = 0;
+                return false;
+            }
+            _containerSlots[offset] = 0;
+            itemId = item;
+            return true;
+        }
+
+        /// Stage 3 Task 17: the ONE home of "container Id -> its position in
+        /// the array", -1 when no live container carries that id. Extracted
+        /// from TryTakeFromContainer above, which is now its first caller —
+        /// Loot.LootOps.Validate is the second, and it needs the position
+        /// WITHOUT taking anything (spec §3.8 checks 4/5/7 read SlotCount, the
+        /// slot byte and Pos before anything moves). A second copy of this
+        /// loop is exactly what rule 2 forbids and what ItemCatalogLookup's
+        /// own doc records the cost of.
+        ///
+        /// Linear, like every other id lookup here: the array is capped at
+        /// Arena.MaxContainers and this runs on a request, not on the tick.
+        internal int IndexOfContainer(int containerId)
+        {
+            for (int i = 0; i < _containerCount; i++)
+                if (_containers[i].Id == containerId) return i;
+            return -1;
         }
 
         /// Reads a container's slot content by the container's own
@@ -1399,6 +1472,19 @@ namespace Ring.Simulation.Core
             // every timer above.
             p.DashRequestCooldownTicks = 0;
             p.SlideRequestCooldownTicks = 0;
+            // Stage 3 Task 17 (spec §3.8: "прерывание — ... смерть"; errata
+            // E-6 A-I8): the transfer channel dies with its owner — timer AND
+            // target, because a target without a running timer is exactly the
+            // inconsistent read DashSpeedCur's own doc above warns about.
+            // Damage alone does NOT interrupt a transfer (spec §3.8 is
+            // explicit that this is where it differs from the extraction
+            // channel), so this belongs to death, not to DamagePlayer. It
+            // matters more than a movement timer would: all three fields are
+            // HASHED (since the Т6 re-pin), so a corpse left mid-channel would
+            // carry stale state into the digest and into WorldSave.
+            p.LootTimer = 0f;
+            p.LootTargetContainerId = 0;
+            p.LootTargetSlot = 0;
             Emit(SimEventKind.PlayerDied, blowPos, index, default, 0f, zone: zone, hitDir: dir,
                 playerIndex: (byte)index);
             // Stage 3 Task 3 (spec §3.6, errata E-6 C-I10): the corpse's

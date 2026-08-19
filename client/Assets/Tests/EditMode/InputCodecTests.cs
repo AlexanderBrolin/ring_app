@@ -570,10 +570,18 @@ namespace Ring.Simulation.Tests
             // …ExactlyEightSections since Т13 grew the section count to
             // twelve) — it does not prove a new field is carried, it forces
             // whoever adds one to come here and decide.
+            // Stage 3 Task 17: InventoryOpen joins the struct WITHOUT joining
+            // the wire — the decision this sentinel exists to force, made and
+            // recorded here rather than defaulted into. The server reads the
+            // flag off SimInput (LootOps.Validate, spec §3.8 check 2); the
+            // bit that carries it lives in ReplicateData's own free flag bits
+            // and lands in Т20 together with the movement slowdown and
+            // WeaponSystem.CanFire, at which point SizeBytes is revisited and
+            // this file grows a real round-trip case for it.
             string[] expected =
             {
                 "MoveDir", "AimPoint", "FireHeld", "DashRequested",
-                "AimHeight", "AimHeld", "SlideRequested"
+                "AimHeight", "AimHeld", "SlideRequested", "InventoryOpen"
             };
             var actual = new System.Collections.Generic.List<string>();
             foreach (System.Reflection.FieldInfo f in typeof(SimInput).GetFields()) actual.Add(f.Name);
