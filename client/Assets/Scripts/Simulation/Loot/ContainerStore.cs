@@ -74,14 +74,14 @@ namespace Ring.Simulation.Loot
         /// out, both of which enter the replay/save contract, so the order
         /// is part of this method's contract, not an implementation detail.
         ///
-        /// No item content is placed here (coordinator R-107): every
-        /// container PlaceStartingContainers creates is EMPTY
-        /// (SpawnContainer's own `items` argument is
-        /// System.ReadOnlySpan&lt;byte&gt;.Empty below) — "1-2 items of the
-        /// zone's own tier, plus a repair kit at 25% chance" (spec §3.7) is
-        /// Т16's own job, together with the tier->item mapping and
-        /// DropChance it needs. Placing a real roll here would invent both
-        /// ahead of that task's own open question to the owner (R-91).
+        /// Content (Stage 3 Task 16, spec §3.7): "1-2 items of the zone's
+        /// own tier, plus a repair kit at 25% chance" — rolled by
+        /// PlaceZone below through LootDrops.RollTierItems/
+        /// TryRollRepairKit, the SAME shared home DamageMob's own item
+        /// drop uses (rule 2). Historical note (Т15): this doc used to say
+        /// every container placed here was EMPTY, content being Т16's
+        /// unstarted job — that sentence is now stale, kept only so a
+        /// reader following an old cross-reference lands somewhere true.
         internal static void PlaceStartingContainers(SimulationWorld w)
         {
             ArenaSimConfig arena = w.Config.Arena;
@@ -125,6 +125,23 @@ namespace Ring.Simulation.Loot
             // number is introduced (the Ф3 data-delivery gate is spent,
             // Т13; CR 6 forbids a balance number living in code instead).
             float radius = w.Config.Hero.Radius;
+            // Stage 3 Task 16 (spec §3.7): the zone's own tier — Outer=1,
+            // Middle=2, Core=3 (Zone's own declared order). Unlike the
+            // archetype drop roll (LootDrops.TryRollMobItemTier), this is
+            // NOT gated by DropChance at all — a crate/cache's content is
+            // an UNCONDITIONAL "1-2 items", DropChance only governs whether
+            // a Chaser/Gunner/Elite drops an item on death (coordinator
+            // finding, session 30: the spec table lists "1-2 предмета" as
+            // a count rule for containers, a percentage only for
+            // archetypes). The gate that keeps this golden-safe is the
+            // EXISTING zero-count guard above (R-108), not a new one.
+            byte tier = (byte)((int)zone + 1);
+            // Coordinator R-131: one stack buffer for the whole zone's
+            // loop, hoisted OUTSIDE the per-container loop below rather
+            // than allocated per-iteration — 2 trophies + a possible
+            // repair kit, same "call outside the hot path, reuse the
+            // buffer" shape SplitByZones' own stackalloc follows.
+            System.Span<byte> items = stackalloc byte[3];
 
             for (int i = 0; i < count; i++)
             {
@@ -133,7 +150,10 @@ namespace Ring.Simulation.Loot
                 if (SpawnPlacement.TryFind(ref rng, loot.LootSpawnAttempts, loot.LootFallbackSlots,
                         ringRadius, in filter, out float2 pos))
                 {
-                    w.SpawnContainer(kind, pos, System.ReadOnlySpan<byte>.Empty);
+                    int n = LootDrops.RollTierItems(tier, w.Config.Items, ref rng, items);
+                    if (LootDrops.TryRollRepairKit(loot.RepairKitChance, w.Config.Items, ref rng, out byte kitId))
+                        items[n++] = kitId;
+                    w.SpawnContainer(kind, pos, items.Slice(0, n));
                 }
                 else
                 {

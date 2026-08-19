@@ -1157,6 +1157,54 @@ namespace Ring.Simulation.Core
                 // itself is gone from that struct).
                 SpawnPickup(PickupKind.EnergyCell, pos,
                     LootDrops.MobDeathCells(_mobs[index].Type, in _config.Loot));
+
+                // Stage 3 Task 16 (spec §3.7): item drop on death. The
+                // Director's own drop is a fixed rule — three tier-3
+                // containers plus one separate tier-4 memory-core
+                // container — never a DropChance read (coordinator R-126);
+                // every other archetype rolls through
+                // LootDrops.TryRollMobItemTier, whose own doc carries the
+                // golden-risk guard-before-ZoneOf requirement (R-120).
+                //
+                // Kind = MobCorpse for all four (not Cache): the Director
+                // IS a mob (MobType.Director) and these are corpse loot from
+                // its own death, the same relationship every other
+                // archetype's single corpse container has to Kind (Р229:
+                // Kind is skin/spawn-table only, never behavior) — Crate/
+                // Cache are the WORLD-START placement's own kinds
+                // (ContainerStore.PlaceStartingContainers), a different
+                // origin entirely. The one behavioral consequence of the
+                // choice: Ttl = ContainerTtlSeconds (expiring), not the
+                // permanent 0f Crate/Cache/PlayerCorpse get
+                // (ContainerStore.InitialTtlFor) — matches every other
+                // mob's own corpse loot, not a boss-specific exception.
+                //
+                // All four containers land at the SAME `pos` (R-129, spec
+                // silent on a spread radius — a new balance number in code
+                // would need a data-delivery gate this stage has already
+                // spent, Т13). Accepted consequence, not a defect: owner
+                // tuning item for milestone В1 (R-105's own open question
+                // about a container layout radius covers this too).
+                if (_mobs[index].Type == MobType.Director)
+                {
+                    System.Span<byte> trophyBuf = stackalloc byte[2];
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int n = LootDrops.RollTierItems(3, _config.Items, ref _lootRng, trophyBuf);
+                        SpawnContainer(ContainerKind.MobCorpse, pos, trophyBuf.Slice(0, n));
+                    }
+                    System.Span<byte> core = stackalloc byte[1];
+                    core[0] = ItemCatalogLookup.FindByTier(4, _config.Items).Id;
+                    SpawnContainer(ContainerKind.MobCorpse, pos, core);
+                }
+                else if (LootDrops.TryRollMobItemTier(_mobs[index].Type, pos, in _config.Arena,
+                             in _config.Loot, ref _lootRng, out byte tier))
+                {
+                    System.Span<byte> item = stackalloc byte[1];
+                    item[0] = ItemCatalogLookup.FindByTier(tier, _config.Items).Id;
+                    SpawnContainer(ContainerKind.MobCorpse, pos, item);
+                }
+
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
@@ -1335,6 +1383,30 @@ namespace Ring.Simulation.Core
             // ammo economy, not loot), so the call now takes both sections.
             SpawnPickup(PickupKind.EnergyCell, p.Pos,
                 LootDrops.CorpseCells(p.Ammo, in _config.Weapon, in _config.Loot));
+
+            // Stage 3 Task 16 (spec §3.7, С21, coordinator R-123): the
+            // corpse holds the WHOLE backpack, created only when
+            // non-empty — an unconditional spawn would waste
+            // _nextEntityId/_containerCount on every player death, same
+            // "refuse before touching _nextEntityId" contract SpawnPickup's
+            // own zero-amount guard follows. Inventory.Count can never
+            // exceed Arena.MaxContainerSlots (SimConfigBuilder's own
+            // MaxContainerSlots >= InventoryCapacity/min(SlotCost) rule),
+            // so no clamp/truncation is needed here — SpawnContainer's own
+            // named refusal (R-99) is a backstop, not a path this call
+            // takes.
+            Inventory inv = _inventories[index];
+            int invCount = inv.Count;
+            if (invCount > 0)
+            {
+                System.Span<byte> items = stackalloc byte[invCount];
+                for (int i = 0; i < invCount; i++) items[i] = inv.ItemAt(i);
+                SpawnContainer(ContainerKind.PlayerCorpse, p.Pos, items);
+                // Coordinator R-128: the container is now the sole owner of
+                // these item ids — leaving them in the live backpack too
+                // would let the same item exist twice, both hashed/saved.
+                inv.Clear();
+            }
         }
 
         /// Stage 2 Task 8 Interfaces: exits a player from the match with no

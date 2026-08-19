@@ -128,5 +128,57 @@ namespace Ring.Simulation.Tests
             StringAssert.Contains("7", ex.Message);
             StringAssert.Contains("1", ex.Message); // catalog's own size (one entry)
         }
+
+        // --- Stage 3 Task 16 (spec §3.7, coordinator R-124/R-130) ---
+
+        /// R-130: the "one trophy per tier" rule lives in ValidateItems
+        /// (not ValidateLoot) — without it FindByTier's "first match" is
+        /// an unstated ordering rule, and the .asset's own record order
+        /// would silently decide a game outcome (R-91's own open
+        /// question about a second tier-1 trophy).
+        [Test]
+        public void Validate_RejectsDuplicateTrophyTier()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            items.Items = new[]
+            {
+                new ItemDef { Id = 0, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 1, Tier = 1, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
+            };
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+            StringAssert.Contains("Tier", ex.Message);
+        }
+
+        [Test]
+        public void FindByTier_ReturnsTheTiersOwnRecord()
+        {
+            var catalog = TestConfigs.Default().Items;
+            ItemDef found = ItemCatalogLookup.FindByTier(2, catalog);
+            Assert.AreEqual(1, found.Id, "tier 2 must resolve to TestConfigs' own Id=1 record");
+        }
+
+        [Test]
+        public void FindByTier_UnknownTier_ThrowsNamingTierAndCatalogSize()
+        {
+            var catalog = new[]
+            {
+                new ItemDef { Id = 0, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+            };
+
+            var ex = Assert.Throws<System.ArgumentException>(() => ItemCatalogLookup.FindByTier(9, catalog));
+            StringAssert.Contains("9", ex.Message);
+            StringAssert.Contains("1", ex.Message); // catalog's own size (one entry)
+        }
+
+        [Test]
+        public void FindRepairKit_ReturnsTheRepairKitRecord()
+        {
+            var catalog = TestConfigs.Default().Items;
+            ItemDef found = ItemCatalogLookup.FindRepairKit(catalog);
+            Assert.AreEqual(4, found.Id, "the repair kit must resolve to TestConfigs' own Id=4 record");
+        }
     }
 }

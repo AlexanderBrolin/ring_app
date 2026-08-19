@@ -277,5 +277,80 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(45f, w.Pickups[0].Ttl,
                 "a freshly spawned pickup's Ttl must come from Loot.PickupTtlSeconds, not a literal");
         }
+
+        // --- Stage 3 Task 16 (spec §3.7): archetype item drop on death ---
+
+        /// Coordinator R-124/R-125: "тир предмета — тир зоны смерти" —
+        /// Middle maps to tier 2, TestConfigs' own Id=1 Trophy record.
+        /// DropChance is pinned to 1 for this one cell so the roll is
+        /// deterministic regardless of seed (same discipline
+        /// CorpseCellFraction's own tests already follow for a config that
+        /// is normally zeroed for golden safety).
+        [Test]
+        public void EliteInMiddle_DropsTierTwo()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Loot.DropChance[(int)MobType.Elite * 3 + (int)Zone.Middle] = 1f;
+            var w = new SimulationWorld(1, cfg);
+            var pos = new float2(70f, 0f); // inside {65, 92} — Middle band
+            w.SpawnMobForTest(MobType.Elite, pos);
+
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+
+            Assert.AreEqual(1, w.ContainerCount, "premise: the elite's death must have produced a container");
+            ContainerState c = w.Containers[0];
+            Assert.AreEqual(ContainerKind.MobCorpse, c.Kind);
+            Assert.AreEqual(pos, c.Pos, "the corpse container must sit at the death position (R-129)");
+            Assert.AreEqual(1, c.SlotCount);
+            Assert.AreEqual(1, w.ContainerSlotAt(0, 0), "Middle => tier 2 => TestConfigs' own Id=1 record");
+        }
+
+        /// Companion to EliteInMiddle_DropsTierTwo above — Core maps to
+        /// tier 3, TestConfigs' own Id=2 Trophy record. Together the pair
+        /// is also the plan-mandated mutation target (Т16 Step 4): "tier
+        /// from archetype instead of tier from zone" must turn THIS test
+        /// red (subject = second element, lesson 227).
+        [Test]
+        public void EliteInCore_DropsTierThree()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Loot.DropChance[(int)MobType.Elite * 3 + (int)Zone.Core] = 1f;
+            var w = new SimulationWorld(1, cfg);
+            var pos = new float2(30f, 0f); // inside {0, 65} — Core band
+            w.SpawnMobForTest(MobType.Elite, pos);
+
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+
+            Assert.AreEqual(1, w.ContainerCount, "premise: the elite's death must have produced a container");
+            ContainerState c = w.Containers[0];
+            Assert.AreEqual(ContainerKind.MobCorpse, c.Kind);
+            Assert.AreEqual(pos, c.Pos);
+            Assert.AreEqual(1, c.SlotCount);
+            Assert.AreEqual(2, w.ContainerSlotAt(0, 0), "Core => tier 3 => TestConfigs' own Id=2 record");
+        }
+
+        /// Coordinator golden risk §1(а)/R-120: the archetype's own
+        /// DropChance row must be checked for all-zero BEFORE
+        /// Geometry.ZoneOf is ever called — ZoneOf's own ZoneRadius[0]/[1]
+        /// reads (Geometry.cs:297) carry no bounds guard and throw a bare
+        /// IndexOutOfRangeException on a zoneless arena (a legal input,
+        /// R-53). TestConfigs.Open()'s own DropChance stays at Default()'s
+        /// all-zero — this test's only addition is emptying ZoneRadius.
+        [Test]
+        public void ChaserDeath_OnZonelessArena_WithZeroDropChance_DoesNotThrow()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Arena.ZoneRadius = System.Array.Empty<float>(); // zoneless — legal (R-53)
+            var w = new SimulationWorld(1, cfg);
+            w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
+
+            Assert.DoesNotThrow(() => w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0),
+                "R-120: the archetype's own DropChance row must be checked BEFORE Geometry.ZoneOf " +
+                "ever runs — ZoneOf's own unguarded ZoneRadius[0]/[1] reads would throw on a " +
+                "zoneless arena otherwise");
+            Assert.AreEqual(0, w.ContainerCount,
+                "witness: golden-safety zero DropChance means no item, no container — this line " +
+                "is what keeps the test from being satisfied by a stub that merely never crashes");
+        }
     }
 }

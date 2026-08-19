@@ -467,6 +467,31 @@ namespace Ring.Simulation.Core
             throw new System.ArgumentException(
                 $"item id {id} is not in the catalog ({catalog.Length} entries)");
         }
+
+        /// Stage 3 Task 16 (coordinator R-124): the second mapping this
+        /// class holds — "tier -> item", the ONE Trophy record whose Tier
+        /// equals `tier`. SimConfigBuilder's own "one trophy per tier" rule
+        /// (ValidateItems) is what makes this a FUNCTION rather than a
+        /// search needing a tie-break; this method does not assume that
+        /// rule holds, it just returns the first match and names the tier
+        /// on failure, same named-refusal shape as Find above.
+        public static ItemDef FindByTier(byte tier, ItemDef[] catalog)
+        {
+            for (int i = 0; i < catalog.Length; i++)
+                if (catalog[i].Kind == ItemKind.Trophy && catalog[i].Tier == tier) return catalog[i];
+            throw new System.ArgumentException(
+                $"no Trophy item maps to tier {tier} ({catalog.Length} catalog entries)");
+        }
+
+        /// Stage 3 Task 16: the ONE RepairKit record — same shape as
+        /// FindByTier above, keyed by Kind instead of Tier.
+        public static ItemDef FindRepairKit(ItemDef[] catalog)
+        {
+            for (int i = 0; i < catalog.Length; i++)
+                if (catalog[i].Kind == ItemKind.RepairKit) return catalog[i];
+            throw new System.ArgumentException(
+                $"no RepairKit item in the catalog ({catalog.Length} entries)");
+        }
     }
 
     /// Stage 3 Task 13 (spec §3.7/§3.8): loot-system balance numbers — drop
@@ -486,16 +511,15 @@ namespace Ring.Simulation.Core
         /// reader indexes this array by MobType directly, with no
         /// MobType-to-archetype remap anywhere (rule 2), and the Director's
         /// own row simply stays unread.
-        /// ⚠ ASSUMPTION THIS FIELD CANNOT ENFORCE, WITH ITS ADDRESSEE NAMED
-        /// (coordinator R-96, same MinCatalogSlotCost/MaxBodyRadius shape):
-        /// no rule checks this array's length is 12 — it has no reader yet
-        /// (SimConfigBuilder.Validate's own ValidateLoot only covers
-        /// CellsPerMob, the one array with a live reader today, R-92). A
-        /// rule with no reader to protect is a rule with no witness.
-        /// ADDRESSEE — Т16, the drop-roll task, the day it becomes one.
-        /// Build's own omitted-`loot` branch still seeds a correctly-sized
-        /// all-zero array (coordinator R-96), so the ABSENCE of a rule
-        /// is not the same as the absence of a safe default.
+        /// Stage 3 Task 16: gained its live reader (LootDrops.
+        /// TryRollMobItemTier) and its own two shape rules — length == 12
+        /// (R-121a) and a nonzero element requires Arena.ZoneRadius.Length
+        /// == 2 (R-121b) — both enforced by SimConfigBuilder.ValidateLoot,
+        /// replacing the ASSUMPTION+ADDRESSEE doc this field carried before
+        /// a reader existed (coordinator R-96 precedent). Build's own
+        /// omitted-`loot` branch still seeds a correctly-sized all-zero
+        /// array (coordinator R-96), so the pre-Т16 history of "no rule"
+        /// was never the same as "no safe default".
         public float[] DropChance;
         public int CrateCount, CacheCountMiddle, CacheCountCore;
         public float RepairKitChance;

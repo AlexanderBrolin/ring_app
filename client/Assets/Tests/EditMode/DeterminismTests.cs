@@ -117,6 +117,12 @@ namespace Ring.Simulation.Tests
         /// Fixture editors: Т16 (non-zero drop chances put ITEMS inside
         /// these containers), Т36 (the third golden, a completely separate
         /// scenario — TestConfigs.Populated() is not that fixture).
+        /// Coordinator fix-round (Т16, R-110 debt closure): a THIRD premise
+        /// below (a placed container actually carries a non-empty slot)
+        /// closes the debt this class doc's own "Fixture editors" line
+        /// named — ContainerCount > 0 alone cannot tell "containers carry
+        /// items" apart from "containers are placed empty", the exact
+        /// vacuous-premise defect Р296 exists to rule out.
         [Test]
         public void SameSeed_SameHash_WithContainers()
         {
@@ -128,6 +134,15 @@ namespace Ring.Simulation.Tests
             var w2 = new SimulationWorld(42, cfg);
             Assert.Greater(w1.ContainerCount, 0,
                 "premise: the world must have actually PLACED containers, not merely been asked to");
+            bool anyContainerHasContent = false;
+            for (int i = 0; i < w1.ContainerCount; i++)
+            {
+                if (w1.Containers[i].SlotCount > 0) { anyContainerHasContent = true; break; }
+            }
+            Assert.IsTrue(anyContainerHasContent,
+                "premise: at least one placed container must carry a non-empty slot — Т16's own " +
+                "drop chances/repair-kit share must actually put items inside these containers, " +
+                "not merely place them empty");
 
             for (int i = 0; i < Ticks; i++)
             {

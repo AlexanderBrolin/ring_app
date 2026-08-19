@@ -52,5 +52,91 @@ namespace Ring.Simulation.Loot
             int raw = (int)math.floor(ammo * lootCfg.CorpseCellFraction / weaponCfg.ShotsPerCell);
             return math.max(raw, 1);
         }
+
+        /// Stage 3 Task 16 (spec §3.7): whether `type`'s own death produces
+        /// an item — Chaser/Gunner/Elite only, indexed into
+        /// LootSimConfig.DropChance by `[archetype * ZoneCount + zone]`
+        /// (errata E-6 A-I11). ZoneCount = 3 is Zone's own declared
+        /// Outer/Middle/Core order (DropChance's own field doc,
+        /// Core/SimConfig.cs, states the same fact — this const is the
+        /// arithmetic side of it, local to the one reader that indexes by
+        /// it). The Director never reaches this method — its own drop is a
+        /// fixed rule, not a chance roll (coordinator R-126), handled by
+        /// DamageMob's own separate branch.
+        ///
+        /// Golden risk R-120 (coordinator §1а): the archetype's own
+        /// DropChance ROW is checked for all-zero BEFORE `Geometry.ZoneOf`
+        /// is ever called — ZoneOf's own ZoneRadius[0]/[1] reads
+        /// (Geometry.cs:297) carry no bounds guard of their own and throw a
+        /// bare IndexOutOfRangeException on a legal zoneless arena (R-53).
+        /// SimConfigBuilder.ValidateLoot's own R-121b rule guarantees that
+        /// a NONZERO row implies Arena.ZoneRadius.Length == 2, so by the
+        /// time this method reaches ZoneOf that guarantee already holds for
+        /// any SimConfig built by SimConfigBuilder.Build — a hand-built
+        /// fixture that skips Build (every test in this suite) is outside
+        /// what that guarantee can reach, which is exactly why the row
+        /// check has to run here too, not only in Validate.
+        const int ZoneCount = 3;
+        public static bool TryRollMobItemTier(MobType type, float2 pos, in ArenaSimConfig arena,
+            in LootSimConfig loot, ref Random rng, out byte tier)
+        {
+            int rowOffset = (int)type * ZoneCount;
+            if (loot.DropChance[rowOffset] <= 0f && loot.DropChance[rowOffset + 1] <= 0f &&
+                loot.DropChance[rowOffset + 2] <= 0f)
+            {
+                tier = 0;
+                return false;
+            }
+            Zone zone = Geometry.ZoneOf(pos, in arena);
+            float chance = loot.DropChance[rowOffset + (int)zone];
+            if (chance <= 0f || rng.NextFloat() >= chance)
+            {
+                tier = 0;
+                return false;
+            }
+            // Р228: "тир предмета — тир зоны смерти", Zone's own declared
+            // order (Outer=0/Middle=1/Core=2) maps onto tier 1..3 by a
+            // plain +1 — no separate table, the SAME arithmetic
+            // ContainerStore.PlaceZone uses for its own zone parameter.
+            tier = (byte)((int)zone + 1);
+            return true;
+        }
+
+        /// Stage 3 Task 16 (spec §3.7): rolls 1 or 2 copies of the ONE
+        /// Trophy item mapped to `tier` (ItemCatalogLookup.FindByTier,
+        /// R-124) into `buffer`, returns the count written — shared by
+        /// ContainerStore.PlaceZone's own starting crate/cache content and
+        /// DamageMob's Director branch (three tier-3 containers). Same item
+        /// repeated up to twice — R-124's own "one trophy per tier" rule
+        /// means there is exactly one candidate id, so "which item" is not
+        /// a second draw, only "how many".
+        public static int RollTierItems(byte tier, ItemDef[] catalog, ref Random rng, System.Span<byte> buffer)
+        {
+            byte id = ItemCatalogLookup.FindByTier(tier, catalog).Id;
+            int count = rng.NextInt(1, 3); // {1, 2}
+            for (int i = 0; i < count; i++) buffer[i] = id;
+            return count;
+        }
+
+        /// Stage 3 Task 16 (spec §3.7): the repair kit riding alongside a
+        /// crate/cache's own main content ("сверх основного содержимого") —
+        /// never for a mob corpse or the Director's own containers (spec's
+        /// own table names ONLY ящик/тайник). Guarded at `chance <= 0f`
+        /// before the draw (same discipline as CorpseCells' own fraction
+        /// guard above) so a golden-safety-zeroed chance costs `_lootRng`
+        /// nothing — golden safety here rests on Loot.CrateCount/
+        /// CacheCount* staying zero (the existing R-108 guard in
+        /// ContainerStore.PlaceZone), not on this one, but the discipline
+        /// is kept anyway for the same "no meaningless draw" reason.
+        public static bool TryRollRepairKit(float chance, ItemDef[] catalog, ref Random rng, out byte itemId)
+        {
+            if (chance <= 0f || rng.NextFloat() >= chance)
+            {
+                itemId = 0;
+                return false;
+            }
+            itemId = ItemCatalogLookup.FindRepairKit(catalog).Id;
+            return true;
+        }
     }
 }

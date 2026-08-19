@@ -851,29 +851,48 @@ namespace Ring.Data
                         errors.Add($"Items[{i}] and Items[{j}] share Id={items[i].Id} — " +
                             "every catalog entry must have a unique id.");
                     }
+                    // Stage 3 Task 16 (coordinator R-124/R-130): among
+                    // Kind == Trophy records, no two may share a Tier —
+                    // ItemCatalogLookup.FindByTier (the "tier -> item"
+                    // mapping both the archetype death-roll and the
+                    // crate/cache content roll resolve through) would
+                    // otherwise silently pick "whichever comes first",
+                    // letting the .asset's own record order decide a game
+                    // outcome (the owner's open question, R-91, about a
+                    // future second tier-1 item).
+                    if (items[i].Kind == ItemKind.Trophy && items[j].Kind == ItemKind.Trophy &&
+                        items[i].Tier == items[j].Tier)
+                    {
+                        errors.Add($"Items[{i}] and Items[{j}] are both Trophy records sharing " +
+                            $"Tier={items[i].Tier} — ItemCatalogLookup.FindByTier must resolve to " +
+                            "exactly one record per tier.");
+                    }
                 }
             }
         }
 
-        /// Stage 3 Task 13 (coordinator R-96): cfg.Loot's own shape rule —
-        /// R-92 restricts this to checks with a NAMED consequence, and of
-        /// Loot's three array fields exactly one has a live reader today.
+        /// Stage 3 Task 13 (coordinator R-96): cfg.Loot's own shape rules —
+        /// R-92 restricts this to checks with a NAMED consequence.
         /// - CellsPerMob is read by LootDrops.MobDeathCells, indexed by
         ///   MobType (Chaser/Gunner/Elite/Director — Core/SimStates.cs'
         ///   own four-value domain) with NO bounds guard of its own; a
         ///   shorter array crashes the FIRST mob death with a bare
         ///   IndexOutOfRangeException, naming nothing. Rule enforced here.
-        /// - DropChance and TransferSeconds have NO reader yet (Т16's drop
-        ///   roll, Т18's transfer timer) — a rule with no reader to protect
-        ///   is a rule with no witness (R-92), so neither gets one. Each
-        ///   carries an ASSUMPTION + ADDRESSEE doc instead, same
-        ///   MinCatalogSlotCost/MaxBodyRadius precedent above: see
-        ///   LootSimConfig's own field docs (Core/SimConfig.cs) for the
-        ///   full account.
+        /// - DropChance gained a live reader in Stage 3 Task 16
+        ///   (LootDrops.TryRollMobItemTier, indexed by
+        ///   `[archetype * 3 + zone]` with no bounds guard of its own) — its
+        ///   own two shape rules (R-121a/R-121b) are enforced below,
+        ///   replacing the ASSUMPTION+ADDRESSEE doc this field carried
+        ///   before a reader existed.
+        /// - TransferSeconds still has NO reader (Т18's transfer timer) —
+        ///   a rule with no reader to protect is a rule with no witness
+        ///   (R-92), so it keeps its ASSUMPTION + ADDRESSEE doc instead,
+        ///   same MinCatalogSlotCost/MaxBodyRadius precedent above: see
+        ///   LootSimConfig's own field doc (Core/SimConfig.cs).
         /// Build's own omitted-`loot` branch (coordinator R-96) already
-        /// guarantees CellsPerMob is never null — this rule instead catches
-        /// a SUPPLIED-but-malformed LootConfig.asset (an Inspector edit
-        /// that shortens the array).
+        /// guarantees CellsPerMob/DropChance are never null — these rules
+        /// instead catch a SUPPLIED-but-malformed LootConfig.asset (an
+        /// Inspector edit that shortens an array).
         static void ValidateLoot(List<string> errors, in LootSimConfig loot, in ArenaSimConfig arena)
         {
             if (loot.CellsPerMob == null || loot.CellsPerMob.Length != 4)
@@ -900,6 +919,42 @@ namespace Ring.Data
                     "(Zone.Middle/Core, ...), which throws a named refusal on a zoneless arena " +
                     $"(got CacheCountMiddle={loot.CacheCountMiddle}, CacheCountCore={loot.CacheCountCore}, " +
                     $"ZoneRadius.Length={arena.ZoneRadius.Length}).");
+            }
+
+            // Stage 3 Task 16 (coordinator R-121a): DropChance gained a
+            // live reader this task (LootDrops.TryRollMobItemTier, no
+            // bounds guard of its own) — the shape rule finally earns a
+            // witness (R-92).
+            if (loot.DropChance == null || loot.DropChance.Length != 12)
+            {
+                errors.Add("Loot.DropChance must have exactly 12 elements (4 archetypes x 3 zones), " +
+                    "read by LootDrops.TryRollMobItemTier with no bounds guard of its own " +
+                    $"(got {loot.DropChance?.Length ?? 0}).");
+            }
+
+            // Stage 3 Task 16 (coordinator R-121b): same F4 family as the
+            // CacheCountMiddle/CacheCountCore rule above — a nonzero
+            // DropChance element means SOME archetype's own death routes
+            // through Geometry.ZoneOf (LootDrops.TryRollMobItemTier's own
+            // row guard only skips an ALL-zero row), and ZoneOf's own
+            // ZoneRadius[0]/[1] reads carry no bounds guard of their own
+            // (Geometry.cs:297) — a bare IndexOutOfRangeException on a
+            // zoneless arena, the same failure mode caught one stack frame
+            // earlier here.
+            if (loot.DropChance != null)
+            {
+                bool anyNonzero = false;
+                for (int i = 0; i < loot.DropChance.Length; i++)
+                {
+                    if (loot.DropChance[i] > 0f) { anyNonzero = true; break; }
+                }
+                if (anyNonzero && arena.ZoneRadius.Length != 2)
+                {
+                    errors.Add("Loot.DropChance has a nonzero element, which requires " +
+                        "Arena.ZoneRadius.Length == 2 -- LootDrops.TryRollMobItemTier calls " +
+                        "Geometry.ZoneOf, which reads ZoneRadius[0]/[1] with no bounds guard of " +
+                        $"its own on a zoneless arena (got ZoneRadius.Length={arena.ZoneRadius.Length}).");
+                }
             }
         }
 

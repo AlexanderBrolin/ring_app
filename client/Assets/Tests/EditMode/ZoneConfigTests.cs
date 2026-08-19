@@ -784,5 +784,68 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("CacheCountMiddle"));
             Assert.That(ex.Message, Does.Contain("ZoneRadius"));
         }
+
+        /// Stage 3 Task 16 (coordinator R-121a): "длина ровно 12 = 4
+        /// архетипа × 3 зоны" — DropChance gains a live reader this task
+        /// (LootDrops.TryRollMobItemTier), so its shape rule finally earns
+        /// a witness (R-92) — same F4-family home as the two rules right
+        /// above.
+        [Test]
+        public void Validate_RejectsDropChanceWrongLength()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            var loot = ScriptableObject.CreateInstance<LootConfig>();
+            loot.DropChance = new float[11]; // one short of 4 archetypes x 3 zones
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+            Assert.That(ex.Message, Does.Contain("DropChance"));
+        }
+
+        /// Stage 3 Task 16 (coordinator R-121b): a nonzero DropChance
+        /// element requires Arena.ZoneRadius.Length == 2 — without this
+        /// rule the first death of the matching archetype on a zoneless
+        /// arena falls through to Geometry.ZoneOf's own unguarded
+        /// ZoneRadius[0]/[1] reads, a bare IndexOutOfRangeException naming
+        /// nothing (same failure class R-109's own cache-count rule
+        /// exists to catch earlier). Zone walls are zeroed too (R-116
+        /// lesson): MakeDefaults()'s ArenaConfig ships ZoneWallCount=2,
+        /// which independently trips the EXISTING "walls imply zones"
+        /// rule and would let that rule's own message (which ALSO
+        /// contains "ZoneRadius") pass this test even if THIS rule were
+        /// broken.
+        [Test]
+        public void Validate_RejectsNonzeroDropChanceWithoutZones()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.ZoneRadius = System.Array.Empty<float>();
+            a.ZoneWallCount = 0;
+            a.ZoneWallRadius = System.Array.Empty<float>();
+            a.ZoneWallHalfWidth = System.Array.Empty<float>();
+            a.ZoneWallDoorStart = System.Array.Empty<int>();
+            a.ZoneWallDoorCount = System.Array.Empty<int>();
+            a.DoorCenterRad = System.Array.Empty<float>();
+            a.DoorFreeWidth = System.Array.Empty<float>();
+            var loot = ScriptableObject.CreateInstance<LootConfig>();
+            // Coordinator fix-round (dословный повтор R-116/Т15): LootConfig's
+            // own C# defaults carry CrateCount 8 / CacheCountMiddle 5 /
+            // CacheCountCore 2 — left in place, those would ALSO trip the
+            // EXISTING R-109 rule (CacheCount* > 0 requires ZoneRadius.Length
+            // == 2) on this same zeroed-zones fixture, and R-109's own
+            // message happens to contain "ZoneRadius" too — so the second
+            // assert below would pass even with THIS rule broken, proving
+            // nothing. Zeroed here so the ONLY violation left is the nonzero
+            // DropChance cell.
+            loot.CrateCount = 0;
+            loot.CacheCountMiddle = 0;
+            loot.CacheCountCore = 0;
+            loot.DropChance = new float[12];
+            loot.DropChance[0] = 0.1f; // Chaser/Outer — the one nonzero cell
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+            Assert.That(ex.Message, Does.Contain("DropChance"));
+            Assert.That(ex.Message, Does.Contain("ZoneRadius"));
+        }
     }
 }

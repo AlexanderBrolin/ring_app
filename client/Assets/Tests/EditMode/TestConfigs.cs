@@ -453,6 +453,20 @@ namespace Ring.Simulation.Tests
             c.Loot.CrateCount = 3;
             c.Loot.CacheCountMiddle = 2;
             c.Loot.CacheCountCore = 1;
+            // Stage 3 Task 16 (spec §4 Р296, coordinator R-110): non-zero
+            // shares so the smoke test's own containers carry real items
+            // and the archetype drop/repair-kit rolls run at least once
+            // over the 1000-tick window (mobs die to friendly fire even
+            // with idle input, Т5) — mirrors LootConfig's own C# defaults,
+            // not fixture-only numbers (two-sources discipline).
+            c.Loot.DropChance = new[]
+            {
+                0.10f, 0.10f, 0.00f,
+                0.10f, 0.10f, 0.00f,
+                0.00f, 0.35f, 0.50f,
+                0.00f, 0.00f, 0.00f,
+            };
+            c.Loot.RepairKitChance = 0.25f;
             return c;
         }
     }

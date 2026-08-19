@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 
 namespace Ring.Simulation.Tests
 {
@@ -130,6 +131,29 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, w.InventoryCountOf(0), "player 0's backpack must stay untouched");
             Assert.AreEqual(1, w.InventoryCountOf(1), "player 1's own item must land in player 1's backpack");
             Assert.AreEqual((byte)0, w.InventoryItemAt(1, 0), "…and be the exact item that was added");
+        }
+
+        /// Stage 3 Task 16 (spec §3.7, coordinator R-128): SimulationWorld.
+        /// KillPlayer's own corpse-container path is the only production
+        /// caller — there is no in-game reason to clear a LIVE player's
+        /// backpack outside death, so no SimulationWorld test seam exists
+        /// to drive this through. This is the one test in this file that
+        /// constructs Loot.Inventory directly rather than going through
+        /// SimulationWorld's own seams (this file's own class doc), same
+        /// per-method direct-unit-test convention every other Inventory
+        /// method already has.
+        [Test]
+        public void Clear_EmptiesTheBackpack()
+        {
+            var catalog = TestConfigs.Default().Items;
+            var inv = new Inventory(maxItems: 16);
+            Assert.IsTrue(inv.TryAdd(0, capacity: 8, catalog), "premise: the first item must actually fit");
+            Assert.IsTrue(inv.TryAdd(1, capacity: 8, catalog), "premise: the second item must actually fit");
+            Assert.AreEqual(2, inv.Count, "premise: both items must actually have been added");
+
+            inv.Clear();
+
+            Assert.AreEqual(0, inv.Count, "Clear must empty the backpack");
         }
     }
 }

@@ -131,5 +131,16 @@ namespace Ring.Simulation.Loot
         /// every id regardless of catalog.
         public static int SlotCostOf(byte itemId, ItemDef[] catalog)
             => ItemCatalogLookup.Find(itemId, catalog).SlotCost;
+
+        /// Stage 3 Task 16 (spec §3.7, coordinator R-128): empties the
+        /// backpack in place. KillPlayer's own corpse-container path is
+        /// the sole caller — once the carried item ids are copied into the
+        /// corpse's ContainerSlots block, the live backpack must not go on
+        /// holding the same ids, or the same item exists twice (container
+        /// slot AND _inventories[index]) and BOTH copies are hashed/saved
+        /// (SimulationWorld.StateHash's own inventories[0..n) walk,
+        /// WorldSave.Inventories) — the same class of defect
+        /// SwapRemove_DoesNotTransferState closes for containers.
+        public void Clear() => _count = 0;
     }
 }

@@ -484,5 +484,155 @@ namespace Ring.Simulation.Tests
                 "witness: construction must have actually run PlaceZone(Outer, ...) and placed the " +
                 "one requested crate — proving real logic ran, not that everything was silently skipped");
         }
+
+        // --- Stage 3 Task 16 (spec §3.7): trophy corpse/container content ---
+
+        /// Coordinator R-123/С21: the corpse holds the WHOLE backpack, not
+        /// a subset. Also proves R-128 (Inventory.Clear()) — the live
+        /// backpack must be emptied once the container is the sole owner
+        /// of these item ids, or the same item is hashed/saved twice.
+        [Test]
+        public void PlayerCorpse_HoldsWholeInventory()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            Assert.IsTrue(w.TryAddItem(0, 0), "premise: the first item (Id 0) must actually fit");
+            Assert.IsTrue(w.TryAddItem(0, 1), "premise: the second item (Id 1) must actually fit");
+            Assert.AreEqual(2, w.InventoryCountOf(0), "premise: both items must actually have been added");
+
+            w.KillPlayerNoDamage(0);
+
+            Assert.AreEqual(1, w.ContainerCount, "the corpse must produce exactly one container");
+            ContainerState c = w.Containers[0];
+            Assert.AreEqual(ContainerKind.PlayerCorpse, c.Kind);
+            Assert.AreEqual(2, c.SlotCount, "the corpse must carry the WHOLE backpack, not a subset");
+            Assert.AreEqual(0, w.ContainerSlotAt(0, 0));
+            Assert.AreEqual(1, w.ContainerSlotAt(0, 1));
+            Assert.AreEqual(0, w.InventoryCountOf(0),
+                "the live backpack must be emptied (R-128) — the container is now the sole owner " +
+                "of these item ids, or the same item would be hashed/saved twice");
+        }
+
+        /// Golden risk §1(б)/R-123 — twin to PlayerCorpse_HoldsWholeInventory
+        /// above: an unconditional SpawnContainer would waste
+        /// _nextEntityId/_containerCount on EVERY player death, and the
+        /// multiplayer golden scenario's own players die (coordinator §1
+        /// preamble) — same "spawn with zero content must be SKIPPED, not
+        /// create an empty entity" precedent as R-18/Т3.
+        [Test]
+        public void PlayerCorpse_WithEmptyInventory_NoContainer()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            Assert.AreEqual(0, w.InventoryCountOf(0), "premise: the backpack must actually be empty");
+
+            w.KillPlayerNoDamage(0);
+
+            Assert.AreEqual(0, w.ContainerCount,
+                "a corpse with an empty backpack must not spawn a container — golden safety (R-123): " +
+                "an unconditional spawn would consume _nextEntityId/_containerCount on every death");
+        }
+
+        /// Coordinator golden risk §1(б): a mob's corpse container must
+        /// exist ONLY when the archetype roll actually produced an item —
+        /// the SAME zero-content-means-no-entity discipline as the player
+        /// corpse twin above. The row is NOT entirely zero (Middle carries
+        /// a live chance) so this exercises the PER-ZONE chance check
+        /// specifically, not just the row-level guard
+        /// (ChaserDeath_OnZonelessArena_WithZeroDropChance_DoesNotThrow in
+        /// PickupTests.cs already covers that one).
+        [Test]
+        public void MobCorpse_AppearsOnlyWhenItemDropped()
+        {
+            var cfg = TestConfigs.Open();
+            cfg.Loot.DropChance[(int)MobType.Chaser * 3 + (int)Zone.Outer] = 0f;
+            cfg.Loot.DropChance[(int)MobType.Chaser * 3 + (int)Zone.Middle] = 1f;
+            var w = new SimulationWorld(1, cfg);
+            w.SpawnMobForTest(MobType.Chaser, new float2(100f, 0f)); // Outer — chance 0
+
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+
+            Assert.AreEqual(0, w.ContainerCount, "a zero-chance zone must not produce a corpse container");
+
+            w.SpawnMobForTest(MobType.Chaser, new float2(70f, 0f)); // Middle — chance 1
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+
+            Assert.AreEqual(1, w.ContainerCount,
+                "the SAME archetype must produce a corpse container once the roll actually succeeds");
+        }
+
+        /// Coordinator debt R-107 (Т15 -> Т16): a crate's content is 1-2
+        /// copies of the zone's own tier item — an UNCONDITIONAL count
+        /// roll, not gated by DropChance at all (that array governs only
+        /// the archetype death-roll, coordinator finding session 30).
+        /// Loops seeds until BOTH counts are observed — a mutant hardcoding
+        /// count=1 (or 2) must not pass.
+        [Test]
+        public void CrateContent_RollsOneOrTwoTierOneItems()
+        {
+            var observedCounts = new System.Collections.Generic.HashSet<int>();
+            for (long seed = 1; seed <= 40; seed++)
+            {
+                var cfg = TestConfigs.Default();
+                cfg.Loot.CrateCount = 1;
+                var w = new SimulationWorld(seed, cfg);
+                Assert.AreEqual(1, w.ContainerCount, "premise: the one requested crate must actually be placed");
+                ContainerState c = w.Containers[0];
+                Assert.That(c.SlotCount, Is.EqualTo(1).Or.EqualTo(2),
+                    $"seed {seed}: a crate must hold 1 or 2 items, this one holds {c.SlotCount}");
+                for (int s = 0; s < c.SlotCount; s++)
+                    Assert.AreEqual(0, w.ContainerSlotAt(0, s), "Outer's own tier (1) maps to TestConfigs' Id=0 record");
+                observedCounts.Add(c.SlotCount);
+            }
+            Assert.That(observedCounts, Is.EquivalentTo(new[] { 1, 2 }),
+                "both counts must be reachable across seeds — a mutant hardcoding one count must not pass");
+        }
+
+        /// Companion to CrateContent_RollsOneOrTwoTierOneItems above: the
+        /// repair kit rides ALONGSIDE the main content at RepairKitChance
+        /// (spec: "сверх основного содержимого") — never for a mob corpse
+        /// or the Director's own containers (spec's own table names ONLY
+        /// ящик/тайник). Loops seeds until BOTH presence and absence are
+        /// observed.
+        [Test]
+        public void CrateContent_RepairKitAppearsAtConfiguredChance()
+        {
+            bool sawRepairKit = false, sawWithout = false;
+            for (long seed = 1; seed <= 80 && !(sawRepairKit && sawWithout); seed++)
+            {
+                var cfg = TestConfigs.Default();
+                cfg.Loot.CrateCount = 1;
+                cfg.Loot.RepairKitChance = 0.5f;
+                var w = new SimulationWorld(seed, cfg);
+                Assert.AreEqual(1, w.ContainerCount, "premise: the one requested crate must actually be placed");
+                ContainerState c = w.Containers[0];
+                bool hasKit = false;
+                for (int s = 0; s < c.SlotCount; s++)
+                    if (w.ContainerSlotAt(0, s) == 4) hasKit = true; // TestConfigs' own Id=4 RepairKit record
+                if (hasKit) sawRepairKit = true; else sawWithout = true;
+            }
+            Assert.IsTrue(sawRepairKit, "the repair kit must appear at least once across seeds at chance 0.5");
+            Assert.IsTrue(sawWithout, "the repair kit must ALSO be absent at least once — chance 0.5 must not be 100%");
+        }
+
+        /// Coordinator debt R-107: proves the zone->tier mapping is wired
+        /// correctly for a NON-Outer zone too — ContainerStore.PlaceZone
+        /// reads its own `zone` PARAMETER directly (not Geometry.ZoneOf),
+        /// a different wiring point than the archetype roll's
+        /// ZoneOf-computed zone, so this is not redundant with
+        /// EliteInCore_DropsTierThree (PickupTests.cs) despite proving the
+        /// same tier arithmetic.
+        [Test]
+        public void CacheInCore_HoldsTierThreeItems()
+        {
+            var cfg = TestConfigs.Default();
+            cfg.Loot.CacheCountCore = 1;
+            var w = new SimulationWorld(1, cfg);
+            Assert.AreEqual(1, w.ContainerCount, "premise: the one requested cache must actually be placed");
+            ContainerState c = w.Containers[0];
+            Assert.AreEqual(ContainerKind.Cache, c.Kind);
+            Assert.GreaterOrEqual(c.SlotCount, 1);
+            Assert.AreEqual(2, w.ContainerSlotAt(0, 0), "Core's own tier (3) maps to TestConfigs' Id=2 record");
+        }
     }
 }
