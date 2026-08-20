@@ -1043,7 +1043,6 @@ namespace Ring.Server
 
             for (int i = 0; i < summary.PlayerStats.Length; i++)
             {
-                MatchStats p = summary.PlayerStats[i];
                 // Ф8 gate W-3: `playerId`, not just the slot number — the
                 // meta reads this container's OWN logs (§3.11) and has no
                 // other way to map "player[N]" back to WHICH configured
@@ -1053,11 +1052,14 @@ namespace Ring.Server
                 // `PlayerCount`/`PlayerIdAt`'s range at exactly
                 // `summary.PlayerStats.Length` by the time a match can have
                 // ended at all.
-                sb.AppendFormat(CultureInfo.InvariantCulture,
-                    "\n  player[{0}] playerId={1} kills={2} headshotKills={3} shotsFired={4} " +
-                    "shotsHit={5} dashesUsed={6} slidesUsed={7} deathTick={8} damageTaken={9:F1}",
-                    i, _roster.PlayerIdAt(i), p.Kills, p.HeadshotKills, p.ShotsFired, p.ShotsHit,
-                    p.DashesUsed, p.SlidesUsed, p.DeathTick, p.DamageTaken);
+                //
+                // Stage 3 Т24: the row itself is built by `MatchSummaryLog`,
+                // which a test can reach; what stays here is the two things
+                // only this class holds — the roster and the shape of the
+                // whole event.
+                sb.Append("\n  ").Append(MatchSummaryLog.PlayerLine(i, _roster.PlayerIdAt(i),
+                    summary.Outcome[i], in summary.PlayerStats[i], summary.SurvivedSeconds[i],
+                    summary.CreditsTotal[i], summary.Loot[i], _simConfig.Items));
             }
 
             // The snapshot's own losses (spec §3.11's "dropped entities and
@@ -1119,6 +1121,67 @@ namespace Ring.Server
             Debug.Log(string.Format(CultureInfo.InvariantCulture,
                 "ServerBootstrap: exiting with code {0} at {1:F3}s.", exitCode, NowSeconds()));
             Application.Quit(exitCode);
+        }
+    }
+
+    /// The per-player half of spec §3.11's structured match line (Stage 3
+    /// Т24), lifted out of `ServerBootstrap.LogMatchSummary` into a pure
+    /// function — the same move, for the same reason, that
+    /// `Ring.Networking.Server.HandshakeLog.RefusalLine` already stands on:
+    /// the line is a CONTRACT with somebody outside this codebase (an
+    /// operator's grep, and the control panel app-7ss will parse it), and a
+    /// contract no test can reach is one a silent rename can break.
+    ///
+    /// THE FRAGMENT, NOT THE WHOLE LINE. `LogMatchSummary` still assembles
+    /// ONE log event per match out of what only it owns — `matchId`, the
+    /// seed, its own wall clock, the exit code — and appends one of these per
+    /// player. A per-match line arriving in N interleaved pieces is not a line
+    /// a log collector can key on, and that has not changed.
+    ///
+    /// WHAT SPEC §3.10 PROMISES IS WHAT THIS ROW CARRIES, because this row IS
+    /// the future `match_players` record: playerId, result, loot,
+    /// creditsTotal, kills, headshotKills, shotsFired, shotsHit, damageTaken,
+    /// ammoSpent, cellsPicked, survivedSeconds. Stage 5 does not invent a
+    /// format, it starts POSTing this one.
+    public static class MatchSummaryLog
+    {
+        /// The OUTCOME PRINTS ITS OWN ENUM MEMBER, never a hand-written
+        /// spelling of it (the spec's prose says `extracted_early`; that is
+        /// prose, and a second table mapping members to strings is a table
+        /// that drifts). `HandshakeLog`'s own tests make the same argument
+        /// about `HandshakeRefusal`, and `ResultsTests` derives its
+        /// expectation from the member for exactly that reason.
+        ///
+        /// `loot` RESOLVES THROUGH THE CATALOG HERE rather than travelling
+        /// pre-resolved: the record wants item, tier and price, the summary
+        /// carries the ids, and `ItemCatalogLookup` is the one home that turns
+        /// one into the other (R-89). An empty hold prints `[]` — a MEASURED
+        /// emptiness, which is a different claim from the dash this project
+        /// reserves for a number nobody measured (app-mi4's `bytesUp`).
+        public static string PlayerLine(int slot, string playerId, MatchOutcome outcome,
+            in MatchStats stats, int survivedSeconds, int creditsTotal, byte[] loot,
+            ItemDef[] catalog)
+        {
+            var sb = new StringBuilder(256);
+            sb.AppendFormat(CultureInfo.InvariantCulture,
+                "player[{0}] playerId={1} result={2} kills={3} headshotKills={4} shotsFired={5} " +
+                "shotsHit={6} dashesUsed={7} slidesUsed={8} deathTick={9} damageTaken={10:F1} " +
+                "ammoSpent={11} cellsPicked={12} survivedSeconds={13} creditsTotal={14} loot=[",
+                slot, playerId, outcome, stats.Kills, stats.HeadshotKills, stats.ShotsFired,
+                stats.ShotsHit, stats.DashesUsed, stats.SlidesUsed, stats.DeathTick,
+                stats.DamageTaken, stats.AmmoSpent, stats.CellsPicked, survivedSeconds,
+                creditsTotal);
+
+            for (int i = 0; loot != null && i < loot.Length; i++)
+            {
+                if (i > 0) sb.Append('|');
+                ItemDef def = ItemCatalogLookup.Find(loot[i], catalog);
+                sb.AppendFormat(CultureInfo.InvariantCulture, "{0}:{1}:{2}",
+                    def.Id, def.Tier, def.CreditValue);
+            }
+
+            sb.Append(']');
+            return sb.ToString();
         }
     }
 }

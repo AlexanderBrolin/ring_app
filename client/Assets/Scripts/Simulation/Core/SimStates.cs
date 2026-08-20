@@ -157,6 +157,32 @@ namespace Ring.Simulation.Core
         public int StrafeSign;
     }
 
+    /// Stage 3 Т24: the values PlayerState.ExtractKind carries, named ONCE
+    /// (rule 2). Two readers need them — Objectives.ExtractionSystem, which
+    /// writes the byte, and Ring.Networking.Server.MatchEndPolicy.OutcomeFor,
+    /// which turns it into ExtractedEarly/ExtractedCore — and a bare literal
+    /// in each would be one number living in two places.
+    ///
+    /// DELIBERATELY NOT ArenaSimConfig's OWN ExitKind, whose Portal is 0: a
+    /// zero here has to mean "never extracted", so the two enumerations are
+    /// offset on purpose and mapped explicitly at the one place that writes
+    /// this field.
+    ///
+    /// A STATIC CLASS RATHER THAN CONSTANTS ON PlayerState ITSELF, and that
+    /// was measured, not assumed: the state structs of this file are swept
+    /// reflectively by six fixtures (the hash-completeness sweep, hot-tweak,
+    /// prediction parity, the config-hash field lists), and a const on the
+    /// struct is a static field those sweeps then try to write —
+    /// WorldLifecycleTests.EveryPlayerAndStatsFieldAffectsHash failed with
+    /// exactly that FieldAccessException before this moved out. ProjectileIds
+    /// below is the same shape for the same kind of value.
+    public static class ExtractKinds
+    {
+        public const byte NotExtracted = 0;
+        public const byte EarlyPortal = 1;
+        public const byte Gate = 2;
+    }
+
     public enum ProjectileOwner : byte { Player = 0, Mob = 1 }
 
     /// Stage 2 Task 7: sentinel for ProjectileState.OwnerIndex / SimEvent.PlayerIndex.

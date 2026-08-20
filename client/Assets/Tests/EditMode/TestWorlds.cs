@@ -380,5 +380,54 @@ namespace Ring.Simulation.Tests
             }
             return ticks;
         }
+
+        /// Stage 3 Т24: the arena's own exit layout, resolved from the config
+        /// instead of restated. Lifted here out of ExtractionTests the moment
+        /// a second class (ResultsTests) needed the same four helpers — the
+        /// same "test helpers duplicated across files" rule Capacity above
+        /// records, applied before the copy was made rather than after.
+        /// An owner retune of the layout moves every caller with it.
+        public static int IndexOfExit(in SimConfig cfg, ExitKind kind)
+        {
+            for (int i = 0; i < cfg.Arena.ExtractPos.Length; i++)
+                if ((ExitKind)cfg.Arena.ExtractKind[i] == kind) return i;
+            return -1;
+        }
+
+        public static float2 EarlyPortalPos(in SimConfig cfg)
+            => cfg.Arena.ExtractPos[IndexOfExit(in cfg, ExitKind.Portal)];
+
+        public static float2 GatePos(in SimConfig cfg)
+            => cfg.Arena.ExtractPos[IndexOfExit(in cfg, ExitKind.Gate)];
+
+        /// TestConfigs.Open() (which ships the real exit layout) with an
+        /// extraction channel short enough to hold inside a test, stated in
+        /// TICKS and converted through the same arithmetic production
+        /// performs. Open() itself is NOT touched — its zones are owner
+        /// decision R-76 and two other fixtures stand on them.
+        public static SimConfig ExitFixture(int channelTicks = 6)
+        {
+            SimConfig c = TestConfigs.Open();
+            c.Flow.ExtractChannelSeconds = channelTicks * SimulationWorld.TickDt;
+            return c;
+        }
+
+        /// Walks the raid to GateOpen: someone enters the core, the Director
+        /// spawns (Т22) and is put down, and the sharing window elapses. The
+        /// caller states GateDelaySeconds = 0 on its own fixture when it wants
+        /// that window to be instant.
+        public static void OpenTheGate(SimulationWorld world, in SimConfig cfg)
+        {
+            RelocatePlayerForTest(world, 2, new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f));
+            IdleTicks(world);
+            for (int i = 0; i < world.MobCount; i++)
+            {
+                if (world.Mobs[i].Type != MobType.Director) continue;
+                world.DamageMob(i, 1e9f, world.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+                break;
+            }
+            IdleTicks(world, 2);
+            Assert.AreEqual(MatchPhase.GateOpen, world.Match.Phase, "premise: the gate is open");
+        }
     }
 }

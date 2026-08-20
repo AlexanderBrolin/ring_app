@@ -719,9 +719,13 @@ namespace Ring.Simulation.Tests
                 ProjectileSpawnsSkipped = 23,
             };
 
+            // Т24 added the four RESULT arrays; this fixture is about the
+            // STATS half, so they carry two inert slots — ResultsTests owns
+            // the assertions on the other half.
             var summary = new MatchSummary(MatchEndReason.MaxDurationReached, NewEpoch,
                 finalTick: 4242, in world, droppedEvents: 31,
-                new[] { other, mine }, new[] { new NetStats(), new NetStats() });
+                new[] { other, mine }, new[] { new NetStats(), new NetStats() },
+                new MatchOutcome[2], new int[2], new byte[2][], new int[2]);
 
             MatchEndedNet net = MatchServer.EndedNetFor(in summary, slot: 1);
 

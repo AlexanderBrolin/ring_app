@@ -136,8 +136,12 @@ namespace Ring.Simulation.Objectives
             // raw ArenaSimConfig.ExtractKind byte, which starts at 0 for a
             // portal and would make "not extracted" and "left by portal" the
             // same value. Mapped explicitly rather than by arithmetic, so the
-            // two encodings can never drift into each other silently.
-            p.ExtractKind = kind == ExitKind.Gate ? (byte)2 : (byte)1;
+            // two encodings can never drift into each other silently. The two
+            // values are named where the field is declared (Т24) — the
+            // outcome record on the other side of the wire reads the same
+            // constants rather than a second literal.
+            p.ExtractKind = kind == ExitKind.Gate
+                ? ExtractKinds.Gate : ExtractKinds.EarlyPortal;
             w.Emit(SimEventKind.PlayerExtracted, exitPos, 0, default, 0f, playerIndex: (byte)index);
         }
     }

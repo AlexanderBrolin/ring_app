@@ -55,6 +55,24 @@ namespace Ring.Simulation.Loot
             return total;
         }
 
+        /// Stage 3 Т24 (spec §3.10): what this backpack is WORTH — the sum of
+        /// its items' own catalog prices. Shaped exactly like UsedSlots above
+        /// and resolving through the same ItemCatalogLookup (R-89, the ONE
+        /// home of "id -> record"), so a retune of the catalog moves both.
+        ///
+        /// WHETHER THE SUM IS CREDITED TO ANYBODY IS NOT THIS METHOD'S
+        /// QUESTION. A backpack has a price whether or not it ever left the
+        /// factory; the gate that pays only a collector who actually walked
+        /// out lives at the one place that knows he did — MatchServer.
+        /// CreditsCarriedOut.
+        public int CreditsTotal(ItemDef[] catalog)
+        {
+            int total = 0;
+            for (int i = 0; i < _count; i++)
+                total += ItemCatalogLookup.Find(_items[i], catalog).CreditValue;
+            return total;
+        }
+
         /// Refuses (returns false, leaves the backpack byte-for-byte
         /// unchanged) once the item's own SlotCostOf would push UsedSlots
         /// past `capacity`, OR the backing array is already at its hard

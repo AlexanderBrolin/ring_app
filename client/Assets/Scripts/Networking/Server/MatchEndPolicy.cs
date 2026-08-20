@@ -1,4 +1,5 @@
 using System;
+using Ring.Simulation.Core;
 
 namespace Ring.Networking.Server
 {
@@ -27,6 +28,29 @@ namespace Ring.Networking.Server
         /// append-only discipline the rest of this doc requires, so no value
         /// already in flight changes meaning.
         AllPlayersResolved = 3,
+    }
+
+    /// How the raid ended for ONE collector (Stage 3 Т24, spec §3.10) — the
+    /// per-player half of the result record, carried on MatchEndedNet as a
+    /// single byte.
+    ///
+    /// VALUES ARE PINNED, AND THAT IS A WIRE CONTRACT, exactly as for
+    /// MatchEndReason above: reordering the members would silently change the
+    /// meaning of a result already in flight between a client build and a
+    /// server build compiled from different sources.
+    /// ResultsTests.MatchOutcome_ValuesAreStableOnTheWire pins all five.
+    ///
+    /// Died IS ZERO ON PURPOSE, and it is the only member that can be reached
+    /// by a zeroed array: "the collector did not come back" is the safe
+    /// direction for a default to point in — the opposite mistake would credit
+    /// somebody with an extraction that never happened.
+    public enum MatchOutcome : byte
+    {
+        Died = 0,
+        ExtractedEarly = 1,
+        ExtractedCore = 2,
+        Disconnected = 3,
+        Stranded = 4,
     }
 
     /// Stage 2 Task 40 (spec §3.10 "end of match" and Р43, §3.11's exit
@@ -170,5 +194,55 @@ namespace Ring.Networking.Server
         /// a predicate that means nothing.)
         public static bool ShouldKillOnDisconnect(bool connectionActive, bool playerAlive)
             => !connectionActive && playerAlive;
+
+        /// Spec §3.10: how the raid ended for the collector in one slot.
+        /// Beside ShouldKillOnDisconnect for the same reason that predicate
+        /// lives here rather than inline in MatchServer — it is a decision,
+        /// it is pure, and a decision no EditMode test can reach is a decision
+        /// no mutation can be caught in.
+        ///
+        /// EXTRACTION IS CHECKED FIRST, AND THE ORDER IS THE MEANING. A
+        /// collector who walked out is not Alive either — ExtractionSystem
+        /// clears the body deliberately, because leaving is NOT dying (Р223)
+        /// and there must be no corpse to loot — so any test of Alive ahead
+        /// of Extracted would report every man who got out as a casualty.
+        /// `extractKind` is PlayerState.ExtractKind's own encoding, compared
+        /// against the constants declared with that field rather than against
+        /// a literal, so the two ends of the wire cannot drift apart.
+        ///
+        /// THE DISCONNECT IS THE SERVER'S MEMORY, NOT THE WORLD'S (Р271). A
+        /// dropped connection kills through KillPlayerNoDamage, which is the
+        /// same seam and leaves the same corpse as any other death: the world
+        /// genuinely cannot tell the two apart, and should not be taught to.
+        /// `disconnectKilled` is MatchServer's own per-slot record of having
+        /// done it, and what it buys is diagnostic — a line in the log and a
+        /// column in the future meta, not different loot on the ground.
+        ///
+        /// STRANDED IS THE OUTCOME THE PLAN DID NOT NAME (owner decision
+        /// R-193). MaxDurationReached is the only end that can leave
+        /// collectors ALIVE in the arena — a raid nobody walks into the core
+        /// is legitimate (spec §3.5) and simply runs its 900 s out — and the
+        /// plan's four members had nothing to say about that man. In the
+        /// world it is not an edge case but the AI winning: the factory
+        /// closes the communication corridor the operator's link to his shell
+        /// runs through, which is what its waves have been buying time for
+        /// since it detected the intrusion, and the shell is lost where it
+        /// stands with everything in its backpack. Calling him Died would be
+        /// a lie about a living body; crediting him with loot he never
+        /// carried out would be the opposite lie. Naming the state closes
+        /// both — see MatchServer.CreditsCarriedOut for the second half.
+        public static MatchOutcome OutcomeFor(bool alive, bool extracted, byte extractKind,
+            bool disconnectKilled)
+        {
+            if (extracted)
+            {
+                return extractKind == ExtractKinds.Gate
+                    ? MatchOutcome.ExtractedCore
+                    : MatchOutcome.ExtractedEarly;
+            }
+            if (disconnectKilled) return MatchOutcome.Disconnected;
+            if (!alive) return MatchOutcome.Died;
+            return MatchOutcome.Stranded;
+        }
     }
 }

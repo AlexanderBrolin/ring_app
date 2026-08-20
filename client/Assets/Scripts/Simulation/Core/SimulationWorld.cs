@@ -889,6 +889,15 @@ namespace Ring.Simulation.Core
         /// stays uniform).
         public int InventoryUsedSlots(int playerIndex) => _inventories[playerIndex].UsedSlots(_config.Items);
 
+        /// Stage 3 Т24 (spec §3.10): the price of one player's backpack,
+        /// read through the world's own catalog — the same shape, and for the
+        /// same reason, as InventoryUsedSlots above. `_inventories` is
+        /// private and `StopMatch` releases the whole world, so the summary
+        /// has exactly one moment to ask, and this is the seam it asks
+        /// through.
+        public int InventoryCreditsOf(int playerIndex)
+            => _inventories[playerIndex].CreditsTotal(_config.Items);
+
         /// Stage 3 Task 4 Interfaces: adds one item to a player's backpack,
         /// refusing (false, backpack byte-for-byte unchanged) once the
         /// item's own SlotCostOf would push UsedSlots past
@@ -1660,6 +1669,27 @@ namespace Ring.Simulation.Core
             if (!_players[index].Alive) return;
             KillPlayer(index, HitZone.None, float2.zero, _players[index].Pos);
         }
+
+        /// THE ONE PRODUCTION WRITER OF MatchPhase.Ended (Stage 3 Т24,
+        /// coordinator R-172) — and it is deliberately outside the
+        /// simulation's own systems.
+        ///
+        /// WHY THIS CANNOT BE MatchFlowSystem'S DECISION: a raid ends when
+        /// MatchEndPolicy says it does, that class lives in
+        /// Ring.Networking.Server, and the assembly reference runs one way —
+        /// the simulation neither sees it nor can. The duration limit it
+        /// reads is NetConfig.MatchMaxDurationSeconds, which is not part of
+        /// SimConfig at all (Р72). So the phase machine only ever READS Ended
+        /// (its own first line, Р256 п.2/п.3) and refuses to move a raid that
+        /// is over, while the writer is whoever holds the verdict:
+        /// MatchServer, through this seam, once per match.
+        ///
+        /// IDEMPOTENT, AND SILENT ABOUT THE PHASE IT REPLACES. A raid can end
+        /// on the very tick its gate would have opened (spec §3.5 п.3: Ended
+        /// wins the tie), so overwriting GateOpen — or DirectorActive, or
+        /// Farm — is the CORRECT behavior, not a case worth guarding. Calling
+        /// it twice changes nothing.
+        public void MarkMatchEnded() => _match.Phase = MatchPhase.Ended;
 
         /// Battle mob spawn (Task 22 Interfaces) — WaveSystem's sole entry point for
         /// turning a validated spawn position into a live mob. Spawned mobs start at

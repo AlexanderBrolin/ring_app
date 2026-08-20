@@ -353,6 +353,28 @@ namespace Ring.Networking.Server
         SpectateRefusal[] _lastLoggedRefusal;
         int[] _lastLoggedRefusalTick;
 
+        // Stage 3 Т24 (spec §3.10): the two facts about a finished raid that
+        // the WORLD does not record, kept here for the summary to read — same
+        // "fresh scratch every StartMatch, released every StopMatch"
+        // treatment, and the same Р151 reason, as the four arrays above.
+        //
+        // `_extractedTick[i]` is the world tick slot `i` was first observed
+        // extracted, 0 meaning "never left" (MatchProgress.Observe owns the
+        // rule and its sentinel). It exists because leaving is NOT dying
+        // (Р223): a death stamps MatchStats.DeathTick, an extraction stamps
+        // nothing at all, and without this the record would credit a man who
+        // went home in the fourth minute with the whole raid's length.
+        //
+        // `_disconnectKilled[i]` is whether THIS server killed slot `i` for a
+        // dropped connection (step 2a). The world cannot answer it —
+        // KillPlayerNoDamage leaves the same corpse any other death does — and
+        // the distinction is what separates the `Disconnected` outcome from
+        // `Died` (Р271). Recorded at the kill rather than re-derived from
+        // `IsActive` at the end, because a player who fell fighting in the
+        // second minute and closed his window in the tenth died fighting.
+        int[] _extractedTick;
+        bool[] _disconnectKilled;
+
         ushort _epoch;
         bool _running;
 
@@ -477,6 +499,13 @@ namespace Ring.Networking.Server
             // too-small guard) must never leave this instance half-updated,
             // holding a fresh world next to a stale assembler from the match
             // that just ended.
+            // Stage 3 Т24: the raid's own per-slot memory, fresh for this
+            // match — a restart's world starts back at tick 0, so either
+            // array surviving one would date this raid's extractions by the
+            // last raid's clock.
+            var extractedTick = new int[playerCount];
+            var disconnectKilled = new bool[playerCount];
+
             var world = new SimulationWorld(seed, in simConfig, playerCount);
             var assembler = new SnapshotAssembler(in simConfig, _netConfig, connections.Length);
             var lastInputsScratch = new ServerTickInput[playerCount];
@@ -555,6 +584,8 @@ namespace Ring.Networking.Server
             _lastSpectateSwitchTick = lastSpectateSwitchTick;
             _lastLoggedRefusal = lastLoggedRefusal;
             _lastLoggedRefusalTick = lastLoggedRefusalTick;
+            _extractedTick = extractedTick;
+            _disconnectKilled = disconnectKilled;
             _tickTime.Reset();
 
             // Stage 2 Task 40: a running match has no outcome, and no summary
@@ -814,6 +845,8 @@ namespace Ring.Networking.Server
             _lastSpectateSwitchTick = null;
             _lastLoggedRefusal = null;
             _lastLoggedRefusalTick = null;
+            _extractedTick = null;
+            _disconnectKilled = null;
         }
 
         /// The `SpectateRequestNet` handler (Stage 2 Task 42a, spec §3.10
@@ -1078,6 +1111,12 @@ namespace Ring.Networking.Server
                             _connections[i].IsActive, _world.PlayerAt(i).Alive))
                     {
                         _world.KillPlayerNoDamage(i);
+                        // Stage 3 Т24 (Р271): the corpse this leaves is
+                        // indistinguishable from any other, so the reason is
+                        // remembered HERE, at the one moment it is known.
+                        // The predicate's own `playerAlive` half makes this
+                        // write happen at most once per slot per match.
+                        _disconnectKilled[i] = true;
                     }
                 }
 
@@ -1089,26 +1128,16 @@ namespace Ring.Networking.Server
                 // owes its clients a frame, and the events in it (fix-round 1,
                 // C-1: `PlayerDied` above all) have no second chance to be
                 // sent.
-                int alivePlayers = 0;
-                // Stage 3 Task 1 (spec §3.10, errata E-1/R-13 decision): the
-                // two extraction-aware counts `MatchEndPolicy.Evaluate` now
-                // needs. "Active" is alive AND not yet extracted (spec's own
-                // definition); `anyExtracted` is whether at least one player
-                // left through a portal or the gate. `PlayerState.Extracted`
-                // has no writer yet (later Ф1 tasks give it one), so today
-                // `activePlayers` always equals `alivePlayers` and
-                // `anyExtracted` is always false on every production match —
-                // this loop exists now so `Evaluate`'s new parameters have a
-                // real caller from the moment they exist, not a placeholder.
-                int activePlayers = 0;
-                bool anyExtracted = false;
-                for (int i = 0; i < _world.PlayerCount; i++)
-                {
-                    PlayerState p = _world.PlayerAt(i);
-                    if (p.Alive) alivePlayers++;
-                    if (p.Alive && !p.Extracted) activePlayers++;
-                    if (p.Extracted) anyExtracted = true;
-                }
+                // Stage 3 Task 1 (spec §3.10, errata E-1/R-13 decision), moved
+                // into `MatchProgress.Observe` by Т24. That method counts the
+                // two extraction-aware inputs `Evaluate` needs AND stamps the
+                // tick a collector left, which is memory the world does not
+                // keep. Т1's own note that `PlayerState.Extracted` "has no
+                // writer yet" is retired here: Т23 gave it one, so on a real
+                // raid `activePlayers` now genuinely differs from
+                // `alivePlayers` and `anyExtracted` genuinely goes true.
+                MatchProgress.Observe(_world, postTickWorldTick, _extractedTick,
+                    out int alivePlayers, out int activePlayers, out bool anyExtracted);
 
                 MatchEndReason reason =
                     _endPolicy.Evaluate(postTickWorldTick, alivePlayers, activePlayers, anyExtracted);
@@ -1294,6 +1323,16 @@ namespace Ring.Networking.Server
         /// match's own state is settled first.
         void EndMatch(MatchEndReason reason)
         {
+            // Stage 3 Т24 (coordinator R-172): the raid is over IN THE WORLD
+            // as well, and this is the one place that says so. It happens
+            // BEFORE the summary is built and long before `StopMatch`, so the
+            // world this method reads is one whose own phase agrees with the
+            // verdict being reported — and so that the invariants standing on
+            // Ended (no exit is open on a finished raid; the phase machine
+            // does not move one) hold from the instant the decision is
+            // executed rather than from the next tick, which never comes.
+            _world.MarkMatchEnded();
+
             MatchSummary summary = BuildSummary(reason);
 
             // Captured before `StopMatch` nulls the field.
@@ -1337,8 +1376,36 @@ namespace Ring.Networking.Server
             var connectionStats = new NetStats[playerCount];
             for (int i = 0; i < playerCount; i++) connectionStats[i] = _assembler.StatsFor(i);
 
-            return new MatchSummary(reason, _epoch, (uint)_world.CurrentTick,
-                _world.WorldStats, _world.DroppedEvents, playerStats, connectionStats);
+            // Stage 3 Т24 (spec §3.10, errata E-3): THE RESULT, taken here
+            // and nowhere else. Every value below needs something `StopMatch`
+            // is about to release — the players' own flags, their backpacks,
+            // the world's tick — which is exactly why this method exists at
+            // all (see its doc, and `ServerBootstrap.cs`'s own note that the
+            // world is gone by the time a bootstrap polling `Outcome` asks).
+            uint finalTick = (uint)_world.CurrentTick;
+            var outcome = new MatchOutcome[playerCount];
+            var creditsTotal = new int[playerCount];
+            var loot = new byte[playerCount][];
+            var survivedSeconds = new int[playerCount];
+            for (int i = 0; i < playerCount; i++)
+            {
+                PlayerState p = _world.PlayerAt(i);
+                outcome[i] = MatchEndPolicy.OutcomeFor(p.Alive, p.Extracted, p.ExtractKind,
+                    _disconnectKilled[i]);
+                creditsTotal[i] = CreditsCarriedOut(_world, i);
+                loot[i] = LootCarriedOut(_world, i);
+                // Ticks to seconds through NetConfig.TickRate — the same
+                // number MatchEndPolicy's own limit was converted with
+                // (`ServerBootstrap`: MatchMaxDurationSeconds * TickRate), and
+                // integer division, so the field reports COMPLETED seconds
+                // rather than a rounded-up one nobody lived.
+                survivedSeconds[i] = SurvivedTicksFor(p.Alive, p.Extracted, _extractedTick[i],
+                    playerStats[i].DeathTick, finalTick) / _netConfig.TickRate;
+            }
+
+            return new MatchSummary(reason, _epoch, finalTick,
+                _world.WorldStats, _world.DroppedEvents, playerStats, connectionStats,
+                outcome, creditsTotal, loot, survivedSeconds);
         }
 
         /// Player `slot`'s own copy of the end-of-match message: the world's
@@ -1377,10 +1444,144 @@ namespace Ring.Networking.Server
                 DeathTick = stats.DeathTick,
                 DamageTaken = stats.DamageTaken,
 
+                // Stage 3 Т24 (errata E-3): this player's own result.
+                // AmmoSpent/CellsPicked come off `stats`, not off a fifth and
+                // sixth summary array — MatchStats is already their home and
+                // its own doc names this task as their READER (Р151).
+                Outcome = (byte)summary.Outcome[slot],
+                CreditsTotal = summary.CreditsTotal[slot],
+                Loot = summary.Loot[slot],
+                AmmoSpent = stats.AmmoSpent,
+                CellsPicked = stats.CellsPicked,
+                SurvivedSeconds = summary.SurvivedSeconds[slot],
+
                 WavesCleared = world.WavesCleared,
                 MobSpawnsSkipped = world.MobSpawnsSkipped,
                 ProjectileSpawnsSkipped = world.ProjectileSpawnsSkipped,
             };
+        }
+
+        /// What slot `slot` carried OUT of the factory, in credits (Stage 3
+        /// Т24, spec §3.10).
+        ///
+        /// GATED ON Extracted, NOT SIMPLY SUMMED, and the gate is the whole
+        /// point: §3.10 counts what was carried out, and only an extraction
+        /// carries anything out. The other three endings need no arithmetic
+        /// of their own — a corpse's backpack has already moved into the
+        /// container KillPlayer spawns from it (so the sum would be zero
+        /// anyway, for both Died and Disconnected), while a Stranded
+        /// collector is still holding everything and is precisely the case a
+        /// bare sum would misreport. One gate, stated once, correct for all
+        /// four.
+        ///
+        /// `internal` FOR THE TESTS, DELIBERATELY — the same reason
+        /// EndedNetFor above is: a pure function of a world and a slot, where
+        /// the rule is worth a mutation and the FishNet wiring around it is
+        /// not reachable by one.
+        internal static int CreditsCarriedOut(SimulationWorld world, int slot)
+            => world.PlayerAt(slot).Extracted ? world.InventoryCreditsOf(slot) : 0;
+
+        /// The items behind that number, in carry order — the `loot` half of
+        /// spec §3.10's record, and empty for exactly the collectors
+        /// CreditsCarriedOut pays nothing.
+        ///
+        /// IDS ONLY. Tier and price are the catalog's answers
+        /// (ItemCatalogLookup, R-89), the client verified its own copy of that
+        /// catalog at the handshake, and the log line resolves them where it
+        /// prints. Copying the resolved values into the record instead would
+        /// be three numbers travelling where one identifies them.
+        internal static byte[] LootCarriedOut(SimulationWorld world, int slot)
+        {
+            if (!world.PlayerAt(slot).Extracted) return Array.Empty<byte>();
+
+            int count = world.InventoryCountOf(slot);
+            if (count == 0) return Array.Empty<byte>();
+
+            var items = new byte[count];
+            for (int i = 0; i < count; i++) items[i] = world.InventoryItemAt(slot, i);
+            return items;
+        }
+
+        /// How long the raid lasted for one collector, in world ticks (Stage 3
+        /// Т24, spec §3.10 `survivedSeconds`; the caller divides by the tick
+        /// rate).
+        ///
+        /// THREE ENDINGS, THREE CLOCKS, AND NONE OF THEM IS A NEW STATE
+        /// FIELD. A collector who EXTRACTED stopped when he stepped out —
+        /// and extraction, unlike death, stamps nothing in the world at all
+        /// (Р223: it is not a death, so there is no DeathTick), which is why
+        /// `extractedTick` is MatchServer's own memory and why the raid's own
+        /// FinalTick would be wrong here: the other two may keep playing for
+        /// another quarter of an hour after he is home. A CORPSE stopped at
+        /// MatchStats.DeathTick, already the world's own answer, read rather
+        /// than recorded a second time (Р151). Anyone STILL STANDING survived
+        /// the whole raid, so FinalTick is his by definition.
+        ///
+        /// Extracted is tested BEFORE Alive for the reason OutcomeFor's own
+        /// doc gives: a man who walked out is not alive either.
+        internal static int SurvivedTicksFor(bool alive, bool extracted, int extractedTick,
+            int deathTick, uint finalTick)
+        {
+            if (extracted) return extractedTick;
+            if (!alive) return deathTick;
+            return (int)finalTick;
+        }
+    }
+
+    /// The post-tick reading of who is still in the raid (Stage 3 Т1, moved
+    /// here by Т24) — the three inputs MatchEndPolicy.Evaluate needs, plus the
+    /// one fact about a finished raid that nothing in the world records.
+    ///
+    /// LIFTED OUT OF OnPostTick BECAUSE Т24 GAVE IT ARITHMETIC WORTH TESTING.
+    /// As Т1 left it this was a counting loop inline in the FishNet-touching
+    /// class; the stamping below is new memory with a rule of its own
+    /// (first write wins), and MatchServer's own class doc is explicit that
+    /// what lives inline there can be reached by no EditMode test and
+    /// therefore caught by no mutation. Same split, and the same file, as
+    /// EffectiveInputBatch and InputStarvation already occupy.
+    internal static class MatchProgress
+    {
+        /// `worldTick` is the POST-TickAll reading — "the tick that just
+        /// finished" — and every count below is a fact about the world as it
+        /// now stands, disconnect-kills included (they run first, step 2a).
+        ///
+        /// "ACTIVE" IS ALIVE AND NOT YET EXTRACTED — the spec's own definition
+        /// (§3.5), kept verbatim from Т1. MEASURED FACT WORTH STATING: the two
+        /// counts cannot actually differ today, because extraction clears
+        /// Alive (Р223 — the body leaves the arena), so the invariant
+        /// `!(Alive && Extracted)` makes the second clause redundant. What
+        /// separates a resolved raid from a wipe is `anyExtracted`, not the
+        /// gap between these two numbers. The clause stays because "active"
+        /// is defined that way and this method must not depend on an
+        /// invariant it does not itself enforce — but it has no witness that
+        /// could kill a mutation of it, and that is said out loud here rather
+        /// than left for a reviewer to find (spec §3.10's own wording implies
+        /// the two counts can diverge; recorded for the Ф9 amendment batch).
+        ///
+        /// THE STAMP IS FIRST-WRITE-WINS, AND ZERO IS THE SENTINEL. A
+        /// collector leaves once and stays left, so a later tick must not
+        /// move the moment he did it; and no extraction can be observed at
+        /// world tick 0, because ExtractionSystem runs inside TickAll and the
+        /// first observation any caller makes is of tick 1 or later. That is
+        /// what makes 0 safe as "never left" — the same sentinel argument
+        /// MatchState.DirectorDeathTick already stands on.
+        internal static void Observe(SimulationWorld world, int worldTick, int[] extractedTick,
+            out int alivePlayers, out int activePlayers, out bool anyExtracted)
+        {
+            alivePlayers = 0;
+            activePlayers = 0;
+            anyExtracted = false;
+
+            for (int i = 0; i < world.PlayerCount; i++)
+            {
+                PlayerState p = world.PlayerAt(i);
+                if (p.Alive) alivePlayers++;
+                if (p.Alive && !p.Extracted) activePlayers++;
+                if (!p.Extracted) continue;
+
+                anyExtracted = true;
+                if (extractedTick[i] == 0) extractedTick[i] = worldTick;
+            }
         }
     }
 
@@ -1447,9 +1648,35 @@ namespace Ring.Networking.Server
         /// real match end produced.
         public readonly NetStats[] ConnectionStats;
 
+        /// Stage 3 Т24 (spec §3.10, errata E-3) — THE RESULT, four arrays and
+        /// no more. `AmmoSpent`/`CellsPicked` are deliberately NOT here even
+        /// though the plan's Interfaces block listed them: both are already
+        /// fields of `PlayerStats[slot]`, whose own doc names Т24 as their
+        /// READER. A second array holding the same number is precisely the
+        /// "two copies of one number" defect Р151 and this type's own class
+        /// doc are written against, so the log line and `EndedNetFor` read
+        /// them off `MatchStats` instead (coordinator R-194).
+        ///
+        /// The four below have no other home. `Outcome` needs the server's
+        /// own memory of who disconnected; `CreditsTotal`/`Loot` need the
+        /// per-player `Loot.Inventory`, which `StopMatch` releases with the
+        /// world; `SurvivedSeconds` needs the tick a collector EXTRACTED,
+        /// which — unlike a death — stamps nothing in the world at all.
+        public readonly MatchOutcome[] Outcome;
+        public readonly int[] CreditsTotal;
+
+        /// Item ids, in carry order, for the collector who walked out with
+        /// them — EMPTY for everyone else, because spec §3.10's record counts
+        /// what left the factory, not what a corpse was holding. Tier and
+        /// price stay the catalog's to answer (`ItemCatalogLookup`, R-89).
+        public readonly byte[][] Loot;
+
+        public readonly int[] SurvivedSeconds;
+
         public MatchSummary(MatchEndReason reason, ushort epoch, uint finalTick,
             in WorldStats world, int droppedEvents, MatchStats[] playerStats,
-            NetStats[] connectionStats)
+            NetStats[] connectionStats, MatchOutcome[] outcome, int[] creditsTotal,
+            byte[][] loot, int[] survivedSeconds)
         {
             Reason = reason;
             Epoch = epoch;
@@ -1458,6 +1685,10 @@ namespace Ring.Networking.Server
             DroppedEvents = droppedEvents;
             PlayerStats = playerStats;
             ConnectionStats = connectionStats;
+            Outcome = outcome;
+            CreditsTotal = creditsTotal;
+            Loot = loot;
+            SurvivedSeconds = survivedSeconds;
         }
     }
 

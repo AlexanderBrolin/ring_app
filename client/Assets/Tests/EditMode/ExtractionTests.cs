@@ -24,24 +24,13 @@ namespace Ring.Simulation.Tests
     {
         const int Subject = 1; // the SECOND player is the subject (lesson 227)
 
-        static int IndexOfKind(in SimConfig cfg, ExitKind kind)
-        {
-            for (int i = 0; i < cfg.Arena.ExtractPos.Length; i++)
-                if ((ExitKind)cfg.Arena.ExtractKind[i] == kind) return i;
-            return -1;
-        }
-
-        static float2 EarlyPortalPos(in SimConfig cfg) => cfg.Arena.ExtractPos[IndexOfKind(in cfg, ExitKind.Portal)];
-        static float2 GatePos(in SimConfig cfg) => cfg.Arena.ExtractPos[IndexOfKind(in cfg, ExitKind.Gate)];
-
-        /// A channel short enough to hold in a test, stated in TICKS and
-        /// converted through the same arithmetic production performs.
-        static SimConfig Fixture(int channelTicks = 6)
-        {
-            SimConfig c = TestConfigs.Open();
-            c.Flow.ExtractChannelSeconds = channelTicks * SimulationWorld.TickDt;
-            return c;
-        }
+        // Т24 lifted the exit-layout resolution and the short-channel fixture
+        // to TestWorlds the moment a second class (ResultsTests) needed the
+        // same four helpers; this file delegates, the same way MatchFlowTests'
+        // own Idle now delegates to TestWorlds.IdleTicks (rule 2).
+        static float2 EarlyPortalPos(in SimConfig cfg) => TestWorlds.EarlyPortalPos(in cfg);
+        static float2 GatePos(in SimConfig cfg) => TestWorlds.GatePos(in cfg);
+        static SimConfig Fixture(int channelTicks = 6) => TestWorlds.ExitFixture(channelTicks);
 
         static SimulationWorld World(in SimConfig cfg) => new SimulationWorld(1, cfg, playerCount: 3);
 
@@ -333,21 +322,8 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0f, p.RepairTimer, 1e-6f, "…nor mid-repair");
         }
 
-        /// Walks the raid to GateOpen: someone enters the core, the Director
-        /// spawns (Т22) and is put down, and the (zero-length here) sharing
-        /// window elapses.
-        static void OpenTheGate(SimulationWorld w, in SimConfig cfg)
-        {
-            Stand(w, 2, new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f));
-            TestWorlds.IdleTicks(w);
-            for (int i = 0; i < w.MobCount; i++)
-            {
-                if (w.Mobs[i].Type != MobType.Director) continue;
-                w.DamageMob(i, 1e9f, w.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
-                break;
-            }
-            TestWorlds.IdleTicks(w, 2);
-            Assert.AreEqual(MatchPhase.GateOpen, w.Match.Phase, "premise: the gate is open");
-        }
+        /// Walks the raid to GateOpen — lifted to TestWorlds by Т24 alongside
+        /// the layout helpers above; this file delegates.
+        static void OpenTheGate(SimulationWorld w, in SimConfig cfg) => TestWorlds.OpenTheGate(w, in cfg);
     }
 }
