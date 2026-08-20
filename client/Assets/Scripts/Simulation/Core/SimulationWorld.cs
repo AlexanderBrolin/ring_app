@@ -373,6 +373,16 @@ namespace Ring.Simulation.Core
             // WeaponSystem.Update gets above, not a getter over
             // _sanitizedInputs whose only consumer would be one system.
             LootOps.Update(this, _sanitizedInputs);
+            // Stage 3 Т23 (spec §3.5 Р256, R-2's canonical tail): the
+            // extraction channel ticks HERE — after combat and after the loot
+            // channel, before ContainerStore/PickupSystem, and therefore
+            // before MatchFlowSystem, which is the last step of all. The order
+            // is a rule, not a placement: a collector who fills the last tick
+            // of his channel on the very tick a companion walks into the core
+            // still gets out, because the portal closes from the NEXT tick
+            // (Р256 п.1). Put after the phase machine, that same collector
+            // would be caught by a door that shut retroactively.
+            Objectives.ExtractionSystem.Update(this);
             // Stage 3 Task 14 (coordinator R-101): container TTL decay slots
             // in HERE, BEFORE PickupSystem — not after. The slot after
             // PickupSystem is reserved for MatchFlowSystem (Т21, see that
@@ -527,6 +537,12 @@ namespace Ring.Simulation.Core
                 p.LinkWindowTimer = math.clamp(p.LinkWindowTimer, 0f, next.Hero.LinkWindowSeconds);
                 // Task 14: aim-settle progress, same clamp-to-new-ceiling contract.
                 p.AimSettleTimer = math.clamp(p.AimSettleTimer, 0f, next.Hero.AimSettleSeconds);
+                // Stage 3 Т23 (spec Р286, debt of this task): the extraction
+                // channel is measured against Flow.ExtractChannelSeconds, so a
+                // live timer must be clamped when that number is retuned mid-
+                // match — otherwise a shortened channel would leave a collector
+                // ALREADY past its end without ever having stood there.
+                p.ExtractTimer = math.clamp(p.ExtractTimer, 0f, next.Flow.ExtractChannelSeconds);
                 // Stage 2 Task 10: the two edge-request counters clamp into
                 // [0, the new EdgeRequestMinTicks] — same contract as the timers
                 // above, just counted in ticks instead of seconds. Without this,
@@ -1361,6 +1377,12 @@ namespace Ring.Simulation.Core
         static void AbortChannels(ref PlayerState p)
         {
             p.RepairTimer = 0f;
+            // Stage 3 Т23 (spec §3.5 Р222, errata E-6/C-I7): the extraction
+            // channel is cancelled by damage too — ONE line in the ONE home,
+            // exactly as this method's own doc and Т19's promised. Both callers
+            // inherit it: DamagePlayer (after both guards, so an i-frame-eaten
+            // blow does not break a channel it never landed on) and KillPlayer.
+            p.ExtractTimer = 0f;
         }
 
         /// Applies damage to one player (spec Interfaces, Task 16/23): a
@@ -1481,11 +1503,21 @@ namespace Ring.Simulation.Core
         /// caught: `PlayerDamaged` and `PlayerDied` from the SAME hit used to
         /// carry the same Pos, and briefly didn't). See `SimEvent.Pos`'s own
         /// doc for the reader-facing version of this contract.
-        void KillPlayer(int index, HitZone zone, float2 dir, float2 blowPos)
+        /// EVERY TIMER A BODY LEAVING THE FIGHT MUST DROP (Stage 3 Т23, errata
+        /// E-6/C-I9). Lifted verbatim out of KillPlayer the moment a SECOND way
+        /// of leaving arrived — extraction — because the reason each line
+        /// exists is not "he died", it is "he is no longer fighting", and all
+        /// of these fields are HASHED: a body left mid-dash or mid-transfer
+        /// would carry stale state into the digest and into WorldSave whichever
+        /// way it left. Callers: KillPlayer and ExtractionSystem.
+        ///
+        /// The transfer trio (LootTimer and its target) belongs HERE and not in
+        /// AbortChannels, and that distinction is load-bearing: damage must NOT
+        /// abort a transfer (spec §3.8 is explicit that this is where it
+        /// differs from the extraction channel), but leaving the fight
+        /// certainly does.
+        internal static void ClearCombatTimers(ref PlayerState p)
         {
-            ref PlayerState p = ref _players[index];
-            p.Alive = false;
-            _matchStats[index].DeathTick = _tick;
             p.DashTimer = 0f;
             // Task 12: DashSpeedCur has no meaning without an active dash
             // (DashTimer == 0 already says "not dashing") — zeroed for the
@@ -1540,6 +1572,14 @@ namespace Ring.Simulation.Core
             // stay KillPlayer's own on purpose: damage must NOT abort a
             // transfer (spec §3.8), so they do not belong to that home.
             AbortChannels(ref p);
+        }
+
+        void KillPlayer(int index, HitZone zone, float2 dir, float2 blowPos)
+        {
+            ref PlayerState p = ref _players[index];
+            p.Alive = false;
+            _matchStats[index].DeathTick = _tick;
+            ClearCombatTimers(ref p);
             Emit(SimEventKind.PlayerDied, blowPos, index, default, 0f, zone: zone, hitDir: dir,
                 playerIndex: (byte)index);
             // Stage 3 Task 3 (spec §3.6, errata E-6 C-I10): the corpse's

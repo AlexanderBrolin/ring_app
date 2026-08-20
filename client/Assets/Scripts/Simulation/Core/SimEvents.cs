@@ -86,7 +86,14 @@ namespace Ring.Simulation.Core
         /// PAYLOAD: none, for the same reason as DirectorActivated above —
         /// where he fell is where everyone is about to fight, and the All
         /// channel does not carry positions.
-        DirectorDied
+        DirectorDied,
+        /// Stage 3 Т23 (spec §3.5 Р222/Р223): a collector held his channel to
+        /// the end and LEFT THE RAID — PlayerIndex names him, Pos is the exit
+        /// he walked out of. Deliberately its own kind rather than a
+        /// PlayerDied with a flag: the two differ in everything a consumer
+        /// cares about (no corpse, nothing to loot, and the man is not dead —
+        /// Р223's own reason for Extracted being a separate bit at all).
+        PlayerExtracted
     }
 
     public struct SimEvent

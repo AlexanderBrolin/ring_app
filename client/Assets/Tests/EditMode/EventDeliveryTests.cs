@@ -657,6 +657,7 @@ namespace Ring.Simulation.Tests
                 // as the wave pair above and for the same reason (spec §3.4).
                 [SimEventKind.DirectorActivated] = DeliveryChannel.All,
                 [SimEventKind.DirectorDied] = DeliveryChannel.All,
+                [SimEventKind.PlayerExtracted] = DeliveryChannel.Visible,
                 [SimEventKind.ProjectileFired] = DeliveryChannel.None,
                 [SimEventKind.ProjectileHit] = DeliveryChannel.None,
                 [SimEventKind.ProjectileBlocked] = DeliveryChannel.None,

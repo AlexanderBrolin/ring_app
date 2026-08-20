@@ -52,6 +52,12 @@ namespace Ring.Simulation.Visibility
                 case SimEventKind.MobDied:
                 case SimEventKind.PlayerDamaged:
                 case SimEventKind.PlayerDied:
+                // Stage 3 Т23: an extraction is something the other two SEE
+                // happen — the same channel a death rides, for the same reason
+                // (it is an event about a body at a place, not an announcement
+                // about the raid). What the raid announces to everyone —
+                // portals closing, the Director falling — is above.
+                case SimEventKind.PlayerExtracted:
                     return DeliveryChannel.Visible;
 
                 case SimEventKind.WaveStarted:
