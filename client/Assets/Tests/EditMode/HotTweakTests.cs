@@ -73,7 +73,9 @@ namespace Ring.Simulation.Tests
         /// ExtractTimer/LootTargetContainerId map to float.PositiveInfinity
         /// (declared inert that task, no ApplyConfig clamp until Т17/Т19/Т23
         /// give them behavior — Т17 has since paid that debt for LootTimer,
-        /// which now maps to the longest transfer in the new tier table),
+        /// which now maps to the longest transfer in the new tier table, and
+        /// Т19 paid it for RepairTimer, whose own map entry a few lines below
+        /// carries the reasoning; only ExtractTimer is still owed, by Т23),
         /// and `typeof(byte)` joined
         /// `unmeasuredFieldTypes` below for ExtractKind/LootTargetSlot — the
         /// struct's first byte fields, small discriminants rather than

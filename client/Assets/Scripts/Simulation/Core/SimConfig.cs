@@ -77,8 +77,9 @@ namespace Ring.Simulation.Core
 
         /// Stage 3 Task 2 (spec Р261/Р225, errata E-6 D-I8): the ammo economy.
         /// ShotsPerCell converts one picked-up energy cell into this many shots
-        /// (the pickup behavior itself is a later task — WeaponSystem.AddAmmo is
-        /// the shared conversion point it will call). AmmoStart seeds
+        /// (the pickup behavior itself has since landed — Loot.PickupSystem
+        /// .Collect calls SimulationWorld.AddAmmo, the shared conversion
+        /// point named here). AmmoStart seeds
         /// PlayerState.Ammo at match start (SimulationWorld's constructor);
         /// AmmoMax is the magazine ceiling SimulationWorld.ApplyConfig clamps
         /// Ammo down to on a hot-tweak. EmergencyFireInterval is the slower

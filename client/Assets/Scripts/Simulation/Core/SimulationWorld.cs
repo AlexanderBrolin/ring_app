@@ -1151,7 +1151,9 @@ namespace Ring.Simulation.Core
         /// Stage 3 Task 17 — THE ADDRESSEE HAS PAID. Loot.LootOps.Validate
         /// refuses `slot` outside [0, SlotCount) with its own
         /// LootRefusal.SlotOutOfRange BEFORE the byte is ever read, and the
-        /// wire path (Т20) reaches this method only through that validation.
+        /// wire path (Т28 — LootRequestNet) has no caller here TODAY and,
+        /// when it lands, reaches this method only through that same
+        /// validation.
         /// The assumption stands as an assumption — this method still checks
         /// nothing itself, and a future SECOND caller would inherit the same
         /// obligation — but it now names a check that exists rather than one
@@ -1521,7 +1523,14 @@ namespace Ring.Simulation.Core
             // repair channel dies with its owner too — a corpse left
             // mid-channel would carry stale state into the digest and
             // WorldSave, same reason the three lines above already exist.
-            p.RepairTimer = 0f;
+            // Through AbortChannels rather than a second copy of its body
+            // (phase review Ф4, B-4): that method is the ONE home of "this
+            // channel is cancellable", and every channel damage cancels,
+            // death cancels too — so Т23's ExtractTimer line lands there once
+            // and death inherits it for free. The three transfer lines ABOVE
+            // stay KillPlayer's own on purpose: damage must NOT abort a
+            // transfer (spec §3.8), so they do not belong to that home.
+            AbortChannels(ref p);
             Emit(SimEventKind.PlayerDied, blowPos, index, default, 0f, zone: zone, hitDir: dir,
                 playerIndex: (byte)index);
             // Stage 3 Task 3 (spec §3.6, errata E-6 C-I10): the corpse's
@@ -1749,7 +1758,9 @@ namespace Ring.Simulation.Core
             // above. Slot CONTENT is deliberately NOT copied here, on the
             // same reasoning CaptureSnapshot's own backpack note gives
             // below: it isn't rendered by the interpolated frame, only
-            // opened through a reliable message a later task (Т17) adds.
+            // carried by the ContainerSlots snapshot block (spec §3.12 tag
+            // 10, Т25) and only inside LootRadius (Р238) — never by the
+            // reliable pair, which carries requests and refusal codes (Т28).
             target.ContainerCount = _containerCount;
             System.Array.Copy(_containers, target.Containers, _containerCount);
             target.Wave = _wave;
@@ -1768,9 +1779,10 @@ namespace Ring.Simulation.Core
             // either alias the live world's own backpack into a frame the
             // renderer keeps across ticks, or force a per-frame clone on a
             // path whose whole contract is "no allocation". The backpack's
-            // own consumer is the inventory window (Т20), which reads the
-            // world/its reliable message rather than the interpolated render
-            // frame, so nothing is lost by leaving it out. StateHash and
+            // own consumer is the inventory window (Т32, Ф7), which reads the
+            // world / the Self snapshot block (spec §3.12 tag 7) rather than
+            // the interpolated render frame, so nothing is lost by leaving it
+            // out. StateHash and
             // WorldSave — the two places backpacks ARE canonical state — do
             // carry them, at the canonical order's own last position.
         }
@@ -2096,8 +2108,10 @@ namespace Ring.Simulation.Core
             // Stage 3 Т6 (Task 1's fields): the three hold-to-act channel
             // timers and the loot channel's own target, as one trailing group
             // — a new subsystem with no existing neighbor to sit beside, kept
-            // in declaration order among themselves. Inert until Т17/Т19/Т23
-            // give them writers; hashed from today, which is the whole point
+            // in declaration order among themselves. Т17 gave the loot timer
+            // and its target their writers, Т19 gave RepairTimer its own; only
+            // ExtractTimer is still inert, until Т23. Hashed from today,
+            // which is the whole point
             // of errata E-1 (a field that joins the hash later moves the
             // digest later, and stage 3 has only two sanctioned movements).
             h = StateHash64.Add(h, p.LootTimer);

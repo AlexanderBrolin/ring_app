@@ -6,8 +6,8 @@ using Unity.Mathematics;
 namespace Ring.Simulation.Tests
 {
     /// Stage 3 Task 17 (spec §3.8, Р234/Р239/Р265/Р266): the server side of
-    /// looting — `LootOps.Validate`'s nine checks with their eleven refusal
-    /// codes, `LootOps.Begin`'s transfer channel, and `LootOps.Update`'s tick.
+    /// looting — `LootOps.Validate`'s checks with their twelve refusal
+    /// codes (eleven at Т17; ItemNotUsable joined them in Т19), `LootOps.Begin`'s transfer channel, and `LootOps.Update`'s tick.
     ///
     /// A file of its own rather than more of LootContainerTests (coordinator
     /// decision D-5): spec §4 lists the loot checks under LootContainerTests,
@@ -174,7 +174,7 @@ namespace Ring.Simulation.Tests
                 "a collector standing still may Use a repair kit — the positive side of the DashingOrSliding branch");
         }
 
-        // ------------------------------------------- 2. the eleven refusals
+        // ------------------------------------------- 2. the twelve refusals
 
         [Test]
         public void Validate_RefusesDeadPlayer()
@@ -420,15 +420,17 @@ namespace Ring.Simulation.Tests
                 "Р266: the channel stores the container Id, never its array position");
         }
 
-        /// Coordinator decision D-1, RECORDED SIMPLIFICATION: the repair kit
-        /// sits outside the tier ladder (ItemDef.Tier == 0, spec §3.7), and
-        /// spec §3.8 only gives transfer times for tiers 1..4. A transfer time
-        /// of its own cannot be introduced here — that would be a balance
-        /// number living in code (CR 6) and the phase's data-delivery gate
-        /// (Т13) is spent — so the tier is clamped into [1, 4] and the kit
-        /// borrows tier one's, the cheapest. Whether the repair kit deserves
-        /// its own TransferSeconds entry is an OPEN OWNER QUESTION for
-        /// milestone В1, recorded rather than quietly decided here.
+        /// OWNER DECISION, SETTLED (R-158, 2026-08-19 — supersedes the
+        /// coordinator's D-1 simplification, which had recorded this as an
+        /// open question for milestone В1; see SimConfig's LootTransferTimes
+        /// .ForTier for the same ruling at the production home). The repair
+        /// kit sits outside the tier ladder (ItemDef.Tier == 0, spec §3.7)
+        /// and spec §3.8 gives transfer times for tiers 1..4 only. The owner
+        /// ruled the kit takes the SAME time as the cheapest tier, so the
+        /// clamp into [1, 4] is the intended rule rather than a stand-in:
+        /// no TransferSeconds entry of its own is coming, and no balance
+        /// number is owed here (which is also what keeps CR 6 satisfied
+        /// without spending the phase's exhausted data-delivery gate).
         [Test]
         public void Begin_RepairKitUsesTheFirstTierTransferTime()
         {
@@ -484,7 +486,7 @@ namespace Ring.Simulation.Tests
         /// OUTCOMES", NOT A SUCCESSFUL TRANSFER. The target below is
         /// `LootTargetContainerId = 4`, an id no container in this world
         /// carries, so the completion re-check Т18 added answers
-        /// LootRefusal.NoSuchContainer, the operation is cancelled SILENTLY —
+        /// LootRefusal.NoSuchContainer, the operation is canceled SILENTLY —
         /// and the three fields are zeroed all the same. That "all the same"
         /// is the whole subject here: a refusal must not leave a collector
         /// stuck in a channel that can never finish. The successful half lives
@@ -803,7 +805,7 @@ namespace Ring.Simulation.Tests
         /// The spec's FIRST stated reason for re-checking at all: "the
         /// container may have emptied". Someone else emptied the targeted slot
         /// while this channel was running, so check 4b answers SlotEmpty on the
-        /// expiry tick and the operation is cancelled SILENTLY: no exception,
+        /// expiry tick and the operation is canceled SILENTLY: no exception,
         /// no event, the client sees it by the next snapshot (spec §3.8).
         [Test]
         public void ContainerEmptiedMidTransfer_AbortsWithSlotEmpty()
@@ -994,6 +996,41 @@ namespace Ring.Simulation.Tests
                 "the repair kit heals exactly RepairKitHealAmount");
             Assert.AreEqual(0, w.InventoryCountOf(0), "and is consumed");
             Assert.AreEqual(0f, w.PlayerAt(0).RepairTimer, 0f, "the channel closes on completion");
+        }
+
+        /// Spec §3.8 check 2 on the REPAIR half of LootOps.Update, mirroring
+        /// TransferAborts_WhenWindowCloses above — phase review Ф4, finding
+        /// B-1. Update takes THIS tick's sanitized input for BOTH completion
+        /// loops (coordinator R-162), but the repair loop's own read had no
+        /// witness: every other repair fixture finishes its channel under
+        /// OpenInputs, so swapping `in inputs[i]` there for a hardcoded open
+        /// window — or dropping check 2 from that path into a lighter copy of
+        /// Validate — stayed green across the entire suite.
+        /// RepairKit_RefusedWhileDashing does NOT cover it: that one fails
+        /// completion on DashingOrSliding, with the window still up.
+        [Test]
+        public void RepairKit_AbortsWhenWindowCloses()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 5);
+            PlayerState before = w.PlayerAt(0);
+            before.Hp = HealableHp(cfg);
+            w.SetPlayerForTest(0, before);
+
+            LootOps.Begin(w, 0, LootOp.Use, 0, 0);
+            AdvanceChannel(w, OpenInputs(1), RepairKitTicks - 1);
+            Assert.Greater(w.PlayerAt(0).RepairTimer, 0f, "premise: the channel must still be running here");
+            Assert.AreEqual(LootRefusal.WindowClosed,
+                LootOps.Validate(w, 0, LootOp.Use, 0, 0, new SimInput()),
+                "premise: with the window down the same Use is refused");
+
+            LootOps.Update(w, ClosedInputs(1));
+
+            Assert.AreEqual(before.Hp, w.PlayerAt(0).Hp, 1e-4f,
+                "a collector who shut the window mid-repair is not healed");
+            Assert.AreEqual(1, w.InventoryCountOf(0), "and the kit is not consumed");
+            Assert.AreEqual(0f, w.PlayerAt(0).RepairTimer, 0f,
+                "the channel closes in both outcomes, refusal included");
         }
 
         /// Spec §3.7, in DELIBERATE contrast with the loot transfer channel

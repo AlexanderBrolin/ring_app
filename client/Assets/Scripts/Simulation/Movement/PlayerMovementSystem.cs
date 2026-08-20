@@ -205,7 +205,7 @@ namespace Ring.Simulation.Movement
                     // still be open (spec: denied no more than once per charge).
                     p.DashBufferTimer = 0f;
                     result.DashDenied = true;
-                    p.Vel = RegularMoveVel(p.Vel, input.MoveDir, in input, hero, dt);
+                    p.Vel = RegularMoveVel(p.Vel, in input, hero, dt);
                 }
             }
             else if (p.SlideTimer > 0f) // slide tick — link of the SAME chain (QC11)
@@ -285,7 +285,7 @@ namespace Ring.Simulation.Movement
                     // SlideBufferWindow (~5 ticks at TickDt) every tick the
                     // buffer keeps retrying/decaying (C11 below), not just
                     // the request's own tick.
-                    p.Vel = RegularMoveVel(p.Vel, input.MoveDir, in input, hero, dt);
+                    p.Vel = RegularMoveVel(p.Vel, in input, hero, dt);
                     // Stage 2 Task 10: the GATED request, not input.SlideRequested
                     // — a request the rate limit dropped must emit no
                     // StaminaDenied at all (it never reached the movement system
@@ -305,7 +305,7 @@ namespace Ring.Simulation.Movement
             }
             else
             {
-                p.Vel = RegularMoveVel(p.Vel, input.MoveDir, in input, hero, dt);
+                p.Vel = RegularMoveVel(p.Vel, in input, hero, dt);
             }
 
             // Stamina regen (Tasks 9/10): only once the post-dash delay has
@@ -378,9 +378,14 @@ namespace Ring.Simulation.Movement
         /// `aimHeld` stopped being an honest name the moment a second
         /// condition started reading it; no test names the parameter
         /// (verified by grep — every reference to RegularMoveVel outside
-        /// this file is a comment, never a call).
-        static float2 RegularMoveVel(float2 vel, float2 moveDir, in SimInput input, in HeroSimConfig hero, float dt)
+        /// this file is a comment, never a call). The separate `moveDir`
+        /// parameter went the same way in the Ф4 phase review (B-6): all
+        /// three call sites passed `input.MoveDir` NEXT TO `in input`, the
+        /// same datum twice, so the heading is read off the input here for
+        /// exactly the reason AimHeld already was.
+        static float2 RegularMoveVel(float2 vel, in SimInput input, in HeroSimConfig hero, float dt)
         {
+            float2 moveDir = input.MoveDir;
             if (math.lengthsq(moveDir) <= 1e-6f)
                 return MoveTowards(vel, float2.zero, hero.Friction * dt);
             float maxSpeed = SlowsMovement(in input) ? hero.MaxSpeed * hero.AimMoveSpeedFrac : hero.MaxSpeed;

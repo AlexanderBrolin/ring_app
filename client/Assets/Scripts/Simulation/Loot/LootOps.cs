@@ -361,9 +361,9 @@ namespace Ring.Simulation.Loot
         /// through a new world getter whose only consumer would be this one
         /// system — which also keeps looting an honest
         /// `(state, input) -> state` function (CR 2). Sanitized rather than
-        /// raw because Т20 will force the window flag back down inside a dash
-        /// or a slide: the transfer's last look at the world must see exactly
-        /// what movement saw.
+        /// raw because Т20's sanitizer forces the window flag back down
+        /// inside a dash or a slide: the transfer's last look at the world
+        /// must see exactly what movement saw.
         ///
         /// `inputs.Length` is NOT checked against PlayerCount, the same
         /// contract Validate's own `playerIndex` doc states and
@@ -430,9 +430,9 @@ namespace Ring.Simulation.Loot
                     // EventRelevance.ChannelFor (typed on SimEventKind, and
                     // built to throw on an unaccounted one) would take the whole
                     // tick down. Т29 owns the enum, the channel and this
-                    // emission together. The same debt, in the same words, is
-                    // already recorded at Loot.PickupSystem.AdvanceTtl for
-                    // PickupTaken.
+                    // emission together. The same debt, with the same named
+                    // addressee, is already recorded at
+                    // Loot.PickupSystem.AdvanceTtl for PickupTaken.
                     w.TryTakeFromContainer(p.LootTargetContainerId, p.LootTargetSlot, out byte itemId);
                     w.TryAddItem(i, itemId);
                 }

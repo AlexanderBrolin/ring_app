@@ -144,11 +144,11 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(expected.DashRequested, actual.DashRequested, $"{where}: DashRequested");
             Assert.AreEqual(expected.AimHeld, actual.AimHeld, $"{where}: AimHeld");
             Assert.AreEqual(expected.SlideRequested, actual.SlideRequested, $"{where}: SlideRequested");
-            // Stage 3 Task 17: compared like every field above even though the
-            // wire does not carry it yet (Т20 owns the bit) — so the day it
-            // starts being carried, every round trip in this file is already
-            // watching it. Today both sides are false on every sample, which
-            // is the honest reading of "not on the wire", not a skipped check.
+            // Stage 3 Task 17, CARRIED SINCE Т20: compared like every field
+            // above, and no longer vacuously — the wire really does carry the
+            // bit now (InputCodec.InventoryOpenBit, byte 7 bit 4), and the
+            // second SampleInputs frame raises it, so this line watches a
+            // value that actually changes across the set.
             Assert.AreEqual(expected.InventoryOpen, actual.InventoryOpen, $"{where}: InventoryOpen");
         }
 
@@ -168,8 +168,11 @@ namespace Ring.Simulation.Tests
 
         /// Three frames whose wire bytes are all different from one another:
         /// distinct heading, distinct deflection, distinct aim point, distinct
-        /// aim height and BOTH polarities of all four flags across the set — so
+        /// aim height and BOTH polarities of all five flags across the set — so
         /// a transposed byte or a swapped flag bit has somewhere to show.
+        /// InventoryOpen (Т20's bit 4) rides the SECOND frame, the same
+        /// "the specimen is the second element" convention the mutation
+        /// discipline uses.
         static SimInput[] SampleInputs(in SimConfig cfg)
         {
             float r = cfg.Arena.Radius;
@@ -190,6 +193,7 @@ namespace Ring.Simulation.Tests
                     AimHeight = cfg.Hero.MaxAimHeight * 0.81f,
                     FireHeld = false, DashRequested = true,
                     AimHeld = false, SlideRequested = true,
+                    InventoryOpen = true,
                 },
                 new SimInput
                 {

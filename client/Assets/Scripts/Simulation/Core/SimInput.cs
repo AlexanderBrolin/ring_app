@@ -31,8 +31,9 @@ namespace Ring.Simulation.Core
         ///
         /// CARRIED IN FULL AS OF STAGE 3 TASK 20. Wire bit —
         /// InputCodec.InventoryOpenBit (byte 7, bit 4); movement slowdown —
-        /// PlayerMovementSystem.SlowsMovement, read by all three
-        /// RegularMoveVel call sites; WeaponSystem.CanFire's fifth
+        /// PlayerMovementSystem.SlowsMovement, read once inside
+        /// RegularMoveVel (its three call sites pass the input, not the
+        /// predicate); WeaponSystem.CanFire's fifth
         /// eligibility term; SimInputSanitizer.Sanitize forces the flag back
         /// down for a dead, extracted, dashing or sliding player (that
         /// method's own doc explains why gating there, not only in

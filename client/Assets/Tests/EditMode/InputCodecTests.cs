@@ -474,11 +474,12 @@ namespace Ring.Simulation.Tests
         {
             // Stage 3 Task 20 (spec §3.8/§3.11): the fifth flag bit — the loot
             // window is now carried on the wire like the other four, in bits
-            // FlagCombinations_AllSixteen_RoundTripExactly and FlagBits_
-            // EachOccupiesItsDocumentedPosition's own combinatorial sweep
-            // don't touch (both predate this bit and are not re-scoped to
-            // it — see FlagBits_EachOccupiesItsDocumentedPosition's own new
-            // case for the direct byte-level pin instead).
+            // FlagCombinations_AllSixteen_RoundTripExactly does not touch:
+            // that sweep predates this bit and is deliberately NOT re-scoped
+            // to it (sixteen combinations of the original four). FlagBits_
+            // EachOccupiesItsDocumentedPosition, by contrast, WAS extended to
+            // bit 4 in this same task (decision D-6) and carries the direct
+            // byte-level pin.
             var baseline = new SimInput
             {
                 MoveDir = new float2(0.3f, -0.4f),

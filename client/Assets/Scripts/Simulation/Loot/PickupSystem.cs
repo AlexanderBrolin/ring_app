@@ -47,7 +47,9 @@ namespace Ring.Simulation.Loot
                 {
                     // Spec §3.6: swap-remove WITHOUT an event — a pickup
                     // quietly aging out is not a VFX/SFX-relevant occurrence
-                    // the way PickupTaken (a later task) is. Safe under the
+                    // the way PickupTaken (Т29 — the task that gives every
+                    // Stage 3 event kind its enum entry, channel and emitter
+                    // together) is. Safe under the
                     // `ref` above for the same reason the back-to-front sweep
                     // is: the slot this overwrites is never read again, in
                     // this turn or any later one.

@@ -404,7 +404,9 @@ namespace Ring.Simulation.Core
         /// 3 (SimulationWorld.SpawnPickup's CAP-overflow branch only — a
         /// zero-amount drop is refused silently and does not count as a
         /// skip, see SpawnPickup's own doc, Р260); ContainerSpawnsSkipped
-        /// still awaits its own later task. Part of StateHash since Т6,
+        /// got its own writers in Т15/Т16 — SimulationWorld.SpawnContainer's
+        /// cap-overflow branch and ContainerStore's placement give-up.
+        /// Part of StateHash since Т6,
         /// after the three counters above.
         public int PickupSpawnsSkipped, ContainerSpawnsSkipped;
     }

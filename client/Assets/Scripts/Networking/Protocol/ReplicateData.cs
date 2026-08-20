@@ -110,7 +110,7 @@ namespace Ring.Networking.Protocol
         /// (Р82, app-ltw). It cannot in fact refuse today — the writer below
         /// always fills all `SizeBytes` — and it is written as a `Try` anyway
         /// so that a future layout change cannot turn "too few bytes" into a
-        /// throw inside the tick pipeline. Callers must honour the `false`.
+        /// throw inside the tick pipeline. Callers must honor the `false`.
         public bool TryToInput(in SimConfig cfg, out SimInput input)
         {
             System.Span<byte> wire = stackalloc byte[InputCodec.SizeBytes];
