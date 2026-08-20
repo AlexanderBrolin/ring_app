@@ -25,6 +25,10 @@ namespace Ring.Simulation.Loot
         NoSuchContainer = 4, SlotOutOfRange = 5, SlotEmpty = 6,
         InventoryIndexOutOfRange = 7, TooFar = 8, NotEnoughSlots = 9, Busy = 10,
         DashingOrSliding = 11,
+        // Stage 3 Task 19 (coordinator D-1, the twelfth check): Validate's
+        // own 6b returns this when a `Use` request addresses an item whose
+        // ItemDef.Kind is not RepairKit.
+        ItemNotUsable = 12,
     }
 
     /// Stage 3 Tasks 17-18 (spec §3.8): the ONE home of loot validation, of
@@ -36,11 +40,13 @@ namespace Ring.Simulation.Loot
     /// else to live) plus `Begin`/`Update` for `Take`. Т18 added the other
     /// half: the completion re-check on the expiry tick, the per-slot race
     /// between two collectors that falls out of it, and `Drop`'s ground
-    /// container. Still elsewhere: the repair kit's own channel is Т19 (it
-    /// runs on RepairTimer, not this one); the wire, the movement slowdown,
-    /// WeaponSystem.CanFire's `!InventoryOpen` term and the window sanitizer
-    /// are Т20; LootRequestNet/LootResultNet are Т28; SimEventKind's own loot
-    /// entries are Т29. None of that is invented here ahead of its own task.
+    /// container. Т19 added the repair kit's own channel (it runs on
+    /// RepairTimer, not LootTimer) — `Begin`'s `Use` branch, `Validate`'s
+    /// twelfth check (ItemNotUsable), and `Update`'s second completion loop.
+    /// Still elsewhere: the wire, the movement slowdown, WeaponSystem.
+    /// CanFire's `!InventoryOpen` term and the window sanitizer are Т20;
+    /// LootRequestNet/LootResultNet are Т28; SimEventKind's own loot entries
+    /// are Т29. None of that is invented here ahead of its own task.
     public static class LootOps
     {
         /// The ONE home of all nine server checks (spec §3.8, Р265). A PURE
@@ -145,11 +151,28 @@ namespace Ring.Simulation.Loot
                 // no other is reachable from here.
                 if (slot < 0 || slot >= w.InventoryCountOf(playerIndex))
                     return LootRefusal.InventoryIndexOutOfRange;
+
+                // (6b) Use only (Stage 3 Task 19, coordinator D-1: the
+                // twelfth check). The addressed item must actually BE a
+                // repair kit — Validate has no other check of item KIND
+                // anywhere, and without this a Use on a Trophy would open a
+                // channel (RepairTimer armed by Begin) that heals nothing
+                // and, on completion, finds nothing sensible to consume.
+                // Placed immediately after (6) — the one place both the
+                // index and the catalog are already in hand.
+                if (op == LootOp.Use)
+                {
+                    byte usedItemId = w.InventoryItemAt(playerIndex, slot);
+                    if (ItemCatalogLookup.Find(usedItemId, cfg.Items).Kind != ItemKind.RepairKit)
+                        return LootRefusal.ItemNotUsable;
+                }
             }
 
-            // (9) no transfer already running. Last of the nine, and shared
-            // by all three ops: one channel per collector.
-            if (p.LootTimer > 0f) return LootRefusal.Busy;
+            // (9) no transfer AND no repair channel already running (Stage 3
+            // Task 19, coordinator D-3): "one channel per collector" was
+            // only half-enforced before this task — a running Use did not
+            // block a new Take. Same code, same position, one extra term.
+            if (p.LootTimer > 0f || p.RepairTimer > 0f) return LootRefusal.Busy;
 
             // `Use` only (spec §3.8): neither dashing NOR sliding. Both close
             // the window, so gating on only one of them would be a hole —
@@ -187,13 +210,13 @@ namespace Ring.Simulation.Loot
         /// already means "no channel". Spec §3.17 keeps the discard as the
         /// cheap valve it is.
         ///
-        /// `Use`'s repair-kit channel runs on RepairTimer, not this one, and
-        /// belongs to Т19 — so it, alone now, still gets a named refusal: a
-        /// silent no-op would read as an operation that happened, same shape
-        /// SimulationWorld.SpawnContainer (R-99) uses for a call it cannot
-        /// honor. Begin stays the ONE entry point of all three ops (its
-        /// signature takes `op` for exactly that reason); splitting Drop out
-        /// would push a game rule into Т28's networking switch.
+        /// `Use`'s repair-kit channel runs on RepairTimer, not this one
+        /// (Stage 3 Task 19, spec §3.7) — armed below, its own branch,
+        /// deliberately NOT remembering which backpack slot asked for it
+        /// (coordinator D-2, see that branch's own doc). Begin stays the ONE
+        /// entry point of all three ops (its signature takes `op` for
+        /// exactly that reason); splitting Drop or Use out would push a game
+        /// rule into Т28's networking switch.
         public static void Begin(SimulationWorld w, int playerIndex, LootOp op,
             int containerId, int slot)
         {
@@ -240,12 +263,36 @@ namespace Ring.Simulation.Loot
                 w.SpawnContainer(ContainerKind.Ground, w.PlayerAt(playerIndex).Pos, one);
                 return;
             }
+            if (op == LootOp.Use)
+            {
+                // Stage 3 Task 19 (spec §3.7, errata E-6/C-I7, coordinator
+                // D-2): ASSUMES Validate has already answered None for these
+                // arguments, same contract as Take/Drop above (including the
+                // twelfth check above — the addressed item really is a
+                // repair kit right now).
+                //
+                // DELIBERATELY DOES NOT REMEMBER `slot`. LootTargetContainerId/
+                // LootTargetSlot belong to the transfer channel (their own
+                // doc at the field says so) — writing Use's backpack index
+                // there would give that field a second, disagreeing meaning
+                // depending on which op opened the channel it rides beside.
+                // The consequence, named here because the next reader will
+                // otherwise "fix" it: the completion tick (Update below)
+                // cannot re-check the SAME address — it re-finds a repair
+                // kit by KIND instead (FindRepairKitSlot), weaker than the
+                // Id-based protection Take gets against the same kind of
+                // drift (Р266) and accepted for the same reason D-2 names:
+                // consuming a DIFFERENT repair kit than the one the player
+                // pointed at is still a repair kit, where a different
+                // container is a different asset entirely.
+                ref PlayerState pUse = ref w.PlayerRef(playerIndex);
+                pUse.RepairTimer = w.Config.Loot.RepairKitChannelSeconds;
+                return;
+            }
             if (op != LootOp.Take)
             {
                 throw new System.ArgumentException(
-                    $"LootOps.Begin: {op} has no transfer channel — only Take does. Use's " +
-                    "repair-kit channel runs on RepairTimer, not LootTimer, and belongs to Т19; " +
-                    "its behavior is not implemented here yet.", nameof(op));
+                    $"LootOps.Begin: {op} is not a recognized loot operation.", nameof(op));
             }
 
             SimConfig cfg = w.Config;
@@ -390,6 +437,65 @@ namespace Ring.Simulation.Loot
                 p.LootTargetContainerId = 0;
                 p.LootTargetSlot = 0;
             }
+
+            // Stage 3 Task 19 (spec §3.7/§3.8, errata E-6/C-I7): the repair
+            // kit's own completion pass. A SEPARATE loop, not folded into
+            // the one above: LootTimer's own early exit already `continue`s
+            // past the rest of that iteration on the (overwhelmingly common)
+            // idle tick, and folding RepairTimer's decrement in there would
+            // either never run on that tick or force rewriting a loop whose
+            // golden-inertness the R-150 guard-class doc already pins. Same
+            // discipline, second channel: named early exit BEFORE any read,
+            // decrement before the re-check, the SAME Validate re-run rather
+            // than a lighter copy (rule 2).
+            for (int i = 0; i < w.PlayerCount; i++)
+            {
+                ref PlayerState p = ref w.PlayerRef(i);
+                if (p.RepairTimer <= 0f) continue; // ← same golden-inertness shape as R-150, second channel
+                p.RepairTimer -= SimulationWorld.TickDt;
+                if (p.RepairTimer > 0f) continue;
+
+                // Coordinator review round 1 (mandatory fix 2): `Config` is a
+                // by-value getter (see this file's own note above, "Config's
+                // getter returns the struct BY VALUE"), and R-150's own
+                // promise is "named early exit BEFORE any read" — reading it
+                // above the guard would run a whole-config copy on every
+                // idle tick of both golden scenarios for nothing. Read AFTER
+                // the guard, same spot Validate itself reads `w.Config`
+                // (after its own first checks, not at the top of the
+                // method).
+                SimConfig cfg = w.Config;
+                int slot = FindRepairKitSlot(w, i, cfg.Items);
+                if (Validate(w, i, LootOp.Use, 0, slot, in inputs[i]) == LootRefusal.None)
+                {
+                    w.TryRemoveItemAt(i, slot, out _);
+                    p.Hp = math.min(p.Hp + cfg.Loot.RepairKitHealAmount, cfg.Hero.MaxHp);
+                }
+                p.RepairTimer = 0f;
+            }
+        }
+
+        /// Coordinator D-2: Use's Begin does not remember which backpack
+        /// slot it started from (see that branch's own doc), so the
+        /// completion tick re-finds a repair kit by KIND instead of by the
+        /// ORIGINAL address. Ascending slot order, first match —
+        /// deterministic, and the only order this codebase ever reads a
+        /// backpack in (same convention TryAdd/UsedSlots already read it
+        /// in). -1 when the backpack carries none (the player dropped or
+        /// used their last one mid-channel): Validate's own check 6 turns a
+        /// negative slot into InventoryIndexOutOfRange, the same silent-
+        /// cancellation shape every other Update abort in this file already
+        /// takes — no new refusal code is owed to "nothing left to
+        /// consume".
+        static int FindRepairKitSlot(SimulationWorld w, int playerIndex, ItemDef[] catalog)
+        {
+            int count = w.InventoryCountOf(playerIndex);
+            for (int i = 0; i < count; i++)
+            {
+                if (ItemCatalogLookup.Find(w.InventoryItemAt(playerIndex, i), catalog).Kind == ItemKind.RepairKit)
+                    return i;
+            }
+            return -1;
         }
     }
 }

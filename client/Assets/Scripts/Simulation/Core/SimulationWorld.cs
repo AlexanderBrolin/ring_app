@@ -542,10 +542,15 @@ namespace Ring.Simulation.Core
                 // make this the ONE line here with a precomputed operand, and
                 // there is nothing to buy: ApplyConfig runs on a hot-tweak,
                 // not on the tick, over at most Arena.MaxPlayers players and a
-                // four-element table. RepairTimer/ExtractTimer stay unclamped
-                // until Т19/Т23 give them behavior and, with it, their
-                // ceilings.
+                // four-element table. ExtractTimer stays unclamped until Т23
+                // gives it behavior and, with it, its ceiling.
                 p.LootTimer = math.clamp(p.LootTimer, 0f, LootTransferTimes.Longest(in next.Loot));
+                // Stage 3 Task 19: the repair channel clamps down to the new
+                // config's own ceiling, same clamp-to-new-ceiling contract
+                // as every timer above — and unlike LootTimer's neighbor, a
+                // single named number, not an aggregate (there is exactly
+                // one repair-kit channel length, not a per-tier table).
+                p.RepairTimer = math.clamp(p.RepairTimer, 0f, next.Loot.RepairKitChannelSeconds);
                 _players[i] = p;
             }
         }
@@ -1334,6 +1339,19 @@ namespace Ring.Simulation.Core
         void IncrementKills(int index) { if (_players[index].Alive) _matchStats[index].Kills++; }
         void IncrementHeadshotKills(int index) { if (_players[index].Alive) _matchStats[index].HeadshotKills++; }
 
+        /// Stage 3 Task 19 (errata E-6/C-I7): the ONE home of "damage
+        /// cancels a hold-to-act channel". Т23 adds ExtractTimer to this
+        /// SAME method rather than growing a second copy of the rule — the
+        /// errata's own text names this requirement by number. `ref`
+        /// because the caller already holds one live PlayerState by
+        /// reference (DamagePlayer's own `p`) and a copy-in/copy-out here
+        /// would be the "lighter copy" this file's other channel code
+        /// (Loot.LootOps.Update's own doc) explicitly refuses to write.
+        static void AbortChannels(ref PlayerState p)
+        {
+            p.RepairTimer = 0f;
+        }
+
         /// Applies damage to one player (spec Interfaces, Task 16/23): a
         /// no-op once the player is already dead (spec §3.12 — stats stay frozen and
         /// no further PlayerDamaged/PlayerDied events fire); otherwise active dash
@@ -1367,6 +1385,14 @@ namespace Ring.Simulation.Core
             ref PlayerState p = ref _players[victimIndex];
             if (!p.Alive) return;
             if (p.IframeTimer > 0f) return;
+
+            // Stage 3 Task 19 (spec §3.7, errata E-6/C-I7): AFTER both
+            // guards — an absorbed or posthumous "hit" must not reach here,
+            // same "only an APPLIED blow counts" contract this method's own
+            // credit gate follows a few lines below (Р222 — symmetry with
+            // the extraction channel's own i-frame rule, which Т23 will
+            // point at this same call).
+            AbortChannels(ref p);
 
             p.Hp -= dmg;
             // Credit sits AFTER both guards on purpose: an absorbed or
@@ -1491,6 +1517,11 @@ namespace Ring.Simulation.Core
             p.LootTimer = 0f;
             p.LootTargetContainerId = 0;
             p.LootTargetSlot = 0;
+            // Stage 3 Task 19 (spec §3.8 symmetry, errata E-6/A-I8): the
+            // repair channel dies with its owner too — a corpse left
+            // mid-channel would carry stale state into the digest and
+            // WorldSave, same reason the three lines above already exist.
+            p.RepairTimer = 0f;
             Emit(SimEventKind.PlayerDied, blowPos, index, default, 0f, zone: zone, hitDir: dir,
                 playerIndex: (byte)index);
             // Stage 3 Task 3 (spec §3.6, errata E-6 C-I10): the corpse's

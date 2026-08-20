@@ -118,6 +118,23 @@ namespace Ring.Simulation.Tests
         const int Tier1Ticks = 10;
         const int Tier2Ticks = 18;
 
+        /// How many LootOps.Update ticks the repair kit's own 2-second
+        /// channel REALLY takes — computed independently, deliberately NOT
+        /// derived from Loot.RepairKitChannelSeconds (lesson 324, same
+        /// discipline Tier1Ticks/Tier2Ticks above already follow): a
+        /// mutation of the config number, or of ApplyConfig's own clamp, has
+        /// to move ONE side of the comparisons below, never both at once.
+        ///
+        /// The channel counts down by repeated float32 subtraction of TickDt
+        /// (1f/30f = 0.03333333507…), and 2f is itself inexact in binary32
+        /// under that arithmetic: after SIXTY subtractions the remainder is
+        /// still +5.588e-07 > 0 — one more than the naive ceil(2 / TickDt) =
+        /// 60 — and it is the SIXTY-FIRST subtraction that crosses zero,
+        /// landing at -3.333e-02. Independently verified (numpy float32,
+        /// same IEEE-754 RNE C# uses): 59 -> +3.333389e-02, 60 -> +5.5879e-07,
+        /// 61 -> -3.333278e-02.
+        const int RepairKitTicks = 61;
+
         // ------------------------------------------------------- 1. positives
 
         [Test]
@@ -423,26 +440,24 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(cfg.Loot.TransferSeconds[0], w.PlayerAt(0).LootTimer, 1e-6f);
         }
 
-        /// Stage 3 Task 18 (owner ruling R-161, coordinator F-3): NARROWED to
-        /// `Use`, and RENAMED with it. Т17 refused both `Drop` and `Use` here
-        /// because neither was implemented; `Drop` is now implemented and
-        /// deliberately has no transfer channel at all, so the old name
-        /// (`…AnOpWithNoTransferChannel`) had become literally false — a name
-        /// that no longer describes its subject is a defect of the same weight
-        /// as a stale doc, not a cosmetic one.
-        ///
-        /// What survives is the rule the refusal exists for: `Use`'s own
-        /// channel runs on RepairTimer and belongs to Т19, and a silent no-op
-        /// would read as an executed operation. The named refusal says whose
-        /// work is missing, the same shape SimulationWorld.SpawnContainer
-        /// (R-99) and Geometry.ZoneSpawnRingRadius (R-64) already use.
+        /// Stage 3 Task 19 (coordinator review round 1, mandatory fix 1):
+        /// RENAMED and RETARGETED, not deleted. `Use` now arms `RepairTimer`
+        /// (§2.3 of the plan) and no longer reaches this method's own
+        /// `throw` — the old name and body described behavior that no longer
+        /// exists, but simply deleting the test would leave the `throw`
+        /// branch itself WITHOUT A SINGLE WITNESS: it still guards a
+        /// genuinely unrecognized `LootOp` (nothing in production ever
+        /// passes one before Т28, but `Begin` does not itself verify that —
+        /// same ASSUMES-Validate-already-checked contract every other branch
+        /// here documents), and a mutation removing it would pass every test
+        /// in this file untouched. `(LootOp)7` is the same sentinel
+        /// `Validate_RefusesUnknownOp` already uses for its own check 3.
         [Test]
-        public void Begin_RefusesUse_UntilItsOwnChannelLands()
+        public void Begin_ThrowsOnUnrecognizedOp()
         {
             var w = MakeWorld(out SimConfig cfg);
-            w.SetInventoryForTest(0, 5); // the repair kit — the item Use is for
 
-            Assert.Throws<System.ArgumentException>(() => LootOps.Begin(w, 0, LootOp.Use, 0, 0));
+            Assert.Throws<System.ArgumentException>(() => LootOps.Begin(w, 0, (LootOp)7, 0, 0));
         }
 
         // ------------------------------------------------------ 4. Update
@@ -906,6 +921,260 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, w.InventoryCountOf(0),
                 "the dropped item leaves the backpack — it must not exist in two places at once");
             Assert.AreEqual(1, w.InventoryItemAt(0, 0), "and the item that was NOT dropped stays");
+        }
+
+        // ------------------------------------------------ 8. RepairKit (Use)
+
+        [Test]
+        public void Validate_RefusesUse_OnNonRepairKitItem()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 1); // a tier-1 Trophy, not a repair kit
+
+            Assert.AreEqual(LootRefusal.ItemNotUsable,
+                LootOps.Validate(w, 0, LootOp.Use, 0, 0, WindowOpen()),
+                "coordinator D-1, the twelfth check: Use on a non-repair-kit item is refused");
+        }
+
+        [Test]
+        public void Validate_RefusesTake_WhileRepairKitChannelRuns()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            int id = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new byte[] { 1 });
+            PlayerState p = w.PlayerAt(0);
+            p.RepairTimer = cfg.Loot.RepairKitChannelSeconds;
+            w.SetPlayerForTest(0, p);
+
+            Assert.AreEqual(LootRefusal.Busy,
+                LootOps.Validate(w, 0, LootOp.Take, id, 0, WindowOpen()),
+                "coordinator D-3: one channel per collector — a running repair also blocks a new Take");
+        }
+
+        [Test]
+        public void Begin_ForUse_ArmsRepairTimerFromConfig()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 5);
+
+            LootOps.Begin(w, 0, LootOp.Use, 0, 0);
+
+            Assert.AreEqual(cfg.Loot.RepairKitChannelSeconds, w.PlayerAt(0).RepairTimer, 1e-6f,
+                "Use arms RepairTimer from the config, not LootTimer");
+            Assert.AreEqual(0f, w.PlayerAt(0).LootTimer, 0f, "and leaves the transfer channel untouched");
+        }
+
+        /// All positive (healing) fixtures below except DoesNotOverheal set
+        /// Hp to exactly this expression — a fixed 10-unit headroom ABOVE the
+        /// post-heal value, so the overheal clamp never actually fires here
+        /// (that branch is DoesNotOverheal's own, single witness). Without a
+        /// shared rule every positive test would start at the default
+        /// (MaxHp, full health) and silently exercise the clamp instead of
+        /// the heal, conflating two facts one test is supposed to own alone.
+        static float HealableHp(in SimConfig cfg) => cfg.Hero.MaxHp - cfg.Loot.RepairKitHealAmount - 10f;
+
+        [Test]
+        public void RepairKit_HealsAndIsConsumed()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 5);
+            PlayerState before = w.PlayerAt(0);
+            before.Hp = HealableHp(cfg);
+            w.SetPlayerForTest(0, before);
+            Assert.Less(before.Hp + cfg.Loot.RepairKitHealAmount, cfg.Hero.MaxHp,
+                "premise: healing must not hit the ceiling, or this test cannot tell heal from clamp");
+
+            LootOps.Begin(w, 0, LootOp.Use, 0, 0);
+            SimInput[] inputs = OpenInputs(1);
+            AdvanceChannel(w, inputs, RepairKitTicks - 1);
+            Assert.Greater(w.PlayerAt(0).RepairTimer, 0f, "premise: channel must still be running here");
+
+            LootOps.Update(w, inputs);
+
+            Assert.AreEqual(before.Hp + cfg.Loot.RepairKitHealAmount, w.PlayerAt(0).Hp, 1e-4f,
+                "the repair kit heals exactly RepairKitHealAmount");
+            Assert.AreEqual(0, w.InventoryCountOf(0), "and is consumed");
+            Assert.AreEqual(0f, w.PlayerAt(0).RepairTimer, 0f, "the channel closes on completion");
+        }
+
+        /// Spec §3.7, in DELIBERATE contrast with the loot transfer channel
+        /// (LootOpsTests.DamageDoesNotAbortTransfer, Т18): a REAL, unabsorbed
+        /// hit resets the repair channel immediately — the extraction
+        /// channel's own rule (Р222), not the transfer's.
+        [Test]
+        public void RepairKit_ChannelResetByDamage()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 5);
+            LootOps.Begin(w, 0, LootOp.Use, 0, 0);
+            SimInput[] inputs = OpenInputs(1);
+            AdvanceChannel(w, inputs, RepairKitTicks / 2);
+            Assert.Greater(w.PlayerAt(0).RepairTimer, 0f, "premise: channel must still be running here");
+            float hpBeforeBlow = w.PlayerAt(0).Hp;
+            float blow = cfg.Hero.MaxHp * 0.1f; // a fixture expression, not a balance literal
+
+            w.DamagePlayer(0, ProjectileIds.NoOwner, blow, w.PlayerAt(0).Pos, HitZone.Body,
+                new float2(1f, 0f));
+
+            Assert.AreEqual(hpBeforeBlow - blow, w.PlayerAt(0).Hp, 1e-4f,
+                "premise: the blow must actually have landed, or this test proves nothing");
+            Assert.IsTrue(w.PlayerAt(0).Alive, "premise: and it must not be lethal");
+            Assert.AreEqual(0f, w.PlayerAt(0).RepairTimer, 0f,
+                "damage resets the repair channel immediately — unlike the loot transfer");
+
+            AdvanceChannel(w, inputs, RepairKitTicks);
+
+            Assert.AreEqual(1, w.InventoryCountOf(0), "the repair kit is not consumed by an interrupted channel");
+            Assert.AreEqual(hpBeforeBlow - blow, w.PlayerAt(0).Hp, 1e-4f, "nor is the player healed");
+        }
+
+        /// Symmetry with Р127 / PvpDamageTests.IframesAbsorbPvpDamage: an
+        /// ABSORBED hit (active dash i-frames) must not reach
+        /// SimulationWorld.AbortChannels at all — DamagePlayer returns before
+        /// that call, exactly as it does before crediting a shooter.
+        [Test]
+        public void RepairKit_AbsorbedHitDoesNotReset()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 5);
+            // HealableHp, not the default full Hp a fresh world spawns with
+            // (SimulationWorld's constructor seeds Hp = Hero.MaxHp): without
+            // headroom the completion heal below would clamp at an ALREADY-
+            // full Hp, and "heals once it does" would be unfalsifiable —
+            // Greater(MaxHp, MaxHp) is false regardless of whether the heal
+            // ran at all.
+            PlayerState seed = w.PlayerAt(0);
+            seed.Hp = HealableHp(cfg);
+            w.SetPlayerForTest(0, seed);
+            LootOps.Begin(w, 0, LootOp.Use, 0, 0);
+            SimInput[] inputs = OpenInputs(1);
+            AdvanceChannel(w, inputs, RepairKitTicks / 2);
+            float timerBeforeBlow = w.PlayerAt(0).RepairTimer;
+            Assert.Greater(timerBeforeBlow, 0f, "premise: channel must still be running here");
+            PlayerState p = w.PlayerAt(0);
+            p.IframeTimer = cfg.Hero.DashIframes;
+            w.SetPlayerForTest(0, p);
+            float hpBeforeBlow = w.PlayerAt(0).Hp;
+
+            w.DamagePlayer(0, ProjectileIds.NoOwner, cfg.Hero.MaxHp * 0.1f, w.PlayerAt(0).Pos,
+                HitZone.Body, new float2(1f, 0f));
+
+            Assert.AreEqual(hpBeforeBlow, w.PlayerAt(0).Hp, 1e-4f, "premise: i-frames absorbed the blow");
+            Assert.AreEqual(timerBeforeBlow, w.PlayerAt(0).RepairTimer, 0f,
+                "an absorbed hit must not reset the channel — same rule as the extraction channel (Р222)");
+
+            AdvanceChannel(w, inputs, RepairKitTicks - RepairKitTicks / 2);
+
+            Assert.AreEqual(0, w.InventoryCountOf(0), "the channel runs to completion under an absorbed hit");
+            Assert.AreEqual(hpBeforeBlow + cfg.Loot.RepairKitHealAmount, w.PlayerAt(0).Hp, 1e-4f,
+                "and heals exactly RepairKitHealAmount once it does");
+        }
+
+        [Test]
+        public void RepairKit_DoesNotOverheal()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 5);
+            PlayerState p = w.PlayerAt(0);
+            p.Hp = cfg.Hero.MaxHp - cfg.Loot.RepairKitHealAmount * 0.5f; // premise: heal would overshoot
+            w.SetPlayerForTest(0, p);
+            Assert.Greater(p.Hp + cfg.Loot.RepairKitHealAmount, cfg.Hero.MaxHp,
+                "premise: an unclamped heal would exceed MaxHp, or this test cannot tell clamp from coincidence");
+
+            LootOps.Begin(w, 0, LootOp.Use, 0, 0);
+            AdvanceChannel(w, OpenInputs(1), RepairKitTicks);
+
+            Assert.AreEqual(cfg.Hero.MaxHp, w.PlayerAt(0).Hp, 1e-4f, "healing clamps at MaxHp, never above it");
+        }
+
+        /// The completion tick re-validates through the SAME `Validate` the
+        /// Begin-time check used (coordinator §2.4, R-119): starting a dash
+        /// BETWEEN Begin and the expiry tick must cancel the heal on
+        /// completion, not merely refuse a fresh Begin.
+        [Test]
+        public void RepairKit_RefusedWhileDashing()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 5);
+            float hpBefore = w.PlayerAt(0).Hp;
+            LootOps.Begin(w, 0, LootOp.Use, 0, 0);
+            SimInput[] inputs = OpenInputs(1);
+            AdvanceChannel(w, inputs, RepairKitTicks - 1);
+            Assert.Greater(w.PlayerAt(0).RepairTimer, 0f, "premise: channel must still be running here");
+            PlayerState p = w.PlayerAt(0);
+            p.DashTimer = cfg.Hero.DashDuration;
+            w.SetPlayerForTest(0, p);
+
+            LootOps.Update(w, inputs);
+
+            Assert.AreEqual(hpBefore, w.PlayerAt(0).Hp, 1e-4f, "a dashing collector is not healed on completion");
+            Assert.AreEqual(1, w.InventoryCountOf(0), "nor is the repair kit consumed");
+            Assert.AreEqual(0f, w.PlayerAt(0).RepairTimer, 0f, "the channel still closes, refusal or not");
+        }
+
+        /// Coordinator D-2: `Begin` does not remember WHICH slot armed the
+        /// channel (LootTarget* belong to the transfer, not Use) — completion
+        /// re-finds a repair kit by KIND. The subject is the SECOND slot
+        /// (lesson 227): an implementation that always addressed slot 0
+        /// would pass a one-item backpack by coincidence.
+        [Test]
+        public void RepairKit_FindsTheKitRegardlessOfSlotPosition()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 1, 5); // a Trophy at slot 0, the repair kit at slot 1
+            PlayerState p0 = w.PlayerAt(0);
+            p0.Hp = HealableHp(cfg);
+            w.SetPlayerForTest(0, p0);
+
+            LootOps.Begin(w, 0, LootOp.Use, 0, 1); // the player pointed at slot 1
+            AdvanceChannel(w, OpenInputs(1), RepairKitTicks);
+
+            Assert.AreEqual(p0.Hp + cfg.Loot.RepairKitHealAmount, w.PlayerAt(0).Hp, 1e-4f,
+                "the kit heals even though completion does not remember slot 1 (coordinator D-2)");
+            Assert.AreEqual(1, w.InventoryCountOf(0), "exactly one item remains");
+            Assert.AreEqual(1, w.InventoryItemAt(0, 0), "and it is the Trophy — the repair kit is the one consumed");
+        }
+
+        /// Same class as LootOpsTests.ContainerEmptiedMidTransfer_AbortsWithSlotEmpty
+        /// for the transfer channel: something else consumes the only repair
+        /// kit while this channel is running, and completion must cancel
+        /// silently rather than crash or heal from nothing.
+        [Test]
+        public void RepairKit_AbortsIfNoKitRemainsAtCompletion()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            w.SetInventoryForTest(0, 5);
+            float hpBefore = w.PlayerAt(0).Hp;
+            LootOps.Begin(w, 0, LootOp.Use, 0, 0);
+            Assert.Greater(w.PlayerAt(0).RepairTimer, 0f,
+                "premise: the channel must actually be running before it gets robbed of its target");
+            SimInput[] inputs = OpenInputs(1);
+            AdvanceChannel(w, inputs, RepairKitTicks - 1);
+            Assert.IsTrue(w.TryRemoveItemAt(0, 0, out byte removed),
+                "premise: something else consumes the only repair kit mid-channel (e.g. a Drop)");
+            Assert.AreEqual(5, removed, "premise: and it really was the repair kit");
+
+            LootOps.Update(w, inputs);
+
+            Assert.AreEqual(hpBefore, w.PlayerAt(0).Hp, 1e-4f, "nothing left to consume — no heal");
+            Assert.AreEqual(0f, w.PlayerAt(0).RepairTimer, 0f, "the channel still closes");
+        }
+
+        /// Symmetry with the existing Death_ClearsTheLootChannel (Т17):
+        /// RepairTimer is hashed too (since the Т6 re-pin), so a corpse left
+        /// mid-channel would carry stale state into the digest and the save.
+        [Test]
+        public void Death_ClearsTheRepairChannel()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            PlayerState p = w.PlayerAt(0);
+            p.RepairTimer = cfg.Loot.RepairKitChannelSeconds;
+            w.SetPlayerForTest(0, p);
+
+            w.KillPlayerNoDamage(0);
+
+            Assert.IsFalse(w.PlayerAt(0).Alive, "premise: the collector must actually be dead");
+            Assert.AreEqual(0f, w.PlayerAt(0).RepairTimer, 0f,
+                "a corpse must not carry a running repair channel into the hash/save");
         }
     }
 }

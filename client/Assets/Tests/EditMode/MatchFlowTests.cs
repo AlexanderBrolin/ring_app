@@ -16,11 +16,12 @@ namespace Ring.Simulation.Tests
     /// AllPlayersResolved`.
     ///
     /// EVERYTHING HERE IS INERT ON PURPOSE. No system yet sets Extracted, ticks
-    /// RepairTimer/ExtractTimer, or advances MatchState.Phase past Farm — that
-    /// behavior belongs to later Ф1-Ф4 tasks (Т19/Т21/Т23). LootTimer has since
-    /// left that list: Т17 gave it Loot.LootOps, whose own tests (LootOpsTests)
-    /// carry that coverage — nothing in THIS file starts a loot channel, so
-    /// every fixture here still reads it as zero.
+    /// ExtractTimer, or advances MatchState.Phase past Farm — that behavior
+    /// belongs to later Ф1-Ф4 tasks (Т21/Т23). LootTimer and RepairTimer have
+    /// since left that list: Т17 gave LootTimer Loot.LootOps, Т19 gave
+    /// RepairTimer the same file's Use behavior, and both carry their own
+    /// coverage in LootOpsTests — nothing in THIS file starts either channel,
+    /// so every fixture here still reads both as zero.
     /// This file only pins the SHAPE of the new state and the ONE piece of
     /// behavior errata E-1's scope line allows: MatchEndPolicy's priority
     /// between a wipe and a resolved run, and MatchServer's own counting of

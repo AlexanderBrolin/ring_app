@@ -142,10 +142,28 @@ namespace Ring.Simulation.Tests
                 // sets it from Loot.TransferSeconds), so it gets its ceiling
                 // here — the "add a line as part of that task's GREEN step"
                 // discipline this test's own doc asks for, paid on the task
-                // that doc named. RepairTimer/ExtractTimer stay uncapped
-                // until Т19/Т23 do the same for theirs.
+                // that doc named. ExtractTimer stays uncapped until Т23 does
+                // the same for it.
                 ["LootTimer"] = longestTransfer,
-                ["RepairTimer"] = float.PositiveInfinity,
+                // Stage 3 Task 19: RepairTimer got its behavior too
+                // (LootOps.Begin arms it from Loot.RepairKitChannelSeconds),
+                // so it gets a real ceiling here. Read DIRECTLY off `next`,
+                // not through a locally-recomputed aggregate the way
+                // `longestTransfer` above is (lesson 324's own concern):
+                // this is the ONE difference from LootTimer's neighbor —
+                // there is exactly one repair-kit channel length in the
+                // config, a single named number, not a per-tier table to
+                // reduce. Reading the SAME field ApplyConfig's own clamp
+                // reads is not "the test shares logic with the code under
+                // test" the way calling LootTransferTimes.Longest would be
+                // (that IS a computation this test would otherwise
+                // duplicate) — it is simply the config's one source of
+                // truth for the ceiling, exactly like `["Hp"] = next.Hero.
+                // MaxHp` above reads Hp's ceiling directly. A mutation that
+                // swaps ApplyConfig's clamp target for a wrong field, or
+                // drops the clamp line outright, still moves only ONE side
+                // of this comparison.
+                ["RepairTimer"] = next.Loot.RepairKitChannelSeconds,
                 ["ExtractTimer"] = float.PositiveInfinity,
                 // LootTargetContainerId: an entity id, not a magnitude —
                 // nothing for ApplyConfig to ever clamp it against.
