@@ -33,10 +33,27 @@ namespace Ring.Data
         /// `flow` above — every one of the 82 real existing call sites (this
         /// task's own recount, coordinator ledger) keeps compiling unchanged,
         /// silently getting an empty catalog and an all-zero LootSimConfig.
+        /// Stage 3 Т22 (coordinator R-186): THE FIVE TRAILING PARAMETERS ARE NO
+        /// LONGER OPTIONAL. They were introduced optional so Т10/Т12/Т13 could
+        /// land without touching ninety call sites, with the debt written down
+        /// and Т22 named as its addressee (MaxBodyRadius's own doc below, and
+        /// ledger R-84). The reason it could not stay: an omitted section is an
+        /// ALL-ZERO section, and a zero section silently WEAKENS the rules
+        /// built on it. Measured, not feared — mutation M8 in Т12 moved the
+        /// Core spawn ring into the forbidden band and the rule stayed quiet,
+        /// because MaxBodyRadius had lost 2.2 m of Director and 0.8 m of Elite
+        /// to a call that omitted them.
+        ///
+        /// The whole game already passed all five (ServerBootstrap,
+        /// SimulationRunner, LongRunHarness); what stayed on the seven-argument
+        /// form was tests, and they now go through ConfigTests.BuildShipped,
+        /// which fills the five with what ships and lets any one of them be
+        /// overridden by name. So a rule-under-test is exercised against the
+        /// real configuration instead of an all-zero stand-in.
         public static SimConfig Build(HeroConfig hero, WeaponConfig weapon, MobConfig chaser,
             MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility,
-            MobConfig elite = null, MobConfig director = null, MatchFlowConfig flow = null,
-            ItemCatalog items = null, LootConfig loot = null)
+            MobConfig elite, MobConfig director, MatchFlowConfig flow,
+            ItemCatalog items, LootConfig loot)
         {
             var cfg = new SimConfig
             {
@@ -465,6 +482,48 @@ namespace Ring.Data
 
             ValidateMob(errors, "Chaser", cfg.Chaser);
             ValidateMob(errors, "Gunner", cfg.Gunner);
+            // Stage 3 Т22 (coordinator R-186, debt named by Т12's own report):
+            // the two archetypes Т10 added were left out of this sweep because
+            // ninety call sites could legally omit them and would have thrown
+            // on numbers that were legitimately absent. Now that Build demands
+            // all five sections, the omission has no excuse left — and a
+            // Director with MaxHp 0 or Radius 0 is exactly the kind of silent
+            // nonsense the rest of this method exists to refuse.
+            ValidateMob(errors, "Elite", cfg.Elite);
+            ValidateMob(errors, "Director", cfg.Director);
+
+            // Stage 3 Т22 (spec §3.5/§3.4, coordinator R-181): the match-flow
+            // block. Т12 delivered these five numbers and nothing checked them;
+            // Т22 gave them readers, and two of the readers cannot defend
+            // themselves.
+            //
+            // RetinueRespawnSeconds is a DIVISOR turned into whole ticks by
+            // MatchFlowSystem — zero is not "a fast retinue", it is a modulo
+            // against zero. And DirectorReserveSlots >= 1 + RetinueCount is
+            // what makes the retinue top-up need no stored debt at all: with
+            // it, the wave ceiling (MaxMobs - reserve), the Director and a full
+            // retinue add up to exactly MaxMobs, so a slot vacated by a fallen
+            // retinue member is always free again and the wave may never take
+            // it. Below that, a top-up can meet the cap with nowhere to record
+            // itself — the branch Р254 asks to be retried next tick, which the
+            // arithmetic is supposed to make unreachable rather than handle.
+            ReqNonNegative(errors, "Flow.GateDelaySeconds", cfg.Flow.GateDelaySeconds);
+            ReqPositive(errors, "Flow.ExtractChannelSeconds", cfg.Flow.ExtractChannelSeconds);
+            ReqNonNegative(errors, "Flow.RetinueCount", cfg.Flow.RetinueCount);
+            ReqPositive(errors, "Flow.RetinueRespawnSeconds", cfg.Flow.RetinueRespawnSeconds);
+            if (cfg.Flow.DirectorReserveSlots < 1 + cfg.Flow.RetinueCount)
+            {
+                errors.Add($"Flow.DirectorReserveSlots must be >= 1 + Flow.RetinueCount " +
+                    $"(got DirectorReserveSlots={cfg.Flow.DirectorReserveSlots}, " +
+                    $"RetinueCount={cfg.Flow.RetinueCount}).");
+            }
+            if (cfg.Flow.DirectorReserveSlots >= cfg.Arena.MaxMobs)
+            {
+                errors.Add($"Flow.DirectorReserveSlots must be < Arena.MaxMobs — the wave ceiling " +
+                    $"(MaxMobs - DirectorReserveSlots) would leave no room for a wave at all " +
+                    $"(got DirectorReserveSlots={cfg.Flow.DirectorReserveSlots}, " +
+                    $"MaxMobs={cfg.Arena.MaxMobs}).");
+            }
 
             ValidateZones(errors, "Hero", cfg.Hero.LegsTop, cfg.Hero.BodyTop, cfg.Hero.HeadTop,
                 cfg.Hero.LegsDamageMult, cfg.Hero.BodyDamageMult, cfg.Hero.HeadDamageMult);
@@ -472,6 +531,11 @@ namespace Ring.Data
                 cfg.Chaser.LegsDamageMult, cfg.Chaser.BodyDamageMult, cfg.Chaser.HeadDamageMult);
             ValidateZones(errors, "Gunner", cfg.Gunner.LegsTop, cfg.Gunner.BodyTop, cfg.Gunner.HeadTop,
                 cfg.Gunner.LegsDamageMult, cfg.Gunner.BodyDamageMult, cfg.Gunner.HeadDamageMult);
+            ValidateZones(errors, "Elite", cfg.Elite.LegsTop, cfg.Elite.BodyTop, cfg.Elite.HeadTop,
+                cfg.Elite.LegsDamageMult, cfg.Elite.BodyDamageMult, cfg.Elite.HeadDamageMult);
+            ValidateZones(errors, "Director", cfg.Director.LegsTop, cfg.Director.BodyTop,
+                cfg.Director.HeadTop, cfg.Director.LegsDamageMult, cfg.Director.BodyDamageMult,
+                cfg.Director.HeadDamageMult);
 
             ReqPositive(errors, "Hero.SlideProfileTop", cfg.Hero.SlideProfileTop);
             if (cfg.Hero.SlideProfileTop > cfg.Hero.BodyTop)

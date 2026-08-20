@@ -28,7 +28,7 @@ namespace Ring.Simulation.Tests
             var items = ScriptableObject.CreateInstance<ItemCatalog>();
             byte originalFirstId = items.Items[0].Id;
 
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items);
+            SimConfig cfg = ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, items: items);
 
             // Coordinator R-94: the length premise comes FIRST, as an
             // assertion — a test that indexes cfg.Items[0] without it dies
@@ -79,7 +79,7 @@ namespace Ring.Simulation.Tests
             };
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, items: items));
             StringAssert.Contains("share Id", ex.Message);
         }
 
@@ -94,7 +94,7 @@ namespace Ring.Simulation.Tests
             };
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, items: items));
             StringAssert.Contains("SlotCost must be > 0", ex.Message);
         }
 
@@ -111,7 +111,7 @@ namespace Ring.Simulation.Tests
             items.Items = overCap;
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, items: items));
             StringAssert.Contains("at most 255", ex.Message);
         }
 
@@ -154,7 +154,7 @@ namespace Ring.Simulation.Tests
             };
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, items: items));
             StringAssert.Contains("Tier", ex.Message);
         }
 
@@ -203,7 +203,7 @@ namespace Ring.Simulation.Tests
             };
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, items: items));
             StringAssert.Contains("must not be 0", ex.Message);
         }
     }

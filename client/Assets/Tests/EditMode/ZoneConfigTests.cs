@@ -113,7 +113,7 @@ namespace Ring.Simulation.Tests
             a.ZoneRadius = new[] { 20f, 20f };
             ClearPortals(a);
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ZoneRadius"));
         }
 
@@ -133,7 +133,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f };
             a.DoorFreeWidth = new[] { 6f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("door"));
         }
 
@@ -164,7 +164,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, 1f };
             a.DoorFreeWidth = new[] { required, required - 0.01f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("DoorFreeWidth"));
         }
 
@@ -197,7 +197,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, 1f };
             a.DoorFreeWidth = new[] { newRequired + 1f, newRequired - 0.01f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, director: director));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, director: director));
             Assert.That(ex.Message, Does.Contain("DoorFreeWidth"));
         }
 
@@ -216,7 +216,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             wv.ZoneWeights = new[] { 1.5f, -0.5f, 0f }; // sums to 1, second element illegal
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Wave.ZoneWeights[1]"));
         }
 
@@ -226,7 +226,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             wv.EliteShareMiddle = 1.4f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Wave.EliteShareMiddle"));
         }
 
@@ -236,7 +236,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             wv.EliteShareOuterGrowth = -0.01f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Wave.EliteShareOuterGrowth"));
         }
 
@@ -249,7 +249,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             wv.EliteShareOuterCap = 1.2f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Wave.EliteShareOuterCap"));
         }
 
@@ -265,7 +265,7 @@ namespace Ring.Simulation.Tests
             a.ZoneRadius = new[] { 65f, a.Radius + 10f };
             ClearPortals(a);
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Arena.ZoneRadius[1] must be < Arena.Radius"));
         }
 
@@ -282,7 +282,7 @@ namespace Ring.Simulation.Tests
             a.ZoneWallCount = 2;
             a.ZoneWallRadius = new[] { 65f }; // one short of the count
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ZoneWallRadius=1"));
         }
 
@@ -295,7 +295,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneWallDoorCount = new[] { 3, 9 };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("zone wall [1] slices the door arrays out of bounds"));
         }
 
@@ -334,7 +334,7 @@ namespace Ring.Simulation.Tests
             a.DoorFreeWidth = new[] { 6f };
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("locks the whole wave spawn ring"));
         }
 
@@ -351,7 +351,7 @@ namespace Ring.Simulation.Tests
             a.ExtractZone = new byte[] { (byte)Zone.Core, (byte)Zone.Core };
             a.ExtractKind = new byte[] { (byte)ExitKind.Gate, (byte)ExitKind.Portal };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Arena.ExtractPos[1] overlaps Arena.Obstacles[6]"));
         }
 
@@ -366,7 +366,7 @@ namespace Ring.Simulation.Tests
             a.ExtractZone = new byte[] { (byte)Zone.Core, (byte)Zone.Core };
             a.ExtractKind = new byte[] { (byte)ExitKind.Gate, (byte)ExitKind.Portal };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Arena.ExtractPos[1] overlaps Arena.Walls[4]"));
         }
 
@@ -381,7 +381,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             wv.SpawnRingInset = a.ZoneRadius[0] + 5f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Core zone's wave spawn ring at radius"));
         }
 
@@ -409,7 +409,7 @@ namespace Ring.Simulation.Tests
             a.ExtractZone = new byte[] { (byte)Zone.Core, (byte)Zone.Outer };
             a.ExtractKind = new byte[] { 1, 0 }; // 0 = Portal, 1 = Gate
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Extract"));
         }
 
@@ -423,7 +423,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.MaxContainerSlots = h.InventoryCapacity - 1;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("MaxContainerSlots"));
         }
 
@@ -450,7 +450,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, 0f };
             a.DoorFreeWidth = new[] { 6f, 0.4f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("interior"));
         }
 
@@ -466,7 +466,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ExtractRadius = h.Radius;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ExtractRadius"));
         }
 
@@ -514,7 +514,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, 0f, 0.3f };
             a.DoorFreeWidth = new[] { 6f, 6f, 6f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("overlap"));
         }
 
@@ -537,7 +537,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, 0f };
             a.DoorFreeWidth = new[] { 6f, 6f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("must be > 0"));
         }
 
@@ -563,7 +563,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, 0f };
             a.DoorFreeWidth = new[] { 6f, 6f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("must be < Arena.Radius"));
         }
 
@@ -587,7 +587,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, 0f };
             a.DoorFreeWidth = new[] { 6f, 6f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ZoneWallHalfWidth"));
         }
 
@@ -615,7 +615,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, 0f, math.PI };
             a.DoorFreeWidth = new[] { 6f, 3f, 3f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("half the ring"));
         }
 
@@ -653,7 +653,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, math.PI / 2f };
             a.DoorFreeWidth = new[] { 6f, 6f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("spawn point"));
         }
 
@@ -668,7 +668,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             wv.ZoneWeights = new[] { 0.5f, 0.5f, 0.5f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ZoneWeights"));
         }
 
@@ -703,7 +703,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f, math.PI };
             a.DoorFreeWidth = new[] { 6f, 6f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("wave spawn ring"));
         }
 
@@ -719,7 +719,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ZoneRadius"));
         }
 
@@ -741,7 +741,7 @@ namespace Ring.Simulation.Tests
             a.DoorCenterRad = new[] { 0f };
             a.DoorFreeWidth = new[] { 6f };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ZoneWallCount"));
         }
 
@@ -783,7 +783,7 @@ namespace Ring.Simulation.Tests
             loot.CacheCountMiddle = 1;
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, loot: loot));
             Assert.That(ex.Message, Does.Contain("CacheCountMiddle"));
             Assert.That(ex.Message, Does.Contain("ZoneRadius"));
         }
@@ -801,7 +801,7 @@ namespace Ring.Simulation.Tests
             loot.DropChance = new float[11]; // one short of 4 archetypes x 3 zones
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, loot: loot));
             Assert.That(ex.Message, Does.Contain("DropChance"));
         }
 
@@ -846,7 +846,7 @@ namespace Ring.Simulation.Tests
             loot.DropChance[0] = 0.1f; // Chaser/Outer — the one nonzero cell
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, loot: loot));
             Assert.That(ex.Message, Does.Contain("DropChance"));
             Assert.That(ex.Message, Does.Contain("ZoneRadius"));
         }

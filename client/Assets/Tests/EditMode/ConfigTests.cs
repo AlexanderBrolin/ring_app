@@ -21,7 +21,7 @@ namespace Ring.Simulation.Tests
             var gunner = ScriptableObject.CreateInstance<MobConfig>();
             var wave = ScriptableObject.CreateInstance<WaveConfig>();
             var arena = ScriptableObject.CreateInstance<ArenaConfig>();
-            // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter.
+            // Stage 2 Task 22: seventh BuildShipped() parameter.
             var visibility = ScriptableObject.CreateInstance<VisibilityConfig>();
             return (hero, weapon, chaser, gunner, wave, arena, visibility);
         }
@@ -48,10 +48,25 @@ namespace Ring.Simulation.Tests
         /// The seven-argument form stays for the ~45 tests that vary ONE field
         /// to prove ONE rule: those are unit tests of a rule, not statements
         /// about the shipped arena.
-        static SimConfig BuildShipped(HeroConfig hero, WeaponConfig weapon, MobConfig chaser,
-            MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility)
+        /// Stage 3 Т22 (coordinator R-186): `internal`, and every shipped
+        /// section is now an OVERRIDABLE default rather than a fixed one.
+        /// SimConfigBuilder.Build's five trailing parameters stopped being
+        /// optional in this task — the debt its own MaxBodyRadius doc named Т22
+        /// for — so every test that used to hand Build seven assets hands them
+        /// to THIS method instead, and gets the other five filled in with what
+        /// the game actually ships. A test that wants to vary one of the five
+        /// passes it by name and gets the rest shipped, which is exactly what
+        /// the old optional-parameter form was being used for, minus its one
+        /// dangerous property: a rule could no longer be silently weakened by
+        /// an absent section (mutation M8, Т12).
+        internal static SimConfig BuildShipped(HeroConfig hero, WeaponConfig weapon, MobConfig chaser,
+            MobConfig gunner, WaveConfig wave, ArenaConfig arena, VisibilityConfig visibility,
+            MobConfig elite = null, MobConfig director = null, MatchFlowConfig flow = null,
+            ItemCatalog items = null, LootConfig loot = null)
         {
-            var (elite, director) = MakeShippedArchetypes();
+            var (shippedElite, shippedDirector) = MakeShippedArchetypes();
+            elite ??= shippedElite;
+            director ??= shippedDirector;
             // Ф2 review C1: the flow asset belongs here too, and leaving it out
             // was this method's own founding defect repeated one parameter
             // over. `Flow` reaching the simulation as five zeros is exactly the
@@ -59,7 +74,7 @@ namespace Ring.Simulation.Tests
             // and ExtractChannelSeconds, and a gate test at GateDelaySeconds = 0
             // would open in the same tick the Director dies and pass while
             // proving nothing (class R-46/R-48).
-            var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
+            flow ??= ScriptableObject.CreateInstance<MatchFlowConfig>();
             // Stage 3 Task 13 (coordinator R-84): the catalog and loot
             // balance sheet join Flow above — the SAME founding defect this
             // method exists to close (mutation M8, Т12) repeats itself one
@@ -69,8 +84,8 @@ namespace Ring.Simulation.Tests
             // whose own C# field initializers already ARE the shipped
             // numbers (ItemCatalog.cs/LootConfig.cs's own doc, same
             // precedent as MatchFlowConfig).
-            var items = ScriptableObject.CreateInstance<ItemCatalog>();
-            var loot = ScriptableObject.CreateInstance<LootConfig>();
+            items ??= ScriptableObject.CreateInstance<ItemCatalog>();
+            loot ??= ScriptableObject.CreateInstance<LootConfig>();
             return SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena, visibility,
                 elite, director, flow, items, loot);
         }
@@ -139,7 +154,7 @@ namespace Ring.Simulation.Tests
         static SimConfig BuildWith(HeroConfig hero)
         {
             var (_, w, c, g, wv, a, vis) = MakeDefaults();
-            return SimConfigBuilder.Build(hero, w, c, g, wv, a, vis);
+            return BuildShipped(hero, w, c, g, wv, a, vis);
         }
 
         [Test]
@@ -165,7 +180,7 @@ namespace Ring.Simulation.Tests
             a.Obstacles = new[] { new ArenaConfig.Obstacle
                 { Pos = new Vector2(a.Radius, 0f), Radius = 2f } };
             Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
         }
 
         [Test]
@@ -174,7 +189,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             h.MaxSpeed = -1f;
             Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
         }
 
         [Test]
@@ -189,10 +204,10 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.BarrierTop = -1f;
             Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
 
             a.BarrierTop = 0f;
-            Assert.DoesNotThrow(() => SimConfigBuilder.Build(h, w, c, g, wv, a, vis),
+            Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis),
                 "zero means 'no modelled top' and must stay a legal authoring choice");
         }
 
@@ -203,7 +218,7 @@ namespace Ring.Simulation.Tests
             a.Obstacles = new[] { new ArenaConfig.Obstacle
                 { Pos = Vector2.zero, Radius = 2f } };
             Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
         }
 
         // P-4.5: the SO defaults are the single source of truth for starting balance —
@@ -404,7 +419,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             c.SwingLeadFactor = 2.5f; // outside [0, 2]
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("SwingLeadFactor"));
         }
 
@@ -416,7 +431,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             c.SwingLeadMaxMeters = -1f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("SwingLeadMaxMeters"));
         }
 
@@ -722,7 +737,7 @@ namespace Ring.Simulation.Tests
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(-5f, 0f), B = new Vector2(5f, 0f), HalfWidth = 0f } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("HalfWidth"));
         }
 
@@ -733,7 +748,7 @@ namespace Ring.Simulation.Tests
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(5f, 5f), B = new Vector2(5f, 5f), HalfWidth = 0.8f } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("zero length"));
         }
 
@@ -761,7 +776,7 @@ namespace Ring.Simulation.Tests
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(0f, 5f), B = new Vector2(2e-7f, 5f), HalfWidth = 0.8f } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("zero length"));
         }
 
@@ -786,7 +801,7 @@ namespace Ring.Simulation.Tests
             a.Walls = new[] { new ArenaConfig.Wall
                 { A = new Vector2(rimEnd - 10f, 0f), B = new Vector2(rimEnd, 0f), HalfWidth = halfWidth } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("arena rim"));
         }
 
@@ -814,7 +829,7 @@ namespace Ring.Simulation.Tests
                 { A = new Vector2(farEnd - 10f, 0f), B = new Vector2(farEnd, 0f), HalfWidth = halfWidth } };
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("arena rim"));
         }
 
@@ -844,7 +859,7 @@ namespace Ring.Simulation.Tests
                 HalfWidth = 0.8f
             } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ring 1/point 0"));
         }
 
@@ -872,7 +887,7 @@ namespace Ring.Simulation.Tests
                 HalfWidth = 0.8f
             } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ring 3/point 1"));
         }
 
@@ -892,7 +907,7 @@ namespace Ring.Simulation.Tests
                 HalfWidth = ringRadius + 5f
             } };
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("spawn ring"));
         }
 
@@ -902,7 +917,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             wv.PerPlayerCountFrac = -0.1f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("PerPlayerCountFrac"));
         }
 
@@ -946,7 +961,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             a.MaxPickups = 0;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("MaxPickups"));
         }
 
@@ -972,7 +987,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             w.ShotsPerCell = 0;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("ShotsPerCell"));
         }
 
@@ -982,14 +997,14 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             w.AmmoStart = w.AmmoMax + 1;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("AmmoStart"));
 
             // The boundary itself stays legal, and saying so pins WHICH
             // comparison this is: "start the match on a full magazine" is a
             // legitimate authoring choice, so the rule is `>`, not `>=`.
             w.AmmoStart = w.AmmoMax;
-            Assert.DoesNotThrow(() => SimConfigBuilder.Build(h, w, c, g, wv, a, vis),
+            Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis),
                 "AmmoStart == AmmoMax is a full starting magazine, not a misconfiguration");
         }
 
@@ -1004,7 +1019,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             w.EmergencyFireInterval = w.FireInterval;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("EmergencyFireInterval"));
 
             // And the inversion — the emergency mode outrunning normal fire —
@@ -1012,7 +1027,7 @@ namespace Ring.Simulation.Tests
             // produces.
             w.EmergencyFireInterval = w.FireInterval * 0.5f;
             Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis),
+                () => BuildShipped(h, w, c, g, wv, a, vis),
                 "a dry weapon must never fire FASTER than a loaded one");
         }
 
@@ -1034,7 +1049,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.SightRadius = 0f; // floor is exclusive: > 0, not >= 0
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.SightRadius"));
         }
 
@@ -1049,7 +1064,7 @@ namespace Ring.Simulation.Tests
             vis.SightRadius = 151f;
             vis.HearRadius = vis.SightRadius;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.SightRadius"));
         }
 
@@ -1061,7 +1076,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.HearRadius = vis.SightRadius - 1f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             // Phase Ф5 fix-wave (I-2): the two separate Does.Contain checks
             // this used to make were satisfied by the WRONG error just as
             // well as by the right one — "Visibility.SightRadius" appears in
@@ -1083,7 +1098,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.HearRadius = 201f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.HearRadius"));
         }
 
@@ -1093,7 +1108,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.ExitHysteresis = -1f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.ExitHysteresis"));
         }
 
@@ -1104,7 +1119,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.ExitHysteresis = 21f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.ExitHysteresis"));
         }
 
@@ -1114,7 +1129,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.HearPositionGridMeters = -1f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.HearPositionGridMeters"));
         }
 
@@ -1125,7 +1140,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.HearPositionGridMeters = 11f;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.HearPositionGridMeters"));
         }
 
@@ -1135,7 +1150,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.LingerTicks = -1;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.LingerTicks"));
         }
 
@@ -1146,7 +1161,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.LingerTicks = 31;
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
+                () => BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Visibility.LingerTicks"));
         }
 
@@ -1198,7 +1213,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             float floor = VisibilityRange(nameof(VisibilityConfig.SightRadius)).Min;
             vis.SightRadius = floor; // HearRadius keeps its default, comfortably above this
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(floor, cfg.Visibility.SightRadius, Eps);
         }
 
@@ -1212,7 +1227,7 @@ namespace Ring.Simulation.Tests
             // matching negative test does, so the cross-check stays quiet and
             // this fixture isolates the SightRadius ceiling.
             vis.HearRadius = VisibilityRange(nameof(VisibilityConfig.HearRadius)).Max;
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(ceiling, cfg.Visibility.SightRadius, Eps);
         }
 
@@ -1228,7 +1243,7 @@ namespace Ring.Simulation.Tests
             vis.SightRadius = VisibilityRange(nameof(VisibilityConfig.SightRadius)).Min;
             Assert.LessOrEqual(vis.SightRadius, vis.HearRadius,
                 "test setup: the two [Range] floors must leave the HearRadius >= SightRadius rule satisfiable");
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(floor, cfg.Visibility.HearRadius, Eps);
         }
 
@@ -1238,7 +1253,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             float ceiling = VisibilityRange(nameof(VisibilityConfig.HearRadius)).Max;
             vis.HearRadius = ceiling; // default SightRadius stays far below — cross-check quiet
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(ceiling, cfg.Visibility.HearRadius, Eps);
         }
 
@@ -1251,7 +1266,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             float floor = VisibilityRange(nameof(VisibilityConfig.ExitHysteresis)).Min;
             vis.ExitHysteresis = floor;
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(floor, cfg.Visibility.ExitHysteresis, Eps);
         }
 
@@ -1261,7 +1276,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             float ceiling = VisibilityRange(nameof(VisibilityConfig.ExitHysteresis)).Max;
             vis.ExitHysteresis = ceiling;
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(ceiling, cfg.Visibility.ExitHysteresis, Eps);
         }
 
@@ -1275,7 +1290,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             float floor = VisibilityRange(nameof(VisibilityConfig.HearPositionGridMeters)).Min;
             vis.HearPositionGridMeters = floor;
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(floor, cfg.Visibility.HearPositionGridMeters, Eps);
         }
 
@@ -1285,7 +1300,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             float ceiling = VisibilityRange(nameof(VisibilityConfig.HearPositionGridMeters)).Max;
             vis.HearPositionGridMeters = ceiling;
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(ceiling, cfg.Visibility.HearPositionGridMeters, Eps);
         }
 
@@ -1297,7 +1312,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             var floor = (int)VisibilityRange(nameof(VisibilityConfig.LingerTicks)).Min;
             vis.LingerTicks = floor;
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(floor, cfg.Visibility.LingerTicks);
         }
 
@@ -1307,7 +1322,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             var ceiling = (int)VisibilityRange(nameof(VisibilityConfig.LingerTicks)).Max;
             vis.LingerTicks = ceiling;
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(ceiling, cfg.Visibility.LingerTicks);
         }
 
@@ -1324,7 +1339,7 @@ namespace Ring.Simulation.Tests
             // and nothing else.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             vis.HearRadius = vis.SightRadius;
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
             Assert.AreEqual(cfg.Visibility.SightRadius, cfg.Visibility.HearRadius, Eps,
                 "HearRadius == SightRadius is a legal config and must reach SimConfig unchanged");
         }
@@ -1651,7 +1666,7 @@ namespace Ring.Simulation.Tests
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
 
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis, flow: flow);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, flow: flow);
 
             Assert.AreEqual(flow.GateDelaySeconds, cfg.Flow.GateDelaySeconds, Eps,
                 "MatchFlowConfig.GateDelaySeconds must reach MatchFlowSimConfig");
@@ -1666,17 +1681,25 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Build_MatchFlowConfigOmitted_LeavesFlowAtZero()
+        public void Build_CarriesEveryShippedSection_NoneLeftAtZero()
         {
-            // The parameter is TRAILING AND OPTIONAL (Global Constraints), so
-            // the 70-odd call sites that predate it keep compiling and keep
-            // getting an all-zero Flow — stated as a test rather than assumed,
-            // the same contract SimConfigBuilder.Build's own doc gives
-            // elite/director.
+            // Stage 3 Т22 (coordinator R-186) REPLACES the old
+            // Build_MatchFlowConfigOmitted_LeavesFlowAtZero, which pinned the
+            // very contract this task removed: "an omitted section arrives as
+            // zeros". It cannot be restated as a test, because the omission no
+            // longer compiles — the five parameters are required. What CAN be
+            // stated, and matters more, is the property that made the old
+            // contract dangerous in the first place: a configuration built the
+            // way the game builds it carries all five sections, so no rule
+            // downstream is quietly running against zeros (mutation M8, Т12).
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
-            Assert.AreEqual(0f, cfg.Flow.GateDelaySeconds, Eps);
-            Assert.AreEqual(0, cfg.Flow.DirectorReserveSlots);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
+            Assert.Greater(cfg.Flow.GateDelaySeconds, 0f, "Flow reached SimConfig");
+            Assert.Greater(cfg.Flow.DirectorReserveSlots, 0, "…including the slot reserve");
+            Assert.Greater(cfg.Elite.MaxHp, 0f, "the Elite section reached SimConfig");
+            Assert.Greater(cfg.Director.MaxHp, 0f, "…and the Director section");
+            Assert.Greater(cfg.Items.Length, 0, "…and the item catalog");
+            Assert.Greater(cfg.Loot.CellsPerMob.Length, 0, "…and the loot table");
         }
 
         [Test]
@@ -1689,7 +1712,7 @@ namespace Ring.Simulation.Tests
             var items = ScriptableObject.CreateInstance<ItemCatalog>();
             var loot = ScriptableObject.CreateInstance<LootConfig>();
 
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis,
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis,
                 items: items, loot: loot);
 
             Assert.AreEqual(items.Items.Length, cfg.Items.Length,
@@ -1711,17 +1734,28 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Build_ItemCatalogAndLootOmitted_LeaveEmptyAndZero()
+        public void Build_ItemCatalogAndLoot_AreOverridableWithoutLosingTheRest()
         {
-            // The two parameters are TRAILING AND OPTIONAL, same contract as
-            // elite/director/flow — the 82 call sites that predate them
-            // (this task's own recount) keep compiling and keep getting an
-            // empty catalog and an all-zero Loot section.
+            // Stage 3 Т22 (coordinator R-186) REPLACES
+            // Build_ItemCatalogAndLootOmitted_LeaveEmptyAndZero, the sibling of
+            // the flow test above: "omitted leaves it empty" was the contract
+            // this task removed, and an empty catalog was precisely what let
+            // the MinCatalogSlotCost rule read as satisfied while resting on
+            // nothing (R-84). What replaces it is the property tests actually
+            // need from the shipped home: ONE section can be varied to prove
+            // ONE rule, and the other four stay real while you do it.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis);
-            Assert.AreEqual(0, cfg.Items.Length);
-            Assert.AreEqual(0f, cfg.Loot.RepairKitHealAmount, Eps);
-            Assert.AreEqual(0, cfg.Loot.CrateCount);
+            var items = ScriptableObject.CreateInstance<ItemCatalog>();
+            items.Items = new[] { new ItemDef { Id = 9, Tier = 1, SlotCost = 2, CreditValue = 5 } };
+
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, items: items);
+
+            Assert.AreEqual(1, cfg.Items.Length, "the override reached SimConfig");
+            Assert.AreEqual(9, cfg.Items[0].Id, "…and it is the caller's own catalog");
+            Assert.Greater(cfg.Loot.CrateCount, 0,
+                "…while every section the caller did NOT override stays the shipped one — " +
+                "which is the whole point of the home (a rule may not be weakened by absence)");
+            Assert.Greater(cfg.Director.MaxHp, 0f, "…including the Director section");
         }
 
         [Test]
@@ -1744,7 +1778,7 @@ namespace Ring.Simulation.Tests
                 new ItemDef { Id = 1, Tier = 1, SlotCost = 2, CreditValue = 15, Kind = ItemKind.Trophy },
             };
 
-            Assert.DoesNotThrow(() => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, items: items),
+            Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis, items: items),
                 "MaxContainerSlots=4 must satisfy InventoryCapacity(8)/min(SlotCost)(2)=4 " +
                 "under the REAL catalog minimum, not the empty-catalog assumption's 8");
         }
@@ -1764,7 +1798,7 @@ namespace Ring.Simulation.Tests
             loot.CellsPerMob = new[] { 1, 1, 4 }; // three, not four — missing Director's own slot
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+                () => BuildShipped(h, w, c, g, wv, a, vis, loot: loot));
             StringAssert.Contains("CellsPerMob must have exactly 4 elements", ex.Message);
         }
 
@@ -1786,8 +1820,96 @@ namespace Ring.Simulation.Tests
             loot.TransferSeconds = new[] { 0.3f, 0.6f, 0.9f }; // three, not four — tier 4 has no time
 
             var ex = Assert.Throws<System.ArgumentException>(
-                () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis, loot: loot));
+                () => BuildShipped(h, w, c, g, wv, a, vis, loot: loot));
             StringAssert.Contains("TransferSeconds must have exactly 4 elements", ex.Message);
+        }
+
+        [Test]
+        public void Validate_RejectsDirectorSectionWithNonPositiveNumbers()
+        {
+            // Stage 3 Т22 (coordinator R-186): the Elite/Director sections were
+            // outside ValidateMob's sweep for two whole phases, because ninety
+            // call sites could legally omit them. Now that they are required,
+            // they are checked like every other archetype — and this is the
+            // witness of that, without which the two new ValidateMob lines
+            // could be deleted and the suite would not notice.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var director = ScriptableObject.CreateInstance<MobConfig>();
+            director.MaxHp = 0f;
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis, director: director));
+            StringAssert.Contains("Director.MaxHp must be > 0", ex.Message);
+        }
+
+        [Test]
+        public void Validate_RejectsEliteHitZoneBandsOutOfOrder()
+        {
+            // The ValidateZones half of the same debt: an elite whose leg band
+            // reaches above its body band is a hit-zone table no shot can be
+            // resolved against, and it used to reach the simulation unchecked.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var elite = ScriptableObject.CreateInstance<MobConfig>();
+            elite.LegsTop = elite.BodyTop + 1f;
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis, elite: elite));
+            StringAssert.Contains("Elite.LegsTop must be < Elite.BodyTop", ex.Message);
+        }
+
+        [Test]
+        public void Validate_RejectsReserveSmallerThanDirectorPlusRetinue()
+        {
+            // Stage 3 Т22 (coordinator R-181): the reserve is what makes the
+            // retinue top-up need no stored debt at all — with
+            // DirectorReserveSlots = 1 + RetinueCount the wave ceiling
+            // (MaxMobs - reserve), the Director and a full retinue add up to
+            // exactly MaxMobs, so a fallen retinue slot is always free again
+            // and the wave may never take it. A reserve below that quietly
+            // reopens the very branch the arithmetic closes: a top-up that
+            // hits the cap and, having nowhere to record itself, is simply
+            // lost until the next period.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
+            flow.RetinueCount = 2;
+            flow.DirectorReserveSlots = 2; // one short: the Director himself has no slot
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis, flow: flow));
+            StringAssert.Contains("Flow.DirectorReserveSlots must be >= 1 + Flow.RetinueCount",
+                ex.Message);
+        }
+
+        [Test]
+        public void Validate_RejectsNonPositiveRetinueRespawn()
+        {
+            // The top-up period is a DIVISOR turned into whole ticks
+            // (MatchFlowSystem, R-180): zero or negative seconds is not a
+            // "fast retinue", it is a division whose answer the phase machine
+            // would then take a modulo against.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
+            flow.RetinueRespawnSeconds = 0f;
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis, flow: flow));
+            StringAssert.Contains("Flow.RetinueRespawnSeconds must be > 0", ex.Message);
+        }
+
+        [Test]
+        public void Validate_RejectsReserveThatLeavesNoRoomForWaves()
+        {
+            // The other end of the same rule: a reserve at or above MaxMobs
+            // stops the wave director outright (its ceiling would be zero or
+            // negative), which is a configuration no raid can be played on.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var arena = ScriptableObject.CreateInstance<ArenaConfig>();
+            var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
+            flow.DirectorReserveSlots = arena.MaxMobs;
+
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, arena, vis, flow: flow));
+            StringAssert.Contains("Flow.DirectorReserveSlots must be < Arena.MaxMobs", ex.Message);
         }
 
         [Test]
@@ -1810,7 +1932,7 @@ namespace Ring.Simulation.Tests
             director.MaxHp = expected.Director.MaxHp;
             director.Radius = expected.Director.Radius;
 
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis, elite, director);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, elite, director);
 
             Assert.AreEqual(expected.Director.MaxHp, cfg.Director.MaxHp, Eps,
                 "MobDirectorConfig.MaxHp must reach SimConfig.Director");
@@ -1852,7 +1974,7 @@ namespace Ring.Simulation.Tests
             Ring.Editor.StageOneSceneBootstrap.ApplyDirectorDefaults(director);
 
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
-            SimConfig cfg = SimConfigBuilder.Build(h, w, c, g, wv, a, vis, elite, director);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, elite, director);
             SimConfig expected = TestConfigs.Default();
 
             AssertMobEqual(expected.Elite, cfg.Elite);
