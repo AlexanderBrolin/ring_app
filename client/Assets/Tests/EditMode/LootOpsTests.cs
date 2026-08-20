@@ -1176,5 +1176,73 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0f, w.PlayerAt(0).RepairTimer, 0f,
                 "a corpse must not carry a running repair channel into the hash/save");
         }
+
+        // ---------------------- 9. Window-flag sanitization (Task 20) ----------------------
+
+        /// A reference PlayerState with none of the four gates armed — Alive,
+        /// not Extracted, no dash, no slide — so the flag survives Sanitize
+        /// unchanged. Each of the four negative tests below flips exactly ONE
+        /// gate off this baseline (rule 227: the baseline itself is never the
+        /// subject under test).
+        static PlayerState OrdinaryCollector() => new PlayerState { Alive = true };
+
+        /// Spec §3.8/§3.11 (coordinator D-3): the loot window closes the
+        /// instant the player is dead, extracted, dashing or sliding —
+        /// regardless of what a client claims. Gated in SimInputSanitizer.
+        /// Sanitize itself, not only in LootOps.Validate's own checks, because
+        /// WeaponSystem.CanFire and PlayerMovementSystem's movement slowdown
+        /// both read SimInput.InventoryOpen directly and never go through
+        /// Validate at all (that method's own doc explains why). Calls
+        /// Sanitize directly, as a pure function — no SimulationWorld needed.
+        [Test]
+        public void Sanitizer_ClearsWindowFlag_WhileDashing()
+        {
+            PlayerState reference = OrdinaryCollector();
+            reference.DashTimer = 0.1f;
+            SimInput result = SimInputSanitizer.Sanitize(WindowOpen(), reference, TestConfigs.Open());
+            Assert.IsFalse(result.InventoryOpen, "an active dash must close the loot window");
+        }
+
+        [Test]
+        public void Sanitizer_ClearsWindowFlag_WhileSliding()
+        {
+            PlayerState reference = OrdinaryCollector();
+            reference.SlideTimer = 0.1f;
+            SimInput result = SimInputSanitizer.Sanitize(WindowOpen(), reference, TestConfigs.Open());
+            Assert.IsFalse(result.InventoryOpen, "an active slide must close the loot window");
+        }
+
+        [Test]
+        public void Sanitizer_ClearsWindowFlag_ForADeadPlayer()
+        {
+            PlayerState reference = OrdinaryCollector();
+            reference.Alive = false;
+            SimInput result = SimInputSanitizer.Sanitize(WindowOpen(), reference, TestConfigs.Open());
+            Assert.IsFalse(result.InventoryOpen, "a dead player cannot hold the loot window open");
+        }
+
+        [Test]
+        public void Sanitizer_ClearsWindowFlag_ForAnExtractedPlayer()
+        {
+            PlayerState reference = OrdinaryCollector();
+            reference.Extracted = true;
+            SimInput result = SimInputSanitizer.Sanitize(WindowOpen(), reference, TestConfigs.Open());
+            Assert.IsFalse(result.InventoryOpen, "an extracted player cannot hold the loot window open");
+        }
+
+        /// Coordinator D-5 (self-review, task-20-plan §6): the four negative
+        /// tests above alone do not distinguish "Sanitize gates the flag
+        /// conditionally" from "Sanitize gates the flag unconditionally" —
+        /// all four feed a raw window already claimed open AND an active
+        /// gate, so an "always clear" stub would pass every one of them
+        /// trivially. This is the missing positive: none of the four gates
+        /// armed, the flag must survive untouched.
+        [Test]
+        public void Sanitizer_PreservesWindowFlag_ForAnOrdinaryCollector()
+        {
+            PlayerState reference = OrdinaryCollector();
+            SimInput result = SimInputSanitizer.Sanitize(WindowOpen(), reference, TestConfigs.Open());
+            Assert.IsTrue(result.InventoryOpen, "an ordinary collector's open window must survive Sanitize");
+        }
     }
 }

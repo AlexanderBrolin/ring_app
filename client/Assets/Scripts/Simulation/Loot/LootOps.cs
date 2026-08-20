@@ -43,10 +43,12 @@ namespace Ring.Simulation.Loot
     /// container. Т19 added the repair kit's own channel (it runs on
     /// RepairTimer, not LootTimer) — `Begin`'s `Use` branch, `Validate`'s
     /// twelfth check (ItemNotUsable), and `Update`'s second completion loop.
-    /// Still elsewhere: the wire, the movement slowdown, WeaponSystem.
-    /// CanFire's `!InventoryOpen` term and the window sanitizer are Т20;
-    /// LootRequestNet/LootResultNet are Т28; SimEventKind's own loot entries
-    /// are Т29. None of that is invented here ahead of its own task.
+    /// Still elsewhere: LootRequestNet/LootResultNet are Т28; SimEventKind's
+    /// own loot entries are Т29. The wire, the movement slowdown,
+    /// WeaponSystem.CanFire's `!InventoryOpen` term and the window
+    /// sanitizer landed in Т20 — see SimInputSanitizer.Sanitize, InputCodec
+    /// and WeaponSystem.CanFire's own docs for that half of the story; none
+    /// of it lives here, this file only READS the flag (check 2 below).
     public static class LootOps
     {
         /// The ONE home of all nine server checks (spec §3.8, Р265). A PURE
@@ -310,9 +312,12 @@ namespace Ring.Simulation.Loot
         ///
         /// ⚠ THE EARLY EXIT IS LOAD-BEARING (coordinator R-150, guard class
         /// R-120). This runs on every tick of both golden scenarios, where
-        /// nobody loots — every LootTimer is zero from the world's birth and
-        /// SimInput.InventoryOpen has no wire bit until Т20. The inertness
-        /// that keeps both pinned digests still is the NAMED exit below, taken
+        /// nobody loots — every LootTimer is zero from the world's birth, and
+        /// the golden scripted input never raises SimInput.InventoryOpen at
+        /// all (checked by grep against DeterminismTests.cs, Т20's own
+        /// finding) — a fact about the SCENARIO, not about whether the flag
+        /// has a wire bit (it does, since Т20). The inertness that keeps
+        /// both pinned digests still is the NAMED exit below, taken
         /// before any container, catalog or distance is read, not an accident
         /// of "the code happens not to get that far". Same shape as
         /// SimulationWorld.SpawnPickup refusing a zero amount before

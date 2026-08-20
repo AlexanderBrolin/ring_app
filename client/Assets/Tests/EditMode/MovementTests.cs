@@ -14,6 +14,11 @@ namespace Ring.Simulation.Tests
         static SimInput MoveAim(float x, float y)
             => new SimInput { MoveDir = new float2(x, y), AimHeld = true };
 
+        /// Stage 3 Task 20 (coordinator D-7): the loot-window counterpart of
+        /// MoveAim above.
+        static SimInput MoveWindow(float x, float y)
+            => new SimInput { MoveDir = new float2(x, y), InventoryOpen = true };
+
         [Test]
         public void AimHeld_CapsRunSpeed()
         {
@@ -21,6 +26,21 @@ namespace Ring.Simulation.Tests
             var w = World();
             for (int i = 0; i < 60; i++) w.Tick(MoveAim(1f, 0f)); // 2 s — enough to reach the capped speed
             float expected = cfg.Hero.MaxSpeed * cfg.Hero.AimMoveSpeedFrac; // fixture expr, PD5
+            Assert.AreEqual(expected, w.Player.Vel.x, 0.05f);
+        }
+
+        [Test]
+        public void InventoryOpen_CapsRunSpeed()
+        {
+            // Stage 3 Task 20 (spec §3.8/§3.11, coordinator D-1/D-7): the loot
+            // window pays the SAME price as AimHeld (Hero.AimMoveSpeedFrac, no
+            // second number, Р239) — mirrors AimHeld_CapsRunSpeed exactly, one
+            // flag swapped for the other, to prove the shared SlowsMovement
+            // predicate really reads InventoryOpen and not just AimHeld.
+            var cfg = TestConfigs.Open();
+            var w = World();
+            for (int i = 0; i < 60; i++) w.Tick(MoveWindow(1f, 0f)); // 2 s
+            float expected = cfg.Hero.MaxSpeed * cfg.Hero.AimMoveSpeedFrac; // fixture expr
             Assert.AreEqual(expected, w.Player.Vel.x, 0.05f);
         }
 

@@ -613,5 +613,42 @@ namespace Ring.Simulation.Tests
 
             HostileInputPremise(world, in cfg);
         }
+
+        [Test]
+        public void OpenWindow_SlowsMovement_IdenticallyInPrediction()
+        {
+            // Stage 3 Task 20 (spec §3.8/§3.9, coordinator D-4): parity here
+            // is STRUCTURAL, not a second implementation independently
+            // agreeing — PlayerPrediction.Step and SimulationWorld.TickAll
+            // both funnel through the SAME SimInputSanitizer.Sanitize and the
+            // SAME PlayerMovementSystem.Update (this file's own class doc),
+            // so any divergence here would mean the seam itself broke, not
+            // that the window-flag slowdown was implemented twice and
+            // disagrees. What THIS test proves in addition to that structural
+            // guarantee — the one thing bitwise parity alone cannot — is that
+            // the window flag ACTUALLY reaches PlayerMovementSystem's speed
+            // cap on BOTH paths: a build that silently dropped the
+            // InventoryOpen term from the movement predicate (coordinator
+            // D-1's SlowsMovement home) would still tick world and prediction
+            // in perfect bitwise lockstep (both wrong identically), which is
+            // exactly the trap RunParity's own internal comparison cannot see
+            // into — hence the explicit premise below, not just the parity
+            // loop.
+            SimConfig cfg = TestConfigs.Open();
+            float topSpeed = 0f;
+            RunParity(in cfg, tick => new SimInput
+                {
+                    MoveDir = new float2(1f, 0f),
+                    AimPoint = new float2(10f, 0f),
+                    InventoryOpen = true
+                }, TicksFor(2f), "open window slows movement",
+                out SimulationWorld _, out PlayerState _,
+                observe: (tick, w) => topSpeed = math.max(topSpeed, math.length(w.PlayerAt(0).Vel)));
+
+            float capped = cfg.Hero.MaxSpeed * cfg.Hero.AimMoveSpeedFrac; // fixture expr
+            Assert.That(topSpeed, Is.EqualTo(capped).Within(0.05f),
+                "premise: the open window must actually cap speed the same way AimHeld does — " +
+                "otherwise this test cannot tell 'both paths agree' from 'both paths do nothing'");
+        }
     }
 }

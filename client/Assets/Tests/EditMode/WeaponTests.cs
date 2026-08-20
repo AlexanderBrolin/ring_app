@@ -105,6 +105,20 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void NoFireWhileWindowOpen()
+        {
+            // Stage 3 Task 20 (spec §3.8 check 2's mirror on the weapon side,
+            // Р239): CanFire's fifth term. No config toggle exists for this
+            // one — unlike CanFireWhileDash/CanFireWhileSlide above, the loot
+            // window's price is unconditional (spec: "стрельба ... недоступны",
+            // no exception offered).
+            var w = new SimulationWorld(1, TestConfigs.Open());
+            SimInput input = Fire; input.InventoryOpen = true;
+            w.Tick(input);
+            Assert.AreEqual(0, w.Stats.ShotsFired);
+        }
+
+        [Test]
         public void ProjectileCap_SkipsDeterministically()
         {
             var cfg = TestConfigs.Open();

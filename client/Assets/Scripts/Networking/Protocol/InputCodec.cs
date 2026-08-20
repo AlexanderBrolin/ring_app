@@ -20,7 +20,8 @@ namespace Ring.Networking.Protocol
     ///                              non-finite h falls back to cfg.Hero.MuzzleHeight
     ///                              first, mirroring SimInputSanitizer (see below)
     ///   [7]    flags             — bit0 FireHeld, bit1 DashRequested,
-    ///                              bit2 AimHeld, bit3 SlideRequested
+    ///                              bit2 AimHeld, bit3 SlideRequested,
+    ///                              bit4 InventoryOpen
     /// Total 8 bytes. Spec §3.8 states "9 Б" for this payload — a round-up
     /// with margin, not a contract (task-25-brief §2); the actual layout
     /// above is 8 bytes, and `SizeBytes` — not the spec prose — is the
@@ -104,6 +105,10 @@ namespace Ring.Networking.Protocol
         const int DashRequestedBit = 1;
         const int AimHeldBit = 2;
         const int SlideRequestedBit = 3;
+        // Stage 3 Task 20 (spec §3.8, coordinator: bits 4-7 free, verified by
+        // grep against Encode/TryDecode before this task — nothing else in this
+        // file has ever set or read them).
+        const int InventoryOpenBit = 4;
 
         public static void Encode(in SimInput input, in SimConfig cfg, System.Span<byte> dst)
         {
@@ -156,6 +161,7 @@ namespace Ring.Networking.Protocol
             if (input.DashRequested) flags |= 1 << DashRequestedBit;
             if (input.AimHeld) flags |= 1 << AimHeldBit;
             if (input.SlideRequested) flags |= 1 << SlideRequestedBit;
+            if (input.InventoryOpen) flags |= 1 << InventoryOpenBit;
             dst[7] = flags;
         }
 
@@ -225,6 +231,7 @@ namespace Ring.Networking.Protocol
                 DashRequested = (flags & (1 << DashRequestedBit)) != 0,
                 AimHeld = (flags & (1 << AimHeldBit)) != 0,
                 SlideRequested = (flags & (1 << SlideRequestedBit)) != 0,
+                InventoryOpen = (flags & (1 << InventoryOpenBit)) != 0,
             };
             return true;
         }

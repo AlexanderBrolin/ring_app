@@ -160,19 +160,20 @@ namespace Ring.Simulation.Combat
         internal static void AdvanceNoSpawn(ref PlayerState p, in SimInput input, in SimConfig cfg)
             => Advance(ref p, in input, in cfg, null, ProjectileIds.NoOwner);
 
-        /// Single home of the FOUR eligibility terms (FireHeld, Alive, dash,
-        /// slide) — consumed by Advance above directly, and by every
-        /// client-side consumer that must agree with them exactly, either
-        /// directly or (fix-round 1) through `WouldFireThisTick` below:
-        /// ghost projectiles (Stage 2 Task 35) read it via that composition;
-        /// so does the Presentation-side prediction
-        /// (`SimulationRunner.WouldFireThisFrame`) since Stage 2 Task 43
-        /// replaced its hand-written restatement of these four terms with a
-        /// call to `WouldFireThisTick` (see that method's own doc for what
-        /// the lift changed about when the prediction arms).
+        /// Single home of the FIVE eligibility terms (FireHeld, Alive, dash,
+        /// slide, window — Stage 3 Task 20 adds the last) — consumed by
+        /// Advance above directly, and by every client-side consumer that
+        /// must agree with them exactly, either directly or (fix-round 1)
+        /// through `WouldFireThisTick` below: ghost projectiles (Stage 2
+        /// Task 35) read it via that composition; so does the
+        /// Presentation-side prediction (`SimulationRunner.
+        /// WouldFireThisFrame`) since Stage 2 Task 43 replaced its
+        /// hand-written restatement of these terms with a call to
+        /// `WouldFireThisTick` (see that method's own doc for what the lift
+        /// changed about when the prediction arms).
         /// Deliberately does NOT decide "fires THIS tick" by itself — see
-        /// `WouldFireThisTick`'s own doc for why that needs a fifth term this
-        /// method does not own.
+        /// `WouldFireThisTick`'s own doc for why that needs a SIXTH term
+        /// this method does not own.
         ///
         /// p.Alive is redundant for today's authoritative call site —
         /// SimulationWorld.TickAll (Task 23) only reaches Update from its Alive
@@ -186,7 +187,12 @@ namespace Ring.Simulation.Combat
         public static bool CanFire(in PlayerState p, in SimInput input, in WeaponSimConfig weapon)
             => input.FireHeld && p.Alive
                && (weapon.CanFireWhileDash || p.DashTimer <= 0f)
-               && (weapon.CanFireWhileSlide || p.SlideTimer <= 0f);
+               && (weapon.CanFireWhileSlide || p.SlideTimer <= 0f)
+               // Stage 3 Task 20 (spec §3.8 check 2's mirror, Р239):
+               // unconditional — no CanFireWhileWindowOpen exists because the
+               // spec never offers that exception (unlike the dash/slide
+               // terms above).
+               && !input.InventoryOpen;
 
         /// Whether the authoritative loop in `Advance` above would spawn AT
         /// LEAST ONE round on the tick that consumes `p`/`input` — the

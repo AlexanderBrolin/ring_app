@@ -70,7 +70,8 @@ namespace Ring.Networking.Protocol
         public ushort AimY;
         /// Byte 6 — `Quantize.Unit(AimHeight, Hero.MaxAimHeight)`.
         public byte AimHeight;
-        /// Byte 7 — FireHeld / DashRequested / AimHeld / SlideRequested.
+        /// Byte 7 — FireHeld / DashRequested / AimHeld / SlideRequested /
+        /// InventoryOpen (Stage 3 Task 20).
         public byte Flags;
 
         public uint GetTick() => _tick;

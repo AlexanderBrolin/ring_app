@@ -29,14 +29,14 @@ namespace Ring.Simulation.Core
         /// latches), because "the window is open" is a state the player holds,
         /// not an event they fire.
         ///
-        /// DECLARED, NOT YET CARRIED. This task is the server-side half only:
-        /// LootOps.Validate reads it, and nothing else does. The wire bit
-        /// (ReplicateData's own free flag bits, InputCodec), the movement
-        /// slowdown, WeaponSystem.CanFire's `!InventoryOpen` term and the
-        /// dash/slide sanitizer that forces it back down all belong to Т20 —
-        /// see InputCodecTests.EveryFieldOfSimInput_IsCarriedOnTheWire and
-        /// ReconcileCodecTests.SimInputFieldsCovered, the two sentinels that
-        /// force that decision to be made rather than forgotten.
+        /// CARRIED IN FULL AS OF STAGE 3 TASK 20. Wire bit —
+        /// InputCodec.InventoryOpenBit (byte 7, bit 4); movement slowdown —
+        /// PlayerMovementSystem.SlowsMovement, read by all three
+        /// RegularMoveVel call sites; WeaponSystem.CanFire's fifth
+        /// eligibility term; SimInputSanitizer.Sanitize forces the flag back
+        /// down for a dead, extracted, dashing or sliding player (that
+        /// method's own doc explains why gating there, not only in
+        /// LootOps.Validate, matters).
         public bool InventoryOpen;
     }
 
