@@ -718,12 +718,50 @@ namespace Ring.Simulation.Tests
             // M1-M8 are digest-inert — three consecutive full runs returned
             // this pair bit for bit.
             //
-            // THE SANCTION BUDGET IS NOW SPENT (С28). Re-pin #1 (Т6, "the
-            // economy of the raid") and re-pin #2 (this one) are both used. The
-            // third constant — Т36's extraction-loop golden over 18 000 ticks —
-            // is a NEW pin and spends no sanction. Any further movement of any
-            // of the three is a stop and a question for the owner.
-            const ulong GoldenHash = 0x5349AE72AEFE860DUL; // = 6001519786033317389
+            // THE TWO PLANNED SANCTIONS ARE SPENT (С28). Re-pin #1 (Т6, "the
+            // economy of the raid") and re-pin #2 (Т12, "the arena and its
+            // inhabitants") are both used. The third constant — Т36's
+            // extraction-loop golden over 18 000 ticks — is a NEW pin and
+            // spends no sanction.
+            //
+            // RE-PIN #3 — SANCTIONED BY THE OWNER OUT OF BUDGET (Stage 3 Ф5-0,
+            // decision R-173), "the solo lobby leaves the arena center". This
+            // is the one movement С28 did not foresee, and it was granted
+            // knowingly, with the alternative measured: Ф5 could not begin
+            // otherwise. WHAT MOVED, and nothing else did:
+            //
+            //   1. THE SPAWN. Geometry.SpawnPosFor lost its solo special case,
+            //      so this scenario's player no longer starts at (0,0) — the
+            //      Director's own ground since Т12, and the trigger of his
+            //      activation since Р299. Measured, not assumed: a probe over
+            //      this very scenario found the player inside the CORE on
+            //      1000 ticks out of 1000, while the multiplayer scenario
+            //      never left the OUTER ring (closest approach 93.45 m against
+            //      a 92 m boundary). Left alone, Т21's phase machine would
+            //      have moved this digest on its first tick and Т22 would have
+            //      spawned the Director into every solo fixture in the suite.
+            //   2. THE SCENARIO'S OWN START, now stated rather than inherited
+            //      (ScenarioStart above). The spawn alone would have left the
+            //      run in an empty stretch of rim where it never ricochets a
+            //      dash — GoldenScenario_ExercisesAllMechanics_Coverage caught
+            //      exactly that, and a coverage assertion is not something to
+            //      weaken to keep a digest quiet.
+            //
+            // ATTRIBUTION, so the movement is proven rather than asserted, and
+            // by the same method the two earlier re-pins used. The two causes
+            // were measured SEPARATELY, in two full runs: the spawn change
+            // alone took this constant to 0xFFFEE5C6C159FA89, and anchoring the
+            // scenario took it from there to the value below. THE CONTROL is
+            // the multiplayer golden, which sat at 0x03FD1C06FC2921DD through
+            // both runs and still does — nothing structural leaked into the
+            // hash, or it would have moved that constant too. The 76 fixture
+            // repairs of the same commit are digest-inert by construction:
+            // every one of them touches TestConfigs.OpenField(), a fixture this
+            // scenario does not use.
+            //
+            // Any further movement of any of the three constants is a stop and
+            // a question for the owner.
+            const ulong GoldenHash = 0x48983E20C038AEF6UL; // = 5230999277575646966
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
