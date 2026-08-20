@@ -172,7 +172,7 @@ namespace Ring.Simulation.Tests
             // that scenario can't actually catch a regression back to the hardcoded
             // value. A 45-degree aim gives a non-zero expected angle the old code would
             // fail, making this a genuinely discriminating regression test.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Weapon.SpreadRad = 0f;
             cfg.Weapon.RecoilPerShotRad = 0f;
             var w = new SimulationWorld(1, cfg);
@@ -279,7 +279,7 @@ namespace Ring.Simulation.Tests
             // Aim that has only just gone up is not yet a laser: on the first
             // aimed tick the settle fraction is a single tick of AimSettleSeconds,
             // so almost the whole base cone still applies.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             float settle = SimulationWorld.TickDt / cfg.Hero.AimSettleSeconds;
             // recoil is still zero on a fresh world's first tick, so the base
             // cone's leftover is the entire effective cone
@@ -295,7 +295,7 @@ namespace Ring.Simulation.Tests
             // Fully settled aim never becomes a laser while the weapon is
             // spraying: the base cone is gone by then, but accumulated recoil IS
             // a cone of its own — and, settled, it is the ONLY term left.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             // the shot's own tick decays recoil once before drawing from it
             float cone = cfg.Weapon.RecoilMaxRad
                 - cfg.Weapon.RecoilRecoveryRadPerSec * SimulationWorld.TickDt;

@@ -72,7 +72,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void BeyondSightRadius_NotVisible()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             // Open arena: no obstacles/walls, so LoS is never the reason this
             // mob is hidden — only the plain distance gate is exercised.
@@ -99,7 +99,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void BehindObstacle_NotVisible()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.ObstacleCount = 1;
             // Dead-centre on the ray, radius well past the mob's own (a
             // Chaser radius of 0.5), so this stays blocked even after the
@@ -129,7 +129,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void BehindWall_NotVisible()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // Vertical wall straddling the ray's crossing point on its flat
             // side (same shape as MobAiTests.LineOfFire_BlockedByWall),
@@ -159,7 +159,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EdgePeek_IsVisible_ConservativeLos()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             float mobRadius = cfg.Chaser.Radius; // 0.5 — the target's own radius the LoS gate must pad by
             cfg.Arena.ObstacleCount = 1;
             // Obstacle's perpendicular offset from the ray sits strictly
@@ -207,7 +207,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EdgePeek_UsesTargetTypeRadius_NotHeroRadius()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             float mobRadius = cfg.Chaser.Radius;  // 0.5
             float heroRadius = cfg.Hero.Radius;   // 0.45
             // Fix-round 1 (M-3): EdgePeek_IsVisible_ConservativeLos's own
@@ -257,7 +257,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Hysteresis_KeepsVisibleUntilExitRadius()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(cfg.Visibility.SightRadius - 1f, 0f));
 
@@ -323,7 +323,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void HysteresisBand_ReenteredFromLinger_ReadsAsVisibleNow()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
@@ -380,7 +380,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void LingerTicks_KeepVisibleAfterRangeLoss()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
@@ -419,7 +419,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void LingerTicks_KeepVisibleAfterLosBreak()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // Same wall shape as BehindWall_NotVisible: blocks anything
             // crossing x=5 within roughly y in [-6,6] but leaves the y-axis
@@ -435,7 +435,7 @@ namespace Ring.Simulation.Tests
             // near the wall) to blocked (dead ahead, straight through the
             // wall's own stadium). Isolates a pure LoS break from a range
             // break, which LingerTicks_KeepVisibleAfterRangeLoss
-            // (TestConfigs.Open(), no geometry at all) cannot exercise no
+            // (TestConfigs.OpenField(), no geometry at all) cannot exercise no
             // matter how it moves its mob.
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
 
@@ -479,7 +479,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SwapRemove_DoesNotTransferState()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
 
             // Fresh world: SimulationWorld's own _nextEntityId counter starts
@@ -1162,7 +1162,7 @@ namespace Ring.Simulation.Tests
             // apart IN THE FIXTURE (the shipped balance may legitimately keep
             // them equal — that is a balance choice, not a contract this test
             // is entitled to depend on).
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             float chaserRadius = cfg.Chaser.Radius;
             cfg.Gunner.Radius = chaserRadius * 2f;
             float gunnerRadius = cfg.Gunner.Radius;

@@ -179,7 +179,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void MobDied_DeliveredInHysteresisBand()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
@@ -245,7 +245,7 @@ namespace Ring.Simulation.Tests
             // test kills a real mob through the DamageMob seam (internal,
             // visible to tests via InternalsVisibleTo) to make that trap
             // observable.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
@@ -306,7 +306,7 @@ namespace Ring.Simulation.Tests
             // over-generalization of 4b — would have broken every MobSpawned
             // delivery, always, with the whole suite green. Both arms are
             // asserted here for the same reason 4b asserts both of its own.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
 
             // Tick N: the world has no mobs at all yet.

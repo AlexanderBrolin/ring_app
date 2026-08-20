@@ -16,16 +16,20 @@ namespace Ring.Simulation.Tests
     ///
     /// ROOT CAUSE OF FIX-ROUND 1 (three of four tests below shipped red,
     /// coordinator's diagnosis, systematic-debugging Phase 1): a solo world's
-    /// OWN player spawns at the arena center (`Geometry.SpawnPosFor` returns
-    /// `float2.zero` for `playerCount &lt;= 1`) — not out on the ring the way a
-    /// multiplayer world's players do. The shooter/victim pair below straddles
+    /// OWN player spawned at the arena center back then — `Geometry.SpawnPosFor`
+    /// answered `float2.zero` for `playerCount &lt;= 1` until Stage 3 Ф5-0
+    /// removed that special case (owner decision R-173), so solo now takes the
+    /// one-player ring point like everybody else. The shooter/victim pair below straddles
     /// that exact center point on the y = 0 line, and a Mob-owned round is
     /// ALWAYS eligible against every live player (no owner exclusion on that
     /// side of the gather, unaffected by this task) — so the round hit the
     /// player sitting at (0, 0), 4-9 m closer than the intended mob victim,
     /// and was consumed there (single-target, no piercing) before it ever
-    /// reached the mob. Every fixture below now relocates the solo player
-    /// WAY off that line first (`TestWorlds.RelocatePlayerForTest`, the
+    /// reached the mob. The spawn has moved since, but the fix has not and
+    /// must not: every fixture below relocates the solo player WAY off that
+    /// line explicitly, which is what makes the firing line a stated premise
+    /// rather than a coincidence of wherever the spawn happens to be
+    /// (`TestWorlds.RelocatePlayerForTest`, the
     /// existing seam — reuse, not a new one), clear of every round's flight
     /// path, so the friendly-fire round's only eligible target really is the
     /// mob the test names.

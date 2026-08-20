@@ -77,7 +77,7 @@ namespace Ring.Simulation.Tests
             // the player, MobAiSystem for a Gunner) rather than the raw
             // SpawnProjectileForTest seam, so this pins the actual call sites, not
             // just the Emit plumbing.
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             var w = new SimulationWorld(1, c);
             w.Tick(new SimInput { AimPoint = new float2(10f, 0f), FireHeld = true }); // player's first shot is instant
 

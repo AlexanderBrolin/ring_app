@@ -916,22 +916,47 @@ namespace Ring.Simulation.Core
             }
         }
 
-        /// Canonical multiplayer spawn-point formula (Stage 2 Task 4, spec
-        /// §3.2, fix-round 1 M-8) — single source of truth shared by
+        /// Canonical spawn-point formula (Stage 2 Task 4, spec §3.2,
+        /// fix-round 1 M-8) — single source of truth shared by
         /// SimulationWorld's constructor and SimConfigBuilder.Validate's
         /// spawn-clearance check (reuse > duplication). Lives here rather
         /// than on SimulationWorld because it is a pure formula with no
         /// dependency on world state, and Ring.Data (the builder's home)
         /// should not have to reach into the stateful world class just to
-        /// call a formula. Solo (playerCount <= 1) spawns at the arena
-        /// center, unchanged from the pre-Stage-2 single-player behavior
-        /// (189 pre-Stage-2 tests depend on it); otherwise index sits on a
-        /// ring at Radius * PlayerSpawnRingFrac, evenly spaced by angle, with
-        /// no seed-dependent rotation — spawn layout must stay reproducible
+        /// call a formula. `index` sits on a ring at Radius *
+        /// PlayerSpawnRingFrac, evenly spaced by angle, with no
+        /// seed-dependent rotation — spawn layout must stay reproducible
         /// across replays regardless of match seed.
+        ///
+        /// ONE RULE FOR EVERY PLAYER COUNT, SOLO INCLUDED (Stage 3 Ф5-0,
+        /// owner decision R-173). Until this task a solo world short-circuited
+        /// to the arena CENTER — a Stage 2 convention from the 65 m arena that
+        /// had no zones in it. Stage 3 made the center the Director's own
+        /// arena (spec §3.4 spawns him at (0,0), §3.15 puts the extraction
+        /// GATE there too), and Р299 made "a live collector standing in the
+        /// core" the trigger that activates him. A solo world spawning at the
+        /// center therefore activated the endgame on its first tick: measured,
+        /// not assumed — the solo golden scenario sat inside the core for
+        /// 1000 ticks out of 1000, and LocalSimBackend (the local playtest,
+        /// milestone В1) builds exactly such a world. Removing the special
+        /// case fixes both at the root and leaves one formula instead of two;
+        /// the price the owner accepted for it was 78 fixtures restated and
+        /// the third golden re-pin (see DeterminismTests' own account).
+        ///
+        /// `playerCount` must be at least 1: zero or negative names no lobby
+        /// at all and would divide the angle by it. It THROWS rather than
+        /// answering, for the same reason MatchEndPolicy's own constructor
+        /// does — a bad count is a caller bug, and the plausible-looking
+        /// float2.zero it used to return is now a real position inside the
+        /// Director's arena, i.e. the single worst answer to hand back.
         public static float2 SpawnPosFor(int index, int playerCount, in ArenaSimConfig arena)
         {
-            if (playerCount <= 1) return float2.zero;
+            if (playerCount < 1)
+            {
+                throw new System.ArgumentOutOfRangeException(nameof(playerCount), playerCount,
+                    "Geometry.SpawnPosFor: playerCount must be at least 1 — a lobby of none has no "
+                    + "spawn points to place anyone on.");
+            }
             float angle = index * 2f * math.PI / playerCount;
             float ringRadius = arena.Radius * arena.PlayerSpawnRingFrac;
             return new float2(math.cos(angle), math.sin(angle)) * ringRadius;

@@ -19,7 +19,7 @@ namespace Ring.Simulation.Tests
         /// the sweep entry away from the geometry above.
         static SimulationWorld SpawnPair(float chaserX, float gunnerX, out SimConfig cfg)
         {
-            cfg = TestConfigs.Open();
+            cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
             cfg.Gunner.MaxSpeed = 0f;
             cfg.Gunner.StrafeSpeed = 0f;
@@ -197,7 +197,7 @@ namespace Ring.Simulation.Tests
             // short of the aimed point along the line. The fixture shrinks
             // ProjectileRadius so that offset stays well inside the tolerance and
             // this assert measures aim accuracy, not sphere size.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Weapon.ProjectileRadius = 0.01f;
             var w = new SimulationWorld(1, cfg);
             var p = w.Player;

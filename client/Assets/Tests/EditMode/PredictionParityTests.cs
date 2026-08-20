@@ -316,7 +316,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Parity_DashRicochetsOffWall()
         {
-            SimConfig cfg = TestConfigs.Open();
+            SimConfig cfg = TestConfigs.OpenField();
             // One wall straight across the dash line, at half the dash's own
             // reach — so the mirror happens mid-dash, with the dash branch still
             // owning the tick (which is the only case that ricochets at all).
@@ -348,7 +348,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Parity_SlideDampedByWall()
         {
-            SimConfig cfg = TestConfigs.Open();
+            SimConfig cfg = TestConfigs.OpenField();
             // The slide needs a full run-up first, plus a few ticks for Accel to
             // clear the run-up's own speed threshold; the wall then sits roughly
             // halfway along the slide's reach from wherever that run leaves the
@@ -396,7 +396,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Parity_DashSlideLinkUnderHeldFire()
         {
-            SimConfig cfg = TestConfigs.Open();
+            SimConfig cfg = TestConfigs.OpenField();
             // dash -> (post-dash window) slide -> (link window) dash, with the
             // trigger held throughout. Held fire is not decoration: the weapon
             // half of the step must run AFTER the movement half, and the tick a

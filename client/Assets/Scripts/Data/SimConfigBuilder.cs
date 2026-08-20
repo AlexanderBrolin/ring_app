@@ -684,17 +684,20 @@ namespace Ring.Data
                 // later, from MatchConfig), and rings for different player
                 // counts are NOT nested — e.g. the n=2 ring's point (-28,0)
                 // is never a point on the n=3 ring — so every potential spawn
-                // point must be checked: the solo center, plus every point on
-                // every ring size from n=2 up to Arena.MaxPlayers (at
-                // MaxPlayers=3 that's 5 ring points: the n=2 ring's 2 points
-                // plus the n=3 ring's 3). Formula reused from
+                // point must be checked: every point on every ring size from
+                // n=1 up to Arena.MaxPlayers (at MaxPlayers=3 that's 6 ring
+                // points: 1 + 2 + 3). Formula reused from
                 // Geometry.SpawnPosFor, not duplicated — reuse > duplication.
-                // MaxPlayers < 2 (M-3): the ring loop below doesn't run (n
-                // starts at 2), so only the center is checked once — no
-                // duplicate "covers the spawn point" message.
+                //
+                // n STARTS AT 1, AND THE SEPARATE "solo center" CANDIDATE IS
+                // GONE (Stage 3 Ф5-0, owner decision R-173): a solo world no
+                // longer spawns at the arena center, it takes the n=1 ring
+                // point like every other lobby size (Geometry.SpawnPosFor's
+                // own account of why). Keeping the hardcoded float2.zero here
+                // would check a point nobody spawns on any more while leaving
+                // the point a solo match actually uses unchecked.
                 float clearanceNeeded = r + cfg.Hero.Radius + spawnClearance;
-                CheckSpawnClearance(errors, tag, pos, clearanceNeeded, float2.zero, "solo center");
-                for (int n = 2; n <= cfg.Arena.MaxPlayers; n++)
+                for (int n = 1; n <= cfg.Arena.MaxPlayers; n++)
                 {
                     for (int s = 0; s < n; s++)
                     {
@@ -1255,15 +1258,14 @@ namespace Ring.Data
                 // Spec §3.2's own Validate paragraph, last clause: "кольцо
                 // спавна игроков … не лежат в теле дуги" — SAME form as
                 // ValidateWalls' own CheckWallSpawnClearance loop just below
-                // (solo center + every ring size up to MaxPlayers via
-                // Geometry.SpawnPosFor), Geometry.OverlapsArc swapped in for
-                // the arc shape instead of OverlapsStadium. No second policy.
+                // (every ring size from n=1 up to MaxPlayers via
+                // Geometry.SpawnPosFor — the separate "solo center" candidate
+                // went away with the solo center itself, Ф5-0/R-173),
+                // Geometry.OverlapsArc swapped in for the arc shape instead
+                // of OverlapsStadium. No second policy.
                 var doorCenter = new ReadOnlySpan<float>(cfg.Arena.DoorCenterRad, start, count);
                 var doorFreeWidth = new ReadOnlySpan<float>(cfg.Arena.DoorFreeWidth, start, count);
-                CheckZoneWallSpawnClearance(errors, tag, cfg.Arena.ZoneWallRadius[i],
-                    cfg.Arena.ZoneWallHalfWidth[i], doorCenter, doorFreeWidth,
-                    spawnClearanceNeeded, float2.zero, "solo center");
-                for (int n = 2; n <= cfg.Arena.MaxPlayers; n++)
+                for (int n = 1; n <= cfg.Arena.MaxPlayers; n++)
                 {
                     for (int s = 0; s < n; s++)
                     {
@@ -1472,7 +1474,7 @@ namespace Ring.Data
         /// derives its own body radius the same way.
         ///
         /// Spawn coverage reuses Geometry.SpawnPosFor over the same candidate set
-        /// the obstacle loop walks (solo center + every ring size up to
+        /// the obstacle loop walks (every ring size from n=1 up to
         /// MaxPlayers), and the "spawn ring is not locked" rule mirrors
         /// WaveSystem.TryFindSpawnPos' RNG-free FallbackSlots grid.
         static void ValidateWalls(List<string> errors, in SimConfig cfg, float spawnClearance)
@@ -1524,9 +1526,11 @@ namespace Ring.Data
                         "wall and the ring can neither be pushed out nor slide along it.");
                 }
 
-                CheckWallSpawnClearance(errors, tag, a, b, halfWidth, spawnClearanceNeeded,
-                    float2.zero, "solo center");
-                for (int n = 2; n <= cfg.Arena.MaxPlayers; n++)
+                // Every ring size from n=1 (the solo lobby's own ring point)
+                // up to MaxPlayers — see ValidateObstacles' own candidate-set
+                // paragraph for why the arena center stopped being one of
+                // them (Ф5-0, owner decision R-173).
+                for (int n = 1; n <= cfg.Arena.MaxPlayers; n++)
                 {
                     for (int s = 0; s < n; s++)
                     {

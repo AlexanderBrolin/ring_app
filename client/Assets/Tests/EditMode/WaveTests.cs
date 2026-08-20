@@ -58,7 +58,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void FullyBlockedRing_NoHang_DebtCarriesOver()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Wave.FirstWaveDelay = 0.1f;
             // Stage 3 Task 12: "no valid points at all" is a claim about EVERY
             // zone's spawn ring now, not about one. The literal 100 blocked the

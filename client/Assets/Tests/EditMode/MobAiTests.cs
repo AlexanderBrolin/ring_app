@@ -389,7 +389,7 @@ namespace Ring.Simulation.Tests
         {
             // Fresh multiplayer world: every player spawns on the ring at the
             // SAME radius from the arena center
-            // (MultiPlayerWorldTests.SoloSpawnsAtOrigin_MultiplayerSpawnsOnRing),
+            // (MultiPlayerWorldTests.SoloTakesTheOnePlayerRingPoint_MultiplayerSpreadsAroundIt),
             // so querying from the center is an exact three-way tie — the
             // smaller index must win (spec Р85), not spawn/array order coincidence.
             var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
@@ -406,11 +406,11 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_ClosesDistanceToPlayer()
         {
-            var w = new SimulationWorld(1, TestConfigs.Open());
+            var w = new SimulationWorld(1, TestConfigs.OpenField());
             w.SpawnMobForTest(MobType.Chaser, new float2(15f, 0f));
             float d0 = 15f;
             for (int i = 0; i < 60; i++) w.Tick(Idle);
-            var snap = new RenderSnapshot(TestConfigs.Open().Arena);
+            var snap = new RenderSnapshot(TestConfigs.OpenField().Arena);
             w.CaptureSnapshot(snap);
             Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), d0 - 3f);
         }
@@ -418,7 +418,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_TelegraphThenStrike_DamagesPlayer()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(1.0f, 0f)); // already within AttackRange
             float hp0 = c.Hero.MaxHp;
@@ -431,7 +431,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_TelegraphsAheadOfRunner_AndConnects()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f));
             var run = new SimInput { MoveDir = new float2(1f, 0f) }; // player charges straight at the chaser
@@ -493,7 +493,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_LeadClampedByMaxMeters()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Chaser.MaxSpeed = 0f; // isolate the cap check from the chaser's own approach
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(20f, 0f));
@@ -517,7 +517,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SwingLeadZero_EntryTickEqualsE1Rule()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             // Factor 0 -> PredictPos degenerates to the raw player position exactly
             // (offset = lead * (seconds * 0) = zero vector) — the pre-Task-13 (E1)
             // raw-distance rule as a special case, bit-exact.
@@ -558,7 +558,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_BehindObstacle_SteersAroundNotStuck()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Arena.ObstacleCount = 1;
             c.Arena.ObstaclePos = new[] { new float2(7f, 0f) };
             c.Arena.ObstacleRadius = new[] { 2f };
@@ -573,7 +573,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Gunner_KeepsPreferredRange_AndFiresOnlyWithLoS()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Gunner, new float2(20f, 0f));
             int fired = 0;
@@ -764,7 +764,7 @@ namespace Ring.Simulation.Tests
             // collide-and-slide cancels the resulting velocity, and the next
             // tick reproduces the same geometry. A mutation that reintroduces
             // tangent-to-end-cap steering for walls reddens this test.
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Arena.WallCount = 1;
             c.Arena.WallA = new[] { new float2(7f, -3f) };
             c.Arena.WallB = new[] { new float2(7f, 3f) };
@@ -857,7 +857,7 @@ namespace Ring.Simulation.Tests
             // which the current straight-line walk-through triggers almost
             // immediately (spawn angle 135 degrees is well outside the door's
             // +-17 degree cutout).
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             float ringR = 10f, halfW = 1f;
             c.Arena.ZoneWallCount = 1;
             c.Arena.ZoneWallRadius = new[] { ringR };

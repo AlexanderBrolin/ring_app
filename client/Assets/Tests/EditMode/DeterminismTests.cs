@@ -61,10 +61,54 @@ namespace Ring.Simulation.Tests
         /// Fixed world seed (42, same as the other tests in this file) driven by
         /// scripted input from an independently-seeded rng — isolates
         /// input-driven determinism from world-seed-driven determinism.
+        /// The scripted SOLO scenario's own start point (Stage 3 Ф5-0, owner
+        /// decision R-173) — stated here instead of inherited from wherever
+        /// the spawn formula happens to put player 0.
+        ///
+        /// WHY IT IS STATED AT ALL. Until Ф5-0 a solo world spawned at the
+        /// arena center, in the middle of this fixture's inner cluster of
+        /// circles, and the scenario ricocheted dashes off them without ever
+        /// saying so (GoldenScenario_ExercisesAllMechanics_Coverage is what
+        /// noticed). Ф5-0 moved the solo spawn onto the one-player ring point,
+        /// an empty stretch of rim where the nearest circle is ~69 m away
+        /// along the arc: the run still slid and dashed, but its ricochet
+        /// count fell to zero — a silent loss of coverage in the very scenario
+        /// the golden digest pins. Anchoring the run beside a circle restores
+        /// it and, unlike the old arrangement, says out loud what the scenario
+        /// needs from the arena.
+        ///
+        /// WHY THIS PARTICULAR SPOT. The anchor is the OUTERMOST circle the
+        /// fixture ships (found by arithmetic, not by index — the layout is
+        /// data and may be retuned), and the player stands half a dash clear
+        /// of its surface, so a dash in its direction reaches it and a dash
+        /// away from it does not. Two constraints it must satisfy, both
+        /// checked by ScenarioStart_IsClearOfTheCoreAndInsideTheArena below:
+        /// the run must stay well outside the CORE, because a live collector
+        /// standing there is what activates the Director from Т21 on (Р299)
+        /// and this digest must not depend on that; and it must sit inside the
+        /// arena rim with room to move.
+        static float2 ScenarioStart(in SimConfig cfg)
+        {
+            int anchor = 0;
+            for (int i = 1; i < cfg.Arena.ObstacleCount; i++)
+            {
+                if (math.lengthsq(cfg.Arena.ObstaclePos[i]) >
+                    math.lengthsq(cfg.Arena.ObstaclePos[anchor]))
+                {
+                    anchor = i;
+                }
+            }
+            float2 obstacle = cfg.Arena.ObstaclePos[anchor];
+            float halfDash = cfg.Hero.DashSpeed * cfg.Hero.DashDuration * 0.5f;
+            float gap = cfg.Arena.ObstacleRadius[anchor] + cfg.Hero.Radius + halfDash;
+            return obstacle + math.normalize(obstacle) * gap;
+        }
+
         static ulong RunScripted(uint inputSeed, int ticks)
         {
             SimConfig cfg = TestConfigs.Default();
             var world = new SimulationWorld(42, cfg);
+            TestWorlds.RelocatePlayerForTest(world, 0, ScenarioStart(in cfg));
             var rng = new Random(inputSeed);
             bool aimHeld = false; // LOCAL — RunScripted runs 3x/session, no static leak (QA5/QB5/QD5)
             for (int i = 0; i < ticks; i++)
@@ -854,16 +898,30 @@ namespace Ring.Simulation.Tests
             // instead of reading the accumulated buffer once at the end.
             SimConfig cfg = TestConfigs.Default();
             var world = new SimulationWorld(42, cfg);
+            // Same start RunScripted states (Ф5-0) — this test only means
+            // anything if it runs the very scenario the golden pins.
+            TestWorlds.RelocatePlayerForTest(world, 0, ScenarioStart(in cfg));
             var rng = new Random(123);
             bool aimHeld = false; // LOCAL, same no-static-leak reasoning as RunScripted's own
 
             int dashRicochetCount = 0;
             int headshotProjectileHits = 0;
             bool anyAimedProjectileFired = false; // VelZ != 0 -> the AimHeld branch actually spawned a shot
+            // Ф5-0: the scenario's own proof that it never sets foot in the
+            // core. ScenarioStart checks the START; this checks all 1000 ticks
+            // of wandering that follow it, which is the half a start position
+            // cannot promise. From Т21 on a live collector inside the core
+            // activates the Director (Р299) — that would move the digest this
+            // file pins, and both re-pin sanctions are spent (see the golden's
+            // own account), so the day the run drifts in, THIS is the test
+            // that says so.
+            Zone deepestZone = Zone.Outer;
 
             for (int i = 0; i < Ticks; i++)
             {
                 world.Tick(Scripted(ref rng, ref aimHeld, cfg.Hero.MaxAimHeight));
+                Zone here = Geometry.ZoneOf(world.Player.Pos, in cfg.Arena);
+                if (here > deepestZone) deepestZone = here;
 
                 for (int e = 0; e < world.EventCount; e++)
                 {
@@ -880,6 +938,8 @@ namespace Ring.Simulation.Tests
                 }
             }
 
+            Assert.AreNotEqual(Zone.Core, deepestZone,
+                "the scripted scenario must never enter the core — the Director's own ground (Р299)");
             Assert.Greater(world.Stats.SlidesUsed, 0,
                 "the golden scenario must actually exercise sliding, not leave it dormant");
             Assert.Greater(world.Stats.DashesUsed, 0,
@@ -889,6 +949,24 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(headshotProjectileHits >= 1 || anyAimedProjectileFired,
                 "the golden scenario must either land a Head-zone hit, or at minimum fire at " +
                 "least one aimed (VelZ != 0) shot, proving the AimHeld branch actually fired");
+        }
+
+        /// Ф5-0: the two premises ScenarioStart leans on, checked rather than
+        /// asserted in prose. Both are about the ARENA, so a retune of the
+        /// circle layout or of the zone radii fails HERE, with a message
+        /// naming what broke, instead of silently moving a golden digest.
+        [Test]
+        public void ScenarioStart_IsClearOfTheCoreAndInsideTheArena()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            float2 start = ScenarioStart(in cfg);
+            float dist = math.length(start);
+
+            Assert.AreEqual(Zone.Outer, Geometry.ZoneOf(start, in cfg.Arena),
+                "the scripted scenario must start in the OUTER ring — a live collector in the core " +
+                "activates the Director (Р299), and this digest must not depend on that");
+            Assert.Less(dist + cfg.Hero.Radius, cfg.Arena.Radius,
+                "the start must be inside the arena rim, body included");
         }
 
         [Test]

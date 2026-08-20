@@ -11,7 +11,7 @@ namespace Ring.Simulation.Tests
 
         static SimConfig NoSpread()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Weapon.SpreadRad = 0f; c.Weapon.RecoilPerShotRad = 0f;
             return c;
         }
@@ -179,7 +179,7 @@ namespace Ring.Simulation.Tests
             // call site" rationale — and reuses that same test's proven Gunner
             // fixture position (well inside PreferredRange+-RangeTolerance with
             // clear LoS, fires on its first eligible tick).
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Gunner, new float2(9f, 0f));
             bool fired = false;

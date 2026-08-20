@@ -27,7 +27,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SlideAlongFlatWall_DoesNotAccelerate()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // Long horizontal wall (axis along +x) above the player's spawn.
             // Touch boundary from below (fixture expr): wall centreline 2,
@@ -76,7 +76,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SlideHeadOnIntoWall_IsDamped()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // Vertical wall dead ahead — a head-on hit against the flat side,
             // dot(-normal, SlideDir) == 1 > SlideWallStopDot, same shape as
@@ -124,7 +124,7 @@ namespace Ring.Simulation.Tests
         /// exactly), against a flat wall instead of a circular obstacle.
         static SimConfig DiagonalWallFixture()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Hero.DashSpeed = 30f;
             cfg.Hero.DashDuration = 0.09f;
             cfg.Hero.RicochetRetention = 0.8f;
@@ -254,7 +254,7 @@ namespace Ring.Simulation.Tests
             // swept check: a naive "does the TARGET point overlap anything"
             // test would see the dash already clear on the far side and
             // report no collision at all.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Hero.DashSpeed = 90f;
             cfg.Hero.DashDuration = 0.09f;
             cfg.Arena.WallCount = 1;
@@ -297,7 +297,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SlideAlongWallCap_DoesNotStick()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // The wall's endpoint B sits exactly where SlideTests.
             // SlideAlongWall_Continues's own circular obstacle sat — (5, 1.3),

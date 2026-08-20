@@ -82,7 +82,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void LinkedDash_CooldownBypassAndRefund_ConsumesWindow()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             var move = new SimInput { MoveDir = new float2(1f, 0f) };
 
@@ -124,7 +124,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void LinkedDash_BypassesStillRunningCooldown()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             var move = new SimInput { MoveDir = new float2(1f, 0f) };
 
@@ -132,7 +132,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, w.Stats.DashesUsed);
 
             // Let the post-dash window close on its own (PostDashSlideWindow <
-            // DashCooldown, TestConfigs.Open()) while DashCooldown keeps
+            // DashCooldown, TestConfigs.OpenField()) while DashCooldown keeps
             // counting down — a slide (linked or not) never touches
             // DashCooldown (owner clarification, В1 fix-wave 3 review: only
             // a dash that itself lands inside LinkWindowTimer bypasses the

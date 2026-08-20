@@ -200,9 +200,14 @@ namespace Ring.Simulation.Core
         public int RejectedEdgeRequestsFor(int index) => _rejectedEdgeRequests[index];
 
         /// `playerCount` defaults to 1 so every call site that predates Stage 2
-        /// Task 4 (136 existing constructions) keeps compiling and behaving
-        /// identically — solo still spawns at the arena center (spec §3.2), not
-        /// on the ring.
+        /// Task 4 (136 existing constructions) keeps compiling. Where it
+        /// SPAWNS that lone player stopped being a special case in Stage 3
+        /// Ф5-0 (owner decision R-173): solo takes the one-player point of the
+        /// same ring every other lobby size takes (Geometry.SpawnPosFor), the
+        /// arena center having become the Director's own ground. A fixture
+        /// that wants its player at the origin says so through its config
+        /// (TestConfigs.OpenField zeroes PlayerSpawnRingFrac) instead of
+        /// leaning on a branch in a production formula.
         public SimulationWorld(long seed, in SimConfig config, int playerCount = 1)
         {
             if (playerCount < 1 || playerCount > config.Arena.MaxPlayers)

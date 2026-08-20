@@ -101,7 +101,7 @@ namespace Ring.Simulation.Tests
         /// no real hit-zone profile yet — Т12 delivers one).
         static SimConfig EliteHybridConfig()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Elite = new MobSimConfig
             {
                 MaxSpeed = c.Chaser.MaxSpeed, Accel = c.Chaser.Accel,

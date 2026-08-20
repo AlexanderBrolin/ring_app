@@ -34,23 +34,42 @@ namespace Ring.Simulation.Tests
             Assert.Throws<System.InvalidOperationException>(() => w.Tick(default));
         }
 
+        /// Stage 3 Ф5-0 (owner decision R-173) rewrote what this pins. It used
+        /// to assert the OPPOSITE of the line below — "solo spawns at the arena
+        /// center" — which was the Stage 2 special case Geometry.SpawnPosFor
+        /// carried until the three-zone arena made the center the Director's
+        /// own ground (that method's own account). The fixture is Open(), not
+        /// OpenField(): OpenField zeroes PlayerSpawnRingFrac so that movement
+        /// fixtures can keep stating their geometry around the origin, and a
+        /// rule about the spawn RING cannot be pinned on a fixture that has
+        /// no ring.
         [Test]
-        public void SoloSpawnsAtOrigin_MultiplayerSpawnsOnRing()
+        public void SoloTakesTheOnePlayerRingPoint_MultiplayerSpreadsAroundIt()
         {
             var cfg = TestConfigs.Open();
+            float ring = cfg.Arena.Radius * cfg.Arena.PlayerSpawnRingFrac;
+
             var solo = new SimulationWorld(1, cfg);
-            Assert.AreEqual(0f, solo.Player.Pos.x, 1e-5f);
-            Assert.AreEqual(0f, solo.Player.Pos.y, 1e-5f);
+            // The n=1 ring point is angle 0 — the same formula every other
+            // lobby size takes, with no special case in front of it. Checked
+            // as a POSITION, not as "not the origin": the arena center is
+            // where the Director spawns and where the gate stands (spec
+            // §3.4/§3.15), so "solo is not there" is exactly half of what
+            // this test exists to say, and the other half is where it IS.
+            Assert.AreEqual(ring, solo.Player.Pos.x, 1e-4f);
+            Assert.AreEqual(0f, solo.Player.Pos.y, 1e-4f);
+            Assert.Greater(math.length(solo.Player.Pos), cfg.Arena.ZoneRadius[1],
+                "a solo collector must start OUTSIDE the middle boundary, i.e. nowhere near the core — " +
+                "a live collector standing in the core is what activates the Director (Р299)");
 
             var multi = new SimulationWorld(1, cfg, playerCount: 3);
             // Fixture arithmetic (Global Constraints C14): expected ring points
             // built from the SAME TestConfigs numbers the world was constructed
             // with, not a literal copied out of the .asset.
-            float ringRadius = cfg.Arena.Radius * cfg.Arena.PlayerSpawnRingFrac;
             for (int i = 0; i < 3; i++)
             {
                 float angle = i * 2f * math.PI / 3;
-                float2 expected = new float2(math.cos(angle), math.sin(angle)) * ringRadius;
+                float2 expected = new float2(math.cos(angle), math.sin(angle)) * ring;
                 Assert.AreEqual(expected.x, multi.PlayerAt(i).Pos.x, 1e-4f);
                 Assert.AreEqual(expected.y, multi.PlayerAt(i).Pos.y, 1e-4f);
             }

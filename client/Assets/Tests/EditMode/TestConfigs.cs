@@ -406,6 +406,46 @@ namespace Ring.Simulation.Tests
             return c;
         }
 
+        /// Open() stripped down to a FEATURELESS DISC with the player standing
+        /// at its center — the fixture for movement, combat, visibility and AI
+        /// tests that state their geometry in absolute coordinates around the
+        /// origin ("a mob 30 m to the right", "an obstacle at (12, 0)").
+        ///
+        /// TWO DIFFERENCES FROM Open(), BOTH SERVING ONE PURPOSE (Stage 3 Ф5-0,
+        /// owner decision R-173).
+        ///
+        /// NO ZONE BOUNDARIES. From Т21 on, a live collector standing in the
+        /// CORE is what activates the Director (Р299) — and from Т22 on that
+        /// spawns the Director and his retinue on top of whatever the fixture
+        /// was measuring. The owner's own rule for fixtures the core gets in
+        /// the way of is a zoneless arena, which is legal by construction
+        /// (R-53) and which Geometry.ZoneOf's callers must guard for anyway
+        /// (lesson 315). Open() itself KEEPS its two boundaries — that is
+        /// owner decision R-76, pinned by ZoneGeometryTests.
+        /// OpenFixture_HasNoBarrierThroughCenter, and the loot-tier tests that
+        /// read them (PickupTests.EliteInMiddle_DropsTierTwo and its family)
+        /// stay on Open() for exactly that reason.
+        ///
+        /// NO SPAWN RING. Since Ф5-0 a solo world spawns on the ring like any
+        /// other lobby size (Geometry.SpawnPosFor's own account), so a fixture
+        /// that wants the player at the origin has to SAY so rather than lean
+        /// on a special case that no longer exists. PlayerSpawnRingFrac = 0
+        /// says it once, here, instead of 76 tests each repeating the same
+        /// relocation line — the same reason Quiet() exists so that no test
+        /// has to write FirstWaveDelay = 1e6f itself. It is a number of the
+        /// TESTS, not a mirror of any .asset (spec §0/Р56): a real match never
+        /// stacks its lobby on one point, and a multiplayer world built on
+        /// this fixture must place its players itself
+        /// (TestWorlds.RelocatePlayerForTest), exactly as the PvP and
+        /// event-delivery fixtures already do.
+        public static SimConfig OpenField()
+        {
+            var c = Open();
+            c.Arena.ZoneRadius = System.Array.Empty<float>();
+            c.Arena.PlayerSpawnRingFrac = 0f;
+            return c;
+        }
+
         /// Ф2 fix-round (review B-m6, and the sweep it prompted): shrink the
         /// arena AND the zone boundaries together.
         ///
@@ -431,7 +471,7 @@ namespace Ring.Simulation.Tests
                 c.Arena.ZoneRadius = new[] { radius * 0.5f, radius * 0.8f };
         }
 
-        /// Open() with an extended slide (Task 10 — M16): SlideDuration 0.9s
+        /// OpenField() with an extended slide (Task 10 — M16): SlideDuration 0.9s
         /// (vs the 0.52s default) and a shortened StaminaRegenDelay of 0.3s so
         /// slide-adjacent stamina-regen timing tests (regen frozen for the
         /// whole slide even once the post-action delay alone would have
@@ -439,7 +479,7 @@ namespace Ring.Simulation.Tests
         /// observe the behavior deterministically instead of racing it.
         public static SimConfig RegenFixture()
         {
-            var c = Open();
+            var c = OpenField();
             c.Hero.SlideDuration = 0.9f;
             c.Hero.StaminaRegenDelay = 0.3f;
             return c;

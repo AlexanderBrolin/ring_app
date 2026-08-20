@@ -625,7 +625,7 @@ namespace Ring.Simulation.Tests
             // Spec §3.2's own Validate paragraph, last clause: "кольцо
             // спавна игроков … не лежат в теле дуги". Reuses the existing
             // CheckSpawnClearance/CheckWallSpawnClearance FORM (same loop —
-            // solo center + every ring size up to MaxPlayers via
+            // every ring size from 1 up to MaxPlayers via
             // Geometry.SpawnPosFor — same message shape) with
             // Geometry.OverlapsArc swapped in for the arc shape; no second
             // policy. Wall 1 (subject) sits exactly on the multiplayer
@@ -634,11 +634,14 @@ namespace Ring.Simulation.Tests
             // (pi/2) from every spawn angle (0, 2pi/3, 4pi/3 for the
             // 3-player ring; 0, pi for the 2-player one), so every
             // multiplayer spawn point falls inside the wall's solid body.
-            // The solo center (0,0) can never be a violation for ANY arc —
-            // InArcBand's own inner-radius clamp excludes the exact
-            // center — so this rule is only ever caught through the ring
-            // loop, with no separate "not just solo center" companion test
-            // needed (unlike the Stage 2 straight-wall precedent).
+            // Every lobby size is caught by the same wall here, the n=1 point
+            // (angle 0, Stage 3 Ф5-0) included — it sits on the same ring
+            // radius as the 2- and 3-player points and just as far from the
+            // single door at pi/2 — so no separate companion test is needed
+            // for the solo case (unlike the Stage 2 straight-wall precedent).
+            // Before Ф5-0 the reason was the opposite one: solo spawned at the
+            // exact center, which InArcBand's own inner-radius clamp excludes
+            // from every arc.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             a.ZoneRadius = new[] { 20f, 40f };
             ClearPortals(a);

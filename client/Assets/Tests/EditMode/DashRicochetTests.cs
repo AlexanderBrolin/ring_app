@@ -18,7 +18,7 @@ namespace Ring.Simulation.Tests
         /// of straight-line travel with no obstacle in the way.
         static SimConfig Fixture()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Hero.DashSpeed = 30f;
             cfg.Hero.DashDuration = 0.09f;
             cfg.Hero.RicochetRetention = 0.8f;

@@ -821,30 +821,46 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Validate_WallOverPlayerSpawn_Throws()
         {
-            // Same contract the obstacle loop already has: every candidate spawn
-            // point (solo center + every ring size up to MaxPlayers) must stay
-            // clear. This wall is laid straight through the arena center.
+            // Same contract the obstacle loop already has: every candidate
+            // spawn point (every ring size from 1 up to MaxPlayers) must stay
+            // clear. This wall straddles the SOLO lobby's own point.
+            //
+            // It used to be laid through the arena center, which was the solo
+            // spawn until Stage 3 Ф5-0 (owner decision R-173) and is a spawn
+            // point no more — a wall there now proves nothing about spawns at
+            // all (it would trip the portal-clearance rule instead, the
+            // extraction gate standing at (0,0), spec §3.15). Position is
+            // FIXTURE ARITHMETIC off the builder's own formula, never a
+            // literal — the same convention
+            // Validate_WallOverRingSpawnPoint_NotJustTheSoloPoint_Throws
+            // below follows.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            var arenaForSpawn = new ArenaSimConfig { Radius = a.Radius, PlayerSpawnRingFrac = a.PlayerSpawnRingFrac };
+            float2 solo = Geometry.SpawnPosFor(0, 1, in arenaForSpawn);
             a.Walls = new[] { new ArenaConfig.Wall
-                { A = new Vector2(-5f, 0f), B = new Vector2(5f, 0f), HalfWidth = 0.8f } };
+            {
+                A = new Vector2(solo.x - 5f, solo.y),
+                B = new Vector2(solo.x + 5f, solo.y),
+                HalfWidth = 0.8f
+            } };
             var ex = Assert.Throws<System.ArgumentException>(
                 () => SimConfigBuilder.Build(h, w, c, g, wv, a, vis));
-            Assert.That(ex.Message, Does.Contain("spawn point"));
+            Assert.That(ex.Message, Does.Contain("ring 1/point 0"));
         }
 
         [Test]
-        public void Validate_WallOverRingSpawnPoint_NotJustSoloCenter_Throws()
+        public void Validate_WallOverRingSpawnPoint_NotJustTheSoloPoint_Throws()
         {
-            // Fixwave Ф3 item 2: Validate_WallOverPlayerSpawn_Throws above lays
-            // its wall through the ORIGIN, so it only ever exercises the
-            // "solo center" clearance check — a mutant that deletes the
-            // `for (int n = 2; n <= cfg.Arena.MaxPlayers; n++)` ring loop right
-            // below it in ValidateWalls stays green against every existing
-            // fixture. This wall sits far from the origin, straddling the P1
-            // spawn point of a full 3-player lobby (Geometry.SpawnPosFor(1, 3,
-            // ...) — the same formula the builder itself uses, not a restated
-            // literal), and leaves the solo center untouched, so only the ring
-            // loop can catch it.
+            // Fixwave Ф3 item 2: Validate_WallOverPlayerSpawn_Throws above
+            // covers the SOLO lobby's own point (the n=1 ring point since
+            // Stage 3 Ф5-0, the arena center before it), so on its own it
+            // would leave a mutant that stops the loop after the first ring
+            // size green against every existing fixture. This wall straddles
+            // the P1 spawn point of a full 3-player lobby (Geometry.
+            // SpawnPosFor(1, 3, ...) — the same formula the builder itself
+            // uses, not a restated literal), which no other ring size shares,
+            // so only a loop that really walks n up to MaxPlayers can catch
+            // it.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             var arenaForSpawn = new ArenaSimConfig { Radius = a.Radius, PlayerSpawnRingFrac = a.PlayerSpawnRingFrac };
             float2 spawnP1 = Geometry.SpawnPosFor(1, 3, in arenaForSpawn);
@@ -1603,8 +1619,12 @@ namespace Ring.Simulation.Tests
         // two-sources discipline, MakeDefaults' own contract).
 
         /// Every candidate player spawn point the world can ever use, with a
-        /// tag naming it — the solo center plus every point of every ring
-        /// size from 2 up to MaxPlayers. Deliberately WIDER than SpawnPoints
+        /// tag naming it — every point of every ring size from 1 up to
+        /// MaxPlayers. The arena center left this set in Stage 3 Ф5-0 (owner
+        /// decision R-173) together with the solo special case that used to
+        /// put a player there, and the n=1 point took its place — same
+        /// change SimConfigBuilder's own three clearance loops made, mirrored
+        /// here. Deliberately WIDER than SpawnPoints
         /// above (which walks one ring, the full lobby): rings of different
         /// sizes are not nested, and SimConfigBuilder.Validate's own
         /// obstacle/wall/arc clearance loops walk exactly this set — a rule
@@ -1613,11 +1633,8 @@ namespace Ring.Simulation.Tests
         /// sit 1.96 m from a real spawn point (owner decision R-72).
         static (float2 Pos, string Tag)[] AllSpawnPoints(in ArenaSimConfig arena)
         {
-            var pts = new System.Collections.Generic.List<(float2, string)>
-            {
-                (float2.zero, "solo center")
-            };
-            for (int n = 2; n <= arena.MaxPlayers; n++)
+            var pts = new System.Collections.Generic.List<(float2, string)>();
+            for (int n = 1; n <= arena.MaxPlayers; n++)
                 for (int s = 0; s < n; s++)
                     pts.Add((Geometry.SpawnPosFor(s, n, in arena), $"ring {n}/point {s}"));
             return pts.ToArray();
