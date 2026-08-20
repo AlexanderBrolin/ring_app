@@ -56,6 +56,19 @@ namespace Ring.Simulation.Visibility
 
                 case SimEventKind.WaveStarted:
                 case SimEventKind.WaveCleared:
+                // Stage 3 Т21 (spec §3.4/§3.5, Р299): both of the raid's own
+                // turning points reach everyone, and neither carries a
+                // position — the first would otherwise leak the location of
+                // whichever collector walked into the core, the second the
+                // spot the corpse everyone is about to fight over lies on.
+                // Their WIRE catalogue (SnapshotEventKind, priority, payload
+                // size) is Т29's, exactly as it is for the two wave kinds
+                // above; the routing has to live here from the moment the
+                // kinds exist, because this switch throws on a kind it does
+                // not know and ChannelFor_HandlesEveryKind walks the whole
+                // enumeration.
+                case SimEventKind.DirectorActivated:
+                case SimEventKind.DirectorDied:
                     return DeliveryChannel.All;
 
                 // Projectile relevance needs the round's own trajectory

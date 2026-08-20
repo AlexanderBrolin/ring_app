@@ -66,7 +66,27 @@ namespace Ring.Simulation.Core
         /// available at the emit site at all. A consumer that needs "damage that
         /// actually landed" must read `PlayerDamaged`, which is not emitted when
         /// the blow is refused.
-        ProjectileHitPlayer
+        ProjectileHitPlayer,
+        /// Stage 3 Т21 (spec §3.4/§3.5, Р299): a live collector stood in the
+        /// core and the raid's endgame began — the Director is on his way and
+        /// the early portals have just closed. Fired ON THE TRANSITION, once
+        /// per raid, by MatchFlowSystem.
+        ///
+        /// PAYLOAD: none. Pos is float2.zero and every other field is unused —
+        /// this kind rides the All channel (EventRelevance.ChannelFor), which
+        /// carries no position by rule (Р28), and the position it would
+        /// otherwise carry is the location of whichever collector walked in.
+        /// Same shape as WaveStarted/WaveCleared next to it.
+        DirectorActivated,
+        /// Stage 3 Т21 (spec §3.4/§3.5): the Director has fallen, and the
+        /// window of sharing at his corpse (GateDelaySeconds) starts now.
+        /// Fired by MatchFlowSystem on the tick its scan first finds him gone
+        /// — liveness is a scan over _mobs by type, never a field (Р218).
+        ///
+        /// PAYLOAD: none, for the same reason as DirectorActivated above —
+        /// where he fell is where everyone is about to fight, and the All
+        /// channel does not carry positions.
+        DirectorDied
     }
 
     public struct SimEvent

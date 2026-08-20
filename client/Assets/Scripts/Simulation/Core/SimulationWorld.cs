@@ -119,9 +119,10 @@ namespace Ring.Simulation.Core
         int _containerCount;
         byte[] _containerSlots;
         WaveState _wave;
-        // Stage 3 Task 1 (spec Ф1, errata E-1/E-2): match-flow phase state —
-        // declared here, inert. Behavior (phase transitions, gate/portal
-        // timers) belongs to the state machine Т21 builds (Ф4); this task
+        // Stage 3 Task 1 (spec Ф1, errata E-1/E-2): match-flow phase state.
+        // Declared inert by Т1 and driven since Т21 by Objectives.
+        // MatchFlowSystem, the last step of TickAll and the ONLY writer of
+        // these two fields outside save/restore; Т1
         // only gave the phase a home so every field the extraction economy
         // needs entered StateHash together at the sanctioned re-pin (Т6,
         // done) instead of dribbling in across later Ф1 tasks (errata E-1's
@@ -387,18 +388,21 @@ namespace Ring.Simulation.Core
             // shift a step that already sits at its position — a re-pin
             // with both sanctions already spent.
             ContainerStore.Update(this);
-            // Stage 3 Task 3 (owner decision R-2): the canonical Ф1 tail this
-            // task's own spec §3.6 wants is combat -> LootOps.Update (Т17) ->
-            // ExtractionSystem.Update (Т23) -> PickupSystem.Update (this
-            // call) -> MatchFlowSystem.Update (Т21) — but of those five only
-            // PickupSystem exists today, so it lands last for now. THE SLOT
-            // AFTER THIS CALL BELONGS TO MatchFlowSystem (Т21), NOT to
-            // whichever of LootOps/ExtractionSystem happens to land next —
-            // those two insert themselves BEFORE this call instead. Spec
-            // §3.6's own "подбор после машины фазы" phrasing disagrees with
-            // this order; R-2 resolves that disagreement in favor of Р256
-            // and Т21's own ordering, not the spec sentence.
+            // Stage 3 Task 3 (owner decision R-2): the canonical tail is
+            // combat -> LootOps.Update (Т17, above) -> ExtractionSystem.Update
+            // (Т23, still to come — it inserts itself BEFORE this call, not
+            // after) -> PickupSystem.Update (this call) -> MatchFlowSystem.
+            // Update (Т21, below). Spec §3.6's own "подбор после машины фазы"
+            // phrasing disagrees with this order; R-2 resolves that
+            // disagreement in favor of Р256 and the phase machine's own
+            // ordering, not the spec sentence.
             PickupSystem.Update(this);
+            // Stage 3 Т21: the phase machine, and it is LAST on purpose (Р256)
+            // — it reads settled positions and settled mob liveness, so a
+            // collector who crossed into the core during this tick activates
+            // the Director on this tick, not the next one. See
+            // MatchFlowSystem's own doc for the rest of the ordering contract.
+            Objectives.MatchFlowSystem.Update(this);
         }
 
         /// One player's movement sub-step of TickAll (Stage 2 Task 4 — split out of the
@@ -1959,8 +1963,11 @@ namespace Ring.Simulation.Core
         internal void SetWaveForTest(in WaveState w) => _wave = w;
         /// Stage 3 Task 1 Interfaces: test-only seam for MatchState, same
         /// contract as SetWaveForTest above — mutates the live slot directly,
-        /// ahead of any test that needs to force a specific phase/
-        /// DirectorDeathTick (Т21 onward; no test in this task uses it yet).
+        /// for a test that needs to force a specific phase/DirectorDeathTick.
+        /// Its consumers arrived with Т21 (MatchFlowTests' own Ended
+        /// fixtures): Ended has no production writer until Т24, so forcing it
+        /// through this seam is the only way to state "the raid ended on this
+        /// tick" at all (coordinator R-172).
         internal void SetMatchForTest(in MatchState m) => _match = m;
 
         /// Test-only seam (Stage 3 Task 3), same contract as SetMobForTest/

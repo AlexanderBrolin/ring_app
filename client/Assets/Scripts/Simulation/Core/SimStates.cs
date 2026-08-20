@@ -326,16 +326,20 @@ namespace Ring.Simulation.Core
     /// Match-flow phase (Stage 3 Task 1 Interfaces, spec Ф1/§3.10): Farm (only
     /// wave combat, no Director/gate yet) -> DirectorActive (the boss has
     /// been triggered) -> GateOpen (the boss died, the extraction window is
-    /// live) -> Ended. Declared here inert — the state machine advancing
-    /// through these phases is Т21's job (Ф4); this task only gives the
-    /// phase a home and a byte-stable wire shape.
+    /// live) -> Ended. Declared inert by Т1; the state machine that advances
+    /// through these phases arrived with Т21 (Objectives.MatchFlowSystem),
+    /// and Ended stays outside its reach — that one is written by whoever
+    /// holds MatchEndPolicy's verdict, i.e. Т24 (coordinator R-172).
     public enum MatchPhase : byte { Farm = 0, DirectorActive = 1, GateOpen = 2, Ended = 3 }
 
     /// Match-wide flow state (Stage 3 Task 1 Interfaces) — one per match, not
     /// per player, same "single struct field" shape as WaveState/WorldStats.
     /// DirectorDeathTick is 0 while the Director is alive or has not yet been
-    /// activated; Т21 sets it to the world tick the Director died on, which
-    /// is what the GateDelaySeconds countdown (SimConfig.Flow) counts from.
+    /// activated; MatchFlowSystem (Т21) stamps it with the world tick its
+    /// liveness scan first found him gone, which is what the GateDelaySeconds
+    /// countdown (SimConfig.Flow) counts from. Zero can never collide with a
+    /// real death tick: TickAll bumps the counter before any system runs, so
+    /// the earliest tick that scan can observe is 1.
     /// Part of StateHash/WorldSave/CaptureSnapshot since Т6 (the sanctioned
     /// re-pin #1), at the canonical position right after the wave — and, from
     /// the same task, covered by a reflective hash-sweep pass of its own

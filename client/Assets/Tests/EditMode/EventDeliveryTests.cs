@@ -653,6 +653,10 @@ namespace Ring.Simulation.Tests
                 [SimEventKind.PlayerDied] = DeliveryChannel.Visible,
                 [SimEventKind.WaveStarted] = DeliveryChannel.All,
                 [SimEventKind.WaveCleared] = DeliveryChannel.All,
+                // Stage 3 Т21: the raid's own two turning points, same channel
+                // as the wave pair above and for the same reason (spec §3.4).
+                [SimEventKind.DirectorActivated] = DeliveryChannel.All,
+                [SimEventKind.DirectorDied] = DeliveryChannel.All,
                 [SimEventKind.ProjectileFired] = DeliveryChannel.None,
                 [SimEventKind.ProjectileHit] = DeliveryChannel.None,
                 [SimEventKind.ProjectileBlocked] = DeliveryChannel.None,
