@@ -55,9 +55,10 @@ namespace Ring.Simulation.Loot
             for (int i = w.ContainerCount - 1; i >= 0; i--)
             {
                 ref ContainerState c = ref w.Containers[i];
-                if (c.Ttl <= 0f) continue; // permanent kind — never decays
-                c.Ttl -= SimulationWorld.TickDt;
-                if (c.Ttl <= 0f) w.RemoveContainerAt(i);
+                // `zeroIsPermanent: true` IS the permanent-kind skip — the
+                // shared home refuses to decrement a container already at 0
+                // (errata E-6 C-I5; TtlDecay's own doc carries the why).
+                if (TtlDecay.Step(ref c.Ttl, zeroIsPermanent: true)) w.RemoveContainerAt(i);
             }
         }
 

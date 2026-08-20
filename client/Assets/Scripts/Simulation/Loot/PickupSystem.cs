@@ -42,8 +42,14 @@ namespace Ring.Simulation.Loot
             for (int i = w.PickupCount - 1; i >= 0; i--)
             {
                 ref PickupState p = ref w.Pickups[i];
-                p.Ttl -= SimulationWorld.TickDt;
-                if (p.Ttl <= 0f)
+                // The arithmetic itself lives in TtlDecay.Step (errata E-6
+                // C-I5), shared with ContainerStore.Update.
+                // `zeroIsPermanent: false` is this system's half of that
+                // home's one difference: 0 is a container's "never decays"
+                // sentinel and never a pickup's — a pickup at 0 is over,
+                // which PickupTests.
+                // ZeroTtl_Expires_WhereAContainerWouldBePermanent pins.
+                if (TtlDecay.Step(ref p.Ttl, zeroIsPermanent: false))
                 {
                     // Spec §3.6: swap-remove WITHOUT an event — a pickup
                     // quietly aging out is not a VFX/SFX-relevant occurrence

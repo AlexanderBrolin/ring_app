@@ -278,6 +278,31 @@ namespace Ring.Simulation.Tests
                 "a freshly spawned pickup's Ttl must come from Loot.PickupTtlSeconds, not a literal");
         }
 
+        /// Ф6-0 (errata E-6 C-I5): the ONE place the pickup TTL rule and the
+        /// container TTL rule genuinely differ, and until now nothing pinned
+        /// it. `ContainerStore.Update` reads `Ttl <= 0` as PERMANENT and skips
+        /// the decrement (Crate/Cache/PlayerCorpse, `InitialTtlFor`); a pickup
+        /// has no such reading and must simply die. Both loops now call one
+        /// home, `Loot.TtlDecay.Step`, whose `zeroIsPermanent` argument is
+        /// exactly that difference — so this test is what keeps the shared
+        /// home from quietly handing pickups the containers' policy.
+        [Test]
+        public void ZeroTtl_Expires_WhereAContainerWouldBePermanent()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            w.SpawnPickup(PickupKind.EnergyCell, new float2(50f, 50f), 4); // far from the player — never auto-collected
+            PickupState p = w.Pickups[0];
+            p.Ttl = 0f;
+            w.SetPickupForTest(0, in p);
+
+            w.Tick(default);
+
+            Assert.AreEqual(0, w.PickupCount,
+                "a pickup at Ttl 0 must be removed on the very next tick — 0 is a container's "
+                + "\"permanent\" sentinel, never a pickup's");
+        }
+
         // --- Stage 3 Task 16 (spec §3.7): archetype item drop on death ---
 
         /// Coordinator R-124/R-125: "тир предмета — тир зоны смерти" —
