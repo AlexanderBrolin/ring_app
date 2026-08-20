@@ -183,10 +183,22 @@ namespace Ring.Simulation.Tests
 
         /// Idle ticks — the phase machine reads positions and mob liveness, so
         /// no input is needed to advance it.
-        static void Idle(SimulationWorld w, int ticks = 1)
+        static void Idle(SimulationWorld w, int ticks = 1) => TestWorlds.IdleTicks(w, ticks);
+
+        /// Since Т22 the activating transition SPAWNS the Director, so a gate
+        /// test has to put him down itself: the countdown starts on the tick
+        /// the liveness scan first finds him gone, and "he was never born" —
+        /// which is what every gate fixture below used to lean on — is no
+        /// longer a way to get there.
+        static void KillTheDirector(SimulationWorld w)
         {
-            var inputs = new SimInput[w.PlayerCount];
-            for (int i = 0; i < ticks; i++) w.TickAll(inputs);
+            for (int i = 0; i < w.MobCount; i++)
+            {
+                if (w.Mobs[i].Type != MobType.Director) continue;
+                w.DamageMob(i, 1e9f, w.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 1);
+                return;
+            }
+            Assert.Fail("fixture premise: the activation must have produced a Director to kill");
         }
 
         /// A point inside the core, stated as fixture arithmetic off the very
@@ -377,18 +389,16 @@ namespace Ring.Simulation.Tests
         {
             var cfg = FlowFixture();
             var w = FlowWorld(in cfg);
-            w.SpawnMobForTest(MobType.Director, float2.zero);
             TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
             Idle(w);
             Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase, "premise: activated");
 
             // A LIVE Director must keep the death tick at 0 for as long as he
-            // stands, and this is the only witness of that branch in the file:
-            // every other fixture here reaches DirectorActive with no Director
-            // in the world at all, where "never born" and "already dead" read
-            // the same (MatchFlowSystem's own doc). Without these ticks the
-            // liveness scan could be deleted outright and the whole suite would
-            // stay green — the shape of lesson 345.
+            // stands. Since Т22 the activation itself puts him there (the
+            // fixture no longer spawns one by hand — that would now make two),
+            // and these ticks are what keep the liveness scan honest: without
+            // them it could be deleted outright and the suite would stay green
+            // — the shape of lesson 345.
             for (int i = 0; i < 3; i++)
             {
                 Idle(w);
@@ -399,8 +409,13 @@ namespace Ring.Simulation.Tests
             }
 
             w.ClearEvents();
-            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 1);
-            Assert.AreEqual(0, w.MobCount, "premise: the overkill must have removed the Director");
+            KillTheDirector(w);
+            for (int i = 0; i < w.MobCount; i++)
+            {
+                Assert.AreNotEqual(MobType.Director, w.Mobs[i].Type,
+                    "premise: the overkill must have removed the Director (his retinue stays — " +
+                    "the scan is about HIM, not about an empty world)");
+            }
             Idle(w);
 
             Assert.AreEqual(w.CurrentTick, w.Match.DirectorDeathTick,
@@ -418,7 +433,8 @@ namespace Ring.Simulation.Tests
             var cfg = FlowFixture(DelayTicks);
             var w = FlowWorld(in cfg);
             TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
-            Idle(w); // activate; no Director was ever spawned, so the next tick stamps his death
+            Idle(w); // activate — and, since Т22, spawn him
+            KillTheDirector(w);
 
             Idle(w);
             int deathTick = w.Match.DirectorDeathTick;
@@ -439,7 +455,9 @@ namespace Ring.Simulation.Tests
             var cfg = FlowFixture(DelayTicks);
             var w = FlowWorld(in cfg);
             TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
-            Idle(w, 2); // activate, then stamp the (already absent) Director's death
+            Idle(w);            // activate (and spawn him, since Т22)
+            KillTheDirector(w);
+            Idle(w);            // the scan finds him gone and stamps the tick
             int deathTick = w.Match.DirectorDeathTick;
             Assert.AreNotEqual(0, deathTick, "premise: death stamped");
 
@@ -473,7 +491,9 @@ namespace Ring.Simulation.Tests
 
             var w = FlowWorld(in cfg);
             TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
-            Idle(w, 2); // activate, then stamp the (never-spawned) Director's death
+            Idle(w);            // activate (and spawn him, since Т22)
+            KillTheDirector(w);
+            Idle(w);            // the scan finds him gone and stamps the tick
             int deathTick = w.Match.DirectorDeathTick;
             Assert.AreNotEqual(0, deathTick, "premise: death stamped");
 
@@ -493,7 +513,9 @@ namespace Ring.Simulation.Tests
             var cfg = FlowFixture(DelayTicks);
             var w = FlowWorld(in cfg);
             TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
-            Idle(w, 2 + DelayTicks);
+            Idle(w);
+            KillTheDirector(w);
+            Idle(w, 1 + DelayTicks);
             Assert.AreEqual(MatchPhase.GateOpen, w.Match.Phase, "premise: the gate must be open first");
 
             // Everything that could plausibly "undo" it: the collector leaves
@@ -524,7 +546,9 @@ namespace Ring.Simulation.Tests
             var cfg = FlowFixture(DelayTicks);
             var w = FlowWorld(in cfg);
             TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
-            Idle(w, 2);
+            Idle(w);
+            KillTheDirector(w);
+            Idle(w);
             int deathTick = w.Match.DirectorDeathTick;
             Assert.AreNotEqual(0, deathTick, "premise: death stamped");
             Idle(w, DelayTicks - 1);

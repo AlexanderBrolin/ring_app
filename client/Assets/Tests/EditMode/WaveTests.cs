@@ -117,15 +117,27 @@ namespace Ring.Simulation.Tests
         [Test]
         public void MobCap_SkipsSpawnsDeterministically()
         {
+            // Stage 3 Т22 (spec §3.4 Р254, coordinator R-182): the wave now
+            // stops DirectorReserveSlots short of MaxMobs, so it can never
+            // reach the physical cap and can never bump MobSpawnsSkipped —
+            // that counter's own branch is witnessed separately, by
+            // PhysicalCap_SkipsAndCounts below. What THIS test has always been
+            // about survives unchanged: the degradation at the ceiling is
+            // deterministic. MaxMobs is stated large enough for the reserve to
+            // leave room (the validator's own rule, R-181), not at the old 2,
+            // where the ceiling would be negative and the fixture would be a
+            // configuration the game refuses to start on.
             var c = TestConfigs.Default();
-            c.Arena.MaxMobs = 2;
+            c.Arena.MaxMobs = 8;
             c.Wave.BaseCount = 6;
             var w = new SimulationWorld(11, c);
             for (int i = 0; i < 200; i++) w.Tick(default);
             var snap = new RenderSnapshot(c.Arena);
             w.CaptureSnapshot(snap);
-            Assert.LessOrEqual(snap.MobCount, 2);
-            Assert.Greater(w.WorldStats.MobSpawnsSkipped, 0);
+            int ceiling = c.Arena.MaxMobs - c.Flow.DirectorReserveSlots;
+            Assert.LessOrEqual(snap.MobCount, ceiling);
+            Assert.Greater(w.WaveRef.PendingTotal, 0,
+                "what the wave could not place stays as debt rather than being lost");
             static ulong Run(SimConfig cc)
             {
                 var ww = new SimulationWorld(11, cc);
@@ -133,6 +145,32 @@ namespace Ring.Simulation.Tests
                 return ww.StateHash();
             }
             Assert.AreEqual(Run(c), Run(c)); // deterministic degradation under the cap
+        }
+
+        /// The physical cap of SpawnMob itself — the branch that skips and
+        /// counts (WorldStats.MobSpawnsSkipped). Since Т22 the wave director
+        /// stops at MaxMobs - DirectorReserveSlots and can no longer reach it,
+        /// so the branch needs a witness that spawns straight through the seam
+        /// instead of through a wave. It is not dead code: the Director and his
+        /// retinue spawn past the wave ceiling by design (Р254), and they are
+        /// the callers that can still meet the cap in a world filled by
+        /// something other than waves.
+        [Test]
+        public void PhysicalCap_SkipsAndCounts_PastTheWaveCeiling()
+        {
+            var c = TestConfigs.Quiet(); // no waves — this is about the seam, not the director
+            c.Arena.MaxMobs = 4;
+            var w = new SimulationWorld(11, c);
+            for (int i = 0; i < c.Arena.MaxMobs; i++)
+                w.SpawnMobForTest(MobType.Chaser, new float2(10f + i * 3f, 0f));
+            Assert.AreEqual(c.Arena.MaxMobs, w.MobCount, "premise: the world is filled to its cap");
+            Assert.AreEqual(0, w.WorldStats.MobSpawnsSkipped, "premise: nothing has been skipped yet");
+
+            int id = w.SpawnMobForTest(MobType.Chaser, new float2(-10f, 0f));
+
+            Assert.AreEqual(-1, id, "past the cap the spawn is refused, not queued");
+            Assert.AreEqual(c.Arena.MaxMobs, w.MobCount, "…and the array is not grown");
+            Assert.AreEqual(1, w.WorldStats.MobSpawnsSkipped, "…and the refusal is counted exactly once");
         }
 
         [Test]

@@ -190,6 +190,16 @@ namespace Ring.Simulation.Tests
         public static SimulationWorld TrioSaturated(out SimConfig config, int measuredTicks)
         {
             config = TestConfigs.Default();
+            // Stage 3 Т22 (rule of fixtures R-173/351): ZONELESS. Every body in
+            // this fixture — the mob crowd at radii 4…31 and the huddle at 58 —
+            // stands inside the CORE zone of TestConfigs.Default(), and a live
+            // collector standing there is what activates the Director from Т22
+            // on. This fixture is about ALLOCATIONS, not about zones, and an
+            // arena with no zones has no core to walk into. Nothing it measures
+            // moves: the huddle's own radius is derived from ZoneWallRadius (the
+            // zone WALLS, which stay), so the geometry every premise below
+            // leans on is unchanged to the meter.
+            config.Arena.ZoneRadius = System.Array.Empty<float>();
             var world = new SimulationWorld(1, config, playerCount: 3);
 
             SpawnMobsToCap(world);
@@ -279,6 +289,17 @@ namespace Ring.Simulation.Tests
         /// multi-mob fixture readable as a single statement instead of a column
         /// of SpawnMobForTest calls. Slot order equals argument order, which the
         /// candidate tie-break tests depend on.
+        /// Stage 3 Т22: N input-free ticks through the FULL TickAll (not
+        /// Tick), so systems that only exist on the all-players path — the
+        /// phase machine among them — actually run. Lifted here from
+        /// MatchFlowTests' own private Idle the moment a second test class
+        /// needed it (rule 2); that file now delegates to this one.
+        public static void IdleTicks(SimulationWorld world, int ticks = 1)
+        {
+            var inputs = new SimInput[world.PlayerCount];
+            for (int i = 0; i < ticks; i++) world.TickAll(inputs);
+        }
+
         public static void SpawnMobsAt(SimulationWorld world,
             params (MobType type, float2 pos)[] mobs)
         {

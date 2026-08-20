@@ -45,7 +45,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void GunnerRound_DamagesAnotherMob()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg, playerCount: 1);
             TestWorlds.RelocatePlayerForTest(w, 0, PlayerOutOfTheWay);
             int shooter = w.SpawnMobForTest(MobType.Gunner, new float2(-5f, 0f));
@@ -62,7 +62,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void MobRound_DoesNotDamageItsOwnShooter()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg, playerCount: 1);
             TestWorlds.RelocatePlayerForTest(w, 0, PlayerOutOfTheWay);
             int shooter = w.SpawnMobForTest(MobType.Gunner, new float2(-5f, 0f));
@@ -85,7 +85,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void MobKilledByMob_CreditsNobody()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg, playerCount: 1);
             TestWorlds.RelocatePlayerForTest(w, 0, PlayerOutOfTheWay);
             int shooter = w.SpawnMobForTest(MobType.Gunner, new float2(-5f, 0f));
@@ -105,7 +105,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void MobDiedEvent_FromFriendlyFire_HasNoOwnerIndex()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg, playerCount: 1);
             TestWorlds.RelocatePlayerForTest(w, 0, PlayerOutOfTheWay);
             int shooter = w.SpawnMobForTest(MobType.Gunner, new float2(-5f, 0f));

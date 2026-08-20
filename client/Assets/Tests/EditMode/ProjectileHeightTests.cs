@@ -33,7 +33,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Projectile_WithVelZ_AdvancesHeightPerTick()
         {
-            var w = new SimulationWorld(1, TestConfigs.Open());
+            var w = new SimulationWorld(1, TestConfigs.OpenField());
             w.SpawnProjectileForTest(ProjectileOwner.Player,
                 new float2(0f, 0f), new float2(10f, 0f),
                 height: 1f, velZ: -3f, damage: 1f, radius: 0.1f, ttl: 5f);
@@ -103,7 +103,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Graze_AtHeadTopPlusRadius_HitsAsHead()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
             float column = cfg.Chaser.HeadTop + cfg.Weapon.ProjectileRadius;
 
@@ -135,7 +135,7 @@ namespace Ring.Simulation.Tests
             // round a projectile-radius short of that — well before the Chaser
             // parked at x = 6 m — so the mob behind the contact point is
             // untouched (Task 7 self-review: floor-vs-mob ordering).
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
@@ -162,7 +162,7 @@ namespace Ring.Simulation.Tests
             // path from the floor one) straight out to the ring wall: the
             // contact height stays pinned at muzzle height, and HitDir carries
             // the real SweepArena normal instead of the pre-Task 7 zero placeholder.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             // Stage 2 Task 16: the ring has to stay INSIDE one round's reach
             // (ProjectileSpeed x ProjectileLifetime) or the shot simply expires
             // in flight and never reports a wall block at all — at Arena.Radius
@@ -226,7 +226,7 @@ namespace Ring.Simulation.Tests
             // Hip fire keeps the flat Phase-1 geometry: the round leaves the
             // standing muzzle horizontally whatever height the (unheld) aim
             // carries — AimHeight is the aimed branch's input alone.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             w.Tick(new SimInput { AimPoint = new float2(10f, 0f),
                                   AimHeight = cfg.Hero.MaxAimHeight, FireHeld = true });
@@ -244,7 +244,7 @@ namespace Ring.Simulation.Tests
         {
             // Mid-slide the hero is low to the ground, so the shot leaves the
             // slide muzzle height instead of the standing one.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             Assert.IsTrue(cfg.Weapon.CanFireWhileSlide,
                 "fixture: this weapon must be allowed to fire mid-slide");
             var w = new SimulationWorld(1, cfg);
@@ -262,7 +262,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EqualT_TieBreaksLowerIndex()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
             var w = new SimulationWorld(1, cfg);
             // mirrored across the firing line (so both circles are entered at a

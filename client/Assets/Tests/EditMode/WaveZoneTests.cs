@@ -323,6 +323,143 @@ namespace Ring.Simulation.Tests
         }
 
         // ------------------------------------------------------------------
+        // Stage 3 Т22 (spec §3.4 Р253/Р254, coordinator R-182/R-185): what the
+        // Director's arrival does to the wave director itself — the slot
+        // reserve held for the WHOLE raid, and the core leaving the wave
+        // budget for good.
+        // ------------------------------------------------------------------
+
+        /// A wave fixture that will genuinely try to overfill the world: a
+        /// small cap, one huge wave, and no spawn-distance rule to block it.
+        /// The wave is aimed at the OUTER ring only, so nothing it spawns can
+        /// be mistaken for the retinue standing in the core.
+        static SimConfig ReserveFixture()
+        {
+            SimConfig c = TestConfigs.Open();
+            c.Arena.MaxMobs = 12;
+            c.Wave.FirstWaveDelay = 0.1f;
+            c.Wave.BaseCount = 40;
+            c.Wave.CountGrowth = 0;
+            c.Wave.MaxMobsPerWave = 40;
+            c.Wave.ZoneWeights = new[] { 1f, 0f, 0f };
+            c.Wave.MinSpawnDistanceToPlayer = 0f;
+            return c;
+        }
+
+        [Test]
+        public void WaveSpawnStopsAtTheReserveCeiling_AndKeepsItsDebt()
+        {
+            SimConfig c = ReserveFixture();
+            var w = new SimulationWorld(1, c, playerCount: 3);
+
+            TestWorlds.IdleTicks(w, 120);
+
+            int ceiling = c.Arena.MaxMobs - c.Flow.DirectorReserveSlots;
+            Assert.AreEqual(ceiling, w.MobCount,
+                "the wave stops at MaxMobs - DirectorReserveSlots and holds there for the whole " +
+                "raid (Р254): the activation cannot be predicted, so the slots must be free ALWAYS");
+            Assert.Greater(w.WaveRef.PendingTotal, 0,
+                "the units it could not place stay as debt, exactly like the existing cap branch");
+            Assert.AreEqual(0, w.WorldStats.MobSpawnsSkipped,
+                "MobSpawnsSkipped counts the world hitting its PHYSICAL cap (SpawnMob's own " +
+                "contract) — the reserve is the wave director's own policy, not an arena refusal");
+        }
+
+        [Test]
+        public void CoreLosesItsWaveBudget_AfterActivation()
+        {
+            SimConfig c = TestConfigs.Open();
+            c.Wave.ZoneWeights = new[] { 0f, 0f, 1f }; // every unit would go to the core...
+            c.Wave.BaseCount = 8;
+            c.Wave.CountGrowth = 0;
+            c.Wave.MaxMobsPerWave = 100;
+            c.Wave.FirstWaveDelay = 1e6f;             // ...but no wave starts until we allow it
+            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
+
+            var w = new SimulationWorld(11, c, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(c.Arena.ZoneRadius[0] * 0.5f, 0f));
+            TestWorlds.IdleTicks(w);
+            Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase, "premise: activated");
+
+            WaveState wave = w.WaveRef;
+            wave.PhaseTimer = SimulationWorld.TickDt; // let the next tick start the wave
+            w.SetWaveForTest(in wave);
+            TestWorlds.IdleTicks(w);
+
+            Assert.AreEqual(0, w.WaveRef.PendingCoreElite + w.WaveRef.PendingCoreChaser
+                + w.WaveRef.PendingCoreGunner,
+                "with the Director standing there the core stops receiving wave budget (spec §3.4): " +
+                "a boss fight plus a live wave in the same room is a mess MVP balance cannot win");
+        }
+
+        [Test]
+        public void CoreBudgetMovesToMiddle_TotalUnchanged()
+        {
+            SimConfig c = TestConfigs.Open();
+            c.Wave.ZoneWeights = new[] { 0f, 0.5f, 0.5f }; // half the wave would be the core's
+            c.Wave.BaseCount = 8;
+            c.Wave.CountGrowth = 0;
+            c.Wave.MaxMobsPerWave = 100;
+            c.Wave.FirstWaveDelay = 1e6f;
+            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f;
+
+            var w = new SimulationWorld(11, c, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(c.Arena.ZoneRadius[0] * 0.5f, 0f));
+            TestWorlds.IdleTicks(w);
+
+            WaveState wave = w.WaveRef;
+            wave.PhaseTimer = SimulationWorld.TickDt;
+            w.SetWaveForTest(in wave);
+            TestWorlds.IdleTicks(w);
+
+            int middle = w.WaveRef.PendingMiddleElite + w.WaveRef.PendingMiddleChaser
+                + w.WaveRef.PendingMiddleGunner;
+            // The whole wave, stated the way the wave director states it — the
+            // per-player scale is part of the size (three players here), so
+            // BaseCount alone would be a different number wearing the same name.
+            int waveSize = WaveSystem.CountForTest(in c.Wave, 0, w.PlayerCount);
+            Assert.AreEqual(waveSize, middle,
+                "the core's share MOVES to the middle zone (spec §3.4), it is not lost — a wave " +
+                "that quietly shrank would be a silent break of Р211's own closing-debt rule");
+        }
+
+        [Test]
+        public void CoreDoesNotRegainBudget_AfterTheDirectorDies()
+        {
+            SimConfig c = TestConfigs.Open();
+            c.Wave.ZoneWeights = new[] { 0f, 0f, 1f };
+            c.Wave.BaseCount = 8;
+            c.Wave.CountGrowth = 0;
+            c.Wave.MaxMobsPerWave = 100;
+            c.Wave.FirstWaveDelay = 1e6f;
+            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f;
+            c.Flow.GateDelaySeconds = 2f * SimulationWorld.TickDt;
+
+            var w = new SimulationWorld(11, c, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(c.Arena.ZoneRadius[0] * 0.5f, 0f));
+            TestWorlds.IdleTicks(w);
+
+            for (int i = 0; i < w.MobCount; i++)
+            {
+                if (w.Mobs[i].Type != MobType.Director) continue;
+                w.DamageMob(i, 1e9f, w.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 1);
+                break;
+            }
+            TestWorlds.IdleTicks(w, 5);
+            Assert.AreEqual(MatchPhase.GateOpen, w.Match.Phase, "premise: the gate has opened");
+
+            WaveState wave = w.WaveRef;
+            wave.PhaseTimer = SimulationWorld.TickDt;
+            w.SetWaveForTest(in wave);
+            TestWorlds.IdleTicks(w);
+
+            Assert.AreEqual(0, w.WaveRef.PendingCoreElite + w.WaveRef.PendingCoreChaser
+                + w.WaveRef.PendingCoreGunner,
+                "the budget does NOT come back after his death (Р253): the sharing window over his " +
+                "body has to pass without fresh elites, or it stops being a window");
+        }
+
+        // ------------------------------------------------------------------
         // Geometry.ZoneSpawnRingRadius — each zone's own wave spawn ring.
         // Coordinator F1 (T8's ZoneOf_On*Boundary precedent): three
         // SEPARATE tests, one per switch branch -- under mutation M5 the

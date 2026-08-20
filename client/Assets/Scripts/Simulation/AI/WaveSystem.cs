@@ -116,10 +116,38 @@ namespace Ring.Simulation.AI
             // Coordinator R-53: zoneless arena -> the whole budget goes to
             // Outer, through the SAME SplitByZones call a real 3-zone arena
             // uses (not a parallel branch).
-            System.ReadOnlySpan<float> zoneWeights = w.Config.Arena.ZoneRadius.Length < 2
-                ? ZonelessWeights : cfg.ZoneWeights;
+            bool zoneless = w.Config.Arena.ZoneRadius.Length < 2;
+            System.ReadOnlySpan<float> zoneWeights = zoneless ? ZonelessWeights : cfg.ZoneWeights;
             System.Span<int> perZone = stackalloc int[ZoneCount];
             SplitByZones(count, zoneWeights, perZone);
+
+            // Stage 3 Т22 (spec §3.4 Р253, coordinator R-185): ONCE THE
+            // DIRECTOR HAS BEEN ACTIVATED THE CORE STOPS RECEIVING WAVE
+            // BUDGET, and its share MOVES to the middle zone rather than
+            // vanishing — a wave that quietly shrank would break Р211's own
+            // "the debt always closes" rule from the other end. A boss fight
+            // sharing its room with a live wave is a mess MVP balance cannot
+            // win three-handed, which is the whole reason for it.
+            //
+            // THE MOVE IS DONE ON THE SPLIT UNITS, NOT ON THE WEIGHTS, and
+            // that is a measured choice, not a stylistic one: reweighting
+            // needed a second stackalloc buffer to hold the adjusted weights,
+            // and AllocationTests.SaturatedTrio_TicksWithoutAllocations caught
+            // that buffer allocating on the hot path. Moving whole units after
+            // the split costs nothing, and it makes the "total unchanged"
+            // promise exact by construction — integers, no second rounding.
+            //
+            // THE CONDITION IS `!= Farm`, NOT `== DirectorActive`, AND THAT IS
+            // THE POINT (Р253): the latch is one-way, so this single test also
+            // says "and the budget never comes back after he dies" — the
+            // sharing window over his body has to pass without fresh elites,
+            // or it stops being a window. A raid that ended without anyone
+            // entering the core reads the same way; its waves no longer matter.
+            if (!zoneless && w.Match.Phase != MatchPhase.Farm)
+            {
+                perZone[(int)Zone.Middle] += perZone[(int)Zone.Core];
+                perZone[(int)Zone.Core] = 0;
+            }
 
             for (int z = 0; z < ZoneCount; z++)
             {
@@ -264,11 +292,31 @@ namespace Ring.Simulation.AI
         static void SpawnPendingOfType(SimulationWorld w, ref WaveState wave,
             in WaveSimConfig cfg, Zone zone, MobType type)
         {
+            // Stage 3 Т22 (spec §3.4 Р254, coordinator R-182): THE DIRECTOR'S
+            // SLOT RESERVE, HELD FOR THE WHOLE RAID. The wave stops
+            // DirectorReserveSlots short of MaxMobs so the Director and his
+            // retinue always have room to be born — Р299 made the activation a
+            // player's decision at a moment nothing can predict, so the slots
+            // cannot be armed in advance, they have to be free the whole time.
+            // Without it a packed world would send the phase to DirectorActive
+            // with no Director in it, the liveness scan would read "already
+            // dead", and the gate would open off a boss nobody fought.
+            //
+            // The gate sits BEFORE the placement search: a wave that is not
+            // allowed to spawn should not spend a candidate search either. It
+            // deliberately does NOT touch WorldStats.MobSpawnsSkipped — that
+            // counter means "the world hit its PHYSICAL cap" (SpawnMob's own
+            // contract, a shared arena outcome since Stage 2 Т5), and the
+            // reserve is this director's own policy, not an arena refusal. The
+            // debt is left untouched exactly as the cap branch below leaves it.
+            int ceiling = w.Config.Arena.MaxMobs - w.Config.Flow.DirectorReserveSlots;
+
             ref int pending = ref PendingRef(ref wave, zone, type);
             int n = pending;
             for (int i = 0; i < n; i++)
             {
-                if (!TryFindSpawnPos(w, in cfg, zone, type, out float2 pos)) continue; // debt stays
+                if (w.MobCount >= ceiling) return; // reserve — debt stays, retried next tick
+                if (!TryFindMobSpawnPos(w, in cfg, zone, type, out float2 pos)) continue; // debt stays
                 if (w.SpawnMob(type, pos) < 0) continue; // MaxMobs cap — debt stays (MobSpawnsSkipped bumped)
 
                 pending--;
@@ -293,8 +341,16 @@ namespace Ring.Simulation.AI
         /// `ref WaveState wave = ref w.WaveRef;` above — the shared search
         /// mutates the SAME stream this call has always drawn from, not a
         /// copy (coordinator danger #1).
-        static bool TryFindSpawnPos(SimulationWorld w, in WaveSimConfig cfg, Zone zone, MobType type,
-            out float2 pos)
+        /// Stage 3 Т22 (coordinator R-183): `internal`, and named for what it
+        /// is — THE one home for "where may a battle mob be put down in this
+        /// zone". The Director's retinue is spawned by the phase machine, not
+        /// by a wave (Р215), but the rules it must respect are identical
+        /// (distance to the nearest player, live-mob overlap, obstacles, walls,
+        /// arcs with doors forgiven), and a second copy of that filter is
+        /// exactly the drift that bit this project once already (Ф2 review A-6:
+        /// arcs missing from RingSlotBlocked while its tests stayed green).
+        internal static bool TryFindMobSpawnPos(SimulationWorld w, in WaveSimConfig cfg,
+            Zone zone, MobType type, out float2 pos)
         {
             ArenaSimConfig arena = w.Config.Arena;
             // Coordinator R-54: the zone's own spawn ring, not the arena-wide

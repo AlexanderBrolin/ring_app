@@ -80,10 +80,11 @@ namespace Ring.Simulation.AI
                     // archetypes share this same six-value MobAiState the
                     // other two already use (Р214) — MaxMobAiStateValue
                     // does not move. Director never leaving the arena core
-                    // (Р248) is Т22's own leash/activation logic, not this
-                    // dispatch — this switch only decides HOW it fights
-                    // once a target is already in range, the same as any
-                    // other archetype here.
+                    // (Р248) is NOT decided here: since Т22 it is enforced
+                    // in ApplyMotion below (LeashToCore), the one place
+                    // every mob's motion lands. This switch only decides HOW
+                    // it fights once a target is already in range, the same
+                    // as any other archetype here.
                     if (math.distance(m.Pos, player.Pos) <= cfg.AttackRange)
                         UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt);
                     else
@@ -292,6 +293,34 @@ namespace Ring.Simulation.AI
             float2 target = m.Pos + m.Vel * dt;
             PlayerMovementSystem.MoveWithCollisions(ref m.Pos, ref m.Vel, target, cfg.Radius, in arena,
                 out _, out _, out _);
+            if (m.Type == MobType.Director) LeashToCore(ref m, in cfg, in arena);
+        }
+
+        /// Stage 3 Т22 (spec §3.4 Р248, coordinator R-184): THE DIRECTOR NEVER
+        /// LEAVES THE CORE. Applied here, in the one place every mob's motion
+        /// actually lands, so no FSM branch — including the "nobody alive, go
+        /// Idle" one that drifts on decaying velocity — can carry him out.
+        ///
+        /// IT IS THE BODY THAT IS LEASHED, NOT THE TARGET, and that is a
+        /// deliberate departure from the plan's own wording (plan :1439 asks
+        /// for the TARGET to be clamped to the core radius). The dispatch above hands the
+        /// SAME target to the melee and the ranged half, so a clamped target
+        /// would have him SHOOTING AT THE ZONE BOUNDARY instead of at the
+        /// collector standing past it — the spec asks that he not walk out
+        /// (§3.4), not that he go blind. A clamped target would not even give
+        /// the invariant: inertia and SeparationSystem's push can carry a body
+        /// across a line its target never crossed.
+        ///
+        /// The primitive pair is the arena rim's own (Geometry.Depenetrate:
+        /// ClampInsideRing, then Slide against the returned normal) — the same
+        /// arithmetic that keeps every body inside the arena, aimed at the core
+        /// boundary instead. Zoneless arenas are a legal input and have no core
+        /// (lesson 315), so they leash nothing.
+        static void LeashToCore(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena)
+        {
+            if (arena.ZoneRadius.Length < 2) return;
+            if (Geometry.ClampInsideRing(ref m.Pos, cfg.Radius, arena.ZoneRadius[0], out float2 normal))
+                m.Vel = Geometry.Slide(m.Vel, normal);
         }
 
         /// Steering direction toward `targetPos`: the direct line unless an

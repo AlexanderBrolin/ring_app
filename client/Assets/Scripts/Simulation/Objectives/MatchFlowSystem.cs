@@ -1,3 +1,4 @@
+using Ring.Simulation.AI;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -55,8 +56,15 @@ namespace Ring.Simulation.Objectives
                     break;
 
                 case MatchPhase.DirectorActive:
-                    AdvanceTowardTheGate(w, ref m);
+                {
+                    // ONE liveness scan per tick, shared by both readers below
+                    // (rule 2): the top-up runs only while he stands, and the
+                    // countdown starts only once he does not.
+                    bool directorAlive = DirectorAlive(w);
+                    if (directorAlive) TopUpRetinueOnItsPeriod(w);
+                    AdvanceTowardTheGate(w, ref m, directorAlive);
                     break;
+                }
 
                 // GateOpen is terminal short of Ended: "открывается и больше
                 // не закрывается до конца захода" (spec §3.5). No case, and
@@ -102,7 +110,111 @@ namespace Ring.Simulation.Objectives
         static void Activate(SimulationWorld w, ref MatchState m)
         {
             m.Phase = MatchPhase.DirectorActive;
+
+            // Stage 3 Т22 (spec §3.4): THE DIRECTOR IS BORN ON THIS VERY
+            // TRANSITION, and the spawn is UNCONDITIONAL — the arena center,
+            // no placement search, no rejection. A boss who failed to appear
+            // "because the middle was crowded" is precisely the outcome Р254
+            // forbids: the phase would sit in DirectorActive, the liveness
+            // scan would answer "dead", and the gate would open off a fight
+            // nobody had. His slot is guaranteed by WaveSystem's reserve, not
+            // by luck (coordinator R-181's own validator rule ties the two
+            // numbers together: DirectorReserveSlots >= 1 + RetinueCount).
+            w.SpawnMob(MobType.Director, float2.zero);
+            TopUpRetinue(w);
+
             w.Emit(SimEventKind.DirectorActivated, float2.zero, 0, default, 0f);
+        }
+
+        /// Spec §3.3 Р215: the retinue is topped back up to RetinueCount ON ITS
+        /// OWN PERIOD, RetinueRespawnSeconds, for as long as the Director
+        /// stands.
+        ///
+        /// WHY A MODULO OF THE RAID'S OWN TICK AND NOT A STORED TIMER
+        /// (coordinator R-180). MatchState carries exactly two fields and may
+        /// not carry a third: Р219a bars derived values from the phase state,
+        /// and errata E-1 bars a new hashable field outright — a single extra
+        /// StateHash64.Add moves both goldens even at value zero, and all three
+        /// sanctioned re-pins are spent. So "is it time" has to be a function
+        /// of the world, and the only clock the world keeps is CurrentTick.
+        /// The period is exact; what it is NOT is phase-aligned to the
+        /// activation — a fallen retinue slot is refilled somewhere within one
+        /// period rather than exactly one period later. That is the accepted
+        /// price, and it is the small half of the trade: the alternative that
+        /// keeps perfect phase costs a fourth re-pin of the goldens, and the
+        /// alternative that needs no clock at all (refill the moment a slot
+        /// opens) would make the fight endless and delete a shipped number.
+        ///
+        /// A period of zero or less cannot be divided by, and this is where a
+        /// hand-built fixture that skipped SimConfigBuilder can land: the
+        /// validator refuses RetinueRespawnSeconds <= 0 for the real game
+        /// (coordinator R-181), and a world assembled around that refusal
+        /// simply gets no top-up rather than a DivideByZeroException.
+        static void TopUpRetinueOnItsPeriod(SimulationWorld w)
+        {
+            // WHOLE TICKS, converted ONCE (R-178/lesson 348): a seconds-side
+            // comparison here would be the same defect Т21's own gate boundary
+            // was caught carrying — an answer that depends on whether an
+            // intermediate spilled to a float local has no place in state that
+            // feeds StateHash.
+            int periodTicks = (int)math.round(w.Config.Flow.RetinueRespawnSeconds / SimulationWorld.TickDt);
+            if (periodTicks <= 0) return;
+            if (w.CurrentTick % periodTicks != 0) return;
+            TopUpRetinue(w);
+        }
+
+        /// Fills the retinue back up to Flow.RetinueCount. THE SHORTFALL IS THE
+        /// DEBT, and it is derived, never stored (Р218's own shape): "retinue"
+        /// is not a flag on a mob — Р215 refuses one outright — it is the live
+        /// elites standing in the core, which is exactly what this counts.
+        ///
+        /// A failed placement therefore needs no bookkeeping either: the
+        /// shortfall is still a shortfall on the next period. The cap branch
+        /// that Р254 asks to be retried "next tick, exactly like wave debt"
+        /// cannot be reached at all once the validator holds
+        /// DirectorReserveSlots >= 1 + RetinueCount (R-181): the wave ceiling,
+        /// the Director and a full retinue sum to exactly MaxMobs, so a slot
+        /// vacated by a fallen retinue member is always free again and the wave
+        /// may never take it.
+        static void TopUpRetinue(SimulationWorld w)
+        {
+            ArenaSimConfig arena = w.Config.Arena;
+            // Zoneless arenas are a legal input (lesson 315) and have no core
+            // to guard — the same guard AnyLiveCollectorInCore states above,
+            // for the same reason and in the same form.
+            if (arena.ZoneRadius.Length < 2) return;
+
+            int want = w.Config.Flow.RetinueCount;
+            // One copy of the wave section per call (the same "SimulationWorld.
+            // Config is a property, not a field" rule every other caller here
+            // obeys) — the placement home takes it by `in`.
+            WaveSimConfig wave = w.Config.Wave;
+            for (int have = LiveRetinueCount(w, in arena); have < want; have++)
+            {
+                // Coordinator R-183: the retinue is placed by the SAME home a
+                // wave places its own mobs through — same spawn ring, same
+                // rejection rules (distance to the nearest player, live-mob
+                // overlap, obstacles, walls, arcs). Elites, because a retinue
+                // member IS an elite (Р215).
+                if (!WaveSystem.TryFindMobSpawnPos(w, in wave, Zone.Core, MobType.Elite,
+                        out float2 pos))
+                    return;
+                if (w.SpawnMob(MobType.Elite, pos) < 0) return;
+            }
+        }
+
+        /// The live retinue: elites standing in the core (Р215 — no stored
+        /// mark exists or may exist, so this is the only reading there is).
+        /// Callers guard the zoneless case before this runs.
+        static int LiveRetinueCount(SimulationWorld w, in ArenaSimConfig arena)
+        {
+            int n = 0;
+            for (int i = 0; i < w.MobCount; i++)
+            {
+                if (w.Mobs[i].Type != MobType.Elite) continue;
+                if (Geometry.ZoneOf(w.Mobs[i].Pos, in arena) == Zone.Core) n++;
+            }
+            return n;
         }
 
         /// DirectorActive -> GateOpen (spec §3.5): the Director is gone AND
@@ -118,17 +230,18 @@ namespace Ring.Simulation.Objectives
         /// counter BEFORE any system runs, so the earliest tick this method
         /// can ever observe is 1.
         ///
-        /// UNTIL Т22 SPAWNS HIM, AN ACTIVATED RAID READS AS A DIRECTOR WHO HAS
-        /// ALREADY DIED, and that is by construction, not by oversight: with
+        /// SINCE Т22 THE SCAN MEANS WHAT IT SAYS: the Director is spawned on
+        /// the activating transition itself and his slot is guaranteed by
+        /// WaveSystem's standing reserve (Р254), so "no Director in _mobs"
+        /// during DirectorActive can only mean he fell. Before that task an
+        /// activated raid read as a Director who had already died — with
         /// liveness defined as a scan, "never born" and "already dead" are the
-        /// same reading, and Т22 — which spawns him on this very transition
-        /// and holds the slot reserve that guarantees his birth (Р254) — is
-        /// what makes the scan mean what it says.
-        static void AdvanceTowardTheGate(SimulationWorld w, ref MatchState m)
+        /// same reading, which is why the two had to arrive in one phase.
+        static void AdvanceTowardTheGate(SimulationWorld w, ref MatchState m, bool directorAlive)
         {
             if (m.DirectorDeathTick == 0)
             {
-                if (DirectorAlive(w)) return;
+                if (directorAlive) return;
                 m.DirectorDeathTick = w.CurrentTick;
                 w.Emit(SimEventKind.DirectorDied, float2.zero, 0, default, 0f);
                 // Falls through into the countdown below rather than spending

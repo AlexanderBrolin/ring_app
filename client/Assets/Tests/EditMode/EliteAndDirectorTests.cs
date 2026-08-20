@@ -326,6 +326,241 @@ namespace Ring.Simulation.Tests
         /// own doc for the full account): spec §3.6 names the corpse/
         /// crate/cache trio "not-expiring… there lies what was earned",
         /// and the Director's guaranteed boss drop is exactly that.
+        // ------------------------------------------------------------------
+        // Stage 3 Т22 (spec §3.3 Р215/§3.4 Р248/Р253/Р254, coordinator
+        // R-180..R-185): the Director's own arrival. Т21 built the phase
+        // machine and left the transition empty on purpose — its own doc says
+        // an activated raid "reads as a Director who has already died" until
+        // this task. Everything below is that gap closing: he is spawned on
+        // the very transition, his retinue with him, the slot reserve
+        // guarantees both, and the leash keeps the fight in the core.
+        // ------------------------------------------------------------------
+
+        /// Zoned fixture for the Director: Open() keeps the two zone
+        /// boundaries (owner decision R-76) and drops every obstacle/wall, and
+        /// it inherits Quiet()'s silent waves — so nothing but this task's own
+        /// code puts a mob in the world. The retinue period is stated in TICKS
+        /// and converted through the very arithmetic production performs, so a
+        /// test can count ten ticks instead of waiting out the shipped 25 s.
+        static SimConfig DirectorFixture(int retinueRespawnTicks = 10, float coreRadius = 10f)
+        {
+            SimConfig c = TestConfigs.Open();
+            c.Arena.ZoneRadius = new[] { coreRadius, coreRadius * 4f };
+            c.Flow.RetinueRespawnSeconds = retinueRespawnTicks * SimulationWorld.TickDt;
+            return c;
+        }
+
+        /// A point inside the core, as fixture arithmetic off the very
+        /// boundary Geometry.ZoneOf compares against — never a literal.
+        static float2 InsideCore(in SimConfig cfg) => new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f);
+
+        /// Activation, stated the way the raid states it: the SECOND player
+        /// (lesson 227) walks into the core and the tick settles.
+        static SimulationWorld ActivatedWorld(in SimConfig cfg, int playerCount = 3)
+        {
+            var w = new SimulationWorld(1, cfg, playerCount);
+            TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
+            TestWorlds.IdleTicks(w);
+            return w;
+        }
+
+        static int CountOfType(SimulationWorld w, MobType type)
+        {
+            int n = 0;
+            for (int i = 0; i < w.MobCount; i++) if (w.Mobs[i].Type == type) n++;
+            return n;
+        }
+
+        static int IndexOfType(SimulationWorld w, MobType type)
+        {
+            for (int i = 0; i < w.MobCount; i++) if (w.Mobs[i].Type == type) return i;
+            return -1;
+        }
+
+        /// "The retinue" has no stored flag and must not have one (Р215): it
+        /// IS the live elites standing in the core, and that is the only way
+        /// production can count them either.
+        static int LiveRetinue(SimulationWorld w, in SimConfig cfg)
+        {
+            int n = 0;
+            for (int i = 0; i < w.MobCount; i++)
+            {
+                if (w.Mobs[i].Type != MobType.Elite) continue;
+                if (Geometry.ZoneOf(w.Mobs[i].Pos, in cfg.Arena) == Zone.Core) n++;
+            }
+            return n;
+        }
+
+        static int IndexOfNthRetinue(SimulationWorld w, in SimConfig cfg, int n)
+        {
+            int seen = 0;
+            for (int i = 0; i < w.MobCount; i++)
+            {
+                if (w.Mobs[i].Type != MobType.Elite) continue;
+                if (Geometry.ZoneOf(w.Mobs[i].Pos, in cfg.Arena) != Zone.Core) continue;
+                if (seen++ == n) return i;
+            }
+            return -1;
+        }
+
+        static void Kill(SimulationWorld w, int mobIndex)
+            => w.DamageMob(mobIndex, 1e9f, w.Mobs[mobIndex].Pos, HitZone.Body, float2.zero, ownerIndex: 1);
+
+        [Test]
+        public void DirectorSpawnsAtCoreCenter_OnActivation()
+        {
+            SimConfig cfg = DirectorFixture();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            Assert.AreEqual(0, CountOfType(w, MobType.Director),
+                "premise: nobody has entered the core, so no Director exists yet");
+
+            TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
+            TestWorlds.IdleTicks(w);
+
+            Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase, "premise: the latch fired");
+            Assert.AreEqual(1, CountOfType(w, MobType.Director),
+                "the transition that announces the Director must also produce him (Р254) — " +
+                "until Т22 an activated raid read as a Director who had already died");
+            Assert.AreEqual(float2.zero, w.Mobs[IndexOfType(w, MobType.Director)].Pos,
+                "spec §3.4: he spawns at the arena center, unconditionally");
+        }
+
+        [Test]
+        public void RetinueSpawnsWithTheDirector_InsideTheCore()
+        {
+            SimConfig cfg = DirectorFixture();
+            var w = ActivatedWorld(in cfg);
+
+            Assert.AreEqual(cfg.Flow.RetinueCount, LiveRetinue(w, in cfg),
+                "RetinueCount elites arrive with him (Р215), and 'retinue' means exactly " +
+                "'elite standing in the core' — no stored flag exists or may exist");
+        }
+
+        [Test]
+        public void RetinueIsRefilledOnItsOwnPeriod_NotEveryTick()
+        {
+            const int PeriodTicks = 10;
+            SimConfig cfg = DirectorFixture(PeriodTicks);
+            var w = ActivatedWorld(in cfg);
+            Assert.AreEqual(2, cfg.Flow.RetinueCount, "premise: the fixture's retinue is two");
+            Assert.AreEqual(cfg.Flow.RetinueCount, LiveRetinue(w, in cfg), "premise: full retinue");
+
+            Kill(w, IndexOfNthRetinue(w, in cfg, 1)); // the SECOND of the two (lesson 227)
+            Assert.AreEqual(cfg.Flow.RetinueCount - 1, LiveRetinue(w, in cfg), "premise: one has fallen");
+
+            int nextRefill = (w.CurrentTick / PeriodTicks + 1) * PeriodTicks;
+            while (w.CurrentTick < nextRefill - 1)
+            {
+                TestWorlds.IdleTicks(w);
+                Assert.AreEqual(cfg.Flow.RetinueCount - 1, LiveRetinue(w, in cfg),
+                    $"tick {w.CurrentTick}: the top-up has its own period (RetinueRespawnSeconds) — " +
+                    "a gap that closes the instant it opens would make the fight endless");
+            }
+
+            TestWorlds.IdleTicks(w);
+            Assert.AreEqual(nextRefill, w.CurrentTick, "premise: this is the period tick");
+            Assert.AreEqual(cfg.Flow.RetinueCount, LiveRetinue(w, in cfg),
+                "on its own tick the retinue is topped back up to RetinueCount");
+        }
+
+        [Test]
+        public void RetinueIsNotRefilled_AfterTheDirectorFalls()
+        {
+            const int PeriodTicks = 10;
+            SimConfig cfg = DirectorFixture(PeriodTicks);
+            var w = ActivatedWorld(in cfg);
+            Assert.AreEqual(cfg.Flow.RetinueCount, LiveRetinue(w, in cfg), "premise: full retinue");
+            Assert.AreEqual(1, CountOfType(w, MobType.Director), "premise: the Director stands");
+
+            Kill(w, IndexOfNthRetinue(w, in cfg, 1));
+            Kill(w, IndexOfType(w, MobType.Director));
+            Assert.AreEqual(0, CountOfType(w, MobType.Director), "premise: the Director is gone");
+            int left = LiveRetinue(w, in cfg);
+
+            TestWorlds.IdleTicks(w, PeriodTicks * 3);
+
+            Assert.AreEqual(left, LiveRetinue(w, in cfg),
+                "the top-up runs only while he stands (Р215) — the sharing window after his death " +
+                "must pass without fresh elites (Р253)");
+        }
+
+        [Test]
+        public void WorldAtWaveCeiling_StillSpawnsDirectorAndRetinue()
+        {
+            SimConfig cfg = DirectorFixture();
+            cfg.Arena.MaxMobs = 12;
+            cfg.Wave.FirstWaveDelay = 0.1f;
+            cfg.Wave.BaseCount = 40;
+            cfg.Wave.CountGrowth = 0;
+            cfg.Wave.MaxMobsPerWave = 40;
+            cfg.Wave.ZoneWeights = new[] { 1f, 0f, 0f }; // the wave fills the OUTER ring only
+            cfg.Wave.MinSpawnDistanceToPlayer = 0f;
+
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.IdleTicks(w, 120);
+
+            int ceiling = cfg.Arena.MaxMobs - cfg.Flow.DirectorReserveSlots;
+            Assert.AreEqual(ceiling, w.MobCount,
+                "premise: the wave has taken every slot it is allowed and stopped at the reserve " +
+                "ceiling (Р254) — the reserve is held for the WHOLE raid, not armed in advance");
+
+            TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
+            TestWorlds.IdleTicks(w);
+
+            Assert.AreEqual(1, CountOfType(w, MobType.Director),
+                "a world packed to the cap must still produce the Director — otherwise the phase " +
+                "goes to DirectorActive, the liveness scan reads 'dead', and the gate never opens");
+            Assert.AreEqual(cfg.Flow.RetinueCount, LiveRetinue(w, in cfg),
+                "…and his retinue with him: the reserve is 1 + RetinueCount slots");
+            Assert.AreEqual(cfg.Arena.MaxMobs, w.MobCount,
+                "the reserve is spent exactly, not over-spent");
+        }
+
+        [Test]
+        public void DirectorNeverLeavesTheCore_ChasingAPlayerOutside()
+        {
+            SimConfig cfg = DirectorFixture();
+            var w = ActivatedWorld(in cfg);
+            Assert.AreEqual(1, CountOfType(w, MobType.Director), "premise: the Director stands");
+            float coreRadius = cfg.Arena.ZoneRadius[0];
+
+            // Everyone steps out to the rim: the Director's only target is now
+            // far outside his own zone, which is the whole point of the leash.
+            var far = new float2(cfg.Arena.Radius * 0.9f, 0f);
+            for (int i = 0; i < w.PlayerCount; i++) TestWorlds.RelocatePlayerForTest(w, i, far);
+
+            float travelled = 0f;
+            for (int t = 0; t < 600; t++)
+            {
+                TestWorlds.IdleTicks(w);
+                float dist = math.length(w.Mobs[IndexOfType(w, MobType.Director)].Pos);
+                if (dist > travelled) travelled = dist;
+                Assert.LessOrEqual(dist, coreRadius,
+                    $"tick {w.CurrentTick}: the Director is leashed to the core (Р248) — he walks to " +
+                    "the boundary and no further, whatever his target does outside it");
+            }
+
+            Assert.Greater(travelled, coreRadius * 0.5f,
+                "premise: he must actually have CHASED — a Director frozen at the center would " +
+                "satisfy the leash assert above while proving nothing");
+        }
+
+        [Test]
+        public void DirectorDoesNotReturn_AfterHisDeath()
+        {
+            const int PeriodTicks = 10;
+            SimConfig cfg = DirectorFixture(PeriodTicks);
+            var w = ActivatedWorld(in cfg);
+            Assert.AreEqual(1, CountOfType(w, MobType.Director), "premise: the Director stands");
+
+            Kill(w, IndexOfType(w, MobType.Director));
+            TestWorlds.IdleTicks(w, PeriodTicks * 4);
+
+            Assert.AreEqual(0, CountOfType(w, MobType.Director),
+                "there is exactly one Director per raid: the latch is one-way, so the transition " +
+                "that spawns him can never fire twice");
+        }
+
         [Test]
         public void Director_DropsExactlyOneMemoryCore()
         {
