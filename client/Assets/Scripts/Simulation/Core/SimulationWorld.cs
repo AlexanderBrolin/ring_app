@@ -360,7 +360,13 @@ namespace Ring.Simulation.Core
             // reopen that decision without writing anything down. Nothing is
             // shared either way: looting never reads mobs, spawning never
             // reads loot timers.
-            LootOps.Update(this);
+            // Stage 3 Task 18 (coordinator R-162): the SANITIZED inputs ride
+            // in as a parameter. The channel's completion re-check has to read
+            // the window flag OF THIS TICK (spec §3.8 check 2), and this
+            // project's precedent for that is the explicit hand-off
+            // WeaponSystem.Update gets above, not a getter over
+            // _sanitizedInputs whose only consumer would be one system.
+            LootOps.Update(this, _sanitizedInputs);
             // Stage 3 Task 14 (coordinator R-101): container TTL decay slots
             // in HERE, BEFORE PickupSystem — not after. The slot after
             // PickupSystem is reserved for MatchFlowSystem (Т21, see that

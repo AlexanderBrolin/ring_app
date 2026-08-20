@@ -27,26 +27,36 @@ namespace Ring.Simulation.Loot
         DashingOrSliding = 11,
     }
 
-    /// Stage 3 Task 17 (spec §3.8): the ONE home of loot validation and of the
-    /// transfer channel's own timer.
+    /// Stage 3 Tasks 17-18 (spec §3.8): the ONE home of loot validation, of
+    /// the transfer channel's own timer, and of what happens when that timer
+    /// runs out.
     ///
-    /// WHAT THIS TASK OWNS AND WHAT IT DOES NOT (R-152). `Validate` answers
-    /// for all three ops — checks 3 and 6 have nowhere else to live — but
-    /// `Begin`/`Update` carry only what `Take` needs. Finishing a transfer
-    /// (the re-check on the expiry tick, the per-slot race between two
-    /// collectors) and `Drop` spawning a ground container are Т18; the repair
-    /// kit's own channel is Т19; the wire, the movement slowdown, CanFire and
-    /// the window sanitizer are Т20. None of that is invented here ahead of
-    /// its own task.
+    /// WHAT LIVES HERE AND WHAT DOES NOT (R-152). Т17 stood up `Validate`'s
+    /// nine checks (it answers for all three ops — checks 3 and 6 have nowhere
+    /// else to live) plus `Begin`/`Update` for `Take`. Т18 added the other
+    /// half: the completion re-check on the expiry tick, the per-slot race
+    /// between two collectors that falls out of it, and `Drop`'s ground
+    /// container. Still elsewhere: the repair kit's own channel is Т19 (it
+    /// runs on RepairTimer, not this one); the wire, the movement slowdown,
+    /// WeaponSystem.CanFire's `!InventoryOpen` term and the window sanitizer
+    /// are Т20; LootRequestNet/LootResultNet are Т28; SimEventKind's own loot
+    /// entries are Т29. None of that is invented here ahead of its own task.
     public static class LootOps
     {
         /// The ONE home of all nine server checks (spec §3.8, Р265). A PURE
         /// function: it mutates nothing, it only answers whether the operation
         /// is legal RIGHT NOW. That purity is what lets the same nine checks
         /// run twice — once when the request arrives (Begin's precondition)
-        /// and once on the tick the transfer completes (Т18), which the spec
-        /// requires because the container may have emptied and the collector
-        /// may have walked away in between.
+        /// and once on the tick the transfer completes (Update below, Т18),
+        /// which the spec requires because the container may have emptied and
+        /// the collector may have walked away in between.
+        ///
+        /// Stage 3 Task 18 — THE SECOND CALLER EXISTS NOW, and it is what makes
+        /// "one home" load-bearing rather than tidy: the completion path calls
+        /// THIS function, not a lighter copy of some of its conditions. A
+        /// second copy would drift the moment Т19/Т20 touch either one, and the
+        /// checks it would be tempting to omit (7 and 4b) are exactly the two
+        /// the spec names as the REASON the re-check exists.
         ///
         /// ORDER IS THE SPEC'S, with one recorded ruling. Spec §3.8 lists
         /// "container exists and the slot is non-empty" (4) BEFORE "Slot in
@@ -168,22 +178,74 @@ namespace Ring.Simulation.Loot
         /// completion re-check would not catch it, because all nine checks
         /// pass honestly on that stranger.
         ///
-        /// Only `Take` has a transfer channel in this task (R-152): `Drop`'s
-        /// ground container is Т18's and the repair kit's channel is Т19's
-        /// (and it runs on RepairTimer, not this one). A silent no-op for
-        /// those would read as an operation that happened, so they get a
-        /// named refusal instead — same shape SimulationWorld.SpawnContainer
-        /// (R-99) uses for a call it cannot honor.
+        /// `Take` OPENS a channel; `Drop` does not (Stage 3 Task 18, owner
+        /// ruling R-161) — it begins and ends inside this same tick. The
+        /// asymmetry is not a shortcut: TransferSeconds is indexed by the tier
+        /// of an item taken FROM A CONTAINER, while LootTargetContainerId/
+        /// LootTargetSlot address a container a discard does not have, so a
+        /// channel for `Drop` would need a sentinel in a field whose zero
+        /// already means "no channel". Spec §3.17 keeps the discard as the
+        /// cheap valve it is.
+        ///
+        /// `Use`'s repair-kit channel runs on RepairTimer, not this one, and
+        /// belongs to Т19 — so it, alone now, still gets a named refusal: a
+        /// silent no-op would read as an operation that happened, same shape
+        /// SimulationWorld.SpawnContainer (R-99) uses for a call it cannot
+        /// honor. Begin stays the ONE entry point of all three ops (its
+        /// signature takes `op` for exactly that reason); splitting Drop out
+        /// would push a game rule into Т28's networking switch.
         public static void Begin(SimulationWorld w, int playerIndex, LootOp op,
             int containerId, int slot)
         {
+            if (op == LootOp.Drop)
+            {
+                // Stage 3 Task 18 (owner ruling R-161). ASSUMES Validate has
+                // already answered None, same contract as the Take path below:
+                // check 6 has bounded `slot` against this player's own backpack
+                // one moment ago on this same state, so TryRemoveItemAt cannot
+                // refuse. No defensive branch for a case that cannot arise —
+                // if you believe it can, that is a finding, not a reason for a
+                // just-in-case guard.
+                //
+                // ORDER IS THE TRANSFER'S OWN: out of the backpack FIRST, into
+                // the world second. Between the two lines the item exists in
+                // exactly one place, never zero and never two — the same
+                // invariant SimulationWorld.KillPlayer keeps when it copies the
+                // whole backpack onto a corpse and then clears it (R-128).
+                w.TryRemoveItemAt(playerIndex, slot, out byte dropped);
+                // stackalloc, never `new byte[1]`: this is the shape all three
+                // existing single-item spawns use (the memory core, a mob
+                // corpse, and DamageMob's own drop) and the reason is the same
+                // — a heap array here would be an allocation on a path Т28 will
+                // call from the tick's own request handling.
+                System.Span<byte> one = stackalloc byte[1];
+                one[0] = dropped;
+                // ContainerKind.Ground gets its FIRST production producer here:
+                // until now the only Ground container in the codebase was a
+                // test fixture, and ContainerStore.InitialTtlFor's default
+                // branch (Ttl = Loot.ContainerTtlSeconds) was waiting for it.
+                // The discard therefore ages out on its own, with no TTL
+                // machinery of this task's making (coordinator R-164: the
+                // "empty" qualifier in spec §3.6 is descriptive prose, not a
+                // condition — a ground container is never born empty in the
+                // first place, exactly like a mob corpse).
+                //
+                // A refusal from SpawnContainer (Arena.MaxContainers reached,
+                // R-99's own skip-and-count) would silently consume the item.
+                // ACCEPTED, NOT OVERLOOKED (coordinator F-4): the identical
+                // exposure is already accepted at all four existing spawns,
+                // rolling the item back would be a branch the spec never asks
+                // for, and §3.17 keeps the discard cheap on purpose. Recorded
+                // as a debt with an owner decision attached, not fixed here.
+                w.SpawnContainer(ContainerKind.Ground, w.PlayerAt(playerIndex).Pos, one);
+                return;
+            }
             if (op != LootOp.Take)
             {
                 throw new System.ArgumentException(
-                    $"LootOps.Begin: {op} has no transfer channel — only Take does. Drop's own " +
-                    "ground container belongs to Т18 and Use's repair-kit channel (RepairTimer, " +
-                    "not LootTimer) to Т19; whichever of those you are wiring, its behavior is " +
-                    "not implemented here yet.", nameof(op));
+                    $"LootOps.Begin: {op} has no transfer channel — only Take does. Use's " +
+                    "repair-kit channel runs on RepairTimer, not LootTimer, and belongs to Т19; " +
+                    "its behavior is not implemented here yet.", nameof(op));
             }
 
             SimConfig cfg = w.Config;
@@ -215,11 +277,49 @@ namespace Ring.Simulation.Loot
         /// which is also the tie-break Р267 asks for when two transfers
         /// complete on the same tick (Т18 relies on it).
         ///
-        /// Damage does NOT interrupt a transfer (spec §3.8, in deliberate
-        /// contrast with the extraction channel): looting under a wave is
-        /// meant to be possible but expensive greed. Death does, in
-        /// SimulationWorld.KillPlayer.
-        public static void Update(SimulationWorld w)
+        /// THREE ASYMMETRIES, ALL DELIBERATE AND ALL RECORDED — a later reader
+        /// will read any of them as an oversight and "fix" it unless they are
+        /// named here together:
+        ///
+        /// (1) DAMAGE DOES NOT INTERRUPT a transfer (spec §3.8, in deliberate
+        ///     contrast with the extraction channel): looting under a wave is
+        ///     meant to be possible but expensive greed, and a channel any
+        ///     stray round could cancel would make it impossible instead.
+        ///     SimulationWorld.DamagePlayer touches none of the three loot
+        ///     fields, and that is the implementation of this rule.
+        /// (2) DEATH DOES, IMMEDIATELY, and not from here —
+        ///     SimulationWorld.KillPlayer zeroes timer and target with the rest
+        ///     of the corpse's clean read. A dead collector must not be left
+        ///     holding a channel that a later tick would try to finish.
+        /// (3) WALKING OUT OF REACH AND CLOSING THE WINDOW DO NEITHER: they
+        ///     make the transfer FAIL TO COMPLETE, they do not break the
+        ///     channel the moment they happen (owner ruling R-160). The checks
+        ///     run ONCE, on the expiry tick. Spec §3.8's own justification for
+        ///     having a re-check at all ("the container may have emptied,
+        ///     the collector may have walked away") is a sentence ABOUT THE
+        ///     EXPIRY TICK, and it says nothing at all under a polling
+        ///     reading. The player sees the end of the
+        ///     operation immediately anyway: §3.11 closes the window client-
+        ///     side on leaving the radius, and the progress bar lives inside
+        ///     that window.
+        ///
+        /// `inputs` is THIS tick's SANITIZED per-player input (Stage 3 Task 18,
+        /// coordinator R-162). It arrives as a PARAMETER, the same way TickAll
+        /// already hands WeaponSystem its own (`in _sanitizedInputs[i]`), not
+        /// through a new world getter whose only consumer would be this one
+        /// system — which also keeps looting an honest
+        /// `(state, input) -> state` function (CR 2). Sanitized rather than
+        /// raw because Т20 will force the window flag back down inside a dash
+        /// or a slide: the transfer's last look at the world must see exactly
+        /// what movement saw.
+        ///
+        /// `inputs.Length` is NOT checked against PlayerCount, the same
+        /// contract Validate's own `playerIndex` doc states and
+        /// SimulationWorld.PlayerAt/ContainerSlotAt/Loot.Inventory.ItemAt
+        /// already follow: this is the server's own per-player array, not a
+        /// wire value. TickAll, the one production caller, passes
+        /// _sanitizedInputs, sized to playerCount at construction.
+        public static void Update(SimulationWorld w, System.ReadOnlySpan<SimInput> inputs)
         {
             for (int i = 0; i < w.PlayerCount; i++)
             {
@@ -228,9 +328,64 @@ namespace Ring.Simulation.Loot
                 p.LootTimer -= SimulationWorld.TickDt;
                 if (p.LootTimer > 0f) continue;
 
-                // The channel expired on this tick. Т18 completes the
-                // transfer HERE — re-running Validate and moving the item —
-                // before the channel is closed below.
+                // ⚠ THE DECREMENT ABOVE MUST STAY BEFORE THIS CALL. Check 9
+                // answers Busy while LootTimer > 0, so a re-check run one line
+                // earlier would refuse EVERY transfer this system ever starts —
+                // silently, permanently, and with every negative test still
+                // green. On the expiry tick the timer is already <= 0, which is
+                // precisely what lets the same nine checks run a second time.
+                //
+                // The nine are re-run through the SAME function, never a
+                // lighter copy (rule 2, and see Validate's own doc): the
+                // container may have emptied and the collector may have walked
+                // away or shut the window since Begin (spec §3.8).
+                //
+                // A REFUSAL CANCELS THE OPERATION SILENTLY: no exception, no
+                // event, nothing moves — the client learns of it from the next
+                // snapshot (spec §3.8). The channel is closed either way, three
+                // lines below; a refusal that left it open would strand the
+                // collector in a channel that can never finish.
+                //
+                // Ascending player index (the loop above) IS the tie-break Р267
+                // asks for when two transfers expire on the same tick: the
+                // lower index takes the item, and the higher one's own re-check
+                // — running later in this very same loop — finds the slot empty
+                // and refuses with SlotEmpty. That is the spec's own account of
+                // the race (С18/Р236): not blocked, just lost.
+                if (Validate(w, i, LootOp.Take, p.LootTargetContainerId, p.LootTargetSlot,
+                        in inputs[i]) == LootRefusal.None)
+                {
+                    // BOTH HALVES IN ONE TICK, in this order. There is no point
+                    // between these two lines at which the item does not exist
+                    // or exists twice — the same invariant the Drop path above
+                    // and KillPlayer's corpse container (R-128) both keep.
+                    //
+                    // Neither call can fail here, and neither return value is
+                    // therefore examined: check 4b established one line ago that
+                    // the slot is non-empty, and check 8 (CanAddItem — the SAME
+                    // predicate TryAddItem gates its own add on) that the
+                    // backpack has room, both on this exact state in this exact
+                    // tick. A "just in case" branch would be untested code
+                    // guarding an unreachable case.
+                    //
+                    // ADDRESSEE — Т29 (coordinator R-163, doc shape R-96). THIS
+                    // is where a container becomes empty, and spec §3.16 wants
+                    // that observable: SimEventKind.ContainerEmptied belongs
+                    // right here. It is NOT emitted yet, and deliberately so —
+                    // SimEventKind carries no Stage 3 entry at all today, and an
+                    // emitter without delivery is half a system: SnapshotAssembler
+                    // would drop an unknown kind silently while
+                    // EventRelevance.ChannelFor (typed on SimEventKind, and
+                    // built to throw on an unaccounted one) would take the whole
+                    // tick down. Т29 owns the enum, the channel and this
+                    // emission together. The same debt, in the same words, is
+                    // already recorded at Loot.PickupSystem.AdvanceTtl for
+                    // PickupTaken.
+                    w.TryTakeFromContainer(p.LootTargetContainerId, p.LootTargetSlot, out byte itemId);
+                    w.TryAddItem(i, itemId);
+                }
+
+                // Closed in BOTH outcomes — success and refusal alike.
                 p.LootTimer = 0f;
                 p.LootTargetContainerId = 0;
                 p.LootTargetSlot = 0;
