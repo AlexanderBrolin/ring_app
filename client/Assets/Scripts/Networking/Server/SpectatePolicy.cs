@@ -60,6 +60,10 @@ namespace Ring.Networking.Server
         /// reconstruct the whole map from the union, defeating the entire
         /// reason fog of war exists.
         CooldownActive,
+
+        /// The requester left the raid through an exit rather than dying
+        /// (spec §3.5 Р257). APPENDED, so no value already on the wire moves.
+        RequesterExtracted
     }
 
     /// The spectate-switch decision (Stage 2 Task 42a, spec §3.10 :673-678,
@@ -226,9 +230,16 @@ namespace Ring.Networking.Server
         /// short-circuits the whole cooldown branch before the subtraction
         /// ever runs, so there is no tick-zero edge case to get wrong.
         public SpectateRefusal Evaluate(int requesterIndex, int targetIndex, int playerCount,
-            bool requesterAlive, bool targetAlive, int lastSwitchTick, int currentTick)
+            bool requesterAlive, bool requesterExtracted, bool targetAlive, int lastSwitchTick,
+            int currentTick)
         {
             if (requesterAlive) return SpectateRefusal.RequesterAlive;
+            // Spec §3.5 Р257 (Ф5 gate, review A-1): AFTER the liveness gate,
+            // because an extraction clears Alive too (Р223 — the body leaves
+            // the arena), so this branch is unreachable for a living player
+            // and the two refusals never compete. A collector who walked out
+            // is not watching the raid he left through somebody else's eyes.
+            if (requesterExtracted) return SpectateRefusal.RequesterExtracted;
             if (!IsTargetInRange(targetIndex, playerCount)) return SpectateRefusal.TargetOutOfRange;
             if (targetIndex == requesterIndex) return SpectateRefusal.TargetIsSelf;
             if (!targetAlive) return SpectateRefusal.TargetDead;

@@ -25,7 +25,7 @@ namespace Ring.Simulation.Tests
     /// beside it.
     ///
     /// THE FIFTH OUTCOME IS THE OWNER'S, AND IT IS LORE, NOT BOOKKEEPING
-    /// (owner decision R-193). A collector who is still alive when the raid's
+    /// (owner decision R-194). A collector who is still alive when the raid's
     /// clock runs out has no outcome among the plan's four: he did not die, he
     /// did not extract, and his socket never dropped. In the world, the
     /// factory closes the communication corridor the operator's link to his
@@ -134,7 +134,7 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(Backpack, MatchServer.LootCarriedOut(w, Subject),
                 "the record names the items themselves, in the order they were carried — the tier " +
-                "and the price are the catalog's to answer, not a second copy travelling beside them");
+                "and the price are the catalog's to answer, not a second copy traveling beside them");
             Assert.IsEmpty(MatchServer.LootCarriedOut(w, 2),
                 "…while a collector still inside the factory carried nothing out, however full his back is");
         }
@@ -225,7 +225,7 @@ namespace Ring.Simulation.Tests
                 MatchEndPolicy.OutcomeFor(p.Alive, p.Extracted, p.ExtractKind, disconnectKilled: false),
                 "MaxDurationReached is the ONE end that leaves live bodies in the arena, and the " +
                 "record must not call them dead: the factory closed the corridor the operator's link " +
-                "runs through, so the shell is lost where it stands (owner decision R-193)");
+                "runs through, so the shell is lost where it stands (owner decision R-194)");
         }
 
         [Test]
@@ -353,7 +353,7 @@ namespace Ring.Simulation.Tests
                 "is this seam, and Т24 is its only caller (coordinator R-172)");
 
             // Everything the machine would otherwise do, offered to it at once.
-            Stand(w, Subject, new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f));
+            Stand(w, Subject, TestWorlds.InsideCore(in cfg));
             TestWorlds.IdleTicks(w, 3);
             Assert.AreEqual(MatchPhase.Ended, w.Match.Phase,
                 "…and a raid that is over does not start its endgame, whatever the arena looks like");

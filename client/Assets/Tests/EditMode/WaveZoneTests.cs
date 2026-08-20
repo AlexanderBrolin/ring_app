@@ -377,7 +377,7 @@ namespace Ring.Simulation.Tests
             c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
 
             var w = new SimulationWorld(11, c, playerCount: 3);
-            TestWorlds.RelocatePlayerForTest(w, 1, new float2(c.Arena.ZoneRadius[0] * 0.5f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, TestWorlds.InsideCore(in c));
             TestWorlds.IdleTicks(w);
             Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase, "premise: activated");
 
@@ -404,7 +404,7 @@ namespace Ring.Simulation.Tests
             c.Wave.MinSpawnDistanceToPlayer = 1_000_000f;
 
             var w = new SimulationWorld(11, c, playerCount: 3);
-            TestWorlds.RelocatePlayerForTest(w, 1, new float2(c.Arena.ZoneRadius[0] * 0.5f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, TestWorlds.InsideCore(in c));
             TestWorlds.IdleTicks(w);
 
             WaveState wave = w.WaveRef;
@@ -436,7 +436,7 @@ namespace Ring.Simulation.Tests
             c.Flow.GateDelaySeconds = 2f * SimulationWorld.TickDt;
 
             var w = new SimulationWorld(11, c, playerCount: 3);
-            TestWorlds.RelocatePlayerForTest(w, 1, new float2(c.Arena.ZoneRadius[0] * 0.5f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, TestWorlds.InsideCore(in c));
             TestWorlds.IdleTicks(w);
 
             for (int i = 0; i < w.MobCount; i++)

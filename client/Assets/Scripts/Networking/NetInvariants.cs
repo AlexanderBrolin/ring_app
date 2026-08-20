@@ -333,6 +333,34 @@ namespace Ring.Networking
                     $"(got EntityFadeTicks={net.EntityFadeTicks}).");
             }
 
+            // #10 (Stage 3, Ф5 gate review A-2; spec §3.5 Р255/Р300). THE ONE
+            // CROSS-CHECK Р255 LEFT STANDING after it deleted the second
+            // duration number, and the one nothing implemented until this
+            // gate. Its home is here because Р72 says only the nodes that see
+            // BOTH configs may state a rule spanning them, and this validator
+            // is exactly that node — `ServerBootstrap` and `NetworkSimBackend`
+            // are its only callers.
+            //
+            // WHAT IT REFUSES IS A CONFIGURATION NOBODY CAN WIN, NOT A LATE
+            // GAMBLE. Р300 is explicit that a collector who enters the core
+            // too late is taking a risk the validator must NOT second-guess —
+            // that is the loop working. This is the other thing: if the
+            // sharing window plus the extraction channel do not FIT inside
+            // the raid at all, the Director could fall on tick one and the
+            // gate would still open too late to walk through, so the core
+            // route is dead for every player in every raid the build ever
+            // runs. Strict `<`: at exactly equal there is no tick left to
+            // stand in the gate on.
+            float endgameSeconds = sim.Flow.GateDelaySeconds + sim.Flow.ExtractChannelSeconds;
+            if (endgameSeconds >= net.MatchMaxDurationSeconds)
+            {
+                errors.Add("Flow.GateDelaySeconds + Flow.ExtractChannelSeconds must be < "
+                    + "Net.MatchMaxDurationSeconds — otherwise the gate route cannot be walked "
+                    + $"in ANY raid (got {sim.Flow.GateDelaySeconds} + "
+                    + $"{sim.Flow.ExtractChannelSeconds} = {endgameSeconds} against "
+                    + $"MatchMaxDurationSeconds={net.MatchMaxDurationSeconds}).");
+            }
+
             return errors.ToArray();
         }
     }

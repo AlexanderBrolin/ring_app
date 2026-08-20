@@ -17,6 +17,28 @@ namespace Ring.Simulation.Core
         /// ADR-002 T5: simulation runs at 30 Hz. The single source of dt.
         public const float TickDt = 1f / 30f;
 
+        /// A length stated in SECONDS, expressed in the only unit a
+        /// deterministic comparison may use: WHOLE TICKS (Stage 3, R-178 and
+        /// R-190; Ф5 gate, review B-4).
+        ///
+        /// THIS PHASE PAID FOR THE RULE TWICE, BOTH TIMES BY MEASUREMENT, and
+        /// then left it transcribed by hand in four places — which is how a
+        /// rule stops being a rule. Т21: `elapsed * TickDt >= GateDelaySeconds`
+        /// survived its mutation because at the boundary the two sides are
+        /// bit-equal when spilled to float locals and NOT equal when the
+        /// product stays inline at higher precision — an answer that depends
+        /// on the compiler has no place in state that feeds StateHash. Т23:
+        /// the extraction channel finished a whole tick LATE, because a SUM of
+        /// six TickDt is 0.2f while six times TickDt is 0.20000002f.
+        ///
+        /// ROUNDING IS TO THE NEAREST TICK, and it is exact for every number
+        /// that matters: the division is far more accurate than half a tick at
+        /// any raid length, so both the shipped values (90 s = 2700 ticks,
+        /// 20 s = 600) and every fixture stated as `N * TickDt` land on their
+        /// own integer. Callers compare the RESULT, never the seconds.
+        public static int TicksFromSeconds(float seconds)
+            => (int)Unity.Mathematics.math.round(seconds / TickDt);
+
 
         int _tick;
         Random _spreadRng;
@@ -400,8 +422,9 @@ namespace Ring.Simulation.Core
             ContainerStore.Update(this);
             // Stage 3 Task 3 (owner decision R-2): the canonical tail is
             // combat -> LootOps.Update (Т17, above) -> ExtractionSystem.Update
-            // (Т23, still to come — it inserts itself BEFORE this call, not
-            // after) -> PickupSystem.Update (this call) -> MatchFlowSystem.
+            // (Т23 — it landed BEFORE this call, not after, and
+            // ChannelCompletingOnTheActivationTick_StillGetsOut is its
+            // witness) -> PickupSystem.Update (this call) -> MatchFlowSystem.
             // Update (Т21, below). Spec §3.6's own "подбор после машины фазы"
             // phrasing disagrees with this order; R-2 resolves that
             // disagreement in favor of Р256 and the phase machine's own
@@ -1387,7 +1410,7 @@ namespace Ring.Simulation.Core
         {
             p.RepairTimer = 0f;
             // Stage 3 Т23 (spec §3.5 Р222, errata E-6/C-I7): the extraction
-            // channel is cancelled by damage too — ONE line in the ONE home,
+            // channel is canceled by damage too — ONE line in the ONE home,
             // exactly as this method's own doc and Т19's promised. Both callers
             // inherit it: DamagePlayer (after both guards, so an i-frame-eaten
             // blow does not break a channel it never landed on) and KillPlayer.
@@ -1496,22 +1519,6 @@ namespace Ring.Simulation.Core
             }
         }
 
-        /// Stage 2 Task 8: single home for player-death bookkeeping — zeroes
-        /// every death-relevant timer, sets Alive=false + DeathTick, and emits
-        /// exactly one PlayerDied. Extracted verbatim (same fields, same order,
-        /// same values) from DamagePlayer's former death branch above, so a
-        /// damage-caused death is byte-for-byte unchanged; KillPlayerNoDamage
-        /// below is the second, no-damage caller. `blowPos` (fix-round 1 I-1):
-        /// the two callers disagree on what this SHOULD be — DamagePlayer
-        /// forwards its own `pos` (the blow's origin, same value the paired
-        /// PlayerDamaged event above it already carries), while
-        /// KillPlayerNoDamage has no blow at all and passes the victim's own
-        /// position instead — so it is a required parameter here, not derived
-        /// from `p.Pos` internally (that would have silently dropped the
-        /// blow's origin for the damage-death path — the bug fix-round 1
-        /// caught: `PlayerDamaged` and `PlayerDied` from the SAME hit used to
-        /// carry the same Pos, and briefly didn't). See `SimEvent.Pos`'s own
-        /// doc for the reader-facing version of this contract.
         /// EVERY TIMER A BODY LEAVING THE FIGHT MUST DROP (Stage 3 Т23, errata
         /// E-6/C-I9). Lifted verbatim out of KillPlayer the moment a SECOND way
         /// of leaving arrived — extraction — because the reason each line
@@ -1583,6 +1590,29 @@ namespace Ring.Simulation.Core
             AbortChannels(ref p);
         }
 
+        /// Stage 2 Task 8: single home for player-death bookkeeping — zeroes
+        /// every death-relevant timer (through ClearCombatTimers above, which
+        /// Т23 lifted out of this method when extraction became a SECOND way
+        /// of leaving the fight), sets Alive=false + DeathTick, and emits
+        /// exactly one PlayerDied. Extracted verbatim (same fields, same order,
+        /// same values) from DamagePlayer's former death branch above, so a
+        /// damage-caused death is byte-for-byte unchanged; KillPlayerNoDamage
+        /// below is the second, no-damage caller. `blowPos` (fix-round 1 I-1):
+        /// the two callers disagree on what this SHOULD be — DamagePlayer
+        /// forwards its own `pos` (the blow's origin, same value the paired
+        /// PlayerDamaged event above it already carries), while
+        /// KillPlayerNoDamage has no blow at all and passes the victim's own
+        /// position instead — so it is a required parameter here, not derived
+        /// from `p.Pos` internally (that would have silently dropped the
+        /// blow's origin for the damage-death path — the bug fix-round 1
+        /// caught: `PlayerDamaged` and `PlayerDied` from the SAME hit used to
+        /// carry the same Pos, and briefly didn't). See `SimEvent.Pos`'s own
+        /// doc for the reader-facing version of this contract.
+        ///
+        /// Ф5 gate, review B-2: this block had drifted onto ClearCombatTimers
+        /// when Т23 extracted that method — leaving the extraction helper
+        /// claiming to set Alive/DeathTick and to take a `blowPos` it has no
+        /// parameter for, and leaving this method with no doc at all.
         void KillPlayer(int index, HitZone zone, float2 dir, float2 blowPos)
         {
             ref PlayerState p = ref _players[index];

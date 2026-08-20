@@ -970,12 +970,17 @@ namespace Ring.Networking.Server
             int target = msg.TargetIndex;
             int playerCount = _world.PlayerCount;
             bool requesterAlive = _world.PlayerAt(slot).Alive;
+            // Ф5 gate, review A-1 (spec §3.5 Р257): an extracted collector is
+            // NOT a corpse, and the two are indistinguishable by `Alive` alone
+            // since Т23 — so the flag has to come along.
+            bool requesterExtracted = _world.PlayerAt(slot).Extracted;
             bool targetInRange = SpectatePolicy.IsTargetInRange(target, playerCount);
             bool targetAlive = targetInRange && _world.PlayerAt(target).Alive;
             int currentTick = _world.CurrentTick;
 
             SpectateRefusal refusal = _spectatePolicy.Evaluate(slot, target, playerCount,
-                requesterAlive, targetAlive, _lastSpectateSwitchTick[slot], currentTick);
+                requesterAlive, requesterExtracted, targetAlive, _lastSpectateSwitchTick[slot],
+                currentTick);
 
             if (refusal == SpectateRefusal.None)
             {
@@ -1489,7 +1494,7 @@ namespace Ring.Networking.Server
         /// (ItemCatalogLookup, R-89), the client verified its own copy of that
         /// catalog at the handshake, and the log line resolves them where it
         /// prints. Copying the resolved values into the record instead would
-        /// be three numbers travelling where one identifies them.
+        /// be three numbers traveling where one identifies them.
         internal static byte[] LootCarriedOut(SimulationWorld world, int slot)
         {
             if (!world.PlayerAt(slot).Extracted) return Array.Empty<byte>();
@@ -1655,7 +1660,7 @@ namespace Ring.Networking.Server
         /// READER. A second array holding the same number is precisely the
         /// "two copies of one number" defect Р151 and this type's own class
         /// doc are written against, so the log line and `EndedNetFor` read
-        /// them off `MatchStats` instead (coordinator R-194).
+        /// them off `MatchStats` instead (coordinator R-195).
         ///
         /// The four below have no other home. `Outcome` needs the server's
         /// own memory of who disconnected; `CreditsTotal`/`Loot` need the

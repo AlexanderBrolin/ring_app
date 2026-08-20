@@ -285,10 +285,6 @@ namespace Ring.Simulation.Tests
             world.SetPlayerForTest(index, p);
         }
 
-        /// Places a batch of mobs in one call (Task 6) — the tuple form keeps a
-        /// multi-mob fixture readable as a single statement instead of a column
-        /// of SpawnMobForTest calls. Slot order equals argument order, which the
-        /// candidate tie-break tests depend on.
         /// Stage 3 Т22: N input-free ticks through the FULL TickAll (not
         /// Tick), so systems that only exist on the all-players path — the
         /// phase machine among them — actually run. Lifted here from
@@ -300,6 +296,11 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < ticks; i++) world.TickAll(inputs);
         }
 
+        /// Places a batch of mobs in one call (Task 6) — the tuple form keeps a
+        /// multi-mob fixture readable as a single statement instead of a column
+        /// of SpawnMobForTest calls. Slot order equals argument order, which the
+        /// candidate tie-break tests depend on. (Ф5 gate, review B-2: this doc
+        /// had drifted onto IdleTicks above when Т22 inserted that helper.)
         public static void SpawnMobsAt(SimulationWorld world,
             params (MobType type, float2 pos)[] mobs)
         {
@@ -387,6 +388,20 @@ namespace Ring.Simulation.Tests
         /// same "test helpers duplicated across files" rule Capacity above
         /// records, applied before the copy was made rather than after.
         /// An owner retune of the layout moves every caller with it.
+        /// A point comfortably inside the core zone — half its radius out
+        /// along +X (Ф5 gate, review B-6). Lifted here after the phase grew
+        /// TWO byte-identical private copies of it (MatchFlowTests,
+        /// EliteAndDirectorTests) and eight more raw transcriptions of the
+        /// same expression across six files. Stated from the config, so a
+        /// retune of the zone radii moves every caller with it.
+        ///
+        /// STANDING A LIVE COLLECTOR HERE WAKES THE DIRECTOR AND HIS RETINUE
+        /// (R-173's fixture rule) — which is the point at every call site that
+        /// uses it, and the reason a fixture that does NOT want that belongs
+        /// on a zoneless arena instead.
+        public static float2 InsideCore(in SimConfig cfg)
+            => new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f);
+
         public static int IndexOfExit(in SimConfig cfg, ExitKind kind)
         {
             for (int i = 0; i < cfg.Arena.ExtractPos.Length; i++)
@@ -418,7 +433,7 @@ namespace Ring.Simulation.Tests
         /// that window to be instant.
         public static void OpenTheGate(SimulationWorld world, in SimConfig cfg)
         {
-            RelocatePlayerForTest(world, 2, new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f));
+            RelocatePlayerForTest(world, 2, InsideCore(in cfg));
             IdleTicks(world);
             for (int i = 0; i < world.MobCount; i++)
             {

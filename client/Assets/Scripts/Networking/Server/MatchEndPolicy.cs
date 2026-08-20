@@ -219,7 +219,7 @@ namespace Ring.Networking.Server
         /// column in the future meta, not different loot on the ground.
         ///
         /// STRANDED IS THE OUTCOME THE PLAN DID NOT NAME (owner decision
-        /// R-193). MaxDurationReached is the only end that can leave
+        /// R-194). MaxDurationReached is the only end that can leave
         /// collectors ALIVE in the arena — a raid nobody walks into the core
         /// is legitimate (spec §3.5) and simply runs its 900 s out — and the
         /// plan's four members had nothing to say about that man. In the

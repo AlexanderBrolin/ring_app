@@ -20,10 +20,13 @@ namespace Ring.Simulation.Tests
     /// THE PHASE MACHINE ITSELF ARRIVED WITH Т21 and is exercised below the
     /// "Stage 3 Т21" divider: activation by a collector entering the core
     /// (Р299), the one-way latch, the Director's death tick, the gate delay,
-    /// and Ended outranking all of it. Still inert above that divider, and
-    /// still genuinely inert in the world: nothing sets Extracted or ticks
-    /// ExtractTimer yet — that half is Т23's. LootTimer and RepairTimer have
-    /// since left that list: Т17 gave LootTimer Loot.LootOps, Т19 gave
+    /// and Ended outranking all of it. Above that divider the new fields are
+    /// still read as inert BY THIS FILE, which is no longer the same claim as
+    /// "inert in the world": Т23 gave Extracted and ExtractTimer their writer
+    /// (Objectives.ExtractionSystem, covered by ExtractionTests), and no
+    /// fixture here ever stands a collector in an exit radius.
+    /// LootTimer and RepairTimer have
+    /// since left that list too: Т17 gave LootTimer Loot.LootOps, Т19 gave
     /// RepairTimer the same file's Use behavior, and both carry their own
     /// coverage in LootOpsTests — nothing in THIS file starts either channel,
     /// so every fixture here still reads both as zero.
@@ -204,7 +207,9 @@ namespace Ring.Simulation.Tests
         /// A point inside the core, stated as fixture arithmetic off the very
         /// boundary Geometry.ZoneOf compares against — never a literal (the
         /// zone radii are data and may be retuned).
-        static float2 InsideCore(in SimConfig cfg) => new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f);
+        // Ф5 gate, review B-6: two files carried this line verbatim; it now
+        // lives in TestWorlds and both delegate.
+        static float2 InsideCore(in SimConfig cfg) => TestWorlds.InsideCore(in cfg);
 
         /// A point in the OUTER ring, the far side of both boundaries.
         static float2 OutsideZones(in SimConfig cfg)

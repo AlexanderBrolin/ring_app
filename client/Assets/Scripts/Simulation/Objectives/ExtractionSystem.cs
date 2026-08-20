@@ -12,7 +12,7 @@ namespace Ring.Simulation.Objectives
     ///
     /// RUNS BETWEEN THE LOOT CHANNEL AND ContainerStore/PickupSystem, and that
     /// is a rule (Р256 п.1, R-2's canonical tail): after combat, so a blow
-    /// landed this tick has already cancelled what it should; before
+    /// landed this tick has already canceled what it should; before
     /// MatchFlowSystem, so a collector who completes his channel on the very
     /// tick a companion steps into the core still gets out — the portals close
     /// from the NEXT tick. Reversed, that same collector would be caught by a
@@ -64,14 +64,14 @@ namespace Ring.Simulation.Objectives
                 // THE COMPLETION BOUNDARY IS COMPARED IN WHOLE TICKS, AND THAT
                 // IS THE SAME DETERMINISM RULE Т21 PAID FOR (R-178/lesson 348),
                 // in its second form — caught here by a test rather than by a
-                // mutation. Spec §3.5 states the channel as a SUM ("taймер
+                // mutation. Spec §3.5 states the channel as a SUM ("таймер
                 // растёт на TickDt… при ExtractTimer >= ExtractChannelSeconds"),
                 // and the obvious transcription `p.ExtractTimer >=
                 // channelSeconds` is wrong for a measured reason: a sum of six
                 // TickDt is 0.2f while six times TickDt is 0.20000002f, so the
                 // channel would finish a whole tick LATE — and at the shipped
                 // 20 s (600 ticks) which way it lands is not predictable by
-                // reading the code. The neighbouring channels (LootOps'
+                // reading the code. The neighboring channels (LootOps'
                 // transfer, the repair kit) dodge this by counting DOWN, where
                 // subtraction of near-equal floats is exact; this one cannot
                 // count down, because it must reset to zero the instant a
@@ -81,8 +81,8 @@ namespace Ring.Simulation.Objectives
                 // entirely: the division is far more accurate than half a tick
                 // at any length that matters, so rounding is exact for the
                 // shipped number and for every fixture stated as N * TickDt.
-                int elapsedTicks = (int)math.round(p.ExtractTimer / SimulationWorld.TickDt);
-                int channelTicks = (int)math.round(channelSeconds / SimulationWorld.TickDt);
+                int elapsedTicks = SimulationWorld.TicksFromSeconds(p.ExtractTimer);
+                int channelTicks = SimulationWorld.TicksFromSeconds(channelSeconds);
                 if (elapsedTicks < channelTicks) continue;
 
                 Extract(w, i, ref p, (ExitKind)arena.ExtractKind[exit], arena.ExtractPos[exit]);
@@ -142,7 +142,14 @@ namespace Ring.Simulation.Objectives
             // constants rather than a second literal.
             p.ExtractKind = kind == ExitKind.Gate
                 ? ExtractKinds.Gate : ExtractKinds.EarlyPortal;
-            w.Emit(SimEventKind.PlayerExtracted, exitPos, 0, default, 0f, playerIndex: (byte)index);
+            // EntityId carries the SLOT, exactly as PlayerDied does for the
+            // same kind of subject (SimulationWorld.KillPlayer passes `index`
+            // there too). A literal 0 would have been indistinguishable from
+            // "player 0 left", and 0 is a legal slot — the wire consumer of
+            // Т29 would have credited every extraction in the raid to the
+            // first player (Ф5 gate, review B-5).
+            w.Emit(SimEventKind.PlayerExtracted, exitPos, index, default, 0f,
+                playerIndex: (byte)index);
         }
     }
 }

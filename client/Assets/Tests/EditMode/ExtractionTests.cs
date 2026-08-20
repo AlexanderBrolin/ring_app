@@ -137,6 +137,14 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerExtracted, out SimEvent ev),
                 "…while the extraction itself IS announced");
             Assert.AreEqual(Subject, ev.PlayerIndex, "…naming who left");
+            // Ф5 gate, review B-5: EntityId carries the slot too, exactly as
+            // PlayerDied does for the same kind of subject. A literal 0 there
+            // was indistinguishable from "player 0 left" — and 0 is a legal
+            // slot, so the wire consumer of Т29 would have credited every
+            // extraction in the raid to the first player. Asserted against
+            // the SECOND player for that very reason (lesson 227).
+            Assert.AreEqual(Subject, ev.EntityId,
+                "…and naming him in EntityId as well, the same convention PlayerDied follows");
         }
 
         [Test]
@@ -169,7 +177,7 @@ namespace Ring.Simulation.Tests
 
             // Player 2 walks into the core: the Director wakes and the early
             // portals shut on everybody, including the man already standing in one.
-            Stand(w, 2, new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f));
+            Stand(w, 2, TestWorlds.InsideCore(in cfg));
             TestWorlds.IdleTicks(w, 2);
 
             Assert.AreNotEqual(MatchPhase.Farm, w.Match.Phase, "premise: the raid has been activated");
@@ -184,7 +192,7 @@ namespace Ring.Simulation.Tests
         {
             SimConfig cfg = Fixture();
             var w = World(in cfg);
-            Stand(w, 2, new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f)); // activate
+            Stand(w, 2, TestWorlds.InsideCore(in cfg)); // activate
             TestWorlds.IdleTicks(w);
             Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase, "premise: the Director stands");
 
@@ -280,7 +288,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(MatchPhase.Farm, w.Match.Phase, "premise: the portals are still open");
 
             // The other collector walks into the core on this very tick.
-            Stand(w, 2, new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f));
+            Stand(w, 2, TestWorlds.InsideCore(in cfg));
             TestWorlds.IdleTicks(w);
 
             Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase,

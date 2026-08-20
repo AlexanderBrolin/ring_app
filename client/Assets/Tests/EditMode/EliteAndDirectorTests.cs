@@ -352,7 +352,9 @@ namespace Ring.Simulation.Tests
 
         /// A point inside the core, as fixture arithmetic off the very
         /// boundary Geometry.ZoneOf compares against — never a literal.
-        static float2 InsideCore(in SimConfig cfg) => new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f);
+        // Ф5 gate, review B-6: two files carried this line verbatim; it now
+        // lives in TestWorlds and both delegate.
+        static float2 InsideCore(in SimConfig cfg) => TestWorlds.InsideCore(in cfg);
 
         /// Activation, stated the way the raid states it: the SECOND player
         /// (lesson 227) walks into the core and the tick settles.
@@ -405,6 +407,118 @@ namespace Ring.Simulation.Tests
 
         static void Kill(SimulationWorld w, int mobIndex)
             => w.DamageMob(mobIndex, 1e9f, w.Mobs[mobIndex].Pos, HitZone.Body, float2.zero, ownerIndex: 1);
+
+        /// Distance from the arena center — the quantity the core leash is
+        /// stated in, so a caller never restates the boundary itself.
+        static float DistanceFromCenter(SimulationWorld w, int mobIndex)
+            => math.length(w.Mobs[mobIndex].Pos);
+
+        [Test]
+        public void RetinueCannotBeWalkedOutOfTheCore()
+        {
+            // Ф5 gate, review A-5 + owner decision R-200. Before the leash the
+            // retinue was gameable: "retinue" is DERIVED as "live elites in
+            // the core" (Р215 forbids a stored mark), nothing held them in, so
+            // a collector could pull them out, the count would drop, and the
+            // top-up would breed replacements every period — an unbounded
+            // supply of loot-dropping elites.
+            SimConfig cfg = DirectorFixture();
+            var w = ActivatedWorld(in cfg);
+            int elite = IndexOfType(w, MobType.Elite);
+            Assert.AreNotEqual(-1, elite, "premise: the activation spawned a retinue");
+            Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase, "premise: the endgame is running");
+
+            // Every collector leaves the core and stands far out in the ring,
+            // which is exactly the bait: the retinue's own FSM will chase.
+            float far = cfg.Arena.ZoneRadius[1] * 0.9f;
+            for (int i = 0; i < w.PlayerCount; i++)
+                TestWorlds.RelocatePlayerForTest(w, i, new float2(far, 0f));
+            TestWorlds.IdleTicks(w, 120);
+
+            for (int i = 0; i < w.MobCount; i++)
+            {
+                if (w.Mobs[i].Type != MobType.Elite) continue;
+                Assert.LessOrEqual(DistanceFromCenter(w, i), cfg.Arena.ZoneRadius[0],
+                    "the core's elite guards the core (ADR-003 §9) — it may not be walked out of " +
+                    "it, because the raid counts the retinue BY standing there");
+            }
+            Assert.AreEqual(cfg.Flow.RetinueCount, LiveRetinue(w, in cfg),
+                "…so the retinue is still exactly its configured size after two minutes of bait, " +
+                "with nothing bred to replace anybody");
+        }
+
+        [Test]
+        public void AnEliteOutsideTheCore_IsNeverDraggedIntoIt()
+        {
+            // The negative half, and the reason the decision is taken BEFORE
+            // the mob moves: the leash CLAMPS a position, so asking it about a
+            // mob that is already outside would teleport it in.
+            SimConfig cfg = DirectorFixture();
+            var w = ActivatedWorld(in cfg);
+            float outside = cfg.Arena.ZoneRadius[0] * 2.5f;
+            // SpawnMobForTest answers with the ENTITY ID, not the array slot
+            // (SimulationWorld.SpawnMob's own return) — the new mob is always
+            // the last slot, and that is what the reads below index.
+            int elite = w.MobCount;
+            w.SpawnMobForTest(MobType.Elite, new float2(outside, 0f));
+            Assert.Greater(DistanceFromCenter(w, elite), cfg.Arena.ZoneRadius[0],
+                "premise: this one stands OUTSIDE the core");
+
+            TestWorlds.IdleTicks(w, 5);
+
+            Assert.Greater(DistanceFromCenter(w, elite), cfg.Arena.ZoneRadius[0],
+                "a wave elite that never entered the core is not the Director's retinue and keeps " +
+                "its own freedom — the leash holds people IN, it never pulls anybody IN");
+        }
+
+        [Test]
+        public void DuringTheEndgame_AnOrdinaryMobInTheCoreIsNotRetinue()
+        {
+            // The type half of the leash, and it had NO witness until a
+            // surviving mutant said so (Ф5 gate, mutation M24): "retinue" is
+            // the core's ELITE (Р215/ADR-003 §9), not whatever happens to be
+            // standing there. A chaser that wandered into the core is an
+            // ordinary wave mob and keeps its ordinary freedom to follow a
+            // collector out — holding it would quietly turn the core into a
+            // trap for the whole arena's population.
+            SimConfig cfg = DirectorFixture();
+            var w = ActivatedWorld(in cfg);
+            Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase, "premise: the endgame is running");
+
+            int chaser = w.MobCount;   // the slot, not the entity id
+            w.SpawnMobForTest(MobType.Chaser, InsideCore(in cfg));
+            float far = cfg.Arena.ZoneRadius[1] * 0.9f;
+            for (int i = 0; i < w.PlayerCount; i++)
+                TestWorlds.RelocatePlayerForTest(w, i, new float2(far, 0f));
+            TestWorlds.IdleTicks(w, 120);
+
+            Assert.Greater(DistanceFromCenter(w, chaser), cfg.Arena.ZoneRadius[0],
+                "an ordinary mob standing in the core is not the Director's retinue and is not " +
+                "held by his leash — only an elite is");
+        }
+
+        [Test]
+        public void DuringFarm_AnEliteInTheCoreKeepsItsFreedom()
+        {
+            // The phase guard's own witness — and the reason both goldens are
+            // untouched by the leash: neither scenario ever leaves Farm, and
+            // during Farm an elite in the core is an ordinary wave mob.
+            SimConfig cfg = DirectorFixture();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            Assert.AreEqual(MatchPhase.Farm, w.Match.Phase, "premise: nobody has entered the core");
+
+            int elite = w.MobCount;   // the slot, not the entity id (see above)
+            w.SpawnMobForTest(MobType.Elite, InsideCore(in cfg));
+            float far = cfg.Arena.ZoneRadius[1] * 0.9f;
+            for (int i = 0; i < w.PlayerCount; i++)
+                TestWorlds.RelocatePlayerForTest(w, i, new float2(far, 0f));
+            TestWorlds.IdleTicks(w, 120);
+
+            Assert.Greater(DistanceFromCenter(w, elite), cfg.Arena.ZoneRadius[0],
+                "while the raid still farms the core is nobody's home ground: an elite standing " +
+                "in it chases like any other mob, and R-185's own latch is what says when that " +
+                "stops being true");
+        }
 
         [Test]
         public void DirectorSpawnsAtCoreCenter_OnActivation()

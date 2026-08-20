@@ -17,7 +17,7 @@ namespace Ring.Simulation.Objectives
     /// SETTLED one. Two consequences the spec spells out and this file
     /// therefore must not reorder: a collector who crosses into the core
     /// during a tick activates the Director on THAT tick (the portal closing
-    /// takes effect from the next one), and — once Т23 lands the extraction
+    /// takes effect from the next one), and — since Т23 landed the extraction
     /// channel ahead of this call — a collector who finishes his channel on
     /// the activation tick still gets out.
     ///
@@ -157,7 +157,7 @@ namespace Ring.Simulation.Objectives
             // was caught carrying — an answer that depends on whether an
             // intermediate spilled to a float local has no place in state that
             // feeds StateHash.
-            int periodTicks = (int)math.round(w.Config.Flow.RetinueRespawnSeconds / SimulationWorld.TickDt);
+            int periodTicks = SimulationWorld.TicksFromSeconds(w.Config.Flow.RetinueRespawnSeconds);
             if (periodTicks <= 0) return;
             if (w.CurrentTick % periodTicks != 0) return;
             TopUpRetinue(w);
@@ -171,11 +171,23 @@ namespace Ring.Simulation.Objectives
         /// A failed placement therefore needs no bookkeeping either: the
         /// shortfall is still a shortfall on the next period. The cap branch
         /// that Р254 asks to be retried "next tick, exactly like wave debt"
-        /// cannot be reached at all once the validator holds
-        /// DirectorReserveSlots >= 1 + RetinueCount (R-181): the wave ceiling,
-        /// the Director and a full retinue sum to exactly MaxMobs, so a slot
-        /// vacated by a fallen retinue member is always free again and the wave
-        /// may never take it.
+        /// is unreachable — but the arithmetic alone was never what made it so,
+        /// and saying that it was is the correction this gate had to make
+        /// (Ф5 gate, review A-5). R-181's sum — wave ceiling (MaxMobs −
+        /// reserve) + the Director + a full retinue = MaxMobs — only closes
+        /// while the number of elites in the core is BOUNDED by RetinueCount.
+        /// Until the retinue was leashed, nothing bounded it: this method
+        /// counts elites STANDING in the core, a collector could walk them
+        /// out, and the next period bred replacements without limit — elites
+        /// past the cap, wave slots eaten and this very branch reached. What
+        /// holds the sum now is MobAiSystem.LeashesToCore (owner decision
+        /// R-200), which keeps the core's elite in the core once the endgame
+        /// begins, so the count this method takes and the count the validator
+        /// reasons about are finally the same number.
+        ///
+        /// THE BRANCH THEREFORE HAS NO WITNESS AND NO MUTATION CAN KILL IT —
+        /// said out loud rather than left for a reviewer: it is a defensive
+        /// return whose premise the leash and the validator jointly forbid.
         static void TopUpRetinue(SimulationWorld w)
         {
             ArenaSimConfig arena = w.Config.Arena;
@@ -273,7 +285,7 @@ namespace Ring.Simulation.Objectives
             // ticks; a fixture that states its delay as N * TickDt is N) and
             // stable against the ±1 ulp the division itself may carry, where
             // ceil would turn that same ulp into a whole extra tick.
-            int delayTicks = (int)math.round(w.Config.Flow.GateDelaySeconds / SimulationWorld.TickDt);
+            int delayTicks = SimulationWorld.TicksFromSeconds(w.Config.Flow.GateDelaySeconds);
             int elapsed = w.CurrentTick - m.DirectorDeathTick;
             if (elapsed >= delayTicks)
                 m.Phase = MatchPhase.GateOpen;

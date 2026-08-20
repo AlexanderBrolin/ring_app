@@ -26,11 +26,22 @@ namespace Ring.Simulation.AI
             ArenaSimConfig arena = w.Config.Arena;
             MobState[] mobs = w.Mobs;
             int count = w.MobCount;
+            // Stage 3 Ф5 gate (owner decision R-200): read ONCE for the tick —
+            // the leash below is a property of the raid's phase, not of any
+            // one mob, and re-reading a property inside the loop is the
+            // pattern this file already avoids for `arena`.
+            MatchPhase phase = w.Match.Phase;
 
             for (int i = 0; i < count; i++)
             {
                 ref MobState m = ref mobs[i];
                 MobSimConfig cfg = w.MobConfigFor(m.Type);
+                // DECIDED BEFORE THE MOB MOVES, and that is the whole trick
+                // (owner decision R-200): an elite is retinue because it
+                // STANDS in the core, so asking after the move would let a
+                // step across the boundary decide the answer — and asking
+                // about a mob that is already outside would TELEPORT it in.
+                bool leashToCore = LeashesToCore(in m, in arena, phase);
 
                 // Stage 2 Task 8: target selection now goes through
                 // NearestAlivePlayer (from THIS mob's own position) instead of
@@ -43,7 +54,7 @@ namespace Ring.Simulation.AI
                     m.Ai = MobAiState.Idle;
                     m.StateTimer = 0f;
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
                     continue;
                 }
                 PlayerState player = w.PlayerAt(targetIndex);
@@ -60,11 +71,11 @@ namespace Ring.Simulation.AI
                 // carried and never read.
                 if (m.Type == MobType.Chaser)
                 {
-                    UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt);
+                    UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt, leashToCore);
                 }
                 else if (m.Type == MobType.Gunner)
                 {
-                    UpdateGunner(w, ref m, in cfg, in player, in arena, dt);
+                    UpdateGunner(w, ref m, in cfg, in player, in arena, dt, leashToCore);
                 }
                 else
                 {
@@ -86,15 +97,16 @@ namespace Ring.Simulation.AI
                     // it fights once a target is already in range, the same
                     // as any other archetype here.
                     if (math.distance(m.Pos, player.Pos) <= cfg.AttackRange)
-                        UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt);
+                        UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt, leashToCore);
                     else
-                        UpdateGunner(w, ref m, in cfg, in player, in arena, dt);
+                        UpdateGunner(w, ref m, in cfg, in player, in arena, dt, leashToCore);
                 }
             }
         }
 
         static void UpdateChaser(SimulationWorld w, ref MobState m, in MobSimConfig cfg,
-            in PlayerState player, int targetIndex, in ArenaSimConfig arena, float dt)
+            in PlayerState player, int targetIndex, in ArenaSimConfig arena, float dt,
+            bool leashToCore)
         {
             switch (m.Ai)
             {
@@ -104,7 +116,7 @@ namespace Ring.Simulation.AI
                     m.Ai = MobAiState.Chase;
                     m.StateTimer = 0f;
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
                     return;
 
                 case MobAiState.Chase:
@@ -153,14 +165,14 @@ namespace Ring.Simulation.AI
                         m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed,
                             cfg.Accel * dt);
                     }
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
                     return;
                 }
 
                 case MobAiState.Telegraph:
                 {
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
                     m.StateTimer += dt;
                     if (m.StateTimer >= cfg.TelegraphSeconds)
                     {
@@ -196,7 +208,7 @@ namespace Ring.Simulation.AI
                 case MobAiState.Recover:
                 {
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
                     m.StateTimer += dt;
                     if (m.StateTimer >= cfg.AttackCooldown)
                     {
@@ -215,7 +227,7 @@ namespace Ring.Simulation.AI
         }
 
         static void UpdateGunner(SimulationWorld w, ref MobState m, in MobSimConfig cfg,
-            in PlayerState player, in ArenaSimConfig arena, float dt)
+            in PlayerState player, in ArenaSimConfig arena, float dt, bool leashToCore)
         {
             m.FireCooldown -= dt;
             // Floor clamp — mirrors WeaponSystem.cs's guarded player cooldown
@@ -247,7 +259,7 @@ namespace Ring.Simulation.AI
                 float2 dir = SteerAround(m.Pos, target, in arena, cfg.AvoidLookahead,
                     cfg.Radius, cfg.AvoidMargin, m.Id);
                 m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed, cfg.Accel * dt);
-                ApplyMotion(ref m, in cfg, in arena, dt);
+                ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
                 return;
             }
 
@@ -255,7 +267,7 @@ namespace Ring.Simulation.AI
             float2 radial = math.normalizesafe(toPlayer, new float2(1f, 0f));
             float2 tangent = new float2(-radial.y, radial.x) * m.StrafeSign;
             m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, tangent * cfg.StrafeSpeed, cfg.Accel * dt);
-            ApplyMotion(ref m, in cfg, in arena, dt);
+            ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
 
             if (cfg.StrafeSpeed > 0f && math.length(m.Vel) < StrafeBlockedFactor * cfg.StrafeSpeed)
                 m.StrafeSign = -m.StrafeSign;
@@ -288,12 +300,52 @@ namespace Ring.Simulation.AI
             => PlayerMovementSystem.MoveTowards(vel, float2.zero, maxDelta);
 
         /// Applies the current velocity through the shared collide-and-slide solver.
-        static void ApplyMotion(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena, float dt)
+        static void ApplyMotion(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena, float dt,
+            bool leashToCore)
         {
             float2 target = m.Pos + m.Vel * dt;
             PlayerMovementSystem.MoveWithCollisions(ref m.Pos, ref m.Vel, target, cfg.Radius, in arena,
                 out _, out _, out _);
-            if (m.Type == MobType.Director) LeashToCore(ref m, in cfg, in arena);
+            if (leashToCore) LeashToCore(ref m, in cfg, in arena);
+        }
+
+        /// WHO MAY NOT LEAVE THE CORE (spec §3.4 Р248 for the Director;
+        /// Ф5 gate review A-5 and owner decision R-200 for his retinue).
+        ///
+        /// THE DIRECTOR, ALWAYS — the unconditional half, unchanged from Т22:
+        /// his fight is the core's fight, and no FSM branch, not even the
+        /// "nobody alive, go Idle" drift, may carry him out.
+        ///
+        /// AN ELITE STANDING IN THE CORE, ONCE THE RAID'S ENDGAME HAS BEGUN.
+        /// This is the retinue, and it is derived exactly the way Р215 demands
+        /// — "retinue" is not a mark on a mob, it is a live elite in the core,
+        /// which is the same reading MatchFlowSystem.LiveRetinueCount takes.
+        /// Before this, that reading was GAMEABLE: nothing held the retinue in,
+        /// so a collector could walk two elites out of the core, the count
+        /// would drop, and the top-up would breed replacements every period —
+        /// an unbounded supply of loot-dropping elites, wave slots eaten, and
+        /// the "unreachable" cap branch in TopUpRetinue made reachable after
+        /// all. Holding them in makes the definition true by construction
+        /// instead of by hope.
+        ///
+        /// THE PHASE GUARD IS R-185'S, REUSED, NOT A SECOND RULE. The core
+        /// belongs to the Director from the moment he wakes — which is exactly
+        /// when it leaves the wave budget — so `Phase != Farm` says "the
+        /// endgame is running" once, for both. During Farm an elite in the
+        /// core is an ORDINARY WAVE MOB and keeps its ordinary freedom to
+        /// chase; that half is also what keeps every golden scenario
+        /// untouched, since neither ever leaves Farm.
+        ///
+        /// ZONELESS ARENAS ARE A LEGAL INPUT (lesson 315) and Geometry.ZoneOf
+        /// has no guard of its own — so the answer is "no leash" before
+        /// anything indexes ZoneRadius.
+        static bool LeashesToCore(in MobState m, in ArenaSimConfig arena, MatchPhase phase)
+        {
+            if (m.Type == MobType.Director) return true;
+            if (m.Type != MobType.Elite) return false;
+            if (phase == MatchPhase.Farm) return false;
+            if (arena.ZoneRadius.Length < 2) return false;
+            return Geometry.ZoneOf(m.Pos, in arena) == Zone.Core;
         }
 
         /// Stage 3 Т22 (spec §3.4 Р248, coordinator R-184): THE DIRECTOR NEVER

@@ -1152,7 +1152,7 @@ namespace Ring.Server
         /// about `HandshakeRefusal`, and `ResultsTests` derives its
         /// expectation from the member for exactly that reason.
         ///
-        /// `loot` RESOLVES THROUGH THE CATALOG HERE rather than travelling
+        /// `loot` RESOLVES THROUGH THE CATALOG HERE rather than traveling
         /// pre-resolved: the record wants item, tier and price, the summary
         /// carries the ids, and `ItemCatalogLookup` is the one home that turns
         /// one into the other (R-89). An empty hold prints `[]` — a MEASURED
