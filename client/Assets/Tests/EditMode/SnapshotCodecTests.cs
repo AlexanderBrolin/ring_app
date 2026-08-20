@@ -868,7 +868,7 @@ namespace Ring.Simulation.Tests
         const byte SnapItemA = 23;
         const byte SnapItemB = 47;
         const byte SnapItemC = 91;
-        const byte SnapItemNotInCatalog = 200;
+        const byte SnapItemNotInCatalog = 199;
 
         static readonly ItemDef[] SnapCatalog =
         {
@@ -3664,10 +3664,17 @@ namespace Ring.Simulation.Tests
         // out bytes, never against the reader — a round trip is blind to any
         // mutation applied symmetrically to both sides.
         //
-        // FIXTURE NUMBERS. Ids 4211/58317, positions (11,-53)/(-67,38) and
-        // item ids 23/47/91 were checked with a token-boundary grep across
-        // client/Assets/Data/*.asset and appear in none of them as values.
-        // Byte offsets and mask literals are structural, not fixtures.
+        // FIXTURE NUMBERS. Ids 4211/58317, positions (11,-43)/(-29,38),
+        // item ids 23/47/91/199 and the Match block's 743 were checked with a
+        // token-boundary grep across client/Assets/Data/*.asset. The only
+        // hits — 43, 23, 47 — are all inside `m_Script` GUID strings, not
+        // values, so none of these is a balance number. (An earlier draft of
+        // this line said (11,-53)/(-67,38) and 200: the first two were
+        // positions OUTSIDE the fixture arena, which Quantize.Pos saturates,
+        // and 200 is a live `CreditValue` in ItemCatalog.asset — both found
+        // by the Task 25 review, both corrected here. State where you looked,
+        // not just what you concluded.) Byte offsets and mask literals are
+        // structural, not fixtures.
 
         // Pickup fixtures, positions INSIDE the fixture arena (SnapRadius 52
         // — Quantize.Pos saturates, so a coordinate outside it would pin a
@@ -4109,19 +4116,351 @@ namespace Ring.Simulation.Tests
             var huge = new byte[ushort.MaxValue + 1];
             var destination = new SnapshotBlocks.ContainerSlotsRecord[4];
             bool ok = true;
+            int taken = -1;
             var error = SnapshotBlockError.None;
             Assert.DoesNotThrow(() => ok = SnapshotBlocks.TryReadContainerSlotsBlock(
                 huge, SnapCfg, destination, out _, out error));
             Assert.IsFalse(ok);
             Assert.AreEqual(SnapshotBlockError.MalformedLength, error);
 
-            // …and exactly 65535 is still legal, so the boundary is pinned
-            // from both sides rather than only from the refusing one.
+            // …and exactly 65535 must still REACH the walk, or the "use >=
+            // instead of >" mutation this test names would be free (Task 25
+            // review, Important — the first version handed the decoder a
+            // three-byte SLICE of a big array, which passes the guard under
+            // either comparison and proved nothing). So the payload really is
+            // 65535 B, and it is well-formed: 13107 records of 5 B each (a
+            // 3-byte head plus a mask of two occupied slots). The destination
+            // is deliberately smaller, so the walk stops on
+            // DestinationTooSmall — a refusal from FURTHER IN than the cap
+            // guard, which is exactly what proves the cap guard let it past.
             var atTheLimit = new byte[ushort.MaxValue];
+            for (int i = 0; i + 5 <= atTheLimit.Length; i += 5)
+            {
+                atTheLimit[i] = 0x73;
+                atTheLimit[i + 1] = 0x10;
+                atTheLimit[i + 2] = 0b11;
+                atTheLimit[i + 3] = SnapItemA;
+                atTheLimit[i + 4] = SnapItemB;
+            }
+            Assert.AreEqual(0, atTheLimit.Length % 5,
+                "fixture premise: 65535 is 13107 whole records, so nothing is malformed by length");
             Assert.DoesNotThrow(() => ok = SnapshotBlocks.TryReadContainerSlotsBlock(
-                new System.ReadOnlySpan<byte>(atTheLimit, 0, 3), SnapCfg, destination, out _, out error));
-            Assert.IsTrue(ok, "a legal-length record must still decode — the guard is about the CAP");
+                atTheLimit, SnapCfg, destination, out taken, out error));
+            Assert.IsFalse(ok);
+            Assert.AreEqual(SnapshotBlockError.DestinationTooSmall, error,
+                "a 65535 B payload must pass the ushort cap and be refused by the DESTINATION instead — "
+                + "if this reads MalformedLength, the cap guard has become >= and eats a legal payload");
+            Assert.AreEqual(destination.Length, taken,
+                "and it must have filled the destination before running out of room");
+        }
+
+        /// The canonical Match -> Self -> Pickups -> Containers ->
+        /// ContainerSlots frame, sized through the writer's own calculators —
+        /// the Task 25 twin of BuildCanonicalFiveBlockFrame, and the fixture
+        /// the two house sweeps below run on. It exists because those sweeps
+        /// (truncate at every length; allocate nothing) are the DOMESTIC
+        /// witnesses of "a decoder never throws on hostile bytes" (Р82) and
+        /// "the codec allocates nothing", and until Task 25's review they
+        /// covered only the five blocks of Task 27 — leaving the most
+        /// intricate new decoder, the ContainerSlots walker, outside both.
+        static byte[] BuildCanonicalNewBlockFrame()
+        {
+            var items = new byte[] { SnapItemA, SnapItemB };
+            int size = SnapshotWriter.HeaderBytes
+                       + SnapshotWriter.MatchBlockBytes()
+                       + SnapshotWriter.SelfBlockBytes(items.Length)
+                       + SnapshotWriter.PickupsBlockBytes(2)
+                       + SnapshotWriter.ContainersBlockBytes(2)
+                       + SnapshotWriter.ContainerSlotsBlockBytes(1, 2);
+            var buffer = new byte[size];
+            var writer = new SnapshotWriter(buffer);
+            writer.WriteHeader(Epoch, Tick, Flags);
+            writer.WriteMatchBlock(MatchFixturePhase, MatchFixtureSeconds, MatchFixtureFlags);
+            writer.WriteSelfBlock(4, items);
+            writer.WritePickupsBlock(new[] { PickupK1, PickupK2 }, SnapCfg);
+            writer.WriteContainersBlock(new[] { ContainerC1, ContainerC2 }, SnapCfg);
+            writer.WriteContainerSlotsBlock(
+                new[] { new SnapshotBlocks.ContainerSlotsRecord { Id = 4211, OccupancyMask = 0b11, ItemOffset = 0 } },
+                items);
+            Assert.AreEqual(size, writer.BytesWritten,
+                "fixture premise: the canonical new-block frame must fill the buffer exactly");
+            return buffer;
+        }
+
+        /// Decodes every block of `frame` the Task 25 kinds cover, into
+        /// caller-owned scratch. Shared by the two sweeps below so the switch
+        /// over the five new kinds exists once.
+        static void DecodeNewBlocks(byte[] frame, int length,
+            SnapshotBlocks.PickupRecord[] pickups, SnapshotBlocks.ContainerRecord[] containers,
+            SnapshotBlocks.ContainerSlotsRecord[] slots, byte[] selfItems, byte[] knownKinds)
+        {
+            var reader = new SnapshotReader(new System.ReadOnlySpan<byte>(frame, 0, length));
+            reader.TryReadHeader(out _, out _, out _);
+            while (reader.TryReadBlock(knownKinds, out byte kind, out System.ReadOnlySpan<byte> payload))
+            {
+                switch ((SnapshotBlockKind)kind)
+                {
+                    case SnapshotBlockKind.Match:
+                        SnapshotBlocks.TryReadMatchBlock(payload, out _, out _, out _, out _);
+                        break;
+                    case SnapshotBlockKind.Self:
+                        SnapshotBlocks.TryReadSelfBlock(payload, SnapCfg, selfItems, out _, out _, out _);
+                        break;
+                    case SnapshotBlockKind.Pickups:
+                        SnapshotBlocks.TryReadPickupsBlock(payload, SnapCfg, pickups, out _, out _);
+                        break;
+                    case SnapshotBlockKind.Containers:
+                        SnapshotBlocks.TryReadContainersBlock(payload, SnapCfg, containers, out _, out _);
+                        break;
+                    case SnapshotBlockKind.ContainerSlots:
+                        SnapshotBlocks.TryReadContainerSlotsBlock(payload, SnapCfg, slots, out _, out _);
+                        break;
+                }
+            }
+        }
+
+        [Test]
+        public void TruncatedNewBlockFrame_AtEveryLength_BlockPayloadsNeverThrow()
+        {
+            byte[] frame = BuildCanonicalNewBlockFrame();
+            var knownKinds = new byte[]
+            {
+                (byte)SnapshotBlockKind.Match, (byte)SnapshotBlockKind.Self,
+                (byte)SnapshotBlockKind.Pickups, (byte)SnapshotBlockKind.Containers,
+                (byte)SnapshotBlockKind.ContainerSlots,
+            };
+            var pickups = new SnapshotBlocks.PickupRecord[8];
+            var containers = new SnapshotBlocks.ContainerRecord[8];
+            var slots = new SnapshotBlocks.ContainerSlotsRecord[8];
+            var selfItems = new byte[8];
+
+            for (int length = frame.Length; length >= 0; length--)
+            {
+                int cut = length;
+                Assert.DoesNotThrow(
+                    () => DecodeNewBlocks(frame, cut, pickups, containers, slots, selfItems, knownKinds),
+                    $"length {cut}: no Task 25 block decoder may ever throw (Р82)");
+            }
+        }
+
+        [Test]
+        public void CorruptedNewBlockFrame_EveryByteFlipped_NeverThrows()
+        {
+            // The truncation sweep above cuts the frame; this one keeps its
+            // LENGTH and lies about its CONTENT, which is the other half of
+            // Р82 and the half that reaches the walker's mask, the kind
+            // nibbles and the item ids. Every byte past the header is set to
+            // two hostile values in turn, one at a time, so each failure is
+            // attributable to one byte.
+            byte[] pristine = BuildCanonicalNewBlockFrame();
+            var knownKinds = new byte[]
+            {
+                (byte)SnapshotBlockKind.Match, (byte)SnapshotBlockKind.Self,
+                (byte)SnapshotBlockKind.Pickups, (byte)SnapshotBlockKind.Containers,
+                (byte)SnapshotBlockKind.ContainerSlots,
+            };
+            var pickups = new SnapshotBlocks.PickupRecord[8];
+            var containers = new SnapshotBlocks.ContainerRecord[8];
+            var slots = new SnapshotBlocks.ContainerSlotsRecord[8];
+            var selfItems = new byte[8];
+            var frame = new byte[pristine.Length];
+
+            foreach (byte hostile in new byte[] { 0x00, 0xFF })
+                for (int i = SnapshotWriter.HeaderBytes; i < pristine.Length; i++)
+                {
+                    System.Array.Copy(pristine, frame, pristine.Length);
+                    frame[i] = hostile;
+                    int index = i;
+                    byte value = hostile;
+                    Assert.DoesNotThrow(
+                        () => DecodeNewBlocks(frame, frame.Length, pickups, containers, slots,
+                            selfItems, knownKinds),
+                        $"byte {index} set to 0x{value:X2}: no Task 25 block decoder may ever throw (Р82)");
+                }
+        }
+
+        [Test]
+        public void WriteThenReadAllNewBlocks_DoesNotAllocateGCMemory()
+        {
+            var items = new byte[] { SnapItemA, SnapItemB };
+            var slotRecords = new[]
+            {
+                new SnapshotBlocks.ContainerSlotsRecord { Id = 4211, OccupancyMask = 0b11, ItemOffset = 0 },
+            };
+            var pickupRecords = new[] { PickupK1, PickupK2 };
+            var containerRecords = new[] { ContainerC1, ContainerC2 };
+            int size = SnapshotWriter.HeaderBytes
+                       + SnapshotWriter.MatchBlockBytes()
+                       + SnapshotWriter.SelfBlockBytes(items.Length)
+                       + SnapshotWriter.PickupsBlockBytes(2)
+                       + SnapshotWriter.ContainersBlockBytes(2)
+                       + SnapshotWriter.ContainerSlotsBlockBytes(1, 2);
+            var buffer = new byte[size];
+            var knownKinds = new byte[]
+            {
+                (byte)SnapshotBlockKind.Match, (byte)SnapshotBlockKind.Self,
+                (byte)SnapshotBlockKind.Pickups, (byte)SnapshotBlockKind.Containers,
+                (byte)SnapshotBlockKind.ContainerSlots,
+            };
+            var pickups = new SnapshotBlocks.PickupRecord[4];
+            var containers = new SnapshotBlocks.ContainerRecord[4];
+            var slots = new SnapshotBlocks.ContainerSlotsRecord[4];
+            var selfItems = new byte[8];
+
+            // Warm-up OUTSIDE the measured lambda, plus the stub-defeating
+            // premise: the measured body must really write and decode all
+            // five, not fail fast on the first one.
+            {
+                var w = new SnapshotWriter(buffer);
+                w.WriteHeader(Epoch, Tick, Flags);
+                w.WriteMatchBlock(MatchFixturePhase, MatchFixtureSeconds, MatchFixtureFlags);
+                w.WriteSelfBlock(4, items);
+                w.WritePickupsBlock(pickupRecords, SnapCfg);
+                w.WriteContainersBlock(containerRecords, SnapCfg);
+                w.WriteContainerSlotsBlock(slotRecords, items);
+                Assert.AreEqual(size, w.BytesWritten, "fixture premise (stub-defeating): the frame must be written");
+
+                var r = new SnapshotReader(buffer);
+                Assert.IsTrue(r.TryReadHeader(out _, out _, out _));
+                int delivered = 0;
+                while (r.TryReadBlock(knownKinds, out byte kind, out System.ReadOnlySpan<byte> payload))
+                {
+                    delivered++;
+                    if ((SnapshotBlockKind)kind == SnapshotBlockKind.ContainerSlots)
+                    {
+                        Assert.IsTrue(SnapshotBlocks.TryReadContainerSlotsBlock(payload, SnapCfg, slots,
+                            out int sc, out _));
+                        Assert.AreEqual(1, sc, "fixture premise (stub-defeating): the slots record must decode");
+                    }
+                }
+                Assert.AreEqual(5, delivered, "fixture premise (stub-defeating): all five blocks must be delivered");
+                Assert.IsFalse(r.Failed);
+            }
+
+            Assert.That(() =>
+            {
+                for (int i = 0; i < 1000; i++)
+                {
+                    var w = new SnapshotWriter(buffer);
+                    w.WriteHeader(Epoch, Tick, Flags);
+                    w.WriteMatchBlock(MatchFixturePhase, MatchFixtureSeconds, MatchFixtureFlags);
+                    w.WriteSelfBlock(4, items);
+                    w.WritePickupsBlock(pickupRecords, SnapCfg);
+                    w.WriteContainersBlock(containerRecords, SnapCfg);
+                    w.WriteContainerSlotsBlock(slotRecords, items);
+                    DecodeNewBlocks(buffer, buffer.Length, pickups, containers, slots, selfItems, knownKinds);
+                }
+            }, Is.Not.AllocatingGCMemory());
+        }
+
+        [Test]
+        public void NewFixedBlocks_RefuseEveryWrongLength_FromBothSides()
+        {
+            // Task 25 review, Important: the first refusal tests fed each
+            // fixed-size block ONE wrong length — a payload SHORTER than its
+            // shape — so "use < instead of !=" survived on every one of them.
+            // The house form is the both-sides sweep the Liveness/Wave test
+            // above already runs.
+            bool ok = true;
+            var error = SnapshotBlockError.None;
+
+            foreach (int len in new[] { 0, 1, 3, 5, 8 })
+            {
+                var bad = new byte[len];
+                Assert.DoesNotThrow(() => ok = SnapshotBlocks.TryReadMatchBlock(
+                    bad, out _, out _, out _, out error));
+                Assert.IsFalse(ok, $"Match length {len} must be refused — its payload is exactly 4");
+                Assert.AreEqual(SnapshotBlockError.MalformedLength, error, $"Match length {len}");
+            }
+
+            // Self is variable-length, so "wrong" means its own count byte
+            // disagreeing with the payload — in EITHER direction. The first
+            // version tested only "the count claims more than is here"; a
+            // trailing-garbage payload (the count claims FEWER) is the other
+            // half, and the same mutation eats it.
+            var destination = new byte[8];
+            Assert.DoesNotThrow(() => ok = SnapshotBlocks.TryReadSelfBlock(
+                new byte[] { 5, 1, SnapItemA, SnapItemB }, SnapCfg, destination, out _, out _, out error));
+            Assert.IsFalse(ok, "a count of 1 with 2 ids present is a length that lies the other way");
+            Assert.AreEqual(SnapshotBlockError.MalformedLength, error);
+
+            byte points = 0;
+            int count = -1;
+            Assert.DoesNotThrow(() => ok = SnapshotBlocks.TryReadSelfBlock(
+                new byte[] { 5, 0 }, SnapCfg, destination, out points, out count, out error));
+            Assert.IsTrue(ok, "an EMPTY backpack is legal and must decode — the boundary from the legal side");
+            Assert.AreEqual((byte)5, points);
+            Assert.AreEqual(0, count);
             Assert.AreEqual(SnapshotBlockError.None, error);
+        }
+
+        [Test]
+        public void SelfBlock_WithNoCatalogToCheckAgainst_AcceptsAnyItemId()
+        {
+            // Task 25 review, Important: the "empty catalog skips validation"
+            // branch had no witness at all, so flipping it to "refuse
+            // everything" was free. It is a real branch with a real reason —
+            // a hand-built fixture may carry no catalog, and a decoder must
+            // not invent a domain it was handed nothing to check against —
+            // and the only place that reason can be checked is here.
+            var noCatalog = new SimConfig
+            {
+                Arena = new ArenaSimConfig { Radius = SnapRadius, MaxPlayers = SnapMaxPlayers },
+                Hero = new HeroSimConfig { MaxHp = SnapHeroMaxHp },
+            };
+            Assert.IsNull(noCatalog.Items, "fixture premise: this config really has no catalog");
+
+            var destination = new byte[8];
+            bool ok = false;
+            int count = -1;
+            var error = SnapshotBlockError.None;
+            Assert.DoesNotThrow(() => ok = SnapshotBlocks.TryReadSelfBlock(
+                new byte[] { 3, 1, SnapItemNotInCatalog }, noCatalog, destination,
+                out _, out count, out error));
+            Assert.IsTrue(ok, "with no catalog there is no domain to refuse against");
+            Assert.AreEqual(SnapshotBlockError.None, error);
+            Assert.AreEqual(1, count);
+
+            // …and the same id against a config that DOES have one is refused,
+            // so this test cannot pass by the check being gone entirely.
+            Assert.DoesNotThrow(() => ok = SnapshotBlocks.TryReadSelfBlock(
+                new byte[] { 3, 1, SnapItemNotInCatalog }, SnapCfg, destination, out _, out _, out error));
+            Assert.IsFalse(ok);
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, error);
+        }
+
+        [Test]
+        public void WriteSelfBlock_ThrowsWhenTheBackpackOutgrowsItsOwnCountByte()
+        {
+            // Task 25 review, Important: the guard had no test, so deleting it
+            // silently wrapped `(byte)itemIds.Length` — 256 items would have
+            // written a count of 0 and a payload of 256, i.e. a frame whose
+            // own length field disagrees with its count, built by us.
+            // Unreachable at Hero.MaxInventoryItems 16 and guarded anyway,
+            // because this is the WRITE side: an argument the format cannot
+            // carry is a caller bug.
+            var buffer = new byte[512];
+            var tooMany = new byte[256];
+            for (int i = 0; i < tooMany.Length; i++) tooMany[i] = SnapItemA;
+
+            var refused = Assert.Throws<System.ArgumentException>(() =>
+            {
+                var w = new SnapshotWriter(buffer);
+                w.WriteHeader(Epoch, Tick, Flags);
+                w.WriteSelfBlock(8, tooMany);
+            });
+            StringAssert.Contains("255", refused.Message, "the refusal must name the ceiling it hit");
+
+            // 255 exactly is still legal, so the boundary is pinned from both
+            // sides — `>` must not become `>=`.
+            var atTheLimit = new byte[255];
+            for (int i = 0; i < atTheLimit.Length; i++) atTheLimit[i] = SnapItemA;
+            Assert.DoesNotThrow(() =>
+            {
+                var w = new SnapshotWriter(buffer);
+                w.WriteHeader(Epoch, Tick, Flags);
+                w.WriteSelfBlock(8, atTheLimit);
+            });
         }
 
         [Test]

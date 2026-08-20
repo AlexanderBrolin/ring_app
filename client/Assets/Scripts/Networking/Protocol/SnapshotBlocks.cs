@@ -3,10 +3,12 @@ using Unity.Mathematics;
 
 namespace Ring.Networking.Protocol
 {
-    /// Stage 2 Task 27 (spec §3.8, §3.12 Р68, Р29/Р60/Р70/Р82/Р101): the FIVE
+    /// Stage 2 Task 27 (spec §3.8, §3.12 Р68, Р29/Р60/Р70/Р82/Р101): the
     /// state blocks that ride inside the SnapshotWriter/SnapshotReader frame
-    /// (Task 26) — players, liveness, mobs, wave and events. Task 26 gave the
-    /// frame; this file gives the frame's content. Task 27 does not decide
+    /// (Task 26). Task 27 gave five — players, liveness, mobs, wave and
+    /// events; Stage 3 Task 25 (spec §3.12) added five more — match, self,
+    /// pickups, containers and container slots — and widened liveness to two
+    /// masks. Task 26 gave the frame; this file gives the frame's content. Task 27 does not decide
     /// WHO is in a snapshot (Task 28's filter/budget) nor WHAT event kinds
     /// exist (Task 28's catalog, since it owns the producer) — only how a
     /// record of each kind is laid out on the wire.
@@ -33,10 +35,24 @@ namespace Ring.Networking.Protocol
     /// `count` is DERIVED, and a payload whose length is not an exact
     /// multiple of the record size is rejected outright
     /// (`SnapshotBlockError.MalformedLength`), never floor-divided. Liveness
-    /// and Wave are fixed-size single "records" (1 and 4 bytes respectively)
-    /// with the same rule: any other length is malformed. Events cannot be
-    /// counted this way at all — its records vary in size — so it is walked
-    /// length-by-length instead (see EventRecord below).
+    /// and Wave are fixed-size single "records" (2 and 4 bytes respectively —
+    /// liveness was 1 until Stage 3 Task 25 gave it a second mask) with the
+    /// same rule: any other length is malformed. Events and ContainerSlots
+    /// cannot be counted this way at all — their records vary in size — so
+    /// they are walked length-by-length instead (see EventRecord below, and
+    /// ContainerSlotsRecord, whose per-record length is its mask's popcount).
+    ///
+    /// THE Self BLOCK IS THE ONE EXCEPTION, AND IT IS THE SPEC'S CALL, NOT A
+    /// LAPSE (Stage 3 Task 25 review, Minor). Spec §3.12's table gives it an
+    /// explicit item-count byte ("число предметов u8" in its own table,
+    /// English here per the convention that caught this very line twice)
+    /// even though `payload.Length - 2` would
+    /// derive the same number — so the wire CAN contradict itself here, which
+    /// is what the paragraph above exists to rule out. The count is therefore
+    /// not trusted: `TryReadSelfBlock` refuses any payload whose length and
+    /// declared count disagree, so the redundancy is checked rather than
+    /// believed, and a hostile sender gains nothing from it. Recorded as the
+    /// deviation it is instead of being quietly implemented.
     ///
     /// ERROR TAXONOMY IS ITS OWN, SEPARATE FROM SnapshotReader'S
     /// Failed/Truncated/VersionMismatch (task-27-brief §2.9). A block that
@@ -419,7 +435,8 @@ namespace Ring.Networking.Protocol
             return true;
         }
 
-        /// Decodes a Liveness block payload — exactly one mask byte
+        /// Decodes a Liveness block payload — exactly TWO mask bytes since
+        /// Stage 3 Task 25 (spec Р257): alive first, extracted second
         /// (task-27-brief §2.2, §2.4). Never throws.
         public static bool TryReadLivenessBlock(
             System.ReadOnlySpan<byte> payload,
@@ -906,8 +923,14 @@ namespace Ring.Networking.Protocol
 
         /// Number of occupied slots a ContainerSlots mask promises — the ONE
         /// home of "how many item ids follow this record", called by the
-        /// decoder above and by SnapshotWriter's own writer and calculator so
-        /// the three cannot drift apart.
+        /// decoder above and by SnapshotWriter.WriteContainerSlotsBlock, so
+        /// the two cannot drift apart.
+        ///
+        /// `SnapshotWriter.ContainerSlotsBlockBytes` is NOT a third caller
+        /// (Stage 3 Task 25 review, Minor — an earlier wording claimed it
+        /// was): it is handed `totalOccupiedSlots` as a parameter and never
+        /// sees a mask, because a budget calculator is asked "how big would N
+        /// records carrying M ids be" before any record exists.
         public static int OccupiedSlotCount(byte occupancyMask)
         {
             int n = 0;
@@ -950,9 +973,10 @@ namespace Ring.Networking.Protocol
         {
             ItemDef[] catalog = cfg.Items;
             if (catalog == null || catalog.Length == 0) return true;
-            for (int i = 0; i < catalog.Length; i++)
-                if (catalog[i].Id == itemId) return true;
-            return false;
+            // The SEARCH itself belongs to ItemCatalogLookup, which declares
+            // itself the one home of "item id -> entry" (owner decision R-89)
+            // — what lives here is only the decoder's own policy above.
+            return ItemCatalogLookup.Contains(itemId, catalog);
         }
 
         static ushort ReadU16(System.ReadOnlySpan<byte> src, int offset)
@@ -1023,7 +1047,7 @@ namespace Ring.Networking.Protocol
     }
 
     /// Bit positions of the Match block's `flags` byte (Stage 3 Task 25,
-    /// spec §3.12: "флаги u8 (Директор жив, створ открыт)"). Bits 2-7 are
+    /// spec §3.12: "flags u8 (Director alive, gate open)"). Bits 2-7 are
     /// free and UNASSIGNED.
     ///
     /// THE TWO BITS ARE NOT THE SAME KIND OF FACT, and reading them as one

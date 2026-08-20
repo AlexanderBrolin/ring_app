@@ -52,6 +52,17 @@ namespace Ring.Networking.Protocol
     ///   silently misparse every Elite/Director Mobs record. The bump is
     ///   what turns that into an honest
     ///   `HandshakeRefusal.ProtocolVersionMismatch`.
+    ///
+    ///   2 → 3, SECOND REASON (Stage 3 Task 25, spec Р257) — recorded here
+    ///   rather than left to the commit log, because by the rule above it
+    ///   would have earned a bump of its own: the Liveness block's payload
+    ///   WIDTH changed, 1 byte to 2, and width is named in that rule
+    ///   explicitly. It rides the same 3 because both breaks land inside
+    ///   Stage 3 with no build released between them — a version is a
+    ///   promise to PEERS, and there is no peer that ever spoke "3 with a
+    ///   one-byte liveness block". Adding five new block KINDS in the same
+    ///   task needed no bump at all (Р282, the rule's own exception); the
+    ///   widening is what would have.
     public static class ProtocolVersion
     {
         public const byte Current = 3;

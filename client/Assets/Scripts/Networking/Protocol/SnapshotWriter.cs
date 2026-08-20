@@ -49,9 +49,18 @@ namespace Ring.Networking.Protocol
     /// is the one right below, not the 1052 B this paragraph used to end on.
     /// The spec line goes to the Task 57 amendments.
     ///
-    /// WORST-CASE FRAME SIZE — 1180 B TO A LIVING RECIPIENT, RECOMPUTED BY
-    /// TASK 28 FROM THE REAL EVENT CATALOG (phase gate fix wave; this
-    /// paragraph's own earlier figures 1043, 1052 and 1116 each predated
+    /// WORST-CASE FRAME SIZE — 1181 B TO A LIVING RECIPIENT AT THE STAGE 2
+    /// CAPS, RECOMPUTED BY TASK 28 FROM THE REAL EVENT CATALOG and again by
+    /// Stage 3 Task 25, which added a byte to the liveness term (spec Р257 —
+    /// every figure below moved by exactly that one byte, and the five blocks
+    /// this table sums are still the five of Task 27: the five that Task 25
+    /// ADDED are not written into a frame until Task 27 of Stage 3, which is
+    /// the task that recomputes this table with them). NOTE that `MaxMobs` is
+    /// 288 in the shipped Stage 3 asset, not the 96 this table's mob term
+    /// still uses — SnapshotCodecTests.WorstCaseFrame_RecomputedFromThe
+    /// Calculators_WithTheRealCatalog is the live arithmetic, and it reads the
+    /// cap from the config rather than from any comment (phase gate fix wave;
+    /// this paragraph's own earlier figures 1043, 1052 and 1116 each predated
     /// something — the format overhead, the event record, the actual payload
     /// widths — and each was corrected by the first task that owned the
     /// missing piece; the running history lives in spec §6i Р146). At the
@@ -61,14 +70,14 @@ namespace Ring.Networking.Protocol
     ///
     ///   HeaderBytes                                    8
     ///   PlayersBlockBytes(2)                          19
-    ///   LivenessBlockBytes()                           4
+    ///   LivenessBlockBytes()                           5
     ///   MobsBlockBytes(96)                           867
     ///   WaveBlockBytes()                               7
     ///   EventsBlockBytes(16, 16*8)                   275
     ///   -----------------------------------------------
-    ///   total                                       1180
+    ///   total                                       1181
     ///
-    /// AND 1188 B TO A DEAD ONE — the next link of that same history, added by
+    /// AND 1189 B TO A DEAD ONE — the next link of that same history, added by
     /// Stage 2 Task 47b (the owner's decision 2a) and NOT a correction of the
     /// figure above, which stays true of the frame it describes. A frame used
     /// to carry at most `MaxPlayers - 1` player records, because a connection
@@ -80,16 +89,16 @@ namespace Ring.Networking.Protocol
     ///
     ///                            live recipient   dead recipient
     ///   PlayersBlockBytes         19 (2 records)   27 (3 records)
-    ///   total                           1180             1188
-    ///   fixed part, five tags             44               52
-    ///   record room at cap 1000          956              948
+    ///   total                           1181             1189
+    ///   fixed part, five tags             45               53
+    ///   record room at cap 1000          955              947
     ///
-    /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 180 or 188 B over
+    /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 181 or 189 B over
     /// the cap ON PAPER. What actually gives at the defaults is the EVENT
     /// budget, never the entity list, and that survives the wider case: the
     /// assembler spends the fixed part and the mobs first, and 864 B of mob
     /// RECORDS still fit in the 948 B of room a dead recipient's fixed part
-    /// leaves (84 B to spare, where a living one leaves 92). Entity truncation
+    /// leaves (83 B to spare, where a living one leaves 91). Entity truncation
     /// is therefore NOT reachable at the shipped numbers for either recipient
     /// — events are squeezed instead and carry over (Р61), and the truncation
     /// branch is exercised by tests through a fixture cap (spec §6i Р147).
@@ -271,8 +280,13 @@ namespace Ring.Networking.Protocol
             _pos += BlockHeaderBytes + payloadBytes;
         }
 
-        /// Appends the Liveness block — exactly one mask byte, bit `i` =
-        /// "player `i` is alive" (task-27-brief §2.2, §2.4, Р70).
+        /// Appends the Liveness block — TWO mask bytes since Stage 3 Task 25
+        /// (spec Р257): bit `i` of the first is "player `i` is alive", bit `i`
+        /// of the second is "player `i` walked out" (task-27-brief §2.2,
+        /// §2.4, Р70). The two never share a bit — a player is never both —
+        /// but this writer does not enforce that: the invariant belongs to
+        /// the simulation that produces the pair (SimulationWorld), and a
+        /// codec that re-derived it would be a second authority on it.
         public void WriteLivenessBlock(byte aliveMask, byte extractedMask)
         {
             Reserve(BlockHeaderBytes + SnapshotBlocks.LivenessBlockPayloadBytes);

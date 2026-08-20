@@ -264,11 +264,13 @@ namespace Ring.Networking.Server
                 (int)math.ceil(maxLifetime / SimulationWorld.TickDt) + net.EventRedundancyTicks;
 
             // The fixed part of a frame is the same size every tick at a given
-            // player count, and its worst case is tiny (52 B at the shipped
-            // caps: 8 header + 27 players + 4 liveness + 7 wave + 3 + 3 empty
-            // block headers — it was 44 before this task widened the Players
-            // term below, and an older wording of this line said 38, which was
-            // the same sum with the two empty block headers left out of it)
+            // player count, and its worst case is tiny (53 B at the shipped
+            // caps: 8 header + 27 players + 5 liveness + 7 wave + 3 + 3 empty
+            // block headers — it was 52 until Stage 3 Task 25 gave the
+            // liveness block its second mask, 44 before Task 47b widened the
+            // Players term below, and an older wording of this line said 38,
+            // which was the same sum with the two empty block headers left
+            // out of it)
             // next to any legal SnapshotMaxBytes. Checking it ONCE here,
             // rather than per frame, means the per-frame path can subtract
             // without a guard — and a genuinely impossible configuration fails
@@ -1214,7 +1216,10 @@ namespace Ring.Networking.Server
             // apart from a dead one — the overlay would report a teammate who
             // walked out as lost, and SpectatePolicy, written for corpses,
             // would hand him someone else's eyes. The pair is protected by
-            // the invariant that a player is never both (NetInvariants), so
+            // the invariant that a player is never both — which lives in the
+            // SIMULATION (SimulationWorld, witnessed by ResultsTests), not in
+            // NetInvariants, whose subject is NetConfig's own numbers (Stage
+            // 3 Task 25 review, Minor: this line named the wrong home) — so
             // the two masks never share a bit.
             byte aliveMask = 0;
             byte extractedMask = 0;

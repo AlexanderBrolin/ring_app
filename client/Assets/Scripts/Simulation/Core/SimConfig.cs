@@ -469,6 +469,23 @@ namespace Ring.Simulation.Core
                 $"item id {id} is not in the catalog ({catalog.Length} entries)");
         }
 
+        /// Whether the catalog holds this id at all (Stage 3 Task 25) — the
+        /// SAME search as Find above, minus the throw. It exists because the
+        /// wire decoders (SnapshotBlocks' Self and ContainerSlots blocks)
+        /// have to ask the question on UNTRUSTED bytes, where Find's named
+        /// refusal is exactly the wrong answer: a decoder of hostile input
+        /// must report, never throw (Р82). Delegating here rather than
+        /// walking the array a second time is this class's own rule — it is
+        /// declared the ONE home of "item id -> entry", and a private copy of
+        /// the loop inside a decoder would be the second home that rule names
+        /// the price of.
+        public static bool Contains(byte id, ItemDef[] catalog)
+        {
+            for (int i = 0; i < catalog.Length; i++)
+                if (catalog[i].Id == id) return true;
+            return false;
+        }
+
         /// Stage 3 Task 16 (coordinator R-124): the second mapping this
         /// class holds — "tier -> item", the ONE Trophy record whose Tier
         /// equals `tier`. SimConfigBuilder's own "one trophy per tier" rule

@@ -157,13 +157,24 @@ namespace Ring.Presentation.Net
             | (1 << (byte)SnapshotBlockKind.Wave)
             | (1 << (byte)SnapshotBlockKind.Events);
 
-        /// How many seats the Liveness mask can speak about, derived from the
-        /// protocol's own payload size rather than restated as an 8 (Stage 2
-        /// Task 47a): the block is one byte and a bit per seat, so widening it
-        /// on the wire moves this number with it instead of leaving a literal
-        /// here to go stale. See `ReadLiveness` for what happens to a seat past
-        /// the ceiling.
-        const int LivenessMaskSeats = SnapshotBlocks.LivenessBlockPayloadBytes * 8;
+        /// How many seats ONE Liveness mask can speak about — a bit per seat
+        /// in a single byte.
+        ///
+        /// IT NO LONGER DERIVES FROM THE BLOCK'S PAYLOAD SIZE, and the reason
+        /// is the whole point of this doc (Stage 3 Task 25 review, Important).
+        /// Task 47a wrote it as `LivenessBlockPayloadBytes * 8` so that
+        /// "widening the block on the wire moves this number with it" — a
+        /// derivation whose premise was "the block is one byte and a bit per
+        /// seat". Task 25 widened the block to two bytes and BROKE that
+        /// premise rather than confirming it: the second byte is a DIFFERENT
+        /// mask (extracted, spec Р257), not eight more seats. Left alone, the
+        /// old expression would have read 16, and `ReadLiveness` would have
+        /// gone on to spread bits 8-15 of an 8-bit mask into seats that
+        /// cannot exist — the "silent lie about who is alive" its own doc
+        /// warns against, arriving through the derivation meant to prevent it.
+        /// A roster past eight still needs a wider mask on the wire first;
+        /// this constant is about the WIDTH OF ONE MASK, which is a byte.
+        const int LivenessMaskSeats = 8;
 
         /// How long a ghost that was confirmed but never ended may stay in the
         /// registry, expressed as `GhostProjectiles`' own `maxTrackTicks`.
