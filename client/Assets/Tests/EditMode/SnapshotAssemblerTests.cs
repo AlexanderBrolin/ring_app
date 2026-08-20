@@ -36,6 +36,8 @@ namespace Ring.Simulation.Tests
         public SnapshotBlocks.PlayerRecord[] Players;
         public int PlayerCount;
         public byte AliveMask;
+        /// Stage 3 Task 25 (spec Р257): the Liveness block's SECOND mask.
+        public byte ExtractedMask;
         public SnapshotBlocks.MobRecord[] Mobs;
         public int MobCount;
         public WavePhase WavePhase;
@@ -117,6 +119,7 @@ namespace Ring.Simulation.Tests
                         break;
                     case SnapshotBlockKind.Liveness:
                         Assert.IsTrue(SnapshotBlocks.TryReadLivenessBlock(payload, out f.AliveMask,
+                            out f.ExtractedMask,
                             out SnapshotBlockError le), $"Liveness block refused: {le}");
                         break;
                     case SnapshotBlockKind.Mobs:
@@ -518,6 +521,74 @@ namespace Ring.Simulation.Tests
                 + "frame is the one a dead recipient gets, and that frame would throw inside a tick");
             StringAssert.Contains("fixed part", refused.Message,
                 "and the refusal has to name what does not fit");
+        }
+
+        // ---- Т25.A1. The Liveness block's second mask (spec Р257) ----
+
+        [Test]
+        public void LivenessExtractedMask_MarksWhoWalkedOut_NotWhoDied()
+        {
+            // Р257, the reason the block grew a byte: one "alive" mask cannot
+            // tell an extracted collector from a dead one, and BOTH consumers
+            // that read it get the answer wrong in the same direction — the
+            // overlay reports a teammate who got out as lost, and
+            // SpectatePolicy, written for corpses, hands him someone else's
+            // eyes. Slot 1 dies, slot 2 extracts: two different fates that
+            // used to produce the identical byte.
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            w.KillPlayerNoDamage(1);
+            PlayerState p = w.PlayerAt(2);
+            p.Alive = false;
+            p.Extracted = true;
+            w.SetPlayerForTest(2, in p);
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.AreEqual((byte)0b001, f.AliveMask, "only slot 0 is still on its feet");
+            Assert.AreEqual((byte)0b100, f.ExtractedMask,
+                "slot 2 walked out — and slot 1, who died, must NOT appear here");
+            Assert.AreEqual(0, f.AliveMask & f.ExtractedMask,
+                "the two masks never share a bit: a player is never both alive and extracted");
+        }
+
+        // ---- Т25.A2. The fixed part of a frame has ONE home (E-6 C-I2) ----
+
+        [Test]
+        public void FixedFrameBytes_IsOneHome_TheConstructorCeilingAndTheFrameAgree()
+        {
+            // Coordinator R-12: the ceiling and the per-frame subtraction used
+            // to spell the same sum out separately, so a new always-riding
+            // block had to be added twice with nothing demanding the second
+            // edit. What this pins is that ONE function answers both, and that
+            // its answer is the arithmetic — spelled out here independently,
+            // exactly as the codec tests spell out their bytes.
+            SimConfig cfg = TestConfigs.Open();
+            int spelledOut = SnapshotWriter.HeaderBytes
+                             + SnapshotWriter.PlayersBlockBytes(cfg.Arena.MaxPlayers)
+                             + SnapshotWriter.LivenessBlockBytes()
+                             + SnapshotWriter.WaveBlockBytes()
+                             + SnapshotWriter.MobsBlockBytes(0)
+                             + SnapshotWriter.EventsBlockBytes(0, 0);
+            Assert.AreEqual(spelledOut, SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers));
+
+            // The constructor's own refusal is computed from the SAME home —
+            // a cap one byte under it is refused, a cap exactly at it is not.
+            Assert.DoesNotThrow(() => new SnapshotAssembler(cfg,
+                Net(maxBytes: SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers)), connectionCount: 1));
+            Assert.Throws<System.ArgumentException>(() => new SnapshotAssembler(cfg,
+                Net(maxBytes: SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers) - 1), connectionCount: 1));
+
+            // And the frame spends exactly what the home says for ITS OWN
+            // player count: an idle solo world writes the fixed part and
+            // nothing else, so the two numbers are the same number.
+            var solo = new SimulationWorld(1, cfg);
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            asm.BeginTick(solo);
+            int bytes = asm.BuildFor(0, 0, 0, Epoch);
+            Assert.AreEqual(SnapshotAssembler.FixedFrameBytes(0), bytes,
+                "a solo connection is sent no player record at all (its own body rides reconciliation), "
+                + "so its frame IS the fixed part at zero players");
         }
 
         // ---- T28.A3. Liveness covers EVERY slot, visible or not ----

@@ -174,6 +174,28 @@ namespace Ring.Networking.Server
             return seqA < seqB;
         }
 
+        /// Bytes a frame spends BEFORE its first mob record or event — the
+        /// header plus every block that always rides, empty or not (see
+        /// WriteFrame step 2 for why they all ride).
+        ///
+        /// ONE HOME, TWO CALLERS (plan errata E-6 C-I2, coordinator R-12).
+        /// The constructor asks for the widest case — the whole roster, since
+        /// Stage 2 Task 47b started sending a dead recipient its own body —
+        /// and every frame asks for its own player count; the two spelled the
+        /// same sum out separately, so a new always-riding block had to be
+        /// added in both places with neither a compile error nor a red test
+        /// to demand the second edit. Stage 3 Task 27 adds exactly such
+        /// blocks (Match and Self, spec Р279), which is why this is settled
+        /// first: after it, the ceiling and the frame cannot disagree about
+        /// what a frame costs.
+        public static int FixedFrameBytes(int playerCount)
+            => SnapshotWriter.HeaderBytes
+               + SnapshotWriter.PlayersBlockBytes(playerCount)
+               + SnapshotWriter.LivenessBlockBytes()
+               + SnapshotWriter.WaveBlockBytes()
+               + SnapshotWriter.MobsBlockBytes(0)
+               + SnapshotWriter.EventsBlockBytes(0, 0);
+
         readonly int _maxBytes;
         readonly int _eventBudget;
         readonly int _redundancyTicks;
@@ -262,12 +284,7 @@ namespace Ring.Networking.Server
             // would pass this check for a configuration whose worst frame does
             // not fit, and throw out of `SnapshotWriter.Reserve` INSIDE a
             // server tick, the moment the first player died.
-            int fixedCeiling = SnapshotWriter.HeaderBytes
-                               + SnapshotWriter.PlayersBlockBytes(math.max(0, cfg.Arena.MaxPlayers))
-                               + SnapshotWriter.LivenessBlockBytes()
-                               + SnapshotWriter.WaveBlockBytes()
-                               + SnapshotWriter.MobsBlockBytes(0)
-                               + SnapshotWriter.EventsBlockBytes(0, 0);
+            int fixedCeiling = FixedFrameBytes(math.max(0, cfg.Arena.MaxPlayers));
             if (_maxBytes < fixedCeiling)
                 throw new System.ArgumentException(
                     $"SnapshotAssembler: SnapshotMaxBytes ({_maxBytes}) cannot hold even the fixed part of a "
@@ -1192,21 +1209,26 @@ namespace Ring.Networking.Server
                 }
             }
 
+            // Stage 3 Task 25 (spec Р257): the Liveness block carries TWO
+            // masks. One byte of "alive" cannot tell an extracted collector
+            // apart from a dead one — the overlay would report a teammate who
+            // walked out as lost, and SpectatePolicy, written for corpses,
+            // would hand him someone else's eyes. The pair is protected by
+            // the invariant that a player is never both (NetInvariants), so
+            // the two masks never share a bit.
             byte aliveMask = 0;
+            byte extractedMask = 0;
             for (int i = 0; i < _capture.PlayerCount && i < 8; i++)
+            {
                 if (_capture.Players[i].Alive) aliveMask |= (byte)(1 << i);
+                if (_capture.Players[i].Extracted) extractedMask |= (byte)(1 << i);
+            }
 
             // 2. The fixed part. Every one of the five blocks always rides,
             // empty or not, so the receiver never has to tell "absent" from
             // "empty" (SnapshotReader cannot: a frame cut on a block boundary
             // parses as a shorter, valid one).
-            int fixedBytes = SnapshotWriter.HeaderBytes
-                             + SnapshotWriter.PlayersBlockBytes(otherPlayers)
-                             + SnapshotWriter.LivenessBlockBytes()
-                             + SnapshotWriter.WaveBlockBytes()
-                             + SnapshotWriter.MobsBlockBytes(0)
-                             + SnapshotWriter.EventsBlockBytes(0, 0);
-            int room = _maxBytes - fixedBytes;
+            int room = _maxBytes - FixedFrameBytes(otherPlayers);
 
             // 3. Mobs, then truncation: the FARTHEST from the viewpoint go
             // first, the smaller id survives a tie. Both halves are needed —
@@ -1252,7 +1274,7 @@ namespace Ring.Networking.Server
             writer.WritePlayersBlock(
                 new System.ReadOnlySpan<SnapshotBlocks.PlayerRecord>(c.PlayerScratch, 0, otherPlayers),
                 in _cfg);
-            writer.WriteLivenessBlock(aliveMask);
+            writer.WriteLivenessBlock(aliveMask, extractedMask);
             writer.WriteMobsBlock(
                 new System.ReadOnlySpan<SnapshotBlocks.MobRecord>(c.MobScratch, 0, mobCount), in _cfg);
             writer.WriteWaveBlock(_capture.Wave.Phase,

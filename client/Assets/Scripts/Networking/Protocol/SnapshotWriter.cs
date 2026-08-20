@@ -273,13 +273,18 @@ namespace Ring.Networking.Protocol
 
         /// Appends the Liveness block — exactly one mask byte, bit `i` =
         /// "player `i` is alive" (task-27-brief §2.2, §2.4, Р70).
-        public void WriteLivenessBlock(byte aliveMask)
+        public void WriteLivenessBlock(byte aliveMask, byte extractedMask)
         {
             Reserve(BlockHeaderBytes + SnapshotBlocks.LivenessBlockPayloadBytes);
 
             _dst[_pos] = (byte)SnapshotBlockKind.Liveness;
             WriteU16(_pos + 1, SnapshotBlocks.LivenessBlockPayloadBytes);
             _dst[_pos + BlockHeaderBytes] = aliveMask;
+            // Alive first, extracted second — the order is the format (Stage
+            // 3 Task 25, spec Р257), and a writer that swapped them would
+            // round-trip perfectly against a reader that swapped them too,
+            // which is why the test pins both bytes literally.
+            _dst[_pos + BlockHeaderBytes + 1] = extractedMask;
             _pos += BlockHeaderBytes + SnapshotBlocks.LivenessBlockPayloadBytes;
         }
 
@@ -406,6 +411,216 @@ namespace Ring.Networking.Protocol
             }
             _pos += BlockHeaderBytes + payloadBytes;
         }
+
+        // ---- Stage 3 Task 25: the five new blocks (spec §3.12) ----------
+        //
+        // Same discipline as Task 27's five: validate the arguments, reserve
+        // the room, then write — so a refused call leaves the buffer
+        // bit-for-bit as it was. Positions quantize through Quantize with
+        // `cfg` as a parameter; no formula lives twice.
+
+        /// Appends the Match block — phase, the raid's remaining seconds and
+        /// the flags byte (MatchWireFlags), 4 bytes fixed.
+        public void WriteMatchBlock(MatchPhase phase, ushort secondsRemaining, byte flags)
+        {
+            if ((byte)phase > SnapshotBlocks.MaxMatchPhaseValue)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteMatchBlock: phase {(byte)phase} is outside the declared domain "
+                    + $"(<= {SnapshotBlocks.MaxMatchPhaseValue}); the read side refuses such a byte, so "
+                    + "writing one would build a frame no peer can decode.",
+                    nameof(phase));
+
+            Reserve(BlockHeaderBytes + SnapshotBlocks.MatchBlockPayloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Match;
+            WriteU16(_pos + 1, SnapshotBlocks.MatchBlockPayloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            _dst[cursor] = (byte)phase;
+            WriteU16(cursor + 1, secondsRemaining);
+            _dst[cursor + 3] = flags;
+            _pos += BlockHeaderBytes + SnapshotBlocks.MatchBlockPayloadBytes;
+        }
+
+        /// Appends the Self block — the owner's own backpack: its slot-point
+        /// total and the ids it carries (spec §3.12 Р276).
+        public void WriteSelfBlock(byte slotPoints, System.ReadOnlySpan<byte> itemIds)
+        {
+            // The count rides as ONE byte, so a backpack of more than 255
+            // items could not describe itself. Unreachable at the shipped
+            // Hero.MaxInventoryItems (16) and checked anyway: this is the
+            // write side, where an argument the format cannot carry is a
+            // caller bug rather than hostile input.
+            if (itemIds.Length > byte.MaxValue)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteSelfBlock: {itemIds.Length} items exceed the 255 its own count "
+                    + "byte can describe.", nameof(itemIds));
+
+            int payloadBytes = SnapshotBlocks.SelfBlockHeaderBytes + itemIds.Length;
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Self;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            _dst[cursor] = slotPoints;
+            _dst[cursor + 1] = (byte)itemIds.Length;
+            itemIds.CopyTo(_dst.Slice(cursor + SnapshotBlocks.SelfBlockHeaderBytes, itemIds.Length));
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// Appends a Pickups block (spec §3.12 layout: id, posX, posY, kind
+        /// — 7 bytes per record).
+        public void WritePickupsBlock(
+            System.ReadOnlySpan<SnapshotBlocks.PickupRecord> records, in SimConfig cfg)
+        {
+            int payloadBytes = records.Length * SnapshotBlocks.PickupRecordBytes;
+            if (payloadBytes > MaxBlockPayloadBytes)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WritePickupsBlock: {records.Length} records ({payloadBytes} bytes) "
+                    + $"exceed MaxBlockPayloadBytes ({MaxBlockPayloadBytes}); the length field is u16.",
+                    nameof(records));
+            for (int i = 0; i < records.Length; i++)
+                if ((byte)records[i].Kind > SnapshotBlocks.MaxPickupKindValue)
+                    throw new System.ArgumentException(
+                        $"SnapshotWriter.WritePickupsBlock: record {i} carries Kind={(byte)records[i].Kind}, "
+                        + $"outside the declared domain (<= {SnapshotBlocks.MaxPickupKindValue}).",
+                        nameof(records));
+
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Pickups;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.PickupRecord r = records[i];
+                WriteEntityRecord(cursor, r.Id, r.Pos, (byte)r.Kind, in cfg);
+                cursor += SnapshotBlocks.PickupRecordBytes;
+            }
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// Appends a Containers block (spec §3.12 layout: id, posX, posY,
+        /// kind and "empty" packed one nibble each — 7 bytes per record).
+        public void WriteContainersBlock(
+            System.ReadOnlySpan<SnapshotBlocks.ContainerRecord> records, in SimConfig cfg)
+        {
+            int payloadBytes = records.Length * SnapshotBlocks.ContainerRecordBytes;
+            if (payloadBytes > MaxBlockPayloadBytes)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteContainersBlock: {records.Length} records ({payloadBytes} bytes) "
+                    + $"exceed MaxBlockPayloadBytes ({MaxBlockPayloadBytes}); the length field is u16.",
+                    nameof(records));
+            for (int i = 0; i < records.Length; i++)
+                if ((byte)records[i].Kind > SnapshotBlocks.MaxContainerKindValue)
+                    throw new System.ArgumentException(
+                        $"SnapshotWriter.WriteContainersBlock: record {i} carries "
+                        + $"Kind={(byte)records[i].Kind}, outside the declared domain "
+                        + $"(<= {SnapshotBlocks.MaxContainerKindValue}); the packed byte has one nibble "
+                        + "for it and cannot carry more.", nameof(records));
+
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Containers;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.ContainerRecord r = records[i];
+                byte packed = (byte)((((byte)r.Kind & 0x0F) << 4) | (r.IsEmpty ? 1 : 0));
+                WriteEntityRecord(cursor, r.Id, r.Pos, packed, in cfg);
+                cursor += SnapshotBlocks.ContainerRecordBytes;
+            }
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// Appends a ContainerSlots block — one variable-length record per
+        /// container whose interior is being sent (spec §3.12 Р277).
+        /// `itemPool` backs every record's item ids, the same
+        /// offset-into-a-caller-pool shape WriteEventsBlock uses; how MANY
+        /// ids a record takes from it is the popcount of its own mask, never
+        /// a separate field.
+        public void WriteContainerSlotsBlock(
+            System.ReadOnlySpan<SnapshotBlocks.ContainerSlotsRecord> records,
+            System.ReadOnlySpan<byte> itemPool)
+        {
+            // Validate BEFORE touching the destination, exactly as
+            // WriteEventsBlock does with its own pool.
+            int payloadBytes = 0;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.ContainerSlotsRecord r = records[i];
+                int occupied = SnapshotBlocks.OccupiedSlotCount(r.OccupancyMask);
+                if (r.ItemOffset + occupied > itemPool.Length)
+                    throw new System.ArgumentException(
+                        $"SnapshotWriter.WriteContainerSlotsBlock: record {i}'s items "
+                        + $"[{r.ItemOffset}, {r.ItemOffset + occupied}) run past itemPool.Length "
+                        + $"({itemPool.Length}) — a caller bug; the mask says how many there are.",
+                        nameof(records));
+                payloadBytes += SnapshotBlocks.ContainerSlotsRecordHeaderBytes + occupied;
+            }
+            if (payloadBytes > MaxBlockPayloadBytes)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteContainerSlotsBlock: {records.Length} records ({payloadBytes} "
+                    + $"bytes) exceed MaxBlockPayloadBytes ({MaxBlockPayloadBytes}); the length field is u16.",
+                    nameof(records));
+
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.ContainerSlots;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.ContainerSlotsRecord r = records[i];
+                int occupied = SnapshotBlocks.OccupiedSlotCount(r.OccupancyMask);
+                WriteU16(cursor, (ushort)(r.Id & 0xFFFF));
+                _dst[cursor + 2] = r.OccupancyMask;
+                itemPool.Slice(r.ItemOffset, occupied)
+                    .CopyTo(_dst.Slice(cursor + SnapshotBlocks.ContainerSlotsRecordHeaderBytes, occupied));
+                cursor += SnapshotBlocks.ContainerSlotsRecordHeaderBytes + occupied;
+            }
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// The head shared by the Pickups and Containers records — id (u16,
+        /// truncated exactly as MobRecord's is), a quantized position, then
+        /// one tail byte whose MEANING belongs to the caller (plan errata
+        /// E-6 C-I5: one home for the ground entities' wire record). The
+        /// mirror of SnapshotBlocks.ReadEntityRecord.
+        void WriteEntityRecord(int cursor, int id, Unity.Mathematics.float2 pos, byte tail,
+            in SimConfig cfg)
+        {
+            WriteU16(cursor, (ushort)(id & 0xFFFF));
+            WriteU16(cursor + 2, Quantize.Pos(pos.x, cfg.Arena.Radius));
+            WriteU16(cursor + 4, Quantize.Pos(pos.y, cfg.Arena.Radius));
+            _dst[cursor + 6] = tail;
+        }
+
+        /// Bytes the Match block occupies, header included — fixed size.
+        public static int MatchBlockBytes()
+            => BlockHeaderBytes + SnapshotBlocks.MatchBlockPayloadBytes;
+
+        /// Bytes a Self block carrying `itemCount` ids would occupy, header
+        /// included.
+        public static int SelfBlockBytes(int itemCount)
+            => BlockHeaderBytes + SnapshotBlocks.SelfBlockHeaderBytes + itemCount;
+
+        /// Bytes a Pickups block of `pickupCount` records would occupy,
+        /// header included.
+        public static int PickupsBlockBytes(int pickupCount)
+            => BlockHeaderBytes + pickupCount * SnapshotBlocks.PickupRecordBytes;
+
+        /// Bytes a Containers block of `containerCount` records would occupy,
+        /// header included.
+        public static int ContainersBlockBytes(int containerCount)
+            => BlockHeaderBytes + containerCount * SnapshotBlocks.ContainerRecordBytes;
+
+        /// Bytes a ContainerSlots block of `recordCount` records carrying
+        /// `totalOccupiedSlots` item ids between them would occupy, header
+        /// included.
+        public static int ContainerSlotsBlockBytes(int recordCount, int totalOccupiedSlots)
+            => BlockHeaderBytes + recordCount * SnapshotBlocks.ContainerSlotsRecordHeaderBytes
+               + totalOccupiedSlots;
 
         /// Bytes a Players block of `playerCount` records would occupy,
         /// including its own 3-byte block header — the number Task 28's

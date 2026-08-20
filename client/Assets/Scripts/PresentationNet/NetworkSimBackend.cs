@@ -1788,8 +1788,19 @@ namespace Ring.Presentation.Net
         /// makes that a visible gap instead of a silent lie about who is alive.
         bool ReadLiveness(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
         {
+            // THE SECOND MASK IS READ AND DELIBERATELY DROPPED HERE (Stage 3
+            // Task 25, spec Р257). The block now carries `extractedMask`
+            // beside the alive one, and this client has nothing to write it
+            // into: `RenderSnapshot.PlayerAliveInMatch` exists because a
+            // consumer asked for it, and the consumer of "who walked out" is
+            // the results overlay of Т32 — adding a parallel array now would
+            // be a field with no reader, the same reasoning SnapshotReader's
+            // own doc gives for keeping its counters out of NetStats until
+            // something folds them in. Discarding it costs nothing on the
+            // wire: the byte rides for every recipient regardless, and the
+            // decode is a single array read.
             if (!SnapshotBlocks.TryReadLivenessBlock(payload, out byte aliveMask,
-                    out SnapshotBlockError error))
+                    out _, out SnapshotBlockError error))
             {
                 LogBlockRefusal(SnapshotBlockKind.Liveness, error);
                 return false;
