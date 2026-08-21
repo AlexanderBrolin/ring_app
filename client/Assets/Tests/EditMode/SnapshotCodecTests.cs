@@ -682,8 +682,8 @@ namespace Ring.Simulation.Tests
             var reader = new SnapshotReader(buffer);
             Assert.IsTrue(reader.TryReadHeader(out _, out _, out _));
             Assert.IsTrue(reader.TryReadBlock(KnownAB, out byte kind, out System.ReadOnlySpan<byte> payload),
-                "a block with an empty payload is still a block (Task 27 will have kinds whose "
-                + "count can legitimately be zero)");
+                "a block with an empty payload is still a block (Stage 2 Task 27 gave the wire "
+                + "kinds whose count can legitimately be zero)");
             Assert.AreEqual(KindA, kind);
             Assert.AreEqual(0, payload.Length);
             Assert.IsFalse(reader.Failed);
@@ -955,10 +955,14 @@ namespace Ring.Simulation.Tests
         const byte LivenessFixtureMask = 0b101;
 
         // Stage 3 Task 25 (Р257): the second mask. Disjoint from the alive
-        // mask by construction — a player is never both alive and extracted
-        // (NetInvariants' own pair invariant) — and DIFFERENT from it byte
-        // for byte, so a writer or reader that swapped the two would be
-        // caught rather than round-tripped.
+        // mask by construction — a player is never both alive and extracted.
+        // ⚠ That invariant lives in the SIMULATION (SimulationWorld,
+        // witnessed by ResultsTests), NOT in NetInvariants, whose subject is
+        // NetConfig's own numbers: the twin of this line in
+        // SnapshotAssembler.cs named the wrong home and Т25's review fixed it
+        // there, this one was missed (gate Ф6, review m3). And DIFFERENT from
+        // the alive mask byte for byte, so a writer or reader that swapped
+        // the two would be caught rather than round-tripped.
         const byte LivenessFixtureExtractedMask = 0b010;
 
         // Event fixtures — synthetic kinds/payloads, per task-27-brief §2.5

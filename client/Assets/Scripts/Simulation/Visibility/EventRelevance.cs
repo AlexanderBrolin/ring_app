@@ -312,16 +312,22 @@ namespace Ring.Simulation.Visibility
                 }
 
                 case DeliveryChannel.None:
-                    // Projectile relevance needs trajectory data this seam
-                    // does not have (Task 28's SnapshotAssembler owns it) — a
-                    // silent `false` here would be indistinguishable from a
-                    // correct "nobody nearby" answer and would make a future
-                    // caller that reaches this by oversight quietly drop every
-                    // projectile event instead of failing its own tests.
+                    // TWO DIFFERENT REASONS LAND HERE, and neither is
+                    // "nobody" (gate Ф6, own finding): a projectile kind needs
+                    // the round's trajectory this seam does not have, and
+                    // ContainerEmptied needs the CONTAINERS visibility set
+                    // this seam is never handed (R-236). Both are decided by
+                    // Stage 2 Task 28's SnapshotAssembler. A silent `false`
+                    // here would be indistinguishable from a correct "nobody
+                    // nearby" answer and would make a future caller that
+                    // reaches this by oversight quietly drop every such event
+                    // instead of failing its own tests.
                     throw new System.ArgumentException(
                         $"EventRelevance.ShouldDeliver: {ev.Kind} delivery is decided elsewhere " +
-                        "(Task 28's SnapshotAssembler, by projectile trajectory relevance) — this seam " +
-                        "must not be called for a None-channel kind.", nameof(ev));
+                        "(the SnapshotAssembler — by projectile trajectory relevance for the " +
+                        "projectile kinds, against the containers visibility set for " +
+                        "ContainerEmptied) — this seam must not be called for a None-channel kind.",
+                        nameof(ev));
 
                 default:
                     throw new System.ArgumentException(

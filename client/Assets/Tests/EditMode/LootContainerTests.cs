@@ -721,5 +721,56 @@ namespace Ring.Simulation.Tests
                 "while the removed box answers 0: an id nothing alive carries is 'nothing there', "
                 + "never a throw on the frame path that reads this");
         }
+
+        /// Gate Ф6 (review B-4): the BULK form of the accessor above — one id
+        /// resolution for a whole box, where the per-slot form costs one per
+        /// slot. The frame builder reads a box's interior up to eight times
+        /// per record, for every box of every connection every tick, which is
+        /// what made the difference worth a second entry point.
+        ///
+        /// SAME ANSWERS AS THE PER-SLOT FORM IS THE WHOLE CONTRACT, so this
+        /// asserts them side by side rather than restating the expected bytes:
+        /// a bulk read that resolved the id once and then walked the WRONG
+        /// box's slots would still return plausible ids, and only the
+        /// comparison catches it.
+        [Test]
+        public void ContainerItemsInto_ReadsTheWholeBox_WithOneIdResolution()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            int first = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new byte[] { 1, 2 });
+            int second = w.SpawnContainer(ContainerKind.Crate, new float2(2f, 0f), new byte[] { 3, 4 });
+            Assert.AreNotEqual(first, second, "premise: the two ids differ");
+
+            // The SUBJECT IS THE SECOND BOX (lesson 227): a bulk read that
+            // ignored the id and walked array position 0 would pass on the
+            // first one and fail only here.
+            var items = new byte[2];
+            w.ContainerItemsInto(second, items);
+            Assert.AreEqual(w.ContainerItemAt(second, 0), items[0],
+                "slot 0 of the box asked for, byte for byte with the per-slot accessor");
+            Assert.AreEqual(w.ContainerItemAt(second, 1), items[1], "and slot 1");
+            Assert.AreEqual(3, items[0], "…which for this fixture is the second box's own first item");
+            Assert.AreEqual(4, items[1], "…and its second");
+
+            // The unknown-id guard, and it is not decoration: the frame
+            // builder describes a tick's boxes and a box can age out (TTL)
+            // between the tick that saw it and the tick that names it. The
+            // destination is PRE-DIRTIED, so "cleared" is a fact about this
+            // call rather than about a fresh array.
+            w.RemoveContainerAt(0);
+            items[0] = 0xAB;
+            items[1] = 0xCD;
+            w.ContainerItemsInto(first, items);
+            Assert.AreEqual(0, items[0],
+                "an id nothing alive carries fills zeros — the same answer the per-slot form gives, "
+                + "and never a throw on the frame path");
+            Assert.AreEqual(0, items[1], "every slot of it, not only the first");
+
+            // And the survivor still answers to its OWN id after swap-remove
+            // moved it onto position 0.
+            w.ContainerItemsInto(second, items);
+            Assert.AreEqual(3, items[0], "the surviving box answers to its id, not to its new position");
+        }
     }
 }

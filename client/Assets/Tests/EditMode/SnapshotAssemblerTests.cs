@@ -380,6 +380,54 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(nearBox, f.Payloads[emptiedAt].Id, "and it is the near one");
         }
 
+        /// Gate Ф6 (review A-1): THE MAPPING SWITCH IS ITSELF A HOME OF THE
+        /// CATALOG, AND A HOME THROWS ON A KIND IT DOES NOT KNOW (spec Р281).
+        /// `BeginTick`'s `SimEventKind -> SnapshotEventKind` switch is the
+        /// NINTH place a new kind must touch — R-231 counted seven, Т29 found
+        /// `EventRelevance.VisibleSubjectId` as the eighth — and until this
+        /// gate it was the only one of the nine that answered SILENCE: a kind
+        /// with no case produced no wire record, no counter and no red test.
+        ///
+        /// That is not a hypothesis, it is this phase's own anamnesis.
+        /// DirectorActivated, DirectorDied (Т21) and PlayerExtracted (Т23)
+        /// were emitted every raid for two stages and fell through this exact
+        /// switch, which is the diagnosis Т29 opened with (lesson 382).
+        ///
+        /// THE EXISTING GUARDS DO NOT WATCH THIS SEAM, AND THE CODE SAYS SO
+        /// ITSELF: `EventRelevance.ChannelFor`'s own doc — "neither of them
+        /// watches the wire". Precisely: `ChannelFor_HandlesEveryKind` walks
+        /// the whole enumeration but asks only for a CHANNEL, and `ChannelFor`'s
+        /// only production caller (`RouteEvents`) reads the already-assembled
+        /// `_wire`, which an unmapped kind never reaches. `Stage3RaidKinds_
+        /// ReachTheWire` above holds the five kinds that EXIST, by name, and
+        /// says nothing about the next one.
+        ///
+        /// The probe is a value OUTSIDE the enumeration rather than a real
+        /// kind, and that is the point rather than a shortcut: all twenty
+        /// members are mapped today, so the branch guards TOMORROW's kind and
+        /// its only possible witness is a value the switch has never seen.
+        [Test]
+        public void UnmappedEventKind_ThrowsInsteadOfVanishing()
+        {
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            w.ClearEvents();
+
+            // The SUBJECT IS THE SECOND EVENT (lesson 227): a mapped kind
+            // rides first, so a switch that threw on everything — or one that
+            // never reached the second element at all — would fail this
+            // fixture rather than pass it.
+            w.Emit(SimEventKind.WaveStarted, new float2(11f, -13f), 0, default, 0f);
+            w.Emit((SimEventKind)99, new float2(2f, 3f), 7, default, 0f);
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            var refused = Assert.Throws<System.ArgumentException>(() => asm.BeginTick(w),
+                "a SimEventKind with no wire mapping must fail LOUDLY here — the silent fall-through "
+                + "this replaces is what lost three kinds of raid news for two stages");
+            StringAssert.Contains("99", refused.Message,
+                "and the refusal has to name the kind that has no mapping, or the next reader gets "
+                + "a throw without an address");
+        }
+
         [Test]
         public void FullFrame_RoundTrips_WithPlayersLivenessMobsWaveAndEvents()
         {
@@ -2453,7 +2501,7 @@ namespace Ring.Simulation.Tests
             VisibilitySet containers = asm.VisibleSetFor(0, VisibilityClass.Containers);
 
             Assert.IsTrue(pickups.Contains(pickupId),
-                "the pickup is three metres away in an open arena — it must be visible SOMEWHERE");
+                "the pickup is three meters away in an open arena — it must be visible SOMEWHERE");
             Assert.IsFalse(mobs.Contains(pickupId),
                 "and it must not be in the MOB set: there it would be looked up as a mob, found "
                 + "missing, and dropped as a lingering corpse");
@@ -2814,7 +2862,7 @@ namespace Ring.Simulation.Tests
             AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
 
             Assert.IsTrue(f.TryPickup(nearPickup, out SnapshotBlocks.PickupRecord near),
-                "a pickup three metres away rides the frame");
+                "a pickup three meters away rides the frame");
             Assert.AreEqual(PickupKind.EnergyCell, near.Kind, "with its own kind");
             // Inside one quantization step of where it really lies — the step
             // computed here from the same two numbers the codec uses, never
@@ -2823,7 +2871,7 @@ namespace Ring.Simulation.Tests
             Assert.Less(math.distance(near.Pos, new float2(3f, 0f)), posStep,
                 "and its position, inside one quantization step");
             Assert.IsTrue(f.TryContainer(nearContainer, out SnapshotBlocks.ContainerRecord box),
-                "so does a container three metres away");
+                "so does a container three meters away");
             Assert.AreEqual(ContainerKind.Crate, box.Kind, "with its own kind");
 
             Assert.IsFalse(f.TryPickup(farPickup, out _),
@@ -3354,7 +3402,7 @@ namespace Ring.Simulation.Tests
             // BOTH the set and the frame, in the same tick, without a
             // truncation bit and without a dropped-entity count — because
             // nothing was cut for room. The `slot < 0` guard stays as the
-            // defence it is (see its own doc), for a capture and a set built
+            // defense it is (see its own doc), for a capture and a set built
             // at different moments.
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);

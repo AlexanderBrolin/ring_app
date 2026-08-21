@@ -44,7 +44,7 @@ namespace Ring.Simulation.Tests
         // ------------------------------------------------ 0. fixtures
 
         /// A one-player world whose collector stands at the origin with a
-        /// stocked crate one metre away — well inside `Loot.LootRadius`.
+        /// stocked crate one meter away — well inside `Loot.LootRadius`.
         ///
         /// `TestConfigs.OpenField()`, NOT `Open()` (fixture rule R-173/355):
         /// every fixture in this file TICKS the world, because
@@ -417,7 +417,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(LootRefusal.None, w.TryBeginLoot(1, LootOp.Take, containerId, 0),
                 "player 1 opened the window in the last tick — their own input is the one that counts");
             Assert.AreEqual(LootRefusal.WindowClosed, w.TryBeginLoot(0, LootOp.Take, containerId, 0),
-                "player 0 did not — and reads their own input, not a neighbour's");
+                "player 0 did not — and reads their own input, not a neighbor's");
         }
 
         // ------------------------------------------ 6. the client's ghost

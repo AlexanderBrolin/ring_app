@@ -200,7 +200,9 @@ namespace Ring.Networking.Server
         /// blocks (Match and Self, spec Р279), which is why this was settled
         /// first: the ceiling and the frame cannot disagree about what a
         /// frame costs. THE PREDICTION CAME TRUE, and the sum below is what
-        /// it grew into — five terms became eleven, in ONE place.
+        /// it grew into — five blocks became ten, in ONE place (six summands
+        /// became eleven: the header is a summand and not a block, and the
+        /// two bases must not be mixed — gate Ф6, review m4).
         /// STAGE 3 TASK 27 GAVE IT A SECOND PARAMETER, AND THE REASON IS THE
         /// ONE BLOCK THAT IS FIXED PER FRAME RATHER THAN PER MATCH. Nine of
         /// the ten blocks cost the same bytes at a given player count; the
@@ -763,6 +765,38 @@ namespace Ring.Networking.Server
                         SnapshotEvents.WriteContainerEmptied(PayloadSpan(slot), ev.EntityId);
                         break;
                     }
+
+                    default:
+                        // Gate Ф6 (review A-1): THIS SWITCH IS THE NINTH HOME
+                        // OF THE EVENT CATALOG, and spec Р281 asks every home
+                        // to break LOUDLY on a kind it does not know. It was
+                        // the only one of the nine that answered silence, and
+                        // the price is measured rather than imagined:
+                        // DirectorActivated, DirectorDied (Т21) and
+                        // PlayerExtracted (Т23) were emitted every raid for two
+                        // stages and fell through here — no wire record, no
+                        // counter, no red test (lesson 382, the diagnosis Т29
+                        // opened with).
+                        //
+                        // Nothing else watches this seam, and
+                        // EventRelevance.ChannelFor's own doc says so: "neither
+                        // of them watches the wire". ChannelFor_HandlesEveryKind
+                        // walks the enumeration but asks only for a CHANNEL, and
+                        // ChannelFor's production caller (RouteEvents) reads the
+                        // already-assembled `_wire` — which is exactly what an
+                        // unmapped kind never reaches.
+                        //
+                        // Unreachable today by construction (all twenty
+                        // SimEventKind members are mapped above, and
+                        // UnmappedEventKind_ThrowsInsteadOfVanishing proves the
+                        // branch itself rather than asserting it in prose): it
+                        // guards the kind Stage 4 adds, on the tick it is first
+                        // emitted, instead of two stages later.
+                        throw new System.ArgumentException(
+                            $"SnapshotAssembler.BeginTick: SimEventKind {ev.Kind} has no wire mapping — "
+                            + "every kind the simulation emits must be given a SnapshotEventKind here "
+                            + "(spec Р281); a silent fall-through drops the event without a counter, "
+                            + "a log or a failing test.", nameof(world));
                 }
             }
         }
@@ -1442,7 +1476,7 @@ namespace Ring.Networking.Server
             // storage and evaluates only what it finds there, so linger (Р19)
             // holds an entity that left SIGHT, never one that left the WORLD —
             // an id in `Current` implies the entity existed when the set was
-            // built. The skip is a defence for the ONE way the two can
+            // built. The skip is a defense for the ONE way the two can
             // disagree: the capture is taken in `BeginTick`, the sets in
             // `BuildFor`, and anything that removed an entity between them
             // would otherwise index a slot that is not there.
@@ -1744,6 +1778,7 @@ namespace Ring.Networking.Server
             int written = 0;
             int spent = 0;
             itemBytes = 0;
+            System.Span<byte> items = stackalloc byte[SnapshotBlocks.ContainerSlotsMaskWidth];
             for (int i = 0; i < c.SlotsCandidates.Count; i++)
             {
                 if (c.SlotsCandidates.Dropped[i]) continue;
@@ -1761,12 +1796,17 @@ namespace Ring.Networking.Server
                     ItemOffset = (ushort)itemBytes,
                 };
                 // Ascending slot order, occupied slots only — the mask is
-                // what maps them back onto slot numbers (Р277).
+                // what maps them back onto slot numbers (Р277). One id
+                // resolution for the box, as in `OccupancyMaskOf` and for the
+                // same reason (gate Ф6, review B-4); the buffer is hoisted
+                // out of the loop because `stackalloc` inside one is not
+                // freed per iteration.
                 int slots = math.min(box.SlotCount, SnapshotBlocks.ContainerSlotsMaskWidth);
+                _world.ContainerItemsInto(box.Id, items.Slice(0, slots));
                 for (int s = 0; s < slots; s++)
                 {
                     if ((mask & (1 << s)) == 0) continue;
-                    c.SlotsItemPool[itemBytes++] = _world.ContainerItemAt(box.Id, s);
+                    c.SlotsItemPool[itemBytes++] = items[s];
                 }
             }
 
@@ -2172,13 +2212,22 @@ namespace Ring.Networking.Server
         /// which is what a visibility set carries (R-217).
         byte OccupancyMaskOf(in ContainerState box)
         {
-            byte mask = 0;
             // Clamped to the mask's own width, which is the format's ceiling
             // and the reason `ArenaConfig.MaxContainerSlots` carries
             // `[Range(1, 8)]`: a slot past the eighth has no bit to ride in.
+            // The clamp stays HERE and not in the world (R-235).
             int slots = math.min(box.SlotCount, SnapshotBlocks.ContainerSlotsMaskWidth);
+
+            // ONE id resolution for the whole box (gate Ф6, review B-4).
+            // `ContainerItemAt` costs one per slot, and this method runs for
+            // every container record of every connection every tick — eight
+            // scans of a 64-long array where one does.
+            System.Span<byte> items = stackalloc byte[SnapshotBlocks.ContainerSlotsMaskWidth];
+            _world.ContainerItemsInto(box.Id, items.Slice(0, slots));
+
+            byte mask = 0;
             for (int i = 0; i < slots; i++)
-                if (_world.ContainerItemAt(box.Id, i) != 0) mask |= (byte)(1 << i);
+                if (items[i] != 0) mask |= (byte)(1 << i);
             return mask;
         }
 

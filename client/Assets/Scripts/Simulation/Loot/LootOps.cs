@@ -247,8 +247,9 @@ namespace Ring.Simulation.Loot
                 // stackalloc, never `new byte[1]`: this is the shape all three
                 // existing single-item spawns use (the memory core, a mob
                 // corpse, and DamageMob's own drop) and the reason is the same
-                // — a heap array here would be an allocation on a path Т28 will
-                // call from the tick's own request handling.
+                // — a heap array here would be an allocation on a path Т28
+                // now calls from the tick's own request handling
+                // (SimulationWorld.TryBeginLoot -> Validate/Begin).
                 System.Span<byte> one = stackalloc byte[1];
                 one[0] = dropped;
                 // ContainerKind.Ground gets its FIRST production producer here:
@@ -431,15 +432,18 @@ namespace Ring.Simulation.Loot
                     // its own emptiness guard. THIS is where a container
                     // becomes empty, and spec §3.16 wanted that observable.
                     // Until Т29 it was NOT emitted, deliberately —
-                    // SimEventKind carries no Stage 3 entry at all today, and an
+                    // SimEventKind carried no Stage 3 entry at all THEN, and an
                     // emitter without delivery is half a system: SnapshotAssembler
                     // would drop an unknown kind silently while
                     // EventRelevance.ChannelFor (typed on SimEventKind, and
                     // built to throw on an unaccounted one) would take the whole
                     // tick down. Т29 owns the enum, the channel and this
-                    // emission together. The same debt, with the same named
-                    // addressee, is already recorded at
-                    // Loot.PickupSystem.AdvanceTtl for PickupTaken.
+                    // emission together, and the assembler's own mapping switch
+                    // stopped dropping silently at the Ф6 gate (review A-1, its
+                    // `default` throws now). The twin debt at
+                    // Loot.PickupSystem.AdvanceTtl for PickupTaken is PAID by
+                    // the same task — that comment now draws its contrast with
+                    // a real neighbor rather than a promised one.
                     w.TryTakeFromContainer(p.LootTargetContainerId, p.LootTargetSlot, out byte itemId);
                     w.TryAddItem(i, itemId);
 
@@ -454,9 +458,19 @@ namespace Ring.Simulation.Loot
                     // The container is still THERE: TryTakeFromContainer
                     // empties a slot and removes nothing, and an emptied box
                     // ages out on its own TTL like any other. So its position
-                    // is readable, and the Visible channel this kind rides
-                    // needs it — the two collectors who can see the box are
-                    // exactly who the news is for.
+                    // is readable, and the delivery needs it — the collectors
+                    // who can see the box are exactly who the news is for.
+                    //
+                    // ⚠ DELIVERED BY VISIBILITY, BUT NOT BY THE CHANNEL TABLE
+                    // (R-236). EventRelevance.ChannelFor answers `None` for
+                    // this kind — its own word for "decided elsewhere" — and
+                    // the decision lives in SnapshotAssembler, against
+                    // `ContainersCurrent`. Do NOT "fix" the table to
+                    // `Visible`: that seam is handed the MOBS set, so a
+                    // container's id would be resolved in the wrong id space
+                    // and the event would reach whichever mob shares the
+                    // number (a CR 4 leak, not cosmetics). See SimEvents.cs's
+                    // entry for this kind, which carries the same warning.
                     //
                     // ⚠ ONE LOSS IS ACCEPTED, NOT OVERLOOKED (Т29 review, M-3),
                     // and it is named because this task's whole subject is
@@ -472,8 +486,16 @@ namespace Ring.Simulation.Loot
                     // is already gone from the frame is unanchorable by Р278,
                     // and the client sees the box vanish that same frame
                     // anyway — which is the stronger news of the two.
+                    // ONE resolution of the id, not two (gate Ф6, review
+                    // B-3): the position is needed anyway, so the emptiness
+                    // question is asked of the index already in hand. The
+                    // `box >= 0` term is the guard `ContainerIsEmpty` keeps
+                    // for its own callers, moved here with the lookup —
+                    // unreachable from here (the transfer above just took
+                    // from this very box) and kept for the same reason its
+                    // sibling is: the next caller may not be so lucky.
                     int box = w.IndexOfContainer(p.LootTargetContainerId);
-                    if (w.ContainerIsEmpty(p.LootTargetContainerId))
+                    if (box >= 0 && w.ContainerIsEmptyAt(box))
                     {
                         w.Emit(SimEventKind.ContainerEmptied, w.Containers[box].Pos,
                             p.LootTargetContainerId, default, 0f);

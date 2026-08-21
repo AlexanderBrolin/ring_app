@@ -395,7 +395,7 @@ namespace Ring.Networking.Protocol
                 case SnapshotEventKind.ContainerEmptied: return 2;
 
                 // Stage 3 Т29 (R-232): THE FIRST ZERO-LENGTH PAYLOADS IN THIS
-                // CATALOGUE, and they are zero on purpose rather than for
+                // CATALOG, and they are zero on purpose rather than for
                 // want of a field. Both ride the All channel, which carries
                 // no position by rule (Р28) — and the position they would
                 // otherwise carry is exactly what Т21 refused to put on the

@@ -1278,7 +1278,15 @@ namespace Ring.Simulation.Core
         /// own doc records the cost of.
         ///
         /// Linear, like every other id lookup here: the array is capped at
-        /// Arena.MaxContainers and this runs on a request, not on the tick.
+        /// Arena.MaxContainers. ⚠ IT NO LONGER RUNS ONLY ON A REQUEST — that
+        /// premise was Т17's and Stage 3 Ф6 outgrew it (gate Ф6, review B-4).
+        /// Two per-tick paths reach it now: Loot.LootOps.Update asks
+        /// `ContainerIsEmpty` on the tick a transfer completes, and the frame
+        /// builder resolves a box before reading its slots. Hence
+        /// `ContainerItemsInto` and `ContainerIsEmptyAt` below: a caller with
+        /// many slots to read resolves the id ONCE for the whole box instead
+        /// of once per slot, which is what the per-slot accessor cost before
+        /// them.
         internal int IndexOfContainer(int containerId)
         {
             for (int i = 0; i < _containerCount; i++)
@@ -1317,16 +1325,57 @@ namespace Ring.Simulation.Core
         /// A caller outside the simulation holds IDs — a visibility set
         /// carries them — and the position is this class's own business,
         /// resolved through `IndexOfContainer`, the one home of that mapping
-        /// since Т17. An unknown id answers 0 rather than throwing: the one
-        /// caller is a per-tick frame builder, and a container can legally
-        /// disappear (TTL) between the tick that saw it and the tick that
-        /// describes it, which is ordinary rather than exceptional.
+        /// since Т17. An unknown id answers 0 rather than throwing: a
+        /// container can legally disappear (TTL) between the tick that saw it
+        /// and the tick that describes it, which is ordinary rather than
+        /// exceptional.
+        ///
+        /// ⚠ THE FRAME BUILDER NO LONGER READS THROUGH THIS ONE (gate Ф6,
+        /// review B-4): asking per slot cost an id resolution per slot, so
+        /// `SnapshotAssembler.OccupancyMaskOf`/`WriteContainerSlots` moved to
+        /// `ContainerItemsInto` below. This form remains the single-slot
+        /// question — R-216's addressing (by id, never by array position) is
+        /// unchanged and both forms honor it — and its callers today are the
+        /// tests that pin exactly that addressing. **Owner decision pending
+        /// (gate Ф6):** keep it as the documented single-slot accessor, or
+        /// drop it in Ф7 and let the tests read whole boxes.
         /// Naming follows `InventoryItemAt`'s, because the question is the
         /// same one asked of a different holder.
         public byte ContainerItemAt(int containerId, int slot)
         {
             int index = IndexOfContainer(containerId);
             return index < 0 ? (byte)0 : ContainerSlotAt(index, slot);
+        }
+
+        /// Every slot of the container with this ID, ascending, into
+        /// `destination` — ONE id resolution for the whole box, where
+        /// `ContainerItemAt` above costs one per slot (gate Ф6, review B-4:
+        /// the frame builder was paying up to eight scans of the container
+        /// array for a single box's mask, every box, every connection, every
+        /// tick).
+        ///
+        /// THE ANSWERS ARE `ContainerItemAt`'s, BY CONSTRUCTION — same lookup,
+        /// same reads, same treatment of an unknown id: zeros rather than a
+        /// throw, because a container can legally disappear (TTL) between the
+        /// tick that saw it and the tick that describes it.
+        ///
+        /// `destination.Length` IS THE CALLER'S PROMISE, the same one
+        /// `ContainerSlotAt` already asks of everyone: at most the container's
+        /// own `SlotCount`. The wire's clamp to
+        /// `Protocol.SnapshotBlocks.ContainerSlotsMaskWidth` deliberately
+        /// stays in the assembler — R-235's whole point is that the format's
+        /// ceiling and the world's fact are not one home.
+        public void ContainerItemsInto(int containerId, System.Span<byte> destination)
+        {
+            int index = IndexOfContainer(containerId);
+            if (index < 0)
+            {
+                destination.Clear();
+                return;
+            }
+
+            for (int i = 0; i < destination.Length; i++)
+                destination[i] = ContainerSlotAt(index, i);
         }
 
         /// One loot request from the wire, validated and — if legal — taken
@@ -1391,11 +1440,25 @@ namespace Ring.Simulation.Core
         internal bool ContainerIsEmpty(int containerId)
         {
             int index = IndexOfContainer(containerId);
-            if (index < 0) return false;
+            return index >= 0 && ContainerIsEmptyAt(index);
+        }
 
-            int slots = _containers[index].SlotCount;
+        /// The same question asked of a container whose index the caller has
+        /// ALREADY resolved (gate Ф6, review B-3). The predicate itself lives
+        /// here and `ContainerIsEmpty` above delegates, so R-235's home does
+        /// not split in two: the id form keeps the "no such container is not
+        /// an empty container" guard, this one keeps the reading.
+        ///
+        /// It exists because the one caller resolves the index anyway — it
+        /// needs the box's POSITION for the event it may emit — and asking by
+        /// id would scan the array a second time for an answer already in
+        /// hand. Same "no bounds guard beyond the backing array" contract as
+        /// `ContainerSlotAt`: `containerIndex` is a live index.
+        internal bool ContainerIsEmptyAt(int containerIndex)
+        {
+            int slots = _containers[containerIndex].SlotCount;
             for (int i = 0; i < slots; i++)
-                if (ContainerSlotAt(index, i) != 0) return false;
+                if (ContainerSlotAt(containerIndex, i) != 0) return false;
             return true;
         }
 

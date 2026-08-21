@@ -198,15 +198,24 @@ namespace Ring.Simulation.Core
         public float2 HitDir;
         /// Stage 2 Task 7: which player this event concerns, under three
         /// conventions picked per kind.
-        /// ACTOR — the five "own-action" kinds ProjectileFired, PlayerDashed,
-        /// PlayerSlideStarted, DashRicocheted, StaminaDenied
+        /// ACTOR — the six "own-action" kinds ProjectileFired, PlayerDashed,
+        /// PlayerSlideStarted, DashRicocheted, StaminaDenied and, since
+        /// Stage 3 Т29, PickupTaken
         /// (SimulationWorld.TickMovement's own per-player loop index /
-        /// SpawnProjectile's ownerIndex).
-        /// VICTIM — PlayerDamaged/PlayerDied (mirrors EntityId's convention for
-        /// those two kinds, spec §3.2); the attacker is deliberately not
+        /// SpawnProjectile's ownerIndex / PickupSystem.Collect's collector).
+        /// ⚠ PickupTaken's is LOAD-BEARING rather than informational: the kind
+        /// rides the Owner channel, which addresses its recipient by exactly
+        /// this field (EventRelevance.ShouldDeliver), so an emit without it
+        /// delivers to nobody at all.
+        /// VICTIM — PlayerDamaged/PlayerDied and, since Stage 3 Т23/Т29,
+        /// PlayerExtracted (mirrors EntityId's convention for those three
+        /// kinds, spec §3.2); the attacker is deliberately not
         /// reported, there is only one player slot on the struct and for a
         /// damage/death pair the victim is the one Presentation places the
-        /// feedback on.
+        /// feedback on. An extraction is the same SHAPE of subject rather
+        /// than a blow — the collector the news is about — which is why
+        /// EventRelevance.VisibleSubjectId resolves all three through the
+        /// same ForPlayer(ev.PlayerIndex).
         /// ATTACKER — ProjectileHit/MobDied, added by Stage 2 Task 17
         /// (carryover-t17.md item 2), and ProjectileHitPlayer, added by Stage 2
         /// Task 44a: the SHOOTER behind the blow, i.e. the
