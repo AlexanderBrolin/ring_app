@@ -2774,6 +2774,27 @@ namespace Ring.Simulation.Tests
                 out _, out SnapshotBlockError heardBad));
             Assert.AreEqual(SnapshotBlockError.MalformedContent, heardBad,
                 "but an index that is neither a slot nor the sentinel is still hostile");
+
+            // Stage 3 Т29 (review I-1): the kind added to this validation
+            // group in that task needs its own pair here, or the label could
+            // be deleted with the whole suite still green — and a byte of 255
+            // would reach a consumer that indexes per-slot view pools by it.
+            // NoOwner is hostile for this kind too: an extraction names a
+            // real collector, the same VICTIM convention PlayerDied follows.
+            var extracted = new byte[] { legal };
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerExtracted, extracted,
+                EvtCfg, out _, out SnapshotBlockError extractedOk));
+            Assert.AreEqual(SnapshotBlockError.None, extractedOk, "the last real slot may walk out");
+            extracted[0] = hostile;
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerExtracted, extracted,
+                EvtCfg, out _, out SnapshotBlockError extractedBad));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, extractedBad,
+                "a seat this match does not have cannot have extracted");
+            extracted[0] = ProjectileIds.NoOwner;
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerExtracted, extracted,
+                EvtCfg, out _, out SnapshotBlockError extractedNone));
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, extractedNone,
+                "and neither can the no-player sentinel");
         }
 
         [Test]

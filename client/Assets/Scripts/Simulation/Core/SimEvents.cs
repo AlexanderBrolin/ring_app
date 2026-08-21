@@ -119,9 +119,17 @@ namespace Ring.Simulation.Core
         /// cannot express to a surface that wants to react once.
         ///
         /// PAYLOAD: `EntityId` = the container's own id (u16 on the wire, as
-        /// above). `Pos` is the container's — this kind rides the Visible
-        /// channel, so the two collectors who can see the box learn the
-        /// pile they were racing for is spent.
+        /// above). `Pos` is the container's.
+        ///
+        /// ⚠ DELIVERED BY VISIBILITY, BUT ROUTED `None` (coordinator R-236).
+        /// The two collectors who can see the box are exactly who the news is
+        /// for — and `EventRelevance.ChannelFor` still answers `None` for it,
+        /// because that table's `ShouldDeliver` is handed ONE visibility set
+        /// (the mobs', where players ride on the signed trick) while a
+        /// container's id lives in the containers set. `None` is that file's
+        /// own word for "decided elsewhere"; the decision lives in
+        /// `SnapshotAssembler`, against `ContainersCurrent`. Do not "fix" the
+        /// routing table here — see its own entry for this kind.
         ContainerEmptied
     }
 

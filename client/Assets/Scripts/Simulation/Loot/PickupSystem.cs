@@ -56,7 +56,7 @@ namespace Ring.Simulation.Loot
                     // the way PickupTaken is. That kind now EXISTS (Т29 gave
                     // every Stage 3 event its enum entry, channel and emitter
                     // together) and is emitted by Collect below — the
-                    // contrast this comment draws is with a real neighbour
+                    // contrast this comment draws is with a real neighbor
                     // now, not with a promised one. Safe under the
                     // `ref` above for the same reason the back-to-front sweep
                     // is: the slot this overwrites is never read again, in

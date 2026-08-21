@@ -867,19 +867,8 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, w.ContainerSlotAt(w.IndexOfContainer(id), 1));
         }
 
-        // --------------------------------------------------------- 7. Drop
+        // ------------------------------------------ 6a. ContainerEmptied
 
-        /// Owner ruling R-161: `Drop` opens NO channel — it begins and ends in
-        /// the same tick — because Loot.TransferSeconds is indexed by the tier
-        /// of an item taken FROM A CONTAINER, while LootTargetContainerId/
-        /// LootTargetSlot address a container a discard does not have. Spec
-        /// §3.17 keeps the discard as the cheap valve it is: moving items
-        /// INTO containers is explicitly not built, a Drop onto the ground
-        /// being deemed enough.
-        ///
-        /// The SECOND carried item is the subject (lesson 227). This test owns
-        /// the CONTAINER half; the backpack half is the next test's, so the
-        /// two ablations ("no spawn", "no removal") cannot share one witness.
         /// Stage 3 Т29: the box is announced EMPTY, and only when it
         /// actually is. The kind's name is a claim about the container —
         /// one fired per take would make "emptied" mean "touched", and the
@@ -931,6 +920,41 @@ namespace Ring.Simulation.Tests
             }
         }
 
+        /// Stage 3 Т29 (review M-4): the predicate's own refusal for an id
+        /// no live container carries. UNREACHABLE from its one production
+        /// caller — `LootOps.Update` asks about a box it took from one line
+        /// earlier — so it is a contract for the NEXT caller rather than a
+        /// guard against today, and this file's own rule is that such a
+        /// branch is untested code until somebody writes the witness.
+        ///
+        /// `false`, not `true`: a box that is not there is not an empty box,
+        /// and answering otherwise would make the emit above announce the
+        /// emptying of a container nobody can point at.
+        [Test]
+        public void ContainerIsEmpty_AnswersFalseForAnIdNoContainerCarries()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            int id = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new byte[] { 1 });
+
+            Assert.IsFalse(w.ContainerIsEmpty(id + 1000),
+                "an id no live container carries is not an empty container");
+            Assert.IsFalse(w.ContainerIsEmpty(id),
+                "the positive witness that the fixture could have said true: this one holds an item");
+        }
+
+        // --------------------------------------------------------- 7. Drop
+
+        /// Owner ruling R-161: `Drop` opens NO channel — it begins and ends in
+        /// the same tick — because Loot.TransferSeconds is indexed by the tier
+        /// of an item taken FROM A CONTAINER, while LootTargetContainerId/
+        /// LootTargetSlot address a container a discard does not have. Spec
+        /// §3.17 keeps the discard as the cheap valve it is: moving items
+        /// INTO containers is explicitly not built, a Drop onto the ground
+        /// being deemed enough.
+        ///
+        /// The SECOND carried item is the subject (lesson 227). This test owns
+        /// the CONTAINER half; the backpack half is the next test's, so the
+        /// two ablations ("no spawn", "no removal") cannot share one witness.
         [Test]
         public void Drop_SpawnsGroundContainerWithItem()
         {

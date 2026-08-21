@@ -457,10 +457,25 @@ namespace Ring.Simulation.Loot
                     // is readable, and the Visible channel this kind rides
                     // needs it — the two collectors who can see the box are
                     // exactly who the news is for.
+                    //
+                    // ⚠ ONE LOSS IS ACCEPTED, NOT OVERLOOKED (Т29 review, M-3),
+                    // and it is named because this task's whole subject is
+                    // silent losses. This system runs BEFORE ContainerStore
+                    // (SimulationWorld.TickAll's own order, R-149/R-101), and
+                    // a Ground/MobCorpse container's TTL decays regardless of
+                    // what is left in it. On the one tick where a transfer
+                    // takes the last item AND that TTL crosses zero, the box
+                    // is swap-removed later in the same tick, so no
+                    // connection's ContainersCurrent holds it and the event
+                    // reaches nobody. Deliberately NOT fixed by widening the
+                    // assembler to the PREVIOUS set: an event about a box that
+                    // is already gone from the frame is unanchorable by Р278,
+                    // and the client sees the box vanish that same frame
+                    // anyway — which is the stronger news of the two.
+                    int box = w.IndexOfContainer(p.LootTargetContainerId);
                     if (w.ContainerIsEmpty(p.LootTargetContainerId))
                     {
-                        w.Emit(SimEventKind.ContainerEmptied,
-                            w.Containers[w.IndexOfContainer(p.LootTargetContainerId)].Pos,
+                        w.Emit(SimEventKind.ContainerEmptied, w.Containers[box].Pos,
                             p.LootTargetContainerId, default, 0f);
                     }
                 }

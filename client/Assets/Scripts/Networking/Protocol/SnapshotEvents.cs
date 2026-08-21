@@ -54,12 +54,12 @@ namespace Ring.Networking.Protocol
         WaveStarted = 12,
         WaveCleared = 13,
 
-        // Stage 3 Т29 (spec §3.12 Р281): the raid's own catalogue. APPENDED,
+        // Stage 3 Т29 (spec §3.12 Р281): the raid's own catalog. APPENDED,
         // never renumbered — a client already in flight would read a
         // different meaning out of the same byte.
         //
         // The first three have existed on the SIMULATION side since Т21/Т23
-        // and were emitted into a wire catalogue that had no entry for them,
+        // and were emitted into a wire catalog that had no entry for them,
         // so `SnapshotAssembler` dropped them silently; these five lines are
         // what ends that.
         DirectorActivated = 14,
@@ -808,8 +808,8 @@ namespace Ring.Networking.Protocol
         /// so a kind appended past it decodes as `MalformedContent` on the
         /// receiver and nowhere else. Stage 3 Т29 moved it from `WaveCleared`
         /// to `ContainerEmptied`; whoever appends the next kind moves it
-        /// again, and `EveryKnownKind_DecodesItsOwnPayload` is the witness
-        /// that says so.
+        /// again, and `SnapshotCodecTests.EveryStage3Kind_RoundTripsItsOwnPayload`
+        /// is the witness that says so.
         static bool IsKnown(SnapshotEventKind kind)
             => kind != SnapshotEventKind.None && (byte)kind <= (byte)SnapshotEventKind.ContainerEmptied;
 

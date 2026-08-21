@@ -76,9 +76,9 @@ namespace Ring.Simulation.Visibility
                 // position — the first would otherwise leak the location of
                 // whichever collector walked into the core, the second the
                 // spot the corpse everyone is about to fight over lies on.
-                // Their WIRE catalogue (SnapshotEventKind, priority, payload
+                // Their WIRE catalog (SnapshotEventKind, priority, payload
                 // size) WAS Т29's and now exists — until that task both kinds
-                // were emitted into a catalogue with no entry for them and
+                // were emitted into a catalog with no entry for them and
                 // SnapshotAssembler dropped them silently, which is precisely
                 // what the routing living here from the moment the kinds
                 // exist could not prevent: this switch throws on a kind it
