@@ -7,6 +7,7 @@ using FishNet.Transporting;
 using Ring.Data;
 using Ring.Networking.Protocol;
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 
 namespace Ring.Networking.Server
 {
@@ -81,19 +82,21 @@ namespace Ring.Networking.Server
     /// null-outs and NRE).
     ///
     /// ONE `MatchServer` PER PROCESS, DECLARED EXPLICITLY (fix-round 2, W9;
-    /// extended by Task 42a fix-round 1, M-5 — TWO permanent roots now, not
-    /// one). The `OnPostTick` subscription lives for the rest of the
+    /// extended by Task 42a fix-round 1, M-5, and again by Stage 3 Т28 —
+    /// THREE permanent roots now, not one). The `OnPostTick` subscription lives for the rest of the
     /// PROCESS's lifetime, not merely this instance's — there is no
     /// unsubscribe anywhere in this class, on purpose (the FIFO guarantee
     /// I1 above rests on exactly that permanence). Task 42a's constructor
     /// ALSO registers `OnSpectateRequest` as this process's one
-    /// `SpectateRequestNet` handler, with the identical never-released shape
-    /// — no `UnregisterBroadcast` call exists anywhere in this class either.
+    /// `SpectateRequestNet` handler, and Stage 3 Т28 `OnLootRequest` as its
+    /// one `LootRequestNet` handler, both with the identical never-released
+    /// shape — no `UnregisterBroadcast` call exists anywhere in this class.
     /// A `MatchServer` that falls out of scope is therefore NOT
-    /// garbage-collected THROUGH EITHER ROOT: `_nm.TimeManager`'s own event
-    /// keeps a live delegate into `OnPostTick`, and `_nm.ServerManager`'s own
-    /// broadcast handler list keeps one into `OnSpectateRequest`, both for as
-    /// long as the `NetworkManager` itself exists. Ф8's bootstrap must
+    /// garbage-collected THROUGH ANY OF THE THREE ROOTS: `_nm.TimeManager`'s
+    /// own event keeps a live delegate into `OnPostTick`, and
+    /// `_nm.ServerManager`'s own broadcast handler list keeps one into
+    /// `OnSpectateRequest` and one into `OnLootRequest`, all for as long as
+    /// the `NetworkManager` itself exists. Ф8's bootstrap must
     /// construct exactly ONE instance for the whole process and reuse it
     /// across every `StartMatch`/`StopMatch` cycle (see the re-entrancy
     /// paragraph above) — constructing a second one would leave the first's
@@ -108,7 +111,8 @@ namespace Ring.Networking.Server
     /// deduplication correctly treats them as different handlers and
     /// subscribes BOTH — the second construction does not even fail loudly,
     /// it just doubles the handler that answers every future
-    /// `SpectateRequestNet` for the rest of the process.
+    /// `SpectateRequestNet`, and since Т28 every future `LootRequestNet`,
+    /// for the rest of the process.
     ///
     /// TWO READINGS OF `SimulationWorld.CurrentTick` PER CALL, NOT ONE
     /// (fix-round 1, M1). `CurrentTick` counts ticks the world has FINISHED —
@@ -465,6 +469,17 @@ namespace Ring.Networking.Server
             // exactly one registration must ever exist, and the constructor
             // is the one place that runs exactly once per instance.
             _nm.ServerManager.RegisterBroadcast<SpectateRequestNet>(OnSpectateRequest);
+
+            // Stage 3 Т28 (spec §3.8 С17/Р237): the process's one
+            // `LootRequestNet` handler, registered here for exactly the
+            // reasons the line above states — the "ONE MatchServer PER
+            // PROCESS" rule and the constructor being the one place that runs
+            // once per instance. THIRD PERMANENT ROOT, not a second: the
+            // class doc's garbage-collection paragraph counts them, and this
+            // is one more delegate `_nm.ServerManager`'s own handler list
+            // keeps into this instance for as long as the `NetworkManager`
+            // lives.
+            _nm.ServerManager.RegisterBroadcast<LootRequestNet>(OnLootRequest);
         }
 
         /// Starts a match — or restarts one, if this instance is already
@@ -953,18 +968,10 @@ namespace Ring.Networking.Server
         {
             if (!_running) return;
 
-            int slot = -1;
-            for (int i = 0; i < _connections.Length; i++)
-            {
-                if (ReferenceEquals(_connections[i], connection))
-                {
-                    slot = i;
-                    break;
-                }
-            }
             // Not a seated connection (e.g. one `MatchHandshake` refused
             // with `DuplicatePlayer` but left connected, `MatchHandshake.cs`'s
             // own doc on that path) — nothing to act on.
+            int slot = SlotOf(connection);
             if (slot < 0) return;
 
             int target = msg.TargetIndex;
@@ -1022,6 +1029,65 @@ namespace Ring.Networking.Server
                 UnityEngine.Debug.Log($"MatchServer: refusing spectate switch — slot={slot} "
                     + $"target={target} tick={currentTick} — {refusal}.");
             }
+        }
+
+        /// One loot operation asked for over the reliable channel (Stage 3
+        /// Т28, spec §3.8). THE HANDLER DECIDES NOTHING, on purpose — every
+        /// rule it applies belongs to a seam that EditMode can reach:
+        /// `LootNet.IsCurrentEpoch` for the epoch, `SimulationWorld.
+        /// TryBeginLoot` for the ten checks and the channel, `LootNet.
+        /// ResultFor` for the reply. That split is `SpectateTests`'s own
+        /// recorded lesson: FishNet wiring needs a live `NetworkManager` this
+        /// project's tests cannot raise, so a decision left inline here is a
+        /// decision nothing watches.
+        ///
+        /// THIS IS NOT A QUEUE, AND THAT IS NOT AN OVERSIGHT (coordinator
+        /// R-223). Spec §3.8 asks for the operations to run "on a tick
+        /// boundary, in arrival order", and this handler IS that boundary:
+        /// FishNet dispatches incoming broadcasts inside
+        /// `TimeManager.IncreaseTick`'s own loop, between `OnPreTick` and
+        /// `OnPostTick` (TimeManager.cs:726/734/752 of the pinned 4.7.2) and
+        /// only once per frame — so this runs after the last tick this world
+        /// completed and before the next one, never inside `TickAll`, and
+        /// requests arrive in the order they were sent. Deferring them into a
+        /// list drained by `OnPostTick` would buy one tick of input freshness
+        /// (see `TryBeginLoot`'s own doc on the one-tick lag) at the price of
+        /// a capacity, an overflow policy and a loss counter — machinery for
+        /// a difference of 33 ms on the tick a window opens.
+        ///
+        /// THREE ARRIVALS GET NO REPLY AT ALL, and each is a request that
+        /// reached no match rather than one that was refused: a stopped
+        /// instance, an unseated connection, and a foreign epoch. There is no
+        /// match-scoped truth to report about any of them — `LootResultNet`
+        /// echoes a match's own verdict, and none of the three has one. The
+        /// client's own `LootRequestTracker` covers the silence: its ghost is
+        /// dropped when the epoch changes, which is the only way the first and
+        /// the third can persist.
+        void OnLootRequest(NetworkConnection connection, LootRequestNet msg, Channel channel)
+        {
+            if (!_running) return;
+            if (!LootNet.IsCurrentEpoch(msg.MatchEpoch, _epoch)) return;
+
+            int slot = SlotOf(connection);
+            if (slot < 0) return;
+
+            LootRefusal code = _world.TryBeginLoot(slot, (LootOp)msg.Op, msg.ContainerId, msg.Slot);
+            _nm.ServerManager.Broadcast(connection, LootNet.ResultFor(in msg, code),
+                channel: Channel.Reliable);
+        }
+
+        /// This connection's player slot, or -1 when it holds none — the one
+        /// home of that lookup, shared by both broadcast handlers above
+        /// (rule 2; `OnSpectateRequest` was its only caller until Т28 brought
+        /// the second). `connections[i]` names player `i`, which is the
+        /// class doc's own "what Ф8 must hand in" contract.
+        int SlotOf(NetworkConnection connection)
+        {
+            for (int i = 0; i < _connections.Length; i++)
+            {
+                if (ReferenceEquals(_connections[i], connection)) return i;
+            }
+            return -1;
         }
 
         /// The whole per-tick pipeline (spec §3.7, Р22 — order is load-bearing,

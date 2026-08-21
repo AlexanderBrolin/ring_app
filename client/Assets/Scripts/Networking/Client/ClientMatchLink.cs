@@ -3,6 +3,7 @@ using FishNet.Managing;
 using FishNet.Transporting;
 using Ring.Data;
 using Ring.Networking.Protocol;
+using Ring.Simulation.Loot;
 
 namespace Ring.Networking.Client
 {
@@ -389,6 +390,31 @@ namespace Ring.Networking.Client
         /// to reset, and never an epoch worth reading.
         static LinkAction Refuse(LinkVerdict verdict) => new LinkAction(verdict, resetSeams: false, 0);
 
+        /// One outgoing loot request, stamped with the match this link is
+        /// actually in (Stage 3 Т28, spec §3.8 Р237/Р292).
+        ///
+        /// THE STAMP LIVES IN THE CORE, NOT IN THE WIRING, and that is the
+        /// point of the method rather than a tidy detail: `MatchEpoch` above
+        /// is this process's one answer to "which match is this", and a stamp
+        /// applied inside `ClientMatchLink.RequestLoot` would be a decision
+        /// standing where no test can reach it (that class's whole reason for
+        /// being separate). Here it is an ordinary pure function of this
+        /// core's own state, and `LootProtocolTests` witnesses it.
+        ///
+        /// NO PHASE TEST, like every other method here that decides nothing:
+        /// before the welcome `MatchEpoch` is still 0, and the far end's
+        /// `LootNet.IsCurrentEpoch` refuses a zero-stamped request without
+        /// this core inventing a second opinion about when it is legal to
+        /// ask.
+        public LootRequestNet LootRequestFor(LootOp op, int containerId, byte slot)
+            => new LootRequestNet
+            {
+                MatchEpoch = MatchEpoch,
+                Op = (byte)op,
+                ContainerId = containerId,
+                Slot = slot,
+            };
+
         /// The wire byte to the ONE refusal vocabulary (`HandshakeRefusal`,
         /// HandshakeNet.cs). Written as an explicit switch rather than a cast
         /// or `Enum.IsDefined`: a raw byte off the wire cast straight to the
@@ -727,6 +753,38 @@ namespace Ring.Networking.Client
         public void RequestSpectate(byte targetIndex)
         {
             _nm.ClientManager.Broadcast(new SpectateRequestNet { TargetIndex = targetIndex },
+                Channel.Reliable);
+        }
+
+        /// Asks the server for one loot operation (Stage 3 Т28, spec §3.8).
+        ///
+        /// IT LIVES HERE FOR THE SAME REASON `RequestSpectate` DOES (AGENT.md
+        /// rule 2, and see that method's own doc): this class is the one
+        /// place in the project that speaks to the server, and a second one
+        /// would be a second place to keep the channel, the guard and the
+        /// teardown right.
+        ///
+        /// THE MESSAGE IS BUILT BY THE CORE, NOT HERE — see
+        /// `ClientLinkState.LootRequestFor`, which stamps it with the epoch
+        /// this link tracks. That keeps the one decision in the request (which
+        /// match it belongs to) where tests can reach it and leaves this
+        /// method with what every other method of this class has: a channel
+        /// and a send.
+        ///
+        /// IT DECIDES NOTHING ELSE, like every other method here. WHETHER to
+        /// ask — including whether a ghost is already outstanding — belongs to
+        /// the caller's own `LootRequestTracker`; whether to ACT on the asking
+        /// is the server's alone (`LootOps.Validate`'s ten checks).
+        ///
+        /// Reliable, the "Lifecycle" class of spec §3.7's table Р27, and for
+        /// the sharper reason this one shares with the spectate request: a
+        /// dropped request is a keypress that did nothing, with nothing on the
+        /// wire to say which of the two happened. UNLIKE that one, this wire
+        /// does answer — `LootResultNet` comes back for every request the
+        /// server acted on, accepted or refused.
+        public void RequestLoot(LootOp op, int containerId, byte slot)
+        {
+            _nm.ClientManager.Broadcast(_state.LootRequestFor(op, containerId, slot),
                 Channel.Reliable);
         }
     }

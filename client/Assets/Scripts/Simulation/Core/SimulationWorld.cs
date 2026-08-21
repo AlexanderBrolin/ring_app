@@ -1329,6 +1329,50 @@ namespace Ring.Simulation.Core
             return index < 0 ? (byte)0 : ContainerSlotAt(index, slot);
         }
 
+        /// One loot request from the wire, validated and — if legal — taken
+        /// up, answering with the refusal code the client shows on the slot
+        /// it pressed (Stage 3 Т28, spec §3.8, coordinator R-224). The ONE
+        /// production entry into Loot.LootOps.Validate/Begin: until this
+        /// method neither had a caller outside tests at all, which is why
+        /// Begin's own doc has been written since Т17 in terms of "Т28's
+        /// networking switch".
+        ///
+        /// WHY THE PAIR IS NOT CALLED FROM THE NETWORKING LAYER DIRECTLY, in
+        /// two parts. First, Validate needs THIS tick's SANITIZED input
+        /// (check 2 reads the window flag, and Т20's sanitizer is what forces
+        /// that flag back down inside a dash or a slide) — and those live in
+        /// this class's own private `_sanitizedInputs`, which LootOps.Update's
+        /// doc refuses to put a getter on for a consumer that would be the
+        /// only one. Second, Begin ASSUMES Validate has already answered
+        /// `None` and re-checks nothing; splitting the two across an assembly
+        /// boundary would put that contract in a place where breaking it is
+        /// silent and the damage is a world mutation nobody validated.
+        ///
+        /// THE MOMENT IS THE TICK BOUNDARY, AND THE INPUT IS THE LAST
+        /// COMPLETED TICK'S (spec §3.8: "on a tick boundary, in arrival
+        /// order"). The caller is a FishNet broadcast handler, which the
+        /// package dispatches inside `TimeManager.IncreaseTick`'s own loop
+        /// BETWEEN `OnPreTick` and `OnPostTick` (TimeManager.cs:726/734/752 of
+        /// the pinned 4.7.2) — i.e. after the last tick this world ran and
+        /// before the next one, never inside `TickAll`. `_sanitizedInputs`
+        /// therefore holds the inputs of the tick that just finished, which
+        /// is the freshest authoritative view there is: the next tick's input
+        /// has not been gathered, let alone sanitized. The one-tick lag this
+        /// leaves is the same one `SimInputSanitizer.Sanitize` already
+        /// documents for its own `reference`.
+        ///
+        /// `playerIndex` is NOT range-checked, the same contract PlayerAt and
+        /// LootOps.Validate's own doc state: it is the server's connection ->
+        /// slot mapping, not a wire value. `op`, `containerId` and `slot` ARE
+        /// wire values, and every bound on them is Validate's.
+        public LootRefusal TryBeginLoot(int playerIndex, LootOp op, int containerId, int slot)
+        {
+            LootRefusal refusal = LootOps.Validate(this, playerIndex, op, containerId, slot,
+                in _sanitizedInputs[playerIndex]);
+            if (refusal == LootRefusal.None) LootOps.Begin(this, playerIndex, op, containerId, slot);
+            return refusal;
+        }
+
         /// Test-only seam (Stage 3 Task 14), same contract as
         /// SetPickupForTest/SetMobForTest above — mutates a live slot
         /// directly, for the reflective hash sweep

@@ -6,6 +6,7 @@ using Ring.Networking;
 using Ring.Networking.Client;
 using Ring.Networking.Protocol;
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 using Unity.Mathematics;
 
 namespace Ring.Presentation.Net
@@ -288,6 +289,12 @@ namespace Ring.Presentation.Net
         // answered in — see `TryRequestSpectate`. Zero means "nothing is
         // waiting, and the next request may go".
         float _spectateRequestWindow;
+
+        // Stage 3 Т28 (spec §3.8/§3.11): the one loot request this client is
+        // waiting on, and the code the last answered one came back with. The
+        // client PREDICTS NO LOOT (CR 3) — this is a wait, not a guess, and
+        // the tracker owns both of its rules (see its own doc).
+        readonly LootRequestTracker _lootRequests = new LootRequestTracker();
 
         // Decode scratch, sized once from the arena caps.
         //
@@ -615,6 +622,57 @@ namespace Ring.Presentation.Net
         }
 
         public bool SpectateRequestInFlight => _spectateRequestWindow > 0f;
+
+        /// Asks the server for one loot operation (Stage 3 Т28, spec §3.8);
+        /// true when a request actually went out. A REFUSAL IS A VALUE — the
+        /// transport is not a place to throw from — and there are three of
+        /// them: no link yet, a `slot` no byte can name, and a request already
+        /// outstanding (the tracker's own rule).
+        ///
+        /// THE ANSWER IS NOT "THE OPERATION HAPPENED", and unlike the spectate
+        /// request this wire does eventually say: `true` means only that the
+        /// bytes left this process, and `LootRequestInFlight` stays up until
+        /// `LootResultNet` comes back with the verdict. NOTHING IS PREDICTED
+        /// IN BETWEEN (CR 3) — the caller dims the slot and waits.
+        ///
+        /// NOT ON `ISimBackend`, DELIBERATELY (coordinator R-229). The
+        /// interface carries what the facade reads, and the surface that
+        /// reads loot — the inventory window — is Т32's; a member
+        /// `LocalSimBackend` would have to stub `false` for with no caller
+        /// anywhere is a feature for its own sake (AGENT.md rule 3). Т32
+        /// raises these three into the interface together with the window
+        /// that consumes them, the same way Т32 also teaches the client to
+        /// decode the five blocks Т25/Т27 already put on the wire.
+        public bool TryRequestLoot(LootOp op, int containerId, int slot)
+        {
+            if (_link == null) return false;
+            // The wire field is a byte, and both domains it addresses fit in
+            // one: a slot that cannot be named is a slot that cannot be asked
+            // for. Same shape as `TryRequestSpectate`'s own range refusal.
+            if (slot < 0 || slot > byte.MaxValue) return false;
+            if (!_lootRequests.TryOpen(op, containerId, slot)) return false;
+
+            _link.RequestLoot(op, containerId, (byte)slot);
+            return true;
+        }
+
+        /// Whether a loot request is still waiting for its answer — the
+        /// interval §3.11 dims the addressed slot for. `LootRequestContainerId`
+        /// and `LootRequestSlot` name WHICH slot, and they stay readable after
+        /// the answer because that is where `LastLootRefusal` has to be shown.
+        public bool LootRequestInFlight => _lootRequests.InFlight;
+
+        /// The container half of the address the ghost — or the last refusal —
+        /// belongs to.
+        public int LootRequestContainerId => _lootRequests.ContainerId;
+
+        /// The slot half of that address: a container slot for `Take`, a
+        /// backpack index for `Drop`/`Use`.
+        public int LootRequestSlot => _lootRequests.Slot;
+
+        /// The server's verdict on the last answered request; `None` both
+        /// before the first answer and after an accepted one.
+        public LootRefusal LastLootRefusal => _lootRequests.LastCode;
 
         /// `StalePolicy.FadeProgress` for the player slot, and nothing else
         /// (Stage 2 Task 47c, bd `app-wcy`). The decision is the policy's — how
@@ -1325,6 +1383,15 @@ namespace Ring.Presentation.Net
             // un-restarted instance holds no subscription, and both are right
             // only while this stays the single place.
             _nm.ClientManager.RegisterBroadcast<SnapshotBroadcast>(OnSnapshotBroadcast);
+            // Stage 3 Т28: the loot channel's RECEIVING half, registered here
+            // and dropped by `Unregister` under the same `_registered` flag as
+            // the two subscriptions above — one flag rather than three is what
+            // keeps that promise checkable. It belongs to this class and not to
+            // `ClientMatchLink` (which owns the SENDING half, `RequestLoot`)
+            // because what an answer changes is the inventory window's own
+            // ghost, kept here beside the epoch it is scoped to — not the
+            // identity of the match, which is all that class holds.
+            _nm.ClientManager.RegisterBroadcast<LootResultNet>(OnLootResult);
             _nm.TimeManager.OnPreTick += TimeManager_OnPreTick;
             _registered = true;
 
@@ -1425,6 +1492,7 @@ namespace Ring.Presentation.Net
             if (_registered)
             {
                 _nm.ClientManager.UnregisterBroadcast<SnapshotBroadcast>(OnSnapshotBroadcast);
+                _nm.ClientManager.UnregisterBroadcast<LootResultNet>(OnLootResult);
                 _nm.TimeManager.OnPreTick -= TimeManager_OnPreTick;
                 _registered = false;
             }
@@ -1450,6 +1518,31 @@ namespace Ring.Presentation.Net
 
             ReadFrame(new System.ReadOnlySpan<byte>(msg.Payload.Array, msg.Payload.Offset,
                 msg.Payload.Count));
+        }
+
+        /// The server's answer to one loot request (Stage 3 Т28, spec §3.8).
+        /// Like the frame handler above, everything it can be refused for is a
+        /// VALUE and never an exception: this runs inside FishNet's own
+        /// batched parsing loop, where a throw abandons every message batched
+        /// behind it in the same datagram.
+        ///
+        /// IT DECIDES NOTHING ITSELF. The epoch is `LootNet.IsCurrentEpoch`'s
+        /// call — the same predicate the server used on the way in, spec
+        /// §3.8's "a request OR a reply" read as one rule with one home — and
+        /// whether this answer is the one being waited on is
+        /// `LootRequestTracker`'s. Both are testable; this method is not
+        /// (`LootProtocolTests`'s class doc has the mechanism).
+        ///
+        /// `SyncMatchEpoch` FIRST, exactly as the frame handler does it: the
+        /// link may already have moved to a new match, and the epoch this
+        /// answer is measured against has to be the current one rather than
+        /// the one this class last happened to observe.
+        void OnLootResult(LootResultNet msg, Channel channel)
+        {
+            SyncMatchEpoch();
+            if (!LootNet.IsCurrentEpoch(msg.MatchEpoch, _matchEpoch)) return;
+
+            _lootRequests.TryClose(in msg);
         }
 
         /// The frame, from its first byte to its last.
@@ -2258,6 +2351,12 @@ namespace Ring.Presentation.Net
             // request cannot outlive the match it named a slot of.
             _hasOwnSample = false;
             _spectateRequestWindow = 0f;
+            // Stage 3 Т28: and a loot request cannot outlive the match it
+            // named a container of either. This is the ONE case the reliable
+            // wire never answers — a request that reached no live match gets
+            // no reply by construction (`MatchServer.OnLootRequest`'s own
+            // doc) — so the ghost has to be dropped here or it never goes out.
+            _lootRequests.Reset();
             // The third thing that cannot survive a match: a new one mints its
             // entity ids from 1 again, so a remembered id would answer with
             // the archetype of a mob from the match before (fix-round 1, G-2).

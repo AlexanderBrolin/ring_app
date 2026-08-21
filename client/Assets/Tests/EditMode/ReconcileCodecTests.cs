@@ -267,7 +267,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ReconcileData_SurvivesTheFishNetWireRoundTrip()
         {
-            EnsureGeneratedSerializersAreRegistered();
+            TestSerializers.EnsureRegistered();
 
             PlayerState source = FilledPlayerState();
             AssertEveryFieldIsNonDefault(in source);
@@ -285,32 +285,6 @@ namespace Ring.Simulation.Tests
             ReconcileData back = reader.Read<ReconcileData>();
 
             AssertPlayerStateBitEqual(source, back.State, "ReconcileData through Writer/Reader");
-        }
-
-        /// The generated serializer table is filled from a
-        /// `[RuntimeInitializeOnLoadMethod]` (FishNet's own
-        /// `WriterProcessor.CreateGeneratedWritersClass`, which calls
-        /// `CreateRuntimeInitializeOnLoadMethodAttribute` with no load type, so
-        /// the default `AfterSceneLoad`). EditMode tests never enter play mode
-        /// and therefore never trigger it, so the test drives the very same
-        /// entry point by hand. Reflection is required because the generated
-        /// classes are internal to `Ring.Networking`.
-        static void EnsureGeneratedSerializersAreRegistered()
-        {
-            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedWriters___Internal");
-            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedReaders___Internal");
-        }
-
-        static void InvokeInitializeOnce(string typeName)
-        {
-            System.Type t = typeof(InputCodec).Assembly.GetType(typeName);
-            Assert.IsNotNull(t, $"{typeName} must exist in Ring.Networking — FishNet's IL "
-                + "post-processor creates it for every assembly it processes, and its absence "
-                + "means codegen did not run over this assembly at all");
-            MethodInfo init = t.GetMethod("InitializeOnce",
-                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-            Assert.IsNotNull(init, $"{typeName}.InitializeOnce must exist");
-            init.Invoke(null, null);
         }
 
         // -------------------------------------------- 2. replicate payload size
@@ -680,7 +654,7 @@ namespace Ring.Simulation.Tests
             // nowhere). Without this test the hand-written comparer could be
             // registered under a type nobody asks about and every other
             // assertion in this file would still pass.
-            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedComparers___Internal");
+            TestSerializers.EnsureComparersRegistered();
 
             Assert.IsNotNull(PublicPropertyComparer<ReplicateData>.IsDefault,
                 "codegen must have registered an IsDefault for ReplicateData — Replicate_"
