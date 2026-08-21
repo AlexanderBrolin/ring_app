@@ -426,10 +426,11 @@ namespace Ring.Simulation.Loot
                     // tick. A "just in case" branch would be untested code
                     // guarding an unreachable case.
                     //
-                    // ADDRESSEE — Т29 (coordinator R-163, doc shape R-96). THIS
-                    // is where a container becomes empty, and spec §3.16 wants
-                    // that observable: SimEventKind.ContainerEmptied belongs
-                    // right here. It is NOT emitted yet, and deliberately so —
+                    // ADDRESSEE — Т29 (coordinator R-163, doc shape R-96), AND
+                    // IT HAS PAID: the emission stands immediately below, with
+                    // its own emptiness guard. THIS is where a container
+                    // becomes empty, and spec §3.16 wanted that observable.
+                    // Until Т29 it was NOT emitted, deliberately —
                     // SimEventKind carries no Stage 3 entry at all today, and an
                     // emitter without delivery is half a system: SnapshotAssembler
                     // would drop an unknown kind silently while
@@ -441,6 +442,27 @@ namespace Ring.Simulation.Loot
                     // Loot.PickupSystem.AdvanceTtl for PickupTaken.
                     w.TryTakeFromContainer(p.LootTargetContainerId, p.LootTargetSlot, out byte itemId);
                     w.TryAddItem(i, itemId);
+
+                    // Stage 3 Т29 — THE ADDRESSEE ABOVE HAS PAID. Emitted
+                    // only when the box is now EMPTY, not on every take: the
+                    // kind's name is a claim about the container, and one
+                    // fired per item would make "emptied" mean "touched".
+                    // The predicate is the world's own (ContainerIsEmpty),
+                    // not a loop written here — see its doc for why it is
+                    // deliberately not the assembler's wire mask.
+                    //
+                    // The container is still THERE: TryTakeFromContainer
+                    // empties a slot and removes nothing, and an emptied box
+                    // ages out on its own TTL like any other. So its position
+                    // is readable, and the Visible channel this kind rides
+                    // needs it — the two collectors who can see the box are
+                    // exactly who the news is for.
+                    if (w.ContainerIsEmpty(p.LootTargetContainerId))
+                    {
+                        w.Emit(SimEventKind.ContainerEmptied,
+                            w.Containers[w.IndexOfContainer(p.LootTargetContainerId)].Pos,
+                            p.LootTargetContainerId, default, 0f);
+                    }
                 }
 
                 // Closed in BOTH outcomes — success and refusal alike.

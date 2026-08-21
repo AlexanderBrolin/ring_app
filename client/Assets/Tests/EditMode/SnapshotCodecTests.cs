@@ -2287,7 +2287,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual((byte)12, (byte)SnapshotEventKind.WaveStarted);
             Assert.AreEqual((byte)13, (byte)SnapshotEventKind.WaveCleared);
 
-            // The catalog is DENSE and WaveCleared really is its top — the
+            Assert.AreEqual((byte)14, (byte)SnapshotEventKind.DirectorActivated);
+            Assert.AreEqual((byte)15, (byte)SnapshotEventKind.DirectorDied);
+            Assert.AreEqual((byte)16, (byte)SnapshotEventKind.PlayerExtracted);
+            Assert.AreEqual((byte)17, (byte)SnapshotEventKind.PickupTaken);
+            Assert.AreEqual((byte)18, (byte)SnapshotEventKind.ContainerEmptied);
+
+            // The catalog is DENSE and ContainerEmptied really is its top — the
             // decoder's own "is this kind known" test is a range check, so a
             // kind added above WaveCleared without moving that bound would be
             // silently unreadable, and a gap in the middle would make a
@@ -2297,11 +2303,17 @@ namespace Ring.Simulation.Tests
             var declared = new HashSet<byte>();
             foreach (SnapshotEventKind kind in System.Enum.GetValues(typeof(SnapshotEventKind)))
                 declared.Add((byte)kind);
-            Assert.AreEqual(14, declared.Count, "None plus thirteen kinds — no duplicate values");
-            for (byte v = 0; v <= (byte)SnapshotEventKind.WaveCleared; v++)
+            // Stage 3 Т29 moved the top from WaveCleared to ContainerEmptied
+            // and the count from 14 to 19 — the five raid kinds. The
+            // range check below is exactly the tripwire this comment
+            // predicted: SnapshotEvents.IsKnown bounds against the top
+            // member, so appending a kind without moving that bound leaves it
+            // silently unreadable on the receiver.
+            Assert.AreEqual(19, declared.Count, "None plus eighteen kinds — no duplicate values");
+            for (byte v = 0; v <= (byte)SnapshotEventKind.ContainerEmptied; v++)
                 Assert.IsTrue(declared.Contains(v), $"value {v} must be declared — the catalog has no gaps");
-            Assert.AreEqual((byte)(declared.Count - 1), (byte)SnapshotEventKind.WaveCleared,
-                "and WaveCleared is the top of the range every decoder bounds against");
+            Assert.AreEqual((byte)(declared.Count - 1), (byte)SnapshotEventKind.ContainerEmptied,
+                "and ContainerEmptied is the top of the range every decoder bounds against");
         }
 
         [Test]
@@ -2362,6 +2374,18 @@ namespace Ring.Simulation.Tests
                 [SnapshotEventKind.PlayerDashed] = SnapshotEvents.PriorityCosmetic,
                 [SnapshotEventKind.PlayerSlideStarted] = SnapshotEvents.PriorityCosmetic,
                 [SnapshotEventKind.DashRicocheted] = SnapshotEvents.PriorityCosmetic,
+                // Stage 3 Т29 (R-233). The Director's fall is BOTH a death and
+                // the gate opening — nothing in a frame outranks it. His
+                // arrival and a collector walking out destroy nothing and sit
+                // with the wave pair. The last two announce a MOMENT whose
+                // state already rides every frame (the Pickups block stops
+                // carrying a collected cell; the Containers block carries the
+                // "already looted" flag), so a frame's delay costs nothing.
+                [SnapshotEventKind.DirectorDied] = SnapshotEvents.PriorityDeath,
+                [SnapshotEventKind.DirectorActivated] = SnapshotEvents.PriorityState,
+                [SnapshotEventKind.PlayerExtracted] = SnapshotEvents.PriorityState,
+                [SnapshotEventKind.PickupTaken] = SnapshotEvents.PriorityCosmetic,
+                [SnapshotEventKind.ContainerEmptied] = SnapshotEvents.PriorityCosmetic,
             };
 
             foreach (SnapshotEventKind kind in System.Enum.GetValues(typeof(SnapshotEventKind)))
@@ -2397,6 +2421,15 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerSlideStarted));
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.DashRicocheted));
             Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.StaminaDenied));
+            // Stage 3 Т29 (R-232): the two Director kinds are the catalog's
+            // FIRST zero-length payloads — pinned rather than left implicit,
+            // because "0" is also what a size table returns for a kind
+            // somebody forgot, and the two must not be indistinguishable.
+            Assert.AreEqual(0, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.DirectorActivated));
+            Assert.AreEqual(0, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.DirectorDied));
+            Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerExtracted));
+            Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PickupTaken));
+            Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ContainerEmptied));
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.WaveStarted));
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.WaveCleared));
 
@@ -2606,6 +2639,70 @@ namespace Ring.Simulation.Tests
                 b => SnapshotEvents.WriteShotHeard(new System.Span<byte>(b), ProjectileIds.NoOwner, EvtCfg));
             Assert.AreEqual(ProjectileIds.NoOwner, heardMob[0], "255 marks a shot no player fired");
             Assert.AreEqual(ProjectileIds.NoOwner, Decoded(heardMob, SnapshotEventKind.ShotHeard).PlayerIndex);
+        }
+
+        // ---- Т29. The raid's own five kinds, through their own codec ----
+
+        /// Every Stage 3 kind, written and read back. This is also the ONLY
+        /// witness `SnapshotEvents.IsKnown` has: that bound is the one home in
+        /// the file that does NOT throw on a kind it has no entry for — it
+        /// range-checks against the enum's top member — so a kind appended
+        /// without moving it decodes as `MalformedContent` here and nowhere
+        /// else in the suite.
+        [Test]
+        public void EveryStage3Kind_RoundTripsItsOwnPayload()
+        {
+            // The two zero-length kinds. Their whole message is the kind and
+            // the tick the record header carries; `Decoded` still has to
+            // ACCEPT them, which is what a forgotten IsKnown bound would
+            // break.
+            byte[] activated = WritePayload(SnapshotEventKind.DirectorActivated,
+                b => SnapshotEvents.WriteDirectorActivated(new System.Span<byte>(b)));
+            // `WritePayload` has already asserted the two halves that matter:
+            // the write REPORTED zero, and not one byte of the sentinel-filled
+            // buffer was touched. Restating byte 0 here names the claim.
+            Assert.AreEqual(Sentinel, activated[0], "DirectorActivated writes no byte at all");
+            Assert.AreEqual(SnapshotEventKind.DirectorActivated,
+                Decoded(activated, SnapshotEventKind.DirectorActivated).Kind);
+
+            byte[] died = WritePayload(SnapshotEventKind.DirectorDied,
+                b => SnapshotEvents.WriteDirectorDied(new System.Span<byte>(b)));
+            Assert.AreEqual(Sentinel, died[0], "DirectorDied writes none either");
+            Assert.AreEqual(SnapshotEventKind.DirectorDied,
+                Decoded(died, SnapshotEventKind.DirectorDied).Kind);
+
+            // The slot that walked out. EvtSlot, not 0 — a writer that stored
+            // a constant would pass on slot zero (lesson 227).
+            byte[] extracted = WritePayload(SnapshotEventKind.PlayerExtracted,
+                b => SnapshotEvents.WritePlayerExtracted(new System.Span<byte>(b), EvtSlot, EvtCfg));
+            Assert.AreEqual(EvtSlot, extracted[0]);
+            Assert.AreEqual(EvtSlot, Decoded(extracted, SnapshotEventKind.PlayerExtracted).PlayerIndex);
+
+            // The two id-carrying kinds. The id is deliberately ABOVE 255, so
+            // a writer that stored one byte instead of a u16 loses the high
+            // half and the round trip says so.
+            const int WideId = 0x1234;
+            byte[] taken = WritePayload(SnapshotEventKind.PickupTaken,
+                b => SnapshotEvents.WritePickupTaken(new System.Span<byte>(b), WideId));
+            Assert.AreEqual(WideId, Decoded(taken, SnapshotEventKind.PickupTaken).Id);
+
+            byte[] emptied = WritePayload(SnapshotEventKind.ContainerEmptied,
+                b => SnapshotEvents.WriteContainerEmptied(new System.Span<byte>(b), WideId));
+            Assert.AreEqual(WideId, Decoded(emptied, SnapshotEventKind.ContainerEmptied).Id);
+        }
+
+        /// The write side throws on a CALLER bug (Р82's other half), and a
+        /// seat this match does not have is exactly that — the same guard
+        /// every other slot-carrying writer in the catalog applies.
+        [Test]
+        public void PlayerExtracted_RefusesASeatThisMatchDoesNotHave()
+        {
+            var buffer = new byte[SnapshotEvents.MaxPayloadBytes];
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WritePlayerExtracted(
+                new System.Span<byte>(buffer), (byte)EvtCfg.Arena.MaxPlayers, EvtCfg));
+            Assert.DoesNotThrow(() => SnapshotEvents.WritePlayerExtracted(
+                new System.Span<byte>(buffer), (byte)(EvtCfg.Arena.MaxPlayers - 1), EvtCfg),
+                "the last real seat is legal — the bound is exclusive, not off by one");
         }
 
         // ---- T28.8-11. Hostile payloads: refused, never thrown ----

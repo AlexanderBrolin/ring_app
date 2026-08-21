@@ -211,6 +211,60 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(5, w.Pickups[0].Amount, "…and it must still be the original one, untouched");
         }
 
+        /// Stage 3 Т29: collecting a cell is observable, and the event
+        /// carries what its two consumers need — the cell's own id (the
+        /// wire's u16 code, Р278) and the COLLECTOR, which is not
+        /// informational: `PickupTaken` rides the Owner channel, addressed by
+        /// exactly that field, so an emit without it reaches nobody.
+        ///
+        /// The collector is slot 1 and slot 0 stands far away (lesson 227):
+        /// an emit that hard-coded the first player would pass on a
+        /// single-player fixture and lie on a real raid.
+        ///
+        /// TWO CELLS, NOT ONE, AND THAT IS THE POINT OF THE FIXTURE (mutation
+        /// N9). `RemovePickupAt` is a SWAP-remove, so an emit placed AFTER it
+        /// reads a slot that now holds a DIFFERENT cell. With one cell in the
+        /// world that mutation is invisible: the array is not cleared, so the
+        /// stale copy still answers with the right id. With two, the swap
+        /// really moves the second into the first's slot, and an emit on the
+        /// wrong side of the removal reports the same id twice and never the
+        /// other — which is exactly what this test's "each exactly once"
+        /// assertion refuses.
+        ///
+        /// `TestConfigs.OpenField()` because this fixture TICKS the world
+        /// (fixture rule R-173/355).
+        [Test]
+        public void Collect_EmitsPickupTaken_ForTheCollectorWithEachCellsOwnId()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(60f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, float2.zero);
+            var firstPos = new float2(0.5f, 0f);
+            var secondPos = new float2(-0.5f, 0f);
+            int firstId = w.SpawnPickup(PickupKind.EnergyCell, firstPos, 3);
+            int secondId = w.SpawnPickup(PickupKind.EnergyCell, secondPos, 4);
+            Assert.AreNotEqual(firstId, secondId, "premise: two distinct cells");
+            w.ClearEvents();
+
+            w.TickAll(new SimInput[2]);
+
+            Assert.AreEqual(0, w.PickupCount, "premise: both cells really were collected this tick");
+
+            int first = 0, second = 0;
+            for (int i = 0; i < w.EventCount; i++)
+            {
+                SimEvent ev = w.GetEvent(i);
+                if (ev.Kind != SimEventKind.PickupTaken) continue;
+                Assert.AreEqual(1, ev.PlayerIndex, "the collector, which is how Owner finds its recipient");
+                if (ev.EntityId == firstId) { first++; Assert.AreEqual(firstPos, ev.Pos, "at the spot it lay on"); }
+                else if (ev.EntityId == secondId) { second++; Assert.AreEqual(secondPos, ev.Pos, "at the spot it lay on"); }
+                else Assert.Fail($"PickupTaken names a cell that never existed: {ev.EntityId}");
+            }
+            Assert.AreEqual(1, first, "the first cell is announced exactly once, by its OWN id");
+            Assert.AreEqual(1, second, "and so is the second — a swap-remove must not rename either");
+        }
+
         [Test]
         public void TtlExpiry_RemovesWithoutEvent()
         {

@@ -880,6 +880,57 @@ namespace Ring.Simulation.Tests
         /// The SECOND carried item is the subject (lesson 227). This test owns
         /// the CONTAINER half; the backpack half is the next test's, so the
         /// two ablations ("no spawn", "no removal") cannot share one witness.
+        /// Stage 3 Т29: the box is announced EMPTY, and only when it
+        /// actually is. The kind's name is a claim about the container —
+        /// one fired per take would make "emptied" mean "touched", and the
+        /// surface listening for it would flash a box that still holds three
+        /// things.
+        ///
+        /// The SECOND slot is the one taken (lesson 227), so an
+        /// implementation that only ever looked at slot 0 cannot pass by
+        /// coincidence.
+        [Test]
+        public void TransferTakingTheLastItem_EmitsContainerEmptied()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            int id = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new byte[] { 0, 1 });
+            LootOps.Begin(w, 0, LootOp.Take, id, 1);
+            w.ClearEvents();
+
+            Assert.AreNotEqual(-1, TicksToComplete(w), "premise: the transfer must actually finish");
+            Assert.AreEqual(1, w.InventoryCountOf(0), "premise: the item really moved");
+
+            int emptied = 0;
+            for (int i = 0; i < w.EventCount; i++)
+            {
+                SimEvent ev = w.GetEvent(i);
+                if (ev.Kind != SimEventKind.ContainerEmptied) continue;
+                emptied++;
+                Assert.AreEqual(id, ev.EntityId, "the event names the box that was emptied");
+            }
+            Assert.AreEqual(1, emptied, "exactly one ContainerEmptied for the box that just ran dry");
+        }
+
+        /// The negative half, and it is the one that gives the kind its
+        /// meaning: a take that leaves something behind announces nothing.
+        [Test]
+        public void TransferLeavingSomethingBehind_EmitsNoContainerEmptied()
+        {
+            var w = MakeWorld(out SimConfig cfg);
+            int id = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new byte[] { 1, 2 });
+            LootOps.Begin(w, 0, LootOp.Take, id, 0);
+            w.ClearEvents();
+
+            Assert.AreNotEqual(-1, TicksToComplete(w), "premise: the transfer must actually finish");
+            Assert.AreEqual(1, w.InventoryCountOf(0), "premise: one item moved");
+
+            for (int i = 0; i < w.EventCount; i++)
+            {
+                Assert.AreNotEqual(SimEventKind.ContainerEmptied, w.GetEvent(i).Kind,
+                    "a box that still holds something has not been emptied");
+            }
+        }
+
         [Test]
         public void Drop_SpawnsGroundContainerWithItem()
         {

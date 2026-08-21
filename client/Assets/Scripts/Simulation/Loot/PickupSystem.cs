@@ -53,9 +53,11 @@ namespace Ring.Simulation.Loot
                 {
                     // Spec §3.6: swap-remove WITHOUT an event — a pickup
                     // quietly aging out is not a VFX/SFX-relevant occurrence
-                    // the way PickupTaken (Т29 — the task that gives every
-                    // Stage 3 event kind its enum entry, channel and emitter
-                    // together) is. Safe under the
+                    // the way PickupTaken is. That kind now EXISTS (Т29 gave
+                    // every Stage 3 event its enum entry, channel and emitter
+                    // together) and is emitted by Collect below — the
+                    // contrast this comment draws is with a real neighbour
+                    // now, not with a promised one. Safe under the
                     // `ref` above for the same reason the back-to-front sweep
                     // is: the slot this overwrites is never read again, in
                     // this turn or any later one.
@@ -131,6 +133,28 @@ namespace Ring.Simulation.Loot
                         // itself hit the AmmoMax ceiling: the cells were picked
                         // up either way.
                         w.StatsRef(playerIndex).CellsPicked += pickup.Amount;
+                        // Stage 3 Т29 (spec §3.6/§3.12 Р281): the ADDRESSEE
+                        // named at AdvanceTtl above has paid. Emitted HERE,
+                        // where a cell is really collected — never where one
+                        // ages out, which that method's own doc keeps silent
+                        // on purpose.
+                        //
+                        // BEFORE THE REMOVAL, and that is not style: swap-
+                        // remove moves the array's LAST slot into `i`, so
+                        // after the call `pickup` names a different cell and
+                        // the id in the event would belong to a bystander.
+                        // (`pickup` is a COPY taken at the top of the turn,
+                        // so reading it after the removal would be legal C#
+                        // and wrong anyway — the local still holds the right
+                        // values; what the order really protects is any
+                        // future reader who reaches for `w.Pickups[i]`.)
+                        //
+                        // `playerIndex` IS LOAD-BEARING: this kind rides the
+                        // Owner channel, which addresses its recipient by
+                        // exactly this field (EventRelevance.ShouldDeliver) —
+                        // an emit without it delivers to nobody at all.
+                        w.Emit(SimEventKind.PickupTaken, pickup.Pos, pickup.Id, default, 0f,
+                            playerIndex: (byte)playerIndex);
                         w.RemovePickupAt(i);
                     }
                     else

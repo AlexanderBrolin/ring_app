@@ -1373,6 +1373,32 @@ namespace Ring.Simulation.Core
             return refusal;
         }
 
+        /// Stage 3 Т29: does this container hold nothing at all? -1 slots
+        /// (no such container) answers `false` — a box that is not there is
+        /// not an empty box, and the one caller (Loot.LootOps.Update, on the
+        /// tick a transfer completes) asks about a container it has just
+        /// taken from.
+        ///
+        /// ⚠ IT IS NOT `SnapshotAssembler.OccupancyMaskOf` UNDER ANOTHER
+        /// NAME, and the difference is the reason both exist. That one builds
+        /// the WIRE's mask and is clamped to `SnapshotBlocks.
+        /// ContainerSlotsMaskWidth` — eight bits, the format's ceiling. This
+        /// one is a fact about the WORLD and reads every slot the container
+        /// actually has. Today `ArenaConfig.MaxContainerSlots` carries
+        /// `[Range(1, 8)]` so the two always agree; the day that range grows,
+        /// the wire's answer must stay clamped and this one must not, which
+        /// is exactly what a single shared home would make impossible to say.
+        internal bool ContainerIsEmpty(int containerId)
+        {
+            int index = IndexOfContainer(containerId);
+            if (index < 0) return false;
+
+            int slots = _containers[index].SlotCount;
+            for (int i = 0; i < slots; i++)
+                if (ContainerSlotAt(index, i) != 0) return false;
+            return true;
+        }
+
         /// Test-only seam (Stage 3 Task 14), same contract as
         /// SetPickupForTest/SetMobForTest above — mutates a live slot
         /// directly, for the reflective hash sweep

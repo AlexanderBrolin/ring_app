@@ -53,6 +53,20 @@ namespace Ring.Networking.Protocol
         StaminaDenied = 11,
         WaveStarted = 12,
         WaveCleared = 13,
+
+        // Stage 3 Т29 (spec §3.12 Р281): the raid's own catalogue. APPENDED,
+        // never renumbered — a client already in flight would read a
+        // different meaning out of the same byte.
+        //
+        // The first three have existed on the SIMULATION side since Т21/Т23
+        // and were emitted into a wire catalogue that had no entry for them,
+        // so `SnapshotAssembler` dropped them silently; these five lines are
+        // what ends that.
+        DirectorActivated = 14,
+        DirectorDied = 15,
+        PlayerExtracted = 16,
+        PickupTaken = 17,
+        ContainerEmptied = 18,
     }
 
     /// How a round's flight ended, carried inside a `ProjectileEnded` payload
@@ -304,6 +318,10 @@ namespace Ring.Networking.Protocol
             {
                 case SnapshotEventKind.PlayerDied:
                 case SnapshotEventKind.MobDied:
+                // Stage 3 Т29 (R-233): the Director falling is BOTH a death
+                // and the raid's own turning point — it is what opens the
+                // gate (spec §3.5). Nothing in a frame outranks it.
+                case SnapshotEventKind.DirectorDied:
                     return PriorityDeath;
 
                 case SnapshotEventKind.PlayerDamaged:
@@ -315,12 +333,28 @@ namespace Ring.Networking.Protocol
                 case SnapshotEventKind.StaminaDenied:
                 case SnapshotEventKind.WaveStarted:
                 case SnapshotEventKind.WaveCleared:
+                // Stage 3 Т29 (R-233): both are turning points that destroy
+                // nothing — exactly the kind of thing the two wave events beside
+                // them. A deferred event is carried into the next frame, not
+                // lost, so State rather than Death is the honest rank.
+                case SnapshotEventKind.DirectorActivated:
+                case SnapshotEventKind.PlayerExtracted:
                     return PriorityState;
 
                 case SnapshotEventKind.ShotHeard:
                 case SnapshotEventKind.PlayerDashed:
                 case SnapshotEventKind.PlayerSlideStarted:
                 case SnapshotEventKind.DashRicocheted:
+                // Stage 3 Т29 (R-233): the STATE both of these announce
+                // already rides every frame — the Pickups block stops
+                // carrying a collected cell, the Containers block carries the
+                // "already looted" flag. What the event adds is the MOMENT,
+                // and a moment that arrives a frame late costs nothing.
+                // ⚠ Rank is not channel (Р136): PickupTaken is cosmetic in
+                // rank and PRIVATE in channel, and the two say nothing about
+                // each other.
+                case SnapshotEventKind.PickupTaken:
+                case SnapshotEventKind.ContainerEmptied:
                     return PriorityCosmetic;
 
                 default:
@@ -351,7 +385,27 @@ namespace Ring.Networking.Protocol
                 case SnapshotEventKind.ShotHeard:
                 case SnapshotEventKind.PlayerDashed:
                 case SnapshotEventKind.PlayerSlideStarted:
-                case SnapshotEventKind.StaminaDenied: return 1;
+                case SnapshotEventKind.StaminaDenied:
+                // Stage 3 Т29: the slot that walked out.
+                case SnapshotEventKind.PlayerExtracted: return 1;
+
+                // Stage 3 Т29: the entity's own u16 code (Р278) — the same
+                // width every long-lived entity rides on the wire.
+                case SnapshotEventKind.PickupTaken:
+                case SnapshotEventKind.ContainerEmptied: return 2;
+
+                // Stage 3 Т29 (R-232): THE FIRST ZERO-LENGTH PAYLOADS IN THIS
+                // CATALOGUE, and they are zero on purpose rather than for
+                // want of a field. Both ride the All channel, which carries
+                // no position by rule (Р28) — and the position they would
+                // otherwise carry is exactly what Т21 refused to put on the
+                // wire: the spot a collector walked into the core, and the
+                // spot the corpse everyone is about to fight over lies on.
+                // Nothing else about either is not already in the Match
+                // block's own Director bit; what the event adds is the tick
+                // it happened on, and the record header carries that.
+                case SnapshotEventKind.DirectorActivated:
+                case SnapshotEventKind.DirectorDied: return 0;
 
                 default:
                     throw new System.ArgumentException(
@@ -507,6 +561,57 @@ namespace Ring.Networking.Protocol
             return PayloadBytesFor(SnapshotEventKind.WaveCleared);
         }
 
+        /// Stage 3 Т29. WRITES NOTHING AND SAYS SO BY RETURNING 0 — see
+        /// `PayloadBytesFor`'s own note on why these two carry no payload.
+        /// `Reserve` is still called: it is the one place that would catch a
+        /// caller handing in a span shorter than the kind needs, and a kind
+        /// needing zero is exactly the case where forgetting to ask would
+        /// never be noticed.
+        public static int WriteDirectorActivated(System.Span<byte> dst)
+        {
+            Reserve(dst, SnapshotEventKind.DirectorActivated);
+            return PayloadBytesFor(SnapshotEventKind.DirectorActivated);
+        }
+
+        public static int WriteDirectorDied(System.Span<byte> dst)
+        {
+            Reserve(dst, SnapshotEventKind.DirectorDied);
+            return PayloadBytesFor(SnapshotEventKind.DirectorDied);
+        }
+
+        /// Stage 3 Т29: the slot that walked out. Validated like every other
+        /// player slot this file writes — a wire byte naming a seat this
+        /// match does not have is a CALLER bug, and the write side throws on
+        /// caller bugs (Р82's other half).
+        public static int WritePlayerExtracted(System.Span<byte> dst, byte playerIndex,
+            in SimConfig cfg)
+        {
+            Reserve(dst, SnapshotEventKind.PlayerExtracted);
+            RequirePlayerSlot(playerIndex, in cfg, nameof(playerIndex));
+            dst[0] = playerIndex;
+            return PayloadBytesFor(SnapshotEventKind.PlayerExtracted);
+        }
+
+        /// Stage 3 Т29: the collected cell's own id, truncated to the u16 code
+        /// every long-lived entity rides (Р278) — the receiver maps the code
+        /// back to a live entity within THIS frame and this epoch, never
+        /// across frames.
+        public static int WritePickupTaken(System.Span<byte> dst, int pickupId)
+        {
+            Reserve(dst, SnapshotEventKind.PickupTaken);
+            WriteU16(dst, 0, (ushort)(pickupId & 0xFFFF));
+            return PayloadBytesFor(SnapshotEventKind.PickupTaken);
+        }
+
+        /// Stage 3 Т29: the emptied container's own id, same u16 code and the
+        /// same one-frame mapping contract as `WritePickupTaken` above.
+        public static int WriteContainerEmptied(System.Span<byte> dst, int containerId)
+        {
+            Reserve(dst, SnapshotEventKind.ContainerEmptied);
+            WriteU16(dst, 0, (ushort)(containerId & 0xFFFF));
+            return PayloadBytesFor(SnapshotEventKind.ContainerEmptied);
+        }
+
         // ---- Read side. One entry point, dispatching on the kind the record
         // header already carried. Never throws, on any byte sequence (Р82).
 
@@ -576,10 +681,27 @@ namespace Ring.Networking.Protocol
                 case SnapshotEventKind.PlayerDashed:
                 case SnapshotEventKind.PlayerSlideStarted:
                 case SnapshotEventKind.DashRicocheted:
+                // Stage 3 Т29: same bound, same reason — a seat this match
+                // does not have is content this side refuses rather than
+                // passes on.
+                case SnapshotEventKind.PlayerExtracted:
                 {
                     if (!IsPlayerSlot(payload[0], in cfg)) { error = SnapshotBlockError.MalformedContent; return false; }
                     break;
                 }
+
+                // Stage 3 Т29: the two id-carrying kinds have NO content
+                // constraint, stated rather than left to be inferred from
+                // their absence. Every u16 is a legal entity code — the
+                // receiver's job is to map it to a live entity of THIS frame
+                // and find nothing if it cannot (Р278), which is an ordinary
+                // outcome and not malformed content. The same is true of the
+                // two zero-length kinds, which have no byte to constrain.
+                case SnapshotEventKind.PickupTaken:
+                case SnapshotEventKind.ContainerEmptied:
+                case SnapshotEventKind.DirectorActivated:
+                case SnapshotEventKind.DirectorDied:
+                    break;
             }
 
             value.Kind = kind;
@@ -651,6 +773,21 @@ namespace Ring.Networking.Protocol
                 case SnapshotEventKind.WaveCleared:
                     value.WaveIndex = ReadU16(payload, 0);
                     break;
+
+                case SnapshotEventKind.PlayerExtracted:
+                    value.PlayerIndex = payload[0];
+                    break;
+
+                case SnapshotEventKind.PickupTaken:
+                case SnapshotEventKind.ContainerEmptied:
+                    value.Id = ReadU16(payload, 0);
+                    break;
+
+                // DirectorActivated / DirectorDied assign nothing: their
+                // payload is empty and `value.Kind` above is the whole
+                // message. Listed by their absence deliberately — adding a
+                // `case … : break;` here would read as a field somebody
+                // forgot to fill.
             }
 
             error = SnapshotBlockError.None;
@@ -665,8 +802,16 @@ namespace Ring.Networking.Protocol
         public static float SpeedCapFor(byte ownerIndex, in SimConfig cfg)
             => ownerIndex == ProjectileIds.NoOwner ? cfg.Gunner.ProjectileSpeed : cfg.Weapon.ProjectileSpeed;
 
+        /// ⚠ THE ONLY HOME IN THIS FILE THAT DOES NOT THROW ON AN
+        /// UNACCOUNTED KIND, which is why it is the one a new kind is
+        /// silently forgotten in: the bound is the LAST MEMBER of the enum,
+        /// so a kind appended past it decodes as `MalformedContent` on the
+        /// receiver and nowhere else. Stage 3 Т29 moved it from `WaveCleared`
+        /// to `ContainerEmptied`; whoever appends the next kind moves it
+        /// again, and `EveryKnownKind_DecodesItsOwnPayload` is the witness
+        /// that says so.
         static bool IsKnown(SnapshotEventKind kind)
-            => kind != SnapshotEventKind.None && (byte)kind <= (byte)SnapshotEventKind.WaveCleared;
+            => kind != SnapshotEventKind.None && (byte)kind <= (byte)SnapshotEventKind.ContainerEmptied;
 
         static bool IsPlayerSlot(byte index, in SimConfig cfg) => index < cfg.Arena.MaxPlayers;
 

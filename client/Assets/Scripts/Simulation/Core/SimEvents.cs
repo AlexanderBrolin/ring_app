@@ -93,7 +93,36 @@ namespace Ring.Simulation.Core
         /// PlayerDied with a flag: the two differ in everything a consumer
         /// cares about (no corpse, nothing to loot, and the man is not dead —
         /// Р223's own reason for Extracted being a separate bit at all).
-        PlayerExtracted
+        PlayerExtracted,
+
+        /// Stage 3 Т29 (spec §3.6/§3.12 Р281): a ground cell was actually
+        /// COLLECTED — the moment PickupSystem.Collect folds it into the
+        /// collector's ammo. Deliberately NOT emitted when a cell ages out on
+        /// its TTL: PickupSystem.AdvanceTtl's own doc records that a pickup
+        /// quietly expiring is not a VFX/SFX-relevant occurrence, and this is
+        /// the kind it contrasts itself with.
+        ///
+        /// PAYLOAD: `EntityId` = the cell's own id (it rides the wire as the
+        /// same u16 code every long-lived entity does, Р278); `PlayerIndex` =
+        /// the COLLECTOR, and it is load-bearing rather than informational —
+        /// this kind rides the Owner channel, which addresses its recipient
+        /// by exactly that field (EventRelevance.ShouldDeliver), so an emit
+        /// that omitted it would deliver to nobody. `Pos` is the cell's, for
+        /// the surface that wants to play the pop where it lay.
+        PickupTaken,
+
+        /// Stage 3 Т29 (spec §3.16, §3.12 Р281): a container's LAST item just
+        /// left it — emitted by Loot.LootOps.Update on the tick a transfer
+        /// completes and finds nothing behind it. The state itself already
+        /// rides every frame (the Containers block's "already looted" flag);
+        /// what this kind carries is the MOMENT, which a per-frame flag
+        /// cannot express to a surface that wants to react once.
+        ///
+        /// PAYLOAD: `EntityId` = the container's own id (u16 on the wire, as
+        /// above). `Pos` is the container's — this kind rides the Visible
+        /// channel, so the two collectors who can see the box learn the
+        /// pile they were racing for is spent.
+        ContainerEmptied
     }
 
     public struct SimEvent

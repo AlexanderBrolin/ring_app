@@ -312,6 +312,74 @@ namespace Ring.Simulation.Tests
 
         // ---- T28.A1. A full frame round-trips through the real codec ----
 
+        /// Stage 3 Т29: the raid's own kinds REACH THE WIRE. Until this task
+        /// `SnapshotAssembler.BeginTick`'s mapping switch had no case for
+        /// DirectorActivated/DirectorDied/PlayerExtracted — and it has no
+        /// `default` either, so all three were emitted by the simulation every
+        /// raid and dropped on the floor without a counter, a log or a failing
+        /// test. THIS is the witness that says otherwise; a mapping case
+        /// removed again fails here by name.
+        ///
+        /// The Director pair is asserted through an All-channel frame: they
+        /// reach a connection that can see nothing, and they arrive with no
+        /// position — the spot a collector walked into the core is exactly
+        /// what Р299 refused to ship.
+        [Test]
+        public void Stage3RaidKinds_ReachTheWire()
+        {
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            w.ClearEvents();
+
+            // Positions that are emphatically not the origin, so "no position"
+            // cannot be confused with "the emitter passed zero".
+            w.Emit(SimEventKind.DirectorActivated, new float2(31f, -17f), 0, default, 0f);
+            w.Emit(SimEventKind.DirectorDied, new float2(-23f, 41f), 0, default, 0f);
+            // Slot 1 walked out — not slot 0, whose own frame this is.
+            w.Emit(SimEventKind.PlayerExtracted, w.PlayerAt(1).Pos, 0, default, 0f, playerIndex: 1);
+            // Owner channel: addressed to slot 0, whose frame this is.
+            w.Emit(SimEventKind.PickupTaken, new float2(1f, 1f), 4242, default, 0f, playerIndex: 0);
+            // Two boxes: one under the connection's nose, one across the
+            // arena. R-236 decides this kind in the assembler, against the
+            // CONTAINERS set — so the far one must not ride, and an
+            // implementation that enqueued unconditionally fails on it.
+            int nearBox = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new byte[] { 1 });
+            int farBox = w.SpawnContainer(ContainerKind.Crate, new float2(400f, 400f), new byte[] { 1 });
+            w.Emit(SimEventKind.ContainerEmptied, new float2(1f, 0f), nearBox, default, 0f);
+            w.Emit(SimEventKind.ContainerEmptied, new float2(400f, 400f), farBox, default, 0f);
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, connection: 0, identityIndex: 0, viewpointIndex: 0);
+
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.DirectorActivated),
+                "the Director's arrival must ride the wire — before Т29 the assembler dropped it silently");
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.DirectorDied),
+                "and so must his fall, which is what opens the gate");
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.PlayerExtracted),
+                "a collector walking out is visible to whoever can see them, and slot 1 is");
+
+            // Quantized on the wire, so the check is the same shape the wave
+            // pair's own assertion uses: a length near zero, and emphatically
+            // NOT the position emitted.
+            Assert.IsTrue(f.TryFirstOf(SnapshotEventKind.DirectorActivated, out int activatedAt));
+            Assert.That(math.length(f.Events[activatedAt].Pos), Is.LessThan(0.01f),
+                "an All-channel event carries no position (Р28) — and the one it would carry names "
+                + "the collector who woke him");
+            Assert.IsTrue(f.TryFirstOf(SnapshotEventKind.DirectorDied, out int diedAt));
+            Assert.That(math.length(f.Events[diedAt].Pos), Is.LessThan(0.01f),
+                "same for the fall, whose position is the corpse everyone is about to fight over");
+
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.PickupTaken),
+                "a collected cell reaches the collector — the Owner channel names slot 0 here");
+            Assert.IsTrue(f.TryFirstOf(SnapshotEventKind.PickupTaken, out int takenAt));
+            Assert.AreEqual(4242, f.Payloads[takenAt].Id, "…and it names the cell it was about");
+
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.ContainerEmptied),
+                "ONE of the two boxes: the one this connection can see. An assembler branch that "
+                + "enqueued without asking ContainersCurrent would ship both");
+            Assert.IsTrue(f.TryFirstOf(SnapshotEventKind.ContainerEmptied, out int emptiedAt));
+            Assert.AreEqual(nearBox, f.Payloads[emptiedAt].Id, "and it is the near one");
+        }
+
         [Test]
         public void FullFrame_RoundTrips_WithPlayersLivenessMobsWaveAndEvents()
         {

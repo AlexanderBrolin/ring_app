@@ -717,6 +717,52 @@ namespace Ring.Networking.Server
                         SnapshotEvents.WriteWaveCleared(PayloadSpan(slot), ev.EntityId);
                         break;
                     }
+
+                    // Stage 3 Т29 (spec §3.12 Р281). THE FIRST THREE CLOSE A
+                    // HOLE RATHER THAN ADD A FEATURE: MatchFlowSystem has
+                    // emitted DirectorActivated/DirectorDied since Т21 and
+                    // ExtractionSystem PlayerExtracted since Т23, and this
+                    // switch — which has no `default` — dropped all three on
+                    // the floor every tick they fired. Nothing reported it,
+                    // because a kind with no case here simply produces no
+                    // wire record.
+                    case SimEventKind.DirectorActivated:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.DirectorActivated);
+                        SnapshotEvents.WriteDirectorActivated(PayloadSpan(slot));
+                        break;
+                    }
+
+                    case SimEventKind.DirectorDied:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.DirectorDied);
+                        SnapshotEvents.WriteDirectorDied(PayloadSpan(slot));
+                        break;
+                    }
+
+                    case SimEventKind.PlayerExtracted:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.PlayerExtracted);
+                        SnapshotEvents.WritePlayerExtracted(PayloadSpan(slot), ev.PlayerIndex, in _cfg);
+                        break;
+                    }
+
+                    // EntityId is the entity's own id for these two (their
+                    // emit sites' own docs), truncated to the u16 code by the
+                    // writer — the same treatment MobRecord.Id gets.
+                    case SimEventKind.PickupTaken:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.PickupTaken);
+                        SnapshotEvents.WritePickupTaken(PayloadSpan(slot), ev.EntityId);
+                        break;
+                    }
+
+                    case SimEventKind.ContainerEmptied:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.ContainerEmptied);
+                        SnapshotEvents.WriteContainerEmptied(PayloadSpan(slot), ev.EntityId);
+                        break;
+                    }
                 }
             }
         }
@@ -1043,6 +1089,26 @@ namespace Ring.Networking.Server
                         {
                             Enqueue(c, i, we.Source.Pos);
                         }
+                        break;
+                    }
+
+                    case SnapshotEventKind.ContainerEmptied:
+                    {
+                        // Stage 3 Т29 (R-236): delivered BY VISIBILITY, and
+                        // decided here rather than by `EventRelevance` — see
+                        // that file's own `None` entry for this kind. The
+                        // subject is a CONTAINER, whose id lives in
+                        // `ContainersCurrent`; the seam below is handed the
+                        // MOBS set and would resolve a container id against
+                        // the wrong space entirely.
+                        //
+                        // The CURRENT tick's set, not the previous one: unlike
+                        // a corpse, an emptied box is still standing where it
+                        // was and is still in this tick's visibility — what
+                        // changed is its contents. Its own position rides
+                        // along, exactly as a Visible-channel event's does.
+                        if (c.ContainersCurrent.Contains(we.Source.EntityId))
+                            Enqueue(c, i, we.Source.Pos);
                         break;
                     }
 
