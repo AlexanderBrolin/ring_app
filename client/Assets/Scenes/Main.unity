@@ -3837,6 +3837,11 @@ MonoBehaviour:
   _elitePrefab: {fileID: 510734226809286394, guid: 7e9de8ef182bc7ab8b6cd764dfd32f69, type: 3}
   _directorPrefab: {fileID: 4266061768081252256, guid: ae92006a693591798b5604e35bddf129, type: 3}
   _projectilePrefab: {fileID: 2834824209119835038, guid: 46258a528de6059eeb3ff46cde8d16fd, type: 3}
+  _pickupPrefab: {fileID: 4482262941289945410, guid: 429c6da32db0707bd883888b01cc84c3, type: 3}
+  _crateContainerPrefab: {fileID: 1973259135495199926, guid: 8f25962e086f771a19701c4c2bdd9674, type: 3}
+  _cacheContainerPrefab: {fileID: 2794658302990292225, guid: a40c3f376f5a5e011b135e44d3ee96a9, type: 3}
+  _groundContainerPrefab: {fileID: 1911797069665542063, guid: 074004c0728edffd2b17b981d3643248, type: 3}
+  _corpseMarkerPrefab: {fileID: 667708827555570745, guid: 21360d6cf3309338f8d6a57d5faaecf7, type: 3}
 --- !u!4 &1795406097
 Transform:
   m_ObjectHideFlags: 0

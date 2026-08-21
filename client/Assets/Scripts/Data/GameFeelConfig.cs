@@ -506,7 +506,23 @@ namespace Ring.Data
         // this field is live-tweakable in PlayMode, which is exactly why it is
         // a field.
         [Range(0.05f, 6f)] public float EliteVisualScale = 0.75f;
-        [Range(0.05f, 6f)] public float DirectorVisualScale = 3.5f; // sync-marker key — keep LAST
+        [Range(0.05f, 6f)] public float DirectorVisualScale = 3.5f;
+
+        // Stage 3 Task 31 (spec §3.11): how big the raid's own furniture is
+        // drawn. Both are read fresh on every bind (`PickupView.Bind`'s own
+        // doc), so the owner can size them live on the В1 playtest — which is
+        // the point, because what these two numbers really control is whether a
+        // player can FIND loot on a 113 m arena from a three-quarter camera,
+        // and no number derived at a desk answers that.
+        //
+        // 0.5 m for a cell is a hand's width — big enough to catch the eye at
+        // the camera's distance, small enough not to read as a crate. The
+        // container scale is 1 because the Sci-Fi kit's props are authored at
+        // roughly human furniture size already; it exists as a field so the
+        // owner can push crates up or down against the collector doll without
+        // touching four prefabs.
+        [Range(0.05f, 3f)] public float PickupVisualDiameter = 0.5f;
+        [Range(0.05f, 5f)] public float ContainerVisualScale = 1f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

@@ -403,6 +403,22 @@ namespace Ring.Editor
         const string MobElitePrefabPath = PrefabsDir + "/MobEliteView.prefab";
         const string MobDirectorPrefabPath = PrefabsDir + "/MobDirectorView.prefab";
         const string CorpseMechPrefabPath = PrefabsDir + "/CorpseMechView.prefab";
+        // Stage 3 Task 31 (spec §3.11): the raid's furniture. Four container
+        // prefabs rather than five — the two corpse kinds share the marker,
+        // because their body is drawn by somebody else already
+        // (`ContainerView`'s own doc).
+        const string PickupPrefabPath = PrefabsDir + "/PickupView.prefab";
+        const string CrateContainerPrefabPath = PrefabsDir + "/ContainerCrateView.prefab";
+        const string CacheContainerPrefabPath = PrefabsDir + "/ContainerCacheView.prefab";
+        const string GroundContainerPrefabPath = PrefabsDir + "/ContainerGroundView.prefab";
+        const string CorpseMarkerPrefabPath = PrefabsDir + "/ContainerCorpseMarkerView.prefab";
+        // Models from the same Sci-Fi Essentials kit the Elite and the Director
+        // come out of (ASSETS-001 §2.2 reserves that kit's crates for loot on
+        // purpose), so the loot reads as belonging to the same world as the
+        // robots guarding it.
+        const string CrateModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Prop_Crate.fbx";
+        const string CacheModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Prop_Chest.fbx";
+        const string GroundModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Prop_Ammo.fbx";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -619,9 +635,10 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `DirectorVisualScale` as of Stage 3 Task
-            // 31 — the two archetype scales are that class's new last fields
-            // and the committed asset predates both — was `MeshSagMeters`
+            // field (GameFeelConfig: `ContainerVisualScale` as of Stage 3 Task
+            // 31 — the two archetype scales and the two furniture scales are
+            // that class's new last fields and the committed asset predates
+            // all four — was `MeshSagMeters`
             // (Stage 3 Task 30, the arc-segmentation tolerance shipped
             // alongside the three zone floor tints) before that,
             // `GunEjectLocalEuler` (Stage 2 Task 45b)
@@ -663,7 +680,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "EmergencyFireInterval"); // Stage 3 Task 2 (was RunSpreadSpeedFrac, Task 17)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "DirectorVisualScale"); // Stage 3 Task 31 (was MeshSagMeters, Task 30)
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "ContainerVisualScale"); // Stage 3 Task 31 (was MeshSagMeters, Task 30)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
             // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
@@ -1448,6 +1465,26 @@ namespace Ring.Editor
                 directorSkin);
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
+            // Stage 3 Task 31 (spec §3.11): the cell and the four container
+            // variants. CYAN for the cell — energy the collector is here to
+            // carry, on the same signature color the player's own dash glow and
+            // emissive already speak; a warmer AMBER for the corpse marker, so
+            // "something to loot on a body" never reads as "a cell lying here".
+            Material pickupMat = GetOrCreateUnlitMaterial("PickupCell", new Color(0.2f, 2.6f, 3.2f));
+            Material lootMarkerMat = GetOrCreateUnlitMaterial("LootMarker", new Color(2.8f, 1.9f, 0.4f));
+            PickupView pickupPrefab =
+                GetOrCreatePickupPrefab(pickupMat, gameFeel.PickupVisualDiameter);
+            ContainerView cratePrefab = GetOrCreateContainerPrefab(CrateContainerPrefabPath,
+                CrateModelPath, null, gameFeel.ContainerVisualScale);
+            ContainerView cachePrefab = GetOrCreateContainerPrefab(CacheContainerPrefabPath,
+                CacheModelPath, null, gameFeel.ContainerVisualScale);
+            ContainerView groundPrefab = GetOrCreateContainerPrefab(GroundContainerPrefabPath,
+                GroundModelPath, null, gameFeel.ContainerVisualScale);
+            // The marker is sized in its own right rather than at the container
+            // scale: it is a tell on the ground, not a prop, and half a meter
+            // is the same read the cell gets.
+            ContainerView corpseMarkerPrefab = GetOrCreateContainerPrefab(CorpseMarkerPrefabPath,
+                null, lootMarkerMat, gameFeel.PickupVisualDiameter);
             // Stage 2 Task 45a: the collector doll, same factory shape as the
             // two mech archetypes above — it is a POOLED prefab now, one
             // instance per player slot, and no longer a scene object.
@@ -1486,6 +1523,11 @@ namespace Ring.Editor
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_elitePrefab", elitePrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_directorPrefab", directorPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_pickupPrefab", pickupPrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_crateContainerPrefab", cratePrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_cacheContainerPrefab", cachePrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_groundContainerPrefab", groundPrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_corpseMarkerPrefab", corpseMarkerPrefab);
             if (viewsRefsChanged)
             {
                 viewsSo.ApplyModifiedPropertiesWithoutUndo();
@@ -2671,6 +2713,79 @@ namespace Ring.Editor
         /// `DecalRendererFeature`'s own `[DisallowMultipleRendererFeature]` —
         /// so a second `Apply()` run is a no-op, same contract as everything
         /// else in this file. Returns whether it actually added the feature.
+        /// Stage 3 Task 31 (spec §3.11): the cell on the floor — an emissive
+        /// sphere, built the same way `GetOrCreateProjectilePrefab` builds its
+        /// own ball, with the model on a `Visual` child so `PickupView.Bind`
+        /// can scale the picture without touching the pooled root's own
+        /// transform (the root is what `ViewRegistry` positions).
+        static PickupView GetOrCreatePickupPrefab(Material cellMat, float diameter)
+        {
+            return EditorBootstrapUtils.BuildPrefab<PickupView>(PickupPrefabPath, () =>
+            {
+                var go = new GameObject("PickupView");
+                GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                sphere.name = "Visual";
+                EditorBootstrapUtils.RemoveCollider(sphere);
+                sphere.transform.SetParent(go.transform, false);
+                sphere.transform.localScale = Vector3.one * diameter;
+                sphere.GetComponent<MeshRenderer>().sharedMaterial = cellMat;
+
+                PickupView view = go.AddComponent<PickupView>();
+                var so = new SerializedObject(view);
+                EditorBootstrapUtils.SetRef(so, "_visual", sphere.transform);
+                so.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
+
+        /// One container prefab: a pack prop (or, for the corpse marker, a
+        /// primitive) on a `Visual` child, `ContainerView` on the root. Same
+        /// `PrefabVisualsMatch` guard the mob archetypes use, so swapping a
+        /// model above rebuilds the prefab rather than leaving a stale one.
+        /// `modelPath` null builds the MARKER variant: an emissive sphere, the
+        /// "there is something on this body worth taking" tell spec §3.11 asks
+        /// for over a corpse that is already on the floor.
+        static ContainerView GetOrCreateContainerPrefab(string prefabPath, string modelPath,
+            Material markerMat, float scale)
+        {
+            if (AssetDatabase.LoadAssetAtPath<ContainerView>(prefabPath) != null)
+            {
+                if (modelPath == null
+                    || EditorBootstrapUtils.PrefabVisualsMatch(prefabPath, ("Visual", modelPath)))
+                    return AssetDatabase.LoadAssetAtPath<ContainerView>(prefabPath);
+                AssetDatabase.DeleteAsset(prefabPath);
+            }
+            return EditorBootstrapUtils.BuildPrefab<ContainerView>(prefabPath, () =>
+            {
+                var go = new GameObject(System.IO.Path.GetFileNameWithoutExtension(prefabPath));
+                GameObject visual;
+                if (modelPath == null)
+                {
+                    visual = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    visual.name = "Visual";
+                    EditorBootstrapUtils.RemoveCollider(visual);
+                    visual.transform.SetParent(go.transform, false);
+                    visual.GetComponent<MeshRenderer>().sharedMaterial = markerMat;
+                    visual.transform.localScale = Vector3.one * scale;
+                }
+                else
+                {
+                    bool changed = false;
+                    // No controller: these props carry no takes at all (they are
+                    // static furniture), and `DefaultControllerFor` answers null
+                    // for exactly that case.
+                    visual = EditorBootstrapUtils.EnsureVisual(go, modelPath,
+                        EditorBootstrapUtils.DefaultControllerFor(modelPath), scale, ref changed);
+                }
+
+                ContainerView view = go.AddComponent<ContainerView>();
+                var so = new SerializedObject(view);
+                EditorBootstrapUtils.SetRef(so, "_visual", visual.transform);
+                so.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
+
         static bool AddDecalRendererFeatureIfMissing(string rendererDataPath)
         {
             var data = AssetDatabase.LoadAssetAtPath<ScriptableRendererData>(rendererDataPath);

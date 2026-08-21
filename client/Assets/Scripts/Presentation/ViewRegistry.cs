@@ -131,16 +131,32 @@ namespace Ring.Presentation
         [SerializeField] MobView _elitePrefab;
         [SerializeField] MobView _directorPrefab;
         [SerializeField] ProjectileView _projectilePrefab;
+        // Stage 3 Task 31 (spec §3.11): the raid's own furniture. One prefab
+        // per DRAWN container kind — `MobCorpse`/`PlayerCorpse` share the
+        // marker, because their body is already on the floor (`ContainerView`'s
+        // own doc).
+        [SerializeField] PickupView _pickupPrefab;
+        [SerializeField] ContainerView _crateContainerPrefab;
+        [SerializeField] ContainerView _cacheContainerPrefab;
+        [SerializeField] ContainerView _groundContainerPrefab;
+        [SerializeField] ContainerView _corpseMarkerPrefab;
 
         Dictionary<int, PlayerView> _activePlayers;
         Dictionary<int, MobView> _activeMobs;
         Dictionary<int, ProjectileView> _activeProjectiles;
+        Dictionary<int, PickupView> _activePickups;
+        Dictionary<int, ContainerView> _activeContainers;
         Stack<PlayerView> _playerPool;
         Stack<MobView> _chaserPool;
         Stack<MobView> _gunnerPool;
         Stack<MobView> _elitePool;
         Stack<MobView> _directorPool;
         Stack<ProjectileView> _projectilePool;
+        Stack<PickupView> _pickupPool;
+        Stack<ContainerView> _cratePool;
+        Stack<ContainerView> _cachePool;
+        Stack<ContainerView> _groundPool;
+        Stack<ContainerView> _corpseMarkerPool;
 
         // Stage 2 Task 45a fix-round 1: the detached dolls (class doc). Not a
         // pool — `Clear` hands them back to `_playerPool` and nothing else
@@ -181,6 +197,8 @@ namespace Ring.Presentation
         HashSet<int> _seenPlayerSlots;
         HashSet<int> _seenMobIds;
         HashSet<int> _seenProjectileIds;
+        HashSet<int> _seenPickupIds;
+        HashSet<int> _seenContainerIds;
         List<int> _staleIdsScratch;
 
         void Awake()
@@ -217,7 +235,29 @@ namespace Ring.Presentation
             _projectilePool = new Stack<ProjectileView>(projCap);
             _seenMobIds = new HashSet<int>(mobCap);
             _seenProjectileIds = new HashSet<int>(projCap);
-            _staleIdsScratch = new List<int>(math.max(mobCap, projCap));
+
+            // Stage 3 Task 31. Pickups are capped per match by
+            // `Arena.MaxPickups` and containers by `Arena.MaxContainers`, the
+            // same "size the pool from the simulation's own ceiling" rule the
+            // three pools above already follow. The four CONTAINER pools are
+            // each sized at the whole container cap rather than at a guessed
+            // share of it — Б6's rule, and the kind mix genuinely varies:
+            // crates and caches are placed once at match start, ground drops
+            // and corpses accumulate as the raid goes.
+            int pickupCap = _arena.MaxPickups;
+            int containerCap = _arena.MaxContainers;
+            _activePickups = new Dictionary<int, PickupView>(pickupCap);
+            _activeContainers = new Dictionary<int, ContainerView>(containerCap);
+            _pickupPool = new Stack<PickupView>(pickupCap);
+            _cratePool = new Stack<ContainerView>(containerCap);
+            _cachePool = new Stack<ContainerView>(containerCap);
+            _groundPool = new Stack<ContainerView>(containerCap);
+            _corpseMarkerPool = new Stack<ContainerView>(containerCap);
+            _seenPickupIds = new HashSet<int>(pickupCap);
+            _seenContainerIds = new HashSet<int>(containerCap);
+
+            _staleIdsScratch = new List<int>(
+                math.max(math.max(mobCap, projCap), math.max(pickupCap, containerCap)));
         }
 
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
@@ -280,6 +320,27 @@ namespace Ring.Presentation
                 _projectilePool.Push(kv.Value);
             }
             _activeProjectiles.Clear();
+
+            // Stage 3 Task 31 (spec Р291, and Т35's reset list names this
+            // explicitly): the pickups and containers go back too. A restart
+            // hands out entity ids from 1 again, so a cell or a crate left
+            // active here would both leak and collide with a fresh id.
+            foreach (KeyValuePair<int, PickupView> kv in _activePickups)
+            {
+                kv.Value.gameObject.SetActive(false);
+                _pickupPool.Push(kv.Value);
+            }
+            _activePickups.Clear();
+
+            foreach (KeyValuePair<int, ContainerView> kv in _activeContainers)
+            {
+                kv.Value.gameObject.SetActive(false);
+                // Kind is set by Bind before a view ever reaches
+                // _activeContainers (the only path in — see RentContainer/
+                // SyncContainers), so it is always valid here.
+                ContainerPoolFor(kv.Value.Kind).Push(kv.Value);
+            }
+            _activeContainers.Clear();
         }
 
         void LateUpdate()
@@ -292,6 +353,8 @@ namespace Ring.Presentation
             SyncPlayers();
             SyncMobs();
             SyncProjectiles();
+            SyncPickups();
+            SyncContainers();
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer
@@ -1193,6 +1256,98 @@ namespace Ring.Presentation
             for (int i = 0; i < _staleIdsScratch.Count; i++) RetireProjectile(_staleIdsScratch[i]);
         }
 
+        /// The cells on the floor (spec §3.11, Stage 3 Task 31). Deliberately
+        /// the simplest sync in this class: a pickup does not move, so there is
+        /// no `prev`/`alpha` interpolation to do — it is spawned where the
+        /// simulation says and it stays there until somebody takes it.
+        ///
+        /// THIS RUNS OFF `Curr`, NOT `RenderCurr`, and the difference is not an
+        /// oversight: the render pair exists so a hitstop can freeze MOVING
+        /// things mid-flight (Т25, П-7), and a stationary object has nothing to
+        /// freeze. Reading the live snapshot instead means a cell appears and
+        /// disappears on the tick the server says, with no render-buffer lag on
+        /// top of the network's own.
+        ///
+        /// EMPTY OVER THE WIRE UNTIL Т32, and that is by construction rather
+        /// than by defect: the client does not decode the `Pickups` block yet
+        /// (`NetworkSimBackend`'s own list of five undecoded blocks, bd
+        /// app-gggs' neighbor). On the local backend — host mode, the В1
+        /// playtest — `RenderSnapshot.Pickups` is the world's own array and
+        /// this draws today.
+        void SyncPickups()
+        {
+            RenderSnapshot curr = _runner.Curr;
+
+            _seenPickupIds.Clear();
+            for (int i = 0; i < curr.PickupCount; i++)
+            {
+                PickupState pickup = curr.Pickups[i];
+                _seenPickupIds.Add(pickup.Id);
+
+                if (!_activePickups.TryGetValue(pickup.Id, out PickupView view))
+                {
+                    view = RentPickup();
+                    view.Bind(_gameFeel.PickupVisualDiameter);
+                    _activePickups.Add(pickup.Id, view);
+                }
+                // Written every frame rather than only on rent: the owner can
+                // move a cell by hot-tweaking nothing at all, but a RESTART
+                // reuses ids, and a pooled view that kept last match's position
+                // for one frame would visibly jump.
+                view.transform.position = SimSpace.ToWorld(pickup.Pos);
+            }
+
+            _staleIdsScratch.Clear();
+            foreach (KeyValuePair<int, PickupView> kv in _activePickups)
+            {
+                if (!_seenPickupIds.Contains(kv.Key)) _staleIdsScratch.Add(kv.Key);
+            }
+            for (int i = 0; i < _staleIdsScratch.Count; i++) RetirePickup(_staleIdsScratch[i]);
+        }
+
+        /// The crates, caches, dropped bundles and corpse markers (spec
+        /// §3.7/§3.11, Stage 3 Task 31). Same shape as `SyncPickups` above and
+        /// for the same reasons — a container never moves either — with one
+        /// addition: the KIND picks the prefab, so a view whose container
+        /// somehow changed kind under the same id has to be re-rented rather
+        /// than re-pointed. That cannot happen today (`SpawnContainer` gives
+        /// every container a fresh id and `ContainerState.Kind` is never
+        /// written again), and the guard is one comparison — the cheap side of
+        /// a trade whose expensive side is a crate silently drawn as a corpse
+        /// marker.
+        void SyncContainers()
+        {
+            RenderSnapshot curr = _runner.Curr;
+
+            _seenContainerIds.Clear();
+            for (int i = 0; i < curr.ContainerCount; i++)
+            {
+                ContainerState container = curr.Containers[i];
+                _seenContainerIds.Add(container.Id);
+
+                if (_activeContainers.TryGetValue(container.Id, out ContainerView view)
+                    && view.Kind != container.Kind)
+                {
+                    RetireContainer(container.Id);
+                    view = null;
+                }
+                if (view == null)
+                {
+                    view = RentContainer(container.Kind);
+                    view.Bind(container.Kind, _gameFeel.ContainerVisualScale);
+                    _activeContainers.Add(container.Id, view);
+                }
+                view.transform.position = SimSpace.ToWorld(container.Pos);
+            }
+
+            _staleIdsScratch.Clear();
+            foreach (KeyValuePair<int, ContainerView> kv in _activeContainers)
+            {
+                if (!_seenContainerIds.Contains(kv.Key)) _staleIdsScratch.Add(kv.Key);
+            }
+            for (int i = 0; i < _staleIdsScratch.Count; i++) RetireContainer(_staleIdsScratch[i]);
+        }
+
         static float2 FindMobPrevPos(RenderSnapshot prev, int id, float2 fallback)
         {
             for (int i = 0; i < prev.MobCount; i++)
@@ -1313,6 +1468,72 @@ namespace Ring.Presentation
             _activeProjectiles.Remove(id);
             view.gameObject.SetActive(false);
             _projectilePool.Push(view);
+        }
+
+        /// The container homes (Stage 3 Task 31), same throwing shape as
+        /// `PoolFor`/`PrefabFor` above. `MobCorpse` and `PlayerCorpse` answer
+        /// with the SAME pool and the same prefab on purpose: both are a marker
+        /// laid over a body somebody else already drew, and splitting them
+        /// would be two pools holding identical objects.
+        Stack<ContainerView> ContainerPoolFor(ContainerKind kind) => kind switch
+        {
+            ContainerKind.Crate => _cratePool,
+            ContainerKind.Cache => _cachePool,
+            ContainerKind.Ground => _groundPool,
+            ContainerKind.MobCorpse => _corpseMarkerPool,
+            ContainerKind.PlayerCorpse => _corpseMarkerPool,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(kind), kind,
+                "unknown container kind"),
+        };
+
+        ContainerView ContainerPrefabFor(ContainerKind kind) => kind switch
+        {
+            ContainerKind.Crate => _crateContainerPrefab,
+            ContainerKind.Cache => _cacheContainerPrefab,
+            ContainerKind.Ground => _groundContainerPrefab,
+            ContainerKind.MobCorpse => _corpseMarkerPrefab,
+            ContainerKind.PlayerCorpse => _corpseMarkerPrefab,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(kind), kind,
+                "unknown container kind"),
+        };
+
+        PickupView RentPickup()
+        {
+            if (_pickupPool.Count > 0)
+            {
+                PickupView v = _pickupPool.Pop();
+                v.gameObject.SetActive(true);
+                return v;
+            }
+            return Instantiate(_pickupPrefab, transform);
+        }
+
+        ContainerView RentContainer(ContainerKind kind)
+        {
+            Stack<ContainerView> pool = ContainerPoolFor(kind);
+            if (pool.Count > 0)
+            {
+                ContainerView v = pool.Pop();
+                v.gameObject.SetActive(true);
+                return v;
+            }
+            return Instantiate(ContainerPrefabFor(kind), transform);
+        }
+
+        void RetirePickup(int id)
+        {
+            if (!_activePickups.TryGetValue(id, out PickupView view)) return;
+            _activePickups.Remove(id);
+            view.gameObject.SetActive(false);
+            _pickupPool.Push(view);
+        }
+
+        void RetireContainer(int id)
+        {
+            if (!_activeContainers.TryGetValue(id, out ContainerView view)) return;
+            _activeContainers.Remove(id);
+            view.gameObject.SetActive(false);
+            ContainerPoolFor(view.Kind).Push(view);
         }
     }
 }

@@ -117,3 +117,5 @@ MonoBehaviour:
   MeshSagMeters: 0.05
   EliteVisualScale: 0.75
   DirectorVisualScale: 3.5
+  PickupVisualDiameter: 0.5
+  ContainerVisualScale: 1
