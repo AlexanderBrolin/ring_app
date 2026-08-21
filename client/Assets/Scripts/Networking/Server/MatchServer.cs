@@ -1035,7 +1035,7 @@ namespace Ring.Networking.Server
         /// Т28, spec §3.8). THE HANDLER DECIDES NOTHING, on purpose — every
         /// rule it applies belongs to a seam that EditMode can reach:
         /// `LootNet.IsCurrentEpoch` for the epoch, `SimulationWorld.
-        /// TryBeginLoot` for the ten checks and the channel, `LootNet.
+        /// TryBeginLoot` for the validation and the channel, `LootNet.
         /// ResultFor` for the reply. That split is `SpectateTests`'s own
         /// recorded lesson: FishNet wiring needs a live `NetworkManager` this
         /// project's tests cannot raise, so a decision left inline here is a

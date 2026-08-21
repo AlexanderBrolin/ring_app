@@ -29,7 +29,25 @@ namespace Ring.Networking.Client
     /// with no reply at all is a request that reached no match (foreign
     /// epoch, unseated connection, stopped server), and `Reset` covers it:
     /// `NetworkSimBackend.SyncMatchEpoch` calls it on every epoch change, the
-    /// same place it drops the spectate window and the mob-type memory.
+    /// same place it drops the spectate window and the mob-type memory. A
+    /// request that never LEFT this process is covered at the other end,
+    /// by the caller: `NetworkSimBackend.TryRequestLoot` opens this wait and
+    /// takes it back if the send did not happen (review Т28, I-1).
+    ///
+    /// ONE LATCH IS LEFT, NAMED RATHER THAN SILENTLY ACCEPTED (review Т28,
+    /// M-1). A request still in flight when the MATCH ENDS gets no reply —
+    /// `MatchServer.StopMatch` drops `_running` before the handler can answer
+    /// — and the epoch does not change until a restart arrives, so `InFlight`
+    /// stays up across the end-of-match screen (and indefinitely if no
+    /// restart comes). The same holds for a request sent before the opening
+    /// welcome, which is stamped epoch 0 and dropped by the far end's gate.
+    /// Neither is fixed here: the only consumer of `InFlight` is the
+    /// inventory window, which does not exist yet, and inventing an
+    /// end-of-match observation seam in the backend for a surface nobody has
+    /// built would be machinery for its own sake (AGENT.md rule 3).
+    /// ADDRESSEE — Т32, which builds that window: it either clears this wait
+    /// where the client applies `MatchEndedNet`, or states that a ghost may
+    /// outlive a match and draws accordingly.
     public sealed class LootRequestTracker
     {
         /// True between a request leaving and its answer arriving — the
@@ -59,13 +77,26 @@ namespace Ring.Networking.Client
         /// replay of the operation.
         public LootRefusal LastCode { get; private set; }
 
-        /// Opens the wait. Refuses — returning false, never throwing — while
-        /// another request is already outstanding: the ghost names ONE slot,
-        /// and a second request would either steal that name or need a
-        /// second ghost the surface has no way to show.
+        /// Opens the wait. Refuses — returning false, never throwing — for
+        /// two reasons, and BOTH are rules rather than bookkeeping.
+        ///
+        /// (1) ANOTHER REQUEST IS ALREADY OUTSTANDING. The ghost names ONE
+        ///     slot, and a second request would either steal that name or
+        ///     need a second ghost the surface has no way to show.
+        /// (2) `slot` IS OUTSIDE WHAT A BYTE CAN NAME (review Т28, I-2). The
+        ///     wire field is one byte, so an out-of-range index would be
+        ///     TRUNCATED on the way out — `(byte)300` is 44 — and the server
+        ///     would honestly operate on slot 44 while this tracker waited on
+        ///     300. The reply echoes 44, `TryClose` refuses it as somebody
+        ///     else's, and the ghost latches forever over an operation that
+        ///     really happened. The check lives HERE and not at the send
+        ///     site because the send site is FishNet wiring no EditMode test
+        ///     can reach — the same reason Т28 moved the epoch stamp into
+        ///     `ClientLinkState`.
         public bool TryOpen(LootOp op, int containerId, int slot)
         {
             if (InFlight) return false;
+            if (slot < 0 || slot > byte.MaxValue) return false;
 
             InFlight = true;
             Op = op;

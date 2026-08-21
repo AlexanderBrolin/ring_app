@@ -43,8 +43,11 @@ namespace Ring.Simulation.Loot
     /// container. Т19 added the repair kit's own channel (it runs on
     /// RepairTimer, not LootTimer) — `Begin`'s `Use` branch, `Validate`'s
     /// twelfth check (ItemNotUsable), and `Update`'s second completion loop.
-    /// Still elsewhere: LootRequestNet/LootResultNet are Т28; SimEventKind's
-    /// own loot entries are Т29. The wire, the movement slowdown,
+    /// Т28 built the wire on top of all of it — LootRequestNet/LootResultNet
+    /// and their epoch gate live in Networking/Protocol/LootNet.cs, and
+    /// SimulationWorld.TryBeginLoot is the one production caller of Validate
+    /// and Begin below. Still elsewhere: SimEventKind's own loot entries are
+    /// Т29. The wire, the movement slowdown,
     /// WeaponSystem.CanFire's `!InventoryOpen` term and the window
     /// sanitizer landed in Т20 — see SimInputSanitizer.Sanitize, InputCodec
     /// and WeaponSystem.CanFire's own docs for that half of the story; none
@@ -218,7 +221,10 @@ namespace Ring.Simulation.Loot
         /// (coordinator D-2, see that branch's own doc). Begin stays the ONE
         /// entry point of all three ops (its signature takes `op` for
         /// exactly that reason); splitting Drop or Use out would push a game
-        /// rule into Т28's networking switch.
+        /// rule into Т28's networking switch. THAT CALLER NOW EXISTS and the
+        /// prediction held: `MatchServer.OnLootRequest` forwards a wire `op`
+        /// straight through `SimulationWorld.TryBeginLoot` and carries no
+        /// switch of its own.
         public static void Begin(SimulationWorld w, int playerIndex, LootOp op,
             int containerId, int slot)
         {

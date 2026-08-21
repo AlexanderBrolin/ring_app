@@ -34,9 +34,9 @@ namespace Ring.Simulation.Core
         /// this paragraph used to predict "a reliable message a later task
         /// adds", and the prediction did not come true). Spec §3.12 puts it
         /// in the SNAPSHOT, as the ContainerSlots block (tag 10), sent only
-        /// to a collector inside LootRadius; the reliable pair Т28 adds
-        /// carries loot REQUESTS and refusal codes, not the contents of a
-        /// box. The assembler reads those contents straight from the world
+        /// to a collector inside LootRadius; the reliable pair Т28 added
+        /// (LootRequestNet/LootResultNet) carries loot REQUESTS and refusal
+        /// codes, not the contents of a box. The assembler reads those contents straight from the world
         /// through SimulationWorld.ContainerItemAt — a public accessor added
         /// for exactly this, so that a per-tick copy of
         /// MaxContainers * MaxContainerSlots bytes is NOT taken here for

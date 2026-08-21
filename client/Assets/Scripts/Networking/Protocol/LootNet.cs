@@ -24,14 +24,19 @@ namespace Ring.Networking.Protocol
     /// NOTHING HERE IS TRUSTED. Every field arrives from a client the server
     /// has no reason to believe (CR 3): the epoch is checked by
     /// `LootNet.IsCurrentEpoch`, and `Op`, `ContainerId` and `Slot` are all
-    /// bounded by `Loot.LootOps.Validate`'s own ten checks — none of them by
+    /// bounded by `Loot.LootOps.Validate`'s own checks — none of them by
     /// this struct, which carries no opinion at all.
     public struct LootRequestNet : IBroadcast
     {
         /// The match this request is about (Р237/Р292). MANDATORY on every
-        /// lifecycle message of this project for one reason: a request that
-        /// was in flight when the match restarted must not be applied to the
-        /// new one. `LootNet.IsCurrentEpoch` is the one place that decides.
+        /// lifecycle message THAT MUTATES MATCH STATE, for one reason: a
+        /// request in flight when the match restarted must not be applied to
+        /// the new one. Not on every lifecycle message at all — review Т28,
+        /// M-2: `SpectateRequestNet` is of the same class and carries no
+        /// epoch, because an accepted switch changes only which entities one
+        /// connection is sent and a stale one costs a frame of the wrong
+        /// viewpoint, not a moved item. `LootNet.IsCurrentEpoch` is the one
+        /// place that decides.
         public ushort MatchEpoch;
 
         /// `Loot.LootOp` as a byte — the same enum-rides-as-byte convention

@@ -26,9 +26,9 @@ namespace Ring.Simulation.Tests
     /// anything was kept out of them for exactly that reason. What is left
     /// inside a handler is a slot lookup, a call and a send.
     ///
-    /// THE TEN VALIDATION CHECKS ARE NOT RE-TESTED HERE either: they are
+    /// THE VALIDATION CHECKS ARE NOT RE-TESTED HERE either: they are
     /// `LootOps.Validate`'s, they were tested by `LootOpsTests` at Т17-Т19,
-    /// and Т28 adds no eleventh. What this file witnesses about them is the
+    /// and Т28 adds none of its own. What this file witnesses about them is the
     /// only thing that is new — that a request arriving from the wire
     /// reaches them at all, and that the code they answer with comes back out
     /// the same way it went in.
@@ -52,9 +52,9 @@ namespace Ring.Simulation.Tests
         /// tick and nothing else writes that array. A ticking fixture with a
         /// live collector standing in the core would wake the Director and
         /// its escort; the zone-free arena is the recorded way out.
-        static SimulationWorld MakeWorld(out SimConfig cfg, out int containerId)
+        static SimulationWorld MakeWorld(out int containerId)
         {
-            cfg = TestConfigs.OpenField();
+            SimConfig cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
             containerId = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f),
@@ -339,7 +339,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void LegalRequest_IsAcceptedAndOpensTheChannel()
         {
-            var w = MakeWorld(out SimConfig cfg, out int containerId);
+            var w = MakeWorld(out int containerId);
             TickWithWindowsOpen(w);
 
             LootRefusal code = w.TryBeginLoot(0, LootOp.Take, containerId, 0);
@@ -360,7 +360,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void RequestFromDeadPlayer_IsRefusedWithCode()
         {
-            var w = MakeWorld(out SimConfig cfg, out int containerId);
+            var w = MakeWorld(out int containerId);
             TickWithWindowsOpen(w);
             w.KillPlayerNoDamage(0);
             Assert.IsFalse(w.PlayerAt(0).Alive, "premise: the collector must actually be dead");
@@ -379,7 +379,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void RequestFromExtractedPlayer_IsRefusedWithCode()
         {
-            var w = MakeWorld(out SimConfig cfg, out int containerId);
+            var w = MakeWorld(out int containerId);
             TickWithWindowsOpen(w);
             PlayerState p = w.PlayerAt(0);
             p.Extracted = true;
@@ -461,6 +461,31 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(77, tracker.ContainerId, "…and the refused one changes nothing");
             Assert.AreEqual(3, tracker.Slot);
             Assert.AreEqual(LootOp.Take, tracker.Op);
+        }
+
+        /// Review Т28, I-2: the wire field is ONE byte, so a slot no byte can
+        /// name must never open a wait. The concrete failure the rule
+        /// prevents: `(byte)300` is 44, so the server would honestly operate
+        /// on slot 44, echo 44, and `TryClose` — waiting on 300 — would refuse
+        /// its own answer and latch the ghost over an operation that really
+        /// happened.
+        ///
+        /// 255 IS THE POSITIVE WITNESS, and it is the boundary rather than a
+        /// comfortable middle: a rule written `>= byte.MaxValue` would pass
+        /// every other test in this file and fail only here.
+        [Test]
+        public void Tracker_RefusesASlotNoByteCanName()
+        {
+            var tracker = new LootRequestTracker();
+
+            Assert.IsFalse(tracker.TryOpen(LootOp.Take, containerId: 77, slot: -1),
+                "a negative index names nothing");
+            Assert.IsFalse(tracker.TryOpen(LootOp.Take, containerId: 77, slot: 256),
+                "…and one past what the wire byte can carry would be TRUNCATED into a stranger");
+            Assert.IsFalse(tracker.InFlight, "neither refusal may leave a ghost behind");
+
+            Assert.IsTrue(tracker.TryOpen(LootOp.Take, containerId: 77, slot: byte.MaxValue),
+                "the last slot a byte CAN name is legal — the boundary is inclusive");
         }
 
         [Test]

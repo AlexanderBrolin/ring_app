@@ -774,7 +774,7 @@ namespace Ring.Networking.Client
         /// IT DECIDES NOTHING ELSE, like every other method here. WHETHER to
         /// ask — including whether a ghost is already outstanding — belongs to
         /// the caller's own `LootRequestTracker`; whether to ACT on the asking
-        /// is the server's alone (`LootOps.Validate`'s ten checks).
+        /// is the server's alone (`LootOps.Validate`).
         ///
         /// Reliable, the "Lifecycle" class of spec §3.7's table Р27, and for
         /// the sharper reason this one shares with the spectate request: a
@@ -782,10 +782,25 @@ namespace Ring.Networking.Client
         /// wire to say which of the two happened. UNLIKE that one, this wire
         /// does answer — `LootResultNet` comes back for every request the
         /// server acted on, accepted or refused.
-        public void RequestLoot(LootOp op, int containerId, byte slot)
+        public bool RequestLoot(LootOp op, int containerId, byte slot)
         {
+            // IT REPORTS WHETHER THE BYTES ACTUALLY LEFT (review Т28, I-1),
+            // which `RequestSpectate` above has no need of. FishNet's own
+            // `ClientManager.Broadcast<T>` opens with `if (!Started) {
+            // LogWarning(...); return; }` — verified in the pinned 4.7.2
+            // (Managing/Client/ClientManager.Broadcast.cs) — so a request made
+            // while the transport is down costs a warning line and NO packet,
+            // silently. The spectate request survives that silently too,
+            // because its caller's window decays; the loot ghost has no decay
+            // by design (it waits for a reply this wire really does send), so
+            // a send that never happened would strand it forever. `Started`
+            // is FishNet's own predicate, read here rather than duplicated:
+            // this returns the same answer its guard is about to give.
+            if (!_nm.ClientManager.Started) return false;
+
             _nm.ClientManager.Broadcast(_state.LootRequestFor(op, containerId, slot),
                 Channel.Reliable);
+            return true;
         }
     }
 }

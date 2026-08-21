@@ -646,14 +646,24 @@ namespace Ring.Presentation.Net
         public bool TryRequestLoot(LootOp op, int containerId, int slot)
         {
             if (_link == null) return false;
-            // The wire field is a byte, and both domains it addresses fit in
-            // one: a slot that cannot be named is a slot that cannot be asked
-            // for. Same shape as `TryRequestSpectate`'s own range refusal.
-            if (slot < 0 || slot > byte.MaxValue) return false;
+            // Both refusals that are RULES live in the tracker (review Т28,
+            // I-2): one request at a time, and a slot a byte can name. What
+            // is left here is wiring.
             if (!_lootRequests.TryOpen(op, containerId, slot)) return false;
 
-            _link.RequestLoot(op, containerId, (byte)slot);
-            return true;
+            // THE GHOST IS TAKEN BACK IF THE BYTES NEVER LEFT (review Т28,
+            // I-1). `RequestLoot` answers FishNet's own `ClientManager.
+            // Started`, which refuses to send while the transport is down —
+            // silently, with a warning line and no packet. Without this
+            // rollback that request would wait for a reply nobody will ever
+            // send, and, because the tracker admits one wait at a time, every
+            // later loot request this session would be refused too. `Reset`
+            // is exact here rather than heavy-handed: `TryOpen` succeeded one
+            // line ago, so this wait is the only thing there is to forget.
+            if (_link.RequestLoot(op, containerId, (byte)slot)) return true;
+
+            _lootRequests.Reset();
+            return false;
         }
 
         /// Whether a loot request is still waiting for its answer — the
