@@ -148,7 +148,14 @@ namespace Ring.Editor
         /// pack's maps are wired explicitly — base color texture plus the
         /// EMISSIVE MASK, so the red glow sits in the authored zones instead of
         /// flooding the whole mesh.
-        static Material GetOrCreateDirectorSkin()
+        /// Internal since Stage 3 Task 31: `StageOneSceneBootstrap` builds the
+        /// PRODUCTION Director prefab out of the same mesh and needs the same
+        /// skin on it. Reused rather than restated (rule 2) — the material is
+        /// self-healing and idempotent, so calling it from a second bootstrap
+        /// costs one asset load when the material is already healthy, and the
+        /// owner's accepted look has exactly one recipe instead of two that
+        /// can drift apart.
+        internal static Material GetOrCreateDirectorSkin()
         {
             if (AssetDatabase.LoadAssetAtPath<Material>(ObsoleteDirectorMatPath) != null)
                 AssetDatabase.DeleteAsset(ObsoleteDirectorMatPath);

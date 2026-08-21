@@ -377,12 +377,31 @@ namespace Ring.Editor
         // this is the SOLE place the pair is chosen.
         const string ChaserModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/George.fbx";
         const string GunnerModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/Leela.fbx";
+        // Stage 3 Task 31 (spec §3.11/Р251, owner decision R-192): the other
+        // two archetypes, out of the OTHER pack — ASSETS-001 §2.2 reserves the
+        // Sci-Fi Essentials robots for Elite and the Director's escort
+        // precisely so they cannot be mistaken for wave meat, and §2.3 gives
+        // the Director the kit's biggest robot at a scale of its own.
+        //
+        // WHY THESE TWO OF THE KIT'S THREE, measured against the generated
+        // controllers rather than chosen by name: `Enemy_EyeDrone` carries
+        // neither Walk nor Run nor any death take (it is a hovering drone),
+        // so it cannot drive `MobVisual`'s locomotion at all and stays a
+        // reserve. `Enemy_Trilobite` and `Enemy_QuadShell` both carry
+        // Idle/Walk/Run/Attack/TurnOff, and the owner already looked at both
+        // on the preview stage — Trilobite as the big elite (halved, asset
+        // milestone 3), QuadShell as the Director's stub in `DirectorSkin`.
+        // Same "SOLE place the pair is chosen" rule as the mech pair above.
+        const string EliteModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Enemy_Trilobite.fbx";
+        const string DirectorModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Enemy_QuadShell.fbx";
         // Stage 2 Task 45a (spec §3.12): the collector doll is a pooled prefab
         // now, one instance per player slot, rented by `ViewRegistry` — the
         // scene's own `Player` object is retired in `Apply`.
         const string PlayerDollPrefabPath = PrefabsDir + "/PlayerDollView.prefab";
         const string MobChaserPrefabPath = PrefabsDir + "/MobChaserView.prefab";
         const string MobGunnerPrefabPath = PrefabsDir + "/MobGunnerView.prefab";
+        const string MobElitePrefabPath = PrefabsDir + "/MobEliteView.prefab";
+        const string MobDirectorPrefabPath = PrefabsDir + "/MobDirectorView.prefab";
         const string CorpseMechPrefabPath = PrefabsDir + "/CorpseMechView.prefab";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
@@ -600,10 +619,12 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `MeshSagMeters` as of Stage 3 Task 30 —
-            // the arc-segmentation tolerance and the three zone floor tints
-            // are that class's new last fields, and the committed asset
-            // predates all four — was `GunEjectLocalEuler` (Stage 2 Task 45b)
+            // field (GameFeelConfig: `DirectorVisualScale` as of Stage 3 Task
+            // 31 — the two archetype scales are that class's new last fields
+            // and the committed asset predates both — was `MeshSagMeters`
+            // (Stage 3 Task 30, the arc-segmentation tolerance shipped
+            // alongside the three zone floor tints) before that,
+            // `GunEjectLocalEuler` (Stage 2 Task 45b)
             // before that, `RemotePlayerEmission` (Stage 2 Task
             // 45a) before THAT — was `HeadHoverPulseAmp` (В3 fix-wave 2) before that,
             // `AimRayHeadAlphaBoost` (В3 fix-wave 1) before THAT,
@@ -642,7 +663,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "EmergencyFireInterval"); // Stage 3 Task 2 (was RunSpreadSpeedFrac, Task 17)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "MeshSagMeters"); // Stage 3 Task 30 (was GunEjectLocalEuler, Stage 2 Task 45b)
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "DirectorVisualScale"); // Stage 3 Task 31 (was MeshSagMeters, Task 30)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
             // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
@@ -1410,6 +1431,21 @@ namespace Ring.Editor
                 MobGunnerPrefabPath, GunnerModelPath, gameFeel.GunnerVisualScale,
                 gunner.LegsTop, gunner.BodyTop, gunner.HeadTop, gunner.Radius,
                 gameFeel.AimProxyHeadRadiusFrac);
+            // Stage 3 Task 31: the two archetypes that used to be rented out of
+            // the Gunner's pool. Their belts come from their OWN MobConfigs, so
+            // the Director's aim proxies are the Director's size — a boss you
+            // could only headshot at a Gunner's head height would be worse than
+            // no proxy at all.
+            Material directorSkin = AssetPreviewSceneBootstrap.GetOrCreateDirectorSkin();
+            MobView elitePrefab = GetOrCreateMobArchetypePrefab(
+                MobElitePrefabPath, EliteModelPath, gameFeel.EliteVisualScale,
+                elite.LegsTop, elite.BodyTop, elite.HeadTop, elite.Radius,
+                gameFeel.AimProxyHeadRadiusFrac, AnimIds.MobClipFamily.SciFiEnemy);
+            MobView directorPrefab = GetOrCreateMobArchetypePrefab(
+                MobDirectorPrefabPath, DirectorModelPath, gameFeel.DirectorVisualScale,
+                director.LegsTop, director.BodyTop, director.HeadTop, director.Radius,
+                gameFeel.AimProxyHeadRadiusFrac, AnimIds.MobClipFamily.SciFiEnemy,
+                directorSkin);
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
             // Stage 2 Task 45a: the collector doll, same factory shape as the
@@ -1447,6 +1483,8 @@ namespace Ring.Editor
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_playerPrefab", playerDollPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_chaserPrefab", chaserPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gunnerPrefab", gunnerPrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_elitePrefab", elitePrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_directorPrefab", directorPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
             if (viewsRefsChanged)
             {
@@ -1625,7 +1663,10 @@ namespace Ring.Editor
             GetOrCreateCorpsePrefab(corpseMat);
             CorpseView corpseMechPrefab = GetOrCreateCorpseMechPrefab(
                 CorpseMechPrefabPath, ChaserModelPath, GunnerModelPath,
-                gameFeel.ChaserVisualScale, gameFeel.GunnerVisualScale);
+                EliteModelPath, DirectorModelPath,
+                gameFeel.ChaserVisualScale, gameFeel.GunnerVisualScale,
+                gameFeel.EliteVisualScale, gameFeel.DirectorVisualScale,
+                directorSkin);
             DashGlowView dashGlowPrefab = GetOrCreateDashGlowPrefab(dashGlowMat);
             GibView gibPrefab = GetOrCreateGibPrefab();
 
@@ -2208,9 +2249,23 @@ namespace Ring.Editor
         /// whose visuals already match (`SelfHealAimProxyOnPrefab`, UNDER the
         /// `PrefabVisualsMatch` early return, PC2) and a freshly-built one
         /// (inline in the `build()` closure below).
+        /// Stage 3 Task 31 adds `clipFamily` and `skin`. The FAMILY is which
+        /// pack's take names this model's controller carries — `MobVisual`
+        /// reads it instead of the six loose mech constants it used to
+        /// (`AnimIds.MobClipSet`), because the Sci-Fi kit calls its takes
+        /// Attack/TurnOff where the mech pack says Punch/Shoot/Death. The SKIN
+        /// is an optional material override for every renderer under `Visual`:
+        /// the Director is the same `Enemy_QuadShell` mesh Elite's own kit
+        /// ships, and what tells him apart at a glance — besides being three
+        /// and a half times the size — is `DirectorSkin.mat`, the darkened,
+        /// red-emissive clone of the pack material the owner accepted at asset
+        /// milestone 3. `null` leaves the model's own materials alone, which is
+        /// what all three of the other archetypes pass.
         static MobView GetOrCreateMobArchetypePrefab(string prefabPath, string modelPath,
             float visualScale, float legsTop, float bodyTop, float headTop,
-            float bodyRadius, float headRadiusFrac)
+            float bodyRadius, float headRadiusFrac,
+            AnimIds.MobClipFamily clipFamily = AnimIds.MobClipFamily.Mech,
+            Material skin = null)
         {
             if (AssetDatabase.LoadAssetAtPath<MobView>(prefabPath) != null)
             {
@@ -2230,11 +2285,13 @@ namespace Ring.Editor
                 GameObject visual = EditorBootstrapUtils.EnsureVisual(go, modelPath,
                     ThirdPartyAnimatorBootstrap.ControllerPathFor(modelPath),
                     visualScale, ref changed);
+                if (skin != null) ApplySkin(visual, skin);
                 go.AddComponent<MobView>();
                 MobVisual mobVisual = go.AddComponent<MobVisual>();
                 var so = new SerializedObject(mobVisual);
                 EditorBootstrapUtils.SetRef(so, "_animator", visual.GetComponent<Animator>());
                 EditorBootstrapUtils.SetRef(so, "_visual", visual.transform);
+                so.FindProperty("_clipFamily").enumValueIndex = (int)clipFamily;
                 so.ApplyModifiedPropertiesWithoutUndo();
                 // Task 19: AimProxy_Legs/Body/Head siblings of Visual, at
                 // prefab-root local space (EnsureAimProxyChildren's own doc).
@@ -2497,12 +2554,15 @@ namespace Ring.Editor
         /// prefab too.
         static CorpseView GetOrCreateCorpseMechPrefab(string prefabPath,
             string chaserModelPath, string gunnerModelPath,
-            float chaserScale, float gunnerScale)
+            string eliteModelPath, string directorModelPath,
+            float chaserScale, float gunnerScale, float eliteScale, float directorScale,
+            Material directorSkin)
         {
             if (AssetDatabase.LoadAssetAtPath<CorpseView>(prefabPath) != null)
             {
                 if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath,
-                        ("VisualChaser", chaserModelPath), ("VisualGunner", gunnerModelPath)))
+                        ("VisualChaser", chaserModelPath), ("VisualGunner", gunnerModelPath),
+                        ("VisualElite", eliteModelPath), ("VisualDirector", directorModelPath)))
                     return AssetDatabase.LoadAssetAtPath<CorpseView>(prefabPath);
                 AssetDatabase.DeleteAsset(prefabPath);
             }
@@ -2516,16 +2576,52 @@ namespace Ring.Editor
                 GameObject gunnerVisual = EditorBootstrapUtils.EnsureVisual(go,
                     gunnerModelPath, ThirdPartyAnimatorBootstrap.ControllerPathFor(gunnerModelPath),
                     gunnerScale, ref changed, "VisualGunner");
+                GameObject eliteVisual = EditorBootstrapUtils.EnsureVisual(go,
+                    eliteModelPath, ThirdPartyAnimatorBootstrap.ControllerPathFor(eliteModelPath),
+                    eliteScale, ref changed, "VisualElite");
+                GameObject directorVisual = EditorBootstrapUtils.EnsureVisual(go,
+                    directorModelPath, ThirdPartyAnimatorBootstrap.ControllerPathFor(directorModelPath),
+                    directorScale, ref changed, "VisualDirector");
+                // The corpse wears the same skin the live Director does — a boss
+                // that changed color on death would read as a different body.
+                if (directorSkin != null) ApplySkin(directorVisual, directorSkin);
                 gunnerVisual.SetActive(false); // Spawn() flips per MobType
+                eliteVisual.SetActive(false);
+                directorVisual.SetActive(false);
                 CorpseView view = go.AddComponent<CorpseView>();
                 var so = new SerializedObject(view);
                 EditorBootstrapUtils.SetRef(so, "_chaserVisual", chaserVisual);
                 EditorBootstrapUtils.SetRef(so, "_gunnerVisual", gunnerVisual);
+                EditorBootstrapUtils.SetRef(so, "_eliteVisual", eliteVisual);
+                EditorBootstrapUtils.SetRef(so, "_directorVisual", directorVisual);
                 EditorBootstrapUtils.SetRef(so, "_chaserAnimator", chaserVisual.GetComponent<Animator>());
                 EditorBootstrapUtils.SetRef(so, "_gunnerAnimator", gunnerVisual.GetComponent<Animator>());
+                EditorBootstrapUtils.SetRef(so, "_eliteAnimator", eliteVisual.GetComponent<Animator>());
+                EditorBootstrapUtils.SetRef(so, "_directorAnimator", directorVisual.GetComponent<Animator>());
+                so.FindProperty("_chaserClips").enumValueIndex = (int)AnimIds.MobClipFamily.Mech;
+                so.FindProperty("_gunnerClips").enumValueIndex = (int)AnimIds.MobClipFamily.Mech;
+                so.FindProperty("_eliteClips").enumValueIndex = (int)AnimIds.MobClipFamily.SciFiEnemy;
+                so.FindProperty("_directorClips").enumValueIndex = (int)AnimIds.MobClipFamily.SciFiEnemy;
                 so.ApplyModifiedPropertiesWithoutUndo();
                 return go;
             });
+        }
+
+        /// Overwrites every material slot under a built `Visual` with one
+        /// shared material (Stage 3 Task 31) — the Director's own skin. Mirrors
+        /// what `AssetPreviewSceneBootstrap` does to its Director stub, which
+        /// is where the owner accepted the look; `sharedMaterials` is rewritten
+        /// slot for slot rather than assigned once, since a pack model may
+        /// carry more than one slot even when every slot holds the same
+        /// material.
+        static void ApplySkin(GameObject visual, Material skin)
+        {
+            foreach (Renderer renderer in visual.GetComponentsInChildren<Renderer>(true))
+            {
+                var slots = new Material[renderer.sharedMaterials.Length];
+                for (int i = 0; i < slots.Length; i++) slots[i] = skin;
+                renderer.sharedMaterials = slots;
+            }
         }
 
         /// Task 17: the shared `ProjectileView` prefab — a small emissive sphere
@@ -2895,7 +2991,7 @@ namespace Ring.Editor
         /// Spawn` now swaps in the actual part mesh/material every call
         /// instead of picking a primitive shape (that class's doc has the
         /// full story). The ROOT still carries the actual physics — a
-        /// `SphereCollider` (`GibView.Spawn` resizes/recentres it from the
+        /// `SphereCollider` (`GibView.Spawn` resizes/recenters it from the
         /// swapped-in mesh's own `bounds` every call — no `MeshCollider`,
         /// task brief) + `Rigidbody` — on `PersistentPropsDirector.
         /// CasingsLayer` (Task 27 review fix-round, self-collision already

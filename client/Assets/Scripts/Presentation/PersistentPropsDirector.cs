@@ -583,8 +583,7 @@ namespace Ring.Presentation
         /// a headshot, body height for a body shot, etc.
         void SpawnHitSpark(in SimEvent e)
         {
-            MobSimConfig archetype = e.MobType == MobType.Chaser
-                ? _runner.Config.Chaser : _runner.Config.Gunner;
+            MobSimConfig archetype = ArchetypeConfigFor(e.MobType);
             float height = ZoneHeight(e.Zone, archetype.LegsTop, archetype.BodyTop, archetype.HeadTop);
             PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * height, Quaternion.identity);
         }
@@ -645,6 +644,51 @@ namespace Ring.Presentation
             PlayParticle(_blockSparkPool, contactWorld, Quaternion.LookRotation(normal, upHint));
         }
 
+        /// The archetype homes this class shares with `ViewRegistry` (Stage 3
+        /// Task 31, spec Р251). Each throws on an unknown archetype instead of
+        /// answering with the Gunner's numbers — the fallback that had the
+        /// Director dying at a Gunner's height and a Gunner's size.
+        MobSimConfig ArchetypeConfigFor(MobType type) => type switch
+        {
+            MobType.Chaser => _runner.Config.Chaser,
+            MobType.Gunner => _runner.Config.Gunner,
+            MobType.Elite => _runner.Config.Elite,
+            MobType.Director => _runner.Config.Director,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        /// The same four numbers `ViewRegistry.VisualScaleFor` reads for the
+        /// LIVE mob — a corpse or a gib chunk that disagreed with the body it
+        /// was cut from would visibly pop (В1/В2 fix-wave 2, app-n6g item 2).
+        float VisualScaleFor(MobType type) => type switch
+        {
+            MobType.Chaser => _gameFeel.ChaserVisualScale,
+            MobType.Gunner => _gameFeel.GunnerVisualScale,
+            MobType.Elite => _gameFeel.EliteVisualScale,
+            MobType.Director => _gameFeel.DirectorVisualScale,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        /// The dying archetype's own cut-up meshes and the one remap material
+        /// they share — EMPTY for the two archetypes whose models were never
+        /// cut up (see `HandleMobDied`). Returning empty rather than throwing
+        /// is deliberate here and only here: "this archetype has no parts" is a
+        /// fact about the ASSET, answered honestly, while an unknown archetype
+        /// is still a bug and still throws.
+        (Mesh[] parts, Material material) GibPartsFor(MobType type) => type switch
+        {
+            MobType.Chaser => (_chaserParts, _chaserPartMaterial),
+            MobType.Gunner => (_gunnerParts, _gunnerPartMaterial),
+            MobType.Elite => (System.Array.Empty<Mesh>(), null),
+            MobType.Director => (System.Array.Empty<Mesh>(), null),
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        bool HasGibParts(MobType type) => GibPartsFor(type).parts.Length > 0;
+
         void HandleMobDied(in SimEvent e)
         {
             // В1/В2 fix-wave 2 (app-n6g item 2, BUG fix): same archetype-scale
@@ -652,8 +696,7 @@ namespace Ring.Presentation
             // call — `MobDied`'s own `MobType` is enough, no new SO field
             // (CorpseView.Spawn's own doc). T24-2: also the scale every
             // spawned gib part's transform.localScale mirrors (class doc).
-            float visualScale = e.MobType == MobType.Chaser
-                ? _gameFeel.ChaserVisualScale : _gameFeel.GunnerVisualScale;
+            float visualScale = VisualScaleFor(e.MobType);
 
             PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
 
@@ -662,19 +705,28 @@ namespace Ring.Presentation
             // corpse, and the roll below never runs for this event (class
             // doc has the full rule). `SpawnFullExplodeGibs` itself checks
             // `e.Zone` to give the HEAD part its own directional impulse.
-            if (e.Zone == HitZone.Head)
+            // Stage 3 Task 31: BOTH gib triggers below are gated on the dying
+            // archetype having parts at all. `_chaserParts`/`_gunnerParts` are
+            // meshes cut from the mech FBXs in Blender (T24-2, owner-approved
+            // split); the Sci-Fi models Elite and the Director are drawn from
+            // ship whole, so there is nothing to scatter. The honest answer is
+            // a corpse — the alternative would have been to explode the
+            // Director into a GUNNER'S parts, which is the very defect this
+            // task exists to remove, one layer deeper.
+            if (HasGibParts(e.MobType))
             {
-                SpawnFullExplodeGibs(in e, visualScale);
-                return;
-            }
+                // В3 fix-wave 1: headshots ALWAYS get the full-explode variant.
+                if (e.Zone == HitZone.Head)
+                {
+                    SpawnFullExplodeGibs(in e, visualScale);
+                    return;
+                }
 
-            // T24-2 (app-nco vision): otherwise, a rolled fraction of kills
-            // explode into every part instead of leaving a whole corpse —
-            // class doc has the full variant split.
-            if (Random.value < GibFullExplodeChance)
-            {
-                SpawnFullExplodeGibs(in e, visualScale);
-                return;
+                if (Random.value < GibFullExplodeChance)
+                {
+                    SpawnFullExplodeGibs(in e, visualScale);
+                    return;
+                }
             }
 
             Vector3 pos = SimSpace.ToWorld(e.Pos) + Vector3.up * CorpseLift;
@@ -709,10 +761,8 @@ namespace Ring.Presentation
         /// of an intact corpse).
         void SpawnFullExplodeGibs(in SimEvent e, float visualScale)
         {
-            (Mesh[] parts, Material material) = e.MobType == MobType.Chaser
-                ? (_chaserParts, _chaserPartMaterial) : (_gunnerParts, _gunnerPartMaterial);
-            MobSimConfig archetype = e.MobType == MobType.Chaser
-                ? _runner.Config.Chaser : _runner.Config.Gunner;
+            (Mesh[] parts, Material material) = GibPartsFor(e.MobType);
+            MobSimConfig archetype = ArchetypeConfigFor(e.MobType);
             Vector3 worldPos = SimSpace.ToWorld(e.Pos);
             float settleSeconds = _gameFeel.GibPhysicsSeconds;
             bool headshot = e.Zone == HitZone.Head;

@@ -123,6 +123,13 @@ namespace Ring.Presentation
         [SerializeField] PlayerView _playerPrefab;
         [SerializeField] MobView _chaserPrefab;
         [SerializeField] MobView _gunnerPrefab;
+        // Stage 3 Task 31 (spec Р251/§3.11, owner decision R-192 — the
+        // acceptance condition of milestone В1): Elite and the Director stop
+        // borrowing the Gunner's prefab. Until this task every branch below
+        // was a two-way ternary, so the arena's boss rendered as a rank-and-
+        // file Gunner at a rank-and-file Gunner's size.
+        [SerializeField] MobView _elitePrefab;
+        [SerializeField] MobView _directorPrefab;
         [SerializeField] ProjectileView _projectilePrefab;
 
         Dictionary<int, PlayerView> _activePlayers;
@@ -131,6 +138,8 @@ namespace Ring.Presentation
         Stack<PlayerView> _playerPool;
         Stack<MobView> _chaserPool;
         Stack<MobView> _gunnerPool;
+        Stack<MobView> _elitePool;
+        Stack<MobView> _directorPool;
         Stack<ProjectileView> _projectilePool;
 
         // Stage 2 Task 45a fix-round 1: the detached dolls (class doc). Not a
@@ -194,11 +203,17 @@ namespace Ring.Presentation
             _fadingPlayerSlots = new HashSet<int>(playerCap);
             _activeMobs = new Dictionary<int, MobView>(mobCap);
             _activeProjectiles = new Dictionary<int, ProjectileView>(projCap);
-            // Both pools capped at mobCap (Б6 — not split by archetype ratio):
-            // a match's Chaser/Gunner mix can vary, so each pool is sized as if
-            // the whole cap were one archetype rather than guessing a split.
+            // Every pool capped at mobCap (Б6 — not split by archetype ratio):
+            // a match's archetype mix can vary, so each pool is sized as if the
+            // whole cap were one archetype rather than guessing a split. Task 31
+            // adds two more pools on the same rule rather than inventing a
+            // smaller number for Elite and the Director — a `Stack` of that
+            // capacity is one array of references, and guessing a split is the
+            // thing Б6 refused.
             _chaserPool = new Stack<MobView>(mobCap);
             _gunnerPool = new Stack<MobView>(mobCap);
+            _elitePool = new Stack<MobView>(mobCap);
+            _directorPool = new Stack<MobView>(mobCap);
             _projectilePool = new Stack<ProjectileView>(projCap);
             _seenMobIds = new HashSet<int>(mobCap);
             _seenProjectileIds = new HashSet<int>(projCap);
@@ -255,8 +270,7 @@ namespace Ring.Presentation
                 // Type is set by Bind before a view ever reaches _activeMobs
                 // (the only path in — see RentMob/SyncMobs), so it's always
                 // valid here (Б6).
-                Stack<MobView> pool = kv.Value.Type == MobType.Chaser ? _chaserPool : _gunnerPool;
-                pool.Push(kv.Value);
+                PoolFor(kv.Value.Type).Push(kv.Value);
             }
             _activeMobs.Clear();
 
@@ -1067,8 +1081,7 @@ namespace Ring.Presentation
                     // the projectile branch below for why this order matters at all.
                     view.transform.position = SimSpace.ToWorld(m.Pos) + MobOffset;
                     view.Bind(in m);
-                    view.Visual?.Bind(in m, m.Type == MobType.Chaser
-                        ? _gameFeel.ChaserVisualScale : _gameFeel.GunnerVisualScale);
+                    view.Visual?.Bind(in m, VisualScaleFor(m.Type));
                     // Sync right away (Task 21 Bind/Sync contract) so a mob that's
                     // already mid-Telegraph the instant it becomes visible reads
                     // correctly this same frame, not one frame late.
@@ -1217,17 +1230,59 @@ namespace Ring.Presentation
             _playerPool.Push(view);
         }
 
+        /// The pool an archetype's views live in. One of the three homes Task 31
+        /// puts the archetype dispatch in (pool, prefab, visual scale), each a
+        /// `switch` that THROWS on an unrecognized value rather than falling
+        /// back to the Gunner — the fallback is precisely how Elite and the
+        /// Director came to be drawn as Gunners for two whole stages, silently,
+        /// with no error and no red test (lesson 385, R-237: a catalog home
+        /// throws even while it is exhaustive today). `SimulationWorld.
+        /// MobConfigFor` and `SnapshotBlocks.MaxHpFor` are the same shape on
+        /// the simulation's side of the same enum.
+        Stack<MobView> PoolFor(MobType type) => type switch
+        {
+            MobType.Chaser => _chaserPool,
+            MobType.Gunner => _gunnerPool,
+            MobType.Elite => _elitePool,
+            MobType.Director => _directorPool,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        MobView PrefabFor(MobType type) => type switch
+        {
+            MobType.Chaser => _chaserPrefab,
+            MobType.Gunner => _gunnerPrefab,
+            MobType.Elite => _elitePrefab,
+            MobType.Director => _directorPrefab,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        /// The archetype's own visual scale. `PersistentPropsDirector` reads the
+        /// SAME four numbers for the corpse and the gib parts off `MobDied`'s
+        /// own `MobType` (that class's own doc) — a mob that shrank on death
+        /// would read as a bug, so the two reads have to stay one rule.
+        float VisualScaleFor(MobType type) => type switch
+        {
+            MobType.Chaser => _gameFeel.ChaserVisualScale,
+            MobType.Gunner => _gameFeel.GunnerVisualScale,
+            MobType.Elite => _gameFeel.EliteVisualScale,
+            MobType.Director => _gameFeel.DirectorVisualScale,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
         MobView RentMob(MobType type)
         {
-            Stack<MobView> pool = type == MobType.Chaser ? _chaserPool : _gunnerPool;
+            Stack<MobView> pool = PoolFor(type);
             if (pool.Count > 0)
             {
                 MobView v = pool.Pop();
                 v.gameObject.SetActive(true);
                 return v;
             }
-            MobView prefab = type == MobType.Chaser ? _chaserPrefab : _gunnerPrefab;
-            return Instantiate(prefab, transform);
+            return Instantiate(PrefabFor(type), transform);
         }
 
         ProjectileView RentProjectile()
@@ -1249,8 +1304,7 @@ namespace Ring.Presentation
             // Type is set by Bind before a view ever reaches _activeMobs (the
             // only path in — see RentMob/SyncMobs), so it's always valid here
             // (Б6).
-            Stack<MobView> pool = view.Type == MobType.Chaser ? _chaserPool : _gunnerPool;
-            pool.Push(view);
+            PoolFor(view.Type).Push(view);
         }
 
         void RetireProjectile(int id)

@@ -478,7 +478,35 @@ namespace Ring.Data
         // gap the eye can see. Raising it coarsens the mesh (fewer objects,
         // visibly faceted rings); lowering it multiplies primitives with no
         // gain the camera can resolve at this arena's scale.
-        [Range(0.005f, 0.5f)] public float MeshSagMeters = 0.05f; // sync-marker key — keep LAST
+        [Range(0.005f, 0.5f)] public float MeshSagMeters = 0.05f;
+
+        // Stage 3 Task 31 (spec §3.11/Р251, owner decision R-192 — the
+        // acceptance condition of milestone В1): the two archetypes that had
+        // no visual identity of their own. Until this task `ViewRegistry`
+        // branched two ways on `MobType`, so Elite, the Director's escort and
+        // the DIRECTOR HIMSELF were all drawn with the Gunner's prefab at the
+        // Gunner's scale — a boss with 2500 HP that looked exactly like the
+        // mob a player had already killed forty times.
+        //
+        // THE NUMBERS ARE THE OWNER'S OWN, not this task's invention. The
+        // asset track put every candidate model on a stage and the owner tuned
+        // them by eye across two milestones; the surviving numbers live in
+        // `AssetPreviewSceneBootstrap` (`EliteScale` 1.5 on QuadShell,
+        // `TriloScale` 0.75 — "the biggest elite, halved" — and `DirectorScale`
+        // 3.5, "the director, doubled"). Those preview scales sit on the SAME
+        // base as these fields: the preview's own mech scale is 0.4, which is
+        // `ChaserVisualScale` exactly. Elite is drawn with `Enemy_Trilobite`,
+        // hence 0.75; the Director with `Enemy_QuadShell` in `DirectorSkin.mat`,
+        // hence 3.5 — a silhouette four and a half times the Gunner's.
+        //
+        // ⚠ ASSETS-001 §2.3 asks for x1.5-2 on the Director and this ships
+        // 3.5. The ADR number was written before the model was ever on a
+        // stage; 3.5 is what the owner asked for after looking at it (asset
+        // milestone 3). Both are starting points for the В1 tuning pass —
+        // this field is live-tweakable in PlayMode, which is exactly why it is
+        // a field.
+        [Range(0.05f, 6f)] public float EliteVisualScale = 0.75f;
+        [Range(0.05f, 6f)] public float DirectorVisualScale = 3.5f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

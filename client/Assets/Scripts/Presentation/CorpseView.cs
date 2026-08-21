@@ -16,10 +16,12 @@ namespace Ring.Presentation
     /// single `MeshRenderer` (same treatment as `MobView`, same owner
     /// requirement) so a future model swap's whole hierarchy still gets the
     /// glow/fade without this class changing.
-    /// Mech corpse (Б4, assets phase B): the prefab carries two Visual
-    /// children, `_chaserVisual`/`_gunnerVisual` (each with its own
-    /// `Animator`), toggled by `Spawn`'s `type` — the mech falls to the
-    /// ground via its own `AnimIds.MechDeath` clip rather than a scripted
+    /// Mech corpse (Б4, assets phase B; FOUR archetypes since Stage 3 Task
+    /// 31): the prefab carries one Visual child per `MobType` —
+    /// `_chaserVisual`/`_gunnerVisual`/`_eliteVisual`/`_directorVisual`, each
+    /// with its own `Animator` and its own pack's death take — toggled by
+    /// `Spawn`'s `type` — the body falls to the
+    /// ground via its own death clip rather than a scripted
     /// lying-on-side rotation. A FIFO-reused pooled slot's animator arrives
     /// disabled (left that way by the previous life's death finishing, see
     /// `Update`) so `Spawn` re-arms it every call (enable + `Rebind` +
@@ -33,11 +35,36 @@ namespace Ring.Presentation
         static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
         static readonly Color ChaserGlow = new Color(2.5f, 0.2f, 0.2f);
         static readonly Color GunnerGlow = new Color(0.2f, 0.6f, 2.5f);
+        // Stage 3 Task 31: the two new archetypes get accents of their own on
+        // the same palette logic the pair above already follows (the accent
+        // says WHAT DIED, and it has to survive being seen next to the other
+        // three). Elite takes violet — the one direction left that argues with
+        // neither the Chaser's red nor the Gunner's blue; the Director takes a
+        // hot amber-white, the brightest of the four, because the one corpse a
+        // player crosses the arena to look at should be the one that reads from
+        // furthest away.
+        static readonly Color EliteGlow = new Color(1.6f, 0.2f, 2.5f);
+        static readonly Color DirectorGlow = new Color(3f, 1.6f, 0.4f);
 
         [SerializeField] GameObject _chaserVisual;
         [SerializeField] GameObject _gunnerVisual;
+        [SerializeField] GameObject _eliteVisual;
+        [SerializeField] GameObject _directorVisual;
         [SerializeField] Animator _chaserAnimator;
         [SerializeField] Animator _gunnerAnimator;
+        [SerializeField] Animator _eliteAnimator;
+        [SerializeField] Animator _directorAnimator;
+
+        /// Which pack each archetype's visual came out of — the same choice
+        /// `MobVisual` carries for the LIVE mob, and for the same reason: the
+        /// Sci-Fi kit names its death take `TurnOff`, so playing `Death` on an
+        /// Elite would no-op and leave a body standing to attention.
+        [SerializeField] AnimIds.MobClipFamily _chaserClips = AnimIds.MobClipFamily.Mech;
+        [SerializeField] AnimIds.MobClipFamily _gunnerClips = AnimIds.MobClipFamily.Mech;
+        [SerializeField] AnimIds.MobClipFamily _eliteClips = AnimIds.MobClipFamily.SciFiEnemy;
+        [SerializeField] AnimIds.MobClipFamily _directorClips = AnimIds.MobClipFamily.SciFiEnemy;
+
+        int _activeDeathState;
 
         Renderer[] _renderers;
         MaterialPropertyBlock _block;
@@ -88,23 +115,30 @@ namespace Ring.Presentation
                 mech ? Quaternion.Euler(0f, yaw, 0f) : Quaternion.Euler(90f, yaw, 0f));
             if (mech)
             {
-                bool chaser = type == MobType.Chaser;
-                _chaserVisual.SetActive(chaser);
-                _gunnerVisual.SetActive(!chaser);
-                GameObject activeVisual = chaser ? _chaserVisual : _gunnerVisual;
+                // All four are wired or none are: the prefab factory's
+                // `PrefabVisualsMatch` guard deletes and rebuilds this prefab
+                // whenever the set of visuals changes, so a body committed
+                // before Task 31 never survives to be asked for its Elite
+                // child. Same posture `_gunnerVisual` has always had.
+                GameObject activeVisual = VisualFor(type);
+                _chaserVisual.SetActive(activeVisual == _chaserVisual);
+                _gunnerVisual.SetActive(activeVisual == _gunnerVisual);
+                _eliteVisual.SetActive(activeVisual == _eliteVisual);
+                _directorVisual.SetActive(activeVisual == _directorVisual);
                 activeVisual.transform.localScale = Vector3.one * visualScale;
-                _activeAnimator = chaser ? _chaserAnimator : _gunnerAnimator;
+                _activeAnimator = AnimatorFor(type);
+                _activeDeathState = AnimIds.ClipsFor(ClipsFamilyFor(type)).Death;
                 // Mandatory re-arm: a FIFO-reused slot arrives with the animator
                 // disabled by a finished previous death (Б4).
                 _activeAnimator.enabled = true;
                 _activeAnimator.Rebind();
-                if (!_activeAnimator.HasState(0, AnimIds.MechDeath))
+                if (!_activeAnimator.HasState(0, _activeDeathState))
                     Debug.LogError("CorpseView: controller has no Death state: " + name);
-                _activeAnimator.Play(AnimIds.MechDeath, 0, 0f);
+                _activeAnimator.Play(_activeDeathState, 0, 0f);
                 _activeAnimator.Update(0f);
                 _animatorLive = true;
             }
-            _baseGlow = type == MobType.Chaser ? ChaserGlow : GunnerGlow;
+            _baseGlow = GlowFor(type);
             _fadeDuration = Mathf.Max(glowFadeSeconds, 1e-4f);
             _fadeTimer = _fadeDuration;
             ApplyEmission(_baseGlow);
@@ -112,7 +146,7 @@ namespace Ring.Presentation
 
         void Update()
         {
-            if (_animatorLive && AnimIds.OneShotFinished(_activeAnimator, 0, AnimIds.MechDeath))
+            if (_animatorLive && AnimIds.OneShotFinished(_activeAnimator, 0, _activeDeathState))
             {
                 // Controller evaluation off; the SkinnedMeshRenderer keeps skinning —
                 // profiled at milestone Б2, not "free" (Б4).
@@ -124,6 +158,49 @@ namespace Ring.Presentation
             float t = Mathf.Clamp01(_fadeTimer / _fadeDuration);
             ApplyEmission(_baseGlow * t);
         }
+
+        /// The four archetype homes (Stage 3 Task 31, spec Р251) — each throws
+        /// on an unknown archetype rather than falling back to the Gunner, the
+        /// same rule `ViewRegistry.PoolFor` states at greater length.
+        GameObject VisualFor(MobType type) => type switch
+        {
+            MobType.Chaser => _chaserVisual,
+            MobType.Gunner => _gunnerVisual,
+            MobType.Elite => _eliteVisual,
+            MobType.Director => _directorVisual,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        Animator AnimatorFor(MobType type) => type switch
+        {
+            MobType.Chaser => _chaserAnimator,
+            MobType.Gunner => _gunnerAnimator,
+            MobType.Elite => _eliteAnimator,
+            MobType.Director => _directorAnimator,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        AnimIds.MobClipFamily ClipsFamilyFor(MobType type) => type switch
+        {
+            MobType.Chaser => _chaserClips,
+            MobType.Gunner => _gunnerClips,
+            MobType.Elite => _eliteClips,
+            MobType.Director => _directorClips,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        static Color GlowFor(MobType type) => type switch
+        {
+            MobType.Chaser => ChaserGlow,
+            MobType.Gunner => GunnerGlow,
+            MobType.Elite => EliteGlow,
+            MobType.Director => DirectorGlow,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
 
         void ApplyEmission(Color emission)
         {
