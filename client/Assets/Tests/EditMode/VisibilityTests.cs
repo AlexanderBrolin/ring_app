@@ -1694,5 +1694,64 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, set.Count);
             Assert.AreEqual(2, set.RefusedCount, "Clear resets the extent, never the refusal tally");
         }
+
+        // --- 40: the aliasing guard covers ALL THREE entry points (T26 review, I1) ---
+
+        [Test]
+        public void ComputePickupsAndContainers_ThrowOnAliasedBuffers_LikeComputeDoes()
+        {
+            // Task 26 review, I1. Compute_ThrowsOnAliasedBuffers (fixture 15)
+            // pins the guard on ONE of the three entry points, and Task 26
+            // added the other two — each with its own RequireDistinct call
+            // that no test reached. The failure the guard prevents is SILENT
+            // by its own doc: result.Clear() runs before previous is ever
+            // read, so aliasing does not crash, it just leaves the class with
+            // a permanently-empty hysteresis/linger window. A guard nobody
+            // exercises is a guard that can be deleted without a red.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+
+            var pickupSet = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            Assert.Throws<System.ArgumentException>(
+                () => VisibilitySystem.ComputePickups(w, 0, cfg.Visibility, pickupSet, pickupSet),
+                "ComputePickups must refuse two aliased sets exactly as Compute does");
+
+            var containerSet = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+            Assert.Throws<System.ArgumentException>(
+                () => VisibilitySystem.ComputeContainers(w, 0, cfg.Visibility, containerSet,
+                    containerSet),
+                "ComputeContainers must refuse two aliased sets exactly as Compute does");
+
+            // The negative half, same shape as Compute_AcceptsDistinctBuffers:
+            // a guard that misfired on the ordinary calling convention would
+            // take down every frame instead of none.
+            var otherPickups = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            var otherContainers = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+            Assert.DoesNotThrow(
+                () => VisibilitySystem.ComputePickups(w, 0, cfg.Visibility, pickupSet, otherPickups));
+            Assert.DoesNotThrow(
+                () => VisibilitySystem.ComputeContainers(w, 0, cfg.Visibility, containerSet,
+                    otherContainers));
+        }
+
+        // --- 41: CapacityFor refuses a class it has no cap for (T26 review, Minor) ---
+
+        [Test]
+        public void CapacityFor_RefusesAnUnknownClass_RatherThanFallingBackToTheMobs()
+        {
+            // Task 26 review, Minor: the default arm's own message forbids
+            // exactly the thing a missing default would do — hand back another
+            // class's number. Without a witness, "return arena.MaxMobs +
+            // arena.MaxPlayers" is a green mutation, and a fourth entity class
+            // would then silently get a set sized for mobs.
+            var cfg = TestConfigs.Default();
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => VisibilitySet.CapacityFor(in cfg.Arena, (VisibilityClass)3),
+                "a VisibilityClass with no cap of its own must throw, not inherit one");
+        }
     }
 }

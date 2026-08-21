@@ -724,17 +724,37 @@ namespace Ring.Simulation.Tests
 
         /// What PlayerPrediction.Step is allowed to do to one field of
         /// PlayerState (bd app-fi3f, owner decision R-209, form R-210).
+        /// THE DOMAIN EVERY DEFINITION BELOW IS STATED IN: a LIVING player, on
+        /// the per-tick path. Two server-only writers are deliberately outside
+        /// it and would otherwise make the distinction meaningless (Task 26
+        /// review, Minor — the first draft of these three doc-comments left
+        /// this unsaid, and by their letter all 21 Predicted fields were Mixed
+        /// too):
+        ///   * SimulationWorld.KillPlayer / ClearCombatTimers zero most of the
+        ///     movement timers — but only on the tick a player dies or walks
+        ///     out, and prediction is required to STOP there (Р41/Р59,
+        ///     PlayerPrediction's own "NOT FOR A DEAD PLAYER");
+        ///   * SimulationWorld.ApplyConfig clamps nearly every magnitude — but
+        ///     it is a hot-tweak, not a tick, and no scenario predicts across
+        ///     one.
+        /// So the question that separates Predicted from Mixed is narrower and
+        /// sharper than "does anything else write it": CAN THE SECOND WRITER
+        /// FIRE WHILE THE PLAYER IS ALIVE AND BEING PREDICTED? For Ammo and
+        /// FireCooldown it can — walking over an energy cell is an ordinary
+        /// event in a live raid. For the movement timers it cannot.
         enum PredictionRole
         {
-            /// Step writes it, and the world writes it the SAME way — through
-            /// the very same body (PlayerMovementSystem.Update, WeaponSystem's
-            /// shared Advance). Bit-for-bit equality is the whole contract.
+            /// Step writes it, and on the per-tick path of a living player the
+            /// world writes it ONLY through that same shared body
+            /// (PlayerMovementSystem.Update, WeaponSystem's shared Advance).
+            /// Bit-for-bit equality is the whole contract.
             Predicted,
 
-            /// Step writes it AND a server-only path also writes it. Bitwise
-            /// equality holds only while that second writer has not fired, so
-            /// the scenario has to ASSERT that it did not rather than inherit
-            /// it from a fixture's numbers.
+            /// Step writes it, AND a server-only path can also write it WHILE
+            /// THE PLAYER IS ALIVE AND PREDICTING. Bitwise equality holds only
+            /// while that second writer has not fired, so the scenario has to
+            /// ASSERT that it did not rather than inherit it from a fixture's
+            /// numbers.
             Mixed,
 
             /// Step never writes it at all (CRITICAL RULE 3: the server owns

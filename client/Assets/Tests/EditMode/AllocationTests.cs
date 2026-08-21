@@ -208,9 +208,13 @@ namespace Ring.Simulation.Tests
                 + "to exercise the FULL per-tick mob-evaluation loop, not a near-empty world");
 
             // Phase Ф5 fix-wave (minor): the shared TestWorlds.Capacity seam,
-            // not a hand-rolled second copy of the same sum — it is the one
-            // place the "MaxMobs + MaxPlayers covers every entity a single
-            // Compute call can visit" rule lives.
+            // not a hand-rolled second copy of the same sum. Stage 3 Task 26
+            // moved the rule itself one step further out — "MaxMobs +
+            // MaxPlayers covers every entity a single Compute call can visit"
+            // now lives in VisibilitySet.CapacityFor, the one home of all
+            // THREE classes' caps, and TestWorlds.Capacity is a delegate to
+            // it. This line named the old home and was corrected with the
+            // move (Task 26 review, Minor).
             int capacity = TestWorlds.Capacity(config);
             var setA = new VisibilitySet(capacity);
             var setB = new VisibilitySet(capacity);

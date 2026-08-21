@@ -21,9 +21,12 @@ namespace Ring.Simulation.Tests
         /// Stage 3 Task 26 (plan errata E-6 C-I3): the formula itself moved to
         /// `VisibilitySet.CapacityFor`, the ONE home it now shares with
         /// SnapshotAssembler.Connection — which spelled the same sum out
-        /// separately until this task. This overload stays because ~30 call
-        /// sites in this suite ask for the MOB capacity by that name; it
-        /// states which class it means and delegates.
+        /// separately until this task. This overload stays because 71 call
+        /// sites in this suite ask for the MOB capacity by that name (43 in
+        /// VisibilityTests, 25 in EventDeliveryTests, 3 in AllocationTests —
+        /// COUNTED, after a first draft of this line guessed "~30" and was out
+        /// by 2.4x; Task 26 review, Minor). It states which class it means and
+        /// delegates.
         public static int Capacity(in SimConfig cfg)
             => Visibility.VisibilitySet.CapacityFor(in cfg.Arena, Visibility.VisibilityClass.Mobs);
 

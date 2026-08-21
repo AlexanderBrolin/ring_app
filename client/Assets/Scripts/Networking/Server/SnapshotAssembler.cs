@@ -457,12 +457,26 @@ namespace Ring.Networking.Server
         }
 
         /// This connection's CURRENT visibility set for one entity class — the
-        /// decision CRITICAL RULE 4 is enforced by, offered for reading the
-        /// same way `BufferFor` offers the frame it produced. Read-only by
-        /// contract: `VisibilitySet`'s own doc names `Count`/`IdAt`/`LingerAt`/
-        /// `Contains` as its whole enumeration contract, and a caller that
-        /// mutates what it is handed here corrupts the next tick's hysteresis.
-        public VisibilitySet VisibleSetFor(int connection, VisibilityClass cls)
+        /// decision CRITICAL RULE 4 is enforced by.
+        ///
+        /// `internal`, NOT `public` (Task 26 review, I4). The parallel with
+        /// `BufferFor` does not hold: that one has a production consumer
+        /// (Stage 2 Task 36 wraps its return into the broadcast), while this
+        /// has none — its only caller is the test that proves the three
+        /// classes really are sorted into three sets. This assembly already
+        /// opens its internals to the test assembly by name
+        /// (Networking/AssemblyInfo.cs), which is the route every other test
+        /// seam in the project takes (`SpawnMobForTest`, `SetContainerForTest`,
+        /// `StatsRef`), so `public` would have widened the shipped contract for
+        /// nobody's benefit. `VisibilitySet`'s own doc sets the precedent in
+        /// as many words when it refuses a span accessor: "a wider contract
+        /// than anything asked for".
+        ///
+        /// Read-only by contract even so: `VisibilitySet` names
+        /// `Count`/`IdAt`/`LingerAt`/`Contains` as its whole enumeration
+        /// contract, and a caller that mutates what it is handed here corrupts
+        /// the next tick's hysteresis.
+        internal VisibilitySet VisibleSetFor(int connection, VisibilityClass cls)
         {
             Connection c = _connections[connection];
             switch (cls)

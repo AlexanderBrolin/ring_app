@@ -2308,5 +2308,104 @@ namespace Ring.Simulation.Tests
                     "counterfactual: no mob carries the pickup's id, so MobSlotOf would have "
                     + "answered -1 and the frame would have lost it without a trace");
         }
+
+        // ---- T26 review, I2 + I3: the two NEW pairs are live memory too ----
+
+        /// A connection watching ONE pickup, close enough to be plainly
+        /// visible — the pickup counterpart of LingerFixture above, and built
+        /// the same way (a fresh world/assembler pair per call, so a witness
+        /// and its target never share state).
+        static (SimulationWorld world, SimConfig cfg, SnapshotAssembler asm, int pickupId)
+            PickupLingerFixture()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            int pickupId = w.SpawnPickup(PickupKind.EnergyCell, new float2(0f, 10f), 1);
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            return (w, cfg, asm, pickupId);
+        }
+
+        static void MovePickupPastSightAndHysteresis(SimulationWorld w, in SimConfig cfg)
+        {
+            Assert.AreEqual(1, w.PickupCount, "test setup: PickupLingerFixture spawns exactly one pickup");
+            PickupState pickup = w.Pickups[0];
+            // Past the WIDENED radius, not merely past SightRadius, so what
+            // carries it into the next frame is purely Р19's linger and never
+            // the hysteresis bonus — the identical choice
+            // MoveMobPastSightAndHysteresis makes, for the identical reason.
+            pickup.Pos = new float2(0f, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis + 5f);
+            w.SetPickupForTest(0, pickup);
+        }
+
+        [Test]
+        public void PickupPair_LingersAcrossFrames_AndResetViewpointMemoryClearsItToo()
+        {
+            // Task 26 review, I2 and I3. Task 26 gave the connection two NEW
+            // visibility pairs and wired them exactly like the mob pair — a
+            // ping-pong in BuildFor and a Clear in ResetViewpointMemory — and
+            // neither wire had a witness. Both failures are silent: an
+            // unswapped pair leaves `previous` permanently empty, so
+            // hysteresis and linger are simply dead for that class on the
+            // real assembly path, and an uncleared pair keeps handing a
+            // switched spectator the memory of where it used to look. The
+            // frame carries no Pickups block until Task 27, so the sets
+            // themselves are what has to be read.
+            //
+            // WITNESS FIRST, same shape as
+            // ResetViewpointMemory_ClearsLinger_WitnessedAgainstNoReset: the
+            // pickup that just left sight must keep riding through the linger
+            // window. This half is what the ping-pong pays for — with
+            // `previous` stuck empty it reads as "never seen" and is dropped
+            // outright instead.
+            (SimulationWorld wWitness, SimConfig cfgWitness, SnapshotAssembler asmWitness,
+                int pickupWitness) = PickupLingerFixture();
+            Build(asmWitness, wWitness, cfgWitness, 0, 0, 0);
+            Assert.IsTrue(asmWitness.VisibleSetFor(0, VisibilityClass.Pickups).Contains(pickupWitness),
+                "test setup: the pickup must start plainly visible");
+
+            MovePickupPastSightAndHysteresis(wWitness, in cfgWitness);
+            Build(asmWitness, wWitness, cfgWitness, 0, 0, 0);
+            VisibilitySet lingering = asmWitness.VisibleSetFor(0, VisibilityClass.Pickups);
+            Assert.IsTrue(lingering.Contains(pickupWitness),
+                "witness: WITHOUT a reset, a pickup that just left sight must keep riding through "
+                + "the linger window (Р19) — which it can only do if BuildFor ping-pongs the "
+                + "PICKUP pair, so the set it just filled becomes the next call's `previous`");
+            Assert.AreEqual(cfgWitness.Visibility.LingerTicks, lingering.LingerOf(pickupWitness),
+                "and it must read as FRESHLY lingering, not as visible now — the counter is what "
+                + "tells 'the previous tick remembered it' apart from 'it is in range again'");
+
+            // The target: the identical sequence with ResetViewpointMemory in
+            // between — MatchServer.OnSpectateRequest's own move.
+            (SimulationWorld wReset, SimConfig cfgReset, SnapshotAssembler asmReset,
+                int pickupReset) = PickupLingerFixture();
+            Build(asmReset, wReset, cfgReset, 0, 0, 0);
+            MovePickupPastSightAndHysteresis(wReset, in cfgReset);
+            asmReset.ResetViewpointMemory(0);
+            Build(asmReset, wReset, cfgReset, 0, 0, 0);
+            Assert.IsFalse(asmReset.VisibleSetFor(0, VisibilityClass.Pickups).Contains(pickupReset),
+                "ResetViewpointMemory must clear the PICKUP pair as well as the mob one — every "
+                + "pair is keyed on the VIEWPOINT, so a spectator who just switched must not keep "
+                + "receiving live coordinates of what the OLD viewpoint could see (Stage 2 Task "
+                + "42a fix-round 1, I-1, now owed to all three classes)");
+        }
+
+        [Test]
+        public void VisibleSetFor_RefusesAnUnknownClass_RatherThanFallingBackToTheMobs()
+        {
+            // Task 26 review, Minor: the default arm's own message forbids the
+            // one thing a missing default would do — hand back another class's
+            // set. Unwitnessed, "return c.MobsCurrent" is a green mutation,
+            // and a fourth entity class would then silently read the mobs' fog
+            // of war as its own.
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f),
+                new float2(0f, 8f));
+            var asm = new SnapshotAssembler(in cfg, Net(), connectionCount: 1);
+            Build(asm, w, cfg, connection: 0, identityIndex: 0, viewpointIndex: 0);
+
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => asm.VisibleSetFor(0, (VisibilityClass)3),
+                "a VisibilityClass with no set of its own must throw, not inherit the mobs'");
+        }
     }
 }

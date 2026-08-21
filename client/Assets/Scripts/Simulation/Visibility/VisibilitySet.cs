@@ -25,10 +25,14 @@ namespace Ring.Simulation.Visibility
     /// so slot indices are unstable and would transfer state to a different mob.
     /// Flat array + linear scan (Task 19, spec §3.5) — no HashSet: allocations
     /// and unordered iteration are both unwanted on this per-connection, once-
-    /// per-observer-per-tick path. Capacity is fixed at construction time (the
-    /// caller's job to size — Arena.MaxMobs + Arena.MaxPlayers covers every
-    /// live mob plus every player VisibilitySystem.Compute can ever visit in a
-    /// single call) and never grown; Clear() only resets Count, so a
+    /// per-observer-per-tick path. Capacity is fixed at construction time and
+    /// never grown; the number comes from `CapacityFor` below — THE one home
+    /// of all three classes' caps since Stage 3 Task 26, which is why this
+    /// paragraph no longer spells the mob sum out itself (it used to say
+    /// "the caller's job to size — Arena.MaxMobs + Arena.MaxPlayers covers
+    /// every live mob plus every player", and a reader who believed it would
+    /// have started a second copy of the very formula that task collapsed —
+    /// Task 26 review, Minor). Clear() only resets Count, so a
     /// Compute() call that Clear()s then re-Add()s every tick allocates
     /// nothing beyond the two arrays built here once, in the constructor.
     public sealed class VisibilitySet
