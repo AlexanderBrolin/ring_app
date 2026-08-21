@@ -1,3 +1,4 @@
+using Ring.Simulation.Core;
 using UnityEngine;
 
 namespace Ring.Data
@@ -523,6 +524,26 @@ namespace Ring.Data
         // touching four prefabs.
         [Range(0.05f, 3f)] public float PickupVisualDiameter = 0.5f;
         [Range(0.05f, 5f)] public float ContainerVisualScale = 1f; // sync-marker key — keep LAST
+
+        /// THE one place an archetype becomes a visual scale (fix-round, Ф7
+        /// review B-M5). `ViewRegistry` sizes the LIVE mob with it and
+        /// `PersistentPropsDirector` sizes that mob's corpse and its gib parts
+        /// with it, and the two must never disagree — a body that changed size
+        /// the instant it died reads as a bug (В1/В2 fix-wave 2, app-n6g item
+        /// 2). Until this fix that rule was carried by two mirrored `switch`
+        /// blocks and a comment asking each to remember the other; now there is
+        /// nothing to remember. Throws on an unknown archetype rather than
+        /// answering with the Gunner's size, for the reason spec Р251 spent a
+        /// stage on.
+        public float VisualScaleFor(MobType type) => type switch
+        {
+            MobType.Chaser => ChaserVisualScale,
+            MobType.Gunner => GunnerVisualScale,
+            MobType.Elite => EliteVisualScale,
+            MobType.Director => DirectorVisualScale,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

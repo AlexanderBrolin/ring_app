@@ -20,8 +20,11 @@ namespace Ring.Presentation
     /// 31): the prefab carries one Visual child per `MobType` —
     /// `_chaserVisual`/`_gunnerVisual`/`_eliteVisual`/`_directorVisual`, each
     /// with its own `Animator` and its own pack's death take — toggled by
-    /// `Spawn`'s `type` — the body falls to the
-    /// ground via its own death clip rather than a scripted
+    /// `Spawn`'s `type` — the body falls to the ground via the death take of
+    /// its OWN pack (`AnimIds.ClipsFor(family).Death`, which is `Death` for a
+    /// mech and `TurnOff` for a Sci-Fi robot; the loose `AnimIds.MechDeath`
+    /// constant this doc used to name is gone with Task 31) rather than a
+    /// scripted
     /// lying-on-side rotation. A FIFO-reused pooled slot's animator arrives
     /// disabled (left that way by the previous life's death finishing, see
     /// `Update`) so `Spawn` re-arms it every call (enable + `Rebind` +
@@ -90,15 +93,15 @@ namespace Ring.Presentation
         /// `GameFeelConfig.CorpseGlowFadeSeconds` every call (review fix-round
         /// — was a local `const`), same hot-tweak contract as `CasingView.
         /// Spawn`'s `settleSeconds` parameter.
-        /// Mech vs. capsule (Б4): the mech falls via its own `AnimIds.
-        /// MechDeath` clip, upright at spawn (`Quaternion.Euler(0f, yaw, 0f)`)
+        /// Mech vs. capsule (Б4): the body falls via its own pack's death take
+        /// (`ClipsFamilyFor`, Task 31), upright at spawn (`Quaternion.Euler(0f, yaw, 0f)`)
         /// — the capsule prefab still lies flat on its side
         /// (`Quaternion.Euler(90f, yaw, 0f)`) as before, kept honest but no
         /// longer wired anywhere after T12.
         /// В1/В2 fix-wave 2 (app-n6g item 2, BUG fix): `visualScale` mirrors
         /// `MobVisual.Bind`'s own `_visual.localScale = Vector3.one *
         /// visualScale` write for the LIVE mob (`ViewRegistry.SyncMobs`'
-        /// `GameFeelConfig.ChaserVisualScale`/`GunnerVisualScale` read) — the
+        /// `GameFeelConfig.VisualScaleFor` read, one number per archetype) — the
         /// caller (`PersistentPropsDirector.HandleMobDied`) resolves the same
         /// archetype scale from the `MobDied` event's own `MobType` and passes
         /// it straight through, no new SO field needed. Before this fix the

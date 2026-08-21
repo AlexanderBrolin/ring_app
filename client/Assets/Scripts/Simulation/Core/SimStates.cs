@@ -264,10 +264,17 @@ namespace Ring.Simulation.Core
     /// Stage 3 Task 14 (spec §3.7, С16/Р229): the container's SKIN and spawn
     /// table only — behavior never branches on it (spec: "на поведение он
     /// не влияет… три механизма вместо одного дали бы три state-машины и
-    /// три набора гонок"). Coordinator R-100: `Kind` is read exactly ONCE
-    /// in the whole codebase, by `Loot.ContainerStore.InitialTtlFor` — a
-    /// future task that needs a second branch on it is reopening that
+    /// три набора гонок"). Coordinator R-100: `Kind` is read exactly once
+    /// in the SIMULATION, by `Loot.ContainerStore.InitialTtlFor` — a future
+    /// task that needs a second branch on BEHAVIOR here is reopening that
     /// spec decision, not extending a precedent.
+    ///
+    /// PRESENTATION READS IT TOO SINCE STAGE 3 TASK 31 (R-250), and that is
+    /// the sentence above being honored rather than bent: `ViewRegistry`
+    /// picks a POOL and a PREFAB from it and `ContainerView` records it to
+    /// find its pool again, which is the SKIN this doc opens by calling it.
+    /// No timer, no slot, no outcome branches on `Kind` anywhere — the one
+    /// state machine spec §3.7 asked for is still one.
     public enum ContainerKind : byte { Ground = 0, Crate = 1, Cache = 2, MobCorpse = 3, PlayerCorpse = 4 }
 
     /// Live state of one container (spec §3.7) — the ONE entity type for

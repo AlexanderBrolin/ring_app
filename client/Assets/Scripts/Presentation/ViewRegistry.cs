@@ -6,7 +6,8 @@ using UnityEngine;
 
 namespace Ring.Presentation
 {
-    /// Sole owner of `PlayerView`/`MobView`/`ProjectileView` lifecycle (П-1):
+    /// Sole owner of `PlayerView`/`MobView`/`ProjectileView` lifecycle — and,
+    /// since Stage 3 Task 31, of `PickupView`/`ContainerView` too (П-1):
     /// maps the runner's live snapshot to pools of views — players by SLOT,
     /// mobs and projectiles by entity Id (spec §3.7/§3.12). Two
     /// independent responsibilities:
@@ -1085,7 +1086,21 @@ namespace Ring.Presentation
             // (hot-tweak, spec §3.9) is reflected in the telegraph pulse immediately —
             // the backend is `Ready` here, LateUpdate's own guard above already
             // returned early otherwise.
-            float telegraphSeconds = _runner.Config.Chaser.TelegraphSeconds;
+            //
+            // PER ARCHETYPE SINCE TASK 31 (fix-round, Ф7 review B-I2), and the
+            // defect it closes is the same one this task exists for, wearing a
+            // scalar instead of a branch: the windup pulse normalizes
+            // `StateTimer` against this number, and one number for every mob
+            // meant the CHASER'S windup. The Director's is 1.1 s against the
+            // Chaser's 0.35 (`MobDirectorConfig`/`MobChaserConfig`), so his
+            // telegraph saturated at 32 % of the real windup and then sat at
+            // "the blow lands NOW" for three quarters of a second while nothing
+            // landed — a boss whose tell lies is worse than a boss with no
+            // tell. The Elite escaped only by carrying the Chaser's own 0.35.
+            // The whole config is copied once here (it is a large struct behind
+            // a by-value property) and the archetype's field is picked per mob
+            // inside the loop.
+            SimConfig config = _runner.Config;
             // В1/В2 fix-wave 2 (app-n6g item 3b): read once per frame, same
             // shape as telegraphSeconds above — MobView.Sync takes plain
             // values, never a GameFeelConfig/AimProvider reference of its own.
@@ -1144,11 +1159,12 @@ namespace Ring.Presentation
                     // the projectile branch below for why this order matters at all.
                     view.transform.position = SimSpace.ToWorld(m.Pos) + MobOffset;
                     view.Bind(in m);
-                    view.Visual?.Bind(in m, VisualScaleFor(m.Type));
+                    view.Visual?.Bind(in m, _gameFeel.VisualScaleFor(m.Type));
                     // Sync right away (Task 21 Bind/Sync contract) so a mob that's
                     // already mid-Telegraph the instant it becomes visible reads
                     // correctly this same frame, not one frame late.
-                    view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverAccent, hoverGlowBoost);
+                    view.Sync(in m, TelegraphSecondsFor(m.Type, in config), view == hoveredMob,
+                        hoverAccent, hoverGlowBoost);
                     view.Visual?.Sync(in m, in visualParams);
                     _activeMobs.Add(m.Id, view);
                     continue;
@@ -1167,7 +1183,8 @@ namespace Ring.Presentation
                     Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
                     view.transform.position = world + MobOffset;
                 }
-                view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverAccent, hoverGlowBoost);
+                view.Sync(in m, TelegraphSecondsFor(m.Type, in config), view == hoveredMob,
+                    hoverAccent, hoverGlowBoost);
                 // After the position write above (Б7): when frozen, position
                 // wasn't written this frame, so MobVisual's own prev/curr delta
                 // reads zero and it settles on Idle — no separate "frozen" branch
@@ -1334,7 +1351,7 @@ namespace Ring.Presentation
                 if (view == null)
                 {
                     view = RentContainer(container.Kind);
-                    view.Bind(container.Kind, _gameFeel.ContainerVisualScale);
+                    view.Bind(container.Kind, ContainerScaleFor(container.Kind));
                     _activeContainers.Add(container.Id, view);
                 }
                 view.transform.position = SimSpace.ToWorld(container.Pos);
@@ -1414,16 +1431,15 @@ namespace Ring.Presentation
                 "unknown archetype"),
         };
 
-        /// The archetype's own visual scale. `PersistentPropsDirector` reads the
-        /// SAME four numbers for the corpse and the gib parts off `MobDied`'s
-        /// own `MobType` (that class's own doc) — a mob that shrank on death
-        /// would read as a bug, so the two reads have to stay one rule.
-        float VisualScaleFor(MobType type) => type switch
+        /// The archetype's own windup length, for `MobView`'s telegraph ramp.
+        /// Same throwing shape as the pool/prefab homes above; see the read
+        /// site in `SyncMobs` for what one shared number cost.
+        static float TelegraphSecondsFor(MobType type, in SimConfig config) => type switch
         {
-            MobType.Chaser => _gameFeel.ChaserVisualScale,
-            MobType.Gunner => _gameFeel.GunnerVisualScale,
-            MobType.Elite => _gameFeel.EliteVisualScale,
-            MobType.Director => _gameFeel.DirectorVisualScale,
+            MobType.Chaser => config.Chaser.TelegraphSeconds,
+            MobType.Gunner => config.Gunner.TelegraphSeconds,
+            MobType.Elite => config.Elite.TelegraphSeconds,
+            MobType.Director => config.Director.TelegraphSeconds,
             _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
                 "unknown archetype"),
         };
@@ -1482,6 +1498,25 @@ namespace Ring.Presentation
             ContainerKind.Ground => _groundPool,
             ContainerKind.MobCorpse => _corpseMarkerPool,
             ContainerKind.PlayerCorpse => _corpseMarkerPool,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(kind), kind,
+                "unknown container kind"),
+        };
+
+        /// How big a container is drawn. The corpse kinds are NOT props and do
+        /// not take the prop scale (fix-round, Ф7 review B-I1): their view is
+        /// the little emissive marker, and it is sized with the CELL so the two
+        /// "something to pick up" tells read alike. Before this fix the prefab
+        /// was built at the cell's size and then every `Bind` overwrote it with
+        /// the container scale, so the marker came out at 1 m instead of 0.5
+        /// and the bootstrap's own sizing line was dead code with a comment
+        /// that said otherwise.
+        float ContainerScaleFor(ContainerKind kind) => kind switch
+        {
+            ContainerKind.Crate => _gameFeel.ContainerVisualScale,
+            ContainerKind.Cache => _gameFeel.ContainerVisualScale,
+            ContainerKind.Ground => _gameFeel.ContainerVisualScale,
+            ContainerKind.MobCorpse => _gameFeel.PickupVisualDiameter,
+            ContainerKind.PlayerCorpse => _gameFeel.PickupVisualDiameter,
             _ => throw new System.ArgumentOutOfRangeException(nameof(kind), kind,
                 "unknown container kind"),
         };

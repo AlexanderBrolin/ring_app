@@ -338,6 +338,7 @@ namespace Ring.Editor
         const string BlockSparkPrefabPath = PrefabsDir + "/BlockSpark.prefab";
         const string DeathBurstPrefabPath = PrefabsDir + "/DeathBurst.prefab";
         const string SlideDustPrefabPath = PrefabsDir + "/SlideDust.prefab"; // Task 22
+        const string PickupPopPrefabPath = PrefabsDir + "/PickupPop.prefab"; // Stage 3 Task 31
         const string PersistentPropsObjectName = "PersistentProps";
         const string TagManagerPath = "ProjectSettings/TagManager.asset";
         const string CasingsLayerName = "Casings";
@@ -1762,6 +1763,19 @@ namespace Ring.Editor
             ParticleSystem slideDustPrefab = GetOrCreateSparkPrefab(SlideDustPrefabPath, "SlideDust", slideDustMat,
                 lifetime: gameFeel.SlideDustLifetime, speed: gameFeel.SlideDustSpeed, size: gameFeel.SlideDustSize,
                 burstCount: gameFeel.SlideDustBurstCount, coneAngle: 60f);
+            // Stage 3 Task 31 (the FLASH half of what spec §3.11 asks a pickup
+            // for): the cell's own pop, on the cell's own cyan.
+            //
+            // LITERALS RATHER THAN FOUR NEW `GameFeelConfig` FIELDS, and the
+            // precedent is this file's own history: the hit/block/death spark
+            // numbers were literals here too until Task 27, and they moved into
+            // the SO at the exact moment the OWNER asked to retune them on a
+            // playtest. A brand-new effect nobody has seen yet has nothing to
+            // retune against; if the В1 playtest wants it bigger or longer,
+            // these four take the same road the sparks did. Short and small on
+            // purpose — a cell is a small thing being picked up, not a kill.
+            ParticleSystem pickupPopPrefab = GetOrCreateSparkPrefab(PickupPopPrefabPath, "PickupPop",
+                pickupMat, lifetime: 0.25f, speed: 2f, size: 0.07f, burstCount: 12, coneAngle: 90f);
 
             GameObject persistentPropsGo = EditorBootstrapUtils.FindRootObject(scene, PersistentPropsObjectName);
             if (persistentPropsGo == null)
@@ -1797,6 +1811,7 @@ namespace Ring.Editor
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_slideDustPrefab", slideDustPrefab); // Task 22
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_pickupPopPrefab", pickupPopPrefab); // Stage 3 Task 31
             if (persistentPropsRefsChanged)
             {
                 persistentPropsSo.ApplyModifiedPropertiesWithoutUndo();

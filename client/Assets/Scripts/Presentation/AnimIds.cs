@@ -97,8 +97,10 @@ namespace Ring.Presentation
         /// Hit/Look/TurnOff and NO Punch, Shoot or Death.
         ///
         /// TWO MAPPINGS ARE DELIBERATE COLLAPSES, said out loud rather than
-        /// discovered later. `Ranged` reuses `Attack` because these models
-        /// ship ONE attack take between them and none of it is a firing pose;
+        /// discovered later. `Ranged` reuses `Attack` because neither model
+        /// ships a FIRING pose at all — QuadShell's only attack take is
+        /// `Attack`, and Trilobite's second one (`AttackAuto`) is a melee
+        /// variant of the same lunge, not a shot;
         /// the shot itself is still sold by the muzzle flash and the tracer,
         /// which come from the projectile, not from the animator. And `Death`
         /// maps to `TurnOff` — a robot powering down IS this pack's death

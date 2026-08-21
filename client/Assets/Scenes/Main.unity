@@ -1476,6 +1476,7 @@ MonoBehaviour:
   _blockSparkPrefab: {fileID: 3910514533307916869, guid: 373685f485adaed9fb5cfe233b98cdeb, type: 3}
   _deathBurstPrefab: {fileID: 1797491183300419661, guid: 0f59ad34e3d1f87219e73d7b5b0239b4, type: 3}
   _slideDustPrefab: {fileID: 1261426757742288409, guid: 7e5ba02562ba2fadbbae6b7f82503538, type: 3}
+  _pickupPopPrefab: {fileID: 1007718903658221736, guid: 14f156d5480ef9bc88b2ab20413208e0, type: 3}
 --- !u!4 &791847470
 Transform:
   m_ObjectHideFlags: 0
