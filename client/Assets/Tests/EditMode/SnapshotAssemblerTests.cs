@@ -2227,5 +2227,86 @@ namespace Ring.Simulation.Tests
                 + "on its very next audible event, exactly the averaging leak Р133 exists to close "
                 + "(SnapshotAssembler.ResetViewpointMemory's own doc, fix-round 2 C-1)");
         }
+
+        // ---- T26. A pickup is not a dead mob (errata E-8 C-I4) ----
+
+        [Test]
+        public void PickupInFrame_IsNotMistakenForADeadMob()
+        {
+            // THE DEFECT THIS PINS, stated as the mechanism rather than as a
+            // rule (spec §3.9 Р268 item 2, errata E-8 C-I4). Entity ids come
+            // from ONE counter in SimulationWorld, so a pickup's id is a
+            // perfectly ordinary POSITIVE integer — the same shape a mob's id
+            // has. WriteFrame's candidate loop dispatches on exactly that
+            // sign: negative means a player, and everything else is looked up
+            // with MobSlotOf. A pickup sharing the mob set would therefore be
+            // asked "which capture slot is this mob in", answered -1, and
+            // dropped through the `continue` that exists for a mob still
+            // LINGERING after its death. No exception, no counter, no record:
+            // the entity would simply never be in a frame, and every test in
+            // this file would stay green.
+            //
+            // Three separate sets are the fix, and this is what proves the
+            // fix is in force rather than merely written down.
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(40f, 0f),
+                new float2(0f, 40f));
+            int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            int pickupId = w.SpawnPickup(PickupKind.EnergyCell, new float2(3f, 0f), 1);
+            int containerId = w.SpawnContainer(ContainerKind.Crate, new float2(0f, 3f),
+                new byte[] { 1 });
+            w.ClearEvents();
+
+            // The premise that makes the whole scenario dangerous in the first
+            // place: all three ids are positive and DISTINCT, i.e. the sign
+            // trick cannot tell them apart and only the set an id lives in
+            // can. Stated, not assumed — if SimulationWorld ever gave the
+            // three classes disjoint id spaces of their own, this test would
+            // be pinning a hazard that no longer exists and should say so.
+            Assert.Greater(pickupId, 0, "premise: a pickup id is positive, like a mob's");
+            Assert.Greater(containerId, 0, "premise: a container id is positive, like a mob's");
+            CollectionAssert.AllItemsAreUnique(new[] { mobId, pickupId, containerId },
+                "premise: one counter feeds all three classes, so the ids are distinct but "
+                + "indistinguishable by shape");
+
+            var asm = new SnapshotAssembler(in cfg, Net(), connectionCount: 1);
+            AssembledFrame frame = Build(asm, w, cfg, connection: 0, identityIndex: 0,
+                viewpointIndex: 0);
+
+            // Half one — the three sets really did sort the three classes.
+            VisibilitySet mobs = asm.VisibleSetFor(0, VisibilityClass.Mobs);
+            VisibilitySet pickups = asm.VisibleSetFor(0, VisibilityClass.Pickups);
+            VisibilitySet containers = asm.VisibleSetFor(0, VisibilityClass.Containers);
+
+            Assert.IsTrue(pickups.Contains(pickupId),
+                "the pickup is three metres away in an open arena — it must be visible SOMEWHERE");
+            Assert.IsFalse(mobs.Contains(pickupId),
+                "and it must not be in the MOB set: there it would be looked up as a mob, found "
+                + "missing, and dropped as a lingering corpse");
+            Assert.IsTrue(containers.Contains(containerId),
+                "the container must be visible in its own set for the same reason");
+            Assert.IsFalse(mobs.Contains(containerId),
+                "and must not be in the mob set either");
+            Assert.IsTrue(mobs.Contains(mobId), "witness: the real mob IS in the mob set");
+
+            // Half two — the frame itself. The mob block carries the mob and
+            // nothing else: the pickup neither became a record nor consumed
+            // one, which is what "not mistaken for a dead mob" means at the
+            // wire.
+            Assert.AreEqual(1, frame.MobCount,
+                "the frame carries exactly the one live mob — a pickup that leaked into the "
+                + "mob candidate list would either ride as a mob record or silently displace one");
+            Assert.AreEqual(mobId, frame.Mobs[0].Id,
+                "and the record that IS there is the mob's own, by id");
+
+            // The counterfactual, so the two halves above are not merely
+            // consistent with each other: had the pickup ridden the mob set,
+            // THIS is the lookup that would have swallowed it. No mob in the
+            // world answers to its id, and the branch that handles that
+            // answer is a silent `continue`.
+            for (int i = 0; i < w.MobCount; i++)
+                Assert.AreNotEqual(pickupId, w.Mobs[i].Id,
+                    "counterfactual: no mob carries the pickup's id, so MobSlotOf would have "
+                    + "answered -1 and the frame would have lost it without a trace");
+        }
     }
 }

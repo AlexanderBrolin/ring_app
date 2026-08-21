@@ -18,7 +18,14 @@ namespace Ring.Simulation.Tests
         /// a byte-identical private copy of this one-line helper — the
         /// project's "existing test helpers are reused" rule applies to test
         /// helpers duplicated across files, not only to production code.
-        public static int Capacity(in SimConfig cfg) => cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
+        /// Stage 3 Task 26 (plan errata E-6 C-I3): the formula itself moved to
+        /// `VisibilitySet.CapacityFor`, the ONE home it now shares with
+        /// SnapshotAssembler.Connection — which spelled the same sum out
+        /// separately until this task. This overload stays because ~30 call
+        /// sites in this suite ask for the MOB capacity by that name; it
+        /// states which class it means and delegates.
+        public static int Capacity(in SimConfig cfg)
+            => Visibility.VisibilitySet.CapacityFor(in cfg.Arena, Visibility.VisibilityClass.Mobs);
 
         /// A world with every mob slot filled (via the SpawnMobForTest seam,
         /// half Chaser/half Gunner so both fire/movement/AI paths are live) and

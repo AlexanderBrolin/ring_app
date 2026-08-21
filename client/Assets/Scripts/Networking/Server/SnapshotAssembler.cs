@@ -441,8 +441,41 @@ namespace Ring.Networking.Server
             // anything (this class's own aliasing-guard doc says as much).
             // It is kept because leaving one of a pair stale invites the next
             // reader to reason about which half is safe to skip.
-            c.Previous.Clear();
-            c.Current.Clear();
+            c.MobsPrevious.Clear();
+            c.MobsCurrent.Clear();
+            // All THREE pairs, for the one reason this method exists (Stage 3
+            // Task 26): every one of them is keyed on the VIEWPOINT, so a
+            // pickup or a container this connection could see from where it
+            // used to look would keep its hysteresis and its linger across a
+            // spectate switch exactly the way a mob would. Clearing two of
+            // three would close the leak for the class that happens to be
+            // replicated today and leave it open for the two that arrive next.
+            c.PickupsPrevious.Clear();
+            c.PickupsCurrent.Clear();
+            c.ContainersPrevious.Clear();
+            c.ContainersCurrent.Clear();
+        }
+
+        /// This connection's CURRENT visibility set for one entity class — the
+        /// decision CRITICAL RULE 4 is enforced by, offered for reading the
+        /// same way `BufferFor` offers the frame it produced. Read-only by
+        /// contract: `VisibilitySet`'s own doc names `Count`/`IdAt`/`LingerAt`/
+        /// `Contains` as its whole enumeration contract, and a caller that
+        /// mutates what it is handed here corrupts the next tick's hysteresis.
+        public VisibilitySet VisibleSetFor(int connection, VisibilityClass cls)
+        {
+            Connection c = _connections[connection];
+            switch (cls)
+            {
+                case VisibilityClass.Mobs: return c.MobsCurrent;
+                case VisibilityClass.Pickups: return c.PickupsCurrent;
+                case VisibilityClass.Containers: return c.ContainersCurrent;
+                default:
+                    throw new System.ArgumentOutOfRangeException(nameof(cls), cls,
+                        "SnapshotAssembler.VisibleSetFor: every VisibilityClass keeps its own "
+                        + "set — a new one has to be given a home here rather than fall back "
+                        + "to the mobs'.");
+            }
         }
 
         /// Per-tick, shared by every connection: captures the world once and
@@ -626,10 +659,31 @@ namespace Ring.Networking.Server
             // what carries hysteresis and linger continuity AND what MobDied is
             // routed against. Compute refuses aliased buffers outright, so the
             // swap is not optional bookkeeping.
-            VisibilitySet swap = c.Previous;
-            c.Previous = c.Current;
-            c.Current = swap;
-            VisibilitySystem.Compute(_world, viewpointIndex, in _cfg.Visibility, c.Previous, c.Current);
+            VisibilitySet swap = c.MobsPrevious;
+            c.MobsPrevious = c.MobsCurrent;
+            c.MobsCurrent = swap;
+            VisibilitySystem.Compute(_world, viewpointIndex, in _cfg.Visibility, c.MobsPrevious, c.MobsCurrent);
+
+            // The two new classes, each in its OWN pair and each ping-ponged
+            // the same way (Stage 3 Task 26). Their sets are computed here,
+            // one task before Task 27 spends them on blocks, because this is
+            // the task that decides an entity's CLASS — and a class decided
+            // wrongly is invisible at the frame, by construction (a positive
+            // id in the mob pair resolves to no mob and leaves through the
+            // lingering-corpse branch, silently). The frame writer arriving
+            // next is what they are computed for; nothing else reads them yet,
+            // and that is stated rather than left to be discovered.
+            swap = c.PickupsPrevious;
+            c.PickupsPrevious = c.PickupsCurrent;
+            c.PickupsCurrent = swap;
+            VisibilitySystem.ComputePickups(_world, viewpointIndex, in _cfg.Visibility,
+                c.PickupsPrevious, c.PickupsCurrent);
+
+            swap = c.ContainersPrevious;
+            c.ContainersPrevious = c.ContainersCurrent;
+            c.ContainersCurrent = swap;
+            VisibilitySystem.ComputeContainers(_world, viewpointIndex, in _cfg.Visibility,
+                c.ContainersPrevious, c.ContainersCurrent);
 
             _viewpointPos = _world.PlayerAt(viewpointIndex).Pos;
 
@@ -878,7 +932,7 @@ namespace Ring.Networking.Server
                         // wording, is that "someone died over there" reaches an
                         // observer who cannot see the target.
                         if (EventRelevance.ShouldDeliver(in we.Source, identityIndex, viewpointIndex, _world,
-                                c.Previous, in _cfg.Visibility, out float2 seen))
+                                c.MobsPrevious, in _cfg.Visibility, out float2 seen))
                         {
                             Enqueue(c, i, seen);
                         }
@@ -894,7 +948,7 @@ namespace Ring.Networking.Server
                         // Every remaining kind goes through the seam, against
                         // the CURRENT tick's set.
                         if (!EventRelevance.ShouldDeliver(in we.Source, identityIndex, viewpointIndex, _world,
-                                c.Current, in _cfg.Visibility, out float2 pos))
+                                c.MobsCurrent, in _cfg.Visibility, out float2 pos))
                             break;
 
                         // The seam decides WHETHER; the latch decides WITH
@@ -972,7 +1026,7 @@ namespace Ring.Networking.Server
         /// this reason.
         float2 ResolveAudiblePos(Connection c, int sourceId, float2 truePos)
         {
-            if (c.Current.Contains(sourceId))
+            if (c.MobsCurrent.Contains(sourceId))
             {
                 ClearLatch(c, sourceId);
                 return truePos;
@@ -1156,9 +1210,9 @@ namespace Ring.Networking.Server
             // survives truncation, which is what makes the frame reproducible.
             int otherPlayers = 0;
             c.CandidateCount = 0;
-            for (int i = 0; i < c.Current.Count; i++)
+            for (int i = 0; i < c.MobsCurrent.Count; i++)
             {
-                int id = c.Current.IdAt(i);
+                int id = c.MobsCurrent.IdAt(i);
                 if (id < 0)
                 {
                     int playerIndex = -id - 1;
@@ -1663,8 +1717,17 @@ namespace Ring.Networking.Server
         /// scratch the frame is built through. All of it is allocated once.
         sealed class Connection
         {
-            public VisibilitySet Previous;
-            public VisibilitySet Current;
+            /// THREE PAIRS, NOT ONE (Stage 3 Task 26, spec §3.9 Р268 item 2 —
+            /// see VisibilityClass's own doc for why a shared set could not be
+            /// made to work by tagging). Each is ping-ponged by BuildFor
+            /// exactly like the mob pair always was; players ride in the mob
+            /// pair, told apart by the sign of their id.
+            public VisibilitySet MobsPrevious;
+            public VisibilitySet MobsCurrent;
+            public VisibilitySet PickupsPrevious;
+            public VisibilitySet PickupsCurrent;
+            public VisibilitySet ContainersPrevious;
+            public VisibilitySet ContainersCurrent;
             public readonly byte[] Buffer;
             public readonly NetStats Stats = new NetStats();
 
@@ -1703,11 +1766,26 @@ namespace Ring.Networking.Server
             public Connection(in SimConfig cfg, int maxBytes, int queueCapacity, int eventBudget,
                 int redundancyTicks)
             {
-                // Same capacity the visibility fixtures use: every live mob
-                // plus every player a single Compute call can visit.
-                int setCapacity = cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
-                Previous = new VisibilitySet(setCapacity);
-                Current = new VisibilitySet(setCapacity);
+                // ONE HOME FOR THE THREE CAPACITIES (plan errata E-6 C-I3,
+                // Stage 3 Task 26). The mob formula used to be spelled out
+                // here AND in TestWorlds.Capacity; both now ask
+                // VisibilitySet.CapacityFor, which is also the only place the
+                // two new classes' own caps are stated. Sizing a set by the
+                // wrong class's cap is silent in the cheap direction and
+                // catastrophic in the other, which is why it is not a literal
+                // in either file any more.
+                MobsPrevious = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Mobs));
+                MobsCurrent = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Mobs));
+                PickupsPrevious = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+                PickupsCurrent = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+                ContainersPrevious = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+                ContainersCurrent = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
                 Buffer = new byte[maxBytes];
 
                 SubIds = new int[math.max(1, cfg.Arena.MaxProjectiles)];

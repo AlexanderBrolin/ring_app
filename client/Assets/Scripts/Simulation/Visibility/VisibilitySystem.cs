@@ -32,14 +32,7 @@ namespace Ring.Simulation.Visibility
         public static void Compute(SimulationWorld w, int observerIndex,
             in VisibilitySimConfig cfg, VisibilitySet previous, VisibilitySet result)
         {
-            if (ReferenceEquals(previous, result))
-            {
-                throw new System.ArgumentException(
-                    "VisibilitySystem.Compute: previous and result must be two DISTINCT " +
-                    "VisibilitySet instances — result.Clear() runs before previous is ever " +
-                    "read, so aliasing the two silently disables hysteresis/linger instead " +
-                    "of throwing.", nameof(result));
-            }
+            RequireDistinct(previous, result, nameof(Compute));
             result.Clear();
             // Hoisted out of the per-entity loops below (same discipline as
             // MobAiSystem.Update's own `ArenaSimConfig arena = w.Config.Arena;`)
@@ -89,6 +82,94 @@ namespace Ring.Simulation.Visibility
                 // reason SwapRemove_DoesNotTransferState pins exactly this line.
                 Evaluate(observerPos, m.Pos, radius, m.Id, in cfg, in arena, previous, result);
             }
+        }
+
+        /// `observerIndex`'s per-tick set of visible PICKUPS (Stage 3 Task 26,
+        /// spec §3.9 Р240) — the same rule Compute above applies to mobs, on
+        /// the same `Evaluate` body: distance, then conservative line of
+        /// sight, then exit hysteresis and linger, keyed by the entity's own
+        /// `Id`. No separate policy exists, and none is wanted: a cell behind
+        /// a wall is hidden for exactly the reason a mob behind it is, and the
+        /// EntityFadeTicks fade downstream is the same fade.
+        ///
+        /// SAME PARAMETER ORDER AS Compute, DELIBERATELY (plan errata E-6
+        /// A-I7). The three entry points differ in ONE thing — which store
+        /// they walk — so anything a caller has to reorder between them is an
+        /// invitation to pass a container's set to the pickup pass.
+        ///
+        /// THE TARGET RADIUS COMES FROM THE CONFIG, NOT FROM THE ENTITY.
+        /// Compute reads a mob's own `w.MobConfigFor(m.Type).Radius`; a pickup
+        /// has no MobConfig and no radius of its own anywhere in the
+        /// simulation, so `VisibilitySimConfig.PickupRadiusForVisibility`
+        /// (delivered by Task 13, spec §3.9 item 3) states it. Reading the
+        /// CONTAINER's field here instead would be silent at the shipped
+        /// numbers, where the two are both 0.4 m — which is why
+        /// VisibilityTests spreads them apart rather than inheriting them.
+        public static void ComputePickups(SimulationWorld w, int observerIndex,
+            in VisibilitySimConfig cfg, VisibilitySet previous, VisibilitySet result)
+        {
+            RequireDistinct(previous, result, nameof(ComputePickups));
+            result.Clear();
+
+            ArenaSimConfig arena = w.Config.Arena;
+            float2 observerPos = w.PlayerAt(observerIndex).Pos;
+            float radius = cfg.PickupRadiusForVisibility;
+
+            PickupState[] pickups = w.Pickups;
+            int count = w.PickupCount;
+            for (int i = 0; i < count; i++)
+            {
+                // Keyed by the pickup's own Id and never by the loop index,
+                // for the reason VisibilitySet's own doc gives about mobs: the
+                // store is swap-removed, so this slot's occupant next tick may
+                // be a different entity entirely and `previous` would hand it
+                // a stranger's linger counter.
+                Evaluate(observerPos, pickups[i].Pos, radius, pickups[i].Id,
+                    in cfg, in arena, previous, result);
+            }
+        }
+
+        /// `observerIndex`'s per-tick set of visible CONTAINERS — the pickup
+        /// pass above, one store over, with `ContainerRadiusForVisibility` as
+        /// the target radius. Written as its own method rather than one taking
+        /// a class discriminator: the two walk different arrays of different
+        /// element types, so a shared loop would need an interface and would
+        /// box a state struct on a per-tick path (the same reason Ф6-0's TTL
+        /// home is a rule rather than a loop, R-203).
+        public static void ComputeContainers(SimulationWorld w, int observerIndex,
+            in VisibilitySimConfig cfg, VisibilitySet previous, VisibilitySet result)
+        {
+            RequireDistinct(previous, result, nameof(ComputeContainers));
+            result.Clear();
+
+            ArenaSimConfig arena = w.Config.Arena;
+            float2 observerPos = w.PlayerAt(observerIndex).Pos;
+            float radius = cfg.ContainerRadiusForVisibility;
+
+            ContainerState[] containers = w.Containers;
+            int count = w.ContainerCount;
+            for (int i = 0; i < count; i++)
+            {
+                Evaluate(observerPos, containers[i].Pos, radius, containers[i].Id,
+                    in cfg, in arena, previous, result);
+            }
+        }
+
+        /// The aliasing rule, stated ONCE for all three Compute entry points
+        /// (Task 26): each of them clears `result` before it ever reads
+        /// `previous`, so handing the same instance to both roles turns every
+        /// hysteresis/linger decision into "compare an already-emptied set to
+        /// itself" — no exception, no crash, just a permanently-empty
+        /// linger/hysteresis window. Three copies of the sentence would have
+        /// been three chances to weaken one of them.
+        static void RequireDistinct(VisibilitySet previous, VisibilitySet result, string method)
+        {
+            if (!ReferenceEquals(previous, result)) return;
+            throw new System.ArgumentException(
+                $"VisibilitySystem.{method}: previous and result must be two DISTINCT " +
+                "VisibilitySet instances — result.Clear() runs before previous is ever " +
+                "read, so aliasing the two silently disables hysteresis/linger instead " +
+                "of throwing.", nameof(result));
         }
 
         /// One entity's visibility/linger transition for this tick (spec

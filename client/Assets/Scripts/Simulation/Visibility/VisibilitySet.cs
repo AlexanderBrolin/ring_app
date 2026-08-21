@@ -1,5 +1,26 @@
+using Ring.Simulation.Core;
+
 namespace Ring.Simulation.Visibility
 {
+    /// The three entity classes a connection keeps a SEPARATE visibility set for
+    /// (Stage 3 Task 26, spec §3.9 Р268 item 2). Not a tag inside one shared
+    /// set: the sign of an id is already spoken for — negative means "player"
+    /// (VisibilityIds.ForPlayer below) — and SnapshotAssembler.WriteFrame
+    /// dispatches an entry's class off exactly that sign, reading every
+    /// positive id as a mob's. A pickup or container sharing that set would be
+    /// looked up as a mob, found missing, and dropped by the branch that exists
+    /// for a mob still LINGERING after its death: no exception, no counter,
+    /// nothing in the frame. A second layer of tags in the same integer would
+    /// have made MobSlotOf unreadable instead of fixing that.
+    ///
+    /// PLAYERS RIDE WITH THE MOBS, and that is not an oversight: they share one
+    /// set because VisibilitySystem.Compute produces both in one pass and the
+    /// frame writes both from one candidate list, told apart by the sign trick
+    /// that already works. The split is between the three classes whose ids
+    /// come from the SAME positive counter and can therefore only be told
+    /// apart by which set they are in.
+    public enum VisibilityClass { Mobs = 0, Pickups = 1, Containers = 2 }
+
     /// Id-keyed set with per-id linger counters (Р19/Р20): _mobs uses swap-remove,
     /// so slot indices are unstable and would transfer state to a different mob.
     /// Flat array + linear scan (Task 19, spec §3.5) — no HashSet: allocations
@@ -15,6 +36,7 @@ namespace Ring.Simulation.Visibility
         readonly int[] _ids;
         readonly int[] _lingerTicks;
         int _count;
+        int _refused;
 
         public VisibilitySet(int capacity)
         {
@@ -22,7 +44,49 @@ namespace Ring.Simulation.Visibility
             _lingerTicks = new int[capacity];
         }
 
+        /// How large a set has to be to hold everything ONE Compute call of
+        /// that class can ever put in it (plan errata E-6 C-I3, Stage 3 Task
+        /// 26) — the ONE home of all three numbers.
+        ///
+        /// WHY IT IS A HOME RATHER THAN THREE EXPRESSIONS. The mob sum lived
+        /// in two places before this task (SnapshotAssembler.Connection and
+        /// TestWorlds.Capacity), spelled out identically and with nothing to
+        /// make the second follow the first. A set sized by the wrong class's
+        /// cap does not fail loudly: too large merely wastes an array, and too
+        /// small now REFUSES entities (see Add below) — a fog of war that
+        /// quietly stops reporting the entities past the cap, which is the
+        /// exact shape of bug CRITICAL RULE 4 makes expensive to find.
+        ///
+        /// PLAYERS RIDE ONLY IN THE MOB SUM, and that is the whole difference
+        /// between the three: Compute visits every player and every mob in one
+        /// pass, while ComputePickups and ComputeContainers each visit one
+        /// store and nothing else. Adding MaxPlayers to their caps would not
+        /// be conservative, it would be wrong about what the function does.
+        public static int CapacityFor(in ArenaSimConfig arena, VisibilityClass cls)
+        {
+            switch (cls)
+            {
+                case VisibilityClass.Mobs: return arena.MaxMobs + arena.MaxPlayers;
+                case VisibilityClass.Pickups: return arena.MaxPickups;
+                case VisibilityClass.Containers: return arena.MaxContainers;
+                default:
+                    throw new System.ArgumentOutOfRangeException(nameof(cls), cls,
+                        "VisibilitySet.CapacityFor: every VisibilityClass states its own cap "
+                        + "here — falling back to another class's would size a set by a number "
+                        + "that means something else.");
+            }
+        }
+
         public int Count => _count;
+
+        /// How many Add calls this set has REFUSED for want of room, since it
+        /// was constructed (Stage 3 Task 26, spec §3.9 item 1). Deliberately
+        /// NOT reset by Clear: this is a health number of the same kind as
+        /// `NetStats.DroppedEntities`, and one that reset every tick could
+        /// never be read by anything slower than a tick. A nonzero value means
+        /// some entity was left out of somebody's fog of war — bounded and
+        /// counted, rather than thrown or silent.
+        public int RefusedCount => _refused;
 
         public bool Contains(int entityId)
         {
@@ -77,8 +141,24 @@ namespace Ring.Simulation.Visibility
         /// linear scan. Same 0-means-"visible now" convention as LingerOf.
         public int LingerAt(int index) => _lingerTicks[index];
 
+        /// Appends an entry, or REFUSES it and counts the refusal when the set
+        /// is full (Stage 3 Task 26, spec §3.9 item 1 — until this task the
+        /// line below wrote `_ids[_count]` with no bounds check at all, so an
+        /// undersized set threw IndexOutOfRangeException from inside the
+        /// per-tick snapshot assembly, on the server, mid-match).
+        ///
+        /// THE NEWCOMER IS WHAT GOES, never an incumbent. Evicting an entry
+        /// already written would make the set's contents depend on the order
+        /// Add happened to be called in, which the insertion-order contract
+        /// IdAt/LingerAt above forbids outright — the frame is written in that
+        /// order and has to be reproducible.
         public void Add(int entityId, int lingerTicks = 0)
         {
+            if (_count >= _ids.Length)
+            {
+                _refused++;
+                return;
+            }
             _ids[_count] = entityId;
             _lingerTicks[_count] = lingerTicks;
             _count++;
