@@ -424,9 +424,61 @@ namespace Ring.Data
         // the barrel, which is "sideways and slightly back". Each is a starting
         // pose for the owner's gizmo pass on the smoke test, not a measurement:
         // the model carries no sockets of its own to take them from.
+        // Was the sync-marker key until Stage 3 Task 30's `MeshSagMeters`
+        // below superseded it.
         public Vector3 GunMuzzleLocalPosition = new Vector3(0f, 0f, 0.18f);
         public Vector3 GunEjectLocalPosition = new Vector3(0.03f, 0.04f, 0.16f);
-        public Vector3 GunEjectLocalEuler = new Vector3(0f, 100f, 0f); // sync-marker key — keep LAST
+        public Vector3 GunEjectLocalEuler = new Vector3(0f, 100f, 0f);
+
+        // Stage 3 Task 30 (spec §3.11): the greybox's zone floor tint — one
+        // color per zone, read once by `GreyboxBuilder` when it builds the
+        // arena. THREE FLAT COLORS RATHER THAN ONE PLUS A GRADIENT, because
+        // the thing being communicated is a DISCRETE fact: `Geometry.ZoneOf`
+        // answers Outer/Middle/Core off two radii, and a player who has to
+        // judge a gradient to tell which zone their feet are in is being shown
+        // something the simulation does not believe. LDR, not HDR: this is the
+        // arena's own ground reading under the scene's lighting, not an accent
+        // — every emissive accent in this project is a separate material
+        // (`DashGlow`, `TracerTrail`, the extraction rings below), and a floor
+        // that emits would wash out the mobs standing on it.
+        //
+        // DEFAULTS. Outer is the coolest and darkest (the spawn belt, where
+        // the least happens), Middle warms slightly, Core is the warmest and
+        // brightest — so "further in" reads as "hotter" at a glance without
+        // any of the three competing with the player's own cyan or the
+        // Chaser's amber telegraph. All three sit low enough in value to keep
+        // the "dark environment + emissive VFX" look ADR-001 §10 asks for.
+        //
+        // BAKED AT BUILD TIME, NOT PER FRAME: `GreyboxBuilder` writes these
+        // into a `MaterialPropertyBlock` while constructing the floor, so an
+        // owner edit lands on the next arena build (a match restart, or a
+        // fresh PlayMode enter) rather than live — the same documented
+        // limitation the spark/decal numbers above already carry.
+        public Color ZoneTintOuter = new Color(0.24f, 0.26f, 0.32f);
+        public Color ZoneTintMiddle = new Color(0.34f, 0.30f, 0.28f);
+        public Color ZoneTintCore = new Color(0.46f, 0.33f, 0.26f);
+
+        // Stage 3 Task 30 (spec §3.11, Р273): how far a drawn arc is allowed
+        // to depart from the circle Simulation actually collides against —
+        // the SAGITTA of one mesh segment, in meters. `GreyboxBuilder` turns
+        // it into a segment count with the same arithmetic Р208 used to reject
+        // the "arc as a chain of stadiums" alternative: a chord of half-angle
+        // θ on a circle of radius R sags by R(1 − cos θ), so a full ring needs
+        // ⌈π / arccos(1 − sag/R)⌉ segments and every arc drawn on that ring
+        // steps by that same angle. That is what keeps the number out of the
+        // code: the ring wall's own 48 segments used to be a literal, and a
+        // literal cannot follow a radius the owner retunes (113 today, 65
+        // before Т12) — at a fixed count the picture silently drifts off the
+        // collision the further the radius moves, which is exactly the class
+        // of defect `app-1ru` was filed for.
+        //
+        // 0.05 IS THE SPEC'S NUMBER and it is a VISUAL tolerance, not a
+        // physical one: 5 cm is under the width of a round and far under the
+        // 1 m half-width of a zone wall, so no shot ever passes through a
+        // gap the eye can see. Raising it coarsens the mesh (fewer objects,
+        // visibly faceted rings); lowering it multiplies primitives with no
+        // gain the camera can resolve at this arena's scale.
+        [Range(0.005f, 0.5f)] public float MeshSagMeters = 0.05f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

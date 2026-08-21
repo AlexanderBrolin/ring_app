@@ -600,8 +600,12 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `RemotePlayerEmission` as of Stage 2 Task
-            // 45a — was `HeadHoverPulseAmp` (В3 fix-wave 2) before that,
+            // field (GameFeelConfig: `MeshSagMeters` as of Stage 3 Task 30 —
+            // the arc-segmentation tolerance and the three zone floor tints
+            // are that class's new last fields, and the committed asset
+            // predates all four — was `GunEjectLocalEuler` (Stage 2 Task 45b)
+            // before that, `RemotePlayerEmission` (Stage 2 Task
+            // 45a) before THAT — was `HeadHoverPulseAmp` (В3 fix-wave 2) before that,
             // `AimRayHeadAlphaBoost` (В3 fix-wave 1) before THAT,
             // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
@@ -638,7 +642,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "EmergencyFireInterval"); // Stage 3 Task 2 (was RunSpreadSpeedFrac, Task 17)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "GunEjectLocalEuler"); // Stage 2 Task 45b
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "MeshSagMeters"); // Stage 3 Task 30 (was GunEjectLocalEuler, Stage 2 Task 45b)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
             // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
@@ -1101,6 +1105,20 @@ namespace Ring.Editor
             Material floorMat = LoadMaterial("Floor");
             Material wallMat = LoadMaterial("Wall");
             Material obstacleMat = LoadMaterial("Obstacle");
+            // Stage 3 Task 30 (spec §3.11, plan errata I13): the two painted
+            // floor rings `GreyboxBuilder` draws around extraction points.
+            // Unlit like every other emissive accent this bootstrap generates
+            // (TracerTrail/MuzzleFlash/DashGlow) — a marker painted on the
+            // ground must read the same under any scene light, and a Lit
+            // material on a 6 cm slab would mostly read as its own shadow.
+            // CYAN FOR THE EARLY PORTAL, AMBER FOR THE GATE, on the palette
+            // this project already speaks (GameFeelConfig's own color docs):
+            // cyan is the player's own signature — an early portal is the way
+            // out you brought with you — while the gate belongs to the
+            // Director's half of the arena and takes the warm end. Neither
+            // sits at the red the headshot cue owns.
+            Material portalRingMat = GetOrCreateUnlitMaterial("PortalRing", new Color(0f, 2.2f, 2.8f));
+            Material gateRingMat = GetOrCreateUnlitMaterial("GateRing", new Color(3f, 1.4f, 0.2f));
 
             GameObject arenaGo = EditorBootstrapUtils.FindRootObject(scene, ArenaObjectName);
             if (arenaGo == null)
@@ -1118,9 +1136,15 @@ namespace Ring.Editor
             bool greyboxRefsChanged = false;
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_runner", runner);
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_arena", arena);
+            // Stage 3 Task 30: the builder reads GameFeelConfig for the three
+            // zone tints and for `MeshSagMeters`, the tolerance its derived
+            // segment counts come out of (spec Р273).
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_gameFeel", gameFeel);
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_floor", floorMat);
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_wall", wallMat);
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_obstacle", obstacleMat);
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_portalRing", portalRingMat);
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_gateRing", gateRingMat);
             if (greyboxRefsChanged)
             {
                 greyboxSo.ApplyModifiedPropertiesWithoutUndo();

@@ -2805,9 +2805,12 @@ MonoBehaviour:
   m_EditorClassIdentifier: Ring.Presentation::Ring.Presentation.GreyboxBuilder
   _runner: {fileID: 1959383180}
   _arena: {fileID: 11400000, guid: 867e8c92b82842b1e997ed0f876471d0, type: 2}
+  _gameFeel: {fileID: 11400000, guid: d41891a44ff376508a39bb04582310fe, type: 2}
   _floor: {fileID: 2100000, guid: b9852f4428a7ffe28aafb16048c319b2, type: 2}
   _wall: {fileID: 2100000, guid: 0e03432248fb0647488e9c06598f31d6, type: 2}
   _obstacle: {fileID: 2100000, guid: def817dfba1df8828a4ac91f383db435, type: 2}
+  _portalRing: {fileID: 2100000, guid: 728fe397fd7f6303e9be9967de190527, type: 2}
+  _gateRing: {fileID: 2100000, guid: 9277981b5760009e5bc70b9581cf6a18, type: 2}
 --- !u!4 &1427215804
 Transform:
   m_ObjectHideFlags: 0

@@ -111,3 +111,7 @@ MonoBehaviour:
   GunMuzzleLocalPosition: {x: 0, y: 0, z: 0.18}
   GunEjectLocalPosition: {x: 0.03, y: 0.04, z: 0.16}
   GunEjectLocalEuler: {x: 0, y: 100, z: 0}
+  ZoneTintOuter: {r: 0.24, g: 0.26, b: 0.32, a: 1}
+  ZoneTintMiddle: {r: 0.34, g: 0.3, b: 0.28, a: 1}
+  ZoneTintCore: {r: 0.46, g: 0.33, b: 0.26, a: 1}
+  MeshSagMeters: 0.05

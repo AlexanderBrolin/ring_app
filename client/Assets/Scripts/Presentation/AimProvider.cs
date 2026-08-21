@@ -293,8 +293,12 @@ namespace Ring.Presentation
         /// PvP half of the same bug.
         ///
         /// THAT GATE IS FLAT, AND TODAY THAT COSTS A NAMED BAND, NOT NOTHING.
-        /// `HasLineOfFire` knows obstacle circles and interior wall stadiums in
-        /// plan only; it has no height and no `Arena.BarrierTop`, and it does
+        /// `HasLineOfFire` knows obstacle circles, interior wall stadiums and —
+        /// since Stage 3 Task 9 — zone-wall ARCS in plan only (this sentence
+        /// named the first two until Task 30 drew the third: the arcs share
+        /// `BarrierTop` with the other interior barriers, so everything the
+        /// paragraph says below covers them unchanged); it has no height and no
+        /// `Arena.BarrierTop`, and it does
         /// not consult the outer ring boundary at all (its own doc says so) —
         /// harmless here, because a target beyond the rim is not a target. For
         /// every aim point at or below the barrier column the round's own radius
