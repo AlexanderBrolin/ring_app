@@ -10,13 +10,23 @@ namespace Ring.Simulation.Tests
     /// `SnapshotAssembler` applies on the way out — one wire event turned back
     /// into the `SimEvent` the whole Presentation fan-out already speaks.
     ///
-    /// WHY THIS FILE EXISTS AT ALL. The mapping was written in Task 44c inside
-    /// `NetworkSimBackend`, in an assembly this test assembly does not
-    /// reference and (by the owner's decision of 2026-08-10) never will — so
-    /// every branch of it was unreachable by any unit test. Moving the KNOWLEDGE
+    /// WHY THIS FILE EXISTS AT ALL, restated honestly (owner decision
+    /// 2026-08-22, bd `app-xkir`). This doc used to say the mapping lived "in
+    /// an assembly this test assembly does not reference and never will" — and
+    /// the second half was already false when it was written: `Simulation.
+    /// Tests.asmdef` HAS referenced `Ring.Presentation.Net` since Stage 2. The
+    /// reference stays; what was wrong was the reason given for the split.
+    ///
+    /// THE REAL REASON IS THAT THE BACKEND CANNOT BE STOOD UP IN EDITMODE. The
+    /// mapping was written in Task 44c inside `NetworkSimBackend`, which is a
+    /// `NetworkBehaviour`: reaching any branch of it from a test needs a live
+    /// `NetworkManager`, a started transport and a connection, none of which an
+    /// EditMode test has — so every branch of that switch was unreachable by
+    /// any unit test no matter what the asmdef said. Moving the KNOWLEDGE
     /// rather than the wiring is what made it testable: the decode is a pure
     /// function of a record, its bytes and the config, and the backend now only
-    /// calls it.
+    /// calls it. The boundary this file defends is therefore a SOFT one — keep
+    /// decisions out of FishNet plumbing (lesson 376) — not an assembly wall.
     ///
     /// EVERY EXPECTATION HERE IS TAKEN FROM THE SENDER, NOT FROM THE RECEIVER.
     /// The pairs below were read off `SnapshotAssembler.BeginTick`'s own switch
@@ -50,6 +60,13 @@ namespace Ring.Simulation.Tests
         /// "no entity" value `SimEvent.SecondaryEntityId`'s doc pins.
         const int RoundId = 4242;
         const int MobId = 77;
+
+        /// Stage 3 Т32: the two raid entities that ride the wire as a u16 code
+        /// (Р278). Both under 65 536 so the truncation the writer applies is
+        /// the identity here — a test about the MAPPING must not accidentally
+        /// be a test about truncation.
+        const int PickupId = 3131;
+        const int ContainerId = 909;
 
         /// Where the record says the event happened. The record's position is
         /// per-connection (the server may coarsen it), so it rides the record
@@ -512,6 +529,113 @@ namespace Ring.Simulation.Tests
                 + "so this is the one assertion that can tell them apart");
             Assert.AreEqual(12, e.EntityId,
                 "SimEvent.EntityId must be the WAVE index for this kind too");
+        }
+
+        // ------------------------------------------------------------------
+        // The raid's own five kinds (Stage 3 Т29 on the wire, Т32 here — bd
+        // app-gggs). Every expectation is taken from the SENDER: the
+        // `SimEventKind` docs' per-kind PAYLOAD paragraphs and
+        // `SnapshotAssembler.BeginTick`'s own `Add*` calls, never from the
+        // decoder's body.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void DirectorActivated_MapsToItsOwnKind_AndFillsNoPayloadField()
+        {
+            // PAYLOAD: none (SimEventKind.DirectorActivated's own doc) — the
+            // kind rides the All channel, which carries no position by rule
+            // (Р28), so `Kind` is the entire message.
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.DirectorActivated);
+            SnapshotEvents.WriteDirectorActivated(bytes);
+
+            SimEvent e = Decode(SnapshotEventKind.DirectorActivated, bytes, in cfg);
+
+            Assert.AreEqual(SimEventKind.DirectorActivated, e.Kind, "SimEvent.Kind");
+            Assert.AreEqual(0, e.EntityId, "SimEvent.EntityId — this kind has no entity");
+            Assert.AreEqual(0f, e.Amount, "SimEvent.Amount — unused for this kind");
+        }
+
+        [Test]
+        public void DirectorDied_MapsToItsOwnKind_AndIsNotDirectorActivated()
+        {
+            // The two carry the same (empty) payload and differ only in Kind,
+            // so that is the one assertion able to tell them apart — the same
+            // shape the WaveStarted/WaveCleared pair above is pinned by.
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.DirectorDied);
+            SnapshotEvents.WriteDirectorDied(bytes);
+
+            SimEvent e = Decode(SnapshotEventKind.DirectorDied, bytes, in cfg);
+
+            Assert.AreEqual(SimEventKind.DirectorDied, e.Kind,
+                "SimEvent.Kind — the two Director kinds share an empty payload and differ "
+                + "only here");
+        }
+
+        [Test]
+        public void PlayerExtracted_CarriesTheSlotInBothPlayerIndexAndEntityId()
+        {
+            // VICTIM convention, and the mirror is the point: SimEvent's own
+            // master list puts PlayerExtracted with PlayerDamaged/PlayerDied,
+            // "mirrors EntityId's convention for those three kinds", which is
+            // what lets EventRelevance.VisibleSubjectId resolve all three
+            // through one ForPlayer(ev.PlayerIndex).
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.PlayerExtracted);
+            SnapshotEvents.WritePlayerExtracted(bytes, OtherSlot, in cfg);
+
+            SimEvent e = Decode(SnapshotEventKind.PlayerExtracted, bytes, in cfg);
+
+            Assert.AreEqual(SimEventKind.PlayerExtracted, e.Kind, "SimEvent.Kind");
+            Assert.AreEqual(OtherSlot, e.PlayerIndex,
+                "SimEvent.PlayerIndex must be the slot that walked out");
+            Assert.AreEqual(OtherSlot, e.EntityId,
+                "SimEvent.EntityId mirrors PlayerIndex for this kind (the three victim kinds)");
+        }
+
+        [Test]
+        public void PickupTaken_CarriesTheCellIdInEntityId_AndTheReceiverAsCollector()
+        {
+            // Two halves, and the second is the interesting one. `EntityId` is
+            // the cell's own id, truncated to the u16 code every long-lived
+            // entity rides (Р278). `PlayerIndex` is the COLLECTOR — and the
+            // wire does NOT carry it, because this kind rides the Owner
+            // channel: the server sends it to exactly one connection, the
+            // collector's, so on this side "who collected" is answered by
+            // "who received", the same way StaminaDenied is already decoded.
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.PickupTaken);
+            SnapshotEvents.WritePickupTaken(bytes, PickupId);
+
+            SimEvent e = Decode(SnapshotEventKind.PickupTaken, bytes, in cfg);
+
+            Assert.AreEqual(SimEventKind.PickupTaken, e.Kind, "SimEvent.Kind");
+            Assert.AreEqual(PickupId, e.EntityId,
+                "SimEvent.EntityId must be the collected cell's own id");
+            Assert.AreEqual(LocalSlot, e.PlayerIndex,
+                "SimEvent.PlayerIndex must be THIS connection's slot: the Owner channel "
+                + "delivered this record to the collector and to nobody else");
+        }
+
+        [Test]
+        public void ContainerEmptied_CarriesTheContainerIdInEntityId_AndIsNotPickupTaken()
+        {
+            // Same u16 id payload as PickupTaken, so Kind is again the only
+            // assertion that can tell the two apart. No PlayerIndex here: this
+            // kind is delivered by VISIBILITY (R-236 — the assembler decides it
+            // against ContainersCurrent), so the receiver is not a subject of
+            // the news and filling their slot in would be a fiction.
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.ContainerEmptied);
+            SnapshotEvents.WriteContainerEmptied(bytes, ContainerId);
+
+            SimEvent e = Decode(SnapshotEventKind.ContainerEmptied, bytes, in cfg);
+
+            Assert.AreEqual(SimEventKind.ContainerEmptied, e.Kind,
+                "SimEvent.Kind — the two id-carrying raid kinds differ only here");
+            Assert.AreEqual(ContainerId, e.EntityId,
+                "SimEvent.EntityId must be the emptied container's own id");
         }
 
         // ------------------------------------------------------------------
