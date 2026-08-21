@@ -3022,6 +3022,29 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(f.TryContainer(boxId, out SnapshotBlocks.ContainerRecord box));
             Assert.IsFalse(box.IsEmpty,
                 "and the record's own empty flag agrees with the mask — one derivation, not two");
+
+            // A FULL box, to the LAST slot the mask can name (Т27 fix-round,
+            // mutation G5): the fixture above fills four slots, so a mask
+            // narrowed to four bits would have shipped it unchanged and no
+            // test would have noticed. `MaxContainerSlots` is 8 precisely
+            // because the mask is one byte, and this is what holds the two
+            // together.
+            var full = new byte[cfg.Arena.MaxContainerSlots];
+            for (int i = 0; i < full.Length; i++) full[i] = (byte)(1 + i % 4);
+            int fullBox = w.SpawnContainer(ContainerKind.Crate,
+                new float2(0f, cfg.Loot.LootRadius * 0.5f), full);
+            w.ClearEvents();
+
+            AssembledFrame second = Build(asm, w, cfg, 0, 0, 0);
+            Assert.IsTrue(second.TrySlots(fullBox, out SnapshotBlocks.ContainerSlotsRecord fullRecord));
+            Assert.AreEqual(SnapshotBlocks.ContainerSlotsMaskWidth, cfg.Arena.MaxContainerSlots,
+                "premise: the arena's slot cap IS the mask's width — the two are one number in two "
+                + "files, and ArenaConfig's own [Range(1, 8)] says why");
+            Assert.AreEqual((byte)0xFF, fullRecord.OccupancyMask,
+                "every slot of a full box is named, up to the eighth — a narrower mask would drop "
+                + "the top slots silently and the client would think the box half empty");
+            CollectionAssert.AreEqual(full, second.ItemsOf(in fullRecord),
+                "and every one of their items rides, in ascending slot order");
         }
 
         [Test]
@@ -3059,11 +3082,25 @@ namespace Ring.Simulation.Tests
             AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
 
             Assert.LessOrEqual(f.Bytes, cap, "the whole point: the frame stays inside its cap");
-            Assert.AreEqual(fits, f.SlotsCount, "as many interiors as the room holds, no more");
+            Assert.LessOrEqual(f.SlotsCount, fits, "no more interiors than the room holds");
+            // AND NEVER AN INTERIOR WITHOUT ITS BOX (Task 27 review,
+            // Important-1). The interiors are reserved before the Containers
+            // budget runs, so the number that actually ships is bounded by
+            // BOTH: what the room held and what kept its own record.
+            // ContainerSlots_NeverRideForABoxWhoseOwnRecordWasCut is the
+            // dedicated witness; here it is asserted per box, against the
+            // truncation this fixture is built to produce.
             for (int i = 0; i < boxes; i++)
-                Assert.AreEqual(i < fits, f.TrySlots(ids[i], out _),
-                    $"the {i}-th nearest box's interior must {(i < fits ? "ride" : "be dropped")} — "
-                    + "the farthest go first here too");
+            {
+                bool hasRecord = f.TryContainer(ids[i], out _);
+                bool hasInterior = f.TrySlots(ids[i], out _);
+                Assert.IsFalse(hasInterior && !hasRecord,
+                    $"box {i}: an interior may never ride without the box's own record — the "
+                    + "client cannot anchor a u16 code the frame does not otherwise mention (Р278)");
+                Assert.AreEqual(i < f.SlotsCount, hasInterior,
+                    $"and the interiors that DO ride are the {f.SlotsCount} nearest — the farthest "
+                    + "go first here exactly as for the record classes");
+            }
 
             // AND AN INTERIOR THAT DID NOT FIT IS NOT A DROPPED ENTITY
             // (coordinator R-222). The counter feeds the escalation threshold
@@ -3079,6 +3116,243 @@ namespace Ring.Simulation.Tests
                 + "escalate on something delta-snapshots do not fix");
             Assert.Greater(boxes - fits, 0,
                 "premise: interiors really were cut, so the two counts genuinely differ");
+        }
+
+        // ---- Т27 review: findings Important-1, -3, -4 and Minor-8 ----
+
+        [Test]
+        public void ContainerSlots_NeverRideForABoxWhoseOwnRecordWasCut()
+        {
+            // Task 27 review, Important-1. The interiors are budgeted AHEAD of
+            // every record class (Р243), so a frame can reserve room for a
+            // box's contents and then fail to fit the box's own Containers
+            // record — mobs are budgeted in between and take what they need.
+            // Such an interior is UNANCHORABLE by construction: Р278 forbids
+            // the receiver to carry a u16 entity code from one frame to the
+            // next, so a ContainerSlots record naming a box this frame never
+            // mentions is bytes spent on nothing, out of the highest-priority
+            // class in the whole budget.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            // One box within reach, and a crowd of mobs that will eat every
+            // byte the interiors did not already reserve.
+            int boxId = w.SpawnContainer(ContainerKind.Crate,
+                new float2(cfg.Loot.LootRadius * 0.5f, 0f), new byte[] { 1, 2, 3, 4 });
+            for (int i = 0; i < 20; i++)
+                w.SpawnMobForTest(MobType.Chaser, new float2(6f + i * 0.5f, 0f));
+            w.ClearEvents();
+
+            var asm = new SnapshotAssembler(cfg, Net(maxBytes: TightestLegalCap(in cfg)),
+                connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.IsFalse(f.TryContainer(boxId, out _),
+                "fixture premise: the mobs really did crowd the box's own record out of the frame");
+            Assert.AreEqual(0, f.SlotsCount,
+                "so its interior must not ride either — a ContainerSlots record whose Containers "
+                + "record was cut names a box the client cannot anchor (Р278), and the bytes belong "
+                + "to whoever comes next in the budget");
+
+            // The counterfactual, so the assertion above is not merely a
+            // consequence of the frame being tight: given room for the box's
+            // own record, the SAME world ships both halves.
+            var roomy = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame full = Build(roomy, w, cfg, 0, 0, 0);
+            Assert.IsTrue(full.TryContainer(boxId, out _), "witness: with room, the box rides");
+            Assert.IsTrue(full.TrySlots(boxId, out _), "and its interior rides with it");
+        }
+
+        [Test]
+        public void OrphanedInteriorRefundsItsBytes_AndTheEventsGetThem()
+        {
+            // The other half of the Important-1 fix, and the one a surviving
+            // mutant asked for: an interior reserves its bytes BEFORE the
+            // Containers budget runs (Р243 ranks it above everything), so when
+            // its box loses its own record the reservation has to come back.
+            // Otherwise the frame silently shrinks — bytes taken from the
+            // highest-priority class and given to nobody. The events are next
+            // in line for them, so the events are the witness.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            // One box within reach carrying four items: its interior costs
+            // 3 + 4 = 7 B, exactly what its own Containers record would.
+            var items = new byte[] { 1, 2, 3, 4 };
+            int boxId = w.SpawnContainer(ContainerKind.Crate,
+                new float2(cfg.Loot.LootRadius * 0.5f, 0f), items);
+            int interior = SnapshotBlocks.ContainerSlotsRecordHeaderBytes + items.Length;
+
+            // Mobs sized so that after the interior's reservation they leave
+            // LESS than one container record — the box loses its own record,
+            // which is what makes its interior an orphan.
+            int room = RoomInTightestFrame(in cfg);
+            int mobs = (room - interior) / SnapshotBlocks.MobRecordBytes;
+            for (int i = 0; i < mobs; i++)
+                w.SpawnMobForTest(MobType.Chaser, new float2(6f + i * 0.5f, 0f));
+            int leftWithoutRefund = room - interior - mobs * SnapshotBlocks.MobRecordBytes;
+            Assert.Less(leftWithoutRefund, SnapshotBlocks.ContainerRecordBytes,
+                "fixture premise: the box cannot fit its own record, so its interior is orphaned");
+
+            // One narrow event — 9 B of header and 2 B of payload. It does NOT
+            // fit what is left without the refund, and DOES fit with it.
+            w.ClearEvents();
+            w.Emit(SimEventKind.WaveStarted, float2.zero, 1, MobType.Chaser, 0f);
+            int eventBytes = SnapshotBlocks.EventHeaderBytes
+                             + SnapshotEvents.PayloadBytesFor(SnapshotEventKind.WaveStarted);
+            Assert.Less(leftWithoutRefund, eventBytes,
+                "fixture premise: without the refund the event has nowhere to go");
+            Assert.GreaterOrEqual(leftWithoutRefund + interior, eventBytes,
+                "fixture premise: and with the refund it fits exactly");
+
+            var asm = new SnapshotAssembler(cfg, Net(maxBytes: TightestLegalCap(in cfg)),
+                connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.AreEqual(0, f.SlotsCount, "premise: the orphaned interior really was dropped");
+            Assert.IsFalse(f.TryContainer(boxId, out _), "premise: and its box has no record either");
+            Assert.AreEqual(1, f.CountOf(SnapshotEventKind.WaveStarted),
+                "the bytes the orphan gave back went to the event — an interior that reserved room "
+                + "and shipped nothing must not keep the room");
+        }
+
+        [Test]
+        public void EveryClassAtItsCap_RidesWhole_WhenTheFrameHasRoom()
+        {
+            // Task 27 review, Important-3. `CandidateList.Add` refuses
+            // silently once full, and the refusal is invisible: no exception,
+            // no counter, no truncation bit. It is unreachable by
+            // construction — each list is sized to its own arena cap, and a
+            // candidate only exists for an entity the capture still holds —
+            // but "unreachable" is a claim about capacities, and this is what
+            // checks it rather than asserting it in prose: fill all three
+            // classes to their caps and require every single entity in the
+            // frame.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            // Everything close enough to be seen, so visibility is not what
+            // this test is measuring.
+            for (int i = 0; i < cfg.Arena.MaxMobs; i++)
+                w.SpawnMobForTest(MobType.Chaser, new float2(5f + i * 0.05f, 0f));
+            for (int i = 0; i < cfg.Arena.MaxContainers; i++)
+                w.SpawnContainer(ContainerKind.Crate, new float2(-5f - i * 0.05f, 0f),
+                    new byte[] { 1 });
+            for (int i = 0; i < cfg.Arena.MaxPickups; i++)
+                w.SpawnPickup(PickupKind.EnergyCell, new float2(0f, 5f + i * 0.05f), 1);
+            w.ClearEvents();
+            Assert.AreEqual(cfg.Arena.MaxMobs, w.MobCount, "test setup: the mob cap is full");
+            Assert.AreEqual(cfg.Arena.MaxContainers, w.ContainerCount, "…and the container cap");
+            Assert.AreEqual(cfg.Arena.MaxPickups, w.PickupCount, "…and the pickup cap");
+
+            // A cap with room for every record of every class, so the only
+            // thing that could lose an entity is a candidate list refusing it.
+            int roomy = 4096
+                        + cfg.Arena.MaxMobs * SnapshotBlocks.MobRecordBytes
+                        + cfg.Arena.MaxContainers * SnapshotBlocks.ContainerRecordBytes
+                        + cfg.Arena.MaxPickups * SnapshotBlocks.PickupRecordBytes;
+            var asm = new SnapshotAssembler(cfg, Net(maxBytes: roomy), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.AreEqual(cfg.Arena.MaxMobs, f.MobCount,
+                "every mob the world holds is in the frame — a candidate list one entry short "
+                + "would drop the last one silently");
+            Assert.AreEqual(cfg.Arena.MaxContainers, f.ContainerCount, "and every container");
+            Assert.AreEqual(cfg.Arena.MaxPickups, f.PickupCount, "and every pickup");
+            Assert.IsFalse(f.Truncated, "nothing was cut for room, so nothing may claim it was");
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEntities, "and the counter agrees");
+        }
+
+        [TestCase(VisibilityClass.Containers)]
+        [TestCase(VisibilityClass.Pickups)]
+        public void EntityGoneFromTheWorld_LeavesTheFrameSilently_AndTheSetForgetsItToo(
+            VisibilityClass cls)
+        {
+            // Task 27 review, Important-4 — and the MEASUREMENT the review's
+            // own account did not survive. The `slot < 0` branch was copied
+            // from the mobs onto the two new classes, and the review asked for
+            // a witness of "the set still lingers on an id the capture no
+            // longer has". That state does not exist: `VisibilitySystem.
+            // Compute*` walks the LIVE storage of the world and evaluates only
+            // entities it finds there, so linger (Р19) keeps an entity that
+            // left SIGHT, never one that left the WORLD. An id in `Current`
+            // therefore implies the entity existed when the set was built.
+            //
+            // What IS worth pinning is the thing that really happens when a
+            // container's TTL expires or a pickup is taken: the entity leaves
+            // BOTH the set and the frame, in the same tick, without a
+            // truncation bit and without a dropped-entity count — because
+            // nothing was cut for room. The `slot < 0` guard stays as the
+            // defence it is (see its own doc), for a capture and a set built
+            // at different moments.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            var pos = new float2(0f, 6f);
+            int id = cls == VisibilityClass.Containers
+                ? w.SpawnContainer(ContainerKind.Crate, pos, new byte[] { 1 })
+                : w.SpawnPickup(PickupKind.EnergyCell, pos, 1);
+            w.ClearEvents();
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame seen = Build(asm, w, cfg, 0, 0, 0);
+            bool presentFirst = cls == VisibilityClass.Containers
+                ? seen.TryContainer(id, out _)
+                : seen.TryPickup(id, out _);
+            Assert.IsTrue(presentFirst, "test setup: the entity starts plainly visible");
+            Assert.IsTrue(asm.VisibleSetFor(0, cls).Contains(id), "and its set knows it");
+
+            if (cls == VisibilityClass.Containers) w.RemoveContainerAt(0);
+            else w.RemovePickupAt(0);
+
+            AssembledFrame after = Build(asm, w, cfg, 0, 0, 0);
+            Assert.IsFalse(asm.VisibleSetFor(0, cls).Contains(id),
+                "an entity gone from the WORLD is gone from the set the same tick — linger keeps "
+                + "what left sight, not what stopped existing");
+            bool presentAfter = cls == VisibilityClass.Containers
+                ? after.TryContainer(id, out _)
+                : after.TryPickup(id, out _);
+            Assert.IsFalse(presentAfter, "so the frame carries no record for it either");
+            Assert.IsFalse(after.Truncated,
+                "this is not a truncation — nothing was dropped for ROOM, so the bit must stay clear");
+            Assert.AreEqual(0, asm.StatsFor(0).DroppedEntities, "and nothing is counted as dropped");
+        }
+
+        [Test]
+        public void MatchBlock_AfterTheRaidsLastTick_ReadsZeroSecondsRatherThanWrapping()
+        {
+            // Task 27 review, Minor-8. Of the clamps the countdown carries,
+            // `max(0, matchMaxTicks - tick)` is the ONE that is reachable: a
+            // frame built after the limit has passed is ordinary (the match
+            // ends on the server's own decision, and frames keep being built
+            // until it does). Without the floor the subtraction goes negative
+            // and integer division would carry the sign onto the wire, where
+            // the field is unsigned — a raid with 65 000 seconds left.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            NetConfig net = Net();
+            net.MatchMaxDurationSeconds = 2;
+            // A WHOLE SECOND past the limit, not a tick past it (fix-round,
+            // mutation G6): integer division truncates toward zero, so a
+            // deficit of one tick divides to 0 either way and a test built on
+            // it would be blind to the floor it is checking. One full second
+            // over is where the unfloored expression turns into -1 — and
+            // `(ushort)(-1)` is 65535, a raid with eighteen hours left.
+            int ticks = net.MatchMaxDurationTicks + net.TickRate + 1;
+            var asm = new SnapshotAssembler(cfg, net, connectionCount: 1);
+            TestWorlds.IdleTicks(w, ticks);
+            Assert.Greater(w.CurrentTick - net.MatchMaxDurationTicks, net.TickRate,
+                "test setup: the world is more than a second past the limit");
+
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual((ushort)0, f.MatchSecondsRemaining,
+                "the countdown floors at zero — a negative remainder would ride the u16 field as "
+                + "an enormous positive one");
         }
 
         [Test]

@@ -114,14 +114,22 @@ namespace Ring.Networking.Protocol
     /// for the whole roster AND the fullest backpack.
     ///
     /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 181 or 189 B over
-    /// the cap ON PAPER. What actually gives at the defaults is the EVENT
-    /// budget, never the entity list, and that survives the wider case: the
-    /// assembler spends the fixed part and the mobs first, and 864 B of mob
-    /// RECORDS still fit in the 948 B of room a dead recipient's fixed part
-    /// leaves (83 B to spare, where a living one leaves 91). Entity truncation
-    /// is therefore NOT reachable at the shipped numbers for either recipient
-    /// — events are squeezed instead and carry over (Р61), and the truncation
-    /// branch is exercised by tests through a fixture cap (spec §6i Р147).
+    /// the cap ON PAPER at the five-block frame, and 218 or 226 at the ten-
+    /// block one (Stage 3 Task 27 review, Minor-5: this paragraph kept the
+    /// five-block arithmetic while the table above it had already been
+    /// recomputed).
+    ///
+    /// WHAT GIVES AT THE CAP — AND THE ANSWER FLIPPED IN STAGE 3. At the
+    /// Stage 2 numbers it was the EVENT budget, never the entity list: 96
+    /// mobs need 864 B of RECORDS and the room left after the fixed part was
+    /// 955/947 B, so every mob fitted and truncation was unreachable outside
+    /// a fixture cap (spec §6i Р147). Stage 3 Task 12 raised `MaxMobs` to 288
+    /// and turned that over — 2592 B of mob records against 918/910 B of
+    /// room, i.e. about 102 mobs ride and the rest are cut — which is spec
+    /// Р217's own prediction arriving, and which
+    /// SnapshotCodecTests.WorstCase_ByCaps_TriggersTruncation now asserts at
+    /// the SHIPPED cap rather than only at a fixture one. Task 27's five new
+    /// blocks cost 37 B of that room on top, four mob records' worth.
     /// Pinned by SnapshotCodecTests.WorstCaseFrame_RecomputedFromTheCalculators_
     /// WithTheRealCatalog, whose numbers are the LIVE column throughout
     /// (`int others = shipped.Arena.MaxPlayers - 1;`) and are right for it; the

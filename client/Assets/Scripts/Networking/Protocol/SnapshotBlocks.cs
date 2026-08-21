@@ -135,6 +135,19 @@ namespace Ring.Networking.Protocol
         /// "no record count" doctrine, applied to a mask).
         public const int ContainerSlotsRecordHeaderBytes = 3;
 
+        /// How many slots ONE occupancy mask can speak about — a bit per slot
+        /// in a single byte (Stage 3 Т27 review, Minor-7).
+        ///
+        /// THE NUMBER WAS ALREADY LOAD-BEARING IN THREE PLACES and named in
+        /// none: the popcount below walked 0..7, `ArenaConfig.MaxContainerSlots`
+        /// carries `[Range(1, 8)]` with this very reason written in its own
+        /// doc ("a single-BYTE occupancy mask — a ceiling above 8 would invite
+        /// a value the mask cannot represent"), and the assembler clamps a
+        /// container's SlotCount to it while building the mask. Named here so
+        /// that a wider mask is one edit rather than three, and so that the
+        /// arena's own cap can point at the format constant that binds it.
+        public const int ContainerSlotsMaskWidth = 8;
+
         /// Highest legal wire value of `MobType` / `MobAiState` / `WavePhase`
         /// (fix-round I1). The wire carries these as raw bits, so a hostile
         /// or corrupted byte can name a value the enum does not define —
@@ -934,7 +947,7 @@ namespace Ring.Networking.Protocol
         public static int OccupiedSlotCount(byte occupancyMask)
         {
             int n = 0;
-            for (int bit = 0; bit < 8; bit++)
+            for (int bit = 0; bit < ContainerSlotsMaskWidth; bit++)
                 if ((occupancyMask & (1 << bit)) != 0) n++;
             return n;
         }

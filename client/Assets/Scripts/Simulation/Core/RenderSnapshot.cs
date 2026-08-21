@@ -45,9 +45,14 @@ namespace Ring.Simulation.Core
         /// the accessor).
         ///
         /// A LOCAL world fills this from CaptureSnapshot; the networked
-        /// backend leaves the count at zero until containers reach the wire,
-        /// same "zero means nothing decoded yet" convention PickupCount's own
-        /// doc states.
+        /// backend leaves the count at zero until it DECODES the containers
+        /// block — which is not the same moment as the block reaching the
+        /// wire, and since Т27 the two have come apart: the server writes
+        /// Containers on every frame, while `NetworkSimBackend` still steps
+        /// over the block (it is absent from its `KnownBlockKinds`, see that
+        /// constant's own doc) because the views that would draw it are Ф7.
+        /// Same "zero means nothing decoded yet" convention PickupCount's own
+        /// doc states — the emphasis being on DECODED.
         public int ContainerCount;
         public ContainerState[] Containers;
         public WaveState Wave;

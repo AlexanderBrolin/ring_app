@@ -37,14 +37,20 @@ namespace Ring.Data
     /// Unreliable send to Reliable instead of dropping the packet, which
     /// would quietly break the "state travels unreliably" model this
     /// project relies on. The cap is OURS, not the transport's, and what it
-    /// actually squeezes at the shipped numbers is the EVENT budget, never
-    /// the entity list: Task 28 measured the worst case at 1180 B (spec §6i
-    /// Р146) with mobs fitting the remainder outright (956 B of record room
-    /// after the 44 B fixed part, 864 B of mob records needed), so entity
-    /// truncation is unreachable at the defaults — events
-    /// defer and re-ride instead (Р61), and the truncation branch stays
-    /// tested through a fixture cap (§6i Р147). Either way the frame never
-    /// reaches the transport oversized, which is the point of the gap.
+    /// actually squeezes has CHANGED with the arena, and the history is kept
+    /// rather than overwritten (Stage 3 Т27 review, Minor-11). At the Stage 2
+    /// numbers it was the EVENT budget, never the entity list: the worst case
+    /// measured 1180 B (spec §6i Р146) with mobs fitting the remainder
+    /// outright, so entity truncation was unreachable at the defaults and the
+    /// branch stayed tested through a fixture cap (§6i Р147). Since Т12
+    /// (`MaxMobs` 96 -> 288) and Т27 (the frame's fixed part 45 -> 82 B for a
+    /// living recipient, 53 -> 90 for a dead one) the entity list is what
+    /// gives first: 2592 B of mob records against ~918 B of room, so a
+    /// saturated frame is truncated by construction and carries no events at
+    /// all. Either way the frame never reaches the transport oversized, which
+    /// is the point of the gap. The live arithmetic is
+    /// SnapshotCodecTests.WorstCaseFrame_RecomputedWithNewBlocks — never this
+    /// comment.
     ///
     /// [Range] attributes below are Inspector hints only. The real
     /// cross-config checks (e.g. GhostConfirmTicks > InterpBufferTicks) live
@@ -154,6 +160,26 @@ namespace Ring.Data
         // upward from evidence at В1, not downward from a guess. (Ф2 review
         // A-9: this line used to call 900 "the upper end", which it is not.)
         [Range(60, 7200)] public int MatchMaxDurationSeconds = 900;
+
+        /// The same limit in WORLD TICKS — the ONE home of the conversion
+        /// (Stage 3 Т27 review, Important-2).
+        ///
+        /// TWO READERS, ONE FORMULA. `ServerBootstrap` hands it to
+        /// `MatchEndPolicy`, which ENDS the raid on it, and
+        /// `SnapshotAssembler` counts the Match block's remaining seconds
+        /// down from it. Spelled out twice, the two could disagree about when
+        /// a raid is over — and a countdown that reaches zero at a different
+        /// instant than the match it counts is worse than no countdown.
+        ///
+        /// THE RATE IS `TickRate`, NOT `SimulationWorld.TickDt`, and the two
+        /// are held together by `NetInvariants` #6, which refuses to raise a
+        /// server whose `TickRate` does not name the rate `TickDt` denotes.
+        /// So this property does not clamp or validate: a `TickRate` that
+        /// could make it meaningless never reaches a live server, and
+        /// `MatchEndPolicy`'s own constructor throws on a non-positive tick
+        /// count at start-up — loudly, which is this project's answer to a
+        /// bad conversion done once (see its doc).
+        public int MatchMaxDurationTicks => MatchMaxDurationSeconds * TickRate;
 
         // Stage 2 Task 41 (spec §3.10; Task 40 brief §2.7): once EVERY client
         // has disconnected, the server process waits this long before exiting

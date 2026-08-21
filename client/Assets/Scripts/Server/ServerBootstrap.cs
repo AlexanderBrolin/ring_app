@@ -427,7 +427,7 @@ namespace Ring.Server
                 int spectateCooldownTicks = (int)Math.Ceiling(
                     (decimal)_net.SpectatorSwitchCooldownSeconds * _net.TickRate);
                 _matchServer = new MatchServer(_nm, _net,
-                    new MatchEndPolicy(_net.MatchMaxDurationSeconds * _net.TickRate),
+                    new MatchEndPolicy(_net.MatchMaxDurationTicks),
                     new SpectatePolicy(spectateCooldownTicks));
             }
             catch (Exception ex)

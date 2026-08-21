@@ -89,17 +89,21 @@ namespace Ring.Networking.Server
     /// THE BUDGET IS DECIDED BEFORE THE FIRST BYTE (task-28-brief §2.8). The
     /// header is written first and its `flags` byte cannot be patched
     /// afterwards, and `SnapshotWriter` throws rather than truncating — so the
-    /// whole frame is sized with Task 27's calculators up front:
-    ///   1. fixed part — header, self, match, players, liveness, wave and the
-    ///      five empty block headers that always ride: always fits, checked
-    ///      once in the constructor rather than per frame;
-    ///   2. the interiors of the boxes within `LootRadius`, then the three
+    /// whole frame is sized with Task 27's calculators up front. `WriteFrame`
+    /// numbers its own steps to match this list, so the two can be read side
+    /// by side (Task 27 review, Minor-10 — they had drifted into three
+    /// different numberings):
+    ///   1-3. fixed part — header, self, match, players, liveness, wave and
+    ///      the five empty block headers that always ride: always fits,
+    ///      checked once in the constructor rather than per frame;
+    ///   4-5. the interiors of the boxes within `LootRadius`, then the three
     ///      RECORD classes in Р243's order — mobs, then containers, then
     ///      pickups. What a class cannot fit is cut FARTHEST-FIRST from the
     ///      viewpoint (smaller id survives a tie), the count goes to
     ///      `NetStats.DroppedEntities`, and header bit 0 says so;
-    ///   3. events into whatever is left, by rank, capped by
-    ///      `NetConfig.SnapshotEventBudget`.
+    ///   6-7. events into whatever is left, by rank, capped by
+    ///      `NetConfig.SnapshotEventBudget`, and then recorded for resend;
+    ///   8. the bytes, in the order they were budgeted.
     /// MOBS AHEAD OF THE LITTER IS THE DECISION, NOT THE ORDER THEY HAPPENED
     /// TO BE WRITTEN IN (Stage 3 Task 27, spec Р243 as corrected by findings
     /// C-3/D-19): an earlier reading ranked pickups and containers above the
@@ -232,13 +236,23 @@ namespace Ring.Networking.Server
         /// as many words. Copied here at construction, like the three
         /// NetConfig numbers above it and for the same reason.
         ///
+        /// THE CONVERSION IS NOT DONE HERE (Task 27 review, Important-2). It
+        /// lives once, on `NetConfig.MatchMaxDurationTicks`, and the other
+        /// reader is `ServerBootstrap`, which hands the same number to
+        /// `MatchEndPolicy` — the class that actually ENDS the raid. A
+        /// countdown converted its own way could reach zero at a different
+        /// instant than the match it counts, which is the one thing a
+        /// countdown may not do.
+        ///
         /// THE RATE IS `NetConfig.TickRate`, NOT `SimulationWorld.TickDt`,
-        /// AND THAT IS A CHOICE (coordinator R-219). The two agree only while
-        /// TickRate is 30, the denominator TickDt is written with. What ends
-        /// a raid is `MatchEndPolicy`, and `ServerBootstrap` builds it from
-        /// `MatchMaxDurationSeconds * TickRate` — so a countdown converted any
-        /// other way would reach zero at a different instant than the match
-        /// it is counting, which is the one thing a countdown may not do.
+        /// and the two cannot drift apart in a live server: `NetInvariants`
+        /// #6 refuses to raise one whose `TickRate` does not name the rate
+        /// `TickDt` denotes, and `ServerBootstrap.TryValidateInvariants`
+        /// exits with `ExitBadConfig` on any violation. (R-219 recorded the
+        /// choice of rate but not that fence — its wording implied a
+        /// divergence the bootstrap already refuses to start with.) Hence no
+        /// clamp on the rate either: a value that would make the division
+        /// below meaningless never reaches a running match.
         readonly int _matchMaxTicks;
         readonly int _tickRate;
 
@@ -267,8 +281,8 @@ namespace Ring.Networking.Server
             _maxBytes = net.SnapshotMaxBytes;
             _eventBudget = net.SnapshotEventBudget;
             _redundancyTicks = net.EventRedundancyTicks;
-            _tickRate = math.max(1, net.TickRate);
-            _matchMaxTicks = net.MatchMaxDurationSeconds * _tickRate;
+            _tickRate = net.TickRate;
+            _matchMaxTicks = net.MatchMaxDurationTicks;
 
             // app-dsh PATCH (task-28-brief §2.6) — CONFIRMED by Task 44a, on a
             // NEW justification, the original one having expired with the very
@@ -1353,9 +1367,19 @@ namespace Ring.Networking.Server
             // The two classes Т26 gave sets of their own, gathered exactly
             // like the mobs above and for the same reasons: the SET decides
             // what may ride (CRITICAL RULE 4), the capture decides what its
-            // record says, and an id the capture no longer knows is skipped
-            // rather than guessed at — a container whose TTL expired is in
-            // the linger window of the set and gone from the world.
+            // record says, and an id the capture does not know is skipped
+            // rather than guessed at.
+            //
+            // WHAT THAT SKIP IS AND IS NOT (Task 27 review, Important-4,
+            // corrected by measurement). It is NOT "the TTL expired and the
+            // set still lingers": `VisibilitySystem.Compute*` walks the live
+            // storage and evaluates only what it finds there, so linger (Р19)
+            // holds an entity that left SIGHT, never one that left the WORLD —
+            // an id in `Current` implies the entity existed when the set was
+            // built. The skip is a defence for the ONE way the two can
+            // disagree: the capture is taken in `BeginTick`, the sets in
+            // `BuildFor`, and anything that removed an entity between them
+            // would otherwise index a slot that is not there.
             c.ContainerCandidates.Clear();
             for (int i = 0; i < c.ContainersCurrent.Count; i++)
             {
@@ -1437,7 +1461,8 @@ namespace Ring.Networking.Server
             // the subtraction.
             int room = _maxBytes - FixedFrameBytes(otherPlayers, selfItemCount);
 
-            // 4a. The interiors of the boxes within arm's reach, budgeted
+            // 4. The interiors of the boxes within arm's reach: SELECTED here
+            // and reserved one step below, budgeted
             // AHEAD of every record class (Р243): what is inside a container
             // is what a collector standing over it is looking at, and it is
             // the smallest of the variable blocks by construction — only
@@ -1445,19 +1470,32 @@ namespace Ring.Networking.Server
             // see.
             //
             // TRUNCATED LIKE ANY OTHER CLASS (coordinator R-221 — the spec is
-            // silent here, and silence is not "cannot happen": eight full
-            // boxes at MaxContainerSlots outrun a whole frame, and without a
-            // cut SnapshotWriter would throw inside the server tick).
+            // silent here, and silence is not "cannot happen". Two measured
+            // cases, and the first is the one that binds: at the TIGHTEST cap
+            // the constructor accepts (90 B, i.e. 40 B of record room) eight
+            // full boxes need 88 B; at the SHIPPED cap the whole container
+            // array full and in reach needs 64 * (3 + 8) = 704 B of the ~918 B
+            // a living recipient has for everything. Without a cut
+            // SnapshotWriter would throw inside the server tick.
+            //
+            // A CANDIDATE HERE POINTS AT A CONTAINER CANDIDATE, NOT AT A
+            // CAPTURE SLOT (Task 27 review, Important-1). An interior is
+            // meaningless without the box's own record in the SAME frame —
+            // Р278 forbids the receiver to remember a u16 code between frames,
+            // so a ContainerSlots record whose Containers record was cut for
+            // room is unanchorable by construction, and its bytes were spent
+            // out of the highest-priority class of all. Keeping the index of
+            // the container CANDIDATE is what lets the write below ask
+            // whether that record survived its own budget.
             c.SlotsCandidates.Clear();
             for (int i = 0; i < c.ContainerCandidates.Count; i++)
             {
-                int slot = c.ContainerCandidates.Slots[i];
                 if (c.ContainerCandidates.Distance[i] > _cfg.Loot.LootRadius) continue;
-                c.SlotsCandidates.Add(slot, c.ContainerCandidates.Ids[i],
+                c.SlotsCandidates.Add(i, c.ContainerCandidates.Ids[i],
                     c.ContainerCandidates.Distance[i]);
             }
 
-            // 4. The record classes, IN THE ORDER Р243 ranks them: mobs first,
+            // 5. The record classes, IN THE ORDER Р243 ranks them: mobs first,
             // then containers, then pickups. Each is cut on its own by the
             // same rule — the FARTHEST from the viewpoint go first, the
             // smaller id survives a tie — and what a class does not spend
@@ -1471,13 +1509,18 @@ namespace Ring.Networking.Server
             // cells and empty crates would otherwise push out the picture of
             // the threat the snapshot exists to carry.
             byte flags = 0;
-            int slotsCount = BudgetContainerSlots(c, ref room, out int slotsItemBytes);
+            int slotsReserved = ReserveContainerSlots(c, ref room);
             int mobCount = Budget(c, c.MobCandidates, SnapshotBlocks.MobRecordBytes, ref room,
                 ref flags);
             int containerCount = Budget(c, c.ContainerCandidates, SnapshotBlocks.ContainerRecordBytes,
                 ref room, ref flags);
             int pickupCount = Budget(c, c.PickupCandidates, SnapshotBlocks.PickupRecordBytes,
                 ref room, ref flags);
+            // Only NOW can the interiors be written: an interior rides only if
+            // its own box got a record in this frame, and that is decided one
+            // line above. Whatever the orphans reserved goes back to the room
+            // — the events are the next in line for it.
+            int slotsCount = WriteContainerSlots(c, slotsReserved, ref room, out int slotsItemBytes);
 
             int written = 0;
             for (int i = 0; i < c.MobCandidates.Count; i++)
@@ -1500,7 +1543,7 @@ namespace Ring.Networking.Server
                 c.PickupScratch[written++] = PickupRecordOf(c.PickupCandidates.Slots[i]);
             }
 
-            // 4. Events into what is left, by rank — FRESH ones first, then the
+            // 6. Events into what is left, by rank — FRESH ones first, then the
             // redundant resends of what already shipped (Р58), both inside the
             // one budget and the one byte remainder (Р61). The order is the
             // decision: a fresh event has been transmitted zero times and has
@@ -1510,12 +1553,12 @@ namespace Ring.Networking.Server
             int freshCount = SelectEvents(c, ref room, 0, ref payloadBytes);
             int eventCount = SelectResends(c, ref room, freshCount, ref payloadBytes);
 
-            // 5. And only NOW does this frame's own delivery enter the history:
+            // 7. And only NOW does this frame's own delivery enter the history:
             // an event must not be repeated in the very frame that first
             // carries it (task-29-brief §2.2/§2.6б).
             RecordDelivered(c, freshCount);
 
-            // 6. The bytes, IN THE ORDER THEY WERE BUDGETED (Stage 3 Task 27,
+            // 8. The bytes, IN THE ORDER THEY WERE BUDGETED (Stage 3 Task 27,
             // spec Р243, coordinator R-220). Until this task the two orders
             // were different sequences — the frame wrote Mobs before Wave
             // while the budget spent Wave first — and carrying two orders for
@@ -1556,11 +1599,19 @@ namespace Ring.Networking.Server
             return writer.BytesWritten;
         }
 
-        /// Fits the interiors of the boxes within reach into the frame and
-        /// fills `c.SlotsScratch`/`c.SlotsItemPool` with what survives
-        /// (Stage 3 Task 27, spec Р238/Р277, coordinator R-221). Returns the
-        /// record count; `itemBytes` is how many item ids they carry between
-        /// them.
+        /// PHASE ONE of the interiors (Stage 3 Task 27, spec Р238/Р277,
+        /// coordinator R-221): computes each candidate's occupancy mask, cuts
+        /// the ones that do not fit — farthest first — and TAKES their bytes
+        /// out of `room`. Returns how many bytes were taken, which phase two
+        /// hands back whatever it does not use.
+        ///
+        /// TWO PHASES, AND THE SPLIT IS THE FIX FOR Task 27's REVIEW
+        /// (Important-1). The interiors are budgeted FIRST — Р243 ranks them
+        /// above every record class — but an interior may only be WRITTEN
+        /// once it is known that its own box got a Containers record in the
+        /// same frame, and that is settled several budget steps later. So the
+        /// bytes are reserved here and the records are materialized in
+        /// `WriteContainerSlots` below.
         ///
         /// ITS OWN BUDGET LOOP, NOT `Budget` ABOVE, because a record here is
         /// NOT a fixed width: it costs its own header plus the popcount of
@@ -1577,19 +1628,18 @@ namespace Ring.Networking.Server
         /// mechanism that exists for it. Counting it as a dropped entity
         /// would inflate the escalation threshold (Р280) with something
         /// delta-snapshots would not fix.
-        int BudgetContainerSlots(Connection c, ref int room, out int itemBytes)
+        int ReserveContainerSlots(Connection c, ref int room)
         {
             // Masks first: a record's cost IS its mask's popcount, so the two
-            // are computed once and reused by both the fitting loop and the
-            // write below.
+            // are computed once and reused by the fitting loop, by the write
+            // and by the refund.
             int total = 0;
             for (int i = 0; i < c.SlotsCandidates.Count; i++)
             {
-                ContainerState box = _capture.Containers[c.SlotsCandidates.Slots[i]];
+                ContainerState box = BoxOfSlotsCandidate(c, i);
                 byte mask = OccupancyMaskOf(in box);
                 c.SlotsMask[i] = mask;
-                total += SnapshotBlocks.ContainerSlotsRecordHeaderBytes
-                         + SnapshotBlocks.OccupiedSlotCount(mask);
+                total += SlotsRecordBytes(mask);
             }
 
             for (int i = 0; i < c.SlotsCandidates.Count && total > room; i++)
@@ -1602,18 +1652,42 @@ namespace Ring.Networking.Server
                 for (int j = 0; j < c.SlotsCandidates.Count; j++)
                 {
                     if (c.SlotsCandidates.Dropped[j]) continue;
-                    total += SnapshotBlocks.ContainerSlotsRecordHeaderBytes
-                             + SnapshotBlocks.OccupiedSlotCount(c.SlotsMask[j]);
+                    total += SlotsRecordBytes(c.SlotsMask[j]);
                 }
             }
 
+            room -= total;
+            return total;
+        }
+
+        /// PHASE TWO: fills `c.SlotsScratch`/`c.SlotsItemPool` with the
+        /// interiors whose OWN BOX survived the Containers budget, refunds
+        /// the rest of `reserved` into `room`, and returns the record count.
+        ///
+        /// AN ORPHANED INTERIOR IS NOT SHIPPED (Task 27 review, Important-1).
+        /// Р278 forbids the receiver to carry a u16 entity code from one frame
+        /// to the next — the mapping back to a live entity is valid inside the
+        /// current frame and nowhere else — so a ContainerSlots record whose
+        /// Containers record was cut for room names a box this frame never
+        /// mentions. The client could not anchor it even in principle, and the
+        /// bytes would have been spent out of the highest-priority class in the
+        /// whole budget. They are refunded instead, which puts them where they
+        /// would have gone had the interior never qualified: to the events.
+        int WriteContainerSlots(Connection c, int reserved, ref int room, out int itemBytes)
+        {
             int written = 0;
+            int spent = 0;
             itemBytes = 0;
             for (int i = 0; i < c.SlotsCandidates.Count; i++)
             {
                 if (c.SlotsCandidates.Dropped[i]) continue;
-                ContainerState box = _capture.Containers[c.SlotsCandidates.Slots[i]];
+                // `Slots[i]` is the index of this box's CONTAINER candidate,
+                // so its fate is one lookup away.
+                if (c.ContainerCandidates.Dropped[c.SlotsCandidates.Slots[i]]) continue;
+
+                ContainerState box = BoxOfSlotsCandidate(c, i);
                 byte mask = c.SlotsMask[i];
+                spent += SlotsRecordBytes(mask);
                 c.SlotsScratch[written++] = new SnapshotBlocks.ContainerSlotsRecord
                 {
                     Id = box.Id,
@@ -1622,7 +1696,7 @@ namespace Ring.Networking.Server
                 };
                 // Ascending slot order, occupied slots only — the mask is
                 // what maps them back onto slot numbers (Р277).
-                int slots = math.min(box.SlotCount, 8);
+                int slots = math.min(box.SlotCount, SnapshotBlocks.ContainerSlotsMaskWidth);
                 for (int s = 0; s < slots; s++)
                 {
                     if ((mask & (1 << s)) == 0) continue;
@@ -1630,9 +1704,23 @@ namespace Ring.Networking.Server
                 }
             }
 
-            room -= total;
+            room += reserved - spent;
             return written;
         }
+
+        /// Bytes one ContainerSlots record costs: its own head plus one id per
+        /// occupied slot. Stated once — the reserve, the write and the refund
+        /// all ask it, and a second copy would be a chance for the three to
+        /// disagree about the same record.
+        static int SlotsRecordBytes(byte mask)
+            => SnapshotBlocks.ContainerSlotsRecordHeaderBytes
+               + SnapshotBlocks.OccupiedSlotCount(mask);
+
+        /// The captured container one slots candidate stands for — through its
+        /// container CANDIDATE, which is what the list holds since the review
+        /// fix above.
+        ContainerState BoxOfSlotsCandidate(Connection c, int index)
+            => _capture.Containers[c.ContainerCandidates.Slots[c.SlotsCandidates.Slots[index]]];
 
         /// Fits one CLASS of records into what is left of the frame and
         /// reports how many ride (Stage 3 Task 27, spec Р217/Р243/Р268 item
@@ -2019,7 +2107,10 @@ namespace Ring.Networking.Server
         byte OccupancyMaskOf(in ContainerState box)
         {
             byte mask = 0;
-            int slots = math.min(box.SlotCount, 8);
+            // Clamped to the mask's own width, which is the format's ceiling
+            // and the reason `ArenaConfig.MaxContainerSlots` carries
+            // `[Range(1, 8)]`: a slot past the eighth has no bit to ride in.
+            int slots = math.min(box.SlotCount, SnapshotBlocks.ContainerSlotsMaskWidth);
             for (int i = 0; i < slots; i++)
                 if (_world.ContainerItemAt(box.Id, i) != 0) mask |= (byte)(1 << i);
             return mask;
