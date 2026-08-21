@@ -2891,9 +2891,10 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(8 + 19 + 5 + (3 + shipped.Arena.MaxMobs * 9) + 7 + 275, total,
                 $"8 + 19 + 5 + {3 + shipped.Arena.MaxMobs * 9} + 7 + 275 — the live worst-case frame at "
                 + "the shipped caps. Task 27's 1116 assumed 4 B of event payload; the real catalog's "
-                + "widest is 8. The liveness term is 5 rather than 4 since Task 25 (Р257); the Match "
-                + "and Self blocks are NOT in this sum yet — nothing writes them into a frame until "
-                + "Task 27, which is the task that recomputes this ceiling with them");
+                + "widest is 8. The liveness term is 5 rather than 4 since Task 25 (Р257). This sum "
+                + "is the FIVE Stage 2 blocks and stays that way on purpose — the five Stage 3 ones "
+                + "are the sibling below (WorstCaseFrame_RecomputedWithNewBlocks), so the two halves "
+                + "of the history stay separately checkable");
             Assert.Greater(total, net.SnapshotMaxBytes,
                 "and it still exceeds our own cap, which is why the budget exists at all");
 
@@ -2959,6 +2960,80 @@ namespace Ring.Simulation.Tests
                 + "roomier cap to keep measuring a frame with both blocks in it");
         }
 
+        // ---- Т27. The same arithmetic, with the five Stage 3 blocks ----
+
+        [Test]
+        public void WorstCaseFrame_RecomputedWithNewBlocks()
+        {
+            // Урок 103 again, one stage later: the sibling above was written
+            // when nothing wrote the Task 25 blocks into a frame, and its own
+            // text named Т27 as the task that would recompute it with them.
+            // This is that recomputation — and it is a SECOND test rather than
+            // an edit of the first, because the two answer different
+            // questions: what the five Stage 2 blocks cost, and what the
+            // frame costs now that ten ride.
+            SimConfig shipped = TestConfigs.Default();
+            var net = ScriptableObject.CreateInstance<NetConfig>();   // the shipped C# defaults
+
+            int live = shipped.Arena.MaxPlayers - 1;                  // a living recipient
+            int dead = shipped.Arena.MaxPlayers;                      // …and one who is not
+
+            // The fixed part, term by term, at an EMPTY backpack and then at
+            // the fullest one the hero can carry — the two ends of the only
+            // term that varies per frame.
+            int FixedPart(int players, int items) =>
+                SnapshotWriter.HeaderBytes
+                + SnapshotWriter.SelfBlockBytes(items)
+                + SnapshotWriter.MatchBlockBytes()
+                + SnapshotWriter.PlayersBlockBytes(players)
+                + SnapshotWriter.LivenessBlockBytes()
+                + SnapshotWriter.WaveBlockBytes()
+                + SnapshotWriter.ContainerSlotsBlockBytes(0, 0)
+                + SnapshotWriter.MobsBlockBytes(0)
+                + SnapshotWriter.ContainersBlockBytes(0)
+                + SnapshotWriter.PickupsBlockBytes(0)
+                + SnapshotWriter.EventsBlockBytes(0, 0);
+
+            Assert.AreEqual(3 + 4, SnapshotWriter.MatchBlockBytes(), "3 + phase, seconds, flags = 7");
+            Assert.AreEqual(3 + 2 + shipped.Hero.MaxInventoryItems,
+                SnapshotWriter.SelfBlockBytes(shipped.Hero.MaxInventoryItems),
+                "3 + slotPoints + count + one byte per item id");
+            Assert.AreEqual(3, SnapshotWriter.PickupsBlockBytes(0), "an empty block is its own header");
+
+            int widest = FixedPart(dead, shipped.Hero.MaxInventoryItems);
+            Assert.AreEqual(8 + 21 + 7 + 27 + 5 + 7 + 3 + 3 + 3 + 3 + 3, widest,
+                "the widest fixed part at the shipped caps — this is the number the assembler's "
+                + "constructor refuses a SnapshotMaxBytes below (spec Р279), and it is 90 B against "
+                + "the 53 of the five-block frame");
+            Assert.AreEqual(widest, SnapshotAssembler.FixedFrameBytes(dead,
+                shipped.Hero.MaxInventoryItems),
+                "and the assembler's one home answers the same number");
+            Assert.Less(widest, net.SnapshotMaxBytes,
+                "it still fits the shipped cap by a wide margin, which is what makes the throw a "
+                + "start-up guard rather than a limit anyone meets");
+
+            // What the growth costs the entity budget, which is the point of
+            // the whole exercise: 37 B off the record room of a living
+            // recipient, and four mobs off what a saturated frame carries.
+            int roomBefore = net.SnapshotMaxBytes
+                             - (SnapshotWriter.HeaderBytes
+                                + SnapshotWriter.PlayersBlockBytes(live)
+                                + SnapshotWriter.LivenessBlockBytes()
+                                + SnapshotWriter.WaveBlockBytes()
+                                + SnapshotWriter.MobsBlockBytes(0)
+                                + SnapshotWriter.EventsBlockBytes(0, 0));
+            int roomAfter = net.SnapshotMaxBytes - FixedPart(live, shipped.Hero.MaxInventoryItems);
+            Assert.AreEqual(37, roomBefore - roomAfter,
+                "Match 7 + Self 21 at the full backpack + three empty headers 9 = 37 B, the price "
+                + "of the five new blocks on a frame that carries nothing in three of them");
+            Assert.AreEqual(4,
+                roomBefore / SnapshotBlocks.MobRecordBytes - roomAfter / SnapshotBlocks.MobRecordBytes,
+                "which is four mob records — the saturated frame carries that many fewer, and Р243's "
+                + "own ordering decision is what makes those four mobs rather than four crates");
+            Assert.Greater(roomAfter / SnapshotBlocks.MobRecordBytes, 0,
+                "and a frame still carries a crowd, so the cut is a budget rather than a collapse");
+        }
+
         // ---- T28.14. Truncation, by the caps (plan) ----
 
         [Test]
@@ -2995,11 +3070,23 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(f.Truncated, "and says so in header bit 0, so the receiver can tell 'cut for room' "
                 + "from 'left my view' (Tasks 32/37)");
 
+            // Stage 3 Task 27 widened the fixed part from five blocks to ten
+            // (spec §3.12): Self — empty here, this fixture's collectors carry
+            // nothing — Match, and the three ground-entity blocks, all of which
+            // ride whether or not they have content. Spelled out from the
+            // calculators rather than taken from SnapshotAssembler.
+            // FixedFrameBytes on purpose: a guard that read the production
+            // home would agree with a wrong home too (lesson 324).
             int fixedWithEmptyBlocks = SnapshotWriter.HeaderBytes
+                + SnapshotWriter.SelfBlockBytes(0)
+                + SnapshotWriter.MatchBlockBytes()
                 + SnapshotWriter.PlayersBlockBytes(cfg.Arena.MaxPlayers - 1)
                 + SnapshotWriter.LivenessBlockBytes()
                 + SnapshotWriter.WaveBlockBytes()
+                + SnapshotWriter.ContainerSlotsBlockBytes(0, 0)
                 + SnapshotWriter.MobsBlockBytes(0)
+                + SnapshotWriter.ContainersBlockBytes(0)
+                + SnapshotWriter.PickupsBlockBytes(0)
                 + SnapshotWriter.EventsBlockBytes(0, 0);
             int expectedMobs = (cap - fixedWithEmptyBlocks) / SnapshotBlocks.MobRecordBytes;
             Assert.AreEqual(expectedMobs, f.MobCount, "exactly as many mobs as the remaining bytes hold");

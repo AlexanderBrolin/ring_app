@@ -886,11 +886,44 @@ namespace Ring.Simulation.Core
         /// Loot.ContainerStore's seam into live container storage (Stage 3
         /// Task 14) — same shape as Pickups/PickupCount above. Slot
         /// CONTENT has no array-typed accessor of its own: every reader
-        /// goes through ContainerSlotAt/TryTakeFromContainer, which resolve
-        /// the position-addressed offset once rather than handing out the
-        /// flat backing array for every caller to re-derive.
+        /// goes through ContainerSlotAt/ContainerItemAt/TryTakeFromContainer,
+        /// which resolve the offset once rather than handing out the flat
+        /// backing array for every caller to re-derive. (Т27 added the middle
+        /// one — the same read addressed by container ID, for the snapshot
+        /// assembler on the far side of the assembly boundary.)
         internal ContainerState[] Containers => _containers;
         internal int ContainerCount => _containerCount;
+
+        /// Whether a Director is standing in the arena right now (Stage 3
+        /// Т27, coordinator R-218) — ONE home, two readers on two sides of an
+        /// assembly boundary.
+        ///
+        /// WHY IT IS PUBLIC AND WHY IT IS HERE. `MatchFlowSystem` has asked
+        /// this question since Т21 and owns the phase machine that acts on
+        /// the answer; Т27 gives it a second reader that cannot see the
+        /// first — `SnapshotAssembler` lives in `Ring.Networking`, and the
+        /// Match block's `DirectorAlive` bit is NOT derivable from the phase
+        /// (MatchWireFlags' own doc: he dies GateDelaySeconds before the
+        /// phase moves, and that window is exactly when a client needs to
+        /// know). The alternatives were a second copy of this loop over the
+        /// networked side's own capture, or an assembly-wide
+        /// InternalsVisibleTo — the same two the owner weighed and rejected
+        /// for container slots (R-216), answered the same way and for the
+        /// same reason: one public accessor beside the ones the assembler
+        /// already reads.
+        ///
+        /// Linear over live mobs, like every other scan here; it runs once
+        /// per tick for the phase machine and once per connection for the
+        /// frame, against Arena.MaxMobs.
+        public bool DirectorAlive
+        {
+            get
+            {
+                for (int i = 0; i < _mobCount; i++)
+                    if (_mobs[i].Type == MobType.Director) return true;
+                return false;
+            }
+        }
 
         /// Stage 3 Task 4 Interfaces: number of items currently carried by
         /// one player's backpack.
@@ -1261,6 +1294,40 @@ namespace Ring.Simulation.Core
         /// codebase already assumes of its own caller.
         internal byte ContainerSlotAt(int containerIndex, int slot)
             => _containerSlots[containerIndex * _config.Arena.MaxContainerSlots + slot];
+
+        /// The item in one slot of the container with this ID — 0 for an
+        /// empty slot, and 0 for a container no longer alive (Stage 3 Т27,
+        /// owner decision R-216, form R-217).
+        ///
+        /// WHY IT IS PUBLIC. Slot CONTENT reaches nobody outside this
+        /// assembly today: `RenderSnapshot` carries container METADATA on
+        /// purpose and no content (its own doc), and `ContainerSlotAt` above
+        /// is `internal`. Stage 3 spec §3.12 puts the content on the WIRE —
+        /// the ContainerSlots block, sent only to a collector inside
+        /// LootRadius — and `SnapshotAssembler` lives in `Ring.Networking`.
+        /// The owner weighed three routes (grow RenderSnapshot, open the
+        /// assembly's internals, or add one public accessor) and chose this
+        /// one: it is the same route the backpack already takes through
+        /// `InventoryItemAt`/`InventoryCountOf`/`InventoryUsedSlots` right
+        /// above, and it costs no per-tick copy of data one connection out of
+        /// three needs only while standing next to the box.
+        ///
+        /// BY ID, NOT BY ARRAY POSITION (R-217), which is what separates it
+        /// from `ContainerSlotAt` below rather than merely a widening of it.
+        /// A caller outside the simulation holds IDs — a visibility set
+        /// carries them — and the position is this class's own business,
+        /// resolved through `IndexOfContainer`, the one home of that mapping
+        /// since Т17. An unknown id answers 0 rather than throwing: the one
+        /// caller is a per-tick frame builder, and a container can legally
+        /// disappear (TTL) between the tick that saw it and the tick that
+        /// describes it, which is ordinary rather than exceptional.
+        /// Naming follows `InventoryItemAt`'s, because the question is the
+        /// same one asked of a different holder.
+        public byte ContainerItemAt(int containerId, int slot)
+        {
+            int index = IndexOfContainer(containerId);
+            return index < 0 ? (byte)0 : ContainerSlotAt(index, slot);
+        }
 
         /// Test-only seam (Stage 3 Task 14), same contract as
         /// SetPickupForTest/SetMobForTest above — mutates a live slot

@@ -93,6 +93,26 @@ namespace Ring.Networking.Protocol
     ///   fixed part, five tags             45               53
     ///   record room at cap 1000          955              947
     ///
+    /// AND THE FIXED PART GREW AGAIN IN STAGE 3 TASK 27, which is the task
+    /// that first WRITES the five blocks Task 25 built a codec for (spec
+    /// §3.12). Five more tags ride every frame — Self, Match, ContainerSlots,
+    /// Containers, Pickups — and two of them carry a fixed payload: Match is
+    /// 4 B, Self is 2 B plus one byte per item in THIS recipient's backpack,
+    /// so its widest is 2 + Hero.MaxInventoryItems (16 at the shipped caps).
+    /// The other three ride empty when there is nothing to say and cost their
+    /// 3-byte header regardless — a receiver cannot tell an absent block from
+    /// an empty one, so none of them may be conditional:
+    ///
+    ///                            live recipient   dead recipient
+    ///   fixed part, TEN tags              82               90
+    ///   record room at cap 1000          918              910
+    ///   mobs that fit (9 B each)         102              101
+    ///
+    /// The live figures are pinned by SnapshotCodecTests.
+    /// WorstCaseFrame_RecomputedWithNewBlocks and the dead one is
+    /// SnapshotAssembler's own constructor ceiling, which since Task 27 asks
+    /// for the whole roster AND the fullest backpack.
+    ///
     /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 181 or 189 B over
     /// the cap ON PAPER. What actually gives at the defaults is the EVENT
     /// budget, never the entity list, and that survives the wider case: the

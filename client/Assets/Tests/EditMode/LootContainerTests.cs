@@ -686,5 +686,40 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, w.ContainerSlotAt(0, 1),
                 "the tail slot must read empty — the first container's own leftover byte must not survive");
         }
+
+        /// Stage 3 Т27 (owner decision R-216, form R-217): the public
+        /// accessor the snapshot assembler reads a box's interior through.
+        /// It addresses the container by ITS OWN ID, and this is what pins
+        /// that — an accessor that took the array POSITION under an id-shaped
+        /// argument would answer plausibly and wrongly for every container
+        /// but the first, and swap-remove makes "position" move under it.
+        [Test]
+        public void ContainerItemAt_AddressesByContainerId_NotByArrayPosition()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            int first = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new byte[] { 1, 2 });
+            int second = w.SpawnContainer(ContainerKind.Crate, new float2(2f, 0f), new byte[] { 3, 4 });
+            Assert.AreNotEqual(-1, first);
+            Assert.AreNotEqual(-1, second);
+            Assert.AreNotEqual(first, second, "premise: the two ids differ");
+            Assert.AreNotEqual(0, second, "premise: and neither is the array position 0 of the other");
+
+            Assert.AreEqual(1, w.ContainerItemAt(first, 0), "the first box's own slot 0");
+            Assert.AreEqual(4, w.ContainerItemAt(second, 1),
+                "and the SECOND box's slot 1 — an accessor reading the argument as a position "
+                + "would answer with the first box's slot instead");
+
+            // Swap-remove moves what lives at position 0; the id does not
+            // move with it, which is the whole reason the accessor is keyed
+            // on the id.
+            w.RemoveContainerAt(0);
+            Assert.AreEqual(3, w.ContainerItemAt(second, 0),
+                "after the first box is removed the second one occupies position 0 — and still "
+                + "answers to its own id");
+            Assert.AreEqual(0, w.ContainerItemAt(first, 0),
+                "while the removed box answers 0: an id nothing alive carries is 'nothing there', "
+                + "never a throw on the frame path that reads this");
+        }
     }
 }

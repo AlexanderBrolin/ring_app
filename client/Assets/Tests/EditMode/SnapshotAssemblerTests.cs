@@ -47,6 +47,64 @@ namespace Ring.Simulation.Tests
         public SnapshotEventPayload[] Payloads;
         public int EventCount;
 
+        /// Stage 3 Task 27: the five blocks Task 25 built a codec for and
+        /// nobody wrote into a frame until now (spec §3.12). They are read
+        /// back through the same real decoders as the five above — a block
+        /// this class did not decode would be a block the receiver cannot
+        /// either.
+        public MatchPhase MatchPhase;
+        public ushort MatchSecondsRemaining;
+        public byte MatchFlags;
+        public byte SelfSlotPoints;
+        public byte[] SelfItems;
+        public int SelfItemCount;
+        public SnapshotBlocks.PickupRecord[] Pickups;
+        public int PickupCount;
+        public SnapshotBlocks.ContainerRecord[] Containers;
+        public int ContainerCount;
+        public SnapshotBlocks.ContainerSlotsRecord[] Slots;
+        public int SlotsCount;
+        /// The ContainerSlots block's own payload, kept because a record's
+        /// `ItemOffset` indexes INTO it on the read side (the struct's own
+        /// doc says so) — without it a decoded record cannot be asked what
+        /// the box actually holds.
+        public byte[] SlotsPayload;
+
+        public bool TryPickup(int id, out SnapshotBlocks.PickupRecord record)
+        {
+            for (int i = 0; i < PickupCount; i++)
+                if (Pickups[i].Id == id) { record = Pickups[i]; return true; }
+            record = default;
+            return false;
+        }
+
+        public bool TryContainer(int id, out SnapshotBlocks.ContainerRecord record)
+        {
+            for (int i = 0; i < ContainerCount; i++)
+                if (Containers[i].Id == id) { record = Containers[i]; return true; }
+            record = default;
+            return false;
+        }
+
+        public bool TrySlots(int id, out SnapshotBlocks.ContainerSlotsRecord record)
+        {
+            for (int i = 0; i < SlotsCount; i++)
+                if (Slots[i].Id == id) { record = Slots[i]; return true; }
+            record = default;
+            return false;
+        }
+
+        /// The item ids one decoded ContainerSlots record carries, in
+        /// ascending slot order — its mask's popcount worth of bytes taken
+        /// from the block payload at its own offset.
+        public byte[] ItemsOf(in SnapshotBlocks.ContainerSlotsRecord record)
+        {
+            int occupied = SnapshotBlocks.OccupiedSlotCount(record.OccupancyMask);
+            var items = new byte[occupied];
+            System.Array.Copy(SlotsPayload, record.ItemOffset, items, 0, occupied);
+            return items;
+        }
+
         /// Bit 0 of the header's flags byte — "this frame dropped at least one
         /// entity for room" (SnapshotHeaderFlags.Truncated).
         public bool Truncated => (Flags & SnapshotHeaderFlags.Truncated) != 0;
@@ -86,6 +144,10 @@ namespace Ring.Simulation.Tests
         {
             (byte)SnapshotBlockKind.Players, (byte)SnapshotBlockKind.Liveness,
             (byte)SnapshotBlockKind.Mobs, (byte)SnapshotBlockKind.Wave, (byte)SnapshotBlockKind.Events,
+            // Stage 3 Task 27: the five new kinds, now that a frame carries them.
+            (byte)SnapshotBlockKind.Match, (byte)SnapshotBlockKind.Self,
+            (byte)SnapshotBlockKind.Pickups, (byte)SnapshotBlockKind.Containers,
+            (byte)SnapshotBlockKind.ContainerSlots,
         };
 
         /// Reads `bytes` of `buffer` back through the Task 26/27 codec — the
@@ -100,6 +162,11 @@ namespace Ring.Simulation.Tests
                 Players = new SnapshotBlocks.PlayerRecord[math.max(1, cfg.Arena.MaxPlayers)],
                 Mobs = new SnapshotBlocks.MobRecord[math.max(1, cfg.Arena.MaxMobs)],
                 Events = new SnapshotBlocks.EventRecord[math.max(1, cfg.Arena.MaxEventsPerFrame)],
+                SelfItems = new byte[math.max(1, cfg.Hero.MaxInventoryItems)],
+                Pickups = new SnapshotBlocks.PickupRecord[math.max(1, cfg.Arena.MaxPickups)],
+                Containers = new SnapshotBlocks.ContainerRecord[math.max(1, cfg.Arena.MaxContainers)],
+                Slots = new SnapshotBlocks.ContainerSlotsRecord[math.max(1, cfg.Arena.MaxContainers)],
+                SlotsPayload = System.Array.Empty<byte>(),
             };
             f.Payloads = new SnapshotEventPayload[f.Events.Length];
 
@@ -143,12 +210,50 @@ namespace Ring.Simulation.Tests
                                 $"event {i} (kind {r.Kind}) payload refused: {xe}");
                         }
                         break;
+
+                    // Stage 3 Task 27: the five blocks Task 25 gave a codec
+                    // and nobody wrote into a frame until now (spec §3.12).
+                    // Read back through the real decoders — a block this
+                    // class could not decode is one the receiver could not
+                    // either.
+                    case SnapshotBlockKind.Match:
+                        Assert.IsTrue(SnapshotBlocks.TryReadMatchBlock(payload, out f.MatchPhase,
+                            out f.MatchSecondsRemaining, out f.MatchFlags,
+                            out SnapshotBlockError mte), $"Match block refused: {mte}");
+                        break;
+                    case SnapshotBlockKind.Self:
+                        Assert.IsTrue(SnapshotBlocks.TryReadSelfBlock(payload, cfg, f.SelfItems,
+                            out f.SelfSlotPoints, out f.SelfItemCount, out SnapshotBlockError sfe),
+                            $"Self block refused: {sfe}");
+                        break;
+                    case SnapshotBlockKind.Pickups:
+                        Assert.IsTrue(SnapshotBlocks.TryReadPickupsBlock(payload, cfg, f.Pickups,
+                            out f.PickupCount, out SnapshotBlockError pke),
+                            $"Pickups block refused: {pke}");
+                        break;
+                    case SnapshotBlockKind.Containers:
+                        Assert.IsTrue(SnapshotBlocks.TryReadContainersBlock(payload, cfg, f.Containers,
+                            out f.ContainerCount, out SnapshotBlockError cne),
+                            $"Containers block refused: {cne}");
+                        break;
+                    case SnapshotBlockKind.ContainerSlots:
+                        Assert.IsTrue(SnapshotBlocks.TryReadContainerSlotsBlock(payload, cfg, f.Slots,
+                            out f.SlotsCount, out SnapshotBlockError cse),
+                            $"ContainerSlots block refused: {cse}");
+                        // A record's ItemOffset indexes into THIS payload on
+                        // the read side (the struct's own doc), so the bytes
+                        // are kept rather than parsed away.
+                        f.SlotsPayload = payload.ToArray();
+                        break;
                 }
             }
 
             Assert.IsFalse(reader.Failed, "an assembled frame must parse cleanly to its end");
-            Assert.AreEqual(5, blocks,
-                "the assembler always emits all five blocks in canonical order, even when a block is empty");
+            Assert.AreEqual(10, blocks,
+                "the assembler always emits all TEN blocks in canonical order, even when a block is empty "
+                + "— Stage 3 Task 27 added Self, Match, ContainerSlots, Containers and Pickups to the "
+                + "five of Stage 2, and none of them may be conditional on having content: a receiver "
+                + "cannot tell an absent block from an empty one (SnapshotReader's own account)");
             return f;
         }
     }
@@ -503,14 +608,17 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Constructor_RefusesACapThatCannotHoldTheWholeRoster()
         {
+            // Т27: the sum's own arithmetic is pinned by
+            // FixedFrameBytes_CountsMatchSelfAndTheThreeNewEmptyHeaders; what
+            // THIS test is about is the PLAYERS term of it, so it states the
+            // two player counts and lets the one home add up the rest.
             SimConfig cfg = TestConfigs.Open();
-            int wholeRoster = SnapshotWriter.HeaderBytes
-                              + SnapshotWriter.PlayersBlockBytes(cfg.Arena.MaxPlayers)
-                              + SnapshotWriter.LivenessBlockBytes()
-                              + SnapshotWriter.WaveBlockBytes()
-                              + SnapshotWriter.MobsBlockBytes(0)
-                              + SnapshotWriter.EventsBlockBytes(0, 0);
-            int oneSeatShort = wholeRoster - SnapshotBlocks.PlayerRecordBytes;
+            int wholeRoster = SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers,
+                cfg.Hero.MaxInventoryItems);
+            int oneSeatShort = SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers - 1,
+                cfg.Hero.MaxInventoryItems);
+            Assert.AreEqual(SnapshotBlocks.PlayerRecordBytes, wholeRoster - oneSeatShort,
+                "premise: the two differ by exactly one player record, which is what this test is about");
 
             Assert.DoesNotThrow(() => new SnapshotAssembler(cfg, Net(maxBytes: wholeRoster),
                 connectionCount: 1), "a cap that holds the whole roster is legal");
@@ -560,35 +668,34 @@ namespace Ring.Simulation.Tests
             // Coordinator R-12: the ceiling and the per-frame subtraction used
             // to spell the same sum out separately, so a new always-riding
             // block had to be added twice with nothing demanding the second
-            // edit. What this pins is that ONE function answers both, and that
-            // its answer is the arithmetic — spelled out here independently,
-            // exactly as the codec tests spell out their bytes.
+            // edit. What this pins is that ONE function answers BOTH callers.
+            // (Т27: the arithmetic of the sum itself moved to
+            // FixedFrameBytes_CountsMatchSelfAndTheThreeNewEmptyHeaders when
+            // the sum grew from five terms to eleven — spelling it out twice
+            // would be the very duplication R-12 closed.)
             SimConfig cfg = TestConfigs.Open();
-            int spelledOut = SnapshotWriter.HeaderBytes
-                             + SnapshotWriter.PlayersBlockBytes(cfg.Arena.MaxPlayers)
-                             + SnapshotWriter.LivenessBlockBytes()
-                             + SnapshotWriter.WaveBlockBytes()
-                             + SnapshotWriter.MobsBlockBytes(0)
-                             + SnapshotWriter.EventsBlockBytes(0, 0);
-            Assert.AreEqual(spelledOut, SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers));
+            int ceiling = SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers,
+                cfg.Hero.MaxInventoryItems);
 
             // The constructor's own refusal is computed from the SAME home —
             // a cap one byte under it is refused, a cap exactly at it is not.
             Assert.DoesNotThrow(() => new SnapshotAssembler(cfg,
-                Net(maxBytes: SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers)), connectionCount: 1));
+                Net(maxBytes: ceiling), connectionCount: 1));
             Assert.Throws<System.ArgumentException>(() => new SnapshotAssembler(cfg,
-                Net(maxBytes: SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers) - 1), connectionCount: 1));
+                Net(maxBytes: ceiling - 1), connectionCount: 1));
 
             // And the frame spends exactly what the home says for ITS OWN
-            // player count: an idle solo world writes the fixed part and
-            // nothing else, so the two numbers are the same number.
+            // player count and ITS OWN backpack: an idle solo world with an
+            // empty pack writes the fixed part and nothing else, so the two
+            // numbers are the same number.
             var solo = new SimulationWorld(1, cfg);
+            Assert.AreEqual(0, solo.InventoryCountOf(0), "test setup: the solo pack starts empty");
             var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
             asm.BeginTick(solo);
             int bytes = asm.BuildFor(0, 0, 0, Epoch);
-            Assert.AreEqual(SnapshotAssembler.FixedFrameBytes(0), bytes,
+            Assert.AreEqual(SnapshotAssembler.FixedFrameBytes(0, 0), bytes,
                 "a solo connection is sent no player record at all (its own body rides reconciliation), "
-                + "so its frame IS the fixed part at zero players");
+                + "so its frame IS the fixed part at zero players and zero items");
         }
 
         // ---- T28.A3. Liveness covers EVERY slot, visible or not ----
@@ -2388,6 +2495,590 @@ namespace Ring.Simulation.Tests
                 + "pair is keyed on the VIEWPOINT, so a spectator who just switched must not keep "
                 + "receiving live coordinates of what the OLD viewpoint could see (Stage 2 Task "
                 + "42a fix-round 1, I-1, now owed to all three classes)");
+        }
+
+        // ---- Т27.A. The fixed part grows: Match and Self (spec Р279) ----
+
+        [Test]
+        public void FixedFrameBytes_CountsMatchSelfAndTheThreeNewEmptyHeaders()
+        {
+            // Т25 built a codec for five new blocks; Т27 is the task that puts
+            // them in a frame, so the ONE home of "what a frame costs before
+            // its first mob record" has to grow with them. Spelled out here
+            // independently of the home, exactly as the Т25 test above spells
+            // out the five older terms — a home that agreed with itself and
+            // with nothing else would pin nothing.
+            SimConfig cfg = TestConfigs.Open();
+            const int items = 4;
+            int spelledOut = SnapshotWriter.HeaderBytes
+                             + SnapshotWriter.PlayersBlockBytes(cfg.Arena.MaxPlayers)
+                             + SnapshotWriter.LivenessBlockBytes()
+                             + SnapshotWriter.WaveBlockBytes()
+                             + SnapshotWriter.MobsBlockBytes(0)
+                             + SnapshotWriter.EventsBlockBytes(0, 0)
+                             + SnapshotWriter.MatchBlockBytes()
+                             + SnapshotWriter.SelfBlockBytes(items)
+                             + SnapshotWriter.PickupsBlockBytes(0)
+                             + SnapshotWriter.ContainersBlockBytes(0)
+                             + SnapshotWriter.ContainerSlotsBlockBytes(0, 0);
+            Assert.AreEqual(spelledOut,
+                SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers, items),
+                "the fixed part is header + every block that always rides, and since Т27 that is TEN "
+                + "blocks, not five");
+
+            // The backpack is the one variable term, and it is variable by
+            // ONE byte per item — the count byte and the slot-point byte ride
+            // whether the backpack is empty or full.
+            Assert.AreEqual(SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers, 0) + items,
+                SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers, items),
+                "one item id is one byte — the Self block's own head is already counted at zero items");
+        }
+
+        [Test]
+        public void FixedCeiling_ThrowsWhenSelfBlockDoesNotFit()
+        {
+            // Spec Р279: the constructor is the ONE throw at server start-up,
+            // and it must be sized for the WIDEST frame — which since Т27
+            // includes a backpack at Hero.MaxInventoryItems. A ceiling that
+            // asked for a SMALLER backpack would pass here and throw inside a
+            // server tick out of SnapshotWriter.Reserve, the very first time a
+            // collector filled his pack — the same failure shape Task 47b's
+            // own "whole roster, not one seat fewer" paragraph describes.
+            SimConfig cfg = TestConfigs.Open();
+            int widest = SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers,
+                cfg.Hero.MaxInventoryItems);
+            int oneItemShort = widest - 1;
+
+            Assert.DoesNotThrow(() => new SnapshotAssembler(cfg, Net(maxBytes: widest),
+                connectionCount: 1), "a cap that holds the widest fixed part is legal");
+
+            var refused = Assert.Throws<System.ArgumentException>(
+                () => new SnapshotAssembler(cfg, Net(maxBytes: oneItemShort), connectionCount: 1),
+                "a cap one backpack byte short of the widest fixed part must be refused HERE");
+            StringAssert.Contains("fixed part", refused.Message,
+                "and the refusal has to name what does not fit");
+
+            // The witness that the ceiling really is the FULL backpack and not
+            // some smaller number that happens to pass: a cap sized for an
+            // EMPTY backpack is refused too, because a full one cannot fit in
+            // it — this is the arm a ceiling that forgot MaxInventoryItems
+            // would fail.
+            Assert.Throws<System.ArgumentException>(
+                () => new SnapshotAssembler(cfg,
+                    Net(maxBytes: SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers, 0)),
+                    connectionCount: 1),
+                "a cap sized for an EMPTY backpack cannot hold a full one, so the ceiling must "
+                + "refuse it: the widest Self block is Hero.MaxInventoryItems ids long");
+        }
+
+        // ---- Т27.B. The Match block (spec §3.12, R-204) ----
+
+        [Test]
+        public void MatchBlock_CarriesThePhase_TheRemainingSeconds_AndTheGateBit()
+        {
+            // R-204: the block carries what is LEFT of the raid, not what has
+            // elapsed — elapsed is already in the frame header's own tick. The
+            // number the countdown is measured against lives in NetConfig
+            // (MatchMaxDurationSeconds), outside SimConfig entirely, which is
+            // why the assembler has to carry it.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, 8f));
+
+            const int matchSeconds = 60;
+            NetConfig net = Net();
+            net.MatchMaxDurationSeconds = matchSeconds;
+            var asm = new SnapshotAssembler(cfg, net, connectionCount: 1);
+
+            AssembledFrame first = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(MatchPhase.Farm, first.MatchPhase,
+                "a raid nobody has walked into the core in is still farming");
+            Assert.AreEqual((ushort)matchSeconds, first.MatchSecondsRemaining,
+                "at tick zero the whole raid is still ahead");
+            Assert.AreEqual(0, first.MatchFlags & MatchWireFlags.GateOpen,
+                "and its gate is shut");
+
+            // One second of ticks later the countdown has moved by exactly one
+            // second — computed from the tick rate the match's own end is
+            // measured against (ServerBootstrap hands MatchEndPolicy
+            // MatchMaxDurationSeconds * TickRate), never from a second clock.
+            TestWorlds.IdleTicks(w, net.TickRate);
+            AssembledFrame later = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual((ushort)(matchSeconds - 1), later.MatchSecondsRemaining,
+                "one second of ticks is one second off the countdown");
+
+            // The gate bit is a view of the phase, and it is asserted against a
+            // raid that really opened one (TestWorlds.OpenTheGate walks the
+            // whole route: a collector in the core, the Director down, the
+            // sharing window elapsed).
+            SimConfig gateCfg = TestConfigs.Open();
+            gateCfg.Flow.GateDelaySeconds = 0f;
+            var gateWorld = new SimulationWorld(1, gateCfg, playerCount: 3);
+            var gateAsm = new SnapshotAssembler(gateCfg, Net(), connectionCount: 1);
+            TestWorlds.OpenTheGate(gateWorld, in gateCfg);
+            AssembledFrame open = Build(gateAsm, gateWorld, gateCfg, 0, 0, 0);
+            Assert.AreEqual(MatchPhase.GateOpen, open.MatchPhase, "premise: the gate really is open");
+            Assert.AreNotEqual(0, open.MatchFlags & MatchWireFlags.GateOpen,
+                "and the flags byte says so — a consumer reading the byte should not have to "
+                + "re-derive the state machine's own verdict (MatchWireFlags' own doc)");
+        }
+
+        [Test]
+        public void MatchBlock_DirectorAliveBit_IsNotDerivedFromThePhase()
+        {
+            // MatchWireFlags' own doc: this bit is NOT derivable from the
+            // phase, and the window where the two disagree is exactly the one
+            // a client most needs it in — the Director is dead, the gate has
+            // not opened yet (GateDelaySeconds is still running), and the
+            // phase is STILL DirectorActive. A bit computed from the phase
+            // would keep reporting a boss who is already on the floor.
+            SimConfig cfg = TestConfigs.Open();
+            cfg.Flow.GateDelaySeconds = 10f;    // long enough that the window is still open below
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+
+            TestWorlds.RelocatePlayerForTest(w, 2, TestWorlds.InsideCore(in cfg));
+            TestWorlds.IdleTicks(w);
+            Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase,
+                "premise: a live collector in the core activates the Director (Р299)");
+
+            AssembledFrame alive = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreNotEqual(0, alive.MatchFlags & MatchWireFlags.DirectorAlive,
+                "witness: while he stands, the bit is set");
+
+            for (int i = 0; i < w.MobCount; i++)
+            {
+                if (w.Mobs[i].Type != MobType.Director) continue;
+                w.DamageMob(i, 1e9f, w.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+                break;
+            }
+            TestWorlds.IdleTicks(w);
+            w.ClearEvents();
+            Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase,
+                "premise: the phase has NOT moved yet — GateDelaySeconds is still running");
+
+            AssembledFrame dead = Build(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(0, dead.MatchFlags & MatchWireFlags.DirectorAlive,
+                "the bit must follow the BODY, not the phase: this is the window the doc names, "
+                + "and a bit derived from MatchPhase would still be reporting him alive");
+            Assert.AreEqual(0, dead.MatchFlags & MatchWireFlags.GateOpen,
+                "and the gate bit is still clear, so the two bits are genuinely independent");
+        }
+
+        // ---- Т27.C. The Self block: the owner's own backpack (Р276) ----
+
+        [Test]
+        public void SelfBlock_CarriesTheOwnersBackpack_NotTheViewpointsOne()
+        {
+            // Spec §3.12 tag 7: the Self block goes to the OWNER — "who this
+            // connection is", not "where it looks from". The two diverge the
+            // moment a dead player spectates someone else (Stage 2 Task 42a),
+            // and a Self block built from the viewpoint would hand a corpse
+            // the contents of a living stranger's pack.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, 8f));
+            w.SetInventoryForTest(0, 1, 5);         // tier 1 trophy + a repair kit
+            w.SetInventoryForTest(1, 2, 3, 4);      // a strictly different pack
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame own = Build(asm, w, cfg, connection: 0, identityIndex: 0, viewpointIndex: 0);
+
+            Assert.AreEqual(w.InventoryCountOf(0), own.SelfItemCount,
+                "the block carries every item of the owner's pack");
+            CollectionAssert.AreEqual(new byte[] { 1, 5 },
+                new[] { own.SelfItems[0], own.SelfItems[1] },
+                "in the backpack's own order — the window that draws it addresses slots by index");
+            Assert.AreEqual((byte)w.InventoryUsedSlots(0), own.SelfSlotPoints,
+                "and the slot-point total, which is what the capacity bar reads (Р276: a derived "
+                + "number the client must not re-derive against a catalog it may not have)");
+
+            // The divergence: connection 0 is player 0, watching player 1.
+            AssembledFrame spectating = Build(asm, w, cfg, connection: 0, identityIndex: 0,
+                viewpointIndex: 1);
+            Assert.AreEqual(w.InventoryCountOf(0), spectating.SelfItemCount,
+                "a spectator's Self block is still HIS OWN pack — the block is keyed on identity");
+            CollectionAssert.AreEqual(new byte[] { 1, 5 },
+                new[] { spectating.SelfItems[0], spectating.SelfItems[1] },
+                "and it must NOT be the viewpoint player's {2, 3, 4}");
+        }
+
+        // ---- Т27.D. The ground entities reach the frame (spec §3.12) ----
+
+        /// One collector at the origin of an open arena, with a pickup and a
+        /// container placed by the caller. Т26 taught the assembler to SEE
+        /// them; this is the fixture for the task that puts them in a frame.
+        static (SimulationWorld world, SimConfig cfg, SnapshotAssembler asm) GroundFixture(
+            out int pickupId, out int containerId, float2 pickupPos, float2 containerPos,
+            byte[] containerItems = null, NetConfig net = null)
+        {
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            pickupId = w.SpawnPickup(PickupKind.EnergyCell, pickupPos, 1);
+            containerId = w.SpawnContainer(ContainerKind.Crate, containerPos,
+                containerItems ?? new byte[] { 1 });
+            w.ClearEvents();
+            var asm = new SnapshotAssembler(cfg, net ?? Net(), connectionCount: 1);
+            return (w, cfg, asm);
+        }
+
+        [Test]
+        public void PickupsAndContainers_RideTheFrame_ByVisibilityAndNotOtherwise()
+        {
+            // CRITICAL RULE 4 for the two classes Т26 gave their own sets:
+            // what the collector can see rides at full precision, what he
+            // cannot is not in his frame at all. Until this task the blocks
+            // existed in the codec and NOTHING wrote them — the sets were
+            // computed and spent on nobody.
+            (SimulationWorld w, SimConfig cfg, SnapshotAssembler asm) = GroundFixture(
+                out int nearPickup, out int nearContainer,
+                new float2(3f, 0f), new float2(0f, 3f));
+            float outOfSight = cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis + 20f;
+            int farPickup = w.SpawnPickup(PickupKind.EnergyCell, new float2(outOfSight, 0f), 1);
+            int farContainer = w.SpawnContainer(ContainerKind.Crate, new float2(0f, outOfSight),
+                new byte[] { 1 });
+
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.IsTrue(f.TryPickup(nearPickup, out SnapshotBlocks.PickupRecord near),
+                "a pickup three metres away rides the frame");
+            Assert.AreEqual(PickupKind.EnergyCell, near.Kind, "with its own kind");
+            // Inside one quantization step of where it really lies — the step
+            // computed here from the same two numbers the codec uses, never
+            // quoted (the codec tests' own tolerance discipline).
+            float posStep = 2f * cfg.Arena.Radius / ushort.MaxValue;
+            Assert.Less(math.distance(near.Pos, new float2(3f, 0f)), posStep,
+                "and its position, inside one quantization step");
+            Assert.IsTrue(f.TryContainer(nearContainer, out SnapshotBlocks.ContainerRecord box),
+                "so does a container three metres away");
+            Assert.AreEqual(ContainerKind.Crate, box.Kind, "with its own kind");
+
+            Assert.IsFalse(f.TryPickup(farPickup, out _),
+                "and a pickup past sight is NOT in the frame — fog of war is not a client-side "
+                + "filter (CRITICAL RULE 4)");
+            Assert.IsFalse(f.TryContainer(farContainer, out _),
+                "nor is a container past sight");
+        }
+
+        [Test]
+        public void ContainerRecord_CarriesTheEmptyFlag_OfABoxAlreadyLooted()
+        {
+            // Spec §3.12: "already looted" is what a collector reads AT A
+            // DISTANCE to decide whether the walk is worth it, which is why
+            // the flag rides the Containers record — sent to everyone who can
+            // see the box — rather than only in the ContainerSlots block, sent
+            // only to whoever is already standing next to it
+            // (ContainerRecord's own doc states the asymmetry).
+            (SimulationWorld w, SimConfig cfg, SnapshotAssembler asm) = GroundFixture(
+                out _, out int containerId, new float2(3f, 0f), new float2(0f, 3f),
+                new byte[] { 1, 2 });
+
+            AssembledFrame stocked = Build(asm, w, cfg, 0, 0, 0);
+            Assert.IsTrue(stocked.TryContainer(containerId, out SnapshotBlocks.ContainerRecord full));
+            Assert.IsFalse(full.IsEmpty, "witness: a box that still holds two items is not empty");
+
+            Assert.IsTrue(w.TryTakeFromContainer(containerId, 0, out _), "test setup: take the first");
+            Assert.IsTrue(w.TryTakeFromContainer(containerId, 1, out _), "test setup: and the second");
+
+            AssembledFrame looted = Build(asm, w, cfg, 0, 0, 0);
+            Assert.IsTrue(looted.TryContainer(containerId, out SnapshotBlocks.ContainerRecord empty));
+            Assert.IsTrue(empty.IsEmpty,
+                "a box whose every slot is empty says so on the wire — the flag is DERIVED from the "
+                + "slots, so it cannot drift out of step with them");
+        }
+
+        // ---- Т27.E. The budget order (Р243) and truncation of three classes ----
+
+        [Test]
+        public void MobsAreBudgetedBeforePickupsAndContainers()
+        {
+            // Р243, corrected by findings C-3/D-19: an earlier reading of the
+            // order put the ground litter ABOVE the mobs, so in a tight frame
+            // cells and empty crates would push out the picture of the threat
+            // the snapshot exists to carry. The assertion is the consequence:
+            // when the room runs out, it runs out for the LITTER first, and
+            // the mobs that fit are the ones that ride.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            // A crowd close enough to be seen, and litter closer still — so
+            // proximity alone would rank the litter first if the order were
+            // by distance rather than by class.
+            for (int i = 0; i < 20; i++)
+                w.SpawnMobForTest(MobType.Chaser, new float2(10f + i * 0.5f, 0f));
+            for (int i = 0; i < 8; i++) w.SpawnPickup(PickupKind.EnergyCell, new float2(1f, i * 0.3f), 1);
+            // Just OUTSIDE LootRadius, deliberately: a box within reach also
+            // sends its interior, which Р243 budgets ahead of the mobs, and
+            // this test is about the mobs against the litter — not about the
+            // interiors (ContainerSlots_AreTruncatedFarthestFirst is).
+            float pastReach = cfg.Loot.LootRadius + 1f;
+            for (int i = 0; i < 4; i++)
+                w.SpawnContainer(ContainerKind.Crate, new float2(-pastReach, i * 0.3f),
+                    new byte[] { 1 });
+            w.ClearEvents();
+
+            // A cap with room for SOME mobs and nothing beyond them.
+            int fixedPart = SnapshotWriter.HeaderBytes
+                            + SnapshotWriter.SelfBlockBytes(0)
+                            + SnapshotWriter.MatchBlockBytes()
+                            + SnapshotWriter.PlayersBlockBytes(0)
+                            + SnapshotWriter.LivenessBlockBytes()
+                            + SnapshotWriter.WaveBlockBytes()
+                            + SnapshotWriter.ContainerSlotsBlockBytes(0, 0)
+                            + SnapshotWriter.MobsBlockBytes(0)
+                            + SnapshotWriter.ContainersBlockBytes(0)
+                            + SnapshotWriter.PickupsBlockBytes(0)
+                            + SnapshotWriter.EventsBlockBytes(0, 0);
+            const int mobsThatFit = 6;
+            var asm = new SnapshotAssembler(cfg,
+                Net(maxBytes: fixedPart + mobsThatFit * SnapshotBlocks.MobRecordBytes),
+                connectionCount: 1);
+
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.AreEqual(mobsThatFit, f.MobCount,
+                "the mobs take the room first — every byte of it");
+            Assert.AreEqual(0, f.PickupCount,
+                "and the litter gets none: a pickup ahead of a mob is the ordering this decision "
+                + "reversed (Р243)");
+            Assert.AreEqual(0, f.ContainerCount, "the same for containers");
+            Assert.IsTrue(f.Truncated, "and the header says the frame was cut");
+        }
+
+        /// The tightest frame the constructor will accept — its own ceiling,
+        /// which is sized for the WIDEST fixed part (whole roster, fullest
+        /// backpack). A cap below it is refused at construction, so this is
+        /// the smallest byte budget a truncation fixture can legally ask for.
+        static int TightestLegalCap(in SimConfig cfg)
+            => SnapshotAssembler.FixedFrameBytes(cfg.Arena.MaxPlayers, cfg.Hero.MaxInventoryItems);
+
+        /// The record room such a frame leaves a SOLO connection with an empty
+        /// backpack: the cap minus the fixed part that frame actually spends.
+        /// Spelled out from the calculators, never from FixedFrameBytes — a
+        /// guard reading the production home would agree with a wrong home
+        /// too (lesson 324).
+        static int RoomInTightestFrame(in SimConfig cfg)
+            => TightestLegalCap(in cfg)
+               - (SnapshotWriter.HeaderBytes
+                  + SnapshotWriter.SelfBlockBytes(0)
+                  + SnapshotWriter.MatchBlockBytes()
+                  + SnapshotWriter.PlayersBlockBytes(0)
+                  + SnapshotWriter.LivenessBlockBytes()
+                  + SnapshotWriter.WaveBlockBytes()
+                  + SnapshotWriter.ContainerSlotsBlockBytes(0, 0)
+                  + SnapshotWriter.MobsBlockBytes(0)
+                  + SnapshotWriter.ContainersBlockBytes(0)
+                  + SnapshotWriter.PickupsBlockBytes(0)
+                  + SnapshotWriter.EventsBlockBytes(0, 0));
+
+        [TestCase(VisibilityClass.Mobs)]
+        [TestCase(VisibilityClass.Containers)]
+        [TestCase(VisibilityClass.Pickups)]
+        public void TruncationDropsFarthest_ForEachOfThreeClasses(VisibilityClass cls)
+        {
+            // Р217/Р268 item 4: the drop rule stops being mob-specific. Each
+            // class is cut on its own, by the SAME rule — the farthest from
+            // the viewpoint go first — so a collector never loses the crate at
+            // his feet while keeping one across the arena.
+            //
+            // ONE CLASS PER CASE, and that is forced rather than chosen: the
+            // classes share one byte budget in Р243's own order, so a frame
+            // tight enough to cut the mobs leaves the litter nothing at all to
+            // be cut FROM (which is what MobsAreBudgetedBeforePickupsAndContainers
+            // above asserts). Each case therefore populates its own class only.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            int recordBytes = cls switch
+            {
+                VisibilityClass.Mobs => SnapshotBlocks.MobRecordBytes,
+                VisibilityClass.Containers => SnapshotBlocks.ContainerRecordBytes,
+                _ => SnapshotBlocks.PickupRecordBytes,
+            };
+            int fits = RoomInTightestFrame(in cfg) / recordBytes;
+            int spawned = fits + 2;     // two more than the frame can hold
+            Assert.Greater(fits, 0, "fixture premise: the tightest legal frame still holds records");
+
+            // Placed at strictly growing distances, so "farthest first" has a
+            // total order to cut along and the survivors are decidable here.
+            var ids = new int[spawned];
+            for (int i = 0; i < spawned; i++)
+            {
+                float2 pos = new float2(2f + i * 1.5f, 0f);
+                ids[i] = cls switch
+                {
+                    VisibilityClass.Mobs => w.SpawnMobForTest(MobType.Chaser, pos),
+                    VisibilityClass.Containers => w.SpawnContainer(ContainerKind.Crate, pos,
+                        new byte[] { 1 }),
+                    _ => w.SpawnPickup(PickupKind.EnergyCell, pos, 1),
+                };
+            }
+            w.ClearEvents();
+
+            var asm = new SnapshotAssembler(cfg, Net(maxBytes: TightestLegalCap(in cfg)),
+                connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            int riding = cls switch
+            {
+                VisibilityClass.Mobs => f.MobCount,
+                VisibilityClass.Containers => f.ContainerCount,
+                _ => f.PickupCount,
+            };
+            Assert.AreEqual(fits, riding, $"{cls}: exactly as many records as the room holds");
+
+            for (int i = 0; i < spawned; i++)
+            {
+                bool present = cls switch
+                {
+                    VisibilityClass.Mobs => f.ContainsMob(ids[i]),
+                    VisibilityClass.Containers => f.TryContainer(ids[i], out _),
+                    _ => f.TryPickup(ids[i], out _),
+                };
+                Assert.AreEqual(i < fits, present,
+                    $"{cls}: the {i}-th nearest must {(i < fits ? "ride" : "be dropped")} — the "
+                    + "farthest go first, for this class exactly as for the mobs");
+            }
+
+            Assert.IsTrue(f.Truncated, "the header says the frame was cut");
+            Assert.AreEqual(spawned - fits, asm.StatsFor(0).DroppedEntities,
+                "and the counter is per ENTITY, not per class: what went missing is what the "
+                + "escalation threshold (Р280) is measured in");
+        }
+
+        // ---- Т27.F. ContainerSlots: only within arm's reach (Р238/Р277) ----
+
+        [Test]
+        public void ContainerSlots_RideOnlyForBoxesInsideLootRadius()
+        {
+            // Spec §3.12 tag 10: the interior of a box is sent only to a
+            // collector inside LootRadius, while the box ITSELF is sent to
+            // everyone who can see it. The two travel on different terms on
+            // purpose — "what is in it" is what you ask when you are already
+            // standing there, "is it worth the walk" is what you read from
+            // across the room (ContainerRecord's own doc).
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            float reach = cfg.Loot.LootRadius;
+            int atHand = w.SpawnContainer(ContainerKind.Crate, new float2(reach * 0.5f, 0f),
+                new byte[] { 1, 2 });
+            int acrossTheRoom = w.SpawnContainer(ContainerKind.Crate, new float2(reach + 5f, 0f),
+                new byte[] { 3 });
+            w.ClearEvents();
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.IsTrue(f.TryContainer(atHand, out _), "premise: both boxes are plainly visible");
+            Assert.IsTrue(f.TryContainer(acrossTheRoom, out _), "premise: including the far one");
+
+            Assert.AreEqual(1, f.SlotsCount,
+                "exactly one box has its interior in the frame — the one within reach");
+            Assert.IsTrue(f.TrySlots(atHand, out SnapshotBlocks.ContainerSlotsRecord slots),
+                "and it is the near one");
+            Assert.IsFalse(f.TrySlots(acrossTheRoom, out _),
+                "a box outside LootRadius keeps its contents to itself — sending them would hand "
+                + "every observer the whole floor's loot table (Р238)");
+            CollectionAssert.AreEqual(new byte[] { 1, 2 }, f.ItemsOf(in slots),
+                "the near box's own items, in ascending slot order");
+        }
+
+        [Test]
+        public void ContainerSlots_CarryTheOccupancyMask_AndOnlyTheOccupiedItems()
+        {
+            // Р277 (finding D-14): the MASK is the point, not a compaction.
+            // LootOps.Take addresses a slot BY INDEX, so a compact "here are
+            // the two it still holds" list would systematically disagree with
+            // the server's own numbering after any partial looting — every
+            // second Take refused as "slot empty" by construction rather than
+            // by a race.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            int boxId = w.SpawnContainer(ContainerKind.Crate, new float2(cfg.Loot.LootRadius * 0.5f, 0f),
+                new byte[] { 1, 2, 3 });
+            // The MIDDLE slot is emptied, so a compact list and a masked one
+            // disagree about what slot 2 holds — which is the whole point.
+            Assert.IsTrue(w.TryTakeFromContainer(boxId, 1, out _), "test setup: empty the middle slot");
+            w.ClearEvents();
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.IsTrue(f.TrySlots(boxId, out SnapshotBlocks.ContainerSlotsRecord record));
+            Assert.AreEqual((byte)0b101, record.OccupancyMask,
+                "bit i means slot i is occupied: slots 0 and 2 hold something, slot 1 does not");
+            CollectionAssert.AreEqual(new byte[] { 1, 3 }, f.ItemsOf(in record),
+                "and only the OCCUPIED slots' ids follow, in ascending slot order — the mask is what "
+                + "maps them back onto slot numbers");
+
+            Assert.IsTrue(f.TryContainer(boxId, out SnapshotBlocks.ContainerRecord box));
+            Assert.IsFalse(box.IsEmpty,
+                "and the record's own empty flag agrees with the mask — one derivation, not two");
+        }
+
+        [Test]
+        public void ContainerSlots_AreTruncatedFarthestFirst_RatherThanOverrunningTheFrame()
+        {
+            // Coordinator R-221: the spec puts ContainerSlots inside
+            // LootRadius and says nothing about what happens when more boxes
+            // are inside it than the frame can carry. Silence is not "cannot
+            // happen" — Arena.MaxContainers is 64, and 64 full boxes would
+            // need 704 B of a frame that has ~900 to spend on EVERYTHING. The
+            // writer would then throw INSIDE a server tick, which is exactly
+            // what the constructor's ceiling exists to make impossible.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+
+            // Eight full boxes, all within arm's reach, all at growing
+            // distances so the cut has a total order to follow.
+            var full = new byte[] { 1, 2, 3, 4, 1, 2, 3, 4 };
+            const int boxes = 8;
+            var ids = new int[boxes];
+            for (int i = 0; i < boxes; i++)
+                ids[i] = w.SpawnContainer(ContainerKind.Crate,
+                    new float2(cfg.Loot.LootRadius * (0.1f + 0.1f * i), 0f), full);
+            w.ClearEvents();
+
+            int cap = TightestLegalCap(in cfg);
+            int room = RoomInTightestFrame(in cfg);
+            int perBox = SnapshotBlocks.ContainerSlotsRecordHeaderBytes + full.Length;
+            int fits = room / perBox;
+            Assert.Greater(fits, 0, "fixture premise: at least one interior fits");
+            Assert.Less(fits, boxes, "fixture premise: and not all of them do");
+
+            var asm = new SnapshotAssembler(cfg, Net(maxBytes: cap), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.LessOrEqual(f.Bytes, cap, "the whole point: the frame stays inside its cap");
+            Assert.AreEqual(fits, f.SlotsCount, "as many interiors as the room holds, no more");
+            for (int i = 0; i < boxes; i++)
+                Assert.AreEqual(i < fits, f.TrySlots(ids[i], out _),
+                    $"the {i}-th nearest box's interior must {(i < fits ? "ride" : "be dropped")} — "
+                    + "the farthest go first here too");
+
+            // AND AN INTERIOR THAT DID NOT FIT IS NOT A DROPPED ENTITY
+            // (coordinator R-222). The counter feeds the escalation threshold
+            // (Р280), which is about entities that stopped updating — a box
+            // whose interior was cut is still in the frame, at its position,
+            // with its own "already looted" flag, and the collector standing
+            // over it asks for the rest on the reliable channel. What the
+            // counter must show here is the CONTAINERS that lost their whole
+            // record, and nothing else.
+            Assert.AreEqual(boxes - f.ContainerCount, asm.StatsFor(0).DroppedEntities,
+                "the counter is exactly the containers that lost their record — if the cut "
+                + "interiors were counted too it would read higher, and Р280's threshold would "
+                + "escalate on something delta-snapshots do not fix");
+            Assert.Greater(boxes - fits, 0,
+                "premise: interiors really were cut, so the two counts genuinely differ");
         }
 
         [Test]

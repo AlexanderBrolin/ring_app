@@ -94,6 +94,14 @@ namespace Ring.Networking.Protocol
     /// one bit would make the flag fire on almost every busy frame and mean
     /// nothing.
     ///
+    /// NEITHER DOES A CONTAINER'S CUT INTERIOR (Stage 3 Task 27, coordinator
+    /// R-222). "Entity" is the word this bit is defined on: a box whose
+    /// ContainerSlots record did not fit is still IN the frame, at its own
+    /// position, with its own "already looted" flag — what it lost is a
+    /// detail available on demand over the reliable loot channel, so the
+    /// receiver has nothing to retire and nothing to coast. Setting the bit
+    /// for it would tell Tasks 32/37 an entity went missing when none did.
+    ///
     /// Bits 1-7 are FREE and NOT ASSIGNED.
     public static class SnapshotHeaderFlags
     {

@@ -26,13 +26,28 @@ namespace Ring.Simulation.Core
         public PickupState[] Pickups;
         /// Container METADATA of this tick (Stage 3 Т14) — same count-plus-
         /// array pair as Pickups above, sized to Arena.MaxContainers. Slot
-        /// CONTENT is deliberately absent from this class, same reasoning
-        /// as the backpack note on SimulationWorld.CaptureSnapshot: it
-        /// isn't drawn by the interpolated frame, only opened through a
-        /// reliable message a later task adds. A LOCAL world fills this
-        /// from CaptureSnapshot; the networked backend leaves the count at
-        /// zero until containers reach the wire, same "zero means nothing
-        /// decoded yet" convention PickupCount's own doc states.
+        /// CONTENT is deliberately absent from this class, same reasoning as
+        /// the backpack note on SimulationWorld.CaptureSnapshot: it isn't
+        /// drawn by the interpolated frame.
+        ///
+        /// WHERE THE CONTENT DOES TRAVEL (Stage 3 Т27, owner decision R-216 —
+        /// this paragraph used to predict "a reliable message a later task
+        /// adds", and the prediction did not come true). Spec §3.12 puts it
+        /// in the SNAPSHOT, as the ContainerSlots block (tag 10), sent only
+        /// to a collector inside LootRadius; the reliable pair Т28 adds
+        /// carries loot REQUESTS and refusal codes, not the contents of a
+        /// box. The assembler reads those contents straight from the world
+        /// through SimulationWorld.ContainerItemAt — a public accessor added
+        /// for exactly this, so that a per-tick copy of
+        /// MaxContainers * MaxContainerSlots bytes is NOT taken here for
+        /// data one connection in three needs only while standing over the
+        /// box (the owner weighed that copy against the accessor and chose
+        /// the accessor).
+        ///
+        /// A LOCAL world fills this from CaptureSnapshot; the networked
+        /// backend leaves the count at zero until containers reach the wire,
+        /// same "zero means nothing decoded yet" convention PickupCount's own
+        /// doc states.
         public int ContainerCount;
         public ContainerState[] Containers;
         public WaveState Wave;

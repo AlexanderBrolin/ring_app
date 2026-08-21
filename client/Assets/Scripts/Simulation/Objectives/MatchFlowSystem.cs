@@ -291,11 +291,12 @@ namespace Ring.Simulation.Objectives
                 m.Phase = MatchPhase.GateOpen;
         }
 
-        static bool DirectorAlive(SimulationWorld w)
-        {
-            for (int i = 0; i < w.MobCount; i++)
-                if (w.Mobs[i].Type == MobType.Director) return true;
-            return false;
-        }
+        /// Delegates to the world's own accessor (Stage 3 Т27, coordinator
+        /// R-218): the same question is now asked from `Ring.Networking` for
+        /// the Match block's DirectorAlive bit, which cannot see this file at
+        /// all, so the loop moved to the ONE place both readers can reach.
+        /// The local name stays because the two call sites above read as
+        /// sentences with it.
+        static bool DirectorAlive(SimulationWorld w) => w.DirectorAlive;
     }
 }

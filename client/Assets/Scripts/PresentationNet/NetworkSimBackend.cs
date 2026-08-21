@@ -138,13 +138,25 @@ namespace Ring.Presentation.Net
         /// The same five kinds as a bit per kind — the set a COMPLETE frame
         /// carries, which `ReadFrame` tests the walk against (fix-round 1,
         /// F-1). Every one of them is required because the SENDER sends every
-        /// one of them: `SnapshotAssembler` writes all five on every frame,
-        /// empty or not, and says why in its own comment — a receiver cannot
-        /// tell an absent block from an empty one, because a datagram cut on a
-        /// block boundary parses as a shorter, valid snapshot. So a kind
-        /// missing here is not "the server had nothing to say"; it is the tail
-        /// of the frame missing, and everything the walk did not re-decode is
-        /// still `BeginSlot`'s zeros.
+        /// one of them: `SnapshotAssembler` writes them on every frame, empty
+        /// or not, and says why in its own comment — a receiver cannot tell an
+        /// absent block from an empty one, because a datagram cut on a block
+        /// boundary parses as a shorter, valid snapshot. So a kind missing
+        /// here is not "the server had nothing to say"; it is the tail of the
+        /// frame missing, and everything the walk did not re-decode is still
+        /// `BeginSlot`'s zeros.
+        ///
+        /// FIVE OF THE TEN, AND THAT IS DELIBERATE (Stage 3 Т27). Since Т27
+        /// the sender writes TEN blocks — Self, Match, ContainerSlots,
+        /// Containers and Pickups joined the five above — and this build
+        /// decodes none of those five: they are absent from `KnownBlockKinds`,
+        /// so `TryReadBlock` steps over them by their own byte length, which
+        /// is precisely the forward compatibility Р29 asks the format for.
+        /// They are NOT listed as required for the same reason: this side has
+        /// no consumer for them yet (the inventory window and the ground views
+        /// are Ф7), and requiring a block one cannot read would turn every
+        /// healthy frame into an incomplete one. The task that starts
+        /// decoding them adds them to BOTH lists in the same edit.
         ///
         /// A BIT PER KIND RATHER THAN A COUNT: two copies of one kind and one
         /// each of two kinds are different frames, and a count cannot tell
@@ -306,8 +318,10 @@ namespace Ring.Presentation.Net
         //
         // Frames that arrived with entities missing: either the SENDER dropped
         // some for room (the header's `Truncated` bit) or the frame turned up
-        // without all five blocks it must carry. `ReadFrame` already computes
-        // that exact test for `StalePolicy`; this counts it. It is the honest
+        // without all the blocks this build REQUIRES — the five of
+        // `RequiredBlockKinds`, which is a subset of the ten the sender writes
+        // since Stage 3 Т27 (see that constant's own doc). `ReadFrame` already
+        // computes that exact test for `StalePolicy`; this counts it. It is the honest
         // client-side neighbor of the server's `NetStats.DroppedEntities`,
         // which lives in the other process and which nothing here can read.
         int _framesMissingEntities;
