@@ -102,7 +102,7 @@ namespace Ring.Presentation
         /// `CorpseView.Spawn`'s own `visualScale` parameter already applies
         /// to the whole corpse — a gib chunk cut from the same mesh has to
         /// agree with it or a Gunner's parts would visibly mismatch its own
-        /// corpse/live-mob size). The `SphereCollider` is resized/recentred
+        /// corpse/live-mob size). The `SphereCollider` is resized/recentered
         /// from `mesh.bounds` in the mesh's own LOCAL (unscaled) space — the
         /// `transform.localScale` write below is what the physics engine
         /// then applies on top (Unity scales a collider's local

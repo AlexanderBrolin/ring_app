@@ -17,7 +17,12 @@ namespace Ring.Presentation
     /// — down to two approximations worth naming rather than leaving to be
     /// discovered (fix-round 1, Ф-5). A primitive cylinder is a polygonal prism
     /// inscribed in its circle, not a circle: its drawn face lies inside the
-    /// simulated one by R·(1 − cos(π/sides)), centimeters on this arena's radii.
+    /// simulated one by R·(1 − cos(π/sides)) — centimeters at the radii the
+    /// PRIMITIVES here are drawn at, which is obstacles and wall caps and
+    /// nothing else. Anything at a zone's own radius is drawn from a mesh this
+    /// file generates instead, segmented by `MeshSagMeters` like every arc:
+    /// twenty sides costs 0.80 m of error at 65 and 1.13 m at 92
+    /// (`BuildTintDisc`'s own doc measures it).
     /// And the ring wall is drawn as 0.5 m thick boxes CENTERED on the radius,
     /// while Simulation stops a round when its center reaches `Radius` minus the
     /// round's own radius — so at the rim a round buries up to ~0.17 m into the
@@ -27,10 +32,11 @@ namespace Ring.Presentation
     ///
     /// PhysX colliders on the generated primitives are intentionally kept (they
     /// come free with `CreatePrimitive`) and moved to the `Cosmetics` layer
-    /// (`TagManager.asset` user layer 8) — EXCEPT on the flat painted surfaces
-    /// Task 30 adds (the zone floor tints and the extraction rings), which are
-    /// pictures with nothing behind them and drop theirs outright
-    /// (`DropCollider`). They have TWO consumers, not one:
+    /// (`TagManager.asset` user layer 8) — EXCEPT on the extraction rings Task
+    /// 30 adds, which are pictures with nothing behind them and drop theirs
+    /// outright (`DropCollider`); the zone floor tints of the same task are
+    /// generated meshes rather than primitives and never had one to drop.
+    /// They have TWO consumers, not one:
     /// cosmetic props (Task 27 shell casings) bounce off the arena, and since
     /// Stage 2 Task 46 `AimProvider` casts against this same layer to find out
     /// whether the cursor is standing behind a barrier (bd app-1ru). Simulation
@@ -153,6 +159,13 @@ namespace Ring.Presentation
         /// `CorpseView`/`DashGlowView` already use for their own accents.
         static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
 
+        /// Meshes this component built itself (the zone tint fans). A mesh is
+        /// not owned by the renderer that draws it, so `Rebuild` has to free
+        /// them explicitly or a match restarted often enough leaks one per
+        /// zone per restart.
+        readonly System.Collections.Generic.List<Mesh> _generatedMeshes =
+            new System.Collections.Generic.List<Mesh>();
+
         void Awake()
         {
             Build();
@@ -184,8 +197,17 @@ namespace Ring.Presentation
         {
             for (int i = transform.childCount - 1; i >= 0; i--)
                 Destroy(transform.GetChild(i).gameObject);
+            ReleaseGeneratedMeshes();
 
             BuildContent();
+        }
+
+        void OnDestroy() => ReleaseGeneratedMeshes();
+
+        void ReleaseGeneratedMeshes()
+        {
+            for (int i = 0; i < _generatedMeshes.Count; i++) Destroy(_generatedMeshes[i]);
+            _generatedMeshes.Clear();
         }
 
         void BuildContent()
@@ -397,23 +419,70 @@ namespace Ring.Presentation
                 FloorPaintLift * 2f, _gameFeel.ZoneTintCore);
         }
 
-        /// One painted disc: `FloorPaintLift` thick, centered on `centerY`, no
-        /// collider (`DropCollider`'s doc says why). A primitive cylinder is 2
-        /// units tall, hence the half-scale on Y — the same convention
-        /// `BuildFloor`/`BuildObstacles`/`BuildWallCap` already use.
+        /// One painted disc, flat on the floor at `centerY`, no collider and no
+        /// thickness — a generated triangle fan rather than a primitive.
+        ///
+        /// AND THE FAN IS THE WHOLE POINT (fix-round, Ф7 review B-I1). A
+        /// `PrimitiveType.Cylinder` is a TWENTY-sided prism inscribed in its
+        /// circle — the class doc has said so since Т46 — and twenty sides is
+        /// cheap at an obstacle's 2 m radius and ruinous at a zone boundary's:
+        /// the drawn edge falls `R·(1 − cos(π/20))` short of the true radius,
+        /// which is 0.80 m at the Core's 65 and 1.13 m at the Middle's 92,
+        /// sixteen to twenty-two times the 5 cm this same file derives for
+        /// every arc it draws, on facets 20 to 29 m long. Two places where
+        /// that is not academic: in the six doorways there is no wall to hide
+        /// the seam under, so the player crosses a boundary whose paint
+        /// disagrees with `Geometry.ZoneOf` by up to 0.8 m at exactly the spot
+        /// they cross it; and the Middle disc's own edge would sink to
+        /// 92·cos(9°) = 90.87, INSIDE the wall band's own inner face at 91.0,
+        /// showing a hand's width of the outer zone's color where the server
+        /// says Middle.
+        ///
+        /// `RingSegments` is the same tolerance the arcs use, so the paint and
+        /// the collision agree to within one `MeshSagMeters` by the same
+        /// construction rather than by coincidence.
         void BuildTintDisc(Transform parent, string name, float radius, float centerY,
             Color color)
         {
-            GameObject disc = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            disc.name = name;
+            var disc = new GameObject(name);
             disc.layer = CosmeticsLayer;
             disc.transform.SetParent(parent, false);
             disc.transform.localPosition = new Vector3(0f, centerY, 0f);
-            disc.transform.localScale =
-                new Vector3(radius * 2f, FloorPaintLift * 0.5f, radius * 2f);
-            disc.GetComponent<MeshRenderer>().sharedMaterial = _floor;
+            disc.AddComponent<MeshFilter>().sharedMesh = BuildDiscMesh(radius);
+            disc.AddComponent<MeshRenderer>().sharedMaterial = _floor;
             Tint(disc, color);
-            DropCollider(disc);
+        }
+
+        /// A filled circle in the XZ plane, center first and the rim fanned
+        /// around it at this radius's own segment count. Tracked in
+        /// `_generatedMeshes` because a mesh built at runtime is not owned by
+        /// the GameObject that renders it: destroying the object on `Rebuild`
+        /// would leave the mesh behind, and a match restarted often enough
+        /// would leak one per restart.
+        Mesh BuildDiscMesh(float radius)
+        {
+            int segments = RingSegments(radius);
+            var vertices = new Vector3[segments + 1];
+            var triangles = new int[segments * 3];
+            vertices[0] = Vector3.zero;
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = i * (2f * Mathf.PI / segments);
+                vertices[i + 1] = new Vector3(Mathf.Cos(angle) * radius, 0f,
+                    Mathf.Sin(angle) * radius);
+                // Clockwise seen from +Y, which is the winding that faces the
+                // camera: this project looks at the arena from above.
+                triangles[i * 3] = 0;
+                triangles[i * 3 + 1] = 1 + (i + 1) % segments;
+                triangles[i * 3 + 2] = 1 + i;
+            }
+            var mesh = new Mesh { name = $"ZoneTint_{segments}" };
+            mesh.SetVertices(vertices);
+            mesh.SetTriangles(triangles, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            _generatedMeshes.Add(mesh);
+            return mesh;
         }
 
         /// The zone-wall arcs — the geometry this whole task exists for
@@ -504,11 +573,24 @@ namespace Ring.Presentation
                 for (int d = 0; d < doorCount; d++)
                 {
                     // From this door's counter-clockwise corner to the next
-                    // door's clockwise one — the last span wraps past 0.
+                    // door's clockwise one. ONLY THE LAST SPAN WRAPS PAST 0,
+                    // and the distinction is load-bearing (fix-round, Ф7
+                    // review B-M1): the doors are sorted, so a non-positive
+                    // span anywhere BUT the last pair means two cutouts
+                    // overlap, and wrapping that one by 2π would draw a solid
+                    // band — with colliders — straight across every other
+                    // doorway on the ring, walling off a passage the
+                    // simulation still lets bodies through. `SimConfigBuilder.
+                    // ValidateZoneWalls` rejects overlapping doors before a
+                    // match runs, but this builder reads the unvalidated asset
+                    // (see the clamps above), and its honest answer there is
+                    // to draw nothing for that pair rather than something
+                    // false.
                     int next = (d + 1) % doorCount;
                     float from = centers[d] + halves[d];
                     float span = centers[next] - halves[next] - from;
-                    if (span <= 0f) span += 2f * Mathf.PI;
+                    if (d == doorCount - 1) span += 2f * Mathf.PI;
+                    if (span <= 0f) continue;
                     BuildArcSpan(zoneRoot.transform, $"{prefix}_Segment", ref index, ringR,
                         halfW, height, 0f, from, span, _wall, true);
 
@@ -692,8 +774,8 @@ namespace Ring.Presentation
                 // Geometry's degenerate-axis branch changes what a wall MEANS to
                 // Simulation; the question here is only whether LookRotation has
                 // a usable forward, and mirroring 1e-12 would let a wall a
-                // micrometre long through to a rotation with nothing to derive
-                // it from. 1e-8 on the square is a tenth of a millimetre of
+                // micrometer long through to a rotation with nothing to derive
+                // it from. 1e-8 on the square is a tenth of a millimeter of
                 // length: everything under it is invisible at any camera
                 // distance, so substituting a heading there costs no picture
                 // anyone could have seen.
