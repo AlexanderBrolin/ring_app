@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
 using Ring.Networking.Protocol;
@@ -87,6 +88,10 @@ namespace Ring.Simulation.Tests
             world = new SimulationWorld(ParitySeed, cfg);
             setup?.Invoke(world);
             predicted = world.PlayerAt(0);
+            // The frozen copy the SERVER-owned fields are measured against —
+            // see AssertPlayerStateBitEqual for why they cannot be measured
+            // against the world (bd app-fi3f).
+            PlayerState atStart = predicted;
 
             System.Span<byte> wire = stackalloc byte[InputCodec.SizeBytes];
             for (int tick = 0; tick < ticks; tick++)
@@ -102,19 +107,38 @@ namespace Ring.Simulation.Tests
                 world.Tick(sent);
                 PlayerPrediction.Step(ref predicted, in sent, in cfg);
 
-                AssertPlayerStateBitEqual(world.PlayerAt(0), predicted, scenario, tick);
+                AssertPlayerStateBitEqual(world.PlayerAt(0), predicted, in atStart, scenario, tick);
                 observe?.Invoke(tick, world);
             }
         }
 
         // ------------------------------------------------------------- comparer
 
-        /// Compares EVERY public field of `PlayerState` BITWISE, by reflection
-        /// rather than field by field. Reflection is the point, not a shortcut:
-        /// a field a future phase adds to `PlayerState` starts being compared
-        /// the moment it is declared, so it breaks every scenario here until
-        /// prediction is taught to produce it too — a hand-written field list
-        /// would silently keep passing.
+        /// Visits EVERY public field of `PlayerState` by reflection and makes
+        /// the claim that field's OWN CLASSIFICATION allows. Reflection is the
+        /// point, not a shortcut: a field a future phase adds starts being
+        /// visited the moment it is declared, and `RoleByField` then refuses
+        /// to answer for it until somebody classifies it — a hand-written
+        /// field list would silently keep passing.
+        ///
+        /// TWO CLAIMS, NOT ONE (bd app-fi3f, owner decision R-209, form
+        /// R-210). This sweep used to demand bit equality of all 32 fields
+        /// against the world, which is a claim `PlayerPrediction.Step` cannot
+        /// satisfy for the nine the SERVER owns: Step does not write them and
+        /// the world does, so the two are equal only while nothing has moved
+        /// them — i.e. only in a vacuum. Every scenario in this file happened
+        /// to be one, so the false claim never failed; the first non-vacuum
+        /// scenario (Т38's lag rig is the obvious candidate) would have
+        /// reported a prediction bug that is not there. So:
+        ///   * Predicted and Mixed fields — world vs prediction, bit for bit,
+        ///     exactly as before;
+        ///   * Server fields — prediction NOW vs prediction AT THE START. The
+        ///     honest statement about them is "Step left this alone" (CRITICAL
+        ///     RULE 3), and unlike the old one it stays checkable however far
+        ///     the world moves on.
+        /// The sweep still visits all 32; nothing is skipped (there is no
+        /// skip-list anywhere in this suite, and this is not the place to
+        /// start one).
         ///
         /// Bitwise, not `==`. `==` on float calls NaN equal to nothing (two
         /// identically-NaN fields would read as a MISMATCH) and calls `-0f`
@@ -122,49 +146,88 @@ namespace Ring.Simulation.Tests
         /// Neither is the question being asked, which is only ever "did the two
         /// paths produce the same bits".
         static void AssertPlayerStateBitEqual(in PlayerState expected, in PlayerState actual,
-            string scenario, int tick)
+            in PlayerState atStart, string scenario, int tick)
         {
             object boxedExpected = expected;   // reflection reads fields off a box
             object boxedActual = actual;
+            object boxedAtStart = atStart;
             for (int i = 0; i < PlayerStateFields.Length; i++)
             {
                 FieldInfo f = PlayerStateFields[i];
-                object e = f.GetValue(boxedExpected);
-                object a = f.GetValue(boxedActual);
-                string where = $"{scenario}: PlayerState.{f.Name} diverged on tick {tick}";
-                if (e is float ef)
+                Assert.IsTrue(RoleByField.TryGetValue(f.Name, out PredictionRole role),
+                    $"PlayerState.{f.Name} has no entry in RoleByField — classify it in the "
+                    + "SAME task that declares it, by reading the bodies that write it: "
+                    + "Predicted (prediction and the world share one writer), Mixed "
+                    + "(prediction writes it and a server-only path also does), or Server "
+                    + "(prediction must not touch it at all).");
+
+                if (role == PredictionRole.Server)
                 {
-                    AssertFloatBitEqual(ef, (float)a, where);
+                    AssertFieldBitEqual(f, boxedAtStart, boxedActual,
+                        $"{scenario}: PlayerState.{f.Name} is server-owned (CRITICAL RULE 3), "
+                        + "so PlayerPrediction.Step must have left it exactly as it found it — "
+                        + $"prediction moved it on tick {tick}");
+                    continue;
                 }
-                else if (e is float2 e2)
-                {
-                    var a2 = (float2)a;
-                    AssertFloatBitEqual(e2.x, a2.x, where + " (.x)");
-                    AssertFloatBitEqual(e2.y, a2.y, where + " (.y)");
-                }
-                else if (e is bool || e is int)
-                {
-                    Assert.AreEqual(e, a, $"{where}: world {e} vs predicted {a}");
-                }
-                // Stage 3 Task 1: byte joins bool/int on exact equality — an
-                // integral type has no NaN/-0f ambiguity, so there is nothing
-                // bitwise about it to get wrong. PlayerState.ExtractKind and
-                // LootTargetSlot are its first byte fields; neither is
-                // advanced by PlayerPrediction.Step (spec Р297 — prediction
-                // moves only movement/dash state), so both sides read the
-                // SAME zero value in every scenario here and this branch
-                // proves that equality instead of assuming it.
-                else if (e is byte)
-                {
-                    Assert.AreEqual(e, a, $"{where}: world {e} vs predicted {a}");
-                }
-                else
-                {
-                    Assert.Fail($"{where}: field type {f.FieldType.Name} is one this " +
-                        "comparer cannot compare bitwise — teach it that type. A silently " +
-                        "skipped field would make prediction parity unprovable for it, " +
-                        "which is exactly the failure this comparer exists to prevent.");
-                }
+
+                AssertFieldBitEqual(f, boxedExpected, boxedActual,
+                    $"{scenario}: PlayerState.{f.Name} is {role}, so world and prediction must "
+                    + $"agree bit for bit — diverged on tick {tick}");
+            }
+        }
+
+        /// ONE field of two boxed PlayerStates, compared bitwise — lifted out
+        /// of the whole-struct sweep above (Stage 3, bd app-fi3f) the moment a
+        /// second caller needed the same type dispatch against a DIFFERENT
+        /// pairing. The sweep asks "world vs prediction"; the classification
+        /// sweep below asks "prediction now vs prediction at the start" for
+        /// the fields prediction is not allowed to touch at all. Same
+        /// comparison, same "a type I cannot compare is a hard failure" rule,
+        /// stated once.
+        static void AssertFieldBitEqual(FieldInfo f, object boxedExpected, object boxedActual,
+            string where)
+        {
+            object e = f.GetValue(boxedExpected);
+            object a = f.GetValue(boxedActual);
+            if (e is float ef)
+            {
+                AssertFloatBitEqual(ef, (float)a, where);
+            }
+            else if (e is float2 e2)
+            {
+                var a2 = (float2)a;
+                AssertFloatBitEqual(e2.x, a2.x, where + " (.x)");
+                AssertFloatBitEqual(e2.y, a2.y, where + " (.y)");
+            }
+            else if (e is bool || e is int)
+            {
+                Assert.AreEqual(e, a, $"{where}: {e} vs {a}");
+            }
+            // Stage 3 Task 1: byte joins bool/int on exact equality — an
+            // integral type has no NaN/-0f ambiguity, so there is nothing
+            // bitwise about it to get wrong. PlayerState.ExtractKind and
+            // LootTargetSlot are its first byte fields, and PlayerPrediction.
+            // Step advances neither (spec Р297 — prediction moves only
+            // movement/dash state).
+            //
+            // WHAT THIS BRANCH USED TO CLAIM, AND WHY THE CLAIM IS GONE (bd
+            // app-fi3f): it said both sides read "the SAME zero value in every
+            // scenario here", which was true only because every scenario in
+            // this file was a VACUUM — nothing in them ever opened a channel
+            // or an exit, so no server-owned field ever left zero. That is a
+            // property of the fixtures, not of the comparer, and it is exactly
+            // the accident ServerOwnedFields_AreNotMovedByPrediction below
+            // replaces with a stated rule.
+            else if (e is byte)
+            {
+                Assert.AreEqual(e, a, $"{where}: {e} vs {a}");
+            }
+            else
+            {
+                Assert.Fail($"{where}: field type {f.FieldType.Name} is one this " +
+                    "comparer cannot compare bitwise — teach it that type. A silently " +
+                    "skipped field would make prediction parity unprovable for it, " +
+                    "which is exactly the failure this comparer exists to prevent.");
             }
         }
 
@@ -212,8 +275,14 @@ namespace Ring.Simulation.Tests
                 f.SetValue(box, DistinctValueFor(f));
                 var baseline = new PlayerState();
                 var mutated = (PlayerState)box;
+                // `atStart` is the baseline too: a Server field diverging in
+                // `mutated` then reads as "prediction moved it", and a
+                // Predicted one as "the two paths disagree" — both are the
+                // failure this guard demands, so the guard keeps covering all
+                // 32 fields across both claims (bd app-fi3f).
                 Assert.Throws<AssertionException>(
-                    () => AssertPlayerStateBitEqual(baseline, mutated, "comparer guard", 0),
+                    () => AssertPlayerStateBitEqual(baseline, mutated, in baseline,
+                        "comparer guard", 0),
                     $"the comparer must catch a divergence in PlayerState.{f.Name}");
             }
         }
@@ -649,6 +718,238 @@ namespace Ring.Simulation.Tests
             Assert.That(topSpeed, Is.EqualTo(capped).Within(0.05f),
                 "premise: the open window must actually cap speed the same way AimHeld does — " +
                 "otherwise this test cannot tell 'both paths agree' from 'both paths do nothing'");
+        }
+
+        // -------------------------------------------- the classification sweep
+
+        /// What PlayerPrediction.Step is allowed to do to one field of
+        /// PlayerState (bd app-fi3f, owner decision R-209, form R-210).
+        enum PredictionRole
+        {
+            /// Step writes it, and the world writes it the SAME way — through
+            /// the very same body (PlayerMovementSystem.Update, WeaponSystem's
+            /// shared Advance). Bit-for-bit equality is the whole contract.
+            Predicted,
+
+            /// Step writes it AND a server-only path also writes it. Bitwise
+            /// equality holds only while that second writer has not fired, so
+            /// the scenario has to ASSERT that it did not rather than inherit
+            /// it from a fixture's numbers.
+            Mixed,
+
+            /// Step never writes it at all (CRITICAL RULE 3: the server owns
+            /// damage, death, loot, extraction and the clock). The claim made
+            /// about it is therefore NOT "the two agree" — it is "prediction
+            /// did not move it", which stays checkable in a scenario where the
+            /// world moves it a long way.
+            Server,
+        }
+
+        /// EVERY field of PlayerState, classified by the body that writes it —
+        /// measured method by method, not inherited from a list (rule 17).
+        ///
+        /// WHY A CLASSIFICATION AND NOT A SKIP-LIST (owner decision R-209,
+        /// form R-210). This suite has no permanent skip-list anywhere:
+        /// WorldLifecycleTests' own header records that its PendingHashFields
+        /// were TEMPORARY, carried a named addressee, and were removed by
+        /// Т10/Т13. A skip-list here would be the first one in the project and
+        /// would say "we do not look at these nine fields" — while the honest
+        /// statement about them is stronger and just as cheap: prediction must
+        /// not have touched them. So the sweep still visits all 32.
+        ///
+        /// THE SHAPE IS HotTweakTests'. That file already sweeps these same
+        /// fields with a per-field expectation map and a hard failure for any
+        /// field missing an entry, so a newly declared field cannot slip
+        /// through. Second mechanism not built (AGENT.md rule 2); this is the
+        /// same mechanism pointed at a different question.
+        static readonly Dictionary<string, PredictionRole> RoleByField =
+            new Dictionary<string, PredictionRole>
+            {
+                // --- written by PlayerMovementSystem.Update, which Step calls ---
+                ["Pos"] = PredictionRole.Predicted,          // through MoveWithCollisions(ref p.Pos, ...)
+                ["Vel"] = PredictionRole.Predicted,
+                ["DashDir"] = PredictionRole.Predicted,
+                ["DashSpeedCur"] = PredictionRole.Predicted,
+                ["DashTimer"] = PredictionRole.Predicted,
+                ["DashCooldown"] = PredictionRole.Predicted,
+                ["IframeTimer"] = PredictionRole.Predicted,
+                ["DashBufferTimer"] = PredictionRole.Predicted,
+                ["Stamina"] = PredictionRole.Predicted,
+                ["StaminaRegenDelayTimer"] = PredictionRole.Predicted,
+                ["SlideDir"] = PredictionRole.Predicted,
+                ["SlideTimer"] = PredictionRole.Predicted,
+                ["SlideBufferTimer"] = PredictionRole.Predicted,
+                ["RunUpTimer"] = PredictionRole.Predicted,
+                ["PostDashSlideTimer"] = PredictionRole.Predicted,
+                ["LinkWindowTimer"] = PredictionRole.Predicted,
+                ["AimSettleTimer"] = PredictionRole.Predicted,
+                ["DashRequestCooldownTicks"] = PredictionRole.Predicted,
+                ["SlideRequestCooldownTicks"] = PredictionRole.Predicted,
+                // --- written by Step itself, from the sanitized input ---
+                ["AimPoint"] = PredictionRole.Predicted,
+                // --- written by WeaponSystem.AdvanceNoSpawn -> Advance ---
+                ["RecoilOffset"] = PredictionRole.Predicted,
+
+                // --- SPENT by prediction, ADDED to by the server alone ---
+                // WeaponSystem.Advance decrements Ammo inside the one body
+                // both paths run, so a held trigger empties the magazine in
+                // lockstep. WeaponSystem.AddAmmo is the other writer, and it
+                // has exactly one production caller: PickupSystem.Collect,
+                // i.e. walking over an energy cell. That is a server-only
+                // event — the client predicts no pickups at all — so bitwise
+                // equality here is true only while no cell was collected,
+                // which this test asserts rather than assumes.
+                ["Ammo"] = PredictionRole.Mixed,
+                // AND SO IS FireCooldown, WHICH THE COORDINATOR'S OWN
+                // PRE-READ CALLED PREDICTED (measured against the body, rule
+                // 17): AddAmmo does not write one field, it writes two —
+                // `if (wasEmpty && p.Ammo > 0) p.FireCooldown =
+                // math.min(p.FireCooldown, weapon.FireInterval);`. A cell
+                // picked up on an empty magazine cancels the emergency
+                // interval, and prediction knows nothing about it. Same
+                // second writer, same premise, same class.
+                ["FireCooldown"] = PredictionRole.Mixed,
+
+                // --- the server's alone (CRITICAL RULE 3) ---
+                // Hp: SimulationWorld.DamagePlayer and LootOps' repair-kit heal.
+                ["Hp"] = PredictionRole.Server,
+                // Alive: SimulationWorld.KillPlayer and ExtractionSystem.
+                ["Alive"] = PredictionRole.Server,
+                // Extracted / ExtractKind: ExtractionSystem, on completion.
+                ["Extracted"] = PredictionRole.Server,
+                ["ExtractKind"] = PredictionRole.Server,
+                // The three channels. LootOps arms and spends the loot and
+                // repair timers; ExtractionSystem the exit one. The client
+                // renders their progress off the RECONCILED copy (Р276), so
+                // it needs no prediction of its own for any of them.
+                ["LootTimer"] = PredictionRole.Server,
+                ["LootTargetContainerId"] = PredictionRole.Server,
+                ["LootTargetSlot"] = PredictionRole.Server,
+                ["RepairTimer"] = PredictionRole.Server,
+                ["ExtractTimer"] = PredictionRole.Server,
+            };
+
+        [Test]
+        public void ServerOwnedFields_AreNotMovedByPrediction_AndTheRestStayBitEqual()
+        {
+            // bd app-fi3f. RunParity's blanket comparer demands bit equality
+            // of ALL 32 fields, which is a claim about nine of them that
+            // PlayerPrediction.Step could never satisfy — it does not write
+            // them, and the world does. Every scenario in this file is green
+            // on that claim for one reason only, and it is a fixture accident:
+            // none of them ever stands anywhere the world would move a
+            // server-owned field. The moment one does — Т38's own lag rig
+            // being the obvious candidate — the comparer reports a prediction
+            // bug that is not there, which is the defect this test retires.
+            //
+            // THE SCENARIO IS DELIBERATELY NOT A VACUUM (errata E-6 D-I2's
+            // rule, and it costs one line of setup). ExtractionSystem.
+            // IsExitOpen opens a PORTAL in phase Farm, i.e. from tick zero,
+            // with no Director, no core and no mobs involved; TestConfigs.
+            // Open() carries the real exit layout and TestWorlds.
+            // EarlyPortalPos resolves the portal out of it. Standing there is
+            // enough to make ExtractTimer climb every single tick.
+            //
+            // AND IT IS NOT IN THE CORE (the fixture rule, R-173/355): the
+            // portal sits at radius 102 on an arena whose zones end at 65 and
+            // 92, so no live collector enters the core and no Director or
+            // retinue is woken. TestConfigs.Open() itself is untouched (R-76).
+            SimConfig cfg = TestConfigs.Open();
+            // The starting state, captured in `setup` — the same instant
+            // RunParity takes its own predicted copy from, so the premises
+            // below measure movement against exactly the state both paths
+            // started from.
+            PlayerState atStart = default;
+
+            Assert.AreEqual(PlayerStateFields.Length, RoleByField.Count,
+                "every field of PlayerState needs exactly one entry in RoleByField, and no "
+                + "entry may outlive the field it classifies — reflection and the map must "
+                + "see the same set");
+
+            // Standing still on purpose: MoveDir stays zero so the collector
+            // does not walk out of ExtractRadius and zero its own channel
+            // (ExtractionSystem zeroes rather than pauses, Р222). The trigger
+            // and the sights are held instead, which is what keeps the
+            // PREDICTED half of the sweep from comparing two frozen copies —
+            // FireCooldown, RecoilOffset, Ammo and AimSettleTimer all move
+            // under this input.
+            //
+            // The per-tick comparison is RunParity's own — the classification
+            // lives in ONE sweep (AssertPlayerStateBitEqual), and a second
+            // copy of it here would be a second place to weaken (rule 2).
+            // What this test adds is the SCENARIO that makes the Server half
+            // of that sweep mean something, and the premises below that prove
+            // it does.
+            int ticks = TicksFor(1f);
+            bool sawServerFieldMove = false;
+
+            RunParity(in cfg, tick => new SimInput
+                {
+                    MoveDir = float2.zero,
+                    AimPoint = AimRing(tick, in cfg),
+                    AimHeld = true,
+                    FireHeld = true,
+                }, ticks, "server-owned fields on an open early portal",
+                out SimulationWorld world, out PlayerState predicted,
+                setup: w =>
+                {
+                    TestWorlds.RelocatePlayerForTest(w, 0, TestWorlds.EarlyPortalPos(in cfg));
+                    atStart = w.PlayerAt(0);
+                },
+                observe: (tick, w) =>
+                {
+                    if (w.PlayerAt(0).ExtractTimer != atStart.ExtractTimer) sawServerFieldMove = true;
+                });
+
+            // --- the three premises, without which the sweep above is theatre
+
+            // 1. The scenario really is non-vacuum. Without this the nine
+            //    server-field assertions would be comparing zero to zero and
+            //    would pass on a build where prediction DID move them.
+            Assert.IsTrue(sawServerFieldMove,
+                "premise: the world must actually have moved a server-owned field — the "
+                + "collector is standing on an open early portal, so ExtractTimer must climb. "
+                + "A vacuum here would make every Server assertion above vacuously true");
+            Assert.Greater(world.PlayerAt(0).ExtractTimer, 0f,
+                "premise, stated on the field itself: the exit channel is still running at the "
+                + "end of the scenario, i.e. the collector never left the portal's radius");
+            Assert.AreEqual(0f, predicted.ExtractTimer, 0f,
+                "and the predicted copy never left zero — the divergence this test tolerates is "
+                + "real and measurable, not hypothetical");
+
+            // 2. The predicted half really moved. Two frozen copies agree bit
+            //    for bit no matter how broken Step is.
+            Assert.Greater(world.Stats.ShotsFired, 0,
+                "premise: the held trigger must actually have fired, or the Predicted and Mixed "
+                + "assertions above compare two untouched copies");
+            Assert.Less(world.PlayerAt(0).Ammo, atStart.Ammo,
+                "premise: prediction and the world must both have SPENT ammo — that spend is "
+                + "what makes Ammo a Mixed field rather than a Server one");
+            Assert.Greater(world.PlayerAt(0).AimSettleTimer, 0f,
+                "premise: the held sights must actually have advanced a movement-owned timer");
+
+            // 3. The Mixed premise, which used to be luck. TestConfigs' drop
+            //    numbers are all zero (DropChance, CellsPerMob,
+            //    CorpseCellFraction), so no cell can exist to be walked over
+            //    — but that is a property of the fixture's numbers, and
+            //    bitwise equality of Ammo and FireCooldown depends on it.
+            //
+            //    WHAT THIS CATCHES THAT THE COMPARISON ABOVE CANNOT, stated
+            //    from a measurement rather than from intent (a mutation that
+            //    spawned a cell under the collector's feet was caught by the
+            //    per-tick comparison FIRST, reporting "400 vs 399" — this
+            //    assertion runs after the loop and can never beat it to the
+            //    failure). The case it owns is the SILENT one: AddAmmo clamps
+            //    to AmmoMax, so a cell collected at a full magazine moves
+            //    neither Ammo nor FireCooldown and the comparison stays green
+            //    while the premise it rests on is already false. That fixture
+            //    would then be one balance change away from a mystery
+            //    divergence; this line names the cause in a sentence instead.
+            Assert.AreEqual(0, world.Stats.CellsPicked,
+                "premise: no energy cell may have been collected in this scenario — "
+                + "PickupSystem.Collect -> WeaponSystem.AddAmmo is the server-only writer that "
+                + "makes Ammo and FireCooldown Mixed, and bit equality for the two holds only "
+                + "while it has not fired");
         }
     }
 }
