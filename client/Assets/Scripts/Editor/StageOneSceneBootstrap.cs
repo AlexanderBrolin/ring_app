@@ -293,6 +293,11 @@ namespace Ring.Editor
         const string StaminaBarObjectName = "StaminaBar"; // Task 22
         const string WaveTextObjectName = "WaveText";
         const string SpectateLabelObjectName = "SpectateLabel"; // Task 47b
+        const string AmmoBarObjectName = "AmmoBar";           // Stage 3 Т33
+        const string AmmoTextObjectName = "AmmoText";         // Stage 3 Т33
+        const string EmergencyLabelObjectName = "EmergencyLabel"; // Stage 3 Т33
+        const string PhaseTextObjectName = "PhaseText";       // Stage 3 Т33
+        const string ExtractRingObjectName = "ExtractRing";   // Stage 3 Т33
         const string SpectateButtonObjectName = "SpectateButton"; // Task 47b
         const string BackgroundObjectName = "Background";
         const string FillObjectName = "Fill";
@@ -1317,6 +1322,45 @@ namespace Ring.Editor
             // whose one job is the Fill every caller wires to.
             Transform staminaBar = hudGo.transform.Find(StaminaBarObjectName);
 
+            // Stage 3 Т33 (spec §3.11): the magazine, the phase line and the
+            // extraction ring. The magazine takes the third slot down the left
+            // edge, under HP and Буст, because those three are what a collector
+            // checks in the same glance; the phase belongs to the raid rather
+            // than to him and goes top-center under the spectate line; the ring
+            // has no slot at all — it rides his own figure.
+            Image ammoFill = GetOrCreateBar(hudGo.transform, AmmoBarObjectName,
+                anchoredPos: new Vector2(24f, -84f), size: new Vector2(320f, 14f),
+                backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
+                fillColor: new Color(0.95f, 0.75f, 0.25f), ref sceneDirty);
+            Transform ammoBar = hudGo.transform.Find(AmmoBarObjectName);
+            TMP_Text ammoText = GetOrCreateHudLabel(hudGo.transform, AmmoTextObjectName,
+                "БОЕЗАПАС", anchor: new Vector2(0f, 1f), anchoredPos: new Vector2(24f, -104f),
+                size: new Vector2(320f, 26f), fontSize: 18f,
+                alignment: TextAlignmentOptions.TopLeft, ref sceneDirty);
+            // The emergency mark is parented to the AMMO BAR rather than to the
+            // canvas, so hiding the magazine while spectating takes the mark
+            // with it — one object to switch off instead of two that can
+            // disagree.
+            TMP_Text emergencyLabel = ammoBar == null
+                ? null
+                : GetOrCreateHudLabel(ammoBar, EmergencyLabelObjectName,
+                    "АВАРИЙНЫЙ СИНТЕЗ", anchor: new Vector2(0f, 1f),
+                    anchoredPos: new Vector2(0f, -46f), size: new Vector2(320f, 26f),
+                    fontSize: 18f, alignment: TextAlignmentOptions.TopLeft, ref sceneDirty);
+            // AND IT SHIPS DISABLED, for the reason the spectate label does: a
+            // committed scene is what a build starts from, and a raid does not
+            // open in an emergency.
+            if (emergencyLabel != null && emergencyLabel.gameObject.activeSelf)
+            {
+                emergencyLabel.gameObject.SetActive(false);
+                sceneDirty = true;
+            }
+            TMP_Text phaseText = GetOrCreateHudLabel(hudGo.transform, PhaseTextObjectName,
+                "ФАРМ", anchor: new Vector2(0.5f, 1f), anchoredPos: new Vector2(0f, -64f),
+                size: new Vector2(640f, 34f), fontSize: 22f,
+                alignment: TextAlignmentOptions.Top, ref sceneDirty);
+            Image extractRing = GetOrCreateExtractRing(hudGo.transform, ref sceneDirty);
+
             HudController hud = hudGo.GetComponent<HudController>();
             if (hud == null)
             {
@@ -1333,6 +1377,17 @@ namespace Ring.Editor
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_spectateLabel", spectateLabel);
             if (staminaBar != null)
                 hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_staminaBar", staminaBar.gameObject);
+            // Stage 3 Т33.
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_ammoFill", ammoFill);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_ammoText", ammoText);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_phaseText", phaseText);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_extractRing", extractRing);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_camera", mainCamera);
+            if (ammoBar != null)
+                hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_ammoBar", ammoBar.gameObject);
+            if (emergencyLabel != null)
+                hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_emergencyLabel",
+                    emergencyLabel.gameObject);
             if (hudRefsChanged)
             {
                 hudSo.ApplyModifiedPropertiesWithoutUndo();
@@ -3631,6 +3686,50 @@ namespace Ring.Editor
         /// class doc), so a plain `AddComponent<TextMeshProUGUI>()` resolves
         /// `TMP_Settings.defaultFontAsset` on its own — no explicit font wiring
         /// needed here. Existence-guarded like everything else in this file.
+        /// Stage 3 Т33 (spec §3.11): the extraction channel's ring, a radial
+        /// `Image` `HudController` moves onto the collector's own screen point
+        /// while the channel runs.
+        ///
+        /// `fillSprite` AND `Filled` TOGETHER, OR NEITHER WORKS (bd `app-yi9`,
+        /// the same defect `GetOrCreateBar` documents): `Image.OnPopulateMesh`
+        /// tests for a sprite BEFORE it looks at `type`, so a sprite-less
+        /// `Filled` image silently draws a full quad and `fillAmount` does
+        /// nothing at all. The ring would have been permanently complete.
+        ///
+        /// IT SHIPS DISABLED, like the spectate label and the emergency mark:
+        /// nobody is extracting on the frame a build opens.
+        static Image GetOrCreateExtractRing(Transform parent, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(ExtractRingObjectName);
+            if (existing != null) return existing.GetComponent<Image>();
+
+            var go = new GameObject(ExtractRingObjectName, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            // Centered on its own point rather than corner-anchored: the point
+            // it is given is the collector's, and it has to sit AROUND him.
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.sizeDelta = new Vector2(96f, 96f);
+
+            var image = go.AddComponent<Image>();
+            image.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+            image.type = Image.Type.Filled;
+            image.fillMethod = Image.FillMethod.Radial360;
+            image.fillOrigin = (int)Image.Origin360.Top;
+            image.fillClockwise = true;
+            image.fillAmount = 0f;
+            image.color = new Color(0.35f, 0.95f, 0.6f, 0.9f);
+            // Nothing may click through the HUD onto the world, and a ring that
+            // ate the cursor would eat aiming with it.
+            image.raycastTarget = false;
+            go.SetActive(false);
+
+            sceneDirty = true;
+            return image;
+        }
+
         static TMP_Text GetOrCreateHudLabel(Transform parent, string name, string defaultText,
             Vector2 anchor, Vector2 anchoredPos, Vector2 size, float fontSize,
             TextAlignmentOptions alignment, ref bool sceneDirty)

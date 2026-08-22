@@ -696,6 +696,13 @@ namespace Ring.Presentation
                 BuildArcSpan(marker.transform, "Ring", ref index, _arena.ExtractRadius,
                     ExtractRingHalfWidth, ExtractRingHeight, FloorPaintLift * 3f,
                     0f, 2f * Mathf.PI, isGate ? _gateRing : _portalRing, false);
+
+                // Stage 3 Т33 (spec §3.11 asks these rings for emission BY
+                // STATE, bd `app-j4oj`): the ring reports whether this exit
+                // will take anyone. Added AFTER the band is built, because the view
+                // captures the renderers it finds under itself.
+                marker.AddComponent<ExtractionRingView>()
+                    .Configure(_runner, isGate ? ExitKind.Gate : ExitKind.Portal);
             }
         }
 

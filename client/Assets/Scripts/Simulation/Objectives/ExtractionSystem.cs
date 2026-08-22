@@ -99,26 +99,18 @@ namespace Ring.Simulation.Objectives
             float radiusSq = arena.ExtractRadius * arena.ExtractRadius;
             for (int e = 0; e < arena.ExtractPos.Length; e++)
             {
-                if (!IsExitOpen(in match, arena.ExtractKind[e])) continue;
+                if (!ExitRules.IsOpen(in match, arena.ExtractKind[e])) continue;
                 if (math.lengthsq(pos - arena.ExtractPos[e]) <= radiusSq) return e;
             }
             return -1;
         }
 
-        /// THE WHOLE OPENNESS RULE, IN ONE PLACE (spec §3.5's own table):
-        /// the early portals are open while the raid still farms and shut for
-        /// good the moment the Director wakes; the gate is shut until he falls
-        /// and the window of sharing elapses, and then stays open to the end.
-        /// A raid that has ENDED has no way out of it at all — both readings
-        /// fall out of the two comparisons below rather than needing a third
-        /// rule.
-        public static bool IsExitOpen(in MatchState match, byte exitKind) => (ExitKind)exitKind switch
-        {
-            ExitKind.Portal => match.Phase == MatchPhase.Farm,
-            ExitKind.Gate => match.Phase == MatchPhase.GateOpen,
-            _ => throw new System.ArgumentOutOfRangeException(nameof(exitKind), exitKind,
-                "IsExitOpen: unknown exit kind"),
-        };
+        /// MOVED OUT IN Т33, NOT COPIED (bd `app-j4oj`). The rule now lives in
+        /// `Core.ExitRules.IsOpen`, because the ring drawn on the floor over an
+        /// exit has to report the same answer this system enforces, and
+        /// `Presentation` cannot see an `internal` system. This call is the
+        /// only production reader on the simulation side and it goes to the
+        /// same one home the picture asks.
 
         /// He is out (spec §3.5 Р222/Р223): NOT a death — no corpse, no
         /// backpack on the ground, nothing for anyone to loot, and
