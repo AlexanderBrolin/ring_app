@@ -131,9 +131,19 @@ namespace Ring.Presentation
             // did nothing; what exists there instead is the match this player is
             // no longer in, and watching it.
             bool canRestart = _runner.CanRestartMatch;
-            _restartButton.gameObject.SetActive(canRestart);
-            if (_hintText != null) _hintText.gameObject.SetActive(canRestart);
-            if (_spectateButton != null) _spectateButton.gameObject.SetActive(!canRestart);
+            // ⚠ AND NOTHING IS OFFERED OVER A FINISHED RAID (fix round, Ф7
+            // review A-1). "Наблюдать" closes this panel to watch the match go
+            // on — but once the board is up the match is OVER, so there is
+            // nothing to watch, and worse: `Update` below reopens the panel
+            // while a board stands, which turned that button into a control
+            // that silently did nothing. That is the exact defect the owner's
+            // decision 4b removed from the restart button, and it must not come
+            // back through the other one.
+            bool raidOver = _runner.HasMatchResults;
+            _restartButton.gameObject.SetActive(canRestart && !raidOver);
+            if (_hintText != null) _hintText.gameObject.SetActive(canRestart && !raidOver);
+            if (_spectateButton != null)
+                _spectateButton.gameObject.SetActive(!canRestart && !raidOver);
 
             _panel.SetActive(true);
             // Review round (Minor): without an explicit selection, UI/Submit has
@@ -141,21 +151,28 @@ namespace Ring.Presentation
             // button — gamepad/keyboard Submit would silently do nothing. The
             // selected object is whichever button this panel is actually
             // offering.
-            Button offered = canRestart ? _restartButton : _spectateButton;
+            Button offered = raidOver ? null : canRestart ? _restartButton : _spectateButton;
             if (EventSystem.current != null && offered != null)
                 EventSystem.current.SetSelectedGameObject(offered.gameObject);
         }
 
         /// Closes the panel WITHOUT ending anything (Stage 2 Task 47b): the
-        /// match carries on, the HUD becomes a spectator's
-        /// (`SimulationRunner.ObservedIndex`), and nothing brings this panel
-        /// back — `PlayerDied` for this seat arrives once per match, and
-        /// `HandleWorldRestarted` below is what resets the screen for the next
-        /// one.
+        /// match carries on and the HUD becomes a spectator's
+        /// (`SimulationRunner.ObservedIndex`).
+        ///
+        /// ⚠ WHAT BRINGS THE PANEL BACK, corrected (fix round, Ф7 review A-1).
+        /// This paragraph used to say "nothing" does, which was true while
+        /// `PlayerDied` was the only way in. Т34 added a second: a BOARD
+        /// arriving reopens it, because a raid can end without this client
+        /// dying. The two do not collide, because `Show` stops offering the
+        /// closing buttons once a board stands — a finished raid has nothing
+        /// left to spectate. `HandleWorldRestarted` resets the screen for the
+        /// next raid.
         void Hide()
         {
             _shownAtUnscaledTime = -1f;
             _panel.SetActive(false);
+            _boardDrawn = false;
         }
 
         void HandleWorldRestarted() => Hide();
@@ -173,11 +190,24 @@ namespace Ring.Presentation
             if (_resultsText == null) return;
 
             string board = _runner.MatchResultsBoard;
-            bool has = !string.IsNullOrEmpty(board);
+            // `!= null` RATHER THAN `IsNullOrEmpty` (fix round, Ф7 review B-7):
+            // `MatchResultsBoard.Format` returns null for "no raid has ended"
+            // and a (today unreachable) empty string for "one ended with nobody
+            // in it" — collapsing the two would throw away the distinction the
+            // formatter's own doc keeps them apart for.
+            bool has = board != null;
             if (_resultsText.gameObject.activeSelf != has)
                 _resultsText.gameObject.SetActive(has);
             if (has) _resultsText.text = board;
+            _boardDrawn = has;
         }
+
+        /// Whether the board on the panel is the CURRENT one, so `Update` can
+        /// watch for a board arriving without asking for its text every frame
+        /// (`ISimBackend.MatchResultsBoard` builds what it returns). Cleared by
+        /// `Hide` and by a restart, which is what lets the next raid's board be
+        /// drawn in its turn.
+        bool _boardDrawn;
 
         void Update()
         {
@@ -189,16 +219,17 @@ namespace Ring.Presentation
             // pushed because the message arrives in `Ring.Networking`, on the
             // far side of Р180's line, with no event this layer may subscribe
             // to. One reference comparison per frame.
-            if (_shownAtUnscaledTime < 0f && _runner != null && _runner.Ready
-                && !string.IsNullOrEmpty(_runner.MatchResultsBoard))
+            bool hasBoard = _runner != null && _runner.Ready && _runner.HasMatchResults;
+            if (_shownAtUnscaledTime < 0f)
             {
-                Show();
+                if (hasBoard) Show();
             }
-            else if (_shownAtUnscaledTime >= 0f)
+            else if (hasBoard && !_boardDrawn)
             {
-                // The panel is already up — it may have opened on a death that
-                // came a moment BEFORE the raid's own end, in which case the
-                // board arrives while it is standing.
+                // The panel is already up — it opened on a death that came a
+                // moment BEFORE the raid's own end, and the board arrived while
+                // it was standing. Drawn ONCE, on that edge: `MatchResultsBoard`
+                // builds the text it returns.
                 ShowBoard();
             }
 
@@ -235,13 +266,24 @@ namespace Ring.Presentation
         /// facts and true on either backend.
         string BuildMetricsText()
         {
-            if (!_runner.HasMatchStats) return BuildDashedMetricsText();
+            // THE END-OF-MATCH MESSAGE OUTRANKS BOTH (fix round Ф7, review
+            // A-2). A networked client's per-frame picture carries no counters
+            // and never will, which is why this screen printed dashes — but the
+            // numbers DO arrive, once, when the raid ends, and printing dashes
+            // beside a working scoreboard while holding them is the absurdity
+            // the dash was invented to avoid. Asked FIRST, because when it
+            // answers it is the authoritative end-of-raid tally rather than a
+            // live frame's running one.
+            if (!_runner.TryGetFinalStats(out MatchStats stats, out WorldStats worldStats))
+            {
+                if (!_runner.HasMatchStats) return BuildDashedMetricsText();
 
-            // Stage 2 Task 5: personal counters off Curr.Stats (the local
-            // player's own MatchStats), WavesCleared off Curr.WorldStats (a
-            // match-wide counter, not something any one player earned).
-            MatchStats stats = _runner.Curr.Stats;
-            WorldStats worldStats = _runner.Curr.WorldStats;
+                // Stage 2 Task 5: personal counters off Curr.Stats (the local
+                // player's own MatchStats), WavesCleared off Curr.WorldStats (a
+                // match-wide counter, not something any one player earned).
+                stats = _runner.Curr.Stats;
+                worldStats = _runner.Curr.WorldStats;
+            }
             float timeSeconds = stats.DeathTick * SimulationWorld.TickDt;
             // Stage 2 Task 7: ShotsHit/Kills/HeadshotKills now route through the
             // projectile's OwnerIndex (SimulationWorld.DamageMob) instead of a

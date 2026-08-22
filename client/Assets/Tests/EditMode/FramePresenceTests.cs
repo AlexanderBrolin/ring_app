@@ -42,6 +42,35 @@ namespace Ring.Simulation.Tests
                 "PlayerAliveInMatch must be indexable by any seat of the roster");
         }
 
+        /// Фикс-раунд гейта Ф7, находка ревью B-2 (Important).
+        ///
+        /// THE LOCAL FRAME MUST ANSWER "IS THE DIRECTOR ALIVE" TOO. The bit is
+        /// carried on the wire (the Match block's `DirectorAlive` flag) and
+        /// decoded by `ClientFrameDecoder`, but nothing filled it on the LOCAL
+        /// path — so in solo, which is the mode the owner tunes in, the phase
+        /// line read "the Director has fallen" for the whole of
+        /// `DirectorActive`, over a boss that was alive and attacking. The bit
+        /// exists precisely because the phase covers both halves (R-257), and
+        /// a frame that always says one of them is the same lie the whole
+        /// phase was spent removing.
+        [Test]
+        public void CaptureSnapshot_ReportsWhetherTheDirectorIsAlive()
+        {
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var snap = new RenderSnapshot(cfg);
+
+            w.CaptureSnapshot(snap);
+            Assert.IsFalse(snap.DirectorAlive,
+                "premise: no Director has been spawned into this world yet");
+
+            w.SpawnMobForTest(MobType.Director, new float2(5f, 0f));
+            w.CaptureSnapshot(snap);
+            Assert.IsTrue(snap.DirectorAlive,
+                "a world holding a live Director must say so on its own frames, "
+                + "the same way it already fills ContainerIsEmpty");
+        }
+
         [Test]
         public void CaptureSnapshot_KnowsEverySlotOfTheRoster()
         {

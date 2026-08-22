@@ -390,7 +390,29 @@ namespace Ring.Presentation
         ///
         /// `null` AND NOT AN EMPTY STRING: a screen has to tell "no raid has
         /// ended" from "a raid ended with nobody in it".
+        ///
+        /// ⚠ READING IT BUILDS IT. Ask `HasMatchResults` below to POLL and
+        /// this only when there is something to draw — a screen that read this
+        /// every frame would format the whole board every frame, on a layer
+        /// whose own rule is that it does not allocate per frame.
         string MatchResultsBoard { get; }
+
+        /// Whether a board exists at all — the cheap question, so a screen can
+        /// watch for one without building it (Stage 3 Т34).
+        bool HasMatchResults { get; }
+
+        /// This collector's OWN end-of-raid counters, or `false` while the raid
+        /// has not ended (fix round of gate Ф7, review A-2).
+        ///
+        /// IT IS A SECOND SOURCE FOR THE SAME NUMBERS, AND DELIBERATELY SO.
+        /// `HasMatchStats` above answers whether the PER-FRAME picture carries
+        /// them, and on a networked backend it never will — no snapshot block
+        /// exists for them and none is planned (Р146). What DOES arrive, once,
+        /// is the end-of-match message; this is how the results screen reads it
+        /// without learning the wire's own types (Р180 — the structs handed out
+        /// here are `Ring.Simulation.Core`'s, and the crossing is made in
+        /// `Ring.Presentation.Net.FinalStats`).
+        bool TryGetFinalStats(out MatchStats stats, out WorldStats world);
 
         /// This frame's network instrument panel, or `false` when this backend
         /// HAS no network (Stage 2 Task 48, plan Ф9 :2100-2107). The dev

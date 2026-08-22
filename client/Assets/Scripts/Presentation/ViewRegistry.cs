@@ -1309,12 +1309,12 @@ namespace Ring.Presentation
         /// disappears on the tick the server says, with no render-buffer lag on
         /// top of the network's own.
         ///
-        /// EMPTY OVER THE WIRE UNTIL Т32, and that is by construction rather
-        /// than by defect: the client does not decode the `Pickups` block yet
-        /// (`NetworkSimBackend`'s own list of five undecoded blocks, bd
-        /// app-gggs' neighbor). On the local backend — host mode, the В1
-        /// playtest — `RenderSnapshot.Pickups` is the world's own array and
-        /// this draws today.
+        /// IT WAS EMPTY OVER THE WIRE UNTIL Т32б, and is not any more (fix
+        /// round, Ф7 review B-5 — this paragraph still said "does not decode
+        /// the `Pickups` block yet" a whole task after it did). The client
+        /// decodes all ten blocks now (`ClientFrameDecoder`), so cells draw on
+        /// both backends; on the local one `RenderSnapshot.Pickups` is the
+        /// world's own array, as it always was.
         void SyncPickups()
         {
             RenderSnapshot curr = _runner.Curr;

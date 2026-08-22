@@ -381,8 +381,21 @@ namespace Ring.Presentation
             /// Nothing in the way and no proxy under the cursor — the Э1 plane
             /// point is the honest answer, as it has been since Stage 1.
             Miss,
-            /// Arena geometry stopped the ray, and where it stopped IS the
-            /// point: the round goes exactly that far and no further.
+            /// Arena geometry stopped the CAMERA's ray, and where it stopped
+            /// is the point.
+            ///
+            /// ⚠ THE LIMIT, NAMED RATHER THAN LEFT TO BE FOUND (fix round, Ф7
+            /// review B-10; the first wording promised "the round goes exactly
+            /// that far and no further"). This branch is not gated by
+            /// `HasLineOfFire`, unlike `Proxy` below — so with a SECOND barrier
+            /// between the muzzle and the barrier the cursor landed on, the
+            /// camera looks over the near one from its own height while a flat
+            /// shot does not, and the marker sits on the far wall while the
+            /// round dies in the near one. Gating it naively is not the fix:
+            /// the point lies ON a barrier's face, inside the same barrier
+            /// grown by `ProjectileRadius`, so the gate would refuse the honest
+            /// case too. The remainder belongs with the height question the
+            /// class doc already defers to post-MVP low cover.
             Screened,
             /// A proxy — a mob or another collector's doll — with the line of
             /// fire agreeing.

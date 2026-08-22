@@ -283,6 +283,15 @@ namespace Ring.Presentation
         /// (Stage 3 Т34) — a forward, like every other backend question here.
         public string MatchResultsBoard => _backend.MatchResultsBoard;
 
+        /// Whether a board exists — the cheap poll beside the property above,
+        /// which BUILDS what it returns.
+        public bool HasMatchResults => _backend.HasMatchResults;
+
+        /// This collector's own end-of-raid counters — a forward, like every
+        /// other backend question here (fix round Ф7, review A-2).
+        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world)
+            => _backend.TryGetFinalStats(out stats, out world);
+
         /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
         /// this render frame was sampled with — `MuzzleFlashView`/
         /// `AudioDirector`'s per-frame prediction reads `FireHeld` off THIS

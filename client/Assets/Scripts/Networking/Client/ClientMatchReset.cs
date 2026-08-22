@@ -8,7 +8,7 @@ namespace Ring.Networking.Client
     /// that names a new epoch (`MatchRestartedNet`, and the welcome that opens
     /// the first match).
     ///
-    /// WHY ONE HANDLER AND NOT SEVEN CALL SITES. The seven objects below each
+    /// WHY ONE HANDLER AND NOT EIGHT CALL SITES. The eight objects below each
     /// carry a piece of "where this client is in the match", and each of them
     /// fails SILENTLY when it is the one that was forgotten — no exception, no
     /// log line, just one guarantee quietly dead for the whole next match:
@@ -55,9 +55,9 @@ namespace Ring.Networking.Client
     ///     never happened in — and until then it sits occupying capacity the
     ///     new match's own events are refused at (`OverflowDroppedEvents`).
     ///     This one does not merely lose a guarantee, it INVENTS events: the
-    ///     only seam of the seven that fails by producing something rather than
+    ///     only seam of the eight that fails by producing something rather than
     ///     by refusing.
-    /// Seven call sites spread across a receiver would be seven chances to
+    /// Eight call sites spread across a receiver would be eight chances to
     /// forget one; one call site is one.
     ///
     /// THE SET'S COMPLETENESS IS CONTRACTUAL, NOT SOMETHING THE TYPE SYSTEM
@@ -73,15 +73,17 @@ namespace Ring.Networking.Client
     /// by exactly this route, and the paragraph is left standing, with the
     /// number moved on, for the seventh.
     ///
-    /// THIS CLASS DOES NOT OWN THE SEVEN AND DOES NOT BUILD THEM. They are
+    /// THIS CLASS DOES NOT OWN THE EIGHT AND DOES NOT BUILD THEM. They are
     /// handed in. Their construction parameters have nothing in common (an
     /// arena config, per-match timings, capacities, an event budget, a
     /// `NetStats` sink), and pulling those in here would make this a second
     /// home for the client's network configuration. The owner is the network
-    /// backend of Task 44, which builds all seven for its own reasons and hands
+    /// backend of Task 44, which builds all eight for its own reasons and hands
     /// them here once.
     ///
-    /// THREE OF THE SEVEN TAKE NO EPOCH, AND THAT IS CORRECT.
+    /// FIVE OF THE EIGHT TAKE NO EPOCH, AND THAT IS CORRECT (fix round, Ф7
+    /// review A-5: this class doc still counted seven seams and three
+    /// epochless ones after the eighth arrived in Т32б — recount below).
     /// `GhostProjectiles.Reset`/`StalePolicy.Reset`/`ClientEventQueue.Reset`
     /// track no epoch at all — their reset is total by construction, which is
     /// why none of them has an epoch-shaped seam to pass one to.

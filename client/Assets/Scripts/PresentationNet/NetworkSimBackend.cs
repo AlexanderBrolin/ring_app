@@ -752,16 +752,43 @@ namespace Ring.Presentation.Net
         /// The raid's public scoreboard, formatted once per read out of the
         /// message the link is holding (Stage 3 Т34).
         ///
-        /// FORMATTED HERE RATHER THAN CACHED, and the reason is that it is not
-        /// a per-frame path: the board exists only between a raid ending and
-        /// the next one starting, and the one consumer is a screen that draws
-        /// it when the panel opens. A cache would need its own invalidation on
-        /// an epoch change — a second thing to keep in step for no measured
-        /// gain.
+        /// FORMATTED ON READ RATHER THAN CACHED, and the contract that makes
+        /// that safe is `HasMatchResults` beside it: the CHEAP question is a
+        /// separate member, so the screen polls the bool every frame and asks
+        /// for the text once, when it has something to draw. A cache here
+        /// would need its own invalidation on an epoch change — a second thing
+        /// to keep in step — and reading this per frame instead would format
+        /// the whole board per frame on a layer whose own rule is that it does
+        /// not allocate per frame.
         public string MatchResultsBoard
-            => _link != null && _link.State.HasResults
+            => HasMatchResults
                 ? Net.MatchResultsBoard.Format(_link.State.ResultsNet, LocalPlayerIndex)
                 : null;
+
+        public bool HasMatchResults => _link != null && _link.State.HasResults;
+
+        /// The counters the end-of-match message brought, converted at the one
+        /// crossing this assembly exists to make (fix round Ф7, review A-2).
+        ///
+        /// GATED ON THE PHASE, NOT ON `HasResults`: the personal message and
+        /// the public board are two sends, and it is the PERSONAL one that
+        /// carries these numbers — a client whose board was lost still has its
+        /// own counters, and one whose personal message was lost has no
+        /// business printing another player's.
+        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world)
+        {
+            if (_link == null || _link.State.Phase != ClientLinkState.LinkPhase.MatchEnded)
+            {
+                stats = default;
+                world = default;
+                return false;
+            }
+
+            MatchEndedNet ended = _link.State.EndedNet;
+            stats = FinalStats.PersonalFrom(in ended);
+            world = FinalStats.WorldFrom(in ended);
+            return true;
+        }
 
         /// Both readers answer the pre-`Configure` frames the same way every
         /// other member here does — nothing is remembered yet, so nothing is

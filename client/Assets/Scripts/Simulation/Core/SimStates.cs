@@ -262,9 +262,10 @@ namespace Ring.Simulation.Core
     }
 
     /// Stage 3 Task 14 (spec §3.7, С16/Р229): the container's SKIN and spawn
-    /// table only — behavior never branches on it (spec: "на поведение он
-    /// не влияет… три механизма вместо одного дали бы три state-машины и
-    /// три набора гонок"). Coordinator R-100: `Kind` is read exactly once
+    /// table only — behavior never branches on it (spec, translated: "it does
+    /// not affect behavior… three mechanisms instead of one would have given
+    /// three state machines and three sets of races"). Coordinator R-100:
+    /// `Kind` is read exactly once
     /// in the SIMULATION, by `Loot.ContainerStore.InitialTtlFor` — a future
     /// task that needs a second branch on BEHAVIOR here is reopening that
     /// spec decision, not extending a precedent.

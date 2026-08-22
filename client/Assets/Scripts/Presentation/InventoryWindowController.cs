@@ -80,8 +80,35 @@ namespace Ring.Presentation
         int _soundedContainerId;
         int _soundedSlot;
 
+        /// What each label was last given, so an unchanged slot is not
+        /// rewritten (fix round, Ф7 review B-9).
+        ///
+        /// THE CLASS PROMISED THIS AND WAS NOT KEEPING IT. `_sourceSlots`' own
+        /// doc says "this layer does not allocate per frame" — the argument
+        /// against a spawned list — while `DrawSource`/`DrawBackpack`
+        /// interpolated a fresh string for every slot every frame, on a window
+        /// designed to be OPEN IN COMBAT ("no pause, and that is the whole
+        /// design"). Item ids are the whole key: a label's text is a pure
+        /// function of the id it draws, and `0` doubles as "this slot is
+        /// empty", which is the other thing a label can say. `-1` is neither,
+        /// so the first frame always writes.
+        ///
+        /// The same shape `ExtractionRingView._applied` uses, and for the same
+        /// reason: a picture that has not changed does not need repainting.
+        int[] _drawnSourceItem;
+        int[] _drawnBackpackItem;
+        int _drawnSourceCount = -1;
+        int _drawnBackpackPoints = -1;
+
         void Awake()
         {
+            // Sized from the bootstrap's own arrays rather than from config, so
+            // the caches cannot outrun the labels they shadow.
+            _drawnSourceItem = new int[_sourceLabels.Length];
+            _drawnBackpackItem = new int[_backpackLabels.Length];
+            for (int i = 0; i < _drawnSourceItem.Length; i++) _drawnSourceItem[i] = -1;
+            for (int i = 0; i < _drawnBackpackItem.Length; i++) _drawnBackpackItem[i] = -1;
+
             // The listeners close over the slot index, which is why they are
             // wired once here rather than rebuilt in `Update`: rebuilding them
             // per frame would allocate a delegate per slot per frame on a path
@@ -150,6 +177,12 @@ namespace Ring.Presentation
             _soundedRefusal = LootRefusal.None;
             _soundedContainerId = 0;
             _soundedSlot = 0;
+            // AND THE LABEL CACHE, or the next raid's first draw would skip
+            // every slot whose id happens to match the last raid's.
+            _drawnSourceCount = -1;
+            _drawnBackpackPoints = -1;
+            for (int i = 0; i < _drawnSourceItem.Length; i++) _drawnSourceItem[i] = -1;
+            for (int i = 0; i < _drawnBackpackItem.Length; i++) _drawnBackpackItem[i] = -1;
         }
 
         void Update()
@@ -161,8 +194,17 @@ namespace Ring.Presentation
             // owns that key already — the fixed dev-controller exception of
             // П-6 — and a second reader of the same key would be two owners of
             // one input.
+            //
+            // ⚠ IT CLOSES, IT DOES NOT MERELY HIDE (fix round, Ф7 review B-3).
+            // This branch used to call `Hide()` alone while the paragraph above
+            // said "closes" — so Escape put the panel away and left the FLAG
+            // up: the collector came back from the pause menu still walking
+            // slowly and still unable to fire, with the window reopening on
+            // its own. `!Ready` takes the same path deliberately: a facade with
+            // no backend yet cannot honor a raised flag either.
             if (!_runner.Ready || _runner.Paused)
             {
+                _runner.CloseInventory();
                 Hide();
                 return;
             }
@@ -215,14 +257,22 @@ namespace Ring.Presentation
         /// address `Drop` and `Use` travel with (`BackpackAddress`). Asking
         /// `RefusalBelongsTo(0, slot)` would light a SOURCE slot red for a
         /// refusal the BACKPACK earned, which is the one way the empty column
-        /// could still tell a lie. The transfer bar needs no such guard and is
-        /// not given one: `LootOps.Begin` sets `LootTargetContainerId` on the
-        /// `Take` path ALONE (every other op throws before reaching it), so a
-        /// running `LootTimer` always names a real box, never id 0.
+        /// could still tell a lie. The transfer bar needs no guard on the BOX —
+        /// `LootOps.Begin` sets `LootTargetContainerId` on the `Take` path
+        /// ALONE (every other op throws before reaching it), so a running
+        /// `LootTimer` always names a real box, never id 0. ⚠ It does need one
+        /// on the SLOT, and this paragraph used to claim otherwise: the slot
+        /// that timer names can be emptied under it by another collector, and
+        /// that guard lives in `TransferProgress` (Ф7 review B-1).
         void DrawSource(in RenderSnapshot frame, in ContainerInterior source, bool present)
         {
             SimConfig cfg = _runner.Config;
-            _sourceTitle.text = present ? $"Источник · {source.ItemCount}" : "Источник · нет";
+            int titleCount = present ? source.ItemCount : -1;
+            if (titleCount != _drawnSourceCount)
+            {
+                _drawnSourceCount = titleCount;
+                _sourceTitle.text = present ? $"Источник · {source.ItemCount}" : "Источник · нет";
+            }
 
             PlayerState self = frame.Player;
             int pooled = 0;
@@ -242,7 +292,12 @@ namespace Ring.Presentation
                 _sourceProgress[slot].fillAmount = transferring
                     ? TransferProgress(in cfg, itemId, self.LootTimer)
                     : 0f;
-                _sourceLabels[slot].text = occupied ? DescribeItem(in cfg, itemId) : "—";
+                int drawn = occupied ? itemId : 0;
+                if (drawn != _drawnSourceItem[slot])
+                {
+                    _drawnSourceItem[slot] = drawn;
+                    _sourceLabels[slot].text = occupied ? DescribeItem(in cfg, itemId) : "—";
+                }
                 _sourceSlots[slot].targetGraphic.color = SlotColor(occupied, transferring,
                     present && RefusalBelongsTo(source.Id, slot));
                 _sourceSlots[slot].interactable = occupied;
@@ -255,14 +310,23 @@ namespace Ring.Presentation
         void DrawBackpack(in RenderSnapshot frame)
         {
             SimConfig cfg = _runner.Config;
-            _backpackTitle.text =
-                $"Рюкзак · {frame.InventorySlotPoints}/{cfg.Hero.InventoryCapacity}";
+            if (frame.InventorySlotPoints != _drawnBackpackPoints)
+            {
+                _drawnBackpackPoints = frame.InventorySlotPoints;
+                _backpackTitle.text =
+                    $"Рюкзак · {frame.InventorySlotPoints}/{cfg.Hero.InventoryCapacity}";
+            }
 
             for (int i = 0; i < _backpackSlots.Length; i++)
             {
                 bool filled = i < frame.InventoryItemCount;
                 byte itemId = filled ? frame.InventoryItems[i] : (byte)0;
-                _backpackLabels[i].text = filled ? DescribeItem(in cfg, itemId) : "—";
+                int drawnItem = filled ? itemId : 0;
+                if (drawnItem != _drawnBackpackItem[i])
+                {
+                    _drawnBackpackItem[i] = drawnItem;
+                    _backpackLabels[i].text = filled ? DescribeItem(in cfg, itemId) : "—";
+                }
                 _backpackSlots[i].targetGraphic.color = SlotColor(filled, false,
                     RefusalBelongsTo(BackpackAddress, i));
                 _backpackSlots[i].interactable = filled;
@@ -276,8 +340,23 @@ namespace Ring.Presentation
         /// `LootSimConfig.TransferSeconds` is indexed by tier (spec §3.8), and
         /// dividing by any other number would draw a bar that fills at the
         /// wrong pace for every item but one.
-        static float TransferProgress(in SimConfig cfg, byte itemId, float remaining)
+        ///
+        /// AN EMPTY SLOT HAS NO TRANSFER LEFT TO DRAW, and saying so here is a
+        /// CRASH FIX rather than tidiness (fix round, Ф7 review B-1). The loot
+        /// race is deliberately not blocked (`LootOps.Validate` check 4b names
+        /// the loser explicitly) and the item STAYS in the container while a
+        /// timer runs (`LootOps.Begin`'s own doc), with revalidation only on
+        /// the completion tick. So a collector who lost the race keeps a
+        /// running `LootTimer` aimed at a slot whose occupancy bit is already
+        /// clear — the panel reads `itemId = 0` there, and
+        /// `ItemCatalogLookup.Find` REFUSES an unknown id by throwing (0 is
+        /// the reserved "empty" sentinel of Р229 and is in no catalog). That
+        /// was one exception per frame, for the length of the transfer, on the
+        /// client that lost.
+        public static float TransferProgress(in SimConfig cfg, byte itemId, float remaining)
         {
+            if (itemId == 0) return 0f;
+
             ItemDef def = ItemCatalogLookup.Find(itemId, cfg.Items);
             int tier = def.Tier;
             if (tier < 0 || tier >= cfg.Loot.TransferSeconds.Length) return 0f;
@@ -368,10 +447,13 @@ namespace Ring.Presentation
         const int BackpackAddress = 0;
 
         /// How many slots one container's occupancy mask can speak about — the
-        /// width of the byte it is. A box configured with more slots than that
-        /// has no bit for them on the wire either
-        /// (`SnapshotBlocks.ContainerSlotsMaskWidth`), and this panel draws what
-        /// the wire can describe.
-        const int ContainerInteriorSlots = 8;
+        /// width of the byte it is, read from the mask's OWN home rather than
+        /// restated (fix round, Ф7 review B-6: this was a third literal 8, and
+        /// the mask this panel walks is exactly the byte
+        /// `LootOps.OccupancyMaskOf` builds). A box configured with more slots
+        /// than that has no bit for them on the wire either
+        /// (`SnapshotBlocks.ContainerSlotsMaskWidth`), and this panel draws
+        /// what the wire can describe.
+        const int ContainerInteriorSlots = LootOps.OccupancyMaskBits;
     }
 }

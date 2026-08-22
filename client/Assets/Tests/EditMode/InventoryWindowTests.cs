@@ -57,7 +57,7 @@ namespace Ring.Simulation.Tests
 
             // The mirror of `SimInputSanitizer`, which already forces the
             // SERVER's flag down for a dead player. Without this line the
-            // client would keep drawing a window the world stopped honouring.
+            // client would keep drawing a window the world stopped honoring.
             Assert.IsTrue(InventoryWindowController.WindowMustClose(in frame),
                 "death closes the window");
         }
@@ -70,6 +70,44 @@ namespace Ring.Simulation.Tests
 
             Assert.IsTrue(InventoryWindowController.WindowMustClose(in frame),
                 "a collector who has left the arena closes the window with him");
+        }
+
+        /// Фикс-раунд гейта Ф7, находка ревью B-1 (Critical).
+        ///
+        /// THE LOSER OF A LOOT RACE MUST NOT CRASH THE WINDOW. The race is
+        /// deliberately not blocked (`LootOps.Validate` check 4b: "This is also
+        /// the refusal the LOSER of a race gets"), and the item STAYS in the
+        /// container while a timer runs (`LootOps.Begin`'s own doc), with
+        /// revalidation only at the completion tick. So between the winner's
+        /// completion and the loser's there is a real window in which the
+        /// loser's `LootTimer` names a slot whose occupancy bit is already
+        /// clear — and the panel then had `itemId = 0`, which
+        /// `ItemCatalogLookup.Find` REFUSES BY THROWING (0 is the reserved
+        /// "empty" sentinel, Р229, and is in no catalog). One exception per
+        /// frame, for the length of the transfer, on the client that lost.
+        [Test]
+        public void TransferProgress_OfAnEmptiedSlot_IsZero_AndDoesNotThrow()
+        {
+            SimConfig cfg = TestConfigs.Open();
+
+            Assert.DoesNotThrow(() => InventoryWindowController.TransferProgress(in cfg, 0, 0.5f),
+                "the slot a running transfer names can be emptied under it by another collector");
+            Assert.AreEqual(0f, InventoryWindowController.TransferProgress(in cfg, 0, 0.5f), 1e-6f,
+                "an emptied slot has no transfer left to draw");
+        }
+
+        [Test]
+        public void TransferProgress_OfARealItem_StillMeasuresItsOwnTier()
+        {
+            SimConfig cfg = TestConfigs.Open();
+            byte itemId = cfg.Items[0].Id;
+            float total = cfg.Loot.TransferSeconds[cfg.Items[0].Tier];
+
+            // The positive witness beside the guard (lesson 129): without it,
+            // "always return 0" would satisfy the test above perfectly and the
+            // bar would never move for anybody.
+            Assert.AreEqual(0.5f, InventoryWindowController.TransferProgress(in cfg, itemId, total * 0.5f),
+                1e-5f, "half the tier's own duration spent is a half-full bar");
         }
 
         [Test]

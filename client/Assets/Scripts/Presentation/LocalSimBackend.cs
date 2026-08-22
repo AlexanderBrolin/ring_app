@@ -232,6 +232,19 @@ namespace Ring.Presentation
         /// restarting — so there is no raid whose members could be listed.
         public string MatchResultsBoard => null;
 
+        public bool HasMatchResults => false;
+
+        /// False, and by the same fact `HasMatchResults` gives: solo has no
+        /// `MatchServer` and therefore no end-of-match message. It needs none —
+        /// `HasMatchStats` is TRUE here, so the screen reads the live frame's
+        /// own counters, which on a local world are the real ones.
+        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world)
+        {
+            stats = default;
+            world = default;
+            return false;
+        }
+
         /// False, and permanently: solo has no wire, no round trip, no
         /// snapshot ring and no reconciliation, so every field of
         /// `NetDiagnostics` would be a zero that looks exactly like a

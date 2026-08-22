@@ -90,7 +90,7 @@ namespace Ring.Simulation.Loot
         /// (R-235 keeps it in the assembler on purpose), while this is simply
         /// how many bits fit in the return type. They happen to be the same
         /// number because a byte is the shape both chose.
-        const int OccupancyMaskBits = 8;
+        public const int OccupancyMaskBits = 8;
 
         /// Which of a container's slots hold something, as one bit per slot in
         /// ascending slot order — bit `i` set means `slotItems[i]` is not 0

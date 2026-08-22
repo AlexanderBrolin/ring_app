@@ -662,12 +662,15 @@ namespace Ring.Presentation
         /// Director wakes, the gate is sealed until he dies (ADR-001 A4) — and
         /// a material is what the owner can retune without a rebuild.
         ///
-        /// STATIC HERE, AND DELIBERATELY: the open/closed STATE rides the
-        /// snapshot's `Match` block, which no client decodes yet (that is
-        /// Т32's debt, and Т33 is where the phase reaches the HUD). Drawing
-        /// the ring now is what lets a player find an extraction point at
-        /// milestone В1 at all; lighting it by state is the next task's job,
-        /// not a second mechanism.
+        /// LIT BY STATE SINCE Т33 (bd `app-j4oj`; fix round, Ф7 review A-4 —
+        /// this paragraph used to say the opposite ten lines above the code
+        /// that does it). The band is still built once and never rebuilt; what
+        /// changes is its brightness, and the marker carries an
+        /// `ExtractionRingView` that reads the ONE home of the openness rule
+        /// (`Core.ExitRules.IsOpen`) off the `Match` block the client has
+        /// decoded since Т32б. Drawing the ring at all is what lets a player
+        /// find an extraction point; lighting it is what stops the ring
+        /// promising a way out that is shut.
         ///
         /// `ExtractKind` is length-checked rather than trusted: `SimConfigBuilder`
         /// validates that it matches `ExtractPos` one to one, but this builder

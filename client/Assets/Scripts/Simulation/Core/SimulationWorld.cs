@@ -2161,6 +2161,15 @@ namespace Ring.Simulation.Core
             // assignment right after the wave — same shape as WorldStats
             // below, and the same canonical position it holds in StateHash.
             target.Match = _match;
+            // Стадия 3, фикс-раунд гейта Ф7 (находка ревью B-2): the phase
+            // alone does not say whether the boss is still standing —
+            // `DirectorActive` covers the stretch AFTER he falls too, while the
+            // sharing window runs, which is why the wire carries a separate bit
+            // (R-257). Filled here for the same reason `ContainerIsEmpty` is:
+            // so the local backend and the networked one describe the raid in
+            // the same words. Left unfilled, solo read "the Director has
+            // fallen" over a living Director for the whole phase.
+            target.DirectorAlive = DirectorAlive;
             // Stage 2 Task 5: PlayerStats mirrors Players' array-copy pattern
             // above; WorldStats is a single plain-struct assignment, same as Wave.
             System.Array.Copy(_matchStats, target.PlayerStats, _matchStats.Length);

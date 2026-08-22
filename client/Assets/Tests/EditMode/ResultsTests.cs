@@ -608,6 +608,59 @@ namespace Ring.Simulation.Tests
         // word, done once on the side of Р180 that may see both.
         // ------------------------------------------------------------------
 
+        /// Фикс-раунд гейта Ф7, находка ревью A-2.
+        ///
+        /// FOURTEEN SAME-TYPED ASSIGNMENTS ARE WHERE A SWAPPED PAIR HIDES, and
+        /// this one runs in the direction nothing else checks: the sending side
+        /// is pinned by `EndedNetFor_CopiesEveryStat`, the RECEIVING side had
+        /// nothing at all, because until this fix round nobody read
+        /// `MatchEndedNet` on the client.
+        [Test]
+        public void FinalStats_CopyEveryCounterOffTheMessage()
+        {
+            var ended = new MatchEndedNet
+            {
+                Kills = 11, HeadshotKills = 12, ShotsFired = 13, ShotsHit = 14,
+                DashesUsed = 15, SlidesUsed = 16, DeathTick = 17, DamageTaken = 18.5f,
+                AmmoSpent = 19, CellsPicked = 20,
+                WavesCleared = 21, MobSpawnsSkipped = 22, ProjectileSpawnsSkipped = 23,
+            };
+
+            MatchStats stats = FinalStats.PersonalFrom(in ended);
+            Assert.AreEqual(11, stats.Kills, "Kills");
+            Assert.AreEqual(12, stats.HeadshotKills, "HeadshotKills");
+            Assert.AreEqual(13, stats.ShotsFired, "ShotsFired");
+            Assert.AreEqual(14, stats.ShotsHit, "ShotsHit");
+            Assert.AreEqual(15, stats.DashesUsed, "DashesUsed");
+            Assert.AreEqual(16, stats.SlidesUsed, "SlidesUsed");
+            Assert.AreEqual(17, stats.DeathTick, "DeathTick");
+            Assert.AreEqual(18.5f, stats.DamageTaken, 1e-6f, "DamageTaken");
+            Assert.AreEqual(19, stats.AmmoSpent, "AmmoSpent");
+            Assert.AreEqual(20, stats.CellsPicked, "CellsPicked");
+
+            WorldStats world = FinalStats.WorldFrom(in ended);
+            Assert.AreEqual(21, world.WavesCleared, "WavesCleared");
+            Assert.AreEqual(22, world.MobSpawnsSkipped, "MobSpawnsSkipped");
+            Assert.AreEqual(23, world.ProjectileSpawnsSkipped, "ProjectileSpawnsSkipped");
+        }
+
+        [Test]
+        public void FinalStats_AndTheMessageBuilder_MeetInTheMiddle()
+        {
+            // The round trip that matters: what `MatchServer` puts on the wire
+            // for a seat is exactly what that seat's screen reads back. Without
+            // this, the two halves could drift apart field by field and each
+            // would still pass its own test.
+            MatchSummary summary = ThreeSeatSummary();
+            MatchEndedNet sent = MatchServer.EndedNetFor(in summary, slot: 2);
+
+            MatchStats back = FinalStats.PersonalFrom(in sent);
+            MatchStats source = summary.PlayerStats[2];
+            Assert.AreEqual(source.Kills, back.Kills, "Kills survive the round trip");
+            Assert.AreEqual(source.AmmoSpent, back.AmmoSpent, "AmmoSpent survives");
+            Assert.AreEqual(source.CellsPicked, back.CellsPicked, "CellsPicked survives");
+        }
+
         [Test]
         public void EveryOutcomeOwnsAWordOnTheBoard()
         {

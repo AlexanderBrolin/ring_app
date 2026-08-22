@@ -105,12 +105,13 @@ namespace Ring.Simulation.Objectives
             return -1;
         }
 
-        /// MOVED OUT IN Т33, NOT COPIED (bd `app-j4oj`). The rule now lives in
-        /// `Core.ExitRules.IsOpen`, because the ring drawn on the floor over an
-        /// exit has to report the same answer this system enforces, and
-        /// `Presentation` cannot see an `internal` system. This call is the
-        /// only production reader on the simulation side and it goes to the
-        /// same one home the picture asks.
+        // MOVED OUT IN Т33, NOT COPIED (bd `app-j4oj`). The rule now lives in
+        // `Core.ExitRules.IsOpen`, because the ring drawn on the floor over an
+        // exit has to report the same answer this system enforces, and
+        // `Presentation` cannot see an `internal` system. Written with `//`
+        // rather than `///` on purpose (fix round, Ф7 review B-11): an XML doc
+        // block with no member under it concatenates onto the NEXT member's
+        // doc and surfaces in IntelliSense at the wrong address.
 
         /// He is out (spec §3.5 Р222/Р223): NOT a death — no corpse, no
         /// backpack on the ground, nothing for anyone to loot, and
