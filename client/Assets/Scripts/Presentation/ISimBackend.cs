@@ -1,4 +1,5 @@
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 using Unity.Mathematics;
 
 namespace Ring.Presentation
@@ -235,6 +236,46 @@ namespace Ring.Presentation
         /// request needs a moment at which it stops waiting; this is that
         /// moment, and it is the same one that permits the next request.
         bool SpectateRequestInFlight { get; }
+
+        /// Asks for ONE loot operation on behalf of the seat this client owns
+        /// (Stage 3 Т28 for the wire, raised here by Т32б); `true` when the
+        /// request was actually made. A REFUSAL IS A VALUE — a transport is not
+        /// a place to throw from.
+        ///
+        /// THE ANSWER IS NOT "THE OPERATION HAPPENED", and the two backends
+        /// disagree about how long the difference lasts. Over the wire `true`
+        /// means the bytes left the process and `LootRequestInFlight` stays up
+        /// until `LootResultNet` brings the verdict; in a local world the
+        /// verdict is the same tick's, and `LootRequestInFlight` is therefore
+        /// never up. Nothing is predicted in between either way (CR 3): the
+        /// caller dims the slot it pressed and waits, and locally that wait is
+        /// zero frames because there is no latency to hide.
+        ///
+        /// RAISED HERE ONLY NOW, AND THE OLD REASON WAS SOUND (R-229). Т28 kept
+        /// these five off the interface because `LocalSimBackend` would have had
+        /// to answer them with constants and nothing read them — a member for
+        /// its own sake (AGENT.md rule 3). Both halves of that are gone:
+        /// Т32б brings the reader (the inventory window), and
+        /// `SimulationWorld.TryBeginLoot` is public and synchronous, so the
+        /// local answers are the world's own rather than placeholders.
+        bool TryRequestLoot(LootOp op, int containerId, int slot);
+
+        /// Whether a loot request is still waiting for its verdict — the
+        /// interval §3.11 dims the addressed slot for.
+        bool LootRequestInFlight { get; }
+
+        /// The container half of the address the pending request — or the last
+        /// refusal — belongs to. Readable AFTER the answer, because that is
+        /// where the refusal has to be shown.
+        int LootRequestContainerId { get; }
+
+        /// The slot half of that address: a container slot for `Take`, a
+        /// backpack index for `Drop`/`Use`.
+        int LootRequestSlot { get; }
+
+        /// The verdict on the last answered request; `None` both before the
+        /// first answer and after an accepted one.
+        LootRefusal LastLootRefusal { get; }
 
         /// How much of player slot `slot`'s fade-out is already spent, in
         /// `[0, 1]` (Stage 2 Task 47c, bd `app-wcy`, spec §3.9 Р39/Р77) — `0`

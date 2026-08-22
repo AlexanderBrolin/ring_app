@@ -1,4 +1,5 @@
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 using Unity.Mathematics;
 
 namespace Ring.Presentation
@@ -135,6 +136,50 @@ namespace Ring.Presentation
         /// Never: nothing was ever sent, so nothing is waiting to be answered.
         public bool SpectateRequestInFlight => false;
 
+        /// The world's own verdict on the last loot request, and the address it
+        /// was made at (Stage 3 Т32б).
+        int _lootContainerId;
+        int _lootSlot;
+        LootRefusal _lootRefusal;
+
+        /// Straight into the world, which answers on the spot.
+        ///
+        /// NOT A STUB, AND THAT IS WHY THE MEMBER COULD BE RAISED AT ALL.
+        /// `SimulationWorld.TryBeginLoot` is public, runs `LootOps.Validate`'s
+        /// twelve checks and, when they pass, `LootOps.Begin` — the same one
+        /// production entry the server takes when a `LootRequestNet` arrives.
+        /// So a solo player loots for real, and the refusal he sees on the slot
+        /// is the same code a networked one would have been sent.
+        ///
+        /// `false` BEFORE THE FIRST `Restart`, matching the networked twin's
+        /// answer when it has no link: there is no world to ask, and a refusal
+        /// is a value rather than a throw.
+        public bool TryRequestLoot(LootOp op, int containerId, int slot)
+        {
+            if (_world == null) return false;
+
+            // The address is remembered whatever the verdict, because the
+            // refusal is shown ON the slot that was pressed — see
+            // `ISimBackend.LootRequestContainerId`.
+            _lootContainerId = containerId;
+            _lootSlot = slot;
+            _lootRefusal = _world.TryBeginLoot(_curr.LocalPlayerIndex, op, containerId, slot);
+            return true;
+        }
+
+        /// Never, and this is a FACT about this backend rather than a
+        /// placeholder: `TryRequestLoot` above has the world's verdict before
+        /// it returns, so there is no interval in which an answer is
+        /// outstanding. The networked twin is the one with a round trip to
+        /// wait out.
+        public bool LootRequestInFlight => false;
+
+        public int LootRequestContainerId => _lootContainerId;
+
+        public int LootRequestSlot => _lootSlot;
+
+        public LootRefusal LastLootRefusal => _lootRefusal;
+
         /// Zero for every slot, always (Stage 2 Task 47c): this backend owns no
         /// stale policy and there is no fog between a world in memory and the
         /// frame it captures itself into, so no slot's records ever stop
@@ -220,6 +265,12 @@ namespace Ring.Presentation
             _world.CaptureOwnerView(_prev, _prev.LocalPlayerIndex);
             _world.CaptureOwnerView(_curr, _curr.LocalPlayerIndex);
             _acc.Reset();
+            // Stage 3 Т32б: a fresh match's ids start from 1 again, so a
+            // remembered address would name a box from the match before —
+            // a wrong answer rather than a missing one.
+            _lootContainerId = 0;
+            _lootSlot = 0;
+            _lootRefusal = LootRefusal.None;
             // AFTER the reset, never before it (Stage 2 Task 48, bd
             // `app-c3m`): `Reset` clears a pending excuse along with everything
             // else it clears, so the order is the whole of this line's
