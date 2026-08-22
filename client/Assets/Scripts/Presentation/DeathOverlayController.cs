@@ -338,6 +338,35 @@ namespace Ring.Presentation
         /// accuracy of 0% for a player who spent the match shooting. The seed
         /// and the tweak marker are NOT dashed — they are the facade's own
         /// facts and true on either backend.
+        /// "Время на объекте", in seconds (bd `app-oypt`, found by the owner on
+        /// the В1 playtest: it read 00:00 over a raid he had just won).
+        ///
+        /// IT WAS `stats.DeathTick * TickDt`, AND THAT IS ZERO FOR EVERYONE WHO
+        /// DID NOT DIE. Extraction stamps nothing in the world — Р223, and
+        /// `MatchServer.SurvivedTicksFor`'s own doc says so outright ("it is not
+        /// a death, so there is no DeathTick") — so the one number a collector
+        /// most wants after walking out was structurally guaranteed to be zero,
+        /// as it was for anyone still standing when the clock ran out.
+        ///
+        /// TWO SOURCES, IN THIS ORDER, AND `DeathTick` IS NEITHER. When the
+        /// end-of-match message has arrived, `MatchEndedNet.SurvivedSeconds` is
+        /// the SERVER's answer, computed from the three clocks only it can see
+        /// (the tick this collector stepped out is `MatchServer`'s own memory);
+        /// it rode on the wire from Т24 and had no reader until now — the same
+        /// shape as review A-2, where the counters arrived and the screen
+        /// printed dashes beside them.
+        ///
+        /// Otherwise the frame's own tick, and in the one mode that reaches this
+        /// branch it is exact rather than approximate: solo has no end-of-match
+        /// message at all, and this screen opens on the very frame the raid
+        /// ended for this collector — his death, or his extraction — so "how far
+        /// the world had got" IS "how long he was in it". The metrics are built
+        /// once, inside `Show`, which is what makes that true (`_shownAtUnscaled
+        /// Time`), and the panel never recomputes them while it stands.
+        public static float RaidSecondsFor(bool hasFinalStats, int finalSurvivedSeconds,
+            int frameTick)
+            => hasFinalStats ? finalSurvivedSeconds : frameTick * SimulationWorld.TickDt;
+
         string BuildMetricsText()
         {
             // THE END-OF-MATCH MESSAGE OUTRANKS BOTH (fix round Ф7, review
@@ -348,7 +377,9 @@ namespace Ring.Presentation
             // the dash was invented to avoid. Asked FIRST, because when it
             // answers it is the authoritative end-of-raid tally rather than a
             // live frame's running one.
-            if (!_runner.TryGetFinalStats(out MatchStats stats, out WorldStats worldStats))
+            bool hasFinal = _runner.TryGetFinalStats(out MatchStats stats,
+                out WorldStats worldStats, out int finalSurvivedSeconds);
+            if (!hasFinal)
             {
                 if (!_runner.HasMatchStats) return BuildDashedMetricsText();
 
@@ -358,7 +389,7 @@ namespace Ring.Presentation
                 stats = _runner.Curr.Stats;
                 worldStats = _runner.Curr.WorldStats;
             }
-            float timeSeconds = stats.DeathTick * SimulationWorld.TickDt;
+            float timeSeconds = RaidSecondsFor(hasFinal, finalSurvivedSeconds, _runner.Curr.Tick);
             // Stage 2 Task 7: ShotsHit/Kills/HeadshotKills now route through the
             // projectile's OwnerIndex (SimulationWorld.DamageMob) instead of a
             // hardcoded player 0, so Curr.Stats (the LOCAL player's own

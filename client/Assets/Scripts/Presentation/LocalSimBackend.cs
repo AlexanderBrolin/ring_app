@@ -238,10 +238,12 @@ namespace Ring.Presentation
         /// `MatchServer` and therefore no end-of-match message. It needs none —
         /// `HasMatchStats` is TRUE here, so the screen reads the live frame's
         /// own counters, which on a local world are the real ones.
-        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world)
+        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world,
+            out int survivedSeconds)
         {
             stats = default;
             world = default;
+            survivedSeconds = 0;
             return false;
         }
 

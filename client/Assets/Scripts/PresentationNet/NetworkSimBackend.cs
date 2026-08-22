@@ -756,18 +756,25 @@ namespace Ring.Presentation.Net
         /// carries these numbers — a client whose board was lost still has its
         /// own counters, and one whose personal message was lost has no
         /// business printing another player's.
-        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world)
+        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world,
+            out int survivedSeconds)
         {
             if (_link == null || _link.State.Phase != ClientLinkState.LinkPhase.MatchEnded)
             {
                 stats = default;
                 world = default;
+                survivedSeconds = 0;
                 return false;
             }
 
             MatchEndedNet ended = _link.State.EndedNet;
             stats = FinalStats.PersonalFrom(in ended);
             world = FinalStats.WorldFrom(in ended);
+            // Read rather than re-derived (bd `app-oypt`): the server answered
+            // this once, out of three clocks the client cannot see — the tick
+            // this collector stepped out is MatchServer's own memory and stamps
+            // nothing in the world at all.
+            survivedSeconds = ended.SurvivedSeconds;
             return true;
         }
 

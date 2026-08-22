@@ -822,6 +822,45 @@ namespace Ring.Simulation.Tests
         /// indexed — `NetworkSimBackend` fills `PlayerCount` from the arena cap
         /// and `LocalPlayerIndex` from the welcome, and a client that never got
         /// a welcome carries the default.
+        // ---- "Время на объекте" (bd `app-oypt`) ------------------------------
+        //
+        // It read 00:00 over a raid the owner had just won by killing the
+        // Director and walking out. The metric was `stats.DeathTick * TickDt`,
+        // and extraction stamps no DeathTick at all (Р223) — so the number was
+        // structurally zero for two of the three endings.
+
+        [Test]
+        public void RaidSeconds_PrefersTheServersAnswerWhenTheRaidHasEnded()
+        {
+            Assert.AreEqual(137f, DeathOverlayController.RaidSecondsFor(
+                hasFinalStats: true, finalSurvivedSeconds: 137, frameTick: 999999), 1e-4f,
+                "MatchEndedNet.SurvivedSeconds is computed from three clocks this client "
+                + "cannot see — the frame's tick may be a whole raid longer");
+        }
+
+        [Test]
+        public void RaidSeconds_FallsBackToTheFramesOwnTick()
+        {
+            const int Ticks = 600;
+            Assert.AreEqual(Ticks * SimulationWorld.TickDt, DeathOverlayController.RaidSecondsFor(
+                hasFinalStats: false, finalSurvivedSeconds: 0, frameTick: Ticks), 1e-4f,
+                "solo has no end-of-match message, and this screen opens on the very frame "
+                + "the raid ended for this collector");
+        }
+
+        /// The defect itself, stated as a property: a collector who never died
+        /// gets a real number. `DeathTick` is not an argument of this function
+        /// at all any more, which is what makes the old answer unreachable
+        /// rather than merely unlikely.
+        [Test]
+        public void RaidSeconds_IsNotZero_ForACollectorWhoWalkedOut()
+        {
+            Assert.Greater(DeathOverlayController.RaidSecondsFor(
+                hasFinalStats: false, finalSurvivedSeconds: 0, frameTick: 1200), 0f);
+            Assert.Greater(DeathOverlayController.RaidSecondsFor(
+                hasFinalStats: true, finalSurvivedSeconds: 42, frameTick: 0), 0f);
+        }
+
         [Test]
         public void WalkedOut_ALocalSeatOutsideTheFrame_IsNo()
         {

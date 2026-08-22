@@ -412,7 +412,20 @@ namespace Ring.Presentation
         /// without learning the wire's own types (Р180 — the structs handed out
         /// here are `Ring.Simulation.Core`'s, and the crossing is made in
         /// `Ring.Presentation.Net.FinalStats`).
-        bool TryGetFinalStats(out MatchStats stats, out WorldStats world);
+        ///
+        /// `survivedSeconds` RIDES BESIDE THE STRUCT RATHER THAN INSIDE IT (bd
+        /// `app-oypt`), and the reason is R-13's, not this seam's: how long a
+        /// raid lasted for one collector is NOT a `MatchStats` field — that
+        /// struct is a per-tick counter hashed every frame, and the answer here
+        /// is computed once at the end from three different clocks
+        /// (`MatchServer.SurvivedTicksFor`: an extraction stops at the tick he
+        /// stepped out, a corpse at `DeathTick`, anyone still standing at the
+        /// raid's own final tick). It travels in `MatchEndedNet.SurvivedSeconds`
+        /// and had NO READER until the results screen was caught deriving the
+        /// number itself out of `DeathTick` — which is zero for everyone who did
+        /// not die, i.e. for the two endings a player actually wants to see.
+        bool TryGetFinalStats(out MatchStats stats, out WorldStats world,
+            out int survivedSeconds);
 
         /// This frame's network instrument panel, or `false` when this backend
         /// HAS no network (Stage 2 Task 48, plan Ф9 :2100-2107). The dev

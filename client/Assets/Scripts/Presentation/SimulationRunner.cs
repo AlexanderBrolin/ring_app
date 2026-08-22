@@ -289,8 +289,9 @@ namespace Ring.Presentation
 
         /// This collector's own end-of-raid counters — a forward, like every
         /// other backend question here (fix round Ф7, review A-2).
-        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world)
-            => _backend.TryGetFinalStats(out stats, out world);
+        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world,
+            out int survivedSeconds)
+            => _backend.TryGetFinalStats(out stats, out world, out survivedSeconds);
 
         /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
         /// this render frame was sampled with — `MuzzleFlashView`/
