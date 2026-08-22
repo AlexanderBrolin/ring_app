@@ -134,6 +134,12 @@ namespace Ring.Presentation.Net
             (byte)SnapshotBlockKind.Mobs,
             (byte)SnapshotBlockKind.Wave,
             (byte)SnapshotBlockKind.Events,
+            // Stage 3 Т32б — the five the sender has been writing since Т27.
+            (byte)SnapshotBlockKind.Match,
+            (byte)SnapshotBlockKind.Self,
+            (byte)SnapshotBlockKind.Pickups,
+            (byte)SnapshotBlockKind.Containers,
+            (byte)SnapshotBlockKind.ContainerSlots,
         };
 
         /// The same five kinds as a bit per kind — the set a COMPLETE frame
@@ -147,17 +153,23 @@ namespace Ring.Presentation.Net
         /// frame missing, and everything the walk did not re-decode is still
         /// `BeginSlot`'s zeros.
         ///
-        /// FIVE OF THE TEN, AND THAT IS DELIBERATE (Stage 3 Т27). Since Т27
-        /// the sender writes TEN blocks — Self, Match, ContainerSlots,
-        /// Containers and Pickups joined the five above — and this build
-        /// decodes none of those five: they are absent from `KnownBlockKinds`,
-        /// so `TryReadBlock` steps over them by their own byte length, which
-        /// is precisely the forward compatibility Р29 asks the format for.
-        /// They are NOT listed as required for the same reason: this side has
-        /// no consumer for them yet (the inventory window and the ground views
-        /// are Ф7), and requiring a block one cannot read would turn every
-        /// healthy frame into an incomplete one. The task that starts
-        /// decoding them adds them to BOTH lists in the same edit.
+        /// TEN OF TEN SINCE Т32б, AND REQUIRING ALL TEN IS SAFE BECAUSE THE
+        /// SENDER WRITES ALL TEN. Between Т27 and Т32б this list held five and
+        /// the other five were stepped over by their own byte length — the
+        /// forward compatibility Р29 asks the format for — because this side
+        /// had no consumer for them, and requiring a block one cannot read
+        /// would turn every healthy frame into an incomplete one. Т32б brought
+        /// the consumers (the ground views, the rings and the inventory
+        /// window) and, as the paragraph this replaces required, adds them to
+        /// BOTH lists in the same edit.
+        ///
+        /// THE SAFETY WAS MEASURED, NOT ASSUMED, and it has two halves.
+        /// `SnapshotAssembler.WriteFrame` calls its ten writers in a straight
+        /// line with no condition around any of them; and a writer handed zero
+        /// records does not return early — it emits the tag with a length of
+        /// zero (`SnapshotWriter.WritePickupsBlock` and its siblings). So "the
+        /// block is absent" is not something a healthy frame can be: only
+        /// "the block is empty", which is different bytes.
         ///
         /// A BIT PER KIND RATHER THAN A COUNT: two copies of one kind and one
         /// each of two kinds are different frames, and a count cannot tell
@@ -168,7 +180,12 @@ namespace Ring.Presentation.Net
             | (1 << (byte)SnapshotBlockKind.Liveness)
             | (1 << (byte)SnapshotBlockKind.Mobs)
             | (1 << (byte)SnapshotBlockKind.Wave)
-            | (1 << (byte)SnapshotBlockKind.Events);
+            | (1 << (byte)SnapshotBlockKind.Events)
+            | (1 << (byte)SnapshotBlockKind.Match)
+            | (1 << (byte)SnapshotBlockKind.Self)
+            | (1 << (byte)SnapshotBlockKind.Pickups)
+            | (1 << (byte)SnapshotBlockKind.Containers)
+            | (1 << (byte)SnapshotBlockKind.ContainerSlots);
 
         /// How many seats ONE Liveness mask can speak about — a bit per seat
         /// in a single byte.
@@ -311,6 +328,16 @@ namespace Ring.Presentation.Net
         SnapshotBlocks.PlayerRecord[] _playerScratch;
         SnapshotBlocks.MobRecord[] _mobScratch;
         SnapshotBlocks.EventRecord[] _eventScratch;
+        // Stage 3 Т32б, sized from the same caps `SnapshotAssembler` sizes its
+        // own sending scratch from, so a legal frame can never overrun one of
+        // these: a decoder handed a destination too small refuses the WHOLE
+        // block (`SnapshotBlockError.DestinationTooSmall`), which would drop a
+        // frame the sender built inside the very caps this client was
+        // configured with.
+        byte[] _selfScratch;
+        SnapshotBlocks.PickupRecord[] _pickupScratch;
+        SnapshotBlocks.ContainerRecord[] _containerScratch;
+        SnapshotBlocks.ContainerSlotsRecord[] _slotsScratch;
 
         // This flush's event buffer — the `EventCount`/`GetEvent` window the
         // facade opens with `Advance` and closes with `EndFrame`.
@@ -1371,6 +1398,12 @@ namespace Ring.Presentation.Net
             _playerScratch = new SnapshotBlocks.PlayerRecord[math.max(1, cfg.Arena.MaxPlayers)];
             _mobScratch = new SnapshotBlocks.MobRecord[math.max(1, cfg.Arena.MaxMobs)];
             _eventScratch = new SnapshotBlocks.EventRecord[math.max(1, _net.SnapshotEventBudget)];
+            _selfScratch = new byte[math.max(1, cfg.Hero.MaxInventoryItems)];
+            _pickupScratch = new SnapshotBlocks.PickupRecord[math.max(1, cfg.Arena.MaxPickups)];
+            _containerScratch =
+                new SnapshotBlocks.ContainerRecord[math.max(1, cfg.Arena.MaxContainers)];
+            _slotsScratch =
+                new SnapshotBlocks.ContainerSlotsRecord[math.max(1, cfg.Arena.MaxContainers)];
 
             _frameEvents = new SimEvent[_events.Capacity];
 
@@ -1701,6 +1734,25 @@ namespace Ring.Presentation.Net
                         break;
                     case SnapshotBlockKind.Events:
                         ReadEvents(epoch, tick, payload);
+                        break;
+                    // Stage 3 Т32б. Same shape as the five above: the reader
+                    // answers false only when the BLOCK was refused, and a
+                    // refused block makes the whole frame incomplete rather
+                    // than a frame with one section missing.
+                    case SnapshotBlockKind.Match:
+                        stateDecoded &= ReadMatch(slot, payload);
+                        break;
+                    case SnapshotBlockKind.Self:
+                        stateDecoded &= ReadSelf(slot, payload);
+                        break;
+                    case SnapshotBlockKind.Pickups:
+                        stateDecoded &= ReadPickups(slot, payload);
+                        break;
+                    case SnapshotBlockKind.Containers:
+                        stateDecoded &= ReadContainers(slot, payload);
+                        break;
+                    case SnapshotBlockKind.ContainerSlots:
+                        stateDecoded &= ReadContainerSlots(slot, payload);
                         break;
                 }
             }
@@ -2035,6 +2087,60 @@ namespace Ring.Presentation.Net
                 AliveCount = aliveCount,
             };
             return true;
+        }
+
+        /// The five Stage 3 blocks, each a thin wire around
+        /// `ClientFrameDecoder` (Т32б): the landing itself is a pure function
+        /// and lives in `Ring.Networking.Client` so that it can be tested —
+        /// this class takes a live `NetworkManager` and no EditMode fixture
+        /// can build it (`app-xkir`). What stays here is what needs the
+        /// runtime: the logger, and the one-line-per-block rule that keeps the
+        /// receive path free of garbage.
+        bool ReadMatch(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandMatch(payload, slot, out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.Match, error);
+            return false;
+        }
+
+        bool ReadSelf(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandSelf(payload, in _cfg,
+                    new System.Span<byte>(_selfScratch), slot, out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.Self, error);
+            return false;
+        }
+
+        bool ReadPickups(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandPickups(payload, in _cfg,
+                    new System.Span<SnapshotBlocks.PickupRecord>(_pickupScratch), slot,
+                    out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.Pickups, error);
+            return false;
+        }
+
+        bool ReadContainers(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandContainers(payload, in _cfg,
+                    new System.Span<SnapshotBlocks.ContainerRecord>(_containerScratch), slot,
+                    out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.Containers, error);
+            return false;
+        }
+
+        bool ReadContainerSlots(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandContainerSlots(payload, in _cfg,
+                    new System.Span<SnapshotBlocks.ContainerSlotsRecord>(_slotsScratch), slot,
+                    out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.ContainerSlots, error);
+            return false;
         }
 
         /// This frame's events, each asked about exactly once.

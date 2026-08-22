@@ -817,6 +817,7 @@ namespace Ring.Simulation.Tests
             { nameof(RenderSnapshot.Pickups), nameof(RenderSnapshot.PickupCount) },
             // Stage 3 Т14: containers, same bounded-by-their-own-count shape.
             { nameof(RenderSnapshot.Containers), nameof(RenderSnapshot.ContainerCount) },
+            { nameof(RenderSnapshot.ContainerIsEmpty), nameof(RenderSnapshot.ContainerCount) },
             // Stage 3 Т32б: the three arrays the five decoded blocks landed in.
             // The owner's pack and the interiors are each bounded by their own
             // count exactly like the entity arrays above; the interiors' ITEM
@@ -905,6 +906,11 @@ namespace Ring.Simulation.Tests
                     SlotCount = (byte)(1 + i),
                     Ttl = 12.5f + i,
                 };
+            // Stage 3 Т32б: `true` for every described box, for the reason the
+            // PlayerKnown/PlayerAliveInMatch filler above states — `false` IS
+            // this type's default and would leave the guard unable to tell
+            // "copied" from "never written".
+            for (int i = 0; i < s.ContainerCount; i++) s.ContainerIsEmpty[i] = true;
             s.Match = new MatchState { Phase = MatchPhase.GateOpen, DirectorDeathTick = 77 };
             // Stage 3 Task 11 (errata A-I6): the debt grew from two named
             // fields to nine (zone x archetype) -- every one gets a

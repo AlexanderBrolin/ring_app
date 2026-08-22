@@ -115,6 +115,27 @@ namespace Ring.Simulation.Core
         /// — the emphasis being on DECODED.
         public int ContainerCount;
         public ContainerState[] Containers;
+
+        /// Whether the box at the same index has already been emptied (Stage 3
+        /// Т32б) — indexed like `Containers` above and bounded by
+        /// `ContainerCount`, the shape `PlayerKnown` established for a decoded
+        /// per-entity flag with no room in the state struct.
+        ///
+        /// NOT A FIELD OF `ContainerState`, and the reason is not tidiness:
+        /// that struct is hashed (`SimulationWorld.StateHash` walks every live
+        /// container), and the extraction stage has no golden sanctions left.
+        /// It is also the wrong layer — emptiness is answered by the world's
+        /// own `ContainerIsEmptyAt`, and a frame is where an ANSWER is
+        /// delivered, not where it is stored.
+        ///
+        /// IT RIDES SEPARATELY FROM THE INTERIOR ON PURPOSE, and the wire says
+        /// why (`SnapshotBlocks.ContainerRecord`'s own doc): interiors reach
+        /// only a collector inside `LootRadius`, while this flag reaches
+        /// everyone who can see the box, because "already looted" is what a
+        /// player reads AT A DISTANCE to decide whether the walk is worth it.
+        /// A client that had to stand over a box to learn it was empty would
+        /// have learned it too late to matter.
+        public bool[] ContainerIsEmpty;
         public WaveState Wave;
         /// The match's flow phase (Stage 3 Т6) — a single struct like Wave
         /// above and WorldStats below, at the same canonical position it
@@ -315,6 +336,7 @@ namespace Ring.Simulation.Core
             // scratch from, so a frame can hold every box the world can hold
             // even though it will normally describe one or two.
             InventoryItems = new byte[math.max(1, cfg.Hero.MaxInventoryItems)];
+            ContainerIsEmpty = new bool[arena.MaxContainers];
             ContainerInteriors = new ContainerInterior[arena.MaxContainers];
             ContainerInteriorItems = new byte[math.max(1,
                 arena.MaxContainers * arena.MaxContainerSlots)];
@@ -366,6 +388,8 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < other.PickupCount; i++) Pickups[i] = other.Pickups[i];
             ContainerCount = other.ContainerCount;
             for (int i = 0; i < other.ContainerCount; i++) Containers[i] = other.Containers[i];
+            for (int i = 0; i < other.ContainerCount; i++)
+                ContainerIsEmpty[i] = other.ContainerIsEmpty[i];
             Wave = other.Wave;
             Match = other.Match;
             // Stage 3 Т32б: the five blocks' own fields, in the order they are

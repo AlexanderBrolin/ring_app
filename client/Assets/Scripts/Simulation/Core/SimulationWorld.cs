@@ -2063,6 +2063,13 @@ namespace Ring.Simulation.Core
             // reliable pair, which carries requests and refusal codes (Т28).
             target.ContainerCount = _containerCount;
             System.Array.Copy(_containers, target.Containers, _containerCount);
+            // Stage 3 Т32б: "already emptied" is a world fact about each box,
+            // and the frame is where it is delivered rather than stored (see
+            // RenderSnapshot.ContainerIsEmpty). Filled here so the local
+            // backend and the networked one describe a box in the same words —
+            // the same reason PlayerKnown is filled above.
+            for (int i = 0; i < _containerCount; i++)
+                target.ContainerIsEmpty[i] = ContainerIsEmptyAt(i);
             target.Wave = _wave;
             // Stage 3 Т6: the match's flow state, a single plain-struct
             // assignment right after the wave — same shape as WorldStats
