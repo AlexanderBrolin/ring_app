@@ -6,6 +6,7 @@ using NUnit.Framework;
 using Ring.Networking;
 using Ring.Networking.Protocol;
 using Ring.Networking.Server;
+using Ring.Presentation;
 using Ring.Presentation.Net;
 using Ring.Server;
 using Ring.Simulation.Core;
@@ -756,6 +757,79 @@ namespace Ring.Simulation.Tests
             string board = MatchResultsBoard.Format(in ragged, localSlot: 0);
             Assert.AreEqual(1, board.Split('\n').Length,
                 "only the seat both arrays describe is drawn");
+        }
+
+        // ---- the OTHER way a raid ends for one collector (bd `app-rkcu`) ----
+        //
+        // The owner walked out of the gate after killing the Director and got
+        // no results screen at all. The panel had two ways in — his own death,
+        // and a BOARD arriving — and a board is networked by construction, so
+        // in solo the second way could never fire. These pin the third fact the
+        // screen now asks for, on the frame both backends fill.
+
+        static RenderSnapshot FrameWithSeats(int seats, int localSlot)
+        {
+            SimConfig cfg = TestConfigs.Open();
+            cfg.Arena.MaxPlayers = seats;
+            var frame = new RenderSnapshot(in cfg) { PlayerCount = seats, LocalPlayerIndex = localSlot };
+            return frame;
+        }
+
+        [Test]
+        public void WalkedOut_IsFalse_WhileTheCollectorIsStillInTheRaid()
+        {
+            RenderSnapshot frame = FrameWithSeats(3, localSlot: 1);
+            Assert.IsFalse(DeathOverlayController.LocalCollectorWalkedOut(frame));
+        }
+
+        [Test]
+        public void WalkedOut_IsTrue_ForTheLocalSeatThatExtracted()
+        {
+            RenderSnapshot frame = FrameWithSeats(3, localSlot: 1);
+            frame.PlayerExtractedInMatch[1] = true;
+            Assert.IsTrue(DeathOverlayController.LocalCollectorWalkedOut(frame),
+                "the raid is over for this collector, and that is what opens the screen");
+        }
+
+        /// The seat matters, and this is the assertion that says so: a rule
+        /// reading "somebody walked out" would put the results screen over a
+        /// player still fighting for his life (the same defect `app-jw0` fixed
+        /// on the death path).
+        [Test]
+        public void WalkedOut_IgnoresSomebodyElsesExtraction()
+        {
+            RenderSnapshot frame = FrameWithSeats(3, localSlot: 1);
+            frame.PlayerExtractedInMatch[0] = true;
+            frame.PlayerExtractedInMatch[2] = true;
+            Assert.IsFalse(DeathOverlayController.LocalCollectorWalkedOut(frame),
+                "two teammates left; this client is still in the raid");
+        }
+
+        /// Polled every frame, including the ones before a backend has a
+        /// picture — so the cold cases answer "no" rather than throwing.
+        [Test]
+        public void WalkedOut_ANullOrEmptyFrame_IsNo()
+        {
+            Assert.IsFalse(DeathOverlayController.LocalCollectorWalkedOut(null));
+
+            RenderSnapshot empty = FrameWithSeats(3, localSlot: 0);
+            empty.PlayerCount = 0;
+            Assert.IsFalse(DeathOverlayController.LocalCollectorWalkedOut(empty),
+                "a frame describing no seats describes no extraction either");
+        }
+
+        /// A local index outside the frame's own count is refused rather than
+        /// indexed — `NetworkSimBackend` fills `PlayerCount` from the arena cap
+        /// and `LocalPlayerIndex` from the welcome, and a client that never got
+        /// a welcome carries the default.
+        [Test]
+        public void WalkedOut_ALocalSeatOutsideTheFrame_IsNo()
+        {
+            RenderSnapshot frame = FrameWithSeats(3, localSlot: 2);
+            frame.PlayerCount = 1;
+            frame.PlayerExtractedInMatch[2] = true;
+            Assert.IsFalse(DeathOverlayController.LocalCollectorWalkedOut(frame),
+                "the frame does not describe seat 2 at all");
         }
     }
 }

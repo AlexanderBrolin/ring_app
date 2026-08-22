@@ -10,10 +10,20 @@ using UnityEngine.InputSystem;
 
 namespace Ring.Presentation
 {
-    /// Death screen (Task 24 spec Interfaces): shown on `PlayerDied`, driven
-    /// exclusively through `SimEventRouter`'s `HandleEvent` fan-out (П-1 — this
-    /// task's amendment explicitly calls this out: no new `TicksFlushed`
-    /// subscriber). Metrics are computed once when the panel is shown, straight
+    /// The end-of-raid screen (Task 24 spec Interfaces) — "death screen" was its
+    /// name while dying was the only way to reach it.
+    ///
+    /// THREE WAYS IN, AND THEY ARE THREE DIFFERENT FACTS. `PlayerDied` for this
+    /// client, delivered through `SimEventRouter`'s `HandleEvent` fan-out (П-1 —
+    /// Task 24's amendment explicitly calls this out: no new `TicksFlushed`
+    /// subscriber); a BOARD arriving, which says the whole match ended (Т34);
+    /// and THIS COLLECTOR WALKING OUT (`LocalCollectorWalkedOut`, bd
+    /// `app-rkcu`), which says the raid ended for him alone and is the only one
+    /// of the three that solo can ever produce besides dying. The last was
+    /// missing until the owner extracted through the gate and got nothing at
+    /// all.
+    ///
+    /// Metrics are computed once when the panel is shown, straight
     /// off `SimulationRunner.Curr.Stats` — safe because match stats freeze the
     /// tick the player dies (spec §3.12: `DamagePlayer`/`DamageMob`'s guarded
     /// increments, `WaveSystem.Update`'s early return once no player is alive —
@@ -41,7 +51,12 @@ namespace Ring.Presentation
     /// (`ISimBackend.CanRestartMatch`), the restart button and its `R`/`Shift+R`
     /// hint are hidden and the keys are inert; what the panel offers there is
     /// "Наблюдать", which closes it and leaves the match — and the spectator HUD
-    /// behind it — running. Where the numbers are somebody else's
+    /// behind it — running. ⚠ UNLESS THERE IS NOTHING LEFT TO WATCH OR NO RIGHT
+    /// TO WATCH IT: over a finished raid (Ф7 review A-1) and to a collector who
+    /// walked out (bd `app-rkcu`, whom `SpectatePolicy` refuses outright), that
+    /// button is not offered either — a control that silently does nothing is
+    /// the one thing decision 4b was taken to remove. Where the numbers are
+    /// somebody else's
     /// (`HasMatchStats`), the metrics print dashes instead of the zeros the
     /// render pair holds.
     public sealed class DeathOverlayController : MonoBehaviour
@@ -109,6 +124,38 @@ namespace Ring.Presentation
             Show();
         }
 
+        /// Whether THIS client's collector has walked out of the raid (playtest
+        /// В1 round two, bd `app-rkcu`) — the second thing that ends a raid for
+        /// one player, beside dying, and the one nothing in this class could
+        /// see.
+        ///
+        /// WHY THE SCREEN NEEDED IT. `Update` below polls for a BOARD, and a
+        /// board is a networked object by construction: `MatchServer` builds it
+        /// when a whole match ends, so `LocalSimBackend.HasMatchResults` is
+        /// `false` for ever and solo — the mode the owner tunes in — had no
+        /// second way in at all. A collector who killed the Director and left
+        /// through the gate got no screen whatsoever, while my own note for Т34
+        /// claimed the opposite (lesson 406/407: a doc explaining an absence has
+        /// to be read as a list of what it actually accounted for). "My raid is
+        /// over" and "the match's board has arrived" are two facts, and only the
+        /// first one belongs to this client.
+        ///
+        /// OFF `PlayerExtractedInMatch` AND NOT `Players[i].Extracted`, for the
+        /// reason that field's own doc gives: the second is only ever true about
+        /// oneself, and a rule that reads it happens to work here — this IS the
+        /// local slot — but would quietly mean something else the moment it was
+        /// reused for anybody else's seat. One fact, one home.
+        ///
+        /// A NULL OR SHORT FRAME IS "NO", not an exception: this is polled every
+        /// frame, including the ones before a backend has a picture at all.
+        public static bool LocalCollectorWalkedOut(RenderSnapshot frame)
+        {
+            if (frame == null) return false;
+            int local = frame.LocalPlayerIndex;
+            if (local < 0 || local >= frame.PlayerCount) return false;
+            return frame.PlayerExtractedInMatch[local];
+        }
+
         void Show()
         {
             // Task 25 (this task's amendment, explicitly called out ahead of
@@ -140,10 +187,23 @@ namespace Ring.Presentation
             // decision 4b removed from the restart button, and it must not come
             // back through the other one.
             bool raidOver = _runner.HasMatchResults;
+            // ⚠ AND NOT TO A COLLECTOR WHO WALKED OUT EITHER (bd `app-rkcu`,
+            // the same lens as A-1 above). `SpectatePolicy.Evaluate` refuses an
+            // extracted requester outright — `SpectateRefusal.RequesterExtracted`
+            // is its second check, and the spec's reason is that he left the
+            // object and has no business looking through anyone's eyes (§3.5) —
+            // so offering him this button would put the dead control back, this
+            // time through the door the board does not cover: on a networked
+            // raid his own extraction comes a long time before the match's end.
+            // The RESTART button is untouched by that: `CanRestartMatch` is
+            // false on the networked backend anyway, and in solo — where it is
+            // true — restarting after walking out is exactly what the panel is
+            // for.
+            bool walkedOut = _runner.Ready && LocalCollectorWalkedOut(_runner.RenderCurr);
             _restartButton.gameObject.SetActive(canRestart && !raidOver);
             if (_hintText != null) _hintText.gameObject.SetActive(canRestart && !raidOver);
             if (_spectateButton != null)
-                _spectateButton.gameObject.SetActive(!canRestart && !raidOver);
+                _spectateButton.gameObject.SetActive(!canRestart && !raidOver && !walkedOut);
 
             _panel.SetActive(true);
             // Review round (Minor): without an explicit selection, UI/Submit has
@@ -151,7 +211,9 @@ namespace Ring.Presentation
             // button — gamepad/keyboard Submit would silently do nothing. The
             // selected object is whichever button this panel is actually
             // offering.
-            Button offered = raidOver ? null : canRestart ? _restartButton : _spectateButton;
+            Button offered = raidOver || (!canRestart && walkedOut)
+                ? null
+                : canRestart ? _restartButton : _spectateButton;
             if (EventSystem.current != null && offered != null)
                 EventSystem.current.SetSelectedGameObject(offered.gameObject);
         }
@@ -160,14 +222,16 @@ namespace Ring.Presentation
         /// match carries on and the HUD becomes a spectator's
         /// (`SimulationRunner.ObservedIndex`).
         ///
-        /// ⚠ WHAT BRINGS THE PANEL BACK, corrected (fix round, Ф7 review A-1).
-        /// This paragraph used to say "nothing" does, which was true while
-        /// `PlayerDied` was the only way in. Т34 added a second: a BOARD
-        /// arriving reopens it, because a raid can end without this client
-        /// dying. The two do not collide, because `Show` stops offering the
-        /// closing buttons once a board stands — a finished raid has nothing
-        /// left to spectate. `HandleWorldRestarted` resets the screen for the
-        /// next raid.
+        /// ⚠ WHAT BRINGS THE PANEL BACK, corrected twice. This paragraph used to
+        /// say "nothing" does, which was true while `PlayerDied` was the only
+        /// way in. Т34 added a BOARD arriving (fix round, Ф7 review A-1), and
+        /// bd `app-rkcu` added this collector's own EXTRACTION — both reopen it,
+        /// because a raid can end without this client dying. None of them
+        /// collide with this method, because `Show` offers no closing button in
+        /// either case: a finished raid has nothing left to spectate, and a
+        /// collector who walked out is refused spectating by the server anyway
+        /// (`SpectatePolicy.Evaluate`). `HandleWorldRestarted` resets the screen
+        /// for the next raid.
         void Hide()
         {
             _shownAtUnscaledTime = -1f;
@@ -219,10 +283,20 @@ namespace Ring.Presentation
             // pushed because the message arrives in `Ring.Networking`, on the
             // far side of Р180's line, with no event this layer may subscribe
             // to. One reference comparison per frame.
-            bool hasBoard = _runner != null && _runner.Ready && _runner.HasMatchResults;
+            bool ready = _runner != null && _runner.Ready;
+            bool hasBoard = ready && _runner.HasMatchResults;
+            // bd `app-rkcu`: THE RAID CAN ALSO END FOR THIS CLIENT ALONE, and
+            // that is the half a board can never report. A board is built by
+            // `MatchServer` when a WHOLE match ends, so in solo it never comes
+            // at all and a collector who walked out of the gate — the winning
+            // move of the entire stage — got no screen whatsoever. Polled here
+            // beside the board rather than pushed, for the same reason the board
+            // is: the fact lives in the frame, and a frame is what this layer
+            // reads.
+            bool walkedOut = ready && LocalCollectorWalkedOut(_runner.RenderCurr);
             if (_shownAtUnscaledTime < 0f)
             {
-                if (hasBoard) Show();
+                if (hasBoard || walkedOut) Show();
             }
             else if (hasBoard && !_boardDrawn)
             {
