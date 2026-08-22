@@ -211,6 +211,20 @@ namespace Ring.Presentation
 
         public bool ShouldKeepMobView(int id) => false;
 
+        /// Zero and false for cells and boxes too, and by the SAME fact rather
+        /// than by symmetry (Stage 3 Т33d): a local frame is captured from the
+        /// world itself, so a cell missing from it has been picked up and a box
+        /// missing from it has been emptied away. Neither is a thing that
+        /// faded out of sight, and fading one would draw a departure that never
+        /// happened.
+        public float PickupFadeProgress(int id) => 0f;
+
+        public bool ShouldKeepPickupView(int id) => false;
+
+        public float ContainerFadeProgress(int id) => 0f;
+
+        public bool ShouldKeepContainerView(int id) => false;
+
         /// False, and permanently: solo has no wire, no round trip, no
         /// snapshot ring and no reconciliation, so every field of
         /// `NetDiagnostics` would be a zero that looks exactly like a

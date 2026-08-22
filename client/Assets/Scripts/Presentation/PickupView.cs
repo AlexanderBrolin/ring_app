@@ -38,6 +38,25 @@ namespace Ring.Presentation
         {
             Vector3 scale = Vector3.one * diameter;
             if (_visual.localScale != scale) _visual.localScale = scale;
+            // A POOLED VIEW COMES BACK AT WHATEVER BRIGHTNESS IT LEFT AT. The
+            // instance that just faded to black is the one the next cell is
+            // rented from, so the bind that puts it back on the floor is what
+            // has to restore it — the same reason `Bind` rewrites the scale it
+            // "already" has.
+            _fade.Apply(1f);
         }
+
+        /// Re-applies the authored color scaled by how much fade is left
+        /// (Stage 3 Т33d, bd `app-tut2`) — the cell's twin of
+        /// `MobView.FadeEmission`, and called INSTEAD of a position write for
+        /// the same reason: a frame that stopped mentioning this cell says
+        /// nothing about where it is, only that this client can no longer see
+        /// it. A cell does not move, so nothing but the brightness has
+        /// anywhere to go.
+        public void FadeEmission(float fadeRemaining) => _fade.Apply(fadeRemaining);
+
+        void Awake() => _fade.Capture(gameObject);
+
+        readonly EmissiveFade _fade = new EmissiveFade();
     }
 }

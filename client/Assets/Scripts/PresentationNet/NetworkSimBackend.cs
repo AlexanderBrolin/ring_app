@@ -336,11 +336,14 @@ namespace Ring.Presentation.Net
         // frame the sender built inside the very caps this client was
         // configured with.
         byte[] _selfScratch;
-        /// The mobs' own fade bookkeeping (Stage 3 Т32б, bd `app-dut`). Players
-        /// have had one since Task 47c; mobs could not, because `StalePolicy`
-        /// indexes by seat and a mob carries a sparse entity id — see
-        /// `EntityStaleTracker`.
-        EntityStaleTracker _mobStale;
+        /// Fade bookkeeping for every entity class the wire describes (Stage 3
+        /// Т32б for mobs, bd `app-dut`; Т33d for pickups and containers, bd
+        /// `app-tut2`). Players have had theirs since Task 47c in `_stale`;
+        /// entities could not share it, because `StalePolicy` indexes by seat
+        /// and an entity carries a sparse id — see `EntityStaleTracker`. One
+        /// TABLE rather than one field per class, so "is every class covered"
+        /// is a question a test can ask (`EntityStaleTrackers`' own doc).
+        EntityStaleTrackers _entityStale;
         SnapshotBlocks.PickupRecord[] _pickupScratch;
         SnapshotBlocks.ContainerRecord[] _containerScratch;
         SnapshotBlocks.ContainerSlotsRecord[] _slotsScratch;
@@ -723,14 +726,37 @@ namespace Ring.Presentation.Net
         /// owner would otherwise see on the milestone: players at the edge of
         /// sight froze and dimmed while mobs vanished with a pop, so the
         /// picture was INCONSISTENT rather than merely abrupt.
-        public float MobFadeProgress(int id)
-            => _mobStale != null ? _mobStale.FadeProgress(id) : 0f;
+        public float MobFadeProgress(int id) => FadeProgressOf(VisibilityClass.Mobs, id);
 
         /// True while the mob's view still has something to show — the twin of
         /// `ShouldKeepPlayerDoll`, and what stops `ViewRegistry` retiring a
         /// view the frame stopped mentioning but the eye is still tracking.
-        public bool ShouldKeepMobView(int id)
-            => _mobStale != null && _mobStale.ShouldKeep(id);
+        public bool ShouldKeepMobView(int id) => ShouldKeepView(VisibilityClass.Mobs, id);
+
+        /// The cell's and the box's halves of the same question (Stage 3 Т33d,
+        /// bd `app-tut2`). Kept as four named members rather than one pair
+        /// taking a `VisibilityClass`, because `ISimBackend` is what
+        /// `Presentation` sees and `Presentation` must not learn the wire's own
+        /// vocabulary (Р180): the class enum lives on the networking side of
+        /// that line, and a view asking "how far gone is this cell" should not
+        /// have to name a wire concept to ask it.
+        public float PickupFadeProgress(int id) => FadeProgressOf(VisibilityClass.Pickups, id);
+
+        public bool ShouldKeepPickupView(int id) => ShouldKeepView(VisibilityClass.Pickups, id);
+
+        public float ContainerFadeProgress(int id) => FadeProgressOf(VisibilityClass.Containers, id);
+
+        public bool ShouldKeepContainerView(int id)
+            => ShouldKeepView(VisibilityClass.Containers, id);
+
+        /// Both readers answer the pre-`Configure` frames the same way every
+        /// other member here does — nothing is remembered yet, so nothing is
+        /// fading and nothing is worth keeping.
+        float FadeProgressOf(VisibilityClass cls, int id)
+            => _entityStale != null ? _entityStale.For(cls).FadeProgress(id) : 0f;
+
+        bool ShouldKeepView(VisibilityClass cls, int id)
+            => _entityStale != null && _entityStale.For(cls).ShouldKeep(id);
 
         /// `StalePolicy.FadeProgress` for the player slot, and nothing else
         /// (Stage 2 Task 47c, bd `app-wcy`). The decision is the policy's — how
@@ -1173,7 +1199,7 @@ namespace Ring.Presentation.Net
             BlendOwnPlayer();
 
             _stale.Advance(renderTick);
-            _mobStale.Advance(renderTick);
+            _entityStale.AdvanceAll(renderTick);
 
             // Р67: ghosts age against the PREDICTED tick, never the render
             // tick — they are the client's own rounds, born in the prediction
@@ -1408,10 +1434,10 @@ namespace Ring.Presentation.Net
             // Sized by the same cap and fed the same two numbers as the player
             // policy above: what counts as stale and how long a fade lasts are
             // properties of the CONNECTION, not of what is fading.
-            _mobStale = new EntityStaleTracker(VisibilityClass.Mobs, cfg.Arena.MaxMobs,
+            _entityStale = new EntityStaleTrackers(in cfg.Arena,
                 _net.InterpMaxStaleTicks, _net.EntityFadeTicks);
             _reset = new ClientMatchReset(_dedup, _snapshots, _clock, _ghosts, _stale, _events,
-                _tracers, _mobStale);
+                _tracers, _entityStale);
             // Sized from the same cap as `_mobScratch` below, which is what
             // makes "a frame can never carry more records than one generation
             // holds" true rather than hoped for.
@@ -1819,7 +1845,7 @@ namespace Ring.Presentation.Net
             if (applyState)
             {
                 _stale.OnFrameApplied(tick, missingEntities);
-                _mobStale.OnFrameApplied(tick, missingEntities);
+                _entityStale.OnFrameAppliedAll(tick, missingEntities);
             }
         }
 
@@ -2082,7 +2108,8 @@ namespace Ring.Presentation.Net
             // the ring refused a slot to says nothing newer than what is
             // already remembered, and `StalePolicy`'s numbers are monotonic
             // maxima (the note on `ReadPlayers`' own OnEntitySeen call).
-            for (int i = 0; i < count; i++) _mobStale.OnSeen(_mobScratch[i].Id, (uint)slot.Tick);
+            for (int i = 0; i < count; i++)
+                _entityStale.For(VisibilityClass.Mobs).OnSeen(_mobScratch[i].Id, (uint)slot.Tick);
 
             for (int i = 0; i < count; i++)
             {
@@ -2154,7 +2181,16 @@ namespace Ring.Presentation.Net
             if (ClientFrameDecoder.TryLandPickups(payload, in _cfg,
                     new System.Span<SnapshotBlocks.PickupRecord>(_pickupScratch), slot,
                     out SnapshotBlockError error))
+            {
+                // FED FROM THE LANDED FRAME, not the scratch, and only on a
+                // block that landed — the mob path's own rule (`ReadMobs`),
+                // with the one difference that the decoder here lands as it
+                // reads, so the frame IS the decoded set by this line.
+                EntityStaleTracker cells = _entityStale.For(VisibilityClass.Pickups);
+                for (int i = 0; i < slot.PickupCount; i++)
+                    cells.OnSeen(slot.Pickups[i].Id, (uint)slot.Tick);
                 return true;
+            }
             LogBlockRefusal(SnapshotBlockKind.Pickups, error);
             return false;
         }
@@ -2164,7 +2200,13 @@ namespace Ring.Presentation.Net
             if (ClientFrameDecoder.TryLandContainers(payload, in _cfg,
                     new System.Span<SnapshotBlocks.ContainerRecord>(_containerScratch), slot,
                     out SnapshotBlockError error))
+            {
+                // The boxes' half of the same stamp — see `ReadPickups` above.
+                EntityStaleTracker boxes = _entityStale.For(VisibilityClass.Containers);
+                for (int i = 0; i < slot.ContainerCount; i++)
+                    boxes.OnSeen(slot.Containers[i].Id, (uint)slot.Tick);
                 return true;
+            }
             LogBlockRefusal(SnapshotBlockKind.Containers, error);
             return false;
         }

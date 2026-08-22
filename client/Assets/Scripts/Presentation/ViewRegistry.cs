@@ -1339,9 +1339,23 @@ namespace Ring.Presentation
             }
 
             _staleIdsScratch.Clear();
+            // Stage 3 Т33d (bd `app-tut2`): a cell the frame stopped mentioning
+            // FADES, exactly as a mob has since Т32б and a player doll since
+            // Task 47c. Until this task it popped, and it popped BESIDE a mob
+            // that faded — one picture speaking two languages about the same
+            // edge of the same fog. The backend answers false to every id on a
+            // local backend, so solo is unchanged: a cell absent from a local
+            // frame has been picked up.
             foreach (KeyValuePair<int, PickupView> kv in _activePickups)
             {
-                if (!_seenPickupIds.Contains(kv.Key)) _staleIdsScratch.Add(kv.Key);
+                if (_seenPickupIds.Contains(kv.Key)) continue;
+                if (_runner.ShouldKeepPickupView(kv.Key))
+                {
+                    kv.Value.FadeEmission(1f - _runner.PickupFadeProgress(kv.Key));
+                    continue;
+                }
+
+                _staleIdsScratch.Add(kv.Key);
             }
             for (int i = 0; i < _staleIdsScratch.Count; i++) RetirePickup(_staleIdsScratch[i]);
         }
@@ -1382,9 +1396,17 @@ namespace Ring.Presentation
             }
 
             _staleIdsScratch.Clear();
+            // The boxes' half of the same fade — see `SyncPickups` above.
             foreach (KeyValuePair<int, ContainerView> kv in _activeContainers)
             {
-                if (!_seenContainerIds.Contains(kv.Key)) _staleIdsScratch.Add(kv.Key);
+                if (_seenContainerIds.Contains(kv.Key)) continue;
+                if (_runner.ShouldKeepContainerView(kv.Key))
+                {
+                    kv.Value.FadeEmission(1f - _runner.ContainerFadeProgress(kv.Key));
+                    continue;
+                }
+
+                _staleIdsScratch.Add(kv.Key);
             }
             for (int i = 0; i < _staleIdsScratch.Count; i++) RetireContainer(_staleIdsScratch[i]);
         }

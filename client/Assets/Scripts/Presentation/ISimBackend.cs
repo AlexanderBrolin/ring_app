@@ -356,6 +356,26 @@ namespace Ring.Presentation
         /// frame its records stop arriving.
         bool ShouldKeepMobView(int id);
 
+        /// The cell's and the box's halves of the same two questions (Stage 3
+        /// Т33d, bd `app-tut2`). Named per class rather than taking one enum,
+        /// because this interface is what `Presentation` sees and the class
+        /// enum is a WIRE concept living behind Р180's line — a view asks
+        /// "how far gone is this cell", not "how far gone is this member of
+        /// visibility class 1".
+        ///
+        /// THEY EXIST BECAUSE THE PICTURE WENT INCONSISTENT AGAIN, one task
+        /// after the mobs were fixed: Т32б started drawing cells and boxes and
+        /// they popped at the edge of sight beside mobs that faded. Same
+        /// defect, same shape, one class of entity later — which is why the
+        /// bookkeeping is a table now and not a field per class.
+        float PickupFadeProgress(int id);
+
+        bool ShouldKeepPickupView(int id);
+
+        float ContainerFadeProgress(int id);
+
+        bool ShouldKeepContainerView(int id);
+
         /// This frame's network instrument panel, or `false` when this backend
         /// HAS no network (Stage 2 Task 48, plan Ф9 :2100-2107). The dev
         /// overlay draws its whole network section behind this answer, so a

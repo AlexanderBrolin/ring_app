@@ -118,7 +118,7 @@ namespace Ring.Networking.Client
         /// SECOND thing to forget on an epoch change and fails exactly the way
         /// the player policy above does when it is not — an id from the match
         /// before, answered for.
-        readonly EntityStaleTracker _mobStale;
+        readonly EntityStaleTrackers _entityStale;
         readonly ClientEventQueue _eventQueue;
 
         /// Every seam is required, and each is guarded separately so a wiring
@@ -133,7 +133,7 @@ namespace Ring.Networking.Client
         /// its own enum grew.
         public ClientMatchReset(EventDedup dedup, SnapshotQueue snapshotQueue, RenderClock renderClock,
             GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue,
-            TracerProjectiles tracers, EntityStaleTracker mobStale)
+            TracerProjectiles tracers, EntityStaleTrackers entityStale)
         {
             _dedup = dedup ?? throw new ArgumentNullException(nameof(dedup));
             _snapshotQueue = snapshotQueue ?? throw new ArgumentNullException(nameof(snapshotQueue));
@@ -142,7 +142,7 @@ namespace Ring.Networking.Client
             _stalePolicy = stalePolicy ?? throw new ArgumentNullException(nameof(stalePolicy));
             _eventQueue = eventQueue ?? throw new ArgumentNullException(nameof(eventQueue));
             _tracers = tracers ?? throw new ArgumentNullException(nameof(tracers));
-            _mobStale = mobStale ?? throw new ArgumentNullException(nameof(mobStale));
+            _entityStale = entityStale ?? throw new ArgumentNullException(nameof(entityStale));
         }
 
         /// Clears all eight seams and starts tracking `epoch` in the three that
@@ -159,7 +159,10 @@ namespace Ring.Networking.Client
             _stalePolicy.Reset();
             _eventQueue.Reset();
             _tracers.Reset();
-            _mobStale.Reset();
+            // EVERY visibility class, not just the mobs (Т33d, bd `app-tut2`):
+            // the table is what makes this seam cover the classes added after
+            // it without anyone remembering to come back here.
+            _entityStale.ResetAll();
         }
     }
 }

@@ -269,6 +269,16 @@ namespace Ring.Presentation
 
         public bool ShouldKeepMobView(int id) => _backend.ShouldKeepMobView(id);
 
+        /// The cells' and the boxes' halves of the same pair (Stage 3 Т33d, bd
+        /// `app-tut2`) — forwards, like every other backend question here.
+        public float PickupFadeProgress(int id) => _backend.PickupFadeProgress(id);
+
+        public bool ShouldKeepPickupView(int id) => _backend.ShouldKeepPickupView(id);
+
+        public float ContainerFadeProgress(int id) => _backend.ContainerFadeProgress(id);
+
+        public bool ShouldKeepContainerView(int id) => _backend.ShouldKeepContainerView(id);
+
         /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
         /// this render frame was sampled with — `MuzzleFlashView`/
         /// `AudioDirector`'s per-frame prediction reads `FireHeld` off THIS
