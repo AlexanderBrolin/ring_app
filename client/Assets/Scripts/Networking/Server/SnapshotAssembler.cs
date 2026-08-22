@@ -386,6 +386,37 @@ namespace Ring.Networking.Server
         /// rest (Tasks 33/35/36).
         public NetStats StatsFor(int connection) => _connections[connection].Stats;
 
+        /// One connection's visibility set for one class and one generation
+        /// (Stage 3 Т35).
+        ///
+        /// `internal` AS A TEST SEAM, the same choice the owner made for
+        /// `PlayerNetworkController`'s three mutators and `MatchServer.
+        /// EndedNetFor` over widening them to `public`: the sets are six
+        /// separate fields, so "does every class have a pair, sized by its own
+        /// cap" is a question nothing outside this file could ask — and it is
+        /// exactly the question `app-tut2` cost a playtest to answer on the
+        /// client, where a class quietly had no bookkeeping at all.
+        ///
+        /// THE SWITCH THROWS ON AN UNKNOWN CLASS (R-237), which is the point
+        /// rather than a formality: a fourth `VisibilityClass` must be given
+        /// its pair HERE, and the alternative — returning the mobs' set for a
+        /// class nobody wired — is one set answering another's question.
+        internal VisibilitySet SetFor(int connection, VisibilityClass cls, bool previous)
+        {
+            Connection c = _connections[connection];
+            switch (cls)
+            {
+                case VisibilityClass.Mobs: return previous ? c.MobsPrevious : c.MobsCurrent;
+                case VisibilityClass.Pickups: return previous ? c.PickupsPrevious : c.PickupsCurrent;
+                case VisibilityClass.Containers:
+                    return previous ? c.ContainersPrevious : c.ContainersCurrent;
+                default:
+                    throw new System.ArgumentOutOfRangeException(nameof(cls), cls,
+                        "SnapshotAssembler.SetFor: every VisibilityClass owns a pair of sets per "
+                        + "connection and a new one must be given its own here.");
+            }
+        }
+
         /// Clears `connection`'s VIEWPOINT memory — the visibility pair
         /// (`Previous`/`Current`) ONLY — so the very next `BuildFor` call
         /// computes a visibility set with NO hysteresis/linger continuity

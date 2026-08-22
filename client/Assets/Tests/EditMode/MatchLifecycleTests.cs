@@ -1,8 +1,10 @@
 using Unity.Mathematics;
+using UnityEngine;
 using System;
 using FishNet.Broadcast;
 using FishNet.Connection;
 using NUnit.Framework;
+using Ring.Data;
 using Ring.Networking;
 using Ring.Networking.Client;
 using Ring.Simulation.Visibility;
@@ -723,6 +725,129 @@ namespace Ring.Simulation.Tests
                 () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers,
                     entityStale),
                 "witness: all eight seams present is the legal construction");
+        }
+
+        // ------------------------------------------------------------------
+        // Stage 3 Т35 (spec Р290/Р291): what a RESTART must leave behind
+        // ------------------------------------------------------------------
+
+        /// A restart's server half, and the finding that shrinks it: the plan
+        /// asked for "recreating three `VisibilitySet`s per connection and
+        /// `_lootRng` from the same seed", and BOTH already hold BY
+        /// CONSTRUCTION. `MatchServer.RestartMatch` calls `StartMatch`, which
+        /// builds a new `SimulationWorld` (that constructor seeds `_lootRng`)
+        /// and a new `SnapshotAssembler` (whose `Connection` constructor builds
+        /// all six sets). Nothing had to be added; what was missing was
+        /// anything that SAYS so, which is what these two tests are.
+        [Test]
+        public void RestartRecreatesAllThreeVisibilitySets()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            net.SnapshotMaxBytes = 1000;
+            net.SnapshotEventBudget = 16;
+            net.EventRedundancyTicks = 4;
+
+            var assembler = new SnapshotAssembler(in cfg, net, connectionCount: 2);
+
+            // EVERY CLASS, REFLECTIVELY, AND BOTH GENERATIONS. This is the
+            // server-side twin of the hole `app-tut2` cost a playtest to find
+            // on the client: six separately named fields state nothing about a
+            // class that has none, so a fourth `VisibilityClass` would ship
+            // with no set, no error and no picture.
+            foreach (VisibilityClass cls in Enum.GetValues(typeof(VisibilityClass)))
+            {
+                int expected = VisibilitySet.CapacityFor(in cfg.Arena, cls);
+                for (int connection = 0; connection < 2; connection++)
+                {
+                    foreach (bool previous in new[] { true, false })
+                    {
+                        VisibilitySet set = assembler.SetFor(connection, cls, previous);
+                        Assert.IsNotNull(set,
+                            $"connection {connection}, {cls}, previous={previous}: no set at all");
+                        Assert.AreEqual(0, set.Count,
+                            $"connection {connection}, {cls}: a fresh match remembers nobody");
+                        Assert.AreEqual(expected, set.Capacity,
+                            $"connection {connection}, {cls}: sized by somebody else's cap");
+                    }
+                }
+            }
+
+            // Two connections must not share a set — one collector's fog is
+            // not another's, and a shared instance would leak the whole point
+            // of interest management (CR 4).
+            foreach (VisibilityClass cls in Enum.GetValues(typeof(VisibilityClass)))
+            {
+                Assert.AreNotSame(assembler.SetFor(0, cls, previous: false),
+                    assembler.SetFor(1, cls, previous: false),
+                    $"{cls}: two connections were handed the same set");
+            }
+
+            ScriptableObject.DestroyImmediate(net);
+        }
+
+        [Test]
+        public void UnknownVisibilityClass_HasNoSet_AndSaysSo()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            net.SnapshotMaxBytes = 1000;
+            net.SnapshotEventBudget = 16;
+            net.EventRedundancyTicks = 4;
+            var assembler = new SnapshotAssembler(in cfg, net, connectionCount: 1);
+
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => assembler.SetFor(0, (VisibilityClass)99, previous: false),
+                "a class with no pair must say so, not hand back the mobs' set");
+
+            ScriptableObject.DestroyImmediate(net);
+        }
+
+        [Test]
+        public void RestartResetsLootRngToSameSeed()
+        {
+            const long Seed = 20260822L;
+            SimConfig cfg = TestConfigs.Default();
+
+            // A restart on the same seed IS a new world on that seed
+            // (`MatchServer.StartMatch`), so this is what the loot stream does
+            // across one: it starts over, at exactly the same place.
+            var first = new SimulationWorld(Seed, cfg);
+            var afterRestart = new SimulationWorld(Seed, cfg);
+            for (int draw = 0; draw < 4; draw++)
+            {
+                Assert.AreEqual(first.LootRng.NextUInt(), afterRestart.LootRng.NextUInt(),
+                    $"draw {draw}: a restart on the same seed must lay the same loot");
+            }
+
+            // The positive witness beside it (lesson 129): without this line a
+            // loot stream that ignored the seed entirely would satisfy the
+            // assertion above perfectly.
+            var otherSeed = new SimulationWorld(Seed + 1, cfg);
+            var firstAgain = new SimulationWorld(Seed, cfg);
+            Assert.AreNotEqual(firstAgain.LootRng.NextUInt(), otherSeed.LootRng.NextUInt(),
+                "…and a different seed must lay different loot, or the seed is not being read");
+        }
+
+        [Test]
+        public void ForeignEpochLootResult_IsDropped()
+        {
+            // A loot answer in flight when the match restarted describes a box
+            // in a raid nobody is in any more. `LootNet.IsCurrentEpoch` is the
+            // ONE place that decides it (that field's own doc), and
+            // `NetworkSimBackend.OnLootResult` asks it before touching the
+            // window's ghost.
+            const ushort Current = 9;
+            Assert.IsTrue(LootNet.IsCurrentEpoch(Current, Current),
+                "premise: this match's own answer is applied");
+            Assert.IsFalse(LootNet.IsCurrentEpoch((ushort)(Current - 1), Current),
+                "the previous match's answer is dropped");
+            Assert.IsFalse(LootNet.IsCurrentEpoch((ushort)(Current + 1), Current),
+                "…and so is one from an epoch this client has not reached");
+            // Epoch 0 is the reserved "no match" value, and a client that has
+            // not joined one must apply nothing at all.
+            Assert.IsFalse(LootNet.IsCurrentEpoch(0, 0),
+                "a client in no match applies no answer, not even a matching zero");
         }
 
         [Test]

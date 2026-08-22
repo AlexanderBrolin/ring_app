@@ -367,6 +367,20 @@ namespace Ring.Presentation
             // Т33: and the pickup mask with it — a mask armed in the last
             // match would hide the fresh one's opening emergency.
             _pickupMaskTimer = 0f;
+            // Т35 (spec Р291, the restart reset list): the three surfaces Т33
+            // added are taken down with it. THE RING IS THE ONE THAT MATTERS —
+            // it is the only one that stays ON by itself: a collector who was
+            // mid-extraction when the raid ended leaves an `ExtractTimer` on
+            // screen that the next raid's first frames have no reason to
+            // clear, so the new match would open with a stranger's channel
+            // filling around the figure. The other two are overwritten every
+            // frame from the new frame's own numbers and are cleared here for
+            // the single frame before that happens.
+            if (_extractRing != null) _extractRing.gameObject.SetActive(false);
+            if (_emergencyLabel != null) _emergencyLabel.SetActive(false);
+            if (_phaseText != null) _phaseText.text = string.Empty;
+            if (_ammoText != null) _ammoText.text = string.Empty;
+            if (_ammoFill != null) _ammoFill.fillAmount = 0f;
         }
     }
 }

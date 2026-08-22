@@ -83,6 +83,15 @@ namespace Ring.Simulation.Visibility
 
         public int Count => _count;
 
+        /// How many ids this set was built to hold — `CapacityFor`'s answer for
+        /// its own class, frozen at construction (Stage 3 Т35). Read rather
+        /// than recomputed: the number a set was SIZED by is the only one that
+        /// says whether it was sized by the right class's cap, and asking
+        /// `CapacityFor` again would only ever confirm that `CapacityFor`
+        /// equals itself. `StalePolicy.Capacity` is the same accessor for the
+        /// same reason.
+        public int Capacity => _ids.Length;
+
         /// How many Add calls this set has REFUSED for want of room, since it
         /// was constructed (Stage 3 Task 26, spec §3.9 item 1). Deliberately
         /// NOT reset by Clear: this is a health number of the same kind as

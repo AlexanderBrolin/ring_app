@@ -122,6 +122,36 @@ namespace Ring.Presentation
         public static bool WindowMustClose(in RenderSnapshot frame)
             => !frame.Player.Alive || frame.Player.Extracted;
 
+        /// Stage 3 Т35 (spec Р291, the restart reset list): a window open when
+        /// the raid ends must not be open when the next one begins.
+        ///
+        /// THE FLAG IS LOWERED, NOT ONLY THE PANEL HIDDEN, because the flag is
+        /// what costs something: `SimInput.InventoryOpen` slows the step and
+        /// forbids the shot for as long as it is up, and a fresh raid that
+        /// opened with an invisible window would have its collector walking
+        /// slowly and unable to fire, with nothing on screen to explain it.
+        void OnEnable()
+        {
+            if (_runner != null) _runner.WorldRestarted += HandleWorldRestarted;
+        }
+
+        void OnDisable()
+        {
+            if (_runner != null) _runner.WorldRestarted -= HandleWorldRestarted;
+        }
+
+        void HandleWorldRestarted()
+        {
+            _runner.CloseInventory();
+            Hide();
+            // The refusal echo belongs to the match that produced it: a code
+            // still latched here would sound on the first click of the next
+            // raid, about a box that no longer exists.
+            _soundedRefusal = LootRefusal.None;
+            _soundedContainerId = 0;
+            _soundedSlot = 0;
+        }
+
         void Update()
         {
             if (_runner == null || _panel == null) return;
