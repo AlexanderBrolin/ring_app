@@ -105,8 +105,12 @@ namespace Ring.Presentation
         }
 
         /// Shuts the window from OUTSIDE the sampler, for the closing
-        /// conditions this class cannot see (spec §3.11: Esc, and walking out
-        /// of `LootRadius`).
+        /// conditions this class cannot see (Esc through the pause menu, and
+        /// the death or extraction of the collector himself). Walking out of
+        /// `LootRadius` is NOT among them and no longer is: spec §3.11 listed
+        /// it, and the owner's В1 playtest struck it out (bd `app-17gj`) —
+        /// leaving every box behind empties the source column, it does not put
+        /// the backpack away.
         ///
         /// IT IS A SEAM RATHER THAN A SETTER, and the asymmetry is the point:
         /// nothing outside may OPEN the window, because opening is the

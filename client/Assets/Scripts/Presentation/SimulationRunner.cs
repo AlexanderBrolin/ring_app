@@ -195,9 +195,10 @@ namespace Ring.Presentation
         public bool InventoryOpen => _sampler != null && _sampler.InventoryOpen;
 
         /// Shuts the window on behalf of a condition the sampler cannot see —
-        /// today, walking out of every box's reach (spec §3.11) and the pause
-        /// menu opening. Opening is deliberately NOT forwarded: it is the
-        /// player's own act, with exactly one way to perform it.
+        /// today, the collector's own death or extraction
+        /// (`InventoryWindowController.WindowMustClose`) and the pause menu
+        /// opening. Opening is deliberately NOT forwarded: it is the player's
+        /// own act, with exactly one way to perform it.
         public void CloseInventory() => _sampler?.CloseInventory();
 
         /// One loot operation, asked of whichever backend is installed.

@@ -26,9 +26,21 @@ namespace Ring.Presentation
     /// interior pool lists exactly the boxes within `LootRadius` — the server
     /// sends no others (Р238) and the local capture keeps the same rule — so
     /// "which box am I standing over" needs no distance test here and no config
-    /// access: it is the pool's first record. That is also how the window
-    /// learns the player walked away: an empty pool means no box in reach, and
-    /// the window closes itself.
+    /// access: it is the pool's first record. An empty pool therefore says the
+    /// player walked away from every box, and the SOURCE COLUMN empties — the
+    /// window does not.
+    ///
+    /// TWO PANELS, TWO LIVES (bd `app-17gj`, the owner's В1 playtest; lesson
+    /// 399). The first cut of this class closed the whole window on an empty
+    /// pool, which read "the source has nothing to show" as "the window must
+    /// close" — and since open ground is the common case, Tab lowered the flag
+    /// it had just raised and no panel ever appeared. The backpack belongs to
+    /// the collector, not to the box he happens to be standing on, so it is
+    /// readable anywhere; what shuts the window is `WindowMustClose` (death,
+    /// extraction), the sampler's own dash/slide edges, the pause menu, and Tab.
+    /// The cost is deliberate rather than incidental: `SimInput.InventoryOpen`
+    /// slows the step and forbids the shot for as long as the window is up, so
+    /// a pack read in open ground is paid for in the open.
     public sealed class InventoryWindowController : MonoBehaviour
     {
         /// Colors are literals rather than `GameFeelConfig` fields, the same
@@ -87,6 +99,29 @@ namespace Ring.Presentation
             }
         }
 
+        /// Whether the world itself has ended the window this frame — the
+        /// client half of `SimInputSanitizer`'s own list (Т20), which already
+        /// forces the SERVER's `SimInput.InventoryOpen` down for a dead or
+        /// extracted collector. Without this the flag would stay raised on a
+        /// client the world has stopped honoring, and the panels would keep
+        /// drawing over a corpse.
+        ///
+        /// IT DOES NOT ASK THE SOURCE POOL, AND THAT IS THE WHOLE FIX
+        /// (bd `app-17gj`, the owner's В1 playtest). The pool describes the
+        /// boxes within `LootOps.WithinLootReach` and nothing else, so reading
+        /// "the pool is empty" as "the window must close" made open ground
+        /// close a window Tab had just opened. Two statements, two homes: this
+        /// one answers whether the WINDOW lives, `DrawSource` answers what the
+        /// SOURCE panel has to show.
+        ///
+        /// THE OTHER THREE CLOSINGS ARE NOT HERE BECAUSE THEY ARE NOT ABOUT THE
+        /// FRAME. Dash and slide are edges, and `InputSampler.ClearLatches`
+        /// shuts the window where it sees them; Escape belongs to
+        /// `PauseController` and arrives through `_runner.Paused`; Tab is the
+        /// toggle itself.
+        public static bool WindowMustClose(in RenderSnapshot frame)
+            => !frame.Player.Alive || frame.Player.Extracted;
+
         void Update()
         {
             if (_runner == null || _panel == null) return;
@@ -109,20 +144,25 @@ namespace Ring.Presentation
             }
 
             RenderSnapshot frame = _runner.Curr;
-            if (frame.ContainerInteriorCount <= 0)
+            if (WindowMustClose(in frame))
             {
-                // Out of reach of every box — the closing condition the sampler
-                // cannot see. The window is TOLD to close rather than merely
-                // hidden, so the flag stops slowing the step and forbidding the
-                // shot as well.
+                // The window is TOLD to close rather than merely hidden, so the
+                // flag stops slowing the step and forbidding the shot as well.
                 _runner.CloseInventory();
                 Hide();
                 return;
             }
 
             _panel.SetActive(true);
-            ContainerInterior source = frame.ContainerInteriors[0];
-            DrawSource(in frame, in source);
+            // WHICHEVER BOX THE FRAME DESCRIBES, OR NONE. An empty pool is open
+            // ground, and open ground is a place a collector is entitled to
+            // stand and count his own cells in (`app-17gj`) — the source column
+            // simply has nothing in it.
+            bool hasSource = frame.ContainerInteriorCount > 0;
+            ContainerInterior source = hasSource
+                ? frame.ContainerInteriors[0]
+                : default;
+            DrawSource(in frame, in source, hasSource);
             DrawBackpack(in frame);
             SoundRefusal();
         }
@@ -139,10 +179,20 @@ namespace Ring.Presentation
         /// means slot `i` is occupied and its item is the NEXT one in the
         /// record's stretch of the pool — the wire's own contract, and the
         /// reason an item id cannot simply be read at `ItemOffset + slot`.
-        void DrawSource(in RenderSnapshot frame, in ContainerInterior source)
+        ///
+        /// `present` IS PASSED RATHER THAN DERIVED FROM `source`, because the
+        /// absent case is a `default` record and its `Id` is 0 — the very
+        /// address `Drop` and `Use` travel with (`BackpackAddress`). Asking
+        /// `RefusalBelongsTo(0, slot)` would light a SOURCE slot red for a
+        /// refusal the BACKPACK earned, which is the one way the empty column
+        /// could still tell a lie. The transfer bar needs no such guard and is
+        /// not given one: `LootOps.Begin` sets `LootTargetContainerId` on the
+        /// `Take` path ALONE (every other op throws before reaching it), so a
+        /// running `LootTimer` always names a real box, never id 0.
+        void DrawSource(in RenderSnapshot frame, in ContainerInterior source, bool present)
         {
             SimConfig cfg = _runner.Config;
-            _sourceTitle.text = $"Источник · {source.ItemCount}";
+            _sourceTitle.text = present ? $"Источник · {source.ItemCount}" : "Источник · нет";
 
             PlayerState self = frame.Player;
             int pooled = 0;
@@ -164,7 +214,7 @@ namespace Ring.Presentation
                     : 0f;
                 _sourceLabels[slot].text = occupied ? DescribeItem(in cfg, itemId) : "—";
                 _sourceSlots[slot].targetGraphic.color = SlotColor(occupied, transferring,
-                    RefusalBelongsTo(source.Id, slot));
+                    present && RefusalBelongsTo(source.Id, slot));
                 _sourceSlots[slot].interactable = occupied;
             }
         }
