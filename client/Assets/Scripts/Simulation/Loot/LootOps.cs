@@ -83,6 +83,41 @@ namespace Ring.Simulation.Loot
             in LootSimConfig loot)
             => WithinLootReach(math.distance(collectorPos, containerPos), in loot);
 
+        /// The width of the mask `OccupancyMaskOf` returns — the number of
+        /// bits in the byte it hands back, and nothing else. It is NOT a
+        /// restatement of the wire's `ContainerSlotsMaskWidth`: that constant
+        /// is the FORMAT's ceiling on how many slots a record may describe
+        /// (R-235 keeps it in the assembler on purpose), while this is simply
+        /// how many bits fit in the return type. They happen to be the same
+        /// number because a byte is the shape both chose.
+        const int OccupancyMaskBits = 8;
+
+        /// Which of a container's slots hold something, as one bit per slot in
+        /// ascending slot order — bit `i` set means `slotItems[i]` is not 0
+        /// (spec Р229: 0 is the empty slot).
+        ///
+        /// ONE HOME, TWO CALLERS, AND THE SECOND IS WHY IT EXISTS (Т32б).
+        /// `SnapshotAssembler.OccupancyMaskOf` built this mask for the wire;
+        /// the local backend needs the same mask for the frame's own interior
+        /// pool, because a frame must mean the same thing on both backends.
+        /// Two loops deriving "occupied" from "not zero" would be two places
+        /// to change the day an empty slot stops being a zero.
+        ///
+        /// THE CLAMPS STAY WITH THE CALLERS. The wire clamps to its format's
+        /// mask width before slicing; the local path clamps to the box's own
+        /// slot count. What is shared is the derivation, not either ceiling —
+        /// the span this receives is already exactly the slots its caller
+        /// means to describe, and anything past `OccupancyMaskBits` has no bit
+        /// to ride in and is ignored rather than silently wrapped.
+        public static byte OccupancyMaskOf(System.ReadOnlySpan<byte> slotItems)
+        {
+            byte mask = 0;
+            int slots = math.min(slotItems.Length, OccupancyMaskBits);
+            for (int i = 0; i < slots; i++)
+                if (slotItems[i] != 0) mask |= (byte)(1 << i);
+            return mask;
+        }
+
         /// The ONE home of all nine server checks (spec §3.8, Р265). A PURE
         /// function: it mutates nothing, it only answers whether the operation
         /// is legal RIGHT NOW. That purity is what lets the same nine checks

@@ -14,6 +14,117 @@ namespace Ring.Simulation.Tests
     /// entity's own hash proof.
     public class LootContainerTests
     {
+        /// Stage 3 Т32б: the owner half of a render frame — the backpack and
+        /// the interiors of the boxes within reach.
+        ///
+        /// THE SUBJECT IS THE REACH FILTER, and the fixture is built so a
+        /// capture that ignored it would fail loudly rather than merely
+        /// describe more: player 0 starts at the origin and `LootRadius` is 3,
+        /// so the near box qualifies and the far one, ten meters out, does not.
+        /// A box missing from the pool means "this frame says nothing here",
+        /// which is a different fact from an empty box — hence asserting the
+        /// COUNT and the surviving record's id rather than only the count.
+        [Test]
+        public void CaptureOwnerView_DescribesOnlyBoxesInReach()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            // The owner is moved to the origin by the same seam every loot
+            // fixture uses: `TestConfigs.Open()` spawns him on the arena's own
+            // start ring at x = 103.96, and boxes placed near the origin would
+            // be a hundred meters out of reach.
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            var frame = new RenderSnapshot(cfg);
+            int near = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f), new byte[] { 1, 2 });
+            int far = w.SpawnContainer(ContainerKind.Crate, new float2(10f, 0f), new byte[] { 3 });
+            Assert.AreNotEqual(-1, near);
+            Assert.AreNotEqual(-1, far);
+            Assert.Less(cfg.Loot.LootRadius, 10f,
+                "premise: 10 m is outside LootRadius and 1 m is inside it");
+
+            w.CaptureSnapshot(frame);
+            w.CaptureOwnerView(frame, 0);
+
+            Assert.AreEqual(2, frame.ContainerCount, "premise: both boxes are in the frame's metadata");
+            Assert.AreEqual(1, frame.ContainerInteriorCount,
+                "…and exactly one of them has its interior described");
+            Assert.AreEqual(near, frame.ContainerInteriors[0].Id,
+                "the one described is the one within LootRadius, not simply the first spawned");
+        }
+
+        /// The pool carries the OCCUPIED slots only, in ascending order, and
+        /// each record addresses its own stretch of it.
+        ///
+        /// THE MIDDLE SLOT IS DELIBERATELY EMPTY. A capture that pooled every
+        /// slot would put a zero where the second item belongs, the mask would
+        /// stop indexing the pool, and the window would show an empty slot
+        /// holding something. Two boxes, so the second record's offset is a
+        /// number the first one produced rather than a constant.
+        [Test]
+        public void CaptureOwnerView_PoolsOccupiedSlotsOnly_WithOwnOffsets()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            var frame = new RenderSnapshot(cfg);
+            int first = w.SpawnContainer(ContainerKind.Crate, new float2(1f, 0f),
+                new byte[] { 1, 0, 2 });
+            int second = w.SpawnContainer(ContainerKind.Crate, new float2(-1f, 0f), new byte[] { 3 });
+            Assert.AreNotEqual(-1, first);
+            Assert.AreNotEqual(-1, second);
+
+            w.CaptureSnapshot(frame);
+            w.CaptureOwnerView(frame, 0);
+
+            Assert.AreEqual(2, frame.ContainerInteriorCount, "premise: both boxes are in reach");
+            ContainerInterior a = frame.ContainerInteriors[0];
+            ContainerInterior b = frame.ContainerInteriors[1];
+            Assert.AreEqual(first, a.Id);
+            Assert.AreEqual(0b0000_0101, a.OccupancyMask,
+                "slots 0 and 2 hold something, slot 1 does not");
+            Assert.AreEqual(2, a.ItemCount, "two items, not three slots");
+            Assert.AreEqual(0, a.ItemOffset);
+            Assert.AreEqual(second, b.Id);
+            Assert.AreEqual(2, b.ItemOffset,
+                "the second box's items start where the first box's ended, empty slots not counted");
+
+            Assert.AreEqual(3, frame.ContainerInteriorItemCount);
+            Assert.AreEqual(1, frame.ContainerInteriorItems[0], "box one, slot 0");
+            Assert.AreEqual(2, frame.ContainerInteriorItems[1],
+                "box one, slot 2 — packed straight after slot 0, with the empty slot skipped");
+            Assert.AreEqual(3, frame.ContainerInteriorItems[2], "box two");
+        }
+
+        /// The owner's own pack lands, and it is the pack of the seat NAMED
+        /// rather than of seat zero: the index is a parameter precisely so the
+        /// world never has to know who is watching.
+        [Test]
+        public void CaptureOwnerView_LandsTheNamedSeatsBackpack()
+        {
+            var cfg = TestConfigs.Open();
+            // TWO SEATS, because the property under test is that the seat is a
+            // PARAMETER: a one-player world cannot tell "the seat asked for"
+            // from "seat zero".
+            var w = new SimulationWorld(1, cfg, 2);
+            var frame = new RenderSnapshot(cfg);
+            Assert.IsTrue(w.TryAddItem(1, 2), "premise: seat 1 carries a tier-2 item (2 slot points)");
+            Assert.IsTrue(w.TryAddItem(1, 1), "premise: and a tier-1 item (1 slot point)");
+
+            w.CaptureSnapshot(frame);
+            w.CaptureOwnerView(frame, 1);
+
+            Assert.AreEqual(2, frame.InventoryItemCount);
+            Assert.AreEqual(2, frame.InventoryItems[0], "the ids land in the order they were added");
+            Assert.AreEqual(1, frame.InventoryItems[1]);
+            Assert.AreEqual(w.InventoryUsedSlots(1), frame.InventorySlotPoints,
+                "the points are the world's own answer for that seat");
+
+            w.CaptureOwnerView(frame, 0);
+            Assert.AreEqual(0, frame.InventoryItemCount,
+                "asked about seat 0 the frame carries seat 0's pack, which is empty — the seat is a "
+                + "parameter, not an assumption");
+        }
+
         [Test]
         public void SpawnedContainer_HoldsGivenItems()
         {

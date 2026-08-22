@@ -2020,6 +2020,92 @@ namespace Ring.Simulation.Core
 
         public void ClearEvents() => _eventCount = 0;
 
+        /// The half of a frame that belongs to WHOEVER IS LOOKING rather than
+        /// to the world (Stage 3 Т32б): `ownerIndex`'s backpack, and the
+        /// interiors of the boxes within his reach.
+        ///
+        /// A SEPARATE CALL FROM `CaptureSnapshot`, AND THE OWNER IS A
+        /// PARAMETER. `CaptureSnapshot` states in its own doc that this class
+        /// has no notion of "the local client's player", and that stays true:
+        /// nothing here is asked who is watching, it is TOLD, exactly as
+        /// `InventoryItemAt(playerIndex, slot)` is told. What would have
+        /// broken the invariant is folding this into the capture and reading
+        /// the answer off the frame.
+        ///
+        /// WHY IT EXISTS. These fields reach a networked client through the
+        /// Self and ContainerSlots blocks (spec §3.12 tags 7 and 10). Left
+        /// unfilled on the local path, the inventory window would be full over
+        /// the wire and blank in the PlayMode the owner tunes in — a system
+        /// with a half, which AGENT.md rule 1 refuses.
+        ///
+        /// AND WHY BY THE SAME RULE THE WIRE USES. Only boxes within
+        /// `Loot.LootOps.WithinLootReach` are described, exactly as spec Р238
+        /// makes the assembler send them. That is meaning rather than thrift:
+        /// the pool lists the boxes a frame DESCRIBES, so a box missing from it
+        /// says "nothing known here" — and a local path that described every
+        /// box on the map while the networked one described two would make the
+        /// same field mean two things. The per-tick copy the owner rejected in
+        /// R-216 — the whole `MaxContainers * MaxContainerSlots` table, every
+        /// tick, for data one connection in three wants only while standing
+        /// over a box — is not taken here either.
+        public void CaptureOwnerView(RenderSnapshot target, int ownerIndex)
+        {
+            if (ownerIndex < 0 || ownerIndex >= _players.Length) return;
+
+            int items = math.min(InventoryCountOf(ownerIndex), target.InventoryItems.Length);
+            for (int i = 0; i < items; i++)
+                target.InventoryItems[i] = InventoryItemAt(ownerIndex, i);
+            target.InventoryItemCount = items;
+            target.InventorySlotPoints = InventoryUsedSlots(ownerIndex);
+
+            float2 eye = _players[ownerIndex].Pos;
+            int records = 0;
+            int pooled = 0;
+            System.Span<byte> slots = stackalloc byte[math.max(1, _config.Arena.MaxContainerSlots)];
+            for (int i = 0; i < target.ContainerCount; i++)
+            {
+                ContainerState box = target.Containers[i];
+                if (!Loot.LootOps.WithinLootReach(eye, box.Pos, in _config.Loot)) continue;
+
+                int width = math.min(box.SlotCount, slots.Length);
+                // The pool is sized `MaxContainers * MaxContainerSlots` and the
+                // reach filter can admit at most that many boxes of that many
+                // slots, so this cannot overrun — but a promise that holds "by
+                // construction" is the kind that stops holding when a cap
+                // moves, and asking costs one comparison per box.
+                if (pooled + width > target.ContainerInteriorItems.Length) break;
+
+                System.Span<byte> mine = slots.Slice(0, width);
+                ContainerItemsInto(box.Id, mine);
+
+                // ONLY THE OCCUPIED SLOTS ARE POOLED, in ascending slot order —
+                // the wire's own contract for these bytes and the one a reader
+                // walks them by. Pooling the empty ones too would put a zero
+                // where the next box's first item belongs, and the mask would
+                // no longer index the pool.
+                int written = 0;
+                for (int slot = 0; slot < width; slot++)
+                {
+                    if (mine[slot] == 0) continue;
+                    target.ContainerInteriorItems[pooled + written] = mine[slot];
+                    written++;
+                }
+
+                target.ContainerInteriors[records] = new ContainerInterior
+                {
+                    Id = box.Id,
+                    OccupancyMask = Loot.LootOps.OccupancyMaskOf(mine),
+                    ItemOffset = pooled,
+                    ItemCount = written,
+                };
+                pooled += written;
+                records++;
+            }
+
+            target.ContainerInteriorCount = records;
+            target.ContainerInteriorItemCount = pooled;
+        }
+
         /// Copies the current tick's render-relevant state into a preallocated
         /// target — no allocation, safe to call every render frame.
         public void CaptureSnapshot(RenderSnapshot target)

@@ -343,6 +343,27 @@ namespace Ring.Simulation.Tests
                 + "the collector still is not");
         }
 
+        /// Stage 3 Т32б: the other half of the wire/frame shared arithmetic —
+        /// which slots of a box hold something, one bit apiece.
+        ///
+        /// ASCENDING SLOT ORDER IS THE CONTRACT, and the fixture is chosen so
+        /// a mask built in the other direction cannot pass: slots 0 and 3 are
+        /// occupied and slots 1, 2 are not, so a reversed build would answer
+        /// 0b0001_0010 where 0b0000_1001 is required. Empty means the byte 0
+        /// (spec Р229), which is why a zero in the middle is the interesting
+        /// case rather than a short array.
+        [Test]
+        public void OccupancyMaskOf_SetsABitPerOccupiedSlot_Ascending()
+        {
+            Assert.AreEqual(0b0000_1001,
+                LootOps.OccupancyMaskOf(new byte[] { 3, 0, 0, 1 }),
+                "bit i means slot i holds something, counting from slot 0 up");
+            Assert.AreEqual(0, LootOps.OccupancyMaskOf(new byte[] { 0, 0 }),
+                "an emptied box answers zero — which is what 'nothing to take' looks like");
+            Assert.AreEqual(0b0000_0001, LootOps.OccupancyMaskOf(new byte[] { 5 }),
+                "a one-slot box uses one bit, not a whole byte's worth");
+        }
+
         /// The boundary is INCLUSIVE — spec §3.8 check 7 says `<= LootRadius`.
         /// Both sides of it are asserted, so a `<` written where `<=` belongs
         /// has somewhere to show. Since Т32б the comparison itself lives in

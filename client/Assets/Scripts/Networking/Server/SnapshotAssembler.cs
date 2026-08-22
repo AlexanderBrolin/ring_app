@@ -2227,10 +2227,13 @@ namespace Ring.Networking.Server
             System.Span<byte> items = stackalloc byte[SnapshotBlocks.ContainerSlotsMaskWidth];
             _world.ContainerItemsInto(box.Id, items.Slice(0, slots));
 
-            byte mask = 0;
-            for (int i = 0; i < slots; i++)
-                if (items[i] != 0) mask |= (byte)(1 << i);
-            return mask;
+            // The derivation itself is `LootOps.OccupancyMaskOf`'s since Т32б
+            // — the local frame builds the same mask for its own interior
+            // pool, and "occupied means not zero" may only be written once.
+            // The CLAMP above stays here: it is the format's ceiling, and
+            // R-235's whole point is that the format's ceiling and the world's
+            // fact are not one home.
+            return LootOps.OccupancyMaskOf(items.Slice(0, slots));
         }
 
         struct WireEvent

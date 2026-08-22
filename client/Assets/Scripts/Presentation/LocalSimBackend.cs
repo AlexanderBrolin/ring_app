@@ -186,6 +186,7 @@ namespace Ring.Presentation
                 _world.Tick(SimInputFrame.ForTick(frame, i));
                 (_prev, _curr) = (_curr, _prev);
                 _world.CaptureSnapshot(_curr);
+                _world.CaptureOwnerView(_curr, _curr.LocalPlayerIndex);
                 // Guarded — see `ISimBackend.Advance`'s doc: `StateHash()` is
                 // only ever computed when something is actually subscribed.
                 if (onTick != null) onTick(_world.CurrentTick, _world.StateHash());
@@ -213,6 +214,11 @@ namespace Ring.Presentation
             _curr = new RenderSnapshot(cfg);
             _world.CaptureSnapshot(_prev);
             _world.CaptureSnapshot(_curr);
+            // The owner half of the frame, which `CaptureSnapshot` above does
+            // not fill because the world is not asked who is watching — this
+            // backend is the one that knows (Stage 3 Т32б).
+            _world.CaptureOwnerView(_prev, _prev.LocalPlayerIndex);
+            _world.CaptureOwnerView(_curr, _curr.LocalPlayerIndex);
             _acc.Reset();
             // AFTER the reset, never before it (Stage 2 Task 48, bd
             // `app-c3m`): `Reset` clears a pending excuse along with everything
