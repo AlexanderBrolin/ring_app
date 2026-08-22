@@ -633,6 +633,34 @@ namespace Ring.Editor
                 waveChanged |= waveThreeDelta;
                 netChanged |= netDelta;
             }
+
+            // Playtest В1, round two (bd `app-oxyo`): the elite's visual scale,
+            // re-gated deliberately — which is exactly what the Stage 2 gate's
+            // own doc says a future sanctioned edit of an EXISTING value has to
+            // do, since neither of the two gates above can ever fire again.
+            //
+            // KEYED ON THE VALUE BEING REPLACED, not on a key. The marker
+            // mechanism above answers "does this field EXIST", and this field
+            // has existed since Т31 — so there is no key whose arrival could
+            // date the delivery. The old NUMBER can: "EliteVisualScale: 0.75"
+            // is in the file until this runs and never afterwards, so this
+            // reads true exactly once, on the delivery run, and false in every
+            // clone after it.
+            //
+            // AND IT DOES NOT FIGHT THE OWNER'S OWN TUNING, which is the whole
+            // reason it is keyed on the OLD value rather than on the new one.
+            // This field is live in PlayMode and meant to be tuned there; a
+            // gate reading "not yet 1.5" would reset every later hand-tuned
+            // number on the next Apply. Reading "still 0.75" leaves anything
+            // the owner puts there alone — including a deliberate return to
+            // 0.75, the one case where this fires again, and the one case where
+            // firing again is the right answer: 0.75 is the number the
+            // measurement calls wrong.
+            bool eliteScalePending = System.IO.File
+                .ReadAllText($"{DataDir}/GameFeelConfig.asset")
+                .Contains("EliteVisualScale: 0.75");
+            if (eliteScalePending)
+                feelChanged |= ApplyPlaytestOneVisuals(gameFeel);
             if (arenaChanged) EditorUtility.SetDirty(arena);
             if (waveChanged) EditorUtility.SetDirty(wave);
             if (feelChanged) EditorUtility.SetDirty(gameFeel);
@@ -2223,6 +2251,33 @@ namespace Ring.Editor
         /// (fix-round 1, I-2): MaxMobsPerWave lives on WaveConfig and
         /// MatchMaxDurationSeconds on NetConfig, so one dirty flag on `arena`
         /// would silently drop both.
+        /// The one number the В1 playtest's second round sent back into the data
+        /// (bd `app-oxyo`): `EliteVisualScale`, 0.75 → 1.5. Same shape as
+        /// `ApplyStageThreeBalance` below — a local defaults instance,
+        /// `SetIfDifferent`, destroyed in a `finally` — so the number lives in
+        /// the C# field initializer and this only delivers it to an asset that
+        /// predates the change. The reason for the number is on the field
+        /// itself; the reason for the gate is at its call site.
+        ///
+        /// THE PREFAB FOLLOWS ON ITS OWN: `GetOrCreateMobArchetypePrefab`'s
+        /// early-return path calls `SelfHealVisualScaleOnPrefab`, which exists
+        /// for precisely this (В1 fix-wave 1 added it when `GunnerVisualScale`
+        /// 0.4 → 0.76 failed to reach an already-committed prefab). Nothing here
+        /// touches `MobEliteView.prefab` directly.
+        static bool ApplyPlaytestOneVisuals(GameFeelConfig gameFeel)
+        {
+            var feelDefaults = ScriptableObject.CreateInstance<GameFeelConfig>();
+            try
+            {
+                return SetIfDifferent(ref gameFeel.EliteVisualScale,
+                    feelDefaults.EliteVisualScale);
+            }
+            finally
+            {
+                Object.DestroyImmediate(feelDefaults);
+            }
+        }
+
         static bool ApplyStageThreeBalance(ArenaConfig arena, WaveConfig wave, NetConfig net,
             out bool waveChanged, out bool netChanged)
         {

@@ -506,7 +506,27 @@ namespace Ring.Data
         // milestone 3). Both are starting points for the В1 tuning pass —
         // this field is live-tweakable in PlayMode, which is exactly why it is
         // a field.
-        [Range(0.05f, 6f)] public float EliteVisualScale = 0.75f;
+        // ⚠ ELITE WAS 0.75 AND IS 1.5 SINCE THE В1 PLAYTEST'S SECOND ROUND (bd
+        // `app-oxyo`), on the owner's call — "the elite has to be at least twice
+        // as big" — and the MEASUREMENT that call turned out to agree with. The
+        // drawn crown of every archetype was measured against the `AimProxy_Head`
+        // belt its own SO builds (renderer AABB of the prefab's `Visual`
+        // subtree): Chaser 2.70 m against a 1.85 m column, Gunner 4.21 against
+        // 3.5, Director 4.79 against 3.5 — and ELITE 1.79 against 3.5, the only
+        // archetype drawn SHORTER than its own hittable column, at barely half
+        // of it. The Head band is 2.7-3.5 m, so it stood entirely in the air
+        // ABOVE the model: an elite could not be headshot at the head a player
+        // could see, and the visible head read as body. 1.5 puts the crown at
+        // 3.58 m against the column's 3.5 — the paragraph above's warning
+        // ("a retune of one alone silently desyncs the visible model from its
+        // hittable silhouette") answered rather than repeated.
+        //
+        // The other three keep their measured mismatch (1.46 / 1.20 / 1.37 — the
+        // drawn model is TALLER than the column, so the top of it cannot be
+        // shot). That is bd `app-1cst`, and it is not a retune: the owner's
+        // decision is that hits should be resolved against the MODEL rather than
+        // a capsule, together with the projectile/mob physics of `app-afaz`.
+        [Range(0.05f, 6f)] public float EliteVisualScale = 1.5f;
         [Range(0.05f, 6f)] public float DirectorVisualScale = 3.5f;
 
         // Stage 3 Task 31 (spec §3.11): how big the raid's own furniture is

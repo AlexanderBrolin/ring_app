@@ -115,7 +115,7 @@ MonoBehaviour:
   ZoneTintMiddle: {r: 0.34, g: 0.3, b: 0.28, a: 1}
   ZoneTintCore: {r: 0.46, g: 0.33, b: 0.26, a: 1}
   MeshSagMeters: 0.05
-  EliteVisualScale: 0.75
+  EliteVisualScale: 1.5
   DirectorVisualScale: 3.5
   PickupVisualDiameter: 0.5
   ContainerVisualScale: 1
