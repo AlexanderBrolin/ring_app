@@ -1,6 +1,7 @@
 using Ring.Data;
 using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -173,6 +174,43 @@ namespace Ring.Presentation
 
         /// The simulation's own tick counter — dev overlay only.
         public int CurrentTick => _backend.CurrentTick;
+
+        // ---------------------------------------------------------------------
+        // The loot window's seam (Stage 3 Т32б). SEVEN FORWARDS AND NO EIGHTH,
+        // because `InventoryWindowController` is a VIEW: it reads what the
+        // frame and the backend already decided and turns a click into a
+        // request. It holds no `ISimBackend` of its own for the reason every
+        // other view here doesn't — the facade is what owns which backend is
+        // installed, and a view that cached one would keep the old one across a
+        // `TryUseBackend`.
+        // ---------------------------------------------------------------------
+
+        /// Whether the loot window is open. The state lives in `InputSampler`,
+        /// because the key is an edge and `SimInput.InventoryOpen` is a level;
+        /// this is the read side of it.
+        ///
+        /// FALSE BEFORE `Awake` HAS BUILT THE SAMPLER, which is the same answer
+        /// every other member here gives about a facade that is not up yet: a
+        /// window nobody can have opened is closed.
+        public bool InventoryOpen => _sampler != null && _sampler.InventoryOpen;
+
+        /// Shuts the window on behalf of a condition the sampler cannot see —
+        /// today, walking out of every box's reach (spec §3.11) and the pause
+        /// menu opening. Opening is deliberately NOT forwarded: it is the
+        /// player's own act, with exactly one way to perform it.
+        public void CloseInventory() => _sampler?.CloseInventory();
+
+        /// One loot operation, asked of whichever backend is installed.
+        public bool TryRequestLoot(LootOp op, int containerId, int slot)
+            => _backend.TryRequestLoot(op, containerId, slot);
+
+        public bool LootRequestInFlight => _backend.LootRequestInFlight;
+
+        public int LootRequestContainerId => _backend.LootRequestContainerId;
+
+        public int LootRequestSlot => _backend.LootRequestSlot;
+
+        public LootRefusal LastLootRefusal => _backend.LastLootRefusal;
 
         /// The ImmediateMuzzleFeedback prediction window both `MuzzleFlashView`
         /// and `AudioDirector` wait out (Stage 2 Task 45b fix-round 1, G-3) —

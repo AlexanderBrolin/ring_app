@@ -321,6 +321,20 @@ namespace Ring.Editor
         const string DeathOverlayObjectName = "DeathOverlay";
         const string PausePanelObjectName = "PausePanel";
         const string PauseControllerObjectName = "PauseMenu";
+        // Stage 3 Т32б: the loot window. Two columns at the screen edges and
+        // NOTHING between them — see `InventoryWindowController`'s own doc for
+        // why the middle is left alone.
+        const string InventoryPanelObjectName = "InventoryPanel";
+        const string InventoryControllerObjectName = "InventoryWindow";
+        const string InventorySourceColumnName = "SourceColumn";
+        const string InventoryBackpackColumnName = "BackpackColumn";
+        /// Column geometry, in the HUD canvas's own units. Three numbers rather
+        /// than a layout group: the slot count is fixed by the config caps, so
+        /// the rows can be placed by arithmetic and the scene carries no
+        /// component whose behavior a bootstrap would have to re-derive.
+        const float InventoryColumnWidth = 360f;
+        const float InventoryRowHeight = 44f;
+        const float InventoryRowGap = 6f;
 
         // Task 25.
         const string GameFeelDirectorObjectName = "GameFeelDirector";
@@ -1381,6 +1395,85 @@ namespace Ring.Editor
             if (deathOverlayRefsChanged)
             {
                 deathOverlaySo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // Stage 3 Т32б (spec §3.11 С23): the loot window — the source box
+            // on the left, the backpack on the right, the world in between.
+            // Built here rather than in `StageTwoSceneBootstrap` for the reason
+            // every other view in this file is: `StageTwo` builds a headless
+            // scene and has no HUD canvas to hang a panel on.
+            GameObject inventoryPanelGo = GetOrCreateInventoryPanel(hudGo.transform, ref sceneDirty);
+            Transform sourceColumn = GetOrCreateInventoryColumn(inventoryPanelGo.transform,
+                InventorySourceColumnName, -1f, ref sceneDirty);
+            Transform backpackColumn = GetOrCreateInventoryColumn(inventoryPanelGo.transform,
+                InventoryBackpackColumnName, 1f, ref sceneDirty);
+            TMP_Text sourceTitle = GetOrCreateOverlayText(sourceColumn, "Title", "Источник",
+                new Vector2(0f, -28f), new Vector2(InventoryColumnWidth - 20f, 34f), 22f,
+                ref sceneDirty);
+            TMP_Text backpackTitle = GetOrCreateOverlayText(backpackColumn, "Title", "Рюкзак",
+                new Vector2(0f, -28f), new Vector2(InventoryColumnWidth - 20f, 34f), 22f,
+                ref sceneDirty);
+
+            // THE ROW COUNTS ARE THE CONFIG'S CAPS, read from the same assets
+            // `SimConfigBuilder` reads: a panel with fewer rows than a box has
+            // slots would hide loot that is really there, and the caps are the
+            // only numbers that cannot disagree with the simulation.
+            int sourceRows = arena.MaxContainerSlots;
+            int backpackRows = hero.MaxInventoryItems;
+            var sourceButtons = new Button[sourceRows];
+            var sourceLabels = new TMP_Text[sourceRows];
+            var sourceProgress = new Image[sourceRows];
+            for (int i = 0; i < sourceRows; i++)
+                GetOrCreateInventoryRow(sourceColumn, i, true, out sourceButtons[i],
+                    out sourceLabels[i], out sourceProgress[i], ref sceneDirty);
+            var backpackButtons = new Button[backpackRows];
+            var backpackLabels = new TMP_Text[backpackRows];
+            for (int i = 0; i < backpackRows; i++)
+                GetOrCreateInventoryRow(backpackColumn, i, false, out backpackButtons[i],
+                    out backpackLabels[i], out Image _, ref sceneDirty);
+
+            GameObject inventoryGo = EditorBootstrapUtils.FindRootObject(scene,
+                InventoryControllerObjectName);
+            if (inventoryGo == null)
+            {
+                inventoryGo = new GameObject(InventoryControllerObjectName);
+                sceneDirty = true;
+            }
+            InventoryWindowController inventory =
+                inventoryGo.GetComponent<InventoryWindowController>();
+            if (inventory == null)
+            {
+                inventory = inventoryGo.AddComponent<InventoryWindowController>();
+                sceneDirty = true;
+            }
+            AudioSource inventoryAudio = inventoryGo.GetComponent<AudioSource>();
+            if (inventoryAudio == null)
+            {
+                inventoryAudio = inventoryGo.AddComponent<AudioSource>();
+                inventoryAudio.playOnAwake = false;
+                sceneDirty = true;
+            }
+            var inventorySo = new SerializedObject(inventory);
+            bool inventoryRefsChanged = false;
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_runner", runner);
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_panel", inventoryPanelGo);
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_sourceTitle", sourceTitle);
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_backpackTitle", backpackTitle);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_sourceSlots", sourceButtons);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_sourceLabels", sourceLabels);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_sourceProgress", sourceProgress);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_backpackSlots", backpackButtons);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_backpackLabels", backpackLabels);
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_audio", inventoryAudio);
+            // The refusal reuses `denied.wav` — the sound this project already
+            // means "no" with (Task 22's stamina refusal). A second clip for one
+            // meaning would be a second vocabulary.
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_refusalClip",
+                LoadAudioClip("denied.wav"));
+            if (inventoryRefsChanged)
+            {
+                inventorySo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -3598,6 +3691,148 @@ namespace Ring.Editor
         /// parent Canvas, starting hidden. Existence-guarded like everything
         /// else in this file: an owner's in-Editor tweak (e.g. background tint)
         /// survives a re-run.
+        /// The loot window's ROOT — stretched over the canvas and PAINTING
+        /// NOTHING (Stage 3 Т32б).
+        ///
+        /// DELIBERATELY NOT `GetOrCreateOverlayPanel`, whose 75%-opaque black
+        /// is exactly right for a modal and exactly wrong here: this window
+        /// stays open while the match runs, and dimming the middle of the
+        /// screen would take away the one thing the design is trading for the
+        /// slowed step — being able to see what is coming.
+        static GameObject GetOrCreateInventoryPanel(Transform parent, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(InventoryPanelObjectName);
+            if (existing != null) return existing.gameObject;
+
+            var go = new GameObject(InventoryPanelObjectName, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            StretchToFillParent((RectTransform)go.transform);
+            go.SetActive(false);
+
+            sceneDirty = true;
+            return go;
+        }
+
+        /// One column of the window, pinned to a screen edge: `side` is -1 for
+        /// the left and +1 for the right. Full height, fixed width, so the gap
+        /// between them is the whole middle of the screen at any resolution.
+        static Transform GetOrCreateInventoryColumn(Transform parent, string name, float side,
+            ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(name);
+            if (existing != null) return existing;
+
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            float anchorX = side < 0f ? 0f : 1f;
+            rect.anchorMin = new Vector2(anchorX, 0f);
+            rect.anchorMax = new Vector2(anchorX, 1f);
+            rect.pivot = new Vector2(anchorX, 1f);
+            rect.anchoredPosition = new Vector2(0f, 0f);
+            rect.sizeDelta = new Vector2(InventoryColumnWidth, 0f);
+            go.GetComponent<Image>().color = new Color(0.05f, 0.06f, 0.08f, 0.82f);
+
+            sceneDirty = true;
+            return go.transform;
+        }
+
+        /// One clickable slot row: a `Button` with a label, and — for the
+        /// source column only — a fill `Image` behind the label that the
+        /// transfer bar drives.
+        ///
+        /// PLACED BY ARITHMETIC, NOT BY A LAYOUT GROUP. The row count is a
+        /// config cap and never changes at runtime, so a layout component would
+        /// be a second thing deciding where a row sits, and a bootstrap that
+        /// has to re-derive a component's output cannot be idempotent by
+        /// inspection.
+        static void GetOrCreateInventoryRow(Transform column, int index, bool withProgress,
+            out Button button, out TMP_Text label, out Image progress, ref bool sceneDirty)
+        {
+            string name = $"Slot{index:00}";
+            float y = -70f - index * (InventoryRowHeight + InventoryRowGap);
+            float width = InventoryColumnWidth - 24f;
+
+            Transform existing = column.Find(name);
+            if (existing != null)
+            {
+                button = existing.GetComponent<Button>();
+                label = existing.Find("Label").GetComponent<TMP_Text>();
+                Transform fill = existing.Find("Progress");
+                progress = fill != null ? fill.GetComponent<Image>() : null;
+                return;
+            }
+
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+            go.transform.SetParent(column, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0.5f, 1f);
+            rect.anchorMax = new Vector2(0.5f, 1f);
+            rect.pivot = new Vector2(0.5f, 1f);
+            rect.anchoredPosition = new Vector2(0f, y);
+            rect.sizeDelta = new Vector2(width, InventoryRowHeight);
+            go.GetComponent<Image>().color = new Color(0.16f, 0.17f, 0.20f, 0.92f);
+
+            progress = null;
+            if (withProgress)
+            {
+                var fillGo = new GameObject("Progress", typeof(RectTransform), typeof(Image));
+                fillGo.transform.SetParent(go.transform, false);
+                StretchToFillParent((RectTransform)fillGo.transform);
+                progress = fillGo.GetComponent<Image>();
+                progress.sprite =
+                    AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+                progress.type = Image.Type.Filled;
+                progress.fillMethod = Image.FillMethod.Horizontal;
+                progress.fillAmount = 0f;
+                progress.color = new Color(0.35f, 0.72f, 0.85f, 0.55f);
+                progress.raycastTarget = false;
+            }
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(go.transform, false);
+            StretchToFillParent((RectTransform)labelGo.transform);
+            var tmp = labelGo.AddComponent<TextMeshProUGUI>();
+            tmp.text = "—";
+            tmp.fontSize = 18f;
+            tmp.alignment = TextAlignmentOptions.Center;
+            tmp.color = Color.white;
+            tmp.raycastTarget = false;
+            label = tmp;
+
+            button = go.GetComponent<Button>();
+            sceneDirty = true;
+        }
+
+        /// Writes a whole object-reference ARRAY field, element for element, and
+        /// answers whether anything moved — the array-shaped twin of
+        /// `EditorBootstrapUtils.SetRef`, whose contract ("returns true only on
+        /// a real change") is what keeps this bootstrap idempotent.
+        ///
+        /// THE LENGTH IS PART OF THE COMPARISON. A field that already holds the
+        /// right references but the wrong COUNT is a field that changed, and
+        /// resizing without saying so would leave `sceneDirty` false over a
+        /// scene that really did move.
+        static bool SetRefArray(SerializedObject so, string fieldName, Object[] values)
+        {
+            SerializedProperty prop = so.FindProperty(fieldName);
+            if (prop == null)
+                throw new System.InvalidOperationException(
+                    $"{so.targetObject.GetType().Name} has no serialized field '{fieldName}'.");
+
+            bool changed = prop.arraySize != values.Length;
+            prop.arraySize = values.Length;
+            for (int i = 0; i < values.Length; i++)
+            {
+                SerializedProperty element = prop.GetArrayElementAtIndex(i);
+                if (element.objectReferenceValue == values[i]) continue;
+                element.objectReferenceValue = values[i];
+                changed = true;
+            }
+
+            return changed;
+        }
+
         static GameObject GetOrCreateOverlayPanel(Transform parent, string name, ref bool sceneDirty)
         {
             Transform existing = parent.Find(name);
