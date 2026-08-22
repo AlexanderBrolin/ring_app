@@ -65,6 +65,11 @@ namespace Ring.Presentation
         /// owner's decision 4b) — the only thing there IS to do on a networked
         /// client, where the match goes on without this player.
         [SerializeField] Button _spectateButton;
+        /// The raid's public board (Stage 3 Т34, spec §3.11): one line per
+        /// collector — how his raid ended and what he carried out — with this
+        /// client's own marked. Hidden while there is no board, which is every
+        /// death that is not also the end of the raid.
+        [SerializeField] TMP_Text _resultsText;
 
         float _shownAtUnscaledTime = -1f;
 
@@ -117,6 +122,7 @@ namespace Ring.Presentation
 
             _shownAtUnscaledTime = Time.unscaledTime;
             _metricsText.text = BuildMetricsText();
+            ShowBoard();
 
             // THE PANEL OFFERS WHAT THIS BACKEND CAN ACTUALLY DO (Stage 2 Task
             // 47b, the owner's decision 4b) — the same shape `DevOverlay` uses
@@ -154,9 +160,49 @@ namespace Ring.Presentation
 
         void HandleWorldRestarted() => Hide();
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// Draws the raid's public board, or takes it off the panel when there
+        /// is none (Stage 3 Т34).
+        ///
+        /// THE BACKEND ANSWERS `null` UNTIL A RAID ENDS, and the two cases the
+        /// panel opens in are genuinely different: a collector who died while
+        /// the raid goes on has no board to read, and taking the object off
+        /// rather than printing an empty line is what keeps the panel from
+        /// showing an empty heading over nothing.
+        void ShowBoard()
+        {
+            if (_resultsText == null) return;
+
+            string board = _runner.MatchResultsBoard;
+            bool has = !string.IsNullOrEmpty(board);
+            if (_resultsText.gameObject.activeSelf != has)
+                _resultsText.gameObject.SetActive(has);
+            if (has) _resultsText.text = board;
+        }
+
         void Update()
         {
+            // Stage 3 Т34: THE RAID CAN END WITHOUT THIS CLIENT DYING. The
+            // panel has opened on `PlayerDied` alone since Stage 2, which
+            // leaves a collector who extracted — or who was still standing
+            // when the clock ran out — with no screen at all. A board
+            // appearing is the other way in, and it is polled rather than
+            // pushed because the message arrives in `Ring.Networking`, on the
+            // far side of Р180's line, with no event this layer may subscribe
+            // to. One reference comparison per frame.
+            if (_shownAtUnscaledTime < 0f && _runner != null && _runner.Ready
+                && !string.IsNullOrEmpty(_runner.MatchResultsBoard))
+            {
+                Show();
+            }
+            else if (_shownAtUnscaledTime >= 0f)
+            {
+                // The panel is already up — it may have opened on a death that
+                // came a moment BEFORE the raid's own end, in which case the
+                // board arrives while it is standing.
+                ShowBoard();
+            }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (_shownAtUnscaledTime < 0f) return;
             // The same gate the button obeys (Stage 2 Task 47b): these two keys
             // call exactly what it calls, so a backend that refuses a restart
@@ -172,8 +218,8 @@ namespace Ring.Presentation
             bool shift = kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed;
             if (shift) _runner.Restart(_runner.Seed);
             else _runner.RestartNewSeed();
-        }
 #endif
+        }
 
         /// Русские подписи — словарь мира (ADR-003 §9) + Приложение П-6.
         ///

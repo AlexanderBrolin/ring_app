@@ -749,6 +749,20 @@ namespace Ring.Presentation.Net
         public bool ShouldKeepContainerView(int id)
             => ShouldKeepView(VisibilityClass.Containers, id);
 
+        /// The raid's public scoreboard, formatted once per read out of the
+        /// message the link is holding (Stage 3 Т34).
+        ///
+        /// FORMATTED HERE RATHER THAN CACHED, and the reason is that it is not
+        /// a per-frame path: the board exists only between a raid ending and
+        /// the next one starting, and the one consumer is a screen that draws
+        /// it when the panel opens. A cache would need its own invalidation on
+        /// an epoch change — a second thing to keep in step for no measured
+        /// gain.
+        public string MatchResultsBoard
+            => _link != null && _link.State.HasResults
+                ? Net.MatchResultsBoard.Format(_link.State.ResultsNet, LocalPlayerIndex)
+                : null;
+
         /// Both readers answer the pre-`Configure` frames the same way every
         /// other member here does — nothing is remembered yet, so nothing is
         /// fading and nothing is worth keeping.

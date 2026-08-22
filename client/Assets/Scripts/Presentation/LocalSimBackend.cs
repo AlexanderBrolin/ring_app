@@ -225,6 +225,13 @@ namespace Ring.Presentation
 
         public bool ShouldKeepContainerView(int id) => false;
 
+        /// `null`, and by a fact rather than by omission (Stage 3 Т34): the
+        /// board is a BROADCAST, built by `MatchServer` out of the summary it
+        /// assembles when a networked match ends. Solo has no `MatchServer` at
+        /// all — a local world is stepped in this process and ends by
+        /// restarting — so there is no raid whose members could be listed.
+        public string MatchResultsBoard => null;
+
         /// False, and permanently: solo has no wire, no round trip, no
         /// snapshot ring and no reconciliation, so every field of
         /// `NetDiagnostics` would be a zero that looks exactly like a

@@ -279,6 +279,10 @@ namespace Ring.Presentation
 
         public bool ShouldKeepContainerView(int id) => _backend.ShouldKeepContainerView(id);
 
+        /// The raid's public scoreboard, or `null` while none has arrived
+        /// (Stage 3 Т34) — a forward, like every other backend question here.
+        public string MatchResultsBoard => _backend.MatchResultsBoard;
+
         /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
         /// this render frame was sampled with — `MuzzleFlashView`/
         /// `AudioDirector`'s per-frame prediction reads `FireHeld` off THIS

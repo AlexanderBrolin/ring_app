@@ -1408,6 +1408,7 @@ namespace Ring.Networking.Server
 
             // Captured before `StopMatch` nulls the field.
             NetworkConnection[] connections = _connections;
+            MatchResultsNet results = ResultsNetFrom(in summary);
             try
             {
                 for (int i = 0; i < connections.Length; i++)
@@ -1417,6 +1418,12 @@ namespace Ring.Networking.Server
                     // send (step 4).
                     if (!connections[i].IsActive) continue;
                     _nm.ServerManager.Broadcast(connections[i], EndedNetFor(in summary, i),
+                        channel: Channel.Reliable);
+                    // Stage 3 Т34: and the public board, the same connection
+                    // and the same channel. Built ONCE outside this loop —
+                    // every copy is identical by construction, which is the
+                    // whole difference between it and the message above.
+                    _nm.ServerManager.Broadcast(connections[i], results,
                         channel: Channel.Reliable);
                 }
             }
@@ -1529,6 +1536,48 @@ namespace Ring.Networking.Server
                 WavesCleared = world.WavesCleared,
                 MobSpawnsSkipped = world.MobSpawnsSkipped,
                 ProjectileSpawnsSkipped = world.ProjectileSpawnsSkipped,
+            };
+        }
+
+        /// The raid's PUBLIC scoreboard, built once and sent to everyone
+        /// (Stage 3 Т34, spec §3.10/§3.11, Р270).
+        ///
+        /// THE SAME SUMMARY BOTH MESSAGES COME OFF (errata E-3). `EndedNetFor`
+        /// above reads one slot of it for one connection; this reads every
+        /// slot for everybody. One capture, two readings — so a collector's
+        /// credits cannot say one thing on his own screen and another on the
+        /// board beside it, which is what two builders reading two places
+        /// would eventually produce.
+        ///
+        /// ONE ALLOCATION PAIR PER MATCH. Both arrays are minted here rather
+        /// than borrowed from the summary: `summary.Outcome` is
+        /// `MatchOutcome[]`, a simulation-side enum the wire carries as bytes,
+        /// and `CreditsTotal` is handed out to FishNet's serializer, which
+        /// must not be given a reference the server keeps mutating. This runs
+        /// once, on the tick a match ends.
+        ///
+        /// `internal` FOR THE TESTS, for the reason `EndedNetFor` states: a
+        /// pure function of a summary, no FishNet and no world, and a run of
+        /// same-typed assignments is exactly where a swapped pair compiles and
+        /// misreports forever.
+        internal static MatchResultsNet ResultsNetFrom(in MatchSummary summary)
+        {
+            int seats = summary.Outcome.Length;
+            var outcome = new byte[seats];
+            var credits = new int[seats];
+            for (int slot = 0; slot < seats; slot++)
+            {
+                outcome[slot] = (byte)summary.Outcome[slot];
+                credits[slot] = summary.CreditsTotal[slot];
+            }
+
+            return new MatchResultsNet
+            {
+                Reason = (byte)summary.Reason,
+                MatchEpoch = summary.Epoch,
+                FinalTick = summary.FinalTick,
+                Outcome = outcome,
+                CreditsTotal = credits,
             };
         }
 

@@ -31,9 +31,27 @@ namespace Ring.Simulation.Tests
         /// own name for that property.
         public static void EnsureRegistered()
         {
-            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedWriters___Internal");
-            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedReaders___Internal");
+            InvokeInitializeOnce(RingAssembly, "FishNet.Serializing.Generated.GeneratedWriters___Internal");
+            InvokeInitializeOnce(RingAssembly, "FishNet.Serializing.Generated.GeneratedReaders___Internal");
+            // AND THE PACKAGE'S OWN TABLE, WHICH IS A SEPARATE ONE (Stage 3
+            // Т34). The post-processor emits one generated class PER ASSEMBLY,
+            // so `Ring.Networking`'s holds the serializers for Ring's own wire
+            // structs while the ELEMENT serializers a `WriteArray<T>` resolves
+            // through — `GenericWriter<byte>`, `GenericWriter<int>` — are
+            // emitted into `FishNet.Runtime`'s. Registering only the first
+            // table is enough for a struct of scalars and silently WRONG for
+            // one carrying an array: the write logs "Write method not found
+            // for System.Byte" and the field comes back null, which a
+            // round-trip assertion reads as a protocol defect that is not
+            // there. Measured on `MatchResultsNet` and confirmed against
+            // `MatchEndedNet.Loot`, which had never been round-tripped here.
+            InvokeInitializeOnce(FishNetAssembly, "FishNet.Serializing.Generated.GeneratedWriters___Internal");
+            InvokeInitializeOnce(FishNetAssembly, "FishNet.Serializing.Generated.GeneratedReaders___Internal");
         }
+
+        static System.Reflection.Assembly RingAssembly => typeof(InputCodec).Assembly;
+
+        static System.Reflection.Assembly FishNetAssembly => typeof(FishNet.Serializing.Writer).Assembly;
 
         /// The comparer table, filled from its own generated class and asked
         /// about by FishNet's prediction path rather than by a writer —
@@ -45,14 +63,14 @@ namespace Ring.Simulation.Tests
         /// them a failure belongs to.
         public static void EnsureComparersRegistered()
         {
-            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedComparers___Internal");
+            InvokeInitializeOnce(RingAssembly, "FishNet.Serializing.Generated.GeneratedComparers___Internal");
         }
 
-        static void InvokeInitializeOnce(string typeName)
+        static void InvokeInitializeOnce(System.Reflection.Assembly assembly, string typeName)
         {
-            System.Type t = typeof(InputCodec).Assembly.GetType(typeName);
-            Assert.IsNotNull(t, $"{typeName} must exist in Ring.Networking — FishNet's IL "
-                + "post-processor creates it for every assembly it processes, and its absence "
+            System.Type t = assembly.GetType(typeName);
+            Assert.IsNotNull(t, $"{typeName} must exist in {assembly.GetName().Name} — FishNet's "
+                + "IL post-processor creates it for every assembly it processes, and its absence "
                 + "means codegen did not run over this assembly at all");
             MethodInfo init = t.GetMethod("InitializeOnce",
                 BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);

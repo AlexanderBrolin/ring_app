@@ -1424,6 +1424,18 @@ namespace Ring.Editor
             Button deathSpectateButton = GetOrCreateOverlayButton(deathPanelGo.transform,
                 SpectateButtonObjectName, "Наблюдать",
                 new Vector2(0f, -230f), new Vector2(220f, 50f), ref sceneDirty);
+            // Stage 3 Т34 (spec §3.10/§3.11): the raid's public board, between
+            // this collector's own numbers and the buttons. It ships DISABLED
+            // like the spectate label and the emergency mark — a build opens on
+            // a raid that has not ended — and `DeathOverlayController.ShowBoard`
+            // is what turns it on for the panels that HAVE one.
+            TMP_Text deathResults = GetOrCreateOverlayText(deathPanelGo.transform, "Results", "",
+                new Vector2(0f, -130f), new Vector2(700f, 90f), 20f, ref sceneDirty);
+            if (deathResults != null && deathResults.gameObject.activeSelf)
+            {
+                deathResults.gameObject.SetActive(false);
+                sceneDirty = true;
+            }
 
             GameObject deathOverlayGo = EditorBootstrapUtils.FindRootObject(scene, DeathOverlayObjectName);
             if (deathOverlayGo == null)
@@ -1447,6 +1459,8 @@ namespace Ring.Editor
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_hintText", deathHint);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_spectateButton",
                 deathSpectateButton);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_resultsText",
+                deathResults);
             if (deathOverlayRefsChanged)
             {
                 deathOverlaySo.ApplyModifiedPropertiesWithoutUndo();

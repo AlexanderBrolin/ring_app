@@ -376,6 +376,22 @@ namespace Ring.Presentation
 
         bool ShouldKeepContainerView(int id);
 
+        /// The raid's PUBLIC scoreboard, ready to draw, or `null` while no
+        /// raid has ended (Stage 3 Т34, spec §3.10/§3.11).
+        ///
+        /// TEXT RATHER THAN A MESSAGE, BECAUSE OF Р180. `Presentation.asmdef`
+        /// does not reference `Ring.Networking` and must not — so
+        /// `MatchResultsNet` and `MatchOutcome` are types this layer cannot
+        /// name, and a byte handed across instead would need a second copy of
+        /// the outcome domain over here, one that keeps compiling and starts
+        /// printing the wrong word the day a sixth outcome is added. The
+        /// crossing happens once, in `Ring.Presentation.Net`, which is allowed
+        /// to see both sides (`MatchResultsBoard`).
+        ///
+        /// `null` AND NOT AN EMPTY STRING: a screen has to tell "no raid has
+        /// ended" from "a raid ended with nobody in it".
+        string MatchResultsBoard { get; }
+
         /// This frame's network instrument panel, or `false` when this backend
         /// HAS no network (Stage 2 Task 48, plan Ф9 :2100-2107). The dev
         /// overlay draws its whole network section behind this answer, so a

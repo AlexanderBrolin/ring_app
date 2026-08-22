@@ -1,7 +1,12 @@
+using System;
+using System.Linq;
+using FishNet.Broadcast;
+using FishNet.Serializing;
 using NUnit.Framework;
 using Ring.Networking;
 using Ring.Networking.Protocol;
 using Ring.Networking.Server;
+using Ring.Presentation.Net;
 using Ring.Server;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
@@ -448,6 +453,256 @@ namespace Ring.Simulation.Tests
                 "an empty hold is a MEASURED fact and says so — the dash this project reserves for " +
                 "a number nobody measured (app-mi4's bytesUp) would be a different claim entirely");
             Assert.That(line, Does.Contain("result=" + MatchOutcome.Stranded));
+        }
+
+        // ------------------------------------------------------------------
+        // Stage 3 Т34 (spec §3.10/§3.11, Р270): the PUBLIC scoreboard
+        //
+        // TWO MESSAGES, AND THE SECOND IS A SUBSET RATHER THAN A COPY.
+        // `MatchEndedNet` above is personal and stays personal — accuracy,
+        // damage taken, shots and kills are built per connection out of that
+        // connection's own slot. `MatchResultsNet` goes to EVERYONE, so it may
+        // carry only what a raid is entitled to know about its members: how
+        // each one's raid ended and what he walked out with. The tests below
+        // are what stops the public message quietly growing into the private
+        // one.
+        // ------------------------------------------------------------------
+
+        /// Three seats with a DISTINCT number in every column, the same rule
+        /// `EndedNetFor_CopiesEveryResultField` follows: a builder that swapped
+        /// two same-typed arrays would round-trip perfectly and misreport a
+        /// player's raid for good.
+        static MatchSummary ThreeSeatSummary()
+        {
+            var stats = new MatchStats[3];
+            for (int i = 0; i < stats.Length; i++)
+                stats[i] = new MatchStats { Kills = 10 + i, AmmoSpent = 60 + i, CellsPicked = 70 + i };
+
+            return new MatchSummary(MatchEndReason.MaxDurationReached, epoch: 7,
+                finalTick: 4321, in Nothing, droppedEvents: 0, stats,
+                new[] { new NetStats(), new NetStats(), new NetStats() },
+                new[] { MatchOutcome.ExtractedEarly, MatchOutcome.Died, MatchOutcome.Stranded },
+                new[] { 111, 222, 333 },
+                new[] { new byte[] { 1, 2 }, new byte[0], new byte[0] },
+                new[] { 81, 82, 83 });
+        }
+
+        [Test]
+        public void ResultsNet_IsABroadcastStruct()
+        {
+            // `IBroadcast` is an empty marker and `Broadcast<T>` is constrained
+            // to structs, so a class here compiles and fails only at the send.
+            Assert.IsTrue(typeof(MatchResultsNet).IsValueType,
+                "MatchResultsNet must be a struct — FishNet's Broadcast<T> takes structs.");
+            Assert.IsTrue(typeof(IBroadcast).IsAssignableFrom(typeof(MatchResultsNet)),
+                "MatchResultsNet must implement IBroadcast.");
+        }
+
+        [Test]
+        public void ResultsNet_SurvivesTheFishNetWireRoundTrip()
+        {
+            TestSerializers.EnsureRegistered();
+            MatchResultsNet source = MatchServer.ResultsNetFrom(ThreeSeatSummary());
+
+            Assert.IsNotNull(GenericWriter<MatchResultsNet>.Write,
+                "FishNet's codegen must have produced a writer — without one the scoreboard "
+                + "never leaves the server");
+            Assert.IsNotNull(GenericReader<MatchResultsNet>.Read, "…and a matching reader");
+
+            var writer = new Writer();
+            writer.Write(source);
+            var reader = new Reader(writer.GetArraySegment(), null);
+            MatchResultsNet back = reader.Read<MatchResultsNet>();
+
+            Assert.AreEqual(source.MatchEpoch, back.MatchEpoch, "MatchEpoch");
+            Assert.AreEqual(source.Reason, back.Reason, "Reason");
+            Assert.AreEqual(source.FinalTick, back.FinalTick, "FinalTick");
+            CollectionAssert.AreEqual(source.Outcome, back.Outcome,
+                "every seat's ending, in seat order");
+            CollectionAssert.AreEqual(source.CreditsTotal, back.CreditsTotal,
+                "every seat's credits, in the same seat order");
+        }
+
+        [Test]
+        public void PublicSubsetCarriesNoAccuracy()
+        {
+            // NAMED BY THE PROPERTY THEY SHARE, NOT ONE BY ONE. Р270's rule is
+            // "what a shot was worth stays private", and the way to hold it is
+            // to FORBID the fields rather than to enumerate today's message: a
+            // counter added to `MatchEndedNet` next year is caught by this list
+            // the moment somebody copies it across.
+            string[] forbidden =
+            {
+                "Kills", "HeadshotKills", "ShotsFired", "ShotsHit", "DamageTaken",
+                "DashesUsed", "SlidesUsed", "DeathTick", "AmmoSpent", "CellsPicked", "Loot",
+            };
+            string[] present = typeof(MatchResultsNet).GetFields().Select(f => f.Name).ToArray();
+
+            foreach (string field in forbidden)
+            {
+                CollectionAssert.DoesNotContain(present, field,
+                    $"{field} is private to a collector — the public board may not carry it");
+            }
+        }
+
+        [Test]
+        public void PublicSubsetCarriesTheThreeThingsItOwes()
+        {
+            // The positive witness beside the negative one above (lesson 129):
+            // without it, "carry nothing at all" would satisfy the forbidding
+            // test perfectly.
+            string[] present = typeof(MatchResultsNet).GetFields().Select(f => f.Name).ToArray();
+            CollectionAssert.Contains(present, "Outcome", "how each raid ended is public");
+            CollectionAssert.Contains(present, "CreditsTotal",
+                "what each collector carried out is public");
+            CollectionAssert.Contains(present, "MatchEpoch",
+                "the epoch, or a client cannot discard a board from a match it has left");
+        }
+
+        [Test]
+        public void ResultsNetFrom_CopiesEverySeatInSeatOrder()
+        {
+            MatchSummary summary = ThreeSeatSummary();
+            MatchResultsNet results = MatchServer.ResultsNetFrom(summary);
+
+            Assert.AreEqual(3, results.Outcome.Length,
+                "one entry per seat, and the seat IS the index — a slot field beside it could disagree");
+            Assert.AreEqual(3, results.CreditsTotal.Length);
+            for (int slot = 0; slot < 3; slot++)
+            {
+                Assert.AreEqual((byte)summary.Outcome[slot], results.Outcome[slot],
+                    $"seat {slot}'s ending");
+                Assert.AreEqual(summary.CreditsTotal[slot], results.CreditsTotal[slot],
+                    $"seat {slot}'s credits");
+            }
+
+            Assert.AreEqual(7, results.MatchEpoch, "MatchEpoch");
+            Assert.AreEqual(4321u, results.FinalTick, "FinalTick");
+            Assert.AreEqual((byte)MatchEndReason.MaxDurationReached, results.Reason, "Reason");
+        }
+
+        [Test]
+        public void BothMessagesComeFromTheSameSummary()
+        {
+            // Errata E-3: one source of truth for the raid's numbers. A seat's
+            // credits must read the same whether it learns them from its own
+            // personal message or off the public board — two builders reading
+            // two places is exactly how those answers start to differ.
+            MatchSummary summary = ThreeSeatSummary();
+            MatchResultsNet results = MatchServer.ResultsNetFrom(summary);
+
+            for (int slot = 0; slot < 3; slot++)
+            {
+                MatchEndedNet personal = MatchServer.EndedNetFor(in summary, slot);
+                Assert.AreEqual(personal.CreditsTotal, results.CreditsTotal[slot],
+                    $"seat {slot}: the personal message and the board must agree on credits");
+                Assert.AreEqual(personal.Outcome, results.Outcome[slot],
+                    $"seat {slot}: …and on how the raid ended");
+                Assert.AreEqual(personal.MatchEpoch, results.MatchEpoch,
+                    $"seat {slot}: …and on which match this was");
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // The board itself: the crossing from the wire's byte to the screen's
+        // word, done once on the side of Р180 that may see both.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void EveryOutcomeOwnsAWordOnTheBoard()
+        {
+            // Reflective over the domain: a sixth outcome added later is named
+            // by this test rather than printed as the fifth one's word.
+            foreach (MatchOutcome outcome in Enum.GetValues(typeof(MatchOutcome)))
+            {
+                Assert.IsNotEmpty(MatchResultsBoard.WordFor(outcome),
+                    $"{outcome} has no word on the board");
+            }
+        }
+
+        [Test]
+        public void EveryOutcomeWordIsDistinct()
+        {
+            // Two endings sharing a word would be a board that cannot be read:
+            // a collector who was cut off and one who stayed behind lost their
+            // raid in different ways, and only one of them may come back for
+            // the pack.
+            string[] words = Enum.GetValues(typeof(MatchOutcome))
+                .Cast<MatchOutcome>()
+                .Select(MatchResultsBoard.WordFor)
+                .ToArray();
+            CollectionAssert.AllItemsAreUnique(words);
+        }
+
+        [Test]
+        public void UnknownOutcome_Throws()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => MatchResultsBoard.WordFor((MatchOutcome)99),
+                "an outcome the table does not know must say so, not borrow a neighbor's word");
+        }
+
+        [Test]
+        public void Board_HasALinePerSeat_AndMarksThisClientsOwn()
+        {
+            MatchResultsNet results = MatchServer.ResultsNetFrom(ThreeSeatSummary());
+
+            string board = MatchResultsBoard.Format(in results, localSlot: 1);
+            string[] lines = board.Split('\n');
+
+            Assert.AreEqual(3, lines.Length, "one line per seat");
+            // The seat number a human reads is one-based — a place at a table,
+            // not an offset.
+            Assert.That(lines[0], Does.Contain("СБОРЩИК 1"));
+            Assert.That(lines[1], Does.Contain("СБОРЩИК 2"));
+            Assert.That(lines[2], Does.Contain("СБОРЩИК 3"));
+
+            Assert.That(lines[1], Does.StartWith("▶"), "the local seat is marked");
+            Assert.That(lines[0], Does.Not.StartWith("▶"), "…and nobody else's is");
+            Assert.That(lines[2], Does.Not.StartWith("▶"));
+        }
+
+        [Test]
+        public void Board_CarriesTheOutcomeAndTheCreditsOfEachSeat()
+        {
+            MatchSummary summary = ThreeSeatSummary();
+            MatchResultsNet results = MatchServer.ResultsNetFrom(summary);
+
+            string[] lines = MatchResultsBoard.Format(in results, localSlot: 0).Split('\n');
+            for (int slot = 0; slot < 3; slot++)
+            {
+                Assert.That(lines[slot],
+                    Does.Contain(MatchResultsBoard.WordFor(summary.Outcome[slot])),
+                    $"seat {slot}: its own ending");
+                Assert.That(lines[slot], Does.Contain(summary.CreditsTotal[slot].ToString()),
+                    $"seat {slot}: its own credits");
+            }
+        }
+
+        [Test]
+        public void Board_IsNullBeforeAnyResultsHaveArrived()
+        {
+            // `null` rather than "", because the screen has to tell "the raid
+            // has not ended" from "the raid ended with nobody in it".
+            Assert.IsNull(MatchResultsBoard.Format(default, localSlot: 0));
+        }
+
+        [Test]
+        public void Board_DrawsTheSeatsBothArraysDescribe_RatherThanThrowing()
+        {
+            // A decoder that never throws (Р82) can hand this a message whose
+            // two arrays disagree. Taking the shorter is the honest answer for
+            // a board that lost bytes; throwing would take the whole screen
+            // away over a cosmetic disagreement.
+            var ragged = new MatchResultsNet
+            {
+                Outcome = new[] { (byte)MatchOutcome.Died, (byte)MatchOutcome.Stranded },
+                CreditsTotal = new[] { 5 },
+            };
+
+            string board = MatchResultsBoard.Format(in ragged, localSlot: 0);
+            Assert.AreEqual(1, board.Split('\n').Length,
+                "only the seat both arrays describe is drawn");
         }
     }
 }
