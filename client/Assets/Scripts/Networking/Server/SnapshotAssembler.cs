@@ -1,6 +1,7 @@
 using Ring.Data;
 using Ring.Networking.Protocol;
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 using Ring.Simulation.Visibility;
 using Unity.Mathematics;
 
@@ -1590,7 +1591,8 @@ namespace Ring.Networking.Server
             c.SlotsCandidates.Clear();
             for (int i = 0; i < c.ContainerCandidates.Count; i++)
             {
-                if (c.ContainerCandidates.Distance[i] > _cfg.Loot.LootRadius) continue;
+                if (!LootOps.WithinLootReach(c.ContainerCandidates.Distance[i], in _cfg.Loot))
+                    continue;
                 c.SlotsCandidates.Add(i, c.ContainerCandidates.Ids[i],
                     c.ContainerCandidates.Distance[i]);
             }

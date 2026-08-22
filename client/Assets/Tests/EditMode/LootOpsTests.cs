@@ -304,9 +304,50 @@ namespace Ring.Simulation.Tests
                 "lower bound: a negative backpack index");
         }
 
+        /// Stage 3 Т32б: the ONE home of Р238's reach test, asked directly.
+        /// `Validate_RefusesWhenTooFar` below asks it through check 7 and the
+        /// frame builder asks it over a distance it already measured; this is
+        /// the witness for the method itself, and for the one property
+        /// neither caller could ever have exposed.
+        ///
+        /// THE DIAGONAL IS THE POINT OF THE THIRD PAIR. A reach test written
+        /// per axis — `abs(dx) <= r && abs(dy) <= r` — accepts a collector
+        /// standing at (0.75r, 0.75r), who is 1.06r away and out of reach.
+        /// Both call sites happened to measure a true distance, so no existing
+        /// test could tell a circle from a square; extracting the comparison
+        /// into a method that could be rewritten makes that worth pinning.
+        [Test]
+        public void WithinLootReach_IsInclusive_AndMeasuresTrueDistance()
+        {
+            var cfg = TestConfigs.Open();
+            float radius = cfg.Loot.LootRadius;
+
+            Assert.IsTrue(LootOps.WithinLootReach(radius, in cfg.Loot),
+                "exactly at LootRadius counts as in reach — the spec says <=, not <");
+            Assert.IsFalse(LootOps.WithinLootReach(radius + 0.01f, in cfg.Loot),
+                "and a hair beyond it does not");
+
+            Assert.IsTrue(
+                LootOps.WithinLootReach(float2.zero, new float2(radius, 0f), in cfg.Loot),
+                "the position overload measures the same boundary…");
+            Assert.IsFalse(
+                LootOps.WithinLootReach(float2.zero, new float2(radius + 0.01f, 0f), in cfg.Loot),
+                "…on both of its sides");
+
+            // 0.75r on each axis is 1.0607r away: inside the square, outside
+            // the circle.
+            Assert.IsFalse(
+                LootOps.WithinLootReach(float2.zero, new float2(radius * 0.75f, radius * 0.75f),
+                    in cfg.Loot),
+                "reach is a RADIUS, not a bounding box — each axis is within LootRadius here and "
+                + "the collector still is not");
+        }
+
         /// The boundary is INCLUSIVE — spec §3.8 check 7 says `<= LootRadius`.
         /// Both sides of it are asserted, so a `<` written where `<=` belongs
-        /// has somewhere to show.
+        /// has somewhere to show. Since Т32б the comparison itself lives in
+        /// `LootOps.WithinLootReach` (pinned directly above); this stays the
+        /// witness that check 7 ASKS it.
         [Test]
         public void Validate_RefusesWhenTooFar()
         {

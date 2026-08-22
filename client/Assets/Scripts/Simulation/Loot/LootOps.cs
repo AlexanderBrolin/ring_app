@@ -54,6 +54,35 @@ namespace Ring.Simulation.Loot
     /// of it lives here, this file only READS the flag (check 2 below).
     public static class LootOps
     {
+        /// Whether a collector standing `distance` away from a container is
+        /// close enough to loot it — the ONE home of spec Р238's reach test
+        /// (Stage 3 Т32б).
+        ///
+        /// IT WAS WRITTEN TWICE BEFORE THIS METHOD EXISTED, and the third
+        /// writer is what made one home mandatory rather than tidy.
+        /// `Validate`'s check 7 spelled `math.distance(p.Pos, c.Pos) >
+        /// cfg.Loot.LootRadius`; `SnapshotAssembler` spelled
+        /// `Distance[i] > _cfg.Loot.LootRadius` over a distance it had already
+        /// measured; and Т32б needs the same question a third time, to decide
+        /// which interiors a LOCAL frame describes. The two spellings agreed —
+        /// both inclusive at the boundary — but nothing held them together,
+        /// and the day they disagree a client is refused a box the frame just
+        /// showed him the inside of.
+        ///
+        /// INCLUSIVE AT THE BOUNDARY, because the spec says "<= LootRadius".
+        /// Expressed as `<=` rather than as the negation of the `>` both call
+        /// sites used, so the boundary reads the way the spec states it
+        /// instead of the way a refusal happened to be phrased.
+        public static bool WithinLootReach(float distance, in LootSimConfig loot)
+            => distance <= loot.LootRadius;
+
+        /// The same question asked of two positions, for callers that have not
+        /// already measured the distance. One home, one comparison: this
+        /// overload only supplies the measurement.
+        public static bool WithinLootReach(in float2 collectorPos, in float2 containerPos,
+            in LootSimConfig loot)
+            => WithinLootReach(math.distance(collectorPos, containerPos), in loot);
+
         /// The ONE home of all nine server checks (spec §3.8, Р265). A PURE
         /// function: it mutates nothing, it only answers whether the operation
         /// is legal RIGHT NOW. That purity is what lets the same nine checks
@@ -140,8 +169,10 @@ namespace Ring.Simulation.Loot
                 byte itemId = w.ContainerSlotAt(index, slot);
                 if (itemId == 0) return LootRefusal.SlotEmpty;
 
-                // (7) within reach. Inclusive — the spec says "<= LootRadius".
-                if (math.distance(p.Pos, c.Pos) > cfg.Loot.LootRadius) return LootRefusal.TooFar;
+                // (7) within reach — through the one home of Р238's test
+                // (WithinLootReach above), which is also what the frame
+                // builder and the local frame's interiors ask.
+                if (!WithinLootReach(p.Pos, c.Pos, in cfg.Loot)) return LootRefusal.TooFar;
 
                 // (8) the backpack can take it — slot POINTS, not item count
                 // (and the hard MaxInventoryItems ceiling too; see
