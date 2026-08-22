@@ -28,7 +28,7 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void NewSnapshot_SizesBothFlagArraysToTheWholeRoster()
+        public void NewSnapshot_SizesEveryFlagArrayToTheWholeRoster()
         {
             SimConfig cfg = TestConfigs.Open();
             var snap = new RenderSnapshot(cfg);
@@ -40,9 +40,11 @@ namespace Ring.Simulation.Tests
                 "PlayerKnown must be indexable by any seat of the roster");
             Assert.AreEqual(cfg.Arena.MaxPlayers, snap.PlayerAliveInMatch.Length,
                 "PlayerAliveInMatch must be indexable by any seat of the roster");
+            Assert.AreEqual(cfg.Arena.MaxPlayers, snap.PlayerExtractedInMatch.Length,
+                "PlayerExtractedInMatch must be indexable by any seat of the roster");
         }
 
-        /// Фикс-раунд гейта Ф7, находка ревью B-2 (Important).
+        /// Ф7 gate fix-round, review finding B-2 (Important).
         ///
         /// THE LOCAL FRAME MUST ANSWER "IS THE DIRECTOR ALIVE" TOO. The bit is
         /// carried on the wire (the Match block's `DirectorAlive` flag) and
@@ -100,6 +102,37 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(snap.PlayerAliveInMatch[0], "seat 0 was killed");
             Assert.IsTrue(snap.PlayerAliveInMatch[1], "seat 1 never took a blow");
             Assert.IsTrue(snap.PlayerAliveInMatch[2], "seat 2 never took a blow");
+        }
+
+        /// Playtest В1, round two (bd `app-1kei`).
+        ///
+        /// A COLLECTOR WHO WALKED OUT IS NOT A CORPSE, and the frame is where
+        /// that stops being sayable if this array is not filled. The local path
+        /// is the one the owner tunes in, and there `Players[i].Extracted`
+        /// happens to carry the truth as well — which is exactly the trap:
+        /// a picture written against that field alone works in solo and draws a
+        /// body for every teammate who made it out, because a stranger's record
+        /// off the wire has no bit for it. One fact, one home, both backends.
+        [Test]
+        public void CaptureSnapshot_ExtractedInMatchMirrorsTheWorldsOwnRoster()
+        {
+            SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
+            PlayerState gone = w.PlayerAt(1);
+            gone.Alive = false;
+            gone.Extracted = true;
+            w.SetPlayerForTest(1, in gone);
+
+            var snap = new RenderSnapshot(cfg);
+            w.CaptureSnapshot(snap);
+
+            // Per seat, for the reason the roster test above states: a constant
+            // answer satisfies one line and only the pattern refuses both.
+            Assert.IsFalse(snap.PlayerExtractedInMatch[0], "seat 0 is still in the raid");
+            Assert.IsTrue(snap.PlayerExtractedInMatch[1], "seat 1 walked out");
+            Assert.IsFalse(snap.PlayerExtractedInMatch[2], "seat 2 is still in the raid");
+            Assert.IsFalse(snap.PlayerAliveInMatch[1],
+                "…and walking out ends a seat's life in the arena, which is precisely why "
+                + "the two flags cannot be derived from one another");
         }
 
         [Test]

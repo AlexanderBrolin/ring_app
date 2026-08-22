@@ -32,6 +32,7 @@ namespace Ring.Simulation.Tests
         /// the block it was asked for instead of stepping over it.
         static readonly byte[] AllKinds =
         {
+            (byte)SnapshotBlockKind.Liveness,
             (byte)SnapshotBlockKind.Match,
             (byte)SnapshotBlockKind.Self,
             (byte)SnapshotBlockKind.Pickups,
@@ -369,6 +370,126 @@ namespace Ring.Simulation.Tests
                 out SnapshotBlockError error));
             Assert.AreEqual(SnapshotBlockError.DestinationTooSmall, error);
             Assert.AreEqual(0, f.ContainerInteriorCount, "nothing of a refused block reaches the frame");
+        }
+
+        /// The one block that came home late (playtest В1 round two, bd
+        /// `app-1kei`): the Liveness landing lived in `NetworkSimBackend`,
+        /// where no test could reach it, and its SECOND mask — the one spec
+        /// Р257 put on the wire — was read and dropped for want of a field to
+        /// take it.
+        ///
+        /// BOTH MASKS, AND AT DIFFERENT SEATS. A landing that spread the alive
+        /// byte into both arrays would pass any assertion that only checked
+        /// "somebody walked out", so the fixture makes the two bytes name
+        /// DIFFERENT seats and pins all three.
+        [Test]
+        public void Liveness_SpreadsBothMasks_IntoTheFrame()
+        {
+            SimConfig cfg = Cfg();
+            RenderSnapshot f = Frame(in cfg);
+            f.PlayerCount = 3;
+
+            var buffer = Buffer(SnapshotWriter.LivenessBlockBytes());
+            SnapshotWriter writer = WriterOver(buffer);
+            // Seat 0 stands, seat 1 walked out, seat 2 is down for good.
+            writer.WriteLivenessBlock(aliveMask: 0b0000_0001, extractedMask: 0b0000_0010);
+            byte[] payload = PayloadIn(buffer, writer.BytesWritten);
+
+            Assert.IsTrue(ClientFrameDecoder.TryLandLiveness(payload, f,
+                out SnapshotBlockError error));
+            Assert.AreEqual(SnapshotBlockError.None, error);
+
+            Assert.IsTrue(f.PlayerAliveInMatch[0], "seat 0 is alive on the wire");
+            Assert.IsFalse(f.PlayerAliveInMatch[1], "seat 1 left the arena");
+            Assert.IsFalse(f.PlayerAliveInMatch[2], "seat 2 is down");
+
+            Assert.IsFalse(f.PlayerExtractedInMatch[0], "seat 0 is still in the raid");
+            Assert.IsTrue(f.PlayerExtractedInMatch[1], "seat 1 walked out — the SECOND mask");
+            Assert.IsFalse(f.PlayerExtractedInMatch[2],
+                "seat 2 died, and a landing that spread the alive byte twice would say otherwise");
+        }
+
+        /// A seat inside the mask's width is written from the mask EVEN TO
+        /// FALSE — the block is refilled wholesale every frame, so a landing
+        /// that only ever set bits would leave last frame's answer standing on
+        /// a recycled slot.
+        [Test]
+        public void Liveness_ASeatInsideTheWidth_IsWrittenEvenToFalse()
+        {
+            SimConfig cfg = Cfg();
+            RenderSnapshot f = Frame(in cfg);
+            f.PlayerCount = 3;
+            f.PlayerExtractedInMatch[2] = true;
+
+            var buffer = Buffer(SnapshotWriter.LivenessBlockBytes());
+            SnapshotWriter writer = WriterOver(buffer);
+            writer.WriteLivenessBlock(aliveMask: 0b0000_0111, extractedMask: 0b0000_0000);
+            byte[] payload = PayloadIn(buffer, writer.BytesWritten);
+
+            Assert.IsTrue(ClientFrameDecoder.TryLandLiveness(payload, f, out _));
+            Assert.IsFalse(f.PlayerExtractedInMatch[2],
+                "a seat INSIDE the mask's width is written from the mask, even to false");
+        }
+
+        /// A seat PAST the mask's eight bits keeps its own answer instead of
+        /// borrowing a bit that does not exist.
+        ///
+        /// THE FIXTURE HAS TO GROW THE ROSTER TO REACH THIS AT ALL — the arena
+        /// caps at three seats, so the width bound is unreachable with the
+        /// shipped config and would have been a branch no test could fail on.
+        /// Ten seats, one mask byte: seats 8 and 9 are outside anything the
+        /// wire can describe.
+        [Test]
+        public void Liveness_ASeatPastTheMasksWidth_IsLeftAlone()
+        {
+            SimConfig cfg = Cfg();
+            cfg.Arena.MaxPlayers = 10;
+            RenderSnapshot f = Frame(in cfg);
+            f.PlayerCount = 10;
+            f.PlayerExtractedInMatch[9] = true;
+            f.PlayerAliveInMatch[9] = true;
+
+            var buffer = Buffer(SnapshotWriter.LivenessBlockBytes());
+            SnapshotWriter writer = WriterOver(buffer);
+            writer.WriteLivenessBlock(aliveMask: 0b1111_1111, extractedMask: 0b1111_1111);
+            byte[] payload = PayloadIn(buffer, writer.BytesWritten);
+
+            Assert.IsTrue(ClientFrameDecoder.TryLandLiveness(payload, f, out _));
+            Assert.IsTrue(f.PlayerExtractedInMatch[9],
+                "seat 9 is past the mask's width — the landing may not invent a bit for it");
+            Assert.IsTrue(f.PlayerAliveInMatch[7], "…while seat 7, the last one inside, is written");
+        }
+
+        /// Malformed is refused, never thrown out of (Р82) — and nothing of a
+        /// refused block reaches the frame.
+        [Test]
+        public void Liveness_MalformedLength_IsRefusedNotThrown()
+        {
+            SimConfig cfg = Cfg();
+            RenderSnapshot f = Frame(in cfg);
+            f.PlayerCount = 3;
+
+            SnapshotBlockError error = SnapshotBlockError.None;
+            bool landed = true;
+            Assert.DoesNotThrow(() =>
+                landed = ClientFrameDecoder.TryLandLiveness(new byte[1], f, out error));
+            Assert.IsFalse(landed);
+            Assert.AreEqual(SnapshotBlockError.MalformedLength, error);
+            Assert.IsFalse(f.PlayerAliveInMatch[0], "nothing of a refused block reaches the frame");
+        }
+
+        /// A frame the ring declined a slot to is still PARSED — the null slot
+        /// is ordinary here, exactly as it is for every other landing.
+        [Test]
+        public void Liveness_ANullSlot_IsParsedAndAccepted()
+        {
+            var buffer = Buffer(SnapshotWriter.LivenessBlockBytes());
+            SnapshotWriter writer = WriterOver(buffer);
+            writer.WriteLivenessBlock(aliveMask: 0b0000_0001, extractedMask: 0b0000_0010);
+            byte[] payload = PayloadIn(buffer, writer.BytesWritten);
+
+            Assert.IsTrue(ClientFrameDecoder.TryLandLiveness(payload, null, out SnapshotBlockError error));
+            Assert.AreEqual(SnapshotBlockError.None, error);
         }
     }
 }

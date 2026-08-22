@@ -812,6 +812,9 @@ namespace Ring.Simulation.Tests
             // exactly like Players/PlayerStats above.
             { nameof(RenderSnapshot.PlayerKnown), nameof(RenderSnapshot.PlayerCount) },
             { nameof(RenderSnapshot.PlayerAliveInMatch), nameof(RenderSnapshot.PlayerCount) },
+            // Playtest В1 round two (bd `app-1kei`): who walked out is the
+            // third per-slot flag, bounded by the same roster as the two above.
+            { nameof(RenderSnapshot.PlayerExtractedInMatch), nameof(RenderSnapshot.PlayerCount) },
             // Stage 3 Т6: ground pickups, bounded by their own count exactly
             // like Mobs/Projectiles above.
             { nameof(RenderSnapshot.Pickups), nameof(RenderSnapshot.PickupCount) },
@@ -857,6 +860,7 @@ namespace Ring.Simulation.Tests
             {
                 s.PlayerKnown[i] = true;
                 s.PlayerAliveInMatch[i] = true;
+                s.PlayerExtractedInMatch[i] = true;
             }
             s.LocalPlayerIndex = s.PlayerCount > 1 ? 1 : 0;
             s.MobCount = math.min(2, arena.MaxMobs);

@@ -288,6 +288,36 @@ namespace Ring.Simulation.Core
         /// simply never says it — rather than infer it from this array.
         public bool[] PlayerAliveInMatch;
 
+        /// Whether the slot WALKED OUT of the raid (Stage 3, playtest В1 round
+        /// two, bd `app-1kei`) — indexed like `PlayerAliveInMatch` beside it,
+        /// and filled from the Liveness block's SECOND mask, the one spec Р257
+        /// put on the wire for exactly this.
+        ///
+        /// IT IS NOT DERIVABLE FROM `Alive`, AND THAT IS THE WHOLE POINT.
+        /// Extraction sets `Alive = false` and `Extracted = true` in one tick
+        /// (`ExtractionSystem`), so a reader with only the first bit sees a
+        /// collector who stopped being alive and draws the one thing that
+        /// means — a body. The spec forbids exactly that: the body is TAKEN
+        /// AWAY, and unlike a death it leaves no corpse and nothing to loot
+        /// (§3.5), and the simulation already obeys it (`ExtractionTests.
+        /// Completing_MarksExtracted_LeavesNoCorpse_AndAnnouncesIt`). Only the
+        /// picture did not, because this fact never reached it.
+        ///
+        /// `Players[i].Extracted` IS NOT THE SAME QUESTION, for the reason
+        /// `PlayerAliveInMatch` exists beside `Players[i].Alive`: a stranger's
+        /// record off the wire carries Index/Pos/Dir/Hp/Flags and nothing else
+        /// (`PlayerWireFlags` has no bit for this), so his `Extracted` reads
+        /// `false` however he left. One's OWN state rides reconciliation and is
+        /// therefore true on both backends — which is precisely why the two
+        /// must not be conflated: a rule written against the local slot alone
+        /// would work in solo and quietly draw a body for every teammate who
+        /// made it out.
+        ///
+        /// A LOCAL WORLD COPIES ITS OWN `Extracted`, the same way it copies its
+        /// own `Alive` into the array above (`SimulationWorld.CaptureSnapshot`)
+        /// — so the field means one thing on both backends rather than two.
+        public bool[] PlayerExtractedInMatch;
+
         /// Synonym for Players[LocalPlayerIndex] (Stage 2 Task 4) — every read
         /// call site that predates Stage 2 Task 4 (~94 across Presentation/
         /// tests, verified by grep) keeps compiling unchanged; only the two write sites
@@ -329,6 +359,7 @@ namespace Ring.Simulation.Core
             // 47a) rather than only the seats this frame happened to fill.
             PlayerKnown = new bool[arena.MaxPlayers];
             PlayerAliveInMatch = new bool[arena.MaxPlayers];
+            PlayerExtractedInMatch = new bool[arena.MaxPlayers];
             // Stage 3 Т32б. The backpack is sized from the HERO cap, the one
             // number in this constructor that is not the arena's — see the
             // constructor's own doc. The interiors and their item pool take the
@@ -379,6 +410,8 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < other.PlayerCount; i++) PlayerKnown[i] = other.PlayerKnown[i];
             for (int i = 0; i < other.PlayerCount; i++)
                 PlayerAliveInMatch[i] = other.PlayerAliveInMatch[i];
+            for (int i = 0; i < other.PlayerCount; i++)
+                PlayerExtractedInMatch[i] = other.PlayerExtractedInMatch[i];
             LocalPlayerIndex = other.LocalPlayerIndex;
             MobCount = other.MobCount;
             for (int i = 0; i < other.MobCount; i++) Mobs[i] = other.Mobs[i];

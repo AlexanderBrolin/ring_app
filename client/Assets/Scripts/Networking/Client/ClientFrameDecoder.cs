@@ -3,18 +3,20 @@ using Ring.Simulation.Core;
 
 namespace Ring.Networking.Client
 {
-    /// The five snapshot blocks Stage 3 put on the wire, landed into the
-    /// render frame they describe (Т32б, spec §3.12 tags 6-10).
+    /// The snapshot blocks landed into the render frame they describe: the five
+    /// Stage 3 put on the wire (Т32б, spec §3.12 tags 6-10) and Liveness, which
+    /// moved here from `NetworkSimBackend` when its second mask finally found a
+    /// reader (playtest В1 round two, bd `app-1kei`).
     ///
     /// IT LIVES HERE, BESIDE `ClientEventDecoder`, SO THAT IT CAN BE TESTED —
     /// the owner's decision of 2026-08-10, applied to the same situation a
-    /// second time. Т32б first wrote these five as private methods of
-    /// `NetworkSimBackend`, and every branch of them was unreachable by a unit
-    /// test there: that class takes a live `NetworkManager` in its constructor
-    /// and refuses a null one, so no EditMode fixture can build it (bd
-    /// `app-xkir`). Nothing about the landing needs a `NetworkManager`, a scene
-    /// or a connection — it is a function of a payload, the match's config and
-    /// a preallocated frame.
+    /// second time, and to Liveness a third. Т32б first wrote these as private
+    /// methods of `NetworkSimBackend`, and every branch of them was unreachable
+    /// by a unit test there: that class takes a live `NetworkManager` in its
+    /// constructor and refuses a null one, so no EditMode fixture can build it
+    /// (bd `app-xkir`). Nothing about the landing needs a `NetworkManager`, a
+    /// scene or a connection — it is a function of a payload, the match's
+    /// config and a preallocated frame.
     ///
     /// THE LOGGING STAYS WITH THE CALLER, for the reason `ClientEventDecoder`
     /// gives about its own side effects: a refusal LINE is the backend's to
@@ -35,6 +37,26 @@ namespace Ring.Networking.Client
     /// frame and handed in.
     public static class ClientFrameDecoder
     {
+        /// How many seats ONE Liveness mask can speak about — a bit per seat in
+        /// a single byte. The sender truncates its own scan at the same width
+        /// (`SnapshotAssembler`), and a roster grown past it needs a wider mask
+        /// on the wire before it could be read here; leaving the extra seats at
+        /// their own value rather than guessing is what makes that a visible gap
+        /// instead of a silent lie about who is alive.
+        ///
+        /// A LITERAL 8 AND NOT `LivenessBlockPayloadBytes * 8`, and the
+        /// difference is load-bearing (Stage 3 Task 25 review, Important —
+        /// carried here verbatim from the const's old home in
+        /// `NetworkSimBackend`, which no longer has a landing to bound). That
+        /// derivation's premise was "the block is one byte and a bit per seat";
+        /// Task 25 widened the block to two bytes and BROKE it rather than
+        /// confirming it, because the second byte is a DIFFERENT mask
+        /// (extracted, spec Р257), not eight more seats. Left alone the
+        /// expression would read 16 and this loop would spread bits 8-15 of an
+        /// 8-bit mask into seats that cannot exist. This constant is about the
+        /// WIDTH OF ONE MASK, which is a byte.
+        const int LivenessMaskSeats = 8;
+
         /// The raid's own flow: phase, what is left of the clock, and whether
         /// the Director is still standing (spec §3.12 tag 6).
         ///
@@ -63,6 +85,44 @@ namespace Ring.Networking.Client
             slot.Match = new MatchState { Phase = phase };
             slot.MatchSecondsRemaining = secondsRemaining;
             slot.DirectorAlive = (flags & MatchWireFlags.DirectorAlive) != 0;
+            return true;
+        }
+
+        /// The raid's roster masks: who is still alive, and who WALKED OUT
+        /// (spec Р257 — the Liveness block has carried both bytes since Т25).
+        ///
+        /// IT MOVED HERE FROM `NetworkSimBackend` for the third application of
+        /// the owner's decision of 2026-08-10, and the move is the fix rather
+        /// than a tidy-up: the second mask was read and thrown away there, with
+        /// a doc explaining that nothing above the border had a field to take
+        /// it, and no unit test could reach either branch to notice when that
+        /// stopped being true. It stopped being true the moment a collector who
+        /// walked out had to be drawn differently from a corpse.
+        ///
+        /// THE MASKS ARE SPREAD, NEVER PASSED UP AS BYTES — the same border
+        /// rule `TryLandMatch` keeps for its flags byte: nothing above this
+        /// line knows a bit layout.
+        ///
+        /// EIGHT SEATS, AND NOT ONE MORE. A mask byte carries eight bits, the
+        /// sender truncates its own scan at the same width, and a roster grown
+        /// past that would need a wider mask on the wire before it could be
+        /// read here — so the loop is bounded by the frame's own count AND by
+        /// the mask's width, and seats beyond it keep their `false` instead of
+        /// borrowing bit 0's answer.
+        public static bool TryLandLiveness(System.ReadOnlySpan<byte> payload, RenderSnapshot slot,
+            out SnapshotBlockError error)
+        {
+            if (!SnapshotBlocks.TryReadLivenessBlock(payload, out byte aliveMask,
+                    out byte extractedMask, out error))
+                return false;
+
+            if (slot == null) return true;
+            int seats = slot.PlayerCount < LivenessMaskSeats ? slot.PlayerCount : LivenessMaskSeats;
+            for (int i = 0; i < seats; i++)
+            {
+                slot.PlayerAliveInMatch[i] = (aliveMask & (1 << i)) != 0;
+                slot.PlayerExtractedInMatch[i] = (extractedMask & (1 << i)) != 0;
+            }
             return true;
         }
 

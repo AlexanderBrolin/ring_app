@@ -188,25 +188,6 @@ namespace Ring.Presentation.Net
             | (1 << (byte)SnapshotBlockKind.Containers)
             | (1 << (byte)SnapshotBlockKind.ContainerSlots);
 
-        /// How many seats ONE Liveness mask can speak about — a bit per seat
-        /// in a single byte.
-        ///
-        /// IT NO LONGER DERIVES FROM THE BLOCK'S PAYLOAD SIZE, and the reason
-        /// is the whole point of this doc (Stage 3 Task 25 review, Important).
-        /// Task 47a wrote it as `LivenessBlockPayloadBytes * 8` so that
-        /// "widening the block on the wire moves this number with it" — a
-        /// derivation whose premise was "the block is one byte and a bit per
-        /// seat". Task 25 widened the block to two bytes and BROKE that
-        /// premise rather than confirming it: the second byte is a DIFFERENT
-        /// mask (extracted, spec Р257), not eight more seats. Left alone, the
-        /// old expression would have read 16, and `ReadLiveness` would have
-        /// gone on to spread bits 8-15 of an 8-bit mask into seats that
-        /// cannot exist — the "silent lie about who is alive" its own doc
-        /// warns against, arriving through the derivation meant to prevent it.
-        /// A roster past eight still needs a wider mask on the wire first;
-        /// this constant is about the WIDTH OF ONE MASK, which is a byte.
-        const int LivenessMaskSeats = 8;
-
         /// How long a ghost that was confirmed but never ended may stay in the
         /// registry, expressed as `GhostProjectiles`' own `maxTrackTicks`.
         /// That class's doc leaves the number to this task and names the
@@ -1922,6 +1903,12 @@ namespace Ring.Presentation.Net
                 slot.PlayerStats[i] = default;
                 slot.PlayerKnown[i] = false;
                 slot.PlayerAliveInMatch[i] = false;
+                // Playtest В1 round two (bd `app-1kei`): the third per-slot
+                // flag, cleared for exactly the reason its two siblings are.
+                // A leftover `true` here is worse than a leftover elsewhere —
+                // it says "this seat walked out" of a recycled slot, and the
+                // view layer answers that by drawing nothing at all.
+                slot.PlayerExtractedInMatch[i] = false;
             }
             slot.MobCount = 0;
             slot.ProjectileCount = 0;
@@ -2076,38 +2063,24 @@ namespace Ring.Presentation.Net
         /// ToSyntheticState` draws for the player record's own flag byte — so
         /// the spread happens here and everything above reads plain booleans.
         ///
-        /// EIGHT SEATS IS THE MASK'S OWN CEILING, and the loop below refuses to
-        /// invent the bits it does not have: one byte carries eight, the sender
-        /// truncates its own scan the same way, and this match's roster is
-        /// capped at three (`ArenaConfig.MaxPlayers`). A roster grown past eight
-        /// would need a wider mask on the wire before it could be read here, and
-        /// leaving the extra seats at `false` — rather than guessing — is what
-        /// makes that a visible gap instead of a silent lie about who is alive.
+        /// BOTH MASKS LAND SINCE THE В1 PLAYTEST'S SECOND ROUND (bd `app-1kei`).
+        /// The second one — who WALKED OUT, spec Р257 — was read and dropped
+        /// here for two tasks, under a doc explaining that nothing above the
+        /// border had a field to take it. That was true when it was written and
+        /// stopped being true the moment a collector who extracted had to be
+        /// drawn differently from a corpse: `ViewRegistry` made a body of every
+        /// slot whose `Alive` bit was clear, so walking out of the gate played
+        /// the death clip. `RenderSnapshot.PlayerExtractedInMatch` is the field
+        /// now, and the landing moved to `ClientFrameDecoder` with it — where a
+        /// test can reach both branches, which is the reason neither of them was
+        /// ever noticed here (lesson 406: a dash justified by yesterday's fact
+        /// stops being justified when the numbers start arriving another way).
         bool ReadLiveness(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
         {
-            // THE SECOND MASK IS READ AND DELIBERATELY DROPPED HERE (Stage 3
-            // Task 25, spec Р257). The block now carries `extractedMask`
-            // beside the alive one, and this client has nothing to write it
-            // into: `RenderSnapshot.PlayerAliveInMatch` exists because a
-            // consumer asked for it, and the consumer of "who walked out" is
-            // the results overlay of Т32 — adding a parallel array now would
-            // be a field with no reader, the same reasoning SnapshotReader's
-            // own doc gives for keeping its counters out of NetStats until
-            // something folds them in. Discarding it costs nothing on the
-            // wire: the byte rides for every recipient regardless, and the
-            // decode is a single array read.
-            if (!SnapshotBlocks.TryReadLivenessBlock(payload, out byte aliveMask,
-                    out _, out SnapshotBlockError error))
-            {
-                LogBlockRefusal(SnapshotBlockKind.Liveness, error);
-                return false;
-            }
-
-            if (slot == null) return true;
-            int seats = math.min(slot.PlayerCount, LivenessMaskSeats);
-            for (int i = 0; i < seats; i++)
-                slot.PlayerAliveInMatch[i] = (aliveMask & (1 << i)) != 0;
-            return true;
+            if (ClientFrameDecoder.TryLandLiveness(payload, slot, out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.Liveness, error);
+            return false;
         }
 
         /// The mobs this client may see, as a DENSE list keyed by id — which is

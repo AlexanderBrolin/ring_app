@@ -109,9 +109,61 @@ namespace Ring.Presentation
     /// the same body in the same place, playing the same clip — which is the
     /// property that matters, since packet loss can put a networked client into
     /// the local backend's order for one death and back for the next.
+    /// What a frame says to DRAW for one player slot (playtest В1 round two, bd
+    /// `app-1kei`) — three answers, because "not alive" is three situations and
+    /// the code that read it as one drew a body for all of them.
+    ///
+    /// The same remedy `AimCast` is (Т33c) and for the same defect class
+    /// (lesson 399/401): two facts collapsed into one condition break on a
+    /// playtest, not in the tests.
+    public enum PlayerSlotPicture : byte
+    {
+        /// A live collector — rent a doll and sync it.
+        Doll,
+
+        /// A body. The slot is known, not alive, and did not walk out.
+        Body,
+
+        /// Nothing to draw here: the collector left through a portal or the
+        /// gate. The spec is explicit that this is NOT a death — the body is
+        /// TAKEN AWAY, and unlike a death it leaves no corpse and nothing to
+        /// loot (§3.5) — and the simulation has always obeyed it; only the
+        /// picture did not.
+        Gone,
+    }
+
     [DefaultExecutionOrder(-10)]
     public sealed class ViewRegistry : MonoBehaviour
     {
+        /// WHAT TO DRAW FOR A SLOT, as a pure function of the three facts a
+        /// frame states about it — so the rule can be tested at all. A
+        /// `MonoBehaviour`'s per-frame loop is unreachable from EditMode, and
+        /// this rule broke in exactly the way an untested rule breaks: the
+        /// loop asked `!Alive` and drew a corpse, and a collector who had just
+        /// won the raid played the death clip (owner's В1 playtest, round two).
+        /// Same precedent as `InventoryWindowController.WindowMustClose`
+        /// (Т33a) and `Core.ExitRules.IsOpen` (Т33).
+        ///
+        /// `known` COMES FIRST because it is a fact about the FRAME and the
+        /// other two are facts about the player: a slot this frame says nothing
+        /// about may be reading `default(PlayerState)`, so neither of the other
+        /// arguments means anything until it is true.
+        ///
+        /// `extracted` BEATS `alive` IF THEY EVER DISAGREE, though the pair
+        /// carries the invariant `!(Alive && Extracted)` (SimulationWorld's own
+        /// hash doc, pinned by `ResultsTests`): the masks arrive as two
+        /// independent bytes off the wire and a hostile or out-of-sync sender
+        /// can set both bits, and of the two readings "he walked out" is the
+        /// one that draws nothing — a decoder that never throws (Р82) must not
+        /// be given a way to make this layer rent a doll for a seat that is out
+        /// of the raid.
+        public static PlayerSlotPicture PictureFor(bool known, bool alive, bool extracted)
+        {
+            if (!known) return PlayerSlotPicture.Gone;
+            if (extracted) return PlayerSlotPicture.Gone;
+            return alive ? PlayerSlotPicture.Doll : PlayerSlotPicture.Body;
+        }
+
         // Mech pivots sit at the feet (Task 10, assets phase B) — the old
         // capsule fallback's pivot was its center, hence the +1m lift; a real
         // model needs none.
@@ -831,21 +883,34 @@ namespace Ring.Presentation
                 // dimming, until the fade behind `HoldFadingDoll` has run out —
                 // and the retirement pass below is still what takes it away
                 // when it has.
-                if (!curr.PlayerKnown[i])
+                // Playtest В1 round two (bd `app-1kei`): THREE answers, not two.
+                // This loop used to ask `!state.Alive` and make a corpse of
+                // whatever said yes, which drew a death for a collector who had
+                // just walked out of the gate. `PictureFor` is where the three
+                // cases are named and where they are tested.
+                PlayerSlotPicture picture = PictureFor(
+                    curr.PlayerKnown[i], state.Alive, curr.PlayerExtractedInMatch[i]);
+                if (picture == PlayerSlotPicture.Gone)
                 {
+                    // Two ways to be gone, and only one of them holds a doll.
                     // Stage 2 Task 47c: a doll the frame has gone quiet about
                     // survives this frame's retirement pass while it is still
                     // fading out — being in `_seenPlayerSlots` is exactly what
-                    // "do not retire me" means to the pass below.
-                    if (HoldFadingDoll(i, local)) _seenPlayerSlots.Add(i);
+                    // "do not retire me" means to the pass below. A collector
+                    // who EXTRACTED is not that case: the frame is not quiet
+                    // about him, it says outright that he left, so there is
+                    // nothing to hold and the retirement pass below pools his
+                    // doll on this very frame — which is what the spec's
+                    // "the body is taken away" (§3.5) looks like from here.
+                    if (!curr.PlayerKnown[i] && HoldFadingDoll(i, local)) _seenPlayerSlots.Add(i);
                     continue;
                 }
-                // Known and not alive is a BODY, and it is the frame that says
-                // so — see `EnsureCorpse`. The slot is deliberately left out of
-                // `_seenPlayerSlots`: a corpse is not a live doll, and the pass
-                // below must not find one to retire, which `EnsureCorpse` has
-                // already seen to by taking it out of `_activePlayers`.
-                if (!state.Alive)
+                // A BODY, and it is the frame that says so — see `EnsureCorpse`.
+                // The slot is deliberately left out of `_seenPlayerSlots`: a
+                // corpse is not a live doll, and the pass below must not find
+                // one to retire, which `EnsureCorpse` has already seen to by
+                // taking it out of `_activePlayers`.
+                if (picture == PlayerSlotPicture.Body)
                 {
                     EnsureCorpse(i, in state, local);
                     continue;

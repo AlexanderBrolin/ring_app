@@ -2129,6 +2129,13 @@ namespace Ring.Simulation.Core
             {
                 target.PlayerKnown[i] = true;
                 target.PlayerAliveInMatch[i] = _players[i].Alive;
+                // Playtest В1 round two (bd `app-1kei`): and WHY a seat stopped
+                // being alive, which the bit above cannot say. Written here
+                // beside its sibling rather than left to the reader's own
+                // `Players[i].Extracted` — that field is only true for oneself
+                // on the networked path, so a picture built on it would work in
+                // solo and bury every teammate who made it out.
+                target.PlayerExtractedInMatch[i] = _players[i].Extracted;
             }
             target.MobCount = _mobCount;
             System.Array.Copy(_mobs, target.Mobs, _mobCount);
