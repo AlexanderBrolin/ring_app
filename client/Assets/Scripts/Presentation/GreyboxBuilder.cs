@@ -138,6 +138,23 @@ namespace Ring.Presentation
         const float ExtractRingHalfWidth = 0.25f;
         const float ExtractRingHeight = 0.06f;
 
+        /// The first height above EVERYTHING this builder paints on the floor,
+        /// and the one number another class has to know to draw its own mark
+        /// there without fighting one of them (bd `app-57qf`).
+        ///
+        /// THE STACK IT CLEARS, bottom to top: the floor disc's own face at
+        /// y = 0 (which also carries the outer zone's tint), the Middle tint at
+        /// one `FloorPaintLift`, the Core tint at two, and the extraction rings
+        /// standing `ExtractRingHeight` tall on three. Derived rather than
+        /// picked, because a picked number is exactly how the defect happened:
+        /// `DashGlowView`'s own lift was chosen against the FLOOR back when the
+        /// floor was all there was (app-9av), and Task 30 later laid the Middle
+        /// tint on the very same plane — two flat surfaces at one height, which
+        /// is z-fighting by construction and read to the owner as a striped
+        /// dash mark in the second zone and the core, but never in the first,
+        /// where no disc is stacked at all.
+        public const float AboveFloorPaint = FloorPaintLift * 4f + ExtractRingHeight;
+
         /// User layer 8 — named "Cosmetics" in `ProjectSettings/TagManager.asset`.
         /// Public (Task 27): `PersistentPropsDirector`/`StageOneSceneBootstrap`
         /// reuse this exact constant for casings/decals/corpses instead of
