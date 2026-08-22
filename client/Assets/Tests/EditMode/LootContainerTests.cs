@@ -693,8 +693,16 @@ namespace Ring.Simulation.Tests
         /// that — an accessor that took the array POSITION under an id-shaped
         /// argument would answer plausibly and wrongly for every container
         /// but the first, and swap-remove makes "position" move under it.
+        ///
+        /// ASKED OF THE BULK FORM SINCE Т32б (owner decision on `app-ivy5`).
+        /// The per-slot `ContainerItemAt` was retired there — the frame
+        /// builder left it at gate Ф6 and nothing in production took its
+        /// place, so it was a public entry point kept for symmetry alone. The
+        /// addressing it used to pin is a property of the LOOKUP, not of the
+        /// arity, so the same four questions are asked of the form that does
+        /// have callers.
         [Test]
-        public void ContainerItemAt_AddressesByContainerId_NotByArrayPosition()
+        public void ContainerItemsInto_AddressesByContainerId_NotByArrayPosition()
         {
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
@@ -705,8 +713,11 @@ namespace Ring.Simulation.Tests
             Assert.AreNotEqual(first, second, "premise: the two ids differ");
             Assert.AreNotEqual(0, second, "premise: and neither is the array position 0 of the other");
 
-            Assert.AreEqual(1, w.ContainerItemAt(first, 0), "the first box's own slot 0");
-            Assert.AreEqual(4, w.ContainerItemAt(second, 1),
+            var items = new byte[2];
+            w.ContainerItemsInto(first, items);
+            Assert.AreEqual(1, items[0], "the first box's own slot 0");
+            w.ContainerItemsInto(second, items);
+            Assert.AreEqual(4, items[1],
                 "and the SECOND box's slot 1 — an accessor reading the argument as a position "
                 + "would answer with the first box's slot instead");
 
@@ -714,25 +725,30 @@ namespace Ring.Simulation.Tests
             // move with it, which is the whole reason the accessor is keyed
             // on the id.
             w.RemoveContainerAt(0);
-            Assert.AreEqual(3, w.ContainerItemAt(second, 0),
+            w.ContainerItemsInto(second, items);
+            Assert.AreEqual(3, items[0],
                 "after the first box is removed the second one occupies position 0 — and still "
                 + "answers to its own id");
-            Assert.AreEqual(0, w.ContainerItemAt(first, 0),
+            w.ContainerItemsInto(first, items);
+            Assert.AreEqual(0, items[0],
                 "while the removed box answers 0: an id nothing alive carries is 'nothing there', "
                 + "never a throw on the frame path that reads this");
         }
 
-        /// Gate Ф6 (review B-4): the BULK form of the accessor above — one id
-        /// resolution for a whole box, where the per-slot form costs one per
-        /// slot. The frame builder reads a box's interior up to eight times
-        /// per record, for every box of every connection every tick, which is
-        /// what made the difference worth a second entry point.
+        /// Gate Ф6 (review B-4): one id resolution for a WHOLE box. The frame
+        /// builder reads a box's interior up to eight times per record, for
+        /// every box of every connection every tick, which is what made this
+        /// form worth its own entry point — and since Т32б it is the only
+        /// one, the per-slot `ContainerItemAt` having been retired with
+        /// `app-ivy5` for want of a production caller.
         ///
-        /// SAME ANSWERS AS THE PER-SLOT FORM IS THE WHOLE CONTRACT, so this
-        /// asserts them side by side rather than restating the expected bytes:
-        /// a bulk read that resolved the id once and then walked the WRONG
-        /// box's slots would still return plausible ids, and only the
-        /// comparison catches it.
+        /// THE EXPECTED BYTES ARE STATED, NOT COMPARED AGAINST A SIBLING
+        /// (lesson 324). Until Т32б these assertions read the per-slot form
+        /// for their expected values — the same `IndexOfContainer` +
+        /// `ContainerSlotAt` pair the subject uses, so a fault in that pair
+        /// would have moved both sides together. The literals below are the
+        /// fixture's own, and a bulk read that resolved the id once and then
+        /// walked the WRONG box's slots answers 1/2 where 3/4 is required.
         [Test]
         public void ContainerItemsInto_ReadsTheWholeBox_WithOneIdResolution()
         {
@@ -747,10 +763,7 @@ namespace Ring.Simulation.Tests
             // first one and fail only here.
             var items = new byte[2];
             w.ContainerItemsInto(second, items);
-            Assert.AreEqual(w.ContainerItemAt(second, 0), items[0],
-                "slot 0 of the box asked for, byte for byte with the per-slot accessor");
-            Assert.AreEqual(w.ContainerItemAt(second, 1), items[1], "and slot 1");
-            Assert.AreEqual(3, items[0], "…which for this fixture is the second box's own first item");
+            Assert.AreEqual(3, items[0], "slot 0 of the box asked for — the second box's own first item");
             Assert.AreEqual(4, items[1], "…and its second");
 
             // The unknown-id guard, and it is not decoration: the frame
@@ -763,8 +776,7 @@ namespace Ring.Simulation.Tests
             items[1] = 0xCD;
             w.ContainerItemsInto(first, items);
             Assert.AreEqual(0, items[0],
-                "an id nothing alive carries fills zeros — the same answer the per-slot form gives, "
-                + "and never a throw on the frame path");
+                "an id nothing alive carries fills zeros, and never a throw on the frame path");
             Assert.AreEqual(0, items[1], "every slot of it, not only the first");
 
             // And the survivor still answers to its OWN id after swap-remove

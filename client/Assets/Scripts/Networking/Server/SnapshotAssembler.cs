@@ -2219,9 +2219,9 @@ namespace Ring.Networking.Server
             int slots = math.min(box.SlotCount, SnapshotBlocks.ContainerSlotsMaskWidth);
 
             // ONE id resolution for the whole box (gate Ф6, review B-4).
-            // `ContainerItemAt` costs one per slot, and this method runs for
-            // every container record of every connection every tick — eight
-            // scans of a 64-long array where one does.
+            // The per-slot form this replaced cost one per slot, and this
+            // method runs for every container record of every connection
+            // every tick — eight scans of a 64-long array where one does.
             System.Span<byte> items = stackalloc byte[SnapshotBlocks.ContainerSlotsMaskWidth];
             _world.ContainerItemsInto(box.Id, items.Slice(0, slots));
 

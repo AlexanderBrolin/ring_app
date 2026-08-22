@@ -886,11 +886,12 @@ namespace Ring.Simulation.Core
         /// Loot.ContainerStore's seam into live container storage (Stage 3
         /// Task 14) — same shape as Pickups/PickupCount above. Slot
         /// CONTENT has no array-typed accessor of its own: every reader
-        /// goes through ContainerSlotAt/ContainerItemAt/TryTakeFromContainer,
+        /// goes through ContainerSlotAt/ContainerItemsInto/TryTakeFromContainer,
         /// which resolve the offset once rather than handing out the flat
         /// backing array for every caller to re-derive. (Т27 added the middle
         /// one — the same read addressed by container ID, for the snapshot
-        /// assembler on the far side of the assembly boundary.)
+        /// assembler on the far side of the assembly boundary; Т32б made it
+        /// the only id-addressed form, see its own doc.)
         internal ContainerState[] Containers => _containers;
         internal int ContainerCount => _containerCount;
 
@@ -1303,9 +1304,13 @@ namespace Ring.Simulation.Core
         internal byte ContainerSlotAt(int containerIndex, int slot)
             => _containerSlots[containerIndex * _config.Arena.MaxContainerSlots + slot];
 
-        /// The item in one slot of the container with this ID — 0 for an
-        /// empty slot, and 0 for a container no longer alive (Stage 3 Т27,
-        /// owner decision R-216, form R-217).
+        /// Every slot of the container with this ID, ascending, into
+        /// `destination` — 0 for an empty slot, and zeros throughout for a
+        /// container no longer alive (Stage 3 Т27, owner decision R-216, form
+        /// R-217; bulk shape from gate Ф6, review B-4). ONE id resolution for
+        /// the whole box: the frame builder was paying up to eight scans of
+        /// the container array for a single box's mask, every box, every
+        /// connection, every tick.
         ///
         /// WHY IT IS PUBLIC. Slot CONTENT reaches nobody outside this
         /// assembly today: `RenderSnapshot` carries container METADATA on
@@ -1321,43 +1326,26 @@ namespace Ring.Simulation.Core
         /// three needs only while standing next to the box.
         ///
         /// BY ID, NOT BY ARRAY POSITION (R-217), which is what separates it
-        /// from `ContainerSlotAt` below rather than merely a widening of it.
+        /// from `ContainerSlotAt` above rather than merely a widening of it.
         /// A caller outside the simulation holds IDs — a visibility set
         /// carries them — and the position is this class's own business,
         /// resolved through `IndexOfContainer`, the one home of that mapping
-        /// since Т17. An unknown id answers 0 rather than throwing: a
+        /// since Т17. An unknown id answers zeros rather than throwing: a
         /// container can legally disappear (TTL) between the tick that saw it
         /// and the tick that describes it, which is ordinary rather than
         /// exceptional.
         ///
-        /// ⚠ THE FRAME BUILDER NO LONGER READS THROUGH THIS ONE (gate Ф6,
-        /// review B-4): asking per slot cost an id resolution per slot, so
-        /// `SnapshotAssembler.OccupancyMaskOf`/`WriteContainerSlots` moved to
-        /// `ContainerItemsInto` below. This form remains the single-slot
-        /// question — R-216's addressing (by id, never by array position) is
-        /// unchanged and both forms honor it — and its callers today are the
-        /// tests that pin exactly that addressing. **Owner decision pending
-        /// (gate Ф6):** keep it as the documented single-slot accessor, or
-        /// drop it in Ф7 and let the tests read whole boxes.
-        /// Naming follows `InventoryItemAt`'s, because the question is the
-        /// same one asked of a different holder.
-        public byte ContainerItemAt(int containerId, int slot)
-        {
-            int index = IndexOfContainer(containerId);
-            return index < 0 ? (byte)0 : ContainerSlotAt(index, slot);
-        }
-
-        /// Every slot of the container with this ID, ascending, into
-        /// `destination` — ONE id resolution for the whole box, where
-        /// `ContainerItemAt` above costs one per slot (gate Ф6, review B-4:
-        /// the frame builder was paying up to eight scans of the container
-        /// array for a single box's mask, every box, every connection, every
-        /// tick).
-        ///
-        /// THE ANSWERS ARE `ContainerItemAt`'s, BY CONSTRUCTION — same lookup,
-        /// same reads, same treatment of an unknown id: zeros rather than a
-        /// throw, because a container can legally disappear (TTL) between the
-        /// tick that saw it and the tick that describes it.
+        /// ⚠ THERE USED TO BE A PER-SLOT FORM BESIDE THIS ONE, and Т32б
+        /// retired it (bd `app-ivy5`, owner decision 2026-08-22).
+        /// `ContainerItemAt(containerId, slot)` was Т27's original shape; gate
+        /// Ф6 (review B-4) moved the frame builder onto this bulk form because
+        /// asking per slot cost an id resolution per slot, and after that
+        /// nothing in production called the per-slot form at all — its only
+        /// callers were the tests pinning the addressing, which now ask the
+        /// same four questions of this method. A public entry point kept for
+        /// symmetry with `InventoryItemAt` alone is a feature for its own sake
+        /// (AGENT.md rule 3), and the addressing it pinned is a property of
+        /// the LOOKUP rather than of the arity.
         ///
         /// `destination.Length` IS THE CALLER'S PROMISE, the same one
         /// `ContainerSlotAt` already asks of everyone: at most the container's

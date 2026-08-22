@@ -37,7 +37,7 @@ namespace Ring.Simulation.Core
         /// to a collector inside LootRadius; the reliable pair Т28 added
         /// (LootRequestNet/LootResultNet) carries loot REQUESTS and refusal
         /// codes, not the contents of a box. The assembler reads those contents straight from the world
-        /// through SimulationWorld.ContainerItemAt — a public accessor added
+        /// through SimulationWorld.ContainerItemsInto — a public accessor added
         /// for exactly this, so that a per-tick copy of
         /// MaxContainers * MaxContainerSlots bytes is NOT taken here for
         /// data one connection in three needs only while standing over the
