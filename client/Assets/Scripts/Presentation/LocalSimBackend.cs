@@ -201,6 +201,16 @@ namespace Ring.Presentation
         /// changed — the conservative one, not a placeholder.
         public bool ShouldKeepPlayerDoll(int slot) => false;
 
+        /// Zero and false, for the reason `PlayerFadeProgress` above gives and
+        /// with the same force: there is no fog between a world in memory and
+        /// the frame it captures itself into, so no mob's records ever stop
+        /// arriving while it is still there. A mob absent from a local frame is
+        /// a mob that is DEAD, and a corpse is not a thing to fade out — it is
+        /// a thing `CorpseView` puts down.
+        public float MobFadeProgress(int id) => 0f;
+
+        public bool ShouldKeepMobView(int id) => false;
+
         /// False, and permanently: solo has no wire, no round trip, no
         /// snapshot ring and no reconciliation, so every field of
         /// `NetDiagnostics` would be a zero that looks exactly like a

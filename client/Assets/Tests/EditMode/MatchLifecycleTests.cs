@@ -5,6 +5,7 @@ using FishNet.Connection;
 using NUnit.Framework;
 using Ring.Networking;
 using Ring.Networking.Client;
+using Ring.Simulation.Visibility;
 using Ring.Networking.Protocol;
 using Ring.Networking.Server;
 using Ring.Server;
@@ -383,6 +384,30 @@ namespace Ring.Simulation.Tests
                 + "still holding the previous match's epoch and lastAppliedTick refuses every one");
         }
 
+        /// Stage 3 Т32б (bd `app-dut`): the EIGHTH seam. A new match mints
+        /// entity ids from 1 again, so a tracker that survived the epoch would
+        /// answer "still fading" for an id belonging to a mob from the match
+        /// before — and `ViewRegistry` would hold a view for a mob that never
+        /// existed in this one.
+        [Test]
+        public void ResetForEpoch_ResetsMobStale()
+        {
+            var mobStale = new EntityStaleTracker(VisibilityClass.Mobs, 8, 4, 4);
+            mobStale.OnSeen(9001, frameTick: 100);
+            mobStale.OnFrameApplied(100, truncated: false);
+            mobStale.Advance(100);
+            Assert.IsTrue(mobStale.ShouldKeep(9001),
+                "fixture premise: the old match's mob is being tracked");
+
+            var reset = NewReset(NewDedup(), NewQueue(), new RenderClock(), NewGhosts(),
+                NewStalePolicy(), mobStale: mobStale);
+            reset.ResetForEpoch(NewEpoch);
+
+            Assert.IsFalse(mobStale.ShouldKeep(9001),
+                "after the restart the id belongs to nobody, and answering for it would keep a "
+                + "view alive for a mob this match never had");
+        }
+
         [Test]
         public void ResetForEpoch_ResetsQueue()
         {
@@ -633,41 +658,52 @@ namespace Ring.Simulation.Tests
             var policy = NewStalePolicy();
             var events = NewEventQueue();
 
-            // Seven separate guards, seven separate assertions on the
+            // Eight separate guards, eight separate assertions on the
             // PARAMETER NAME: "something threw" would pass even if one seam's
             // guard covered another's argument, which is precisely the mistake
-            // a seven-argument constructor invites.
+            // an eight-argument constructor invites.
             var tracers = new TracerProjectiles(8);
+            var mobStale = new EntityStaleTracker(VisibilityClass.Mobs, 8, 4, 4);
             Assert.AreEqual("dedup",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(null, queue, clock, ghosts, policy, events, tracers)).ParamName);
+                    () => new ClientMatchReset(null, queue, clock, ghosts, policy, events, tracers, mobStale)).ParamName);
             Assert.AreEqual("snapshotQueue",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy, events, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy, events, tracers, mobStale)).ParamName);
             Assert.AreEqual("renderClock",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy, events, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy, events, tracers, mobStale)).ParamName);
             Assert.AreEqual("ghosts",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, null, policy, events, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, null, policy, events, tracers, mobStale)).ParamName);
             Assert.AreEqual("stalePolicy",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null, events, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null, events, tracers, mobStale)).ParamName);
             // The sixth seam (Task 44b), by the same rule as the five above.
             Assert.AreEqual("eventQueue",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, null, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, null, tracers, mobStale)).ParamName);
 
             // The seventh seam (bd `app-s0u`), by the same rule as the six above.
             Assert.AreEqual("tracers",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, null))
-                    .ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, null,
+                        mobStale)).ParamName);
+
+            // The eighth seam (Т32б, bd `app-dut`), by the same rule as the
+            // seven above: the mobs' fade bookkeeping is a second thing an
+            // epoch change has to forget, and it fails exactly the way the
+            // player policy does when it is not.
+            Assert.AreEqual("mobStale",
+                Assert.Throws<ArgumentNullException>(
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers,
+                        null)).ParamName);
 
             // Positive witness: a fully wired set constructs.
             Assert.DoesNotThrow(
-                () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers),
-                "witness: all seven seams present is the legal construction");
+                () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers,
+                    mobStale),
+                "witness: all eight seams present is the legal construction");
         }
 
         [Test]
@@ -765,8 +801,9 @@ namespace Ring.Simulation.Tests
         /// and only the test that is ABOUT one of those seams has to name it.
         static ClientMatchReset NewReset(EventDedup dedup, SnapshotQueue queue, RenderClock clock,
             GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue = null,
-            TracerProjectiles tracers = null)
+            TracerProjectiles tracers = null, EntityStaleTracker mobStale = null)
             => new ClientMatchReset(dedup, queue, clock, ghosts, stalePolicy,
-                eventQueue ?? NewEventQueue(), tracers ?? new TracerProjectiles(8));
+                eventQueue ?? NewEventQueue(), tracers ?? new TracerProjectiles(8),
+                mobStale ?? new EntityStaleTracker(VisibilityClass.Mobs, 8, 4, 4));
     }
 }

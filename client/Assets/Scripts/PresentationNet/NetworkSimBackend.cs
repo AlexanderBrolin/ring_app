@@ -7,6 +7,7 @@ using Ring.Networking.Client;
 using Ring.Networking.Protocol;
 using Ring.Simulation.Core;
 using Ring.Simulation.Loot;
+using Ring.Simulation.Visibility;
 using Unity.Mathematics;
 
 namespace Ring.Presentation.Net
@@ -335,6 +336,11 @@ namespace Ring.Presentation.Net
         // frame the sender built inside the very caps this client was
         // configured with.
         byte[] _selfScratch;
+        /// The mobs' own fade bookkeeping (Stage 3 Т32б, bd `app-dut`). Players
+        /// have had one since Task 47c; mobs could not, because `StalePolicy`
+        /// indexes by seat and a mob carries a sparse entity id — see
+        /// `EntityStaleTracker`.
+        EntityStaleTracker _mobStale;
         SnapshotBlocks.PickupRecord[] _pickupScratch;
         SnapshotBlocks.ContainerRecord[] _containerScratch;
         SnapshotBlocks.ContainerSlotsRecord[] _slotsScratch;
@@ -710,6 +716,21 @@ namespace Ring.Presentation.Net
         /// The server's verdict on the last answered request; `None` both
         /// before the first answer and after an accepted one.
         public LootRefusal LastLootRefusal => _lootRequests.LastCode;
+
+        /// `EntityStaleTracker.FadeProgress` for the mob, and nothing else
+        /// (Stage 3 Т32б, bd `app-dut`) — the mob-shaped twin of
+        /// `PlayerFadeProgress` below, and it exists for the difference the
+        /// owner would otherwise see on the milestone: players at the edge of
+        /// sight froze and dimmed while mobs vanished with a pop, so the
+        /// picture was INCONSISTENT rather than merely abrupt.
+        public float MobFadeProgress(int id)
+            => _mobStale != null ? _mobStale.FadeProgress(id) : 0f;
+
+        /// True while the mob's view still has something to show — the twin of
+        /// `ShouldKeepPlayerDoll`, and what stops `ViewRegistry` retiring a
+        /// view the frame stopped mentioning but the eye is still tracking.
+        public bool ShouldKeepMobView(int id)
+            => _mobStale != null && _mobStale.ShouldKeep(id);
 
         /// `StalePolicy.FadeProgress` for the player slot, and nothing else
         /// (Stage 2 Task 47c, bd `app-wcy`). The decision is the policy's — how
@@ -1152,6 +1173,7 @@ namespace Ring.Presentation.Net
             BlendOwnPlayer();
 
             _stale.Advance(renderTick);
+            _mobStale.Advance(renderTick);
 
             // Р67: ghosts age against the PREDICTED tick, never the render
             // tick — they are the client's own rounds, born in the prediction
@@ -1383,8 +1405,13 @@ namespace Ring.Presentation.Net
             // from — `MaxProjectiles` bounds what can be in flight at once,
             // and a client sees a subset of it (`SightRadius`, Р32).
             _tracers = new TracerProjectiles(cfg.Arena.MaxProjectiles);
+            // Sized by the same cap and fed the same two numbers as the player
+            // policy above: what counts as stale and how long a fade lasts are
+            // properties of the CONNECTION, not of what is fading.
+            _mobStale = new EntityStaleTracker(VisibilityClass.Mobs, cfg.Arena.MaxMobs,
+                _net.InterpMaxStaleTicks, _net.EntityFadeTicks);
             _reset = new ClientMatchReset(_dedup, _snapshots, _clock, _ghosts, _stale, _events,
-                _tracers);
+                _tracers, _mobStale);
             // Sized from the same cap as `_mobScratch` below, which is what
             // makes "a frame can never carry more records than one generation
             // holds" true rather than hoped for.
@@ -1790,7 +1817,10 @@ namespace Ring.Presentation.Net
             if (missingEntities) _framesMissingEntities++;
 
             if (applyState)
+            {
                 _stale.OnFrameApplied(tick, missingEntities);
+                _mobStale.OnFrameApplied(tick, missingEntities);
+            }
         }
 
         /// Clears the reserved slot before a byte of this frame is decoded into
@@ -2047,6 +2077,12 @@ namespace Ring.Presentation.Net
             // what is remembered already.
             _mobTypes.OnMobsDecoded(new System.ReadOnlySpan<SnapshotBlocks.MobRecord>(
                 _mobScratch, 0, count));
+
+            // AND THE SAME FRAMES FEED THE FADE, for the same reason: a frame
+            // the ring refused a slot to says nothing newer than what is
+            // already remembered, and `StalePolicy`'s numbers are monotonic
+            // maxima (the note on `ReadPlayers`' own OnEntitySeen call).
+            for (int i = 0; i < count; i++) _mobStale.OnSeen(_mobScratch[i].Id, (uint)slot.Tick);
 
             for (int i = 0; i < count; i++)
             {

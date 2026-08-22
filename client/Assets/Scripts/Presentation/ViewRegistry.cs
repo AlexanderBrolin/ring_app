@@ -1193,9 +1193,33 @@ namespace Ring.Presentation
             }
 
             _staleIdsScratch.Clear();
+            // Stage 3 Т32б (bd `app-dut`): a mob the frame stopped mentioning is
+            // not retired on the spot any more — it FADES, the way a player
+            // doll has since Task 47c, and for the reason the issue records:
+            // players froze and dimmed at the edge of sight while mobs
+            // vanished instantly, so the picture was inconsistent and read as
+            // a bug in the mobs rather than as the limit of the fog it is.
+            //
+            // THE ANSWER IS THE BACKEND'S, NOT THIS CLASS'S. How long a mob may
+            // go unheard before it freezes, whether the fade may start at all,
+            // and whether the whole connection is merely quiet are
+            // `StalePolicy`'s decisions (`ShouldKeepMobView` is the wire out of
+            // them). A local backend answers false to every id, so nothing here
+            // changes for solo: a mob absent from a local frame is a mob that
+            // is dead.
             foreach (KeyValuePair<int, MobView> kv in _activeMobs)
             {
-                if (!_seenMobIds.Contains(kv.Key)) _staleIdsScratch.Add(kv.Key);
+                if (_seenMobIds.Contains(kv.Key)) continue;
+                if (_runner.ShouldKeepMobView(kv.Key))
+                {
+                    // No `Sync`: there is no `MobState` this tick, so the last
+                    // pose is what stays on screen and only the brightness
+                    // moves (`MobView.FadeEmission`'s own doc).
+                    kv.Value.FadeEmission(1f - _runner.MobFadeProgress(kv.Key));
+                    continue;
+                }
+
+                _staleIdsScratch.Add(kv.Key);
             }
             for (int i = 0; i < _staleIdsScratch.Count; i++) RetireMob(_staleIdsScratch[i]);
         }

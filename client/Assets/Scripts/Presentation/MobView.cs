@@ -87,6 +87,9 @@ namespace Ring.Presentation
         // once one exists, with no further change needed here.
         Renderer[] _renderers;
         MaterialPropertyBlock _block;
+        /// The emission `Sync` last built for this mob, kept so a fade can dim
+        /// it without re-deriving every accent that went into it.
+        Color _composedEmission;
         Color _baseEmission;
         float _flashTimer;
         float _flashDuration;
@@ -130,6 +133,7 @@ namespace Ring.Presentation
             _baseEmission = Color.black;
             _flashTimer = 0f;
             _freezePositionTimer = 0f; // pool-rebind hygiene, same as the flash timer above
+            _composedEmission = _baseEmission;
             ApplyEmission(_baseEmission);
         }
 
@@ -190,8 +194,27 @@ namespace Ring.Presentation
 
             if (hovered) emission += hoverAccent * hoverGlowBoost;
 
+            // Stage 3 Т32б (bd `app-dut`): remembered so `FadeEmission` below
+            // can re-apply what THIS frame composed, dimmed — the same seam,
+            // and for the same reason, `PlayerView` keeps its own composed
+            // color for.
+            _composedEmission = emission;
             ApplyEmission(emission);
         }
+
+        /// Re-applies the emission this view last composed, scaled by how much
+        /// of a fade is left (Stage 3 Т32б, bd `app-dut`) — the mob-shaped twin
+        /// of `PlayerView.FadeEmission`.
+        ///
+        /// IT IS CALLED INSTEAD OF `Sync`, NOT AFTER IT. A fading mob is one the
+        /// frame has stopped mentioning: there is no `MobState` for it this
+        /// tick, so there is nothing to sync and the last pose is what stays on
+        /// screen. What changes is only how brightly it reads, which is the
+        /// whole of the fix: the pop is not abolished, it is made quieter and
+        /// later, and what vanishes at the end is an unlit shape the eye had
+        /// stopped tracking.
+        public void FadeEmission(float fadeRemaining)
+            => ApplyEmission(_composedEmission * fadeRemaining);
 
         /// Full hit-flash implementation (spec Interfaces, Task 17): decays the
         /// emission from `FlashAccent` back to the archetype's base color over

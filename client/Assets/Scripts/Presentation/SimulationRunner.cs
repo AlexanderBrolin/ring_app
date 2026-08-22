@@ -261,6 +261,13 @@ namespace Ring.Presentation
 
         public bool ShouldKeepPlayerDoll(int slot) => _backend.ShouldKeepPlayerDoll(slot);
 
+        /// The same pair for MOBS (Stage 3 Т32б, bd `app-dut`), addressed by
+        /// entity id rather than by seat — see `ISimBackend.MobFadeProgress`
+        /// for why the two could not be one call.
+        public float MobFadeProgress(int id) => _backend.MobFadeProgress(id);
+
+        public bool ShouldKeepMobView(int id) => _backend.ShouldKeepMobView(id);
+
         /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
         /// this render frame was sampled with — `MuzzleFlashView`/
         /// `AudioDirector`'s per-frame prediction reads `FireHeld` off THIS

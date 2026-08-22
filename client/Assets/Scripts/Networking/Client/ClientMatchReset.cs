@@ -114,20 +114,26 @@ namespace Ring.Networking.Client
         /// epoch that is over.
         readonly TracerProjectiles _tracers;
         readonly StalePolicy _stalePolicy;
+        /// Stage 3 Т32б (bd `app-dut`): the mobs' fade bookkeeping, which is a
+        /// SECOND thing to forget on an epoch change and fails exactly the way
+        /// the player policy above does when it is not — an id from the match
+        /// before, answered for.
+        readonly EntityStaleTracker _mobStale;
         readonly ClientEventQueue _eventQueue;
 
         /// Every seam is required, and each is guarded separately so a wiring
-        /// mistake names the argument it was actually made in — seven guards
+        /// mistake names the argument it was actually made in — eight guards
         /// answering "one of them was null" would leave the caller to find out
         /// which.
         ///
-        /// `eventQueue` is APPENDED, not inserted (Task 44b), so every
-        /// existing positional call site keeps the meaning it already had —
-        /// the same discipline `HandshakeRefusal.UnrecognizedRejection`
-        /// followed when its own enum grew.
+        /// `eventQueue` was APPENDED, not inserted (Task 44b), and `mobStale`
+        /// is appended for the same reason (Т32б), so every existing
+        /// positional call site keeps the meaning it already had — the same
+        /// discipline `HandshakeRefusal.UnrecognizedRejection` followed when
+        /// its own enum grew.
         public ClientMatchReset(EventDedup dedup, SnapshotQueue snapshotQueue, RenderClock renderClock,
             GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue,
-            TracerProjectiles tracers)
+            TracerProjectiles tracers, EntityStaleTracker mobStale)
         {
             _dedup = dedup ?? throw new ArgumentNullException(nameof(dedup));
             _snapshotQueue = snapshotQueue ?? throw new ArgumentNullException(nameof(snapshotQueue));
@@ -136,9 +142,10 @@ namespace Ring.Networking.Client
             _stalePolicy = stalePolicy ?? throw new ArgumentNullException(nameof(stalePolicy));
             _eventQueue = eventQueue ?? throw new ArgumentNullException(nameof(eventQueue));
             _tracers = tracers ?? throw new ArgumentNullException(nameof(tracers));
+            _mobStale = mobStale ?? throw new ArgumentNullException(nameof(mobStale));
         }
 
-        /// Clears all seven seams and starts tracking `epoch` in the three that
+        /// Clears all eight seams and starts tracking `epoch` in the three that
         /// track one. Call this on the Reliable lifecycle message that names
         /// the epoch — never on a snapshot: a snapshot of an unknown epoch is
         /// refused by these very objects and must never be the thing that
@@ -152,6 +159,7 @@ namespace Ring.Networking.Client
             _stalePolicy.Reset();
             _eventQueue.Reset();
             _tracers.Reset();
+            _mobStale.Reset();
         }
     }
 }

@@ -335,6 +335,27 @@ namespace Ring.Presentation
         /// go — and neither can strand one.
         bool ShouldKeepPlayerDoll(int slot);
 
+        /// How much of the MOB's fade-out is already spent, in `[0, 1]` (Stage
+        /// 3 Т32б, bd `app-dut`) — the entity-id twin of `PlayerFadeProgress`
+        /// above.
+        ///
+        /// IT EXISTS BECAUSE THE PICTURE WAS INCONSISTENT, not merely abrupt.
+        /// Since Task 47c a player at the edge of sight freezes and dims;
+        /// a mob at the same edge vanished instantly, because `StalePolicy`
+        /// indexes by SEAT and a mob carries a sparse entity id with nowhere to
+        /// write. The difference is what the owner sees on the milestone, and
+        /// it reads as a bug in the mobs rather than as a limit of the fog.
+        ///
+        /// `0` MEANS "NOTHING TO FADE" — for an id nothing remembers, and on a
+        /// backend with no fog at all. Same safe default `PlayerFadeProgress`
+        /// gives.
+        float MobFadeProgress(int id);
+
+        /// Whether the mob's view still has something to show — the twin of
+        /// `ShouldKeepPlayerDoll`, and what stops a view being retired the
+        /// frame its records stop arriving.
+        bool ShouldKeepMobView(int id);
+
         /// This frame's network instrument panel, or `false` when this backend
         /// HAS no network (Stage 2 Task 48, plan Ф9 :2100-2107). The dev
         /// overlay draws its whole network section behind this answer, so a
