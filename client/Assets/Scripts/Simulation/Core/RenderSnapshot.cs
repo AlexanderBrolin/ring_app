@@ -1,5 +1,60 @@
+using Unity.Mathematics;
+
 namespace Ring.Simulation.Core
 {
+    /// One container's interior as a FRAME describes it (Stage 3 Т32б, owner
+    /// decision R-253) — the id it belongs to, which of its slots are occupied,
+    /// and where this frame's copy of those slots' item ids begins.
+    ///
+    /// A FLAT POOL, NOT A TABLE, and the owner weighed both. A
+    /// `MaxContainers x MaxContainerSlots` table would be 512 bytes copied on
+    /// every frame and every `CopyFrom` for the sake of a window that shows ONE
+    /// box at a time; the pool costs a record per box the frame actually
+    /// describes. It is deliberately the same shape the wire already uses
+    /// (`Protocol.SnapshotBlocks.ContainerSlotsRecord`) rather than a second
+    /// one — but it cannot BE that type: `Ring.Simulation` references
+    /// `Unity.Mathematics` and nothing else, so a networking type in a render
+    /// frame is not available to it, and would be the wrong dependency even if
+    /// it were (a local world fills this without a wire in sight).
+    ///
+    /// ABSENT IS NOT EMPTY. A box with no record here is one this frame says
+    /// NOTHING about — out of reach, or cut for room — which is a different
+    /// fact from a box whose `OccupancyMask` is zero. That distinction is the
+    /// whole reason the pool lists boxes rather than indexing all of them, and
+    /// it is the same one `PlayerKnown` exists for on the player side.
+    ///
+    /// `ItemOffset` INDEXES `RenderSnapshot.ContainerInteriorItems`, the frame's
+    /// own pool — never the wire payload the record was decoded from. The wire
+    /// record's offset points into the block's bytes and dies with the datagram;
+    /// this one has to outlive it, because the frame is read a whole render
+    /// frame later.
+    public struct ContainerInterior
+    {
+        public int Id;
+        /// Bit `i` set means slot `i` holds something; the item ids that follow
+        /// at `ItemOffset` are those slots' contents in ascending slot order.
+        /// `ItemCount` is this mask's popcount, carried rather than recomputed
+        /// so a reader never has to know the mask's width.
+        public byte OccupancyMask;
+        public int ItemOffset;
+        public int ItemCount;
+    }
+
+    /// Sentinel for `RenderSnapshot.MatchSecondsRemaining` (Stage 3 Т32б).
+    /// Any negative number reads the same way; this is the one every writer
+    /// uses, so "this frame carries no countdown" is one constant rather than a
+    /// convention each writer re-invents.
+    ///
+    /// A CLASS OF ITS OWN, like `ProjectileIds` and `ExtractKinds` — the shape
+    /// this project gives sentinel values, and for the reason `ExtractKinds`'
+    /// own doc measured: a const declared on the type it describes is a static
+    /// field, and the reflective sweeps that walk these types then try to write
+    /// it.
+    public static class MatchCountdown
+    {
+        public const int None = -1;
+    }
+
     /// Preallocated render view of one tick. Matching by entity Id (spec §3.7).
     public sealed class RenderSnapshot
     {
@@ -25,34 +80,39 @@ namespace Ring.Simulation.Core
         public int PickupCount;
         public PickupState[] Pickups;
         /// Container METADATA of this tick (Stage 3 Т14) — same count-plus-
-        /// array pair as Pickups above, sized to Arena.MaxContainers. Slot
-        /// CONTENT is deliberately absent from this class, same reasoning as
-        /// the backpack note on SimulationWorld.CaptureSnapshot: it isn't
-        /// drawn by the interpolated frame.
+        /// array pair as Pickups above, sized to Arena.MaxContainers: where a
+        /// box is, what kind it is, whether it is empty.
         ///
-        /// WHERE THE CONTENT DOES TRAVEL (Stage 3 Т27, owner decision R-216 —
-        /// this paragraph used to predict "a reliable message a later task
-        /// adds", and the prediction did not come true). Spec §3.12 puts it
-        /// in the SNAPSHOT, as the ContainerSlots block (tag 10), sent only
-        /// to a collector inside LootRadius; the reliable pair Т28 added
-        /// (LootRequestNet/LootResultNet) carries loot REQUESTS and refusal
-        /// codes, not the contents of a box. The assembler reads those contents straight from the world
-        /// through SimulationWorld.ContainerItemsInto — a public accessor added
-        /// for exactly this, so that a per-tick copy of
-        /// MaxContainers * MaxContainerSlots bytes is NOT taken here for
-        /// data one connection in three needs only while standing over the
-        /// box (the owner weighed that copy against the accessor and chose
-        /// the accessor).
+        /// ⚠ SLOT CONTENT IS NO LONGER ABSENT FROM THIS CLASS — it arrived in
+        /// Т32б, and it did NOT arrive as the table R-216 refused. This
+        /// paragraph used to say content was "deliberately absent"; what R-216
+        /// weighed and rejected was a per-tick copy of
+        /// MaxContainers * MaxContainerSlots bytes for data one connection in
+        /// three needs only while standing over a box, and that judgement is
+        /// intact: `ContainerInteriors` below is a flat pool listing the
+        /// handful of boxes a frame actually describes (owner decision R-253),
+        /// filled on both backends by the same reach rule the wire uses.
+        /// The assembler still reads the world directly through
+        /// `SimulationWorld.ContainerItemsInto` rather than through this class,
+        /// because it builds ONE connection's frame and this class is the
+        /// RECEIVING side's.
+        ///
+        /// WHERE THE CONTENT TRAVELS (Stage 3 Т27 — an earlier draft of this
+        /// paragraph predicted "a reliable message a later task adds", and the
+        /// prediction did not come true). Spec §3.12 puts it in the SNAPSHOT,
+        /// as the ContainerSlots block (tag 10), sent only to a collector
+        /// inside LootRadius; the reliable pair Т28 added (LootRequestNet/
+        /// LootResultNet) carries loot REQUESTS and refusal codes, not the
+        /// contents of a box.
         ///
         /// A LOCAL world fills this from CaptureSnapshot; the networked
         /// backend leaves the count at zero until it DECODES the containers
-        /// block — which is not the same moment as the block reaching the
-        /// wire, and since Т27 the two have come apart: the server writes
-        /// Containers on every frame, while `NetworkSimBackend` still steps
-        /// over the block (it is absent from its `KnownBlockKinds`, see that
-        /// constant's own doc) because the views that would draw it are Ф7.
-        /// Same "zero means nothing decoded yet" convention PickupCount's own
-        /// doc states — the emphasis being on DECODED.
+        /// block. Between Т27 and Т32б those were different moments — the
+        /// server wrote Containers on every frame while the receiver stepped
+        /// over the block, its views being Ф7 — and Т32б closed the gap by
+        /// teaching `NetworkSimBackend` all five remaining kinds. Same "zero
+        /// means nothing decoded yet" convention PickupCount's own doc states
+        /// — the emphasis being on DECODED.
         public int ContainerCount;
         public ContainerState[] Containers;
         public WaveState Wave;
@@ -63,6 +123,82 @@ namespace Ring.Simulation.Core
         /// at its default on the networked path until Т25 puts the phase on
         /// the wire.
         public MatchState Match;
+
+        /// Seconds left in the raid, or a NEGATIVE number when this frame
+        /// carries no countdown at all (Stage 3 Т32б, spec §3.12 tag 6).
+        ///
+        /// WHY A SENTINEL AND NOT ZERO. Zero is a legal reading — it is what
+        /// the last second before the raid ends looks like — so it cannot also
+        /// mean "nobody told me". The two need telling apart for the same
+        /// reason `PlayerKnown` exists beside `Players[i].Alive`: a HUD that
+        /// cannot tell them apart shows a raid ending forever.
+        ///
+        /// AND A LOCAL WORLD REALLY HAS NO COUNTDOWN. The match's length lives
+        /// in `NetConfig.MatchMaxDurationSeconds` and its expiry is enforced by
+        /// `MatchEndPolicy`, both on the server's side of the authority line
+        /// (CRITICAL RULE 3 names the match timer among the things the server
+        /// decides); `SimulationWorld.MarkMatchEnded` has exactly one caller
+        /// and it is `MatchServer`. So a world ticking in-process is not
+        /// "missing" the number — it is a raid nothing ends on time, and the
+        /// honest answer is that there is no countdown to show.
+        public int MatchSecondsRemaining;
+
+        /// Whether the Director is still standing (Stage 3 Т32б, spec §3.12
+        /// tag 6, the Match block's `DirectorAlive` bit).
+        ///
+        /// A DECODED FACT, NOT A FLAGS BYTE, because a bit layout is the
+        /// wire's business: `ReadLiveness` already spreads its mask into
+        /// `PlayerAliveInMatch` at the border "so that nothing above it has to
+        /// know a bit layout", and `Ring.Presentation` has no reference to the
+        /// assembly the layout lives in and must not grow one (Р180).
+        ///
+        /// THE GATE BIT IS NOT MIRRORED HERE, deliberately. It is derivable —
+        /// it is `Match.Phase == MatchPhase.GateOpen` — and the wire's own doc
+        /// names the phase the source of truth and the bit a convenience view
+        /// of it. Carrying it a second time would put two authorities behind
+        /// one question. `DirectorAlive` is the opposite case and that is why
+        /// it is here: the Director dies `GateDelaySeconds` BEFORE the phase
+        /// moves, so no phase can answer for him during exactly the window a
+        /// client most needs the answer.
+        public bool DirectorAlive;
+
+        /// The frame owner's own backpack (Stage 3 Т32б, spec §3.12 tag 7) —
+        /// item ids, bounded by `InventoryItemCount`, and the slot points they
+        /// cost together.
+        ///
+        /// SINGULAR, NOT ONE PER SEAT. The Self block is sent to its owner and
+        /// nobody else (Р276), so an array indexed by slot would be a field the
+        /// networked backend could only ever fill for one entry — and a reader
+        /// could not tell "his pack is empty" from "his pack is not mine to
+        /// see", which is the exact ambiguity `PlayerKnown` was added to end.
+        ///
+        /// NOTHING ELSE OF THE OWNER LIVES HERE (Р276): `Ammo`, `LootTimer`,
+        /// `ExtractTimer` and `Extracted` are `PlayerState` fields and already
+        /// reach their owner through reconciliation. Only the pack — which
+        /// `PlayerState` has no room for, an `Inventory` being a reference type
+        /// `CaptureSnapshot` refuses to put in a frame — and the points derived
+        /// from it are here.
+        public int InventorySlotPoints;
+        public int InventoryItemCount;
+        public byte[] InventoryItems;
+
+        /// The interiors this frame describes, as a flat pool (owner decision
+        /// R-253) — see `ContainerInterior` above for the form and for why a
+        /// box absent from this list is not a box that is empty.
+        ///
+        /// Filled from the ContainerSlots block on the networked path and, on
+        /// the local one, by `LocalSimBackend` for the boxes within
+        /// `LootOps.WithinLootReach` of the owner — the SAME rule Р238 gives
+        /// the wire, so the field means one thing on both backends.
+        public int ContainerInteriorCount;
+        public ContainerInterior[] ContainerInteriors;
+        /// Every described box's slot contents, back to back, addressed by each
+        /// record's `ItemOffset`. One pool rather than an array per record: the
+        /// records are already bounded and a per-record array would allocate on
+        /// the one path that must not.
+        public int ContainerInteriorItemCount;
+        public byte[] ContainerInteriorItems;
+
         /// Personal per-player match counters (Stage 2 Task 5) — name symmetric
         /// to Players above (both arrays indexed by player); Stats below is the
         /// synonym for the local player's own entry, same pattern as Player/Players.
@@ -143,8 +279,18 @@ namespace Ring.Simulation.Core
         /// DeathOverlayController) keeps compiling unchanged, same Player/Players trick.
         public MatchStats Stats => PlayerStats[LocalPlayerIndex];
 
-        public RenderSnapshot(in ArenaSimConfig arena)
+        /// TAKES THE WHOLE `SimConfig` SINCE Т32б, where it took only the
+        /// arena half before. The frame grew a field the arena cannot size:
+        /// the owner's backpack is bounded by `Hero.MaxInventoryItems`, the
+        /// same number `SnapshotAssembler` sizes its own Self scratch from. The
+        /// alternatives were a literal ceiling in this file (a Data-layer
+        /// `[Range]` this assembly cannot see, restated where nothing could
+        /// check it) or a second constructor, i.e. two truths about how a frame
+        /// is sized. Every call site already held a `SimConfig` and was reaching
+        /// into its `.Arena`, so the widening cost them a shorter argument.
+        public RenderSnapshot(in SimConfig cfg)
         {
+            ArenaSimConfig arena = cfg.Arena;
             Players = new PlayerState[arena.MaxPlayers];
             Mobs = new MobState[arena.MaxMobs];
             Projectiles = new ProjectileState[arena.MaxProjectiles];
@@ -162,6 +308,22 @@ namespace Ring.Simulation.Core
             // 47a) rather than only the seats this frame happened to fill.
             PlayerKnown = new bool[arena.MaxPlayers];
             PlayerAliveInMatch = new bool[arena.MaxPlayers];
+            // Stage 3 Т32б. The backpack is sized from the HERO cap, the one
+            // number in this constructor that is not the arena's — see the
+            // constructor's own doc. The interiors and their item pool take the
+            // container caps, the same pair `SnapshotAssembler` sizes its
+            // scratch from, so a frame can hold every box the world can hold
+            // even though it will normally describe one or two.
+            InventoryItems = new byte[math.max(1, cfg.Hero.MaxInventoryItems)];
+            ContainerInteriors = new ContainerInterior[arena.MaxContainers];
+            ContainerInteriorItems = new byte[math.max(1,
+                arena.MaxContainers * arena.MaxContainerSlots)];
+            // A frame nobody has decoded a Match block into carries no
+            // countdown, and says so rather than reading as "zero seconds
+            // left" (MatchSecondsRemaining's own doc). Every writer of a
+            // recycled frame restates this; the constructor states it for the
+            // first tick, before any writer has run.
+            MatchSecondsRemaining = MatchCountdown.None;
         }
 
         /// Deep-copies one tick's worth of render data FROM `other` INTO this
@@ -181,8 +343,8 @@ namespace Ring.Simulation.Core
         /// Every field here is either a struct or a struct array, so plain
         /// assignment/indexed-copy IS the deep copy — nothing reaches beyond this
         /// class's own already-public fields. Contract: `other` and `this` are
-        /// built from the SAME arena caps (both constructed via `new
-        /// RenderSnapshot(in arena)` off one `ArenaSimConfig`), so every index up
+        /// built from the SAME caps (both constructed via `new
+        /// RenderSnapshot(in cfg)` off one `SimConfig`), so every index up
         /// to `other`'s counts is in bounds on this side too — callers that
         /// preallocate every `RenderSnapshot` they ever copy between off one
         /// config (both `SimulationRunner` and `SnapshotQueue` do) get this for
@@ -206,6 +368,27 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < other.ContainerCount; i++) Containers[i] = other.Containers[i];
             Wave = other.Wave;
             Match = other.Match;
+            // Stage 3 Т32б: the five blocks' own fields, in the order they are
+            // declared above. `MatchSecondsRemaining` copies whatever `other`
+            // holds INCLUDING the no-countdown sentinel — a frozen frame that
+            // invented a countdown the live one never had would be worse than
+            // one that admits it has none.
+            MatchSecondsRemaining = other.MatchSecondsRemaining;
+            DirectorAlive = other.DirectorAlive;
+            InventorySlotPoints = other.InventorySlotPoints;
+            InventoryItemCount = other.InventoryItemCount;
+            for (int i = 0; i < other.InventoryItemCount; i++)
+                InventoryItems[i] = other.InventoryItems[i];
+            ContainerInteriorCount = other.ContainerInteriorCount;
+            for (int i = 0; i < other.ContainerInteriorCount; i++)
+                ContainerInteriors[i] = other.ContainerInteriors[i];
+            // THE POOL IS COPIED BY ITS OWN COUNT, not by the records' offsets.
+            // A record's `ItemOffset` addresses this pool, so copying "what the
+            // records point at" would mean walking them to find the high-water
+            // mark — the same number `ContainerInteriorItemCount` already is.
+            ContainerInteriorItemCount = other.ContainerInteriorItemCount;
+            for (int i = 0; i < other.ContainerInteriorItemCount; i++)
+                ContainerInteriorItems[i] = other.ContainerInteriorItems[i];
             for (int i = 0; i < other.PlayerCount; i++) PlayerStats[i] = other.PlayerStats[i];
             WorldStats = other.WorldStats;
         }

@@ -1327,7 +1327,7 @@ namespace Ring.Presentation.Net
                 SlewFraction = _net.SlewFraction,
             };
 
-            _snapshots = new SnapshotQueue(in cfg.Arena, in _timings);
+            _snapshots = new SnapshotQueue(in cfg, in _timings);
             _clock = new RenderClock();
             _dedup = new EventDedup(in cfg);
             _events = new ClientEventQueue(in _timings, _net.SnapshotEventBudget);
@@ -1363,8 +1363,8 @@ namespace Ring.Presentation.Net
             // holds" true rather than hoped for.
             _mobTypes = new MobTypeMemory(cfg.Arena.MaxMobs);
 
-            _prev = new RenderSnapshot(in cfg.Arena);
-            _curr = new RenderSnapshot(in cfg.Arena);
+            _prev = new RenderSnapshot(in cfg);
+            _curr = new RenderSnapshot(in cfg);
             _alpha = 0f;
             _lastRenderTick = 0;
 
@@ -1786,7 +1786,27 @@ namespace Ring.Presentation.Net
             // the clear together with the fields costs one line; discovering
             // it missing costs a ghost crate on the floor.
             slot.PickupCount = 0;
+            // Stage 3 Т32б. `ContainerCount` was NOT cleared here between Т14
+            // and this task, and that was a gap rather than a decision: this
+            // method's own argument for clearing the Т6 fields — "a tick that
+            // carried pickups would otherwise leave them standing in the next
+            // tick that carries none… discovering it missing costs a ghost
+            // crate on the floor" — is about containers word for word, and the
+            // line was simply not written beside them. Harmless while nothing
+            // decoded the block; this is the task that starts.
+            slot.ContainerCount = 0;
             slot.Match = default;
+            // The five blocks' own fields, cleared for the reason above and in
+            // the order they are declared on the frame. The countdown resets to
+            // its SENTINEL rather than to zero: a recycled frame that says
+            // "zero seconds left" before its Match block is decoded would show
+            // a raid ending every time one arrived late.
+            slot.MatchSecondsRemaining = MatchCountdown.None;
+            slot.DirectorAlive = false;
+            slot.InventorySlotPoints = 0;
+            slot.InventoryItemCount = 0;
+            slot.ContainerInteriorCount = 0;
+            slot.ContainerInteriorItemCount = 0;
             slot.Wave = default;
             slot.WorldStats = default;
         }

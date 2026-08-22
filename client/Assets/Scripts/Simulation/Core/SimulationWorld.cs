@@ -1312,10 +1312,13 @@ namespace Ring.Simulation.Core
         /// the container array for a single box's mask, every box, every
         /// connection, every tick.
         ///
-        /// WHY IT IS PUBLIC. Slot CONTENT reaches nobody outside this
-        /// assembly today: `RenderSnapshot` carries container METADATA on
-        /// purpose and no content (its own doc), and `ContainerSlotAt` above
-        /// is `internal`. Stage 3 spec §3.12 puts the content on the WIRE —
+        /// WHY IT IS PUBLIC. Slot CONTENT had no reader outside this assembly
+        /// when this accessor was added: `RenderSnapshot` carried container
+        /// metadata and no content, and `ContainerSlotAt` above is `internal`.
+        /// (Т32б gave the render frame a flat interior pool of its own — see
+        /// `RenderSnapshot.ContainerInteriors` — but that is the RECEIVING
+        /// side's copy, filled through this very accessor on the local path.)
+        /// Stage 3 spec §3.12 puts the content on the WIRE —
         /// the ContainerSlots block, sent only to a collector inside
         /// LootRadius — and `SnapshotAssembler` lives in `Ring.Networking`.
         /// The owner weighed three routes (grow RenderSnapshot, open the

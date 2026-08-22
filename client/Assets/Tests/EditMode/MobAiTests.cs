@@ -410,7 +410,7 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(15f, 0f));
             float d0 = 15f;
             for (int i = 0; i < 60; i++) w.Tick(Idle);
-            var snap = new RenderSnapshot(TestConfigs.OpenField().Arena);
+            var snap = new RenderSnapshot(TestConfigs.OpenField());
             w.CaptureSnapshot(snap);
             Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), d0 - 3f);
         }
@@ -565,7 +565,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(14f, 0f)); // player at (0,0) behind the obstacle
             for (int i = 0; i < 300; i++) w.Tick(Idle);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), 3f); // reached it by going around
         }
@@ -584,7 +584,7 @@ namespace Ring.Simulation.Tests
                 for (int e = 0; e < w.EventCount; e++)
                     if (w.GetEvent(e).Kind == SimEventKind.ProjectileFired) fired++;
             }
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             float dist = math.distance(snap.Mobs[0].Pos, w.Player.Pos);
             Assert.That(dist, Is.InRange(c.Gunner.PreferredRange - 2f, c.Gunner.PreferredRange + 2f));
@@ -665,7 +665,7 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f));
             w.KillPlayerForTest();
             for (int i = 0; i < 30; i++) w.Tick(Idle);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(MobAiState.Idle, snap.Mobs[0].Ai);
         }
@@ -687,7 +687,7 @@ namespace Ring.Simulation.Tests
             var inputs = new SimInput[2];
             for (int i = 0; i < 30; i++) w.TickAll(inputs);
 
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(MobAiState.Idle, snap.Mobs[0].Ai);
         }
@@ -730,7 +730,7 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(12.1f, 10f));
             w.KillPlayerForTest(); // mobs go Idle — only separation acts
             for (int i = 0; i < 60; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             float dist = math.distance(snap.Mobs[0].Pos, snap.Mobs[1].Pos);
             Assert.Greater(dist, 1.0f); // pushed apart
@@ -772,7 +772,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(14f, 0f)); // player at (0,0) behind the wall
             for (int i = 0; i < 300; i++) w.Tick(Idle);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), 3f); // reached it by going around
         }
@@ -889,7 +889,7 @@ namespace Ring.Simulation.Tests
                     everEmbeddedInSolidWall = true;
             }
 
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), 3f); // reached it through the door
             Assert.IsFalse(everEmbeddedInSolidWall,

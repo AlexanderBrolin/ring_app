@@ -209,8 +209,8 @@ namespace Ring.Presentation
         public bool Restart(long seed, in SimConfig cfg)
         {
             _world = new SimulationWorld(seed, cfg);
-            _prev = new RenderSnapshot(cfg.Arena);
-            _curr = new RenderSnapshot(cfg.Arena);
+            _prev = new RenderSnapshot(cfg);
+            _curr = new RenderSnapshot(cfg);
             _world.CaptureSnapshot(_prev);
             _world.CaptureSnapshot(_curr);
             _acc.Reset();

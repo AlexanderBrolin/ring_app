@@ -88,9 +88,9 @@ namespace Ring.Simulation.Tests
 
         static SnapshotQueue NewQueue()
         {
-            var arena = TestConfigs.DefaultArena();
+            var cfg = TestConfigs.Default();
             var timings = Timings();
-            return new SnapshotQueue(in arena, in timings);
+            return new SnapshotQueue(in cfg, in timings);
         }
 
         /// Small, readable ceilings — this file never exercises ghost expiry

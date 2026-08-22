@@ -365,7 +365,7 @@ namespace Ring.Networking.Server
                     + $"{cfg.Hero.MaxInventoryItems} ({fixedCeiling} bytes: header, self, match, players, "
                     + "liveness, wave and five empty block headers).", nameof(net));
 
-            _capture = new RenderSnapshot(in cfg.Arena);
+            _capture = new RenderSnapshot(in cfg);
 
             int wireCapacity = math.max(1, cfg.Arena.MaxEventsPerFrame * 2);
             _wire = new WireEvent[wireCapacity];

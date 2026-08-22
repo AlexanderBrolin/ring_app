@@ -284,7 +284,7 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 3);
             w.SetStatsForTest(1, new MatchStats { Kills = 7, ShotsFired = 9 });
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             Assert.AreEqual(7, snap.PlayerStats[1].Kills);

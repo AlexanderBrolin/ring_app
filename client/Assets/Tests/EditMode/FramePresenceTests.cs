@@ -31,7 +31,7 @@ namespace Ring.Simulation.Tests
         public void NewSnapshot_SizesBothFlagArraysToTheWholeRoster()
         {
             SimConfig cfg = TestConfigs.Open();
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
 
             // The array index IS the player's slot, so a backend scattering
             // records by their own index must be able to write the last seat of
@@ -46,7 +46,7 @@ namespace Ring.Simulation.Tests
         public void CaptureSnapshot_KnowsEverySlotOfTheRoster()
         {
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             Assert.AreEqual(3, snap.PlayerCount);
@@ -62,7 +62,7 @@ namespace Ring.Simulation.Tests
         {
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
             w.KillPlayerForTest(); // seat 0 only — the seam's own victim
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             // Asserted per seat rather than as "somebody died": a constant
@@ -78,7 +78,7 @@ namespace Ring.Simulation.Tests
         {
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
             w.KillPlayerForTest();
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             // The whole point of the pair: this is the reading that means
@@ -95,7 +95,7 @@ namespace Ring.Simulation.Tests
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
             float2 standing = w.PlayerAt(0).Pos;
             w.KillPlayerForTest();
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             // Where it fell, there it lies (owner, 2026-08-10): the frame is
@@ -129,7 +129,7 @@ namespace Ring.Simulation.Tests
 
             float2 fellAt = w.PlayerAt(0).Pos;
             w.KillPlayerForTest();
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             Assert.IsFalse(snap.Players[0].Alive, "test setup: seat 0 must actually be down");
@@ -153,8 +153,8 @@ namespace Ring.Simulation.Tests
         public void CopyFrom_CarriesTheKnownFlagOfEverySlot()
         {
             SimConfig cfg = TestConfigs.Open();
-            var from = new RenderSnapshot(cfg.Arena);
-            var into = new RenderSnapshot(cfg.Arena);
+            var from = new RenderSnapshot(cfg);
+            var into = new RenderSnapshot(cfg);
             from.PlayerCount = 3;
             from.PlayerKnown[0] = true;
             from.PlayerKnown[1] = false;
@@ -177,8 +177,8 @@ namespace Ring.Simulation.Tests
         public void CopyFrom_CarriesTheRosterLivenessOfEverySlot()
         {
             SimConfig cfg = TestConfigs.Open();
-            var from = new RenderSnapshot(cfg.Arena);
-            var into = new RenderSnapshot(cfg.Arena);
+            var from = new RenderSnapshot(cfg);
+            var into = new RenderSnapshot(cfg);
             from.PlayerCount = 3;
             from.PlayerAliveInMatch[0] = false;
             from.PlayerAliveInMatch[1] = true;
@@ -204,8 +204,8 @@ namespace Ring.Simulation.Tests
             // would blink out of existence on the very hit that killed it.
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
             w.KillPlayerForTest();
-            var live = new RenderSnapshot(cfg.Arena);
-            var frozen = new RenderSnapshot(cfg.Arena);
+            var live = new RenderSnapshot(cfg);
+            var frozen = new RenderSnapshot(cfg);
             w.CaptureSnapshot(live);
 
             frozen.CopyFrom(live);

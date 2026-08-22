@@ -445,7 +445,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(5, cfg);
             w.SpawnPickup(PickupKind.EnergyCell, new float2(30f, 0f), 4);
             w.SetMatchForTest(new MatchState { Phase = MatchPhase.GateOpen, DirectorDeathTick = 17 });
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
 
             w.CaptureSnapshot(snap);
 
@@ -468,7 +468,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(5, cfg);
             w.SpawnContainer(ContainerKind.Crate, new float2(30f, 0f), new byte[] { 4 });
             Assert.AreEqual(1, w.ContainerCount, "premise: the container must actually exist");
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
 
             w.CaptureSnapshot(snap);
 
@@ -483,7 +483,7 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Default();
             var w = new SimulationWorld(5, cfg);
             w.Tick(default);
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(w.CurrentTick, snap.Tick);
             Assert.AreEqual(w.Player.Pos, snap.Player.Pos);

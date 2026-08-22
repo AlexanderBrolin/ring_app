@@ -135,7 +135,7 @@ namespace Ring.Simulation.Tests
                     if (w.GetEvent(e).Kind == SimEventKind.MobDied) died++;
             }
             Assert.AreEqual(3, died); // nobody lost, nobody double-counted
-            var snap = new RenderSnapshot(NoSpread().Arena);
+            var snap = new RenderSnapshot(NoSpread());
             w.CaptureSnapshot(snap);
             Assert.AreEqual(0, snap.MobCount);
         }
@@ -160,7 +160,7 @@ namespace Ring.Simulation.Tests
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(3f, 0f),
                 new float2(35f, 0f), 1f, 0f, 1000f, 0.12f, 1f);
             for (int i = 0; i < 6; i++) w.Tick(default);
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(1, snap.MobCount);
             Assert.AreEqual(cfg.Chaser.MaxHp, snap.Mobs[0].Hp); // the far one is alive and unscathed

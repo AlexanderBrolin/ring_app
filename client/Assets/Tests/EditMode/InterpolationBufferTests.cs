@@ -73,9 +73,9 @@ namespace Ring.Simulation.Tests
 
         static SnapshotQueue NewQueue(out NetTimings timings, int interpBufferTicks = 3)
         {
-            var arena = TestConfigs.DefaultArena();
+            var cfg = TestConfigs.Default();
             timings = Timings(interpBufferTicks);
-            return new SnapshotQueue(in arena, in timings);
+            return new SnapshotQueue(in cfg, in timings);
         }
 
         /// Minimal `EventRecord` fixture. `EventDedup.TryAcceptEvent` only
@@ -138,9 +138,9 @@ namespace Ring.Simulation.Tests
         [Test]
         public void RingDepth_IsInterpBufferTicksPlusTwo()
         {
-            var arena = TestConfigs.DefaultArena();
+            var cfg = TestConfigs.Default();
             var timings = Timings(interpBufferTicks: 3);
-            var queue = new SnapshotQueue(in arena, in timings);
+            var queue = new SnapshotQueue(in cfg, in timings);
 
             Assert.AreEqual(timings.InterpBufferTicks + 2, queue.Depth,
                 "Р37: the ring holds InterpBufferTicks + 2 ticks of history — 5 at the shipped "
@@ -817,6 +817,18 @@ namespace Ring.Simulation.Tests
             { nameof(RenderSnapshot.Pickups), nameof(RenderSnapshot.PickupCount) },
             // Stage 3 Т14: containers, same bounded-by-their-own-count shape.
             { nameof(RenderSnapshot.Containers), nameof(RenderSnapshot.ContainerCount) },
+            // Stage 3 Т32б: the three arrays the five decoded blocks landed in.
+            // The owner's pack and the interiors are each bounded by their own
+            // count exactly like the entity arrays above; the interiors' ITEM
+            // POOL is bounded by its own count too, and deliberately not by the
+            // records that address it — a record's ItemOffset points INTO this
+            // pool, so bounding the pool by the records would be a derivation
+            // where a count already exists.
+            { nameof(RenderSnapshot.InventoryItems), nameof(RenderSnapshot.InventoryItemCount) },
+            { nameof(RenderSnapshot.ContainerInteriors),
+                nameof(RenderSnapshot.ContainerInteriorCount) },
+            { nameof(RenderSnapshot.ContainerInteriorItems),
+                nameof(RenderSnapshot.ContainerInteriorItemCount) },
         };
 
         /// Fills every field of `s` with a distinct, non-default value so a
@@ -928,19 +940,55 @@ namespace Ring.Simulation.Tests
                     DamageTaken = 33.5f,
                 };
             s.WorldStats = new WorldStats { WavesCleared = 2, MobSpawnsSkipped = 1, ProjectileSpawnsSkipped = 4 };
+            // Stage 3 Т32б: the five blocks' own fields. Same discipline as
+            // everything above — nothing left at a value a constructor could
+            // have produced.
+            //
+            // `MatchSecondsRemaining` is filled with a PLAUSIBLE COUNTDOWN and
+            // not with `MatchCountdown.None`: the sentinel is what an untouched
+            // frame reads, so a `CopyFrom` that skipped the field would agree
+            // with the source by accident. (The constructor writes the sentinel
+            // and `AssertEveryFieldIsNonDefault` only rejects `default(int)`,
+            // which the sentinel is not — hence stating this here rather than
+            // relying on the guard to notice.)
+            s.MatchSecondsRemaining = 421;
+            s.DirectorAlive = true;
+            s.InventorySlotPoints = 5;
+            s.InventoryItemCount = math.min(2, s.InventoryItems.Length);
+            for (int i = 0; i < s.InventoryItemCount; i++)
+                s.InventoryItems[i] = (byte)(11 + i);
+            s.ContainerInteriorCount = math.min(2, s.ContainerInteriors.Length);
+            s.ContainerInteriorItemCount = 0;
+            for (int i = 0; i < s.ContainerInteriorCount; i++)
+            {
+                // Two occupied slots apiece, so the pool carries something for
+                // every record and the offsets differ between them.
+                s.ContainerInteriors[i] = new ContainerInterior
+                {
+                    Id = 500 + i,
+                    OccupancyMask = (byte)0b0000_0011,
+                    ItemOffset = s.ContainerInteriorItemCount,
+                    ItemCount = 2,
+                };
+                s.ContainerInteriorItems[s.ContainerInteriorItemCount++] = (byte)(21 + i);
+                s.ContainerInteriorItems[s.ContainerInteriorItemCount++] = (byte)(31 + i);
+            }
         }
 
         /// `value == default(T)` for a boxed value of any VALUE type the
         /// fixture might produce (int/uint/float/bool/byte, enums, `float2`,
         /// and the plain structs `PlayerState`/`MobState`/`ProjectileState`/
         /// `PickupState`/`ContainerState`/`WaveState`/`MatchState`/
-        /// `MatchStats`/`WorldStats` — none of them nest a reference type,
-        /// confirmed by inspection of
-        /// `Simulation/Core/SimStates.cs`, so comparing against a
-        /// freshly-activated instance of the same type is exact. The one
-        /// piece of world state that IS a reference type, the backpack
-        /// (`Loot.Inventory`), deliberately never reaches a render frame —
-        /// see `SimulationWorld.CaptureSnapshot`'s own note on why. A REFERENCE type this helper was never
+        /// `MatchStats`/`WorldStats`, and `ContainerInterior` since Т32б —
+        /// none of them nest a reference type, confirmed by inspection of
+        /// `Simulation/Core/SimStates.cs` and `RenderSnapshot.cs`, so comparing
+        /// against a freshly-activated instance of the same type is exact. The
+        /// backpack OBJECT (`Loot.Inventory`) is still the one piece of world
+        /// state that is a reference type and it still never reaches a render
+        /// frame — see `SimulationWorld.CaptureSnapshot`'s own note. What Т32б
+        /// put in the frame is its CONTENTS, as a `byte[]` of item ids, which
+        /// this helper meets one element at a time like any other mapped array.
+        /// A REFERENCE type this helper was never
         /// taught to compare fails LOUDLY (fix-round 1, IMPORTANT #3:
         /// "unknown type = loud Fail demanding the filler be taught") rather
         /// than silently reporting a wrong answer.
@@ -997,9 +1045,10 @@ namespace Ring.Simulation.Tests
         [Test]
         public void CopyFrom_CopiesEveryPublicField_ByReflection()
         {
-            var arena = TestConfigs.DefaultArena();
-            var source = new RenderSnapshot(in arena);
-            var dest = new RenderSnapshot(in arena);
+            var cfg = TestConfigs.Default();
+            ArenaSimConfig arena = cfg.Arena;
+            var source = new RenderSnapshot(in cfg);
+            var dest = new RenderSnapshot(in cfg);
             FillDistinctValues(source, in arena);
             AssertEveryFieldIsNonDefault(source); // fix-round 1 IMPORTANT #3 guard
 

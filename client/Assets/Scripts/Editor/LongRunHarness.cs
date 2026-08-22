@@ -48,7 +48,7 @@ namespace Ring.Editor
         {
             SimConfig cfg = BuildBattleConfig();
             var world = new SimulationWorld(WorldSeed, in cfg);
-            var snapshot = new RenderSnapshot(in cfg.Arena);
+            var snapshot = new RenderSnapshot(in cfg);
             var rng = new Unity.Mathematics.Random(InputSeed);
 
             Debug.Log($"LongRunHarness: starting {TotalTicks}-tick run " +

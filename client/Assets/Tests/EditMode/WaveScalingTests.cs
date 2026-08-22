@@ -138,7 +138,7 @@ namespace Ring.Simulation.Tests
             p1.Hp = 0f;
             w.SetPlayerForTest(1, p1);
 
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             var idle = new SimInput[w.PlayerCount];
             for (int i = 0; i < 200 && w.MobCount == 0; i++) w.TickAll(idle);
             w.CaptureSnapshot(snap);
@@ -204,7 +204,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(11, c);
             for (int i = 0; i < 200; i++) w.Tick(default);
 
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             int outerDebt = snap.Wave.PendingOuterChaser + snap.Wave.PendingOuterGunner
                 + snap.Wave.PendingOuterElite;
@@ -234,7 +234,7 @@ namespace Ring.Simulation.Tests
                 w.SetPlayerForTest(i, p);
             }
 
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             WavePhase phaseBefore = snap.Wave.Phase;
             float timerBefore = snap.Wave.PhaseTimer;

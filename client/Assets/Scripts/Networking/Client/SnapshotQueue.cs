@@ -315,7 +315,10 @@ namespace Ring.Networking.Client
         /// and never advanced by a reservation that was never committed.
         public uint NewestTick => _newestAccepted;
 
-        public SnapshotQueue(in ArenaSimConfig arena, in NetTimings timings)
+        /// TAKES THE WHOLE `SimConfig` SINCE Т32б, for the reason
+        /// `RenderSnapshot`'s own constructor gives: the ring preallocates the
+        /// frames, and a frame is no longer sized from the arena alone.
+        public SnapshotQueue(in SimConfig cfg, in NetTimings timings)
         {
             // A non-positive InterpBufferTicks has no representation a ring
             // can use (a zero-or-negative-width ring holds nothing); NetTimings
@@ -326,7 +329,7 @@ namespace Ring.Networking.Client
             _depth = math.max(1, timings.InterpBufferTicks + 2);
 
             _ring = new RenderSnapshot[_depth];
-            for (int i = 0; i < _depth; i++) _ring[i] = new RenderSnapshot(in arena);
+            for (int i = 0; i < _depth; i++) _ring[i] = new RenderSnapshot(in cfg);
             _occupied = new bool[_depth];
             _slotTick = new uint[_depth];
         }

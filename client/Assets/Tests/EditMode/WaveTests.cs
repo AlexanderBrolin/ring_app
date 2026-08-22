@@ -13,7 +13,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(11, c);
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(c.Wave.BaseCount, snap.MobCount);
             Assert.AreEqual(1, snap.Wave.WaveIndex);
@@ -28,7 +28,7 @@ namespace Ring.Simulation.Tests
             // chance to move yet
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0);
             for (int m = 0; m < snap.MobCount; m++)
@@ -70,7 +70,7 @@ namespace Ring.Simulation.Tests
             c.Wave.MinSpawnDistanceToPlayer = c.Arena.Radius + 10f; // no valid points on ANY ring
             var w = new SimulationWorld(11, c);
             for (int i = 0; i < 60; i++) w.Tick(default); // not hanging is already success
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(0, snap.MobCount);
             // Stage 3 Task 11: the debt is nine fields now (zone x
@@ -104,7 +104,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(11, c);
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             int gunners = 0;
             for (int m = 0; m < snap.MobCount; m++)
@@ -132,7 +132,7 @@ namespace Ring.Simulation.Tests
             c.Wave.BaseCount = 6;
             var w = new SimulationWorld(11, c);
             for (int i = 0; i < 200; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             int ceiling = c.Arena.MaxMobs - c.Flow.DirectorReserveSlots;
             Assert.LessOrEqual(snap.MobCount, ceiling);
@@ -203,7 +203,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(11, c);
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 10;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0); // the wave still found room elsewhere on the ring
             // M-7 (fix-round T14): IsValidSpawn checks each mob against its
@@ -244,7 +244,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(11, c);
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 10;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0);
             // M-7 (fix-round T14): same fix as Spawn_InsideWall_Rejected

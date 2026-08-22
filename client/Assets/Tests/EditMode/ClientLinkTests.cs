@@ -574,9 +574,9 @@ namespace Ring.Simulation.Tests
             // tick buffered. Asserting against `SnapshotQueue.Depth` itself —
             // rather than restating `InterpBufferTicks + 2` here — is what
             // keeps the two from drifting apart silently.
-            var arena = TestConfigs.DefaultArena();
+            var cfg = TestConfigs.Default();
             var timings = Timings();
-            var ring = new SnapshotQueue(in arena, in timings);
+            var ring = new SnapshotQueue(in cfg, in timings);
 
             Assert.AreEqual(EventBudget * ring.Depth, NewQueue().Capacity,
                 "ClientEventQueue.Capacity must be the per-frame event budget times the number of "

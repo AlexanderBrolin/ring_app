@@ -1544,8 +1544,8 @@ namespace Ring.Presentation
             // call after the first, so this flag never stops a frame there.
             _restartedThisUpdate = true;
             Seed = seed;
-            _renderPrevFrozen = new RenderSnapshot(cfg.Arena);
-            _renderCurrFrozen = new RenderSnapshot(cfg.Arena);
+            _renderPrevFrozen = new RenderSnapshot(cfg);
+            _renderCurrFrozen = new RenderSnapshot(cfg);
             EndHitstop();
             RenderAlpha = 0f;
             ConfigTweaked = false;
