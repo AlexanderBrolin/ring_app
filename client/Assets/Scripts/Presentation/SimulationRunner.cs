@@ -573,7 +573,7 @@ namespace Ring.Presentation
         /// (`AimRayView.LateUpdate`). One rule, one home, three readers — none
         /// of them keeps a copy of the state.
         ///
-        /// THREE TERMS, EACH FOR ITS OWN REASON:
+        /// FOUR TERMS, EACH FOR ITS OWN REASON:
         ///  - `Ready` — the backend has a picture at all. Every reader below
         ///    also touches `Config`/the render pair, which is what that guard
         ///    has always protected;
@@ -588,7 +588,29 @@ namespace Ring.Presentation
         ///    networked one the overlay shows a tick LATE (its `PlayerDied`
         ///    waits for `renderTick`), while this slot stops being written as
         ///    soon as prediction stops.
-        public bool AimActive => Ready && !Paused && RenderCurr.Player.Alive;
+        ///  - `!InventoryOpen` — the loot window is up (playtest В1 round two,
+        ///    bd `app-zg29`). The owner found this one from the other side:
+        ///    there was no MOUSE POINTER in the window, so he was picking items
+        ///    with the aim marker. The pointer is a function of this property
+        ///    (`CrosshairView.UpdateCursor`), and the window was not in it — the
+        ///    pause menu was, which is exactly why Escape's menu had a cursor
+        ///    and Tab's window did not. The term belongs here rather than in the
+        ///    cursor alone, because the game is not asking for aim while the
+        ///    window is up in the strictest possible sense: `WeaponSystem.
+        ///    CanFire` refuses the shot outright on `InventoryOpen`, with no
+        ///    exception of the kind the dash and slide terms have, so the
+        ///    marker, the spread cone and the aim ray were all promising a shot
+        ///    the server would not fire.
+        public bool AimActive
+            => IsAimActive(Ready, Paused, RenderCurr.Player.Alive, InventoryOpen);
+
+        /// The rule of the property above, as a pure function — so it can be
+        /// tested at all, the same split `InventoryWindowController.
+        /// WindowMustClose` and `Core.ExitRules.IsOpen` already are (the owner's
+        /// decision of 2026-08-10). Four facts in, one answer out; the property
+        /// gathers the facts, this decides.
+        public static bool IsAimActive(bool ready, bool paused, bool alive, bool inventoryOpen)
+            => ready && !paused && alive && !inventoryOpen;
 
         // ---- observation: which seat this client is looking from -----------
 

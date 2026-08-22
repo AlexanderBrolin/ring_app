@@ -102,7 +102,7 @@ namespace Ring.Presentation
         ///
         /// SHOWN WHENEVER THE GAME IS NOT ASKING FOR AIM, and "asking for aim"
         /// is `SimulationRunner.AimActive` — not a test assembled here. That
-        /// property's own doc has the three terms and why each is in it; what
+        /// property's own doc has the four terms and why each is in it; what
         /// matters at this call site is that the pointer, the ground marker
         /// below and `AimRayView`'s ray all obey the SAME signal, so the cursor
         /// can never appear over a crosshair that is still tracking the mouse

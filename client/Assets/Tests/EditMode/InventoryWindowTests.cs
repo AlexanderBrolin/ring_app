@@ -122,5 +122,60 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(InventoryWindowController.WindowMustClose(in frame),
                 "standing over a box changes nothing about whether the window shuts");
         }
+
+        // ---- what an OPEN window costs the aim surfaces (bd `app-zg29`) ------
+        //
+        // The owner found this from the far side: no mouse POINTER appeared in
+        // the window, so items had to be picked with the aim marker, while
+        // Escape's pause menu had a pointer all along. The cursor is a pure
+        // function of `SimulationRunner.AimActive` (`CrosshairView` is its sole
+        // owner in the project), pause was one of that property's terms and the
+        // window was not — so these pin all four, the new one included.
+
+        [Test]
+        public void AimActive_InAnOrdinaryFightingFrame()
+        {
+            Assert.IsTrue(SimulationRunner.IsAimActive(
+                ready: true, paused: false, alive: true, inventoryOpen: false));
+        }
+
+        /// The finding itself. `WeaponSystem.CanFire` refuses the shot on
+        /// `InventoryOpen` unconditionally — there is no `CanFireWhileWindowOpen`
+        /// the way there is for the dash and the slide — so while the window is
+        /// up the game is not asking for aim in the strictest sense there is,
+        /// and the marker, the cone and the ray were all drawing a shot that
+        /// could not happen.
+        [Test]
+        public void AimActive_IsFalse_WhileTheLootWindowIsOpen()
+        {
+            Assert.IsFalse(SimulationRunner.IsAimActive(
+                ready: true, paused: false, alive: true, inventoryOpen: true),
+                "the pointer belongs to the player while he is reading his pack, and the shot "
+                + "is refused by the server anyway");
+        }
+
+        /// The three terms that were already there, pinned so the fourth cannot
+        /// be added by loosening one of them.
+        [Test]
+        public void AimActive_IsFalse_BeforeTheBackendHasAPicture()
+        {
+            Assert.IsFalse(SimulationRunner.IsAimActive(
+                ready: false, paused: false, alive: true, inventoryOpen: false));
+        }
+
+        [Test]
+        public void AimActive_IsFalse_WhileThePauseMenuIsUp()
+        {
+            Assert.IsFalse(SimulationRunner.IsAimActive(
+                ready: true, paused: true, alive: true, inventoryOpen: false),
+                "input is frozen while paused, so a held right button would aim for ever");
+        }
+
+        [Test]
+        public void AimActive_IsFalse_WhileThisCollectorIsDown()
+        {
+            Assert.IsFalse(SimulationRunner.IsAimActive(
+                ready: true, paused: false, alive: false, inventoryOpen: false));
+        }
     }
 }
