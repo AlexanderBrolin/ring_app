@@ -3,7 +3,9 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development`.
 > Модели: implementer per task = **sonnet** для Т1/Т2/Т6/Т7 (механика по готовым
 > формулам и данным), **opus** — Т3 (форма состояния и хеш), Т4 (директор волн),
-> Т5 (потолки и сглаживание); **fable** — ревью фаз. Ревьюеры = 2 × Explore
+> Т5 (потолки и сглаживание); **Т8 исполняет главный агент лично** (перепин,
+> шесть сборок, образ, стенд, замер — сплошь запрещённое субагентам);
+> **fable** — ревью фаз. Ревьюеры = 2 × Explore
 > (спека-соответствие + качество/арифметика). **Все прогоны Unity, вердикты
 > субагентов, гейты и веха — main-агент лично** (R-14: субагенты Unity не
 > запускают вовсе; R-98: `.meta` не пишут). Шаги — чекбоксы `- [ ]`.
@@ -30,11 +32,14 @@
 **v4** (К1–К10 владельца, Р301–Р335; self-review спеки — 13 Critical;
 self-review плана — 25 Critical, §6c). **План против спеки — верить спеке.**
 
-**Статус плана:** **v2 — после self-review по `review_plan.md`** (четыре
-Explore-субагента: A корректность кода, B конвенции, C переиспользование,
-D TDD/полнота; **25 Critical**, ~40 прочих; каждая критическая проверена
-главным агентом лично по коду). Что изменилось против v1 — раздел
-«Что исправил self-review» в конце файла.
+**Статус плана:** **v3 — после СОВМЕСТНОГО ре-ревью спеки и плана** (сессия 46,
+три Explore-ревьюера: A согласованность документов, B арифметика тестов и сила
+свидетелей мутаций, C факты кода и компилируемость по границам тасков;
+**11 Critical, 12 Important, 12 Minor**, каждая Critical проверена главным
+агентом лично грепом, ложных нет). История: v1 → **v2** (self-review плана,
+25 Critical) → **v3** (совместное ре-ревью; спека одновременно доведена до v5).
+Что изменилось — разделы «Что исправил self-review» и «Что исправило
+совместное ре-ревью» в конце файла.
 
 ---
 
@@ -58,12 +63,12 @@ D TDD/полнота; **25 Critical**, ~40 прочих; каждая крити
 
   | Таск | Ожидаемые красные |
   |---|---|
-  | Т1 | три golden (форма `MobState` вошла в хеш) |
-  | Т2 | три golden (числа фикстур вошли в `simConfigHash`) |
-  | Т3 | три golden. ⚠ Компиляция обязана быть ЧИСТОЙ: все читатели `WaveState` правятся В ЭТОМ ЖЕ таске |
-  | Т4 | три golden + до правки шага 6 — `SimConfigHashTests.EveryConfigNumberAffectsHash_Wave` (держит имя `"ZoneWeights"` СТРОКОЙ, компиляцию не ломает) |
+  | Т1 | три golden — **и причина ровно одна: `MobState.SpawnZone` вошёл в `HashMob`**. С этого таска и до Т8 они красные постоянно, поэтому в строках ниже «три golden» означает «те же самые, новых причин нет» |
+  | Т2 | три golden. ⚠ v2 писала «числа фикстур вошли в `simConfigHash`» — **это неверно дважды** (ре-ревью): эталон не содержит `simConfigHash` (`SimulationWorld` его не считает вовсе), а новые поля в Т2 ещё никем не читаются, то есть поведение не меняется. Красные унаследованы от Т1. **Если на Т2 красных БОЛЬШЕ трёх — почти наверняка `ConfigTests.AssertWaveEqual` расширен наивным равенством вместо тройной формы (Step 4)** |
+  | Т3 | три golden. ⚠ Компиляция обязана быть ЧИСТОЙ: **все читатели `WaveState`, включая тестовую сборку, правятся В ЭТОМ ЖЕ таске** — `WaveTests`, `WaveZoneTests`, `WaveScalingTests`, `InterpolationBufferTests`, `SnapshotAssemblerTests`, `WorldLifecycleTests` (Р339) |
+  | Т4 | три golden + до правки шага 6 — `SimConfigHashTests.EveryConfigNumberAffectsHash_Wave` (держит имя `"ZoneWeights"` СТРОКОЙ, компиляцию не ломает) + до правки шага 7 — `MultiPlayerWorldTests.WorldStats_CountedOnce_NotPerPlayer` (ждёт `WavesCleared == 1`, получит 3) |
   | Т5 | три golden |
-  | Т6 | три golden |
+  | Т6 | три golden. ⚠ **Правка C#-дефолтов `WaveConfig` краснит `ConfigTests.Build_DefaultAssets_MatchesTestConfigsBaseline` до шага с тройной формой** — это ожидаемо и снимается в том же таске (Р337) |
   | Т7 | три golden |
   | Т8 | **ноль** после перепина |
 
@@ -80,6 +85,12 @@ D TDD/полнота; **25 Critical**, ~40 прочих; каждая крити
   и задаются **в одном месте** — `Default()`, от которой производны все семь
   вариантов (находки B/A: дублировать в каждом — нарушение правила 2).
 - **Орфография идентификаторов — американская.**
+- ⚠ **КОММЕНТАРИИ В СНИППЕТАХ ЭТОГО ПЛАНА НАПИСАНЫ ПО-РУССКИ НАМЕРЕННО** — это
+  объяснение исполнителю, а не текст для файла. В `.cs` они переносятся
+  **по-английски** (американская орфография); по-русски остаётся только строка
+  сообщения `Assert.*` — законный прецедент репозитория (63 живых литерала).
+  Скопированный дословно русский комментарий — находка свипа кириллицы и
+  красный гейт фазы.
 - ⚠ **Свип кириллицы в `.cs` — с явным исключением для сообщений ассертов**
   (находка B-Important). Свип `git diff -U0 -- '*.cs' | grep -E "^\+" |
   grep -P "[а-яА-Я]{4,}"` ловит **прозу и комментарии**; русские сообщения
@@ -94,6 +105,10 @@ D TDD/полнота; **25 Critical**, ~40 прочих; каждая крити
   каждого.
 - **ГЕЙТ-META:** каждому новому не-`.meta` файлу под `client/Assets/**`
   соответствует `<path>.meta` (генерит Unity).
+- **ГЕЙТ-ФАЙЛ (для каждого СОЗДАННОГО файла — в этой задаче это
+  `WaveCadenceTests.cs`):** `file <файл>` = «UTF-8 Unicode text» или «ASCII
+  text», и NUL-чек `tr -d -c '\000' < <файл> | wc -c` → `0` (правило 16, гейт
+  задачи спека §4). v2 не содержала его ни разу.
 - **ГЕЙТ-КОДОГЕН (после таска, тронувшего проводную структуру):**
   `strings -a client/Library/ScriptAssemblies/Ring.Networking.dll | grep -E
   "Comparer___|GWrite___Unity|GRead___Unity"` → ПУСТО; то же для
@@ -205,8 +220,9 @@ public Zone SpawnZone;
 // Производственный спавн: зона ОБЯЗАТЕЛЬНА, умолчания нет (сторож в Step 5).
 internal int SpawnMob(MobType type, float2 pos, Zone zone)
 
-// Тест-шов: хвостовой параметр с умолчанием (иначе 124 вызова в 18 файлах
-// тестов правятся механически).
+// Тест-шов: хвостовой параметр с умолчанием (иначе 122 вызова в 18 файлах
+// тестов правятся механически; 127 вхождений идентификатора, пять из них —
+// упоминания в доках. Число сведено со спекой в ре-ревью).
 internal int SpawnMobForTest(MobType type, float2 pos, Zone zone = Zone.Outer)
     => SpawnMob(type, pos, zone);
 ```
@@ -423,7 +439,11 @@ public void Validate_CeilingsExactlyAtMaxMobs_IsLegal()
 {
     // Граничный случай легален — свидетель для мутации `>` -> `>=`.
     var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-    int reserve = 3;                                  // Flow.DirectorReserveSlots
+    // Резерв читается из СВОЕГО источника, а не литералом: смена C#-дефолта
+    // MatchFlowConfig иначе молча сдвинет фикстуру с границы, и тест
+    // перестанет убивать мутацию `>` -> `>=` (правило 397, находка ре-ревью).
+    var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
+    int reserve = flow.DirectorReserveSlots;
     wv.MaxAliveByZone = new[] { a.MaxMobs - reserve - 2, 1, 1 };
     Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
 }
@@ -439,18 +459,34 @@ public void Validate_ZeroSpawnsPerZonePerTick_Throws()
 }
 ```
 
-- [ ] **Step 2:** заглушки полей → R-FILTER `ZoneConfigTests` → EXIT=2, семь
-      наблюдаемых «исключение не брошено» (и один `DoesNotThrow`, который
-      обязан быть зелёным уже здесь).
+- [ ] **Step 2:** заглушки полей → R-FILTER `ZoneConfigTests` → EXIT=2.
+      ⚠ **Красных ШЕСТЬ, а не семь** (ре-ревью): тестов в Step 1 семь, но
+      `Assert.Throws` из них шесть, а седьмой —
+      `Validate_CeilingsExactlyAtMaxMobs_IsLegal` — обязан быть **зелёным уже
+      здесь**. Неверное предсказание само спровоцировало бы ложный стоп по
+      дисциплине «любое расхождение — стоп».
 - [ ] **Step 3 (GREEN):** поля в `WaveSimConfig` и `WaveConfig` с атрибутами;
       маппинг; два новых хелпера; пять правил (2 и 4 — внутри `else`).
-- [ ] **Step 4:** числа фикстур в `TestConfigs.Default()`; `AssertWaveEqual`
-      расширяется в связке; `SimConfigHashTests` (`:50-51`) получает два новых
-      массива через `AssertInt32ArrayFieldAffectsHash`/
-      `AssertFloatArrayFieldAffectsHash` и два скаляра.
+- [ ] **Step 4:** числа фикстур в `TestConfigs.Default()`; `SimConfigHashTests`
+      (`:50-51`) получает два новых массива через
+      `AssertInt32ArrayFieldAffectsHash`/`AssertFloatArrayFieldAffectsHash` и
+      два скаляра.
+      ⚠ **`AssertWaveEqual` расширяется НЕ равенством** (Р337, находка
+      ре-ревью). Хелпер живёт внутри паритетного
+      `ConfigTests.Build_DefaultAssets_MatchesTestConfigsBaseline` и сравнивает
+      **C#-дефолты SO против `TestConfigs.Default()`**, а числа расходятся
+      намеренно (Р325): SO `{20,30,30}` / `{150,110,10}` / `20` против
+      фикстурных `{2,3,3}` / `{24,16,8}` / `2`. Наивное `Assert.AreEqual`
+      красное по построению и в таблице не значится. Форма — **тройная,
+      прецедент `BarrierTop`** (`ConfigTests.cs:270-282`), по блоку на поле:
+      C#-дефолт обязан доехать до билдера нетронутым; фикстура обязана
+      остаться на своём скромном числе; `Assert.AreNotEqual` с текстом «если
+      сойдутся — один из двух источников уехал». То же для `MaxAliveByZone` и
+      `DifficultyStepSeconds`. `MaxSpawnsPerZonePerTick` совпадает на обеих
+      сторонах (2 = 2) и идёт **обычным равенством**.
 - [ ] **Step 5:** R-FILTER `ZoneConfigTests` + `ConfigTests` +
       `SimConfigHashTests` → PASS.
-- [ ] **Step 6 (мутация M13 — ПЯТЬ мутаций, по одной на правило; предсказания
+- [ ] **Step 6 (мутация M13 — ШЕСТЬ мутаций: пять правил + форма; предсказания
       ДО прогона):** (1) порог `< 2` → `< 1` для паузы → жертва
       `Validate_WavePauseBelowTwoTicks_Throws` (`TicksFromSeconds(0.02) = 1`,
       отказ пропадёт); (2) то же для `DifficultyStepSeconds`; (3) нижняя
@@ -459,13 +495,20 @@ public void Validate_ZeroSpawnsPerZonePerTick_Throws()
       `Validate_CeilingsExactlyAtMaxMobs_IsLegal`; (5) снять
       `ReqZoneArrayLength` → жертва `Validate_WrongZoneArrayLength_Throws`
       **с падением на `IndexOutOfRangeException`, а не на ассерте** — это и
-      есть доказательство, что порядок правил несущий.
+      есть доказательство, что порядок правил несущий;
+      **(6) снять `ReqPositive` с `MaxSpawnsPerZonePerTick` → жертва
+      `Validate_ZeroSpawnsPerZonePerTick_Throws`.** ⚠ Шестая добавлена
+      ре-ревью: v2 обещала «по одной на правило», а правило про приток
+      оставалось единственным немутированным.
 - [ ] **Step 7:** R-TEST полный → красные по таблице.
 - [ ] **Step 8:** R-COMMIT `feat(app-ggvz): Т2 — числа каденции в конфиге и
       пять правил валидации`.
 
-**Гейт фазы 1:** R-TEST по таблице; ГЕЙТ-ЛОГ без `error CS`; свип кириллицы
-(с исключением ассертов) пуст; `bd note` по каждому таску; push ветки.
+**Гейт фазы 1:** R-TEST по таблице; ГЕЙТ-ЛОГ без `error CS`; **ГЕЙТ-ФАЙЛ для
+созданного `WaveCadenceTests.cs`** (`file` = UTF-8/ASCII, NUL-чек = 0);
+**семь мутаций фазы убиты и предсказания сверены** (M5 в Т1 + шесть M13 в Т2 —
+в v2 гейт фазы 1 мутаций не требовал вовсе); свип кириллицы (с исключением
+ассертов) пуст; `bd note` по каждому таску; push ветки.
 
 ---
 
@@ -494,8 +537,21 @@ public void Validate_ZeroSpawnsPerZonePerTick_Throws()
   `client/Assets/Tests/EditMode/InterpolationBufferTests.cs` (филлер
   `:925-940` — девять `Pending*` и `PhaseTimer`),
   `client/Assets/Tests/EditMode/SnapshotAssemblerTests.cs` (`:485-487` —
-  `w.WaveRef` становится методом),
-  `client/Assets/Tests/EditMode/WorldLifecycleTests.cs` (свип и квитанция)
+  `w.WaveRef` становится методом; плюс свидетель насыщения, Step 6a),
+  `client/Assets/Tests/EditMode/SnapshotCodecTests.cs` (блок волны — 4 байта),
+  `client/Assets/Tests/EditMode/WorldLifecycleTests.cs` (свип и квитанция),
+  ⚠ **и три файла, без которых тестовая сборка НЕ КОМПИЛИРУЕТСЯ после Step 3**
+  (Р339, находка ре-ревью К1 — v2 откладывала их в Т4 и тем ломала собственное
+  правило «`error CS` недопустим ни на одном таске»):
+  `client/Assets/Tests/EditMode/WaveZoneTests.cs` (девятнадцать `w.WaveRef`;
+  `WaveSystem.PendingRef(ref w, zone, type)` `:122`, `:146` — трёхаргументная
+  форма; `wv.PhaseTimer` `:207`, `:242`, `:385`, `:411`, `:452`;
+  `w.SetWaveForTest(...)` без зоны `:208`, `:243`, `:386`, `:412`, `:453`;
+  `PendingOuter*/PendingMiddle*/PendingCore*` `:180`, `:211`, `:246`, `:274-276`,
+  `:321`, `:389-390`, `:415-416`, `:456-457`),
+  `client/Assets/Tests/EditMode/WaveTests.cs` (`:139` — `w.WaveRef.PendingTotal`),
+  `client/Assets/Tests/EditMode/WaveScalingTests.cs` (`:209-210` —
+  `snap.Wave.PendingOuter*`; `:240`, `:248` — `snap.Wave.PhaseTimer`)
 
 **Interfaces:**
 
@@ -565,14 +621,26 @@ public void Snapshot_CarriesTheWorldAggregate_NotTheFirstRing()
     var w = new SimulationWorld(7, cfg);
     var frame = new RenderSnapshot(in cfg);
     TestWorlds.IdleTicks(w, 100);
+
+    // ⚠ Кольцам НАРОЧНО раздаются РАЗНЫЕ шаги и таймеры (находка ре-ревью В4):
+    // на 100-м тике мир даёт {1,1,1} и {58,88,88}-подобное, где «максимум»
+    // неотличим ни от «первого кольца», ни от «минимума», и половина ассертов
+    // была бы истинна при любой реализации (урок 428).
+    WaveState mid = w.WaveRef(Zone.Middle);
+    mid.WaveIndex = 5;                    // строго больше внешнего и ядра
+    mid.PhaseTicks = 3;                   // строго меньше соседних таймеров
+    w.SetWaveForTest(Zone.Middle, mid);
     w.CaptureSnapshot(frame);
 
     int sum = w.WaveRef(Zone.Outer).AliveCount + w.WaveRef(Zone.Middle).AliveCount
         + w.WaveRef(Zone.Core).AliveCount;
-    int maxIndex = math.max(w.WaveRef(Zone.Outer).WaveIndex,
-        math.max(w.WaveRef(Zone.Middle).WaveIndex, w.WaveRef(Zone.Core).WaveIndex));
     Assert.AreEqual(sum, frame.Wave.AliveCount, "агрегат не суммирует живых");
-    Assert.AreEqual(maxIndex, frame.Wave.WaveIndex, "агрегат не берёт максимум шага");
+    Assert.AreEqual(5, frame.Wave.WaveIndex,
+        "агрегат обязан брать МАКСИМУМ шага по кольцам, а не первое кольцо");
+    Assert.AreEqual(3, frame.Wave.PhaseTicks,
+        "агрегат обязан брать МИНИМУМ таймера среди незамороженных колец");
+    Assert.AreEqual(WavePhase.Active, frame.Wave.Phase,
+        "агрегат обязан быть Active, пока активно хоть одно кольцо");
 }
 ```
 
@@ -585,10 +653,33 @@ public void Snapshot_CarriesTheWorldAggregate_NotTheFirstRing()
       `Array.Copy` в обе стороны; `HashWave` ×3; агрегат в `CaptureSnapshot`.
 - [ ] **Step 5 (доки, которые иначе станут ложью):** `WaveState` `:317-331`,
       `MatchRef` `:1033`, `SimulationWorld.cs:518`, `ReadWave` `:2163-2168`.
-- [ ] **Step 6 (механическая правка ломающихся тестов):** филлер
-      `InterpolationBufferTests.cs:925-940` (девять `Pending*` + `PhaseTimer`
-      → три + `PhaseTicks`, плюс `WaveIndex` остаётся);
-      `SnapshotAssemblerTests.cs:485-487` (`w.WaveRef` → `w.WaveRef(Zone.Outer)`).
+- [ ] **Step 6 (механическая правка ВСЕХ ломающихся тестов — иначе сборка не
+      компилируется, Р339):** филлер `InterpolationBufferTests.cs:925-940`
+      (девять `Pending*` + `PhaseTimer` → три + `PhaseTicks`, плюс `WaveIndex`
+      остаётся); `SnapshotAssemblerTests.cs:485-487`
+      (`w.WaveRef` → `w.WaveRef(Zone.Outer)`);
+      **`WaveZoneTests.cs`** — девятнадцать `w.WaveRef` → `w.WaveRef(<зона>)`,
+      `PendingRef(ref w, zone, type)` → `PendingRef(ref w, type)` на ссылке
+      нужного кольца, `PhaseTimer` → `PhaseTicks` (значения — в тиках через
+      `SimulationWorld.TicksFromSeconds`, а не `TickDt`),
+      `SetWaveForTest(wv)` → `SetWaveForTest(<зона>, wv)`,
+      `PendingOuter*/Middle*/Core*` → три поля нужного экземпляра;
+      **`WaveTests.cs:139`** — `w.WaveRef.PendingTotal` →
+      `w.WaveRef(Zone.Outer).PendingTotal`;
+      **`WaveScalingTests.cs`** — `:209-210` три `snap.Wave.PendingOuter*` →
+      три поля агрегата, `:240`/`:248` `snap.Wave.PhaseTimer` → `PhaseTicks`
+      (сравнение целых, `Eps` уходит).
+      ⚠ **Это правка ФОРМЫ, а не смысла.** Содержательная переделка под
+      каденцию (удаление `SplitByZones_*`, `CoreBudgetMovesToMiddle_…`,
+      переписывание `CoreLosesItsWaveBudget_…`) остаётся в Т4 — здесь тесты
+      обязаны лишь компилироваться и проходить на промежуточном коде.
+- [ ] **Step 6a (свидетели провода — требование спеки §4, у которого в v2 не
+      было шага):** `SnapshotAssemblerTests` — сумма живых больше 255 даёт в
+      блоке ровно **255** (население 270 стало достижимым только этой задачей,
+      писатель уже режет `math.min(..., byte.MaxValue)`,
+      `SnapshotAssembler.cs:1715`, но ассерта на это нет);
+      `SnapshotCodecTests` — блок волны остаётся **4 байта**
+      (`SnapshotBlocks.cs:112`) и раскодируется в те же три числа.
 - [ ] **Step 7:** `WorldLifecycleTests` — свип **по каждой зоне отдельно**
       (`for (int z = 0; z < Zones.Count; z++)` с `SetWaveForTest((Zone)z, …)`),
       иначе `HashWave`, усечённый до `waves[0]`, прошёл бы тест; квитанция
@@ -621,11 +712,20 @@ public void Snapshot_CarriesTheWorldAggregate_NotTheFirstRing()
 - Modify: `client/Assets/Scripts/Simulation/Core/SimConfigHash.cs` (`:133`, `:140`)
 - Modify: `client/Assets/Scripts/Networking/Protocol/SnapshotEvents.cs`
   (**док `:192`** — `WaveIndex` события теперь несёт шаг сложности)
+- Modify: `client/Assets/Tests/EditMode/TestConfigs.cs` — ⚠ **обязателен в
+  ЭТОМ таске** (находка ре-ревью К2): `:84` несёт литерал `WavePause = 4f`,
+  `:110` — `ZoneWeights = new[] { 0.45f, 0.45f, 0.10f }`, и удаление полей из
+  `WaveSimConfig` без этой правки даёт `error CS0117` на всей тестовой сборке
 - Test: `WaveCadenceTests.cs`, `WaveTests.cs`, `WaveScalingTests.cs`,
   `WaveZoneTests.cs`, `EliteAndDirectorTests.cs` (`:721`), `ConfigTests.cs`
   (`AssertWaveEqual` `:1474`, `:1496-1498`), `ZoneConfigTests.cs` (`:213-220`,
   `:661-672` — удалить), `SimConfigHashTests.cs` (`:50-51` — строка
-  `"ZoneWeights"`), `HotTweakTests.cs`, `AllocationTests.cs` (`:63`)
+  `"ZoneWeights"`), `HotTweakTests.cs`, `AllocationTests.cs` (`:63`),
+  **`MultiPlayerWorldTests.cs` (`:224-231`)** — ⚠ находка ре-ревью К3: тест
+  `WorldStats_CountedOnce_NotPerPlayer` гоняет `TestWorlds.ClearFirstWave`
+  (`TestWorlds.cs:385-397`, убивает всех мобов каждый тик) и ждёт
+  `WavesCleared == 1`; с независимой каденцией три кольца стартуют на одном
+  тике и зачищаются в одном тике — счётчик станет **3**
 
 **Interfaces:**
 
@@ -653,14 +753,18 @@ internal static int DifficultyStepFor(int tick, in WaveSimConfig cfg);
   `Emit(WaveCleared, …, wave.WaveIndex)`, `Phase = Waiting`,
   `PhaseTicks = TicksFromSeconds(cfg.WavePauseByZone[z])`; в конце
   `wave.AliveCount = alive[z]`.
-- **`StartWave(зона)`:** `wave.WaveIndex = DifficultyStepFor(w.Tick, in cfg)`
+- **`StartWave(зона)`:** `wave.WaveIndex = DifficultyStepFor(w.CurrentTick, in cfg)`
+  ⚠ (**`CurrentTick`**, `SimulationWorld.cs:162` — `Tick` занято МЕТОДОМ
+  `Tick(in SimInput)` `:324`; `w.Tick` как число не компилируется, находка
+  ре-ревью К9)
   (**присваивание, не инкремент** — Р334);
   `count = CountForTest(in cfg, wave.WaveIndex - 1, w.PlayerCount)`; доли по
   `EliteShareFor(зона, wave.WaveIndex, in cfg)` и существующей `GunnerShare`;
   **присваивание** долга (Р305); `Emit(WaveStarted, …, wave.WaveIndex)`;
   `Phase = Active`; `PhaseTicks = TicksFromSeconds(cfg.WavePauseByZone[зона])`.
 
-- [ ] **Step 1 (RED):** восемь тестов в `WaveCadenceTests.cs`:
+- [ ] **Step 1 (RED):** **семь** тестов в `WaveCadenceTests.cs` (восьмой,
+      про перезапись долга, уехал в Т5 — см. Р339 и находку ре-ревью К6):
 
 ```csharp
 static int OuterPause(in SimConfig cfg) =>
@@ -730,62 +834,56 @@ public void ClearingARing_RestartsItsOwnTimer_AndLeavesNeighboursAlone()
 public void ClearIsNotCounted_WhileAnyMobOfThatRingLives()
 {
     // Негативная половина: жертва мутации M2.
+    // ⚠ Ассерт АБСОЛЮТНЫЙ, а не дельта одного тика (находка ре-ревью К7):
+    // мутант без проверки `alive == 0` засчитывает зачистку в тот же тик, где
+    // закрылся долг (75-76), то есть ДО того, как дельта начала бы мериться, —
+    // и `before == after` оказывается истинным на ОБЕИХ ветках (урок 432).
+    // На правильном коде ни одно кольцо не вычищено: долг закрыт, мобы живы.
     SimConfig cfg = TestConfigs.Default();
     var w = new SimulationWorld(7, cfg);
     TestWorlds.IdleTicks(w, FirstDelay(in cfg) + 2);
     WaveState outer = w.WaveRef(Zone.Outer);
     outer.PendingChaser = outer.PendingGunner = outer.PendingElite = 0;
     w.SetWaveForTest(Zone.Outer, outer);          // долг закрыт, мобы ЖИВЫ
-    int before = w.WorldStatsRef.WavesCleared;
     w.Tick(default);
-    Assert.AreEqual(before, w.WorldStatsRef.WavesCleared,
-        "кольцо засчитано вычищенным при живых мобах");
-}
-
-[Test]
-public void UnspawnedDebt_IsOverwrittenByTheNextWave_NotAccumulated()
-{
-    // Тест 6 спеки: жертва мутации M11.
-    SimConfig cfg = TestConfigs.Default();
-    cfg.Wave.MaxAliveByZone = new[] { 1, 16, 8 };   // внешнее кольцо почти сразу у потолка
-    var w = new SimulationWorld(7, cfg);
-    TestWorlds.IdleTicks(w, FirstDelay(in cfg) + 2);
-    int debtAfterFirst = w.WaveRef(Zone.Outer).PendingTotal;
-    Assert.Greater(debtAfterFirst, 0, "долг не образовался — фикстура не давит потолком");
-
-    TestWorlds.IdleTicks(w, OuterPause(in cfg) + 2);
-    Assert.LessOrEqual(w.WaveRef(Zone.Outer).PendingTotal,
-        cfg.Wave.MaxMobsPerWave,
-        "долг копится вместо перезаписи: он обязан быть не больше одной волны");
+    Assert.AreEqual(0, w.WorldStatsRef.WavesCleared,
+        "кольцо засчитано вычищенным при живых мобах (мутант дал бы 3 — по кольцу на каждое)");
 }
 
 [Test]
 public void WaveIndex_FollowsTheClock_NotTheNumberOfWavesStarted()
 {
-    // Тесты 2а и 15 спеки: жертва мутации M9. Зачистка ОТОДВИГАЕТ старт,
-    // поэтому счётчик волн и часы расходятся — и поле обязано идти за часами.
+    // Тесты 2а и 15 спеки: жертва мутации M9.
+    // ⚠ ПАУЗА КОЛЬЦА НАРОЧНО СДЕЛАНА БОЛЬШЕ ШАГА СЛОЖНОСТИ (находка ре-ревью
+    // К8). На фикстурных числах пауза (2 с = 60 тиков) РАВНА шагу (2 с = 60),
+    // и тогда часы и счётчик волн дают одно и то же число при любой истории
+    // зачисток: одна зачистка отодвигает старт меньше чем на целый шаг. Тест
+    // был бы зелен на мутанте — ровно тавтология, от которой предостерегает
+    // урок 428. Пауза 4 с = 120 тиков = ДВА шага разводит их гарантированно.
     SimConfig cfg = TestConfigs.Default();
+    cfg.Wave.WavePauseByZone = new[] { 4f, 3f, 3f };
     var w = new SimulationWorld(7, cfg);
-    TestWorlds.IdleTicks(w, FirstDelay(in cfg) + 2);
+    TestWorlds.IdleTicks(w, FirstDelay(in cfg) + 2);   // тик 77; первая волна на 75-м, шаг 1
 
     WaveState outer = w.WaveRef(Zone.Outer);
     outer.PendingChaser = outer.PendingGunner = outer.PendingElite = 0;
     w.SetWaveForTest(Zone.Outer, outer);
     w.ClearMobsForTest();
-    w.Tick(default);                                  // зачистка: таймер с полного
+    w.Tick(default);                                  // тик 78: зачистка, таймер = 120
 
-    // Дотикать до следующего старта внешнего кольца и поймать его тик.
-    int tick = 0;
+    // Дотикать до следующего старта внешнего кольца: он придётся на тик 198.
     for (int i = 0; i < OuterPause(in cfg) + 4; i++)
     {
         w.Tick(default);
-        tick++;
         if (w.WaveRef(Zone.Outer).Phase == WavePhase.Active) break;
     }
     Assert.AreEqual(WavePhase.Active, w.WaveRef(Zone.Outer).Phase, "волна не пришла");
-    Assert.AreEqual(WaveSystem.DifficultyStepFor(w.Tick, in cfg.Wave),
-        w.WaveRef(Zone.Outer).WaveIndex,
-        "номер волны отстал от часов — значит он всё ещё счётчик");
+    // Арифметика ожидания, а не повтор проверяемой функции (урок 428):
+    // старт на тике 198, FirstWaveDelay = 75 тиков, шаг = 60 тиков,
+    // 1 + (198 - 75) / 60 = 1 + 2 = 3. Счётчик волн дал бы 2 — это ВТОРАЯ
+    // волна кольца, и именно этим числом мутация M9 себя выдаёт.
+    Assert.AreEqual(3, w.WaveRef(Zone.Outer).WaveIndex,
+        "номер волны отстал от часов — значит он всё ещё счётчик волн кольца");
 }
 
 [Test]
@@ -818,14 +916,18 @@ public void CoreFreezes_WhenTheDirectorIsAwake()
 ```
 
 - [ ] **Step 2:** заглушка `DifficultyStepFor` → **константа 1** (не «почти
-      реализация»); R-FILTER `WaveCadenceTests` → EXIT=2, восемь наблюдаемых
+      реализация»); R-FILTER `WaveCadenceTests` → EXIT=2, **семь** наблюдаемых
       FAIL.
 - [ ] **Step 3 (GREEN, каденция):** `DifficultyStepFor`, переписанные
       `Update`/`StartWave`/`PendingRef`.
 - [ ] **Step 4 (удаление):** `SplitByZones`, `ZonelessWeights`, переезд
       бюджета ядра, `ZoneWeights` и `WavePause` во всех шести местах
       (`SimConfig.cs`, `WaveConfig.cs`, `SimConfigBuilder.cs:142,154,586,603-631`,
-      `SimConfigHash.cs:133,140`).
+      `SimConfigHash.cs:133,140`) — **и в СЕДЬМОМ, тестовом:
+      `TestConfigs.cs:84` (`WavePause = 4f`) и `:110` (`ZoneWeights`)**.
+      Седьмое место — не мелочь и не «правка теста»: это единственный литерал
+      `new WaveSimConfig` в фикстурах, и без него не собирается вся тестовая
+      сборка (К2).
 - [ ] **Step 5 (доки, которые иначе станут ложью):** `WaveSystem` док класса
       `:6-24`, `SimConfig.cs:181,187`, `WaveConfig.cs:5-6,17-18,38`,
       `SnapshotEvents.cs:192`.
@@ -838,8 +940,25 @@ public void CoreFreezes_WhenTheDirectorIsAwake()
       снять два поля; `SimConfigHashTests:50-51` — снять строку
       `"ZoneWeights"`; `WaveTests` и `WaveScalingTests` — на три кольца,
       включая `NoAlivePlayers_WaveDirectorFreezes_…` (`:222`, **расширяется,
-      не дублируется**) и четыре ручные фикстуры `new WaveSimConfig`;
-      `EliteAndDirectorTests:721`.
+      не дублируется**) и четыре ручные фикстуры `new WaveSimConfig`
+      (⚠ **`Count_ThreePlayers_ScalesAndRoundsToTen` НЕ трогать** — он держит
+      свою ручную фикстуру и от `TestConfigs`/`.asset` не зависит, фикстурный
+      `BaseCount` задача не меняет; спека v4 ошибочно ждала его слома);
+      `EliteAndDirectorTests:721` (с исчезновением `ZoneWeights` его премиса
+      «волна заполняет только внешнее кольцо» больше не выражается весами —
+      кольцо изолируется потолками `MaxAliveByZone`).
+      ⚠ **Механическая, компиляционная часть правки `WaveZoneTests`/`WaveTests`/
+      `WaveScalingTests` сюда НЕ относится — она сделана в Т3 Step 6** (Р339).
+      Здесь только смысловая: удаления, переписывание под каденцию, счётные
+      ожидания.
+- [ ] **Step 6a (`MultiPlayerWorldTests` — находка ре-ревью К3):**
+      `WorldStats_CountedOnce_NotPerPlayer` (`:224-231`) ждёт
+      `WavesCleared == 1` после `TestWorlds.ClearFirstWave`, а с независимой
+      каденцией все три кольца стартуют и зачищаются в одном тике → счётчик
+      станет 3. **Смысл теста («мир, а не игрок») сохраняется, фикстура
+      сужается:** двум кольцам оставить долг через `SetWaveForTest`, чтобы
+      вычищалось ровно одно — тем же приёмом, что
+      `ClearingARing_RestartsItsOwnTimer_…` выше. Ассерт остаётся `== 1`.
 - [ ] **Step 7 (горячая правка — кейс, которого требует спека §3.2):** в
       `HotTweakTests` — `HotTweak_WavePauseChange_LeavesArmedTimersRunning`
       (правка `WavePauseByZone` через `ApplyConfig` не перезаряжает уже
@@ -849,17 +968,18 @@ public void CoreFreezes_WhenTheDirectorIsAwake()
       `AllocationTests.SaturatedTrio_TicksWithoutAllocations` (`:63`) —
       **новый тест не заводить**: скан живых и `stackalloc int[Zones.Count]`
       не аллоцируют.
-- [ ] **Step 9 (мутации M1/M2/M3/M6/M9/M11; предсказания ДО прогона):**
+- [ ] **Step 9 (мутации M1/M2/M3/M6/M9 — **M11 уехала в Т5 вместе со своим
+      свидетелем**; предсказания ДО прогона):**
       M1 — снять `PhaseTicks--` в `Active` (жертва
       `SecondWaveArrives_WithoutASingleKill`); M2 — снять `alive[z] == 0`
-      (жертва `ClearIsNotCounted_WhileAnyMobOfThatRingLives`); M3 —
+      (жертва `ClearIsNotCounted_WhileAnyMobOfThatRingLives`: правильный код
+      даёт `WavesCleared == 0`, мутант — 3); M3 —
       `PhaseTicks = 0` на зачистке (жертва
       `ClearingARing_RestartsItsOwnTimer_…`, `Expected: 60, But was: 0`);
       **M6 — снять гвард неактивного кольца: жертв ДВЕ**
       (`CoreFreezes_WhenTheDirectorIsAwake` И `ZonelessArena_RunsOnlyTheOuterRing`);
       M9 — `wave.WaveIndex++` вместо присваивания шага (жертва
-      `WaveIndex_FollowsTheClock_…`); M11 — накапливать долг (жертва
-      `UnspawnedDebt_IsOverwrittenByTheNextWave_…`).
+      `WaveIndex_FollowsTheClock_…`: правильный код даёт 3, мутант — 2).
 - [ ] **Step 10:** R-COMPILE → чисто; R-TEST полный → красные по таблице;
       **время прогона записать** (§4 спеки: рост более чем вдвое против
       ~40–60 с — находка, а не норма).
@@ -899,7 +1019,10 @@ if (spawnedThisTick >= cfg.MaxSpawnsPerZonePerTick) return;      // долг о�
   потому что это физический потолок арены» **уже написано** на `:305-312` —
   сослаться, а не повторять.
 
-- [ ] **Step 1 (RED):** пять тестов в `WaveCadenceTests.cs`.
+- [ ] **Step 1 (RED):** **семь** тестов в `WaveCadenceTests.cs`: пять
+      потолочных, переехавший из Т4 тест перезаписи долга (К6) и тест 14
+      спеки (Директор, свита, `TopUpRetinue` как no-op). Живость носителя —
+      не отдельный тест, а обязательный ассерт внутри длинных прогонов.
       ⚠ Потолок берётся **строго ниже размера волны**: при фикстурных
       `BaseCount 4` и одном игроке `CountForTest = round((4 + 2·0)·1) = 4`,
       поэтому потолок 4 закрыл бы долг и тест бы лгал (находка A-Critical).
@@ -914,7 +1037,10 @@ public void RingAtItsCeiling_DoesNotSpawn_AndKeepsItsDebt()
     int skippedBefore = w.WorldStatsRef.MobSpawnsSkipped;
     TestWorlds.IdleTicks(w, FirstDelay(in cfg) + 30);
 
-    Assert.LessOrEqual(w.WaveRef(Zone.Outer).AliveCount, 2, "потолок кольца перееден");
+    // Точное равенство, а не `LessOrEqual`: «0 <= 2» истинно и при полностью
+    // мёртвом спавне (находка ре-ревью M-2). Размещение на кольце 171
+    // детерминированно успешно — до игрока 11.84 м при пороге 8.
+    Assert.AreEqual(2, w.WaveRef(Zone.Outer).AliveCount, "потолок кольца перееден или спавн мёртв");
     Assert.Greater(w.WaveRef(Zone.Outer).PendingTotal, 0, "долг обязан сохраниться");
     Assert.AreEqual(skippedBefore, w.WorldStatsRef.MobSpawnsSkipped,
         "потолок кольца — не отказ арены, MobSpawnsSkipped расти не должен");
@@ -927,7 +1053,7 @@ public void CeilingIsPerRing_NotPerArena()
     cfg.Wave.MaxAliveByZone = new[] { 1, 16, 8 };
     var w = new SimulationWorld(7, cfg);
     TestWorlds.IdleTicks(w, FirstDelay(in cfg) + 30);
-    Assert.LessOrEqual(w.WaveRef(Zone.Outer).AliveCount, 1);
+    Assert.AreEqual(1, w.WaveRef(Zone.Outer).AliveCount);
     Assert.Greater(w.WaveRef(Zone.Middle).AliveCount, 1,
         "среднее кольцо остановилось из-за чужого потолка");
 }
@@ -964,26 +1090,108 @@ public void RingWhoseCeilingIsBelowItsWave_NeitherHangsNorClears()
     SimConfig cfg = TestConfigs.Default();
     cfg.Wave.MaxAliveByZone = new[] { 24, 16, 1 };
     var w = new SimulationWorld(7, cfg);
+    // ⚠ 195 тиков — это 6.5 с под контактным уроном: три сошедшихся чейзера
+    // успевают снять 100 HP, носитель гибнет, WaveSystem уходит в ранний
+    // выход, мир замерзает — и ВСЕ четыре ассерта ниже остаются истинными
+    // вакуумно (находка ре-ревью В5). Бюджет HP выдаётся тем же швом, каким
+    // его выдаёт TrioSaturated, а живость носителя проверяется явно.
+    TestWorlds.RelocatePlayerForTest(w, 0, w.PlayerAt(0).Pos, hp: 1e6f);
     int cleared = w.WorldStatsRef.WavesCleared;
     TestWorlds.IdleTicks(w, FirstDelay(in cfg) + 120);
+    Assert.IsTrue(w.PlayerAt(0).Alive, "носитель погиб — прогон заморожен, тест ничего не проверил");
     Assert.AreEqual(WavePhase.Active, w.WaveRef(Zone.Core).Phase);
     Assert.Greater(w.WaveRef(Zone.Core).PendingTotal, 0, "долг обязан сохраняться");
-    Assert.LessOrEqual(w.WaveRef(Zone.Core).AliveCount, 1);
+    Assert.AreEqual(1, w.WaveRef(Zone.Core).AliveCount);
     Assert.AreEqual(cleared, w.WorldStatsRef.WavesCleared,
         "кольцо с потолком ниже волны не может быть вычищено — это инвариант ядра");
 }
+
+[Test]
+public void UnspawnedDebt_IsOverwrittenByTheNextWave_NotAccumulated()
+{
+    // Тест 6 спеки: жертва мутации M11. ⚠ Переехал сюда из Т4 (находка
+    // ре-ревью К6): его предпосылка — ГВАРД ПОТОЛКА, который появляется
+    // именно в этом таске; в Т4 весь долг садился бы в тик старта и
+    // `debtAfterFirst` был бы нулём.
+    SimConfig cfg = TestConfigs.Default();
+    cfg.Wave.MaxAliveByZone = new[] { 1, 16, 8 };   // внешнее кольцо сразу у потолка
+    var w = new SimulationWorld(7, cfg);
+    TestWorlds.IdleTicks(w, FirstDelay(in cfg) + 2);
+    int debtAfterFirst = w.WaveRef(Zone.Outer).PendingTotal;
+    Assert.AreEqual(3, debtAfterFirst, "волна 4, потолок 1 — незакрытым обязан остаться долг 3");
+
+    TestWorlds.IdleTicks(w, OuterPause(in cfg) + 2);
+    // ⚠ ТОЧНОЕ равенство размеру ОДНОЙ волны, а не `<= MaxMobsPerWave` (72):
+    // прежняя граница была шире обоих исходов, и накопление (3 + 6 = 9)
+    // проходило её так же, как перезапись (6) — мутация M11 выживала
+    // (находка ре-ревью C-2). Вторая волна идёт шагом 2: 4 + 2 * 1 = 6.
+    Assert.AreEqual(WaveSystem.CountForTest(in cfg.Wave, 1, w.PlayerCount),
+        w.WaveRef(Zone.Outer).PendingTotal,
+        "долг копится вместо перезаписи: он обязан быть РОВНО одной волной");
+}
+
+[Test]
+public void DirectorAndRetinue_AreFiledUnderTheCore_AndTopUpIsANoOp()
+{
+    // Тест 14 спеки — у него не было таска вовсе (находка ре-ревью В1).
+    // Поведенческое изменение, названное спекой §3.4: при потолке ядра,
+    // набранном волновыми элитами, LiveRetinueCount уже >= RetinueCount,
+    // и TopUpRetinue становится no-op — «свита» оказывается остатком
+    // последней волны ядра. Это согласуется с Р215 (свита позиционна), но
+    // обязано быть решением с ассертом, а не дрейфом.
+    SimConfig cfg = TestConfigs.Default();
+    cfg.Wave.MaxAliveByZone = new[] { 24, 16, 4 };   // ядро набирает потолок волной
+    var w = new SimulationWorld(7, cfg);
+    TestWorlds.RelocatePlayerForTest(w, 0, w.PlayerAt(0).Pos, hp: 1e6f);
+    TestWorlds.IdleTicks(w, FirstDelay(in cfg) + 10);
+    int elitesBefore = CoreElites(w);
+    Assert.GreaterOrEqual(elitesBefore, cfg.Flow.RetinueCount,
+        "фикстура не набрала ядро волной — тест не о том");
+
+    // ⚠ Активация — ПЕРЕХОДОМ, а не присваиванием фазы: Директор рождается
+    // внутри MatchFlowSystem.Activate (`:113`, безусловный спавн + TopUpRetinue),
+    // и мир, которому фазу выставили руками, защёлку не проводит вовсе.
+    TestWorlds.RelocatePlayerForTest(w, 0, TestWorlds.InsideCore(in cfg), hp: 1e6f);
+    w.Tick(default);
+    Assert.AreEqual(MatchPhase.DirectorActive, w.MatchRef.Phase, "защёлка не сработала");
+
+    // Директор приписан к ядру СПАВНЕРОМ, а не геометрией.
+    int director = -1;
+    for (int i = 0; i < w.MobCount; i++)
+        if (w.Mobs[i].Type == MobType.Director) director = i;
+    Assert.GreaterOrEqual(director, 0, "Директор не родился");
+    Assert.AreEqual(Zone.Core, w.Mobs[director].SpawnZone);
+    // Свита не досыпается: ядро уже держит элит больше, чем RetinueCount.
+    // Считаем ЭЛИТ, а не AliveCount кольца: в него теперь входит и сам
+    // Директор, приписанный к ядру, и равенство AliveCount было бы ложным.
+    Assert.AreEqual(elitesBefore, CoreElites(w),
+        "TopUpRetinue досыпал свиту, хотя ядро уже держит её остатком волны");
+}
+
+// Элиты, ПРИПИСАННЫЕ к ядру (не «стоящие в нём» — это отдельное, позиционное
+// понятие Р215, и трогать его задача не имеет права).
+static int CoreElites(SimulationWorld w)
+{
+    int n = 0;
+    for (int i = 0; i < w.MobCount; i++)
+        if (w.Mobs[i].Type == MobType.Elite && w.Mobs[i].SpawnZone == Zone.Core) n++;
+    return n;
+}
 ```
 
-- [ ] **Step 2:** R-FILTER `WaveCadenceTests` → EXIT=2, пять красных.
+- [ ] **Step 2:** R-FILTER `WaveCadenceTests` → EXIT=2, **семь** красных.
 - [ ] **Step 3 (GREEN):** два гварда внутри цикла, инкременты, `ref`-счётчик,
       новая сигнатура `SpawnPendingOfType`.
 - [ ] **Step 4:** R-FILTER `WaveCadenceTests` → PASS.
-- [ ] **Step 5 (мутации M4/M8/M10; предсказания ДО прогона):** M4 — `>=` →
+- [ ] **Step 5 (мутации M4/M8/M10/M11; предсказания ДО прогона):** M4 — `>=` →
       `>` в гварде потолка (жертва `RingAtItsCeiling_…`, население 3 при
       потолке 2); M8 — снять `alive[]++` (жертва
       `WaveDoesNotOvershootTheCeiling_…`); M10 — снять гвард
       `MaxSpawnsPerZonePerTick` (жертва `WaveArrivesGradually_…`,
-      `AliveCount` станет равен размеру волны).
+      `AliveCount` станет равен размеру волны, то есть 4 против 1);
+      **M11 — накапливать долг вместо назначения** (жертва
+      `UnspawnedDebt_IsOverwrittenByTheNextWave_…`: правильный код даёт долг
+      6, мутант — 3 + 6 = 9).
 - [ ] **Step 6 (счётные тесты волн, ломающиеся от сглаживания):**
       `WaveTests.FirstWave_SpawnsAfterDelay_WithBaseCount` (`:11-20`) считает
       `MobCount == BaseCount` через `delay + 2` тика — при сглаживании за два
@@ -994,8 +1202,10 @@ public void RingWhoseCeilingIsBelowItsWave_NeitherHangsNorClears()
 - [ ] **Step 8:** R-COMMIT `feat(app-ggvz): Т5 — потолок численности кольца и
       сглаживание притока`.
 
-**Гейт фазы 2:** R-TEST по таблице; одиннадцать мутаций фазы убиты и
-предсказания сверены; два фазовых ревьюера (Explore); `bd note`; push.
+**Гейт фазы 2:** R-TEST по таблице; **десять** мутаций фазы убиты и
+предсказания сверены (M1/M2/M3/M6/M9 в Т4, M4/M8/M10/M11 в Т5, M7/M12 в Т3 —
+пересчитано после переезда M11); два фазовых ревьюера (Explore); `bd note`;
+push.
 
 ---
 
@@ -1012,6 +1222,15 @@ public void RingWhoseCeilingIsBelowItsWave_NeitherHangsNorClears()
   `client/Assets/Scripts/Data/SimConfigBuilder.cs` (`:199`)
 - Modify: `client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs`
   (новый `ApplyWaveCadence`; аргумент `EnsureAssetHasKey` `:798`)
+- Modify: `client/Assets/Scripts/Data/WaveConfig.cs` — ⚠ **обязателен**
+  (Р337, находка ре-ревью К4): `BaseCount = 4` (`:14`) → **16** и
+  `EliteShareOuterGrowth = 0.02f` (`:42`) → **0.007f**. Без этой правки
+  `ApplyWaveCadence` — **no-op**, потому что `SetIfDifferent` сравнивает ассет
+  со свежим `ScriptableObject.CreateInstance<WaveConfig>()`, то есть берёт
+  число из C#-инициализатора класса, а не из литерала бутстрапа
+  (`StageOneSceneBootstrap.cs:2415-2426`, `:2369-2404`)
+- Modify: `client/Assets/Tests/EditMode/ConfigTests.cs` (`AssertWaveEqual`
+  `:1477`, `:1500` — тройная форма намеренного расхождения)
 - Modify (через бутстрап, руками — НЕТ): `client/Assets/Data/WaveConfig.asset`
 
 **Interfaces:**
@@ -1049,7 +1268,22 @@ static bool ApplyWaveCadence(WaveConfig wave)   // только SetIfDifferent:
       «`ZonelessWeights` + `SplitByZones`» на «неактивное кольцо заморожено,
       долг до `Middle`/`Core` на беззонной арене не доходит»),
       `ContainerStore.cs:148`, `LootConfig.cs:19`, `SimConfigBuilder.cs:199`.
-- [ ] **Step 3:** `ApplyWaveCadence` (bool) + переезд аргумента маркер-ключа.
+- [ ] **Step 3:** **сперва C#-дефолты** `Data/WaveConfig.cs` — `BaseCount`
+      4 → 16, `EliteShareOuterGrowth` 0.02 → 0.007 (иначе следующий шаг
+      ничего не двигает); затем `ApplyWaveCadence` (bool) + переезд аргумента
+      маркер-ключа.
+      ⚠ Инвариант двух источников Р117 при этом СОБЛЮДЁН — `.asset` и
+      C#-дефолт двигаются вместе; расходится третье, фикстура
+      (`TestConfigs.Default()` остаётся на `BaseCount 4`, Р325), и это
+      расхождение НАМЕРЕННОЕ.
+- [ ] **Step 3a (паритетный тест — иначе красный вне таблицы):**
+      `ConfigTests.AssertWaveEqual` переводит `BaseCount` (`:1477`) и
+      `EliteShareOuterGrowth` (`:1500`) на **тройную форму**, прецедент
+      `BarrierTop` (`ConfigTests.cs:270-282`): C#-дефолт обязан доехать до
+      билдера нетронутым; фикстура обязана остаться на своём числе;
+      `Assert.AreNotEqual` с текстом «если сойдутся — один из двух источников
+      уехал». Причина расхождения записывается прямо: фикстурный `BaseCount`
+      16 превратил бы эталон на 18 000 тиков в нагрузочный тест (Р325).
 - [ ] **Step 4:** R-APPLY → EXIT=0. Диффа **две ветки** по результату Step 1:
       (а) ключ был — `git diff -- client/Assets/Data/` показывает ровно
       `BaseCount: 16`, `EliteShareOuterGrowth: 0.007`, исчезнувшие
@@ -1110,6 +1344,12 @@ public void WaveAnnounce_RearmsOnGrowth_AndDecaysOtherwise()
 ```
 
 - [ ] **Step 2:** R-FILTER `HudPhaseLineTests` → EXIT=2.
+- [ ] **Step 2a (мутация M14 — новая ветка продакшена обязана получить
+      свидетеля И мутацию, правило 3; в v2 у Т7 мутации не было вовсе):**
+      в `WaveAnnounceTimerAfter` заменить перезарядку на затухание
+      (`waveNumber > previousWaveNumber` → всегда `false`). Предсказание:
+      красный первый ассерт, `Expected: 1.5f, But was: 0.184f`. Откат — `cp`
+      с копии и md5, НЕ `git checkout` (350).
 - [ ] **Step 3 (GREEN):** шов + его использование; поле
       `WaveAnnounceSeconds` (дефолт 1.5, `[Range(0f, 10f)]`) последним в
       `GameFeelConfig` + четыре вещи переезда маркера.
@@ -1120,8 +1360,8 @@ public void WaveAnnounce_RearmsOnGrowth_AndDecaysOtherwise()
 - [ ] **Step 7:** R-COMMIT `feat(app-ggvz): Т7 — вспышка номера волны в HUD`.
 
 **Гейт фазы 3:** R-TEST по таблице; R-IDEM сошёлся дважды; ГЕЙТ-КОДОГЕН пуст;
-свип кириллицы (кроме ассертов) и британизмов пуст; два ревьюера; push;
-jsonl-chore.
+**мутация M14 убита и предсказание сверено**; свип кириллицы (кроме ассертов)
+и британизмов пуст; два ревьюера; push; jsonl-chore.
 
 ---
 
@@ -1137,9 +1377,13 @@ jsonl-chore.
 - [ ] **Step 1:** R-TEST полный **до** перепина; три `But was: <N>` из xml
       разбором питоном.
 - [ ] **Step 2 (R-GOLDEN, санкция №4 — решение владельца К9):** три hex +
-      десятичные дубли + обоснование, называющее **пять** причин сдвига:
+      десятичные дубли + обоснование, называющее **ШЕСТЬ** причин сдвига
+      (спека §4 и Р-З требуют шесть; v2 давала пять — находка ре-ревью В8):
       форма `WaveState` и три экземпляра в хеше; таймер в целых тиках; шаг
-      сложности от часов; сглаживание притока; `MobState.SpawnZone`.
+      сложности от часов; сглаживание притока; `MobState.SpawnZone`;
+      **исчезновение `ZoneWeights` и `WavePause` из конфига** (эта шестая
+      двигает `simConfigHash`, а не эталон, и именно поэтому её легко забыть —
+      но она и есть причина несовместимости сборок `builds-f8`).
       **В том же коммите** поправить обоснование перепина №2 (`:986`),
       которое называет `ZoneWeights {0.45,0.45,0.10}` причиной прошлого
       сдвига.
@@ -1218,27 +1462,47 @@ bd create "Т8: перепин golden №4, замеры, образ, веха �
 | Мутация | Таск / шаг | Названная жертва |
 |---|---|---|
 | M1 таймер не тикает в `Active` | Т4 Step 9 | `SecondWaveArrives_WithoutASingleKill` |
-| M2 снять `alive == 0` из зачистки | Т4 Step 9 | `ClearIsNotCounted_WhileAnyMobOfThatRingLives` |
+| M2 снять `alive == 0` из зачистки | Т4 Step 9 | `ClearIsNotCounted_WhileAnyMobOfThatRingLives` (0 против 3) |
 | M3 `PhaseTicks = 0` на зачистке | Т4 Step 9 | `ClearingARing_RestartsItsOwnTimer_…` |
 | M4 `>=` → `>` в потолке | Т5 Step 5 | `RingAtItsCeiling_…` |
 | M5 `SpawnZone` всегда `Outer` | Т1 Step 7 | `SpawnZone_IsSetByTheSpawner_NotByPosition` |
 | M6 снять гвард неактивного кольца | Т4 Step 9 | **две**: `CoreFreezes_…` и `ZonelessArena_…` |
 | M7 массив волн ссылкой в `SaveState` | Т3 Step 8 | `SaveState_DoesNotAliasTheLiveWaveArray` |
 | M8 снять `alive[]++` | Т5 Step 5 | `WaveDoesNotOvershootTheCeiling_…` |
-| M9 `WaveIndex++` вместо шага часов | Т4 Step 9 | `WaveIndex_FollowsTheClock_…` |
+| M9 `WaveIndex++` вместо шага часов | Т4 Step 9 | `WaveIndex_FollowsTheClock_…` (3 против 2) |
 | M10 снять `MaxSpawnsPerZonePerTick` | Т5 Step 5 | `WaveArrivesGradually_…` |
-| M11 накапливать долг | Т4 Step 9 | `UnspawnedDebt_IsOverwrittenByTheNextWave_…` |
+| M11 накапливать долг | **Т5 Step 5** (переехала вместе со свидетелем, К6) | `UnspawnedDebt_IsOverwrittenByTheNextWave_…` (6 против 9) |
 | M12 хешировать только `waves[Outer]` | Т3 Step 8 | свип `WorldLifecycleTests` по зонам |
-| M13 ослабить правила `Validate` (**пять мутаций**) | Т2 Step 6 | по одной жертве на правило |
+| M13 ослабить правила `Validate` (**шесть мутаций**) | Т2 Step 6 | по одной жертве на правило + форма |
+| M14 вспышка анонса не перезаряжается | Т7 Step 2a | `WaveAnnounce_RearmsOnGrowth_AndDecaysOtherwise` |
 
 ## Отклонения от спеки (правило 22)
 
-1. **Спека §10 называла семь тасков, план даёт восемь** — Т3 разделён на
-   «состояние» и «каденцию», потому что объединённый таск не помещался ни в
-   один цикл тестов (находка D-Important: четыре его шага были по 5–15 шагов
-   каждый).
-2. **`MaxSpawnsPerTick` переименован в `MaxSpawnsPerZonePerTick`** (находка
-   B-Minor): счётчик обнуляется на кольцо, и имя обязано это говорить.
+⚠ **После совместного ре-ревью отклонений почти не осталось: спека доведена до
+v5 и приняла сторону плана там, где план был прав** (порог двух тиков, имя
+`MaxSpawnsPerZonePerTick`, пять правил валидации, отказ от `WaveNumber` и от
+`MobRadiusFor` в теле спеки, декомпозиция). Осталось три записи.
+
+1. **Декомпозиция.** Спека §10 больше не даёт списка тасков: v5 объявила
+   единственным источником декомпозиции этот план (восемь тасков в четырёх
+   фазах) и оставила у себя только восемь инвариантов порядка. Прежняя
+   формулировка отклонения («Т3 разделён надвое») была неточной: перекройка
+   сплошная — спековские Т1/Т2 разошлись по план-Т3/Т4, спековский Т5 «Снимок
+   и провод» растворился в план-Т3 (агрегат) и исчез вместе с `WaveNumber`, а
+   спековский Т4 «Удаление и данные» разрезан на план-Т4 (код) и план-Т6
+   (`.asset` и мёртвые ссылки).
+2. **Числа фикстур задаются в ОДНОМ месте** — `TestConfigs.Default()`, от
+   которой производны шесть остальных вариантов (правило 2). Спека §3.8
+   говорила «явно во всех вариантах»; четыре ручные фикстуры
+   `new WaveSimConfig` в `WaveScalingTests` числа задают явно, потому что от
+   `Default()` не производны.
+3. **Новые тест-швы и хелперы, которых спека поимённо не называла:**
+   `ClearMobsForTest` (спека знала только `SetWaveForTest`),
+   `ReqZoneArrayLength`/`ReqAtLeastTwoTicks` (спека велела копировать
+   существующую идиому — идиома скопирована в репо пять раз и дома не имеет),
+   резервный ключ гейта `"\n  BaseCount: 4\n"` (Р319 отвергал ключ
+   `"BaseCount: 4"` как подстроку — якорь переводом строки снимает именно тот
+   довод, и включается только если `"ZoneWeights:"` в ассете не найден).
 
 ## Что исправил self-review плана (v1 → v2)
 
@@ -1272,10 +1536,62 @@ bd create "Т8: перепин golden №4, замеры, образ, веха �
 - **Ложные утверждения v1 сняты:** «ветка дефолтов при отсутствующем SO»
   (её нет — `:225-245` про `Loot`); «`EnsureAssetHasKey` переписывает и
   сохраняет ассет» (она только `SetDirty`); «все четыре производственных
-  call-site'а `SpawnMob`» (их три); «127 вызовов» (124); «новых публичных
+  call-site'а `SpawnMob`» (их три); «127 вызовов» (**122**, сведено в ре-ревью); «новых публичных
   имён не появляется» в Т5 (сигнатура `SpawnPendingOfType` меняется).
 - **Гейт «красных ровно три» заменён таблицей ожиданий по таскам**, и в ней
   явно назван четвёртый красный на Т4 (`SimConfigHashTests`, держит имя
   удаляемого поля строкой).
 - **Т8 достроен:** амендменты в пачку Ф9, шесть side-quest'ов командами,
   `bd close` + `bd export`, и гейт Р333 между замером и вехой.
+
+## Что исправило СОВМЕСТНОЕ ре-ревью (v2 → v3, сессия 46)
+
+Три Explore-ревьюера по разным осям; **11 Critical, 12 Important, 12 Minor**,
+каждая Critical проверена главным агентом лично грепом, ложных нет. Эвиденс —
+`$SDD/review-ggvz-joint.md`. Спека одновременно доведена до **v5** (§6d,
+решения Р336–Р340).
+
+- **Три места, где таск не собрался бы или не позеленел** (Р339). Т3 менял
+  форму `WaveState` и оставлял трёх читателей (`WaveZoneTests`, `WaveTests`,
+  `WaveScalingTests`) на Т4 — сборка `Ring.Simulation.Tests` не компилируется.
+  Т4 удалял `WavePause`/`ZoneWeights`, а `TestConfigs.cs:84,:110` держит оба
+  литерала и в скоуп таска не входил. Тест перезаписи долга стоял в Т4, тогда
+  как его предпосылка — гвард потолка — появляется только в Т5. Прошлый круг
+  снял этот класс дефекта для продакшен-сборок (Р334) и не заметил тестовую.
+- **Тест, которого не назвал никто:** `MultiPlayerWorldTests.
+  WorldStats_CountedOnce_NotPerPlayer` ждёт `WavesCleared == 1`, а три
+  независимых кольца зачищаются в одном тике и дают 3.
+- **Механизм доставки чисел в `.asset` не работал как написано** (Р337):
+  `SetIfDifferent` берёт число из C#-инициализатора класса, значит
+  `Data/WaveConfig.cs` обязан войти в скоуп, а порождённое этим намеренное
+  расхождение с фикстурой — получить тройную форму в `AssertWaveEqual`. Та же
+  ловушка ждала четыре новых поля в Т2.
+- **Три мутации выживали у своих же названных жертв.** M2: мутант засчитывает
+  зачистку раньше, чем тест начинает мерить дельту, — ассерт истинен на обеих
+  ветках; лечится абсолютным значением счётчика. M11: граница
+  `<= MaxMobsPerWave` (72) в восемь раз шире обоих исходов (6 против 9);
+  лечится точным равенством размеру одной волны. M9: фикстурная пауза равна
+  шагу сложности, поэтому часы и счётчик волн дают одно и то же число;
+  лечится паузой в два шага и ожиданием-числом. Это девятый, десятый и
+  одиннадцатый арифметические дефекты того же класса, что восемь снятых
+  прошлым кругом.
+- **`w.Tick` как число** — свойство называется `CurrentTick`, `Tick` занято
+  методом; два места плана не скомпилировались бы, а ошибка компиляции по
+  правилу проекта не RED (332).
+- **Четыре требования спеки без таска:** тест 14 (Директор, свита,
+  `TopUpRetinue` как no-op), свидетели провода (насыщение `aliveCount`,
+  четыре байта блока), вторая половина кейса `HotTweakTests`
+  (`MaxAliveByZone`), NUL-чек созданного файла.
+- **Свидетели, зелёные по чужой причине:** агрегат снимка сравнивался на
+  фикстуре, где все три кольца несут одинаковый шаг (максимум неотличим от
+  первого кольца); 195-тиковый прогон Т5 мог замереть от гибели носителя, и
+  все четыре его ассерта остались бы истинными вакуумно.
+- **Мутаций стало шестнадцать вместо тринадцати:** правило про приток и
+  вспышка анонса были ветками без мутации, а гейты фаз 1 и 3 мутационной
+  сверки не требовали вовсе.
+- **Кривая сложности признана конечной** (Р340): размер волны упирается в
+  потолок на 2.4-й минуте, среднее кольцо застывает на 5.4-й, все кольца — на
+  12.0-й при матче 15–20 минут. Числа не тронуты (решение владельца Р331), но
+  факт вошёл в риск Р-К и в амендмент ADR-001 — иначе канон «каждая волна
+  везде сильнее предыдущей» остался бы утверждением, которое механика
+  исполняет лишь наполовину.
