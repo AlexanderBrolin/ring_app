@@ -53,7 +53,7 @@ namespace Ring.Simulation.AI
             // three per-zone WaveState instances, but the CADENCE does not
             // arrive until Т4 -- until then phase, timer, WaveIndex and
             // AliveCount are still led by the Outer instance alone, so this
-            // task moves the shape of the state and nothing about behaviour.
+            // task moves the shape of the state and nothing about behavior.
             ref WaveState wave = ref w.WaveRef(Zone.Outer);
             WaveSimConfig cfg = w.Config.Wave;
 
@@ -78,7 +78,7 @@ namespace Ring.Simulation.AI
                 // The debt of the WHOLE world, summed over the three
                 // instances it now lives in -- reading the Outer instance
                 // alone would clear a wave that still owes mobs to the middle
-                // ring, which is a change of behaviour hidden inside a
+                // ring, which is a change of behavior hidden inside a
                 // refactor, not a refactor.
                 int pendingTotal = 0;
                 for (int z = 0; z < Zones.Count; z++)

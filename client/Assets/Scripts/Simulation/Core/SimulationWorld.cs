@@ -525,7 +525,7 @@ namespace Ring.Simulation.Core
         /// untouched — bd app-ggvz Т3, spec §3.2's "hot edit" note: a
         /// WavePauseByZone retuned in PlayMode leaves up to three already-
         /// armed countdowns to finish on the old number, and that is accepted
-        /// behaviour (the same every other timer in this world has), not
+        /// behavior (the same every other timer in this world has), not
         /// drift.
         /// Stage 2 Task 4: migrates every player in the match, not just player 0 — for
         /// a solo world (_players.Length == 1) this is byte-for-byte the same

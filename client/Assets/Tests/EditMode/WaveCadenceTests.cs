@@ -90,7 +90,7 @@ namespace Ring.Simulation.Tests
             // below would be true under any implementation at all.
             WaveState mid = w.WaveRef(Zone.Middle);
             mid.WaveIndex = 5;                    // strictly above outer and core
-            mid.PhaseTicks = 3;                   // strictly below the neighbouring timers
+            mid.PhaseTicks = 3;                   // strictly below the neighboring timers
             w.SetWaveForTest(Zone.Middle, mid);
             w.CaptureSnapshot(frame);
 
