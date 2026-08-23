@@ -98,9 +98,20 @@ namespace Ring.Simulation.Tests
                     anchor = i;
                 }
             }
+            // bd app-3cph: the clearance is ONE HERO RADIUS now, not half a
+            // dash. Half a dash bought a symmetric choice — "a dash toward it
+            // reaches it, a dash away does not" — and that was enough while the
+            // anchor sat in a tight pocket: at rim 113 the outermost circle
+            // stood 101 m out with the rim 12 m past it and the zone arc 9 m
+            // short of it. The В1 playtest tripled both rings, the same pocket
+            // is now 43 m wide, and the scripted walk simply leaves and never
+            // comes back — GoldenScenario_ExercisesAllMechanics_Coverage read
+            // zero ricochets, which is the coverage loss Ф5-0 introduced this
+            // helper to prevent in the first place. Standing against the
+            // surface makes the FIRST inward dash a contact instead of a
+            // lottery ticket, and it does so at any arena size.
             float2 obstacle = cfg.Arena.ObstaclePos[anchor];
-            float halfDash = cfg.Hero.DashSpeed * cfg.Hero.DashDuration * 0.5f;
-            float gap = cfg.Arena.ObstacleRadius[anchor] + cfg.Hero.Radius + halfDash;
+            float gap = cfg.Arena.ObstacleRadius[anchor] + cfg.Hero.Radius * 2f;
             return obstacle + math.normalize(obstacle) * gap;
         }
 
@@ -761,7 +772,69 @@ namespace Ring.Simulation.Tests
             //
             // Any further movement of any of the three constants is a stop and
             // a question for the owner.
-            const ulong GoldenHash = 0x48983E20C038AEF6UL; // = 5230999277575646966
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #3 (Ф8, bd `app-3cph` + `app-d2ki`) — AND IT IS NOT A
+            // SANCTION SPENT, IT IS A SANCTION GRANTED. The budget of two
+            // (errata §4) was spent by Т6 and Т12; this movement is the
+            // OWNER's, decided twice in writing after he played milestone В1
+            // (bd notes on both issues, 2026-08-22 and 2026-08-23) and asked
+            // for one re-pin covering both edits of the difficulty curve,
+            // committed on its own (R-23). The stop-and-ask rule above did
+            // exactly what it exists for: it stopped, and the answer came back
+            // "do it, and do it before Т36 so the third golden is pinned on the
+            // new numbers and never has to move at all".
+            //
+            // THREE CAUSES, and the arena is only two of them:
+            //   1. THE ARENA'S TWO RINGS TRIPLE IN AREA around an unchanged
+            //      core (`app-3cph`): rim 113 -> 173, middle/outer boundary
+            //      92 -> 130, the twelve non-core circles and eight non-core
+            //      stadiums riding outward with their own rings, the three
+            //      portals re-radiused. Every one of those numbers is inside
+            //      TestConfigs.DefaultArena(), which is the struct BOTH
+            //      scenarios run off — see ArenaConfig's own fields for the
+            //      derivation of each.
+            //   2. THE MOB DENSITY DOUBLES (`app-3cph`): MaxMobs 288 -> 1350,
+            //      so every wave's zonal budget lands differently and the
+            //      WaveRng is consumed on a different search.
+            //   3. THE MIDDLE RING'S ELITE IS LEASHED TO IT (`app-d2ki`,
+            //      MobAiSystem.LeashRingFor) — a rule that acts during Farm,
+            //      which is the only phase either scenario ever reaches.
+            //
+            // ATTRIBUTION, by the same separated-runs method the earlier
+            // re-pins used, and this time the control cuts the other way:
+            //   - `app-d2ki` ALONE, measured on the unchanged arena, moved the
+            //     MULTIPLAYER constant to 6391024973742485840 and left THIS one
+            //     untouched. The reason is geometric, not lucky: the leash only
+            //     bites when an elite in the middle ring has someone to chase
+            //     in the outer one, and only the three-player scenario puts a
+            //     collector out there. Mutation M1 of that task's own batch
+            //     (remove the rule, everything else kept) put the multiplayer
+            //     constant back to 0x03FD1C06FC2921DD exactly — which proves
+            //     the whole `bool` -> `float` rewrite around it is behaviorally
+            //     inert, since nothing else in that commit could return the
+            //     digest to its old value.
+            //   - THE ARENA then moved BOTH, this one included.
+            // The eight fixture repairs in the same commit are digest-inert by
+            // construction: `HostileFrame`, the two GC byte caps, the two
+            // Snapshot spacings, the tie-break placement, the gunner's approach
+            // and the corpse zone points are all outside TestConfigs.Default()
+            // and none of them is read by either scenario.
+            //
+            // ONE OF THE EIGHT IS NOT INERT AND IS NAMED HERE ON PURPOSE:
+            // ScenarioStart's clearance, half a dash -> two hero radii. That
+            // is a fourth cause of THIS constant (and of this one only — the
+            // multiplayer generator does not call it), and it is not a
+            // convenience: at the new arena size the old anchor left the run
+            // ricochet-free, and GoldenScenario_ExercisesAllMechanics_Coverage
+            // failed rather than the digest — the same coverage guard that
+            // caught the same class of loss at Ф5-0. Its own doc carries the
+            // arithmetic.
+            //
+            // The stop-and-ask rule stands, unchanged and unweakened: any
+            // further movement of any of the three constants is a stop and a
+            // question for the owner.
+            const ulong GoldenHash = 0xC19F5FDDF6A8F148UL; // = 13951975577547764040
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
@@ -900,7 +973,23 @@ namespace Ring.Simulation.Tests
             // round(14 * 0.02) = 0 at wave index 2. It does not, and Т11's M12
             // mutation covered this scenario as well and moved neither
             // constant: the composition really is inert at WaveIndex = 1.
-            const ulong MultiGoldenHash = 0x03FD1C06FC2921DDUL; // = 287416767547515357
+            //
+            // RE-PIN #3 (Ф8, bd `app-3cph` + `app-d2ki`) — the solo golden
+            // above carries the full account: whose sanction this is, the
+            // three causes, and the attribution runs. Two things belong here
+            // rather than there, because they are true of THIS scenario only:
+            //
+            //   - IT IS THE ONE THE LEASH CAN REACH. `app-d2ki` holds a middle-
+            //     ring elite out of the outer ring, which requires somebody to
+            //     be chased into the outer ring — and only a three-player run
+            //     puts a collector there. Measured, not argued: the rule alone,
+            //     on the unchanged arena, moved this constant to
+            //     6391024973742485840 and left the solo one exactly where it
+            //     was.
+            //   - IT DOES NOT USE ScenarioStart. The fourth cause listed on the
+            //     solo constant (its anchor clearance) cannot touch this
+            //     digest, and did not.
+            const ulong MultiGoldenHash = 0x259DC0AFF155D907UL; // = 2710534412647651591
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
