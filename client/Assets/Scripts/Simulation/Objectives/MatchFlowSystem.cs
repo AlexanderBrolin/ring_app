@@ -180,7 +180,7 @@ namespace Ring.Simulation.Objectives
         /// counts elites STANDING in the core, a collector could walk them
         /// out, and the next period bred replacements without limit — elites
         /// past the cap, wave slots eaten and this very branch reached. What
-        /// holds the sum now is MobAiSystem.LeashesToCore (owner decision
+        /// holds the sum now is MobAiSystem.LeashRingFor (owner decision
         /// R-200), which keeps the core's elite in the core once the endgame
         /// begins, so the count this method takes and the count the validator
         /// reasons about are finally the same number.

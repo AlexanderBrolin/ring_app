@@ -520,6 +520,117 @@ namespace Ring.Simulation.Tests
                 "stops being true");
         }
 
+        // ------------------------------------------------------------------
+        // bd app-d2ki (owner decision, milestone В1 playtest 2026-08-22): THE
+        // MIDDLE ZONE'S ELITE STAYS IN THE MIDDLE ZONE. The outer ring is the
+        // raid's ENTRANCE — a collector lands there with nothing, and ADR-001
+        // §3.1 gives the arena a difficulty curve that RISES toward the core.
+        // An elite that follows a runner out of the middle ring delivers the
+        // middle ring's difficulty to the entrance and flattens that curve,
+        // which is what the owner saw and named.
+        //
+        // THE MECHANISM IS Т22'S, REUSED, NOT A SECOND ONE (rule 2): the
+        // Director and his retinue are already held by LeashToRing (formerly
+        // LeashToCore) against ZoneRadius[0]. An elite in the middle zone is
+        // the same body held against the NEXT boundary out, ZoneRadius[1].
+        //
+        // THE PHASE GUARD IS DELIBERATELY ABSENT HERE, and that is the one
+        // real difference from Т22's rule. R-185's latch answers "whose home
+        // ground is the core", a question only the endgame raises. This rule
+        // answers "how hard is the entrance allowed to be", which is true from
+        // the first wave to the last — the owner's complaint was about the FARM
+        // phase, the only phase his playtest ever left. Fencing it to the
+        // endgame would leave the reported defect exactly where it was found.
+        // ------------------------------------------------------------------
+
+        /// A point in the middle of the middle ring, as fixture arithmetic off
+        /// the two boundaries Geometry.ZoneOf compares against — never a
+        /// literal (the InsideCore precedent right above).
+        static float2 InsideMiddle(in SimConfig cfg)
+            => new float2((cfg.Arena.ZoneRadius[0] + cfg.Arena.ZoneRadius[1]) * 0.5f, 0f);
+
+        /// A point well inside the outer ring: past the middle boundary by
+        /// three quarters of its own radius, still far short of the arena rim.
+        static float2 InsideOuter(in SimConfig cfg)
+            => new float2(cfg.Arena.ZoneRadius[1] * 1.75f, 0f);
+
+        static void PutEveryCollectorAt(SimulationWorld w, float2 pos)
+        {
+            for (int i = 0; i < w.PlayerCount; i++) TestWorlds.RelocatePlayerForTest(w, i, pos);
+        }
+
+        [Test]
+        public void DuringFarm_AnEliteInTheMiddleZone_IsHeldOutOfTheOuterZone()
+        {
+            // The rule itself, stated in the phase it was reported in: bait
+            // laid in the entrance ring, and the middle ring's elite may not
+            // take it. PreferredRange 2.5 against a collector 70 m out means
+            // the elite WANTS the whole distance — nothing but the leash keeps
+            // it home.
+            SimConfig cfg = DirectorFixture();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            Assert.AreEqual(MatchPhase.Farm, w.Match.Phase, "premise: the raid still farms");
+
+            // SpawnMobForTest answers with the ENTITY ID, not the array slot —
+            // the new mob is always the last slot, and that is what is indexed.
+            int elite = w.MobCount;
+            w.SpawnMobForTest(MobType.Elite, InsideMiddle(in cfg));
+            Assert.AreEqual(Zone.Middle, Geometry.ZoneOf(w.Mobs[elite].Pos, in cfg.Arena),
+                "premise: this elite stands in the MIDDLE ring");
+            PutEveryCollectorAt(w, InsideOuter(in cfg));
+
+            TestWorlds.IdleTicks(w, 300);
+
+            Assert.LessOrEqual(DistanceFromCenter(w, elite), cfg.Arena.ZoneRadius[1],
+                "the outer ring is the raid's entrance and keeps its own difficulty: the middle " +
+                "ring's elite may not be walked out into it, however far the bait runs");
+        }
+
+        [Test]
+        public void AnEliteInTheOuterZone_IsNeverDraggedIntoTheMiddleZone()
+        {
+            // The negative half, and the reason the ring is chosen from the
+            // mob's CURRENT zone rather than assigned to the type: the leash
+            // CLAMPS a position, so fencing an elite that already stands
+            // outside the middle boundary would teleport it inward on the very
+            // first tick. A wave elite born in the entrance ring belongs to the
+            // entrance ring.
+            SimConfig cfg = DirectorFixture();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+
+            int elite = w.MobCount;
+            w.SpawnMobForTest(MobType.Elite, InsideOuter(in cfg));
+            Assert.AreEqual(Zone.Outer, Geometry.ZoneOf(w.Mobs[elite].Pos, in cfg.Arena),
+                "premise: this elite stands in the OUTER ring");
+
+            TestWorlds.IdleTicks(w, 5);
+
+            Assert.Greater(DistanceFromCenter(w, elite), cfg.Arena.ZoneRadius[1],
+                "the leash holds a body IN its own ring, it never pulls one IN from further out");
+        }
+
+        [Test]
+        public void DuringFarm_AnOrdinaryMobInTheMiddleZone_FollowsACollectorOutward()
+        {
+            // The type half — the same witness DuringTheEndgame_AnOrdinaryMob
+            // InTheCoreIsNotRetinue gives the core leash, at the next boundary
+            // out. Only the ELITE carries the middle ring's difficulty
+            // (Р212/ADR-003 §9); holding the chasers too would turn the middle
+            // ring into a wall the entrance never has to fight through.
+            SimConfig cfg = DirectorFixture();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+
+            int chaser = w.MobCount;
+            w.SpawnMobForTest(MobType.Chaser, InsideMiddle(in cfg));
+            PutEveryCollectorAt(w, InsideOuter(in cfg));
+
+            TestWorlds.IdleTicks(w, 300);
+
+            Assert.Greater(DistanceFromCenter(w, chaser), cfg.Arena.ZoneRadius[1],
+                "an ordinary wave mob keeps its ordinary freedom to follow a collector anywhere — " +
+                "only an elite is fenced to the ring it stands in");
+        }
+
         [Test]
         public void DirectorSpawnsAtCoreCenter_OnActivation()
         {

@@ -509,7 +509,7 @@ namespace Ring.Data
             // arithmetic is supposed to make unreachable rather than handle.
             // ⚠ THE SUM CLOSES ONLY BECAUSE THE RETINUE IS BOUNDED, and that
             // bound is not this rule's own (Ф5 gate, review A-5): it is
-            // MobAiSystem.LeashesToCore holding the core's elite in the core
+            // MobAiSystem.LeashRingFor holding the core's elite in the core
             // once the endgame begins (owner decision R-200). Without it a
             // collector could walk the retinue out, the top-up would breed a
             // replacement every period, and this arithmetic would describe a

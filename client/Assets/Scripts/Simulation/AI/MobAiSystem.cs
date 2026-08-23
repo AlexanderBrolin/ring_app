@@ -41,7 +41,7 @@ namespace Ring.Simulation.AI
                 // STANDS in the core, so asking after the move would let a
                 // step across the boundary decide the answer — and asking
                 // about a mob that is already outside would TELEPORT it in.
-                bool leashToCore = LeashesToCore(in m, in arena, phase);
+                float leashRing = LeashRingFor(in m, in arena, phase);
 
                 // Stage 2 Task 8: target selection now goes through
                 // NearestAlivePlayer (from THIS mob's own position) instead of
@@ -54,7 +54,7 @@ namespace Ring.Simulation.AI
                     m.Ai = MobAiState.Idle;
                     m.StateTimer = 0f;
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     continue;
                 }
                 PlayerState player = w.PlayerAt(targetIndex);
@@ -71,11 +71,11 @@ namespace Ring.Simulation.AI
                 // carried and never read.
                 if (m.Type == MobType.Chaser)
                 {
-                    UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt, leashToCore);
+                    UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt, leashRing);
                 }
                 else if (m.Type == MobType.Gunner)
                 {
-                    UpdateGunner(w, ref m, in cfg, in player, in arena, dt, leashToCore);
+                    UpdateGunner(w, ref m, in cfg, in player, in arena, dt, leashRing);
                 }
                 else
                 {
@@ -92,21 +92,21 @@ namespace Ring.Simulation.AI
                     // other two already use (Р214) — MaxMobAiStateValue
                     // does not move. Director never leaving the arena core
                     // (Р248) is NOT decided here: since Т22 it is enforced
-                    // in ApplyMotion below (LeashToCore), the one place
+                    // in ApplyMotion below (LeashToRing), the one place
                     // every mob's motion lands. This switch only decides HOW
                     // it fights once a target is already in range, the same
                     // as any other archetype here.
                     if (math.distance(m.Pos, player.Pos) <= cfg.AttackRange)
-                        UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt, leashToCore);
+                        UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt, leashRing);
                     else
-                        UpdateGunner(w, ref m, in cfg, in player, in arena, dt, leashToCore);
+                        UpdateGunner(w, ref m, in cfg, in player, in arena, dt, leashRing);
                 }
             }
         }
 
         static void UpdateChaser(SimulationWorld w, ref MobState m, in MobSimConfig cfg,
             in PlayerState player, int targetIndex, in ArenaSimConfig arena, float dt,
-            bool leashToCore)
+            float leashRing)
         {
             switch (m.Ai)
             {
@@ -116,7 +116,7 @@ namespace Ring.Simulation.AI
                     m.Ai = MobAiState.Chase;
                     m.StateTimer = 0f;
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     return;
 
                 case MobAiState.Chase:
@@ -165,14 +165,14 @@ namespace Ring.Simulation.AI
                         m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed,
                             cfg.Accel * dt);
                     }
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     return;
                 }
 
                 case MobAiState.Telegraph:
                 {
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     m.StateTimer += dt;
                     if (m.StateTimer >= cfg.TelegraphSeconds)
                     {
@@ -208,7 +208,7 @@ namespace Ring.Simulation.AI
                 case MobAiState.Recover:
                 {
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     m.StateTimer += dt;
                     if (m.StateTimer >= cfg.AttackCooldown)
                     {
@@ -227,7 +227,7 @@ namespace Ring.Simulation.AI
         }
 
         static void UpdateGunner(SimulationWorld w, ref MobState m, in MobSimConfig cfg,
-            in PlayerState player, in ArenaSimConfig arena, float dt, bool leashToCore)
+            in PlayerState player, in ArenaSimConfig arena, float dt, float leashRing)
         {
             m.FireCooldown -= dt;
             // Floor clamp — mirrors WeaponSystem.cs's guarded player cooldown
@@ -259,7 +259,7 @@ namespace Ring.Simulation.AI
                 float2 dir = SteerAround(m.Pos, target, in arena, cfg.AvoidLookahead,
                     cfg.Radius, cfg.AvoidMargin, m.Id);
                 m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed, cfg.Accel * dt);
-                ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
+                ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                 return;
             }
 
@@ -267,7 +267,7 @@ namespace Ring.Simulation.AI
             float2 radial = math.normalizesafe(toPlayer, new float2(1f, 0f));
             float2 tangent = new float2(-radial.y, radial.x) * m.StrafeSign;
             m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, tangent * cfg.StrafeSpeed, cfg.Accel * dt);
-            ApplyMotion(ref m, in cfg, in arena, dt, leashToCore);
+            ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
 
             if (cfg.StrafeSpeed > 0f && math.length(m.Vel) < StrafeBlockedFactor * cfg.StrafeSpeed)
                 m.StrafeSign = -m.StrafeSign;
@@ -301,16 +301,30 @@ namespace Ring.Simulation.AI
 
         /// Applies the current velocity through the shared collide-and-slide solver.
         static void ApplyMotion(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena, float dt,
-            bool leashToCore)
+            float leashRing)
         {
             float2 target = m.Pos + m.Vel * dt;
             PlayerMovementSystem.MoveWithCollisions(ref m.Pos, ref m.Vel, target, cfg.Radius, in arena,
                 out _, out _, out _);
-            if (leashToCore) LeashToCore(ref m, in cfg, in arena);
+            if (leashRing > NoLeash) LeashToRing(ref m, in cfg, leashRing);
         }
 
-        /// WHO MAY NOT LEAVE THE CORE (spec §3.4 Р248 for the Director;
-        /// Ф5 gate review A-5 and owner decision R-200 for his retinue).
+        /// "No ring" — a leash radius no arena ring can take, because a ring
+        /// of zero radius is not a place a body can be held inside. Kept as a
+        /// named constant rather than a bare 0f so the one comparison in
+        /// ApplyMotion above reads as the question it asks.
+        const float NoLeash = 0f;
+
+        /// WHICH RING A MOB MAY NOT LEAVE — its radius, or NoLeash (spec §3.4
+        /// Р248 for the Director; Ф5 gate review A-5 and owner decision R-200
+        /// for his retinue; bd app-d2ki, owner decision on the В1 playtest, for
+        /// the middle ring's elite).
+        ///
+        /// A RADIUS, NOT A BOOL, SINCE app-d2ki: two different rings now hold
+        /// two different populations, and the caller threads ONE answer down
+        /// through the whole FSM to the single place motion lands. A second
+        /// bool would have meant a second clamp call at every one of those
+        /// eight sites (rule 2).
         ///
         /// THE DIRECTOR, ALWAYS — the unconditional half, unchanged from Т22:
         /// his fight is the core's fight, and no FSM branch, not even the
@@ -336,16 +350,40 @@ namespace Ring.Simulation.AI
         /// chase; that half is also what keeps every golden scenario
         /// untouched, since neither ever leaves Farm.
         ///
+        /// THE MIDDLE RING'S ELITE, IN EVERY PHASE (bd app-d2ki). The outer
+        /// ring is the raid's ENTRANCE: a collector lands there with nothing,
+        /// and ADR-001 §3.1 gives the arena a difficulty curve that RISES
+        /// toward the core. An elite that follows a runner out of the middle
+        /// ring carries the middle ring's difficulty to the entrance and
+        /// flattens that curve — which is what the owner reported on the В1
+        /// playtest. The ring it is held against is the one it STANDS in, so
+        /// an elite born in the entrance ring belongs to the entrance ring and
+        /// is never dragged inward: the clamp holds a body IN, it never pulls
+        /// one IN.
+        ///
+        /// AND IT CARRIES NO PHASE GUARD, deliberately. R-185's latch answers
+        /// "whose home ground is the core", a question only the endgame
+        /// raises. This rule answers "how hard may the entrance be", which is
+        /// true from the first wave to the last — and the FARM phase is the
+        /// only phase the reported defect ever occurred in.
+        ///
         /// ZONELESS ARENAS ARE A LEGAL INPUT (lesson 315) and Geometry.ZoneOf
-        /// has no guard of its own — so the answer is "no leash" before
-        /// anything indexes ZoneRadius.
-        static bool LeashesToCore(in MobState m, in ArenaSimConfig arena, MatchPhase phase)
+        /// has no guard of its own — so the answer is NoLeash before anything
+        /// indexes ZoneRadius. Since app-d2ki that guard stands FIRST rather
+        /// than beside the core test: every branch below now returns a radius
+        /// read out of ZoneRadius, the Director's included. Its old home was
+        /// the clamp helper, which made the Director's "always" a half-truth —
+        /// true of the decision, silently false of the motion.
+        static float LeashRingFor(in MobState m, in ArenaSimConfig arena, MatchPhase phase)
         {
-            if (m.Type == MobType.Director) return true;
-            if (m.Type != MobType.Elite) return false;
-            if (phase == MatchPhase.Farm) return false;
-            if (arena.ZoneRadius.Length < 2) return false;
-            return Geometry.ZoneOf(m.Pos, in arena) == Zone.Core;
+            if (arena.ZoneRadius.Length < 2) return NoLeash;
+            if (m.Type == MobType.Director) return arena.ZoneRadius[0];
+            if (m.Type != MobType.Elite) return NoLeash;
+
+            Zone zone = Geometry.ZoneOf(m.Pos, in arena);
+            if (zone == Zone.Middle) return arena.ZoneRadius[1];
+            if (zone == Zone.Core && phase != MatchPhase.Farm) return arena.ZoneRadius[0];
+            return NoLeash;
         }
 
         /// Stage 3 Т22 (spec §3.4 Р248, coordinator R-184): THE DIRECTOR NEVER
@@ -365,13 +403,16 @@ namespace Ring.Simulation.AI
         ///
         /// The primitive pair is the arena rim's own (Geometry.Depenetrate:
         /// ClampInsideRing, then Slide against the returned normal) — the same
-        /// arithmetic that keeps every body inside the arena, aimed at the core
-        /// boundary instead. Zoneless arenas are a legal input and have no core
-        /// (lesson 315), so they leash nothing.
-        static void LeashToCore(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena)
+        /// arithmetic that keeps every body inside the arena, aimed at a zone
+        /// boundary instead.
+        ///
+        /// SINCE app-d2ki IT TAKES THE RING AS A NUMBER and holds no opinion
+        /// about which one: LeashRingFor above is the single place that
+        /// decides, and it has already answered NoLeash for a zoneless arena
+        /// before this is ever reached (lesson 315). Two rules, one clamp.
+        static void LeashToRing(ref MobState m, in MobSimConfig cfg, float ringRadius)
         {
-            if (arena.ZoneRadius.Length < 2) return;
-            if (Geometry.ClampInsideRing(ref m.Pos, cfg.Radius, arena.ZoneRadius[0], out float2 normal))
+            if (Geometry.ClampInsideRing(ref m.Pos, cfg.Radius, ringRadius, out float2 normal))
                 m.Vel = Geometry.Slide(m.Vel, normal);
         }
 
