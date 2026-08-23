@@ -338,6 +338,29 @@ namespace Ring.Editor
         /// the rows can be placed by arithmetic and the scene carries no
         /// component whose behavior a bootstrap would have to re-derive.
         const float InventoryColumnWidth = 360f;
+
+        /// bd `app-pih0`: HOW FAR BELOW THE TOP OF THE SCREEN THE LOOT WINDOW
+        /// STARTS, so it does not share a single pixel with the HUD readouts.
+        ///
+        /// It shipped at zero — the columns were full height, pinned to both
+        /// screen edges — and the HUD lives in those very corners. The result
+        /// was the owner's В1 report: the ammo bar and its caption lying across
+        /// the loot list, and HP and Буст vanishing under the column's own
+        /// opaque backing the moment the window opened. The scene's child order
+        /// is what decides which of the two wins, and the bootstrap cannot
+        /// reorder it — `GetOrCreate*` returns an existing object untouched by
+        /// design — so the fix is to stop the two from overlapping at all.
+        ///
+        /// THE NUMBER IS THE HUD'S OWN, NOT A GUESS. The lowest left-corner
+        /// readout is `AmmoText` at y = -104 with a height of 26, i.e. its
+        /// bottom edge sits at -130; the right corner ends higher (`WaveText`,
+        /// -24 less 40 = -64). 144 clears the lower of the two by 14 px and is
+        /// applied to BOTH columns, so the two halves of a transfer window stay
+        /// level with each other.
+        ///
+        /// It costs no reachable row: at this inset the backpack's sixteenth
+        /// and last row ends at -1008 of the canvas's own 1080.
+        const float InventoryTopInset = 144f;
         const float InventoryRowHeight = 44f;
         const float InventoryRowGap = 6f;
 
@@ -3756,6 +3779,26 @@ namespace Ring.Editor
         /// existence-guard return now self-heals an already-committed scene
         /// (checked unconditionally, same shape as this file's muzzle-particle
         /// material check) instead of trusting a stale `Fill` object as-is.
+        /// bd `app-d0no`: A HUD READOUT IS NOT A BUTTON, AND MUST NOT EAT A
+        /// CLICK. Unity's UI gives every `Image` and every `TMP_Text`
+        /// `raycastTarget = true` by default, and every bar and label on this
+        /// canvas shipped that way — so the ammo bar and its caption, which the
+        /// committed scene draws OVER the loot window, silently swallowed every
+        /// click that landed on the two container rows they cross. That is the
+        /// whole of "not all items can be taken": the simulation refused
+        /// nothing, the click never arrived.
+        ///
+        /// APPLIED TO EXISTING OBJECTS TOO, not only at creation — the committed
+        /// scene already holds all of them, and a bootstrap that only fixed new
+        /// objects would leave the shipped scene exactly as broken as it was.
+        /// Idempotent by inspection: already-false raises no flag.
+        static void MakeNonInteractive(Graphic graphic, ref bool sceneDirty)
+        {
+            if (graphic == null || !graphic.raycastTarget) return;
+            graphic.raycastTarget = false;
+            sceneDirty = true;
+        }
+
         static Image GetOrCreateBar(Transform parent, string name, Vector2 anchoredPos, Vector2 size,
             Color backgroundColor, Color fillColor, ref bool sceneDirty)
         {
@@ -3782,6 +3825,10 @@ namespace Ring.Editor
                     existingFill.sprite = fillSprite;
                     sceneDirty = true;
                 }
+                // bd `app-d0no`: both halves of an already-committed bar.
+                MakeNonInteractive(existingFill, ref sceneDirty);
+                MakeNonInteractive(existing.Find(BackgroundObjectName).GetComponent<Image>(),
+                    ref sceneDirty);
                 return existingFill;
             }
 
@@ -3797,7 +3844,9 @@ namespace Ring.Editor
             var bgGo = new GameObject(BackgroundObjectName, typeof(RectTransform), typeof(Image));
             bgGo.transform.SetParent(barGo.transform, false);
             StretchToFillParent((RectTransform)bgGo.transform);
-            bgGo.GetComponent<Image>().color = backgroundColor;
+            Image bgImage = bgGo.GetComponent<Image>();
+            bgImage.color = backgroundColor;
+            MakeNonInteractive(bgImage, ref sceneDirty);   // bd `app-d0no`
 
             var fillGo = new GameObject(FillObjectName, typeof(RectTransform), typeof(Image));
             fillGo.transform.SetParent(barGo.transform, false);
@@ -3809,6 +3858,7 @@ namespace Ring.Editor
             fillImage.fillMethod = Image.FillMethod.Horizontal;
             fillImage.fillOrigin = (int)Image.OriginHorizontal.Left;
             fillImage.fillAmount = 1f;
+            MakeNonInteractive(fillImage, ref sceneDirty);   // bd `app-d0no`
 
             sceneDirty = true;
             return fillImage;
@@ -3831,6 +3881,11 @@ namespace Ring.Editor
                     existingText.text = "ВОЛНА 0";
                     sceneDirty = true;
                 }
+                // bd `app-d0no`: this early return never reaches
+                // GetOrCreateHudLabel below, so the readout rule has to be
+                // applied here too — the committed scene's wave counter is
+                // exactly such an object.
+                MakeNonInteractive(existingText, ref sceneDirty);
                 return existingText;
             }
 
@@ -3906,7 +3961,13 @@ namespace Ring.Editor
             TextAlignmentOptions alignment, ref bool sceneDirty)
         {
             Transform existing = parent.Find(name);
-            if (existing != null) return existing.GetComponent<TMP_Text>();
+            if (existing != null)
+            {
+                // bd `app-d0no`: a caption is a readout, not a target.
+                TMP_Text existingText = existing.GetComponent<TMP_Text>();
+                MakeNonInteractive(existingText, ref sceneDirty);
+                return existingText;
+            }
 
             var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
@@ -3922,6 +3983,7 @@ namespace Ring.Editor
             tmp.fontSize = fontSize;
             tmp.alignment = alignment;
             tmp.color = Color.white;
+            MakeNonInteractive(tmp, ref sceneDirty);   // bd `app-d0no`
 
             sceneDirty = true;
             return tmp;
@@ -3984,13 +4046,44 @@ namespace Ring.Editor
         }
 
         /// One column of the window, pinned to a screen edge: `side` is -1 for
-        /// the left and +1 for the right. Full height, fixed width, so the gap
-        /// between them is the whole middle of the screen at any resolution.
+        /// the left and +1 for the right. Fixed width, and full height BELOW
+        /// `InventoryTopInset`, so the gap between them is the whole middle of
+        /// the screen at any resolution and neither of them reaches the corner
+        /// the HUD occupies (bd `app-pih0`).
+        ///
+        /// THE ROWS NEED NO ARITHMETIC OF THEIR OWN: they are placed relative
+        /// to the column's top edge, so moving the column moves the whole
+        /// window — backing plate, titles and all — in one place.
+        ///
+        /// WITH `pivot.y = 1` AND STRETCHED Y ANCHORS, an inset of `T` is
+        /// `anchoredPosition.y = -T` together with `sizeDelta.y = -T`: Unity
+        /// derives `offsetMax.y = anchoredPosition.y` and `offsetMin.y =
+        /// anchoredPosition.y - sizeDelta.y`, which puts the top edge `T` down
+        /// from the parent's top and leaves the bottom edge exactly on it.
         static Transform GetOrCreateInventoryColumn(Transform parent, string name, float side,
             ref bool sceneDirty)
         {
+            var inset = new Vector2(0f, -InventoryTopInset);
+            var extent = new Vector2(InventoryColumnWidth, -InventoryTopInset);
+
             Transform existing = parent.Find(name);
-            if (existing != null) return existing;
+            if (existing != null)
+            {
+                // bd `app-pih0`: self-heals an already-committed column, the
+                // same unconditional way `GetOrCreateBar` heals a stale bar
+                // position — the shipped scene carries the full-height version,
+                // and a fix that only reached NEW columns would reach nothing
+                // at all. Idempotent by inspection: matching values raise no
+                // flag.
+                var existingRect = (RectTransform)existing;
+                if (existingRect.anchoredPosition != inset || existingRect.sizeDelta != extent)
+                {
+                    existingRect.anchoredPosition = inset;
+                    existingRect.sizeDelta = extent;
+                    sceneDirty = true;
+                }
+                return existing;
+            }
 
             var go = new GameObject(name, typeof(RectTransform), typeof(Image));
             go.transform.SetParent(parent, false);
@@ -3999,8 +4092,8 @@ namespace Ring.Editor
             rect.anchorMin = new Vector2(anchorX, 0f);
             rect.anchorMax = new Vector2(anchorX, 1f);
             rect.pivot = new Vector2(anchorX, 1f);
-            rect.anchoredPosition = new Vector2(0f, 0f);
-            rect.sizeDelta = new Vector2(InventoryColumnWidth, 0f);
+            rect.anchoredPosition = inset;
+            rect.sizeDelta = extent;
             go.GetComponent<Image>().color = new Color(0.05f, 0.06f, 0.08f, 0.82f);
 
             sceneDirty = true;
