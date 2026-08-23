@@ -152,6 +152,283 @@ namespace Ring.Simulation.Tests
             return world.StateHash();
         }
 
+        // ------------------------------------------------------------------
+        // Stage 3 Т36 (plan Т36, spec §4 Р295): THE THIRD GOLDEN — the
+        // extraction LOOP, end to end. The two constants above pin a thousand
+        // ticks of farming; nothing in this file has ever pinned what the raid
+        // is actually about: a collector walks into the core, the Director
+        // wakes, dies, the gate opens ninety seconds later and somebody walks
+        // out through it. Every one of those transitions is a branch the
+        // farming scenarios never reach.
+        //
+        // IT IS A NEW CONSTANT, NOT A RE-PIN, and spends no sanction (errata
+        // §4 says so in as many words). A new scenario cannot move a digest
+        // that never covered it.
+        // ------------------------------------------------------------------
+
+        /// 18 000 ticks = 600 s at the 30 Hz tick (plan Т36). The window has to
+        /// hold the whole chain and it is stated as the sum of its parts, not
+        /// as a round number: 120 s before the walk-in (below), then the
+        /// Director's fight, then GateDelaySeconds (90 s in the shipped Flow),
+        /// then ExtractChannelSeconds (20 s) — with room to spare on either
+        /// side, and still well inside NetConfig's own 900 s match cap.
+        const int ExtractionTicks = 18_000;
+
+        /// Р295: the walk-in starts at the 120th second, late enough that the
+        /// scenario farms like a normal raid first (waves, loot, the outer
+        /// ring) and the endgame is not simply the whole run.
+        const int CoreEntryTick = 3_600;
+
+        /// The SECOND player walks in (lesson 227). Index 0 is the one every
+        /// solo path already exercises, so driving it here would leave the
+        /// "somebody else triggered the endgame" half of the phase machine
+        /// unpinned — MatchFlowSystem reads a live collector's zone, not
+        /// player 0's.
+        const int CoreWalker = 1;
+
+        /// The walk-in input for that player, every tick from CoreEntryTick on.
+        /// It never stops steering, and that is deliberate — the gate opens AT
+        /// (0, 0) (ArenaConfig's own ExtractPos), so the same walk that wakes
+        /// the Director is the walk that stands on the gate when it finally
+        /// opens, and the run pins the channel as well as the activation.
+        ///
+        /// IT STEERS THROUGH THE DOORS, NOT AT THE CENTER, and that is not a
+        /// refinement — it is the difference between this scenario existing and
+        /// not. A straight line inward is what the first draft did, and
+        /// ExtractionScenario_ReachesTheWholeLoop failed on it: player 1 of
+        /// three spawns at 120 deg, the outer ring's doors are at 30/150/270,
+        /// so the collector spent 480 s pressed against a solid arc while the
+        /// digest sat perfectly stable on a raid where nothing ever happened.
+        /// That is lesson 412 in its purest form, and the reason that guard was
+        /// written before this helper was trusted.
+        ///
+        /// TWO PHASES PER RING, the way a person walks it: first go AROUND at
+        /// the current radius until lined up with a doorway, then go IN through
+        /// it. "Lined up" is measured in METERS of lateral offset rather than
+        /// in radians, because a doorway is a fixed 6 m wide at any radius —
+        /// a quarter of its width is the aim tolerance, which leaves the whole
+        /// remaining half-width as margin against the shoving of a crowd.
+        ///
+        /// UNIT LENGTH throughout, because SimInputSanitizer caps MoveDir at
+        /// one and a longer vector would merely be clamped — stating the cap
+        /// here keeps the scripted stream honest about what the world will
+        /// actually see.
+        static float2 WalkInToCore(float2 pos, in SimConfig cfg)
+        {
+            float r = math.length(pos);
+            if (r <= 1e-6f) return float2.zero;
+            float2 inward = -pos / r;
+
+            // The outermost boundary still standing between this body and the
+            // core. Walls are authored outermost-last, so the scan runs down.
+            for (int w = cfg.Arena.ZoneWallCount - 1; w >= 0; w--)
+            {
+                float ring = cfg.Arena.ZoneWallRadius[w];
+                if (r <= ring) continue;
+
+                float here = math.atan2(pos.y, pos.x);
+                int first = cfg.Arena.ZoneWallDoorStart[w];
+                int count = cfg.Arena.ZoneWallDoorCount[w];
+                int best = first;
+                float bestGap = float.MaxValue;
+                for (int d = first; d < first + count; d++)
+                {
+                    float gap = math.abs(WrapPi(cfg.Arena.DoorCenterRad[d] - here));
+                    // Strictly-less keeps the SMALLER INDEX on an exact tie,
+                    // which a three-door ring produces whenever a body sits
+                    // halfway between two of them — and this run does sit there
+                    // (150 deg is 60 deg from both 90 and 210).
+                    if (gap < bestGap) { bestGap = gap; best = d; }
+                }
+
+                float offset = WrapPi(cfg.Arena.DoorCenterRad[best] - here);
+                if (math.abs(offset) * r > cfg.Arena.DoorFreeWidth[best] * 0.25f)
+                {
+                    // Around: the tangent, turned toward the doorway.
+                    float2 tangent = new float2(-pos.y, pos.x) / r;
+                    return offset >= 0f ? tangent : -tangent;
+                }
+                return inward;
+            }
+            return inward;
+        }
+
+        /// Signed angle difference folded into (-pi, pi] — the plain idiom, kept
+        /// local to this file because it exists here for one scripted walk and
+        /// Simulation has no need of it.
+        static float WrapPi(float a)
+        {
+            while (a > math.PI) a -= 2f * math.PI;
+            while (a < -math.PI) a += 2f * math.PI;
+            return a;
+        }
+
+        /// The third golden's generator. Same shape as RunMultiScripted above —
+        /// same fixed world seed, same per-player scripted streams drawn in
+        /// increasing player order — with two differences, both of them the
+        /// point of the scenario: the fixture is TestConfigs.Extraction() (the
+        /// shipped arena, containers and drop chances), and one player's
+        /// MoveDir is OVERRIDDEN from CoreEntryTick on.
+        ///
+        /// THE OVERRIDE HAPPENS AFTER THE DRAW, NEVER INSTEAD OF IT. Scripted()
+        /// is called for every player on every tick regardless, so the rng draw
+        /// order is exactly the one RunMultiScripted uses and the walk-in
+        /// changes what the world receives without changing what the stream
+        /// produces. Skipping the draw for the walking player would make every
+        /// OTHER player's input depend on the walk-in, which is not a scenario
+        /// anyone could reason about.
+        static ulong RunExtractionScripted(uint inputSeed, int ticks, int playerCount)
+        {
+            SimConfig cfg = TestConfigs.Extraction();
+            var world = new SimulationWorld(42, cfg, playerCount);
+            var rng = new Random(inputSeed);
+            var aimHeld = new bool[playerCount];
+            var inputs = new SimInput[playerCount];
+            for (int i = 0; i < ticks; i++)
+            {
+                for (int p = 0; p < playerCount; p++)
+                {
+                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight);
+                    if (p == CoreWalker && i >= CoreEntryTick)
+                        inputs[p].MoveDir = WalkInToCore(world.PlayerAt(p).Pos, in cfg);
+                }
+                world.TickAll(inputs);
+            }
+            return world.StateHash();
+        }
+
+        [Test]
+        public void ExtractionGoldenHash_ScriptedScenario()
+        {
+            // FIRST PIN of a THIRD constant (plan Т36; errata §4 states in as
+            // many words that Т36 introduces a third constant and that doing so
+            // spends no sanction). Same first-run
+            // procedure the two constants above document: with the constant at
+            // 0 this assert fails and NUnit prints the actual hash.
+            //
+            // WHAT IT COVERS THAT THE OTHER TWO CANNOT. Both farming scenarios
+            // live and die inside MatchPhase.Farm — their own docs say so, and
+            // the elite leash of `app-d2ki` relies on it. This one crosses
+            // every remaining transition: a collector enters the core, Т21's
+            // phase machine latches, Т22 spawns the Director and his retinue,
+            // he dies, DirectorDeathTick is stamped, GateDelaySeconds counts
+            // down, the gate opens and the channel runs. It also runs the only
+            // fully-populated arena in the file — 41 starting containers and
+            // live drop chances — so container placement, item rolls and
+            // corpse containers all enter the digest.
+            //
+            // PINNED AFTER `app-3cph`, ON PURPOSE and by the owner's own
+            // instruction: the arena's rings tripled and the mob density
+            // doubled in this same phase, so pinning this constant first would
+            // have meant re-pinning it immediately. Т36 was moved behind that
+            // work for exactly this reason, and this constant has therefore
+            // never held another value.
+            //
+            // ⚠ WHAT IT DOES NOT COVER, measured and named rather than left to
+            // be assumed from the paragraph above: THE DIRECTOR'S DEATH, the
+            // GateDelaySeconds countdown and the extraction channel. Plan Т36
+            // asks for all three; the code says no, and the code wins over the
+            // plan (the plan's own errata says as much about itself). Two
+            // probes over this exact scenario: the Director finished on 2500 HP
+            // of 2500, and 2431 when every surviving collector was additionally
+            // aimed straight at him for the whole 480 s — the three of them are
+            // dead well before that, and the walker's entire magazine is 499
+            // rounds. Killing a 2500 HP boss is PLAY. Recorded as bd
+            // `app-7vkd` for the owner to decide what, if anything, should pin
+            // the far half of the loop.
+            //
+            // ExtractionScenario_ReachesTheWholeLoop below is what keeps this
+            // whole account honest rather than merely claimed — a digest is
+            // stable whether or not the scenario it pins does anything, and
+            // that guard is what caught the first draft of the walk-in walking
+            // into a solid wall for 480 s.
+            const ulong ExtractionGoldenHash = 0xC43B54B02689DC8FUL; // = 14139988570597350543
+            Assert.AreEqual(ExtractionGoldenHash,
+                RunExtractionScripted(123, ExtractionTicks, 3));
+        }
+
+        [Test]
+        public void ExtractionScriptedRun_SameSeed_SameHash()
+        {
+            // Companion to the constant above, exactly as the two farming
+            // goldens have: a pinned digest means nothing unless the run is
+            // reproducible in the first place, and unless a different input
+            // seed actually reaches a different world. The scenario costs
+            // about 2.8 s per run, which is what makes a three-run companion
+            // affordable here at all.
+            Assert.AreEqual(RunExtractionScripted(123, ExtractionTicks, 3),
+                RunExtractionScripted(123, ExtractionTicks, 3));
+            Assert.AreNotEqual(RunExtractionScripted(123, ExtractionTicks, 3),
+                RunExtractionScripted(43, ExtractionTicks, 3));
+        }
+
+        [Test]
+        public void ExtractionScenario_ReachesTheWholeLoop()
+        {
+            // The coverage guard for the third golden, and the reason it exists
+            // is lesson 412: a property with no witness is a surface checked
+            // blind. The constant above CLAIMS this scenario walks the whole
+            // loop; a digest cannot tell the difference between a run that
+            // opens the gate and one that spends 600 s farming the periphery,
+            // because both are perfectly stable. This is what tells them apart,
+            // and it is deliberately written over the SAME generator, seed and
+            // tick count, so it can never drift away from what the golden pins.
+            SimConfig cfg = TestConfigs.Extraction();
+            var world = new SimulationWorld(42, cfg, 3);
+            var rng = new Random(123);
+            var aimHeld = new bool[3];
+            var inputs = new SimInput[3];
+
+            bool sawDirector = false, sawWalkerInCore = false;
+            MatchPhase deepestPhase = MatchPhase.Farm;
+            int containersAtStart = world.ContainerCount;
+
+            for (int i = 0; i < ExtractionTicks; i++)
+            {
+                for (int p = 0; p < 3; p++)
+                {
+                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight);
+                    if (p == CoreWalker && i >= CoreEntryTick)
+                        inputs[p].MoveDir = WalkInToCore(world.PlayerAt(p).Pos, in cfg);
+                }
+                world.TickAll(inputs);
+
+                if (world.Match.Phase > deepestPhase) deepestPhase = world.Match.Phase;
+                if (Geometry.ZoneOf(world.PlayerAt(CoreWalker).Pos, in cfg.Arena) == Zone.Core)
+                    sawWalkerInCore = true;
+                for (int m = 0; m < world.MobCount; m++)
+                    if (world.Mobs[m].Type == MobType.Director) { sawDirector = true; break; }
+            }
+
+            Assert.Greater(containersAtStart, 0,
+                "premise: this is the fully populated arena, not a bare one — the loop it pins "
+                + "includes looting, and a fixture with no containers cannot pin that");
+            Assert.IsTrue(sawWalkerInCore,
+                "the scripted walk-in must actually reach the core — Р295's whole point is that "
+                + "the endgame is triggered from inside the run, not assumed");
+            Assert.IsTrue(sawDirector,
+                "…and the Director must actually have been spawned by it (Т22)");
+            // THE CEILING IS ASSERTED, NOT THE WISH — and it is a MEASURED
+            // ceiling (bd `app-7vkd`). Plan Т36 asks for the Director's death
+            // and the gate's opening to fall inside this window too. They do
+            // not, and no amount of window would change it: a probe over this
+            // very scenario left the Director on 2500 HP of 2500, and a second
+            // probe that additionally aimed every survivor straight at him for
+            // all 480 s took him to 2431 — because the collectors are dead long
+            // before that and the walker's whole magazine is 499 rounds. Killing
+            // a 2500 HP boss is PLAY, not a scripted random walk.
+            //
+            // So this pins the depth the scenario actually reaches, by equality
+            // rather than by "at least": the day the loop becomes reachable in
+            // a scripted run, THIS is the assertion that says so out loud and
+            // asks to be updated, instead of quietly passing while the golden
+            // covers less than its own doc claims.
+            Assert.AreEqual(MatchPhase.DirectorActive, deepestPhase,
+                "the scenario reaches the Director's activation and stops there — his death and "
+                + "the gate's opening are NOT covered by this digest (bd app-7vkd), and the "
+                + "golden's own doc says so rather than implying otherwise");
+        }
+
         [Test]
         public void SameSeed_SameHash_After1000Ticks()
         {

@@ -523,5 +523,38 @@ namespace Ring.Simulation.Tests
             c.Loot.RepairKitChance = 0.25f;
             return c;
         }
+
+        /// Stage 3 Т36 (plan Т36, spec §4): the THIRD golden's own fixture —
+        /// the full arena the game ships, not a reduced one. Т36 is the only
+        /// scenario in this file that pins the extraction LOOP end to end
+        /// (Director activation, his death, the gate's delay, the walk out),
+        /// so every number it runs on has to be the shipped number: three
+        /// zones with their walls and doors, the real container counts, the
+        /// real drop chances.
+        ///
+        /// IT BUILDS ON Populated() RATHER THAN RESTATING IT (rule 2). That
+        /// fixture already carries the drop-chance and repair-kit shares
+        /// mirrored from LootConfig's own C# defaults; the only thing it
+        /// deliberately keeps cheap is the container COUNT (three crates, for
+        /// a smoke test that just needs placement to run at all). This
+        /// replaces exactly those three numbers with the shipped ones —
+        /// Populated()'s own doc says its name belongs to a different job, and
+        /// that stays true: it is the base, not the fixture.
+        ///
+        /// ⚠ THIS IS THE ONE FIXTURE IN THE FILE EXEMPT FROM THE OPEN-FIELD
+        /// RULE (R-173/351/355). A fixture that TICKS the world is normally
+        /// owed a zoneless arena, precisely so an arena-layout pass cannot
+        /// rewrite its geometry underneath it. Here the zoned, fully populated
+        /// arena IS the subject: a golden that pinned the extraction loop on
+        /// an open field would pin a loop with no core to enter, no doors to
+        /// pass and no gate to open.
+        public static SimConfig Extraction()
+        {
+            var c = Populated();
+            c.Loot.CrateCount = 24;
+            c.Loot.CacheCountMiddle = 15;
+            c.Loot.CacheCountCore = 2;
+            return c;
+        }
     }
 }
