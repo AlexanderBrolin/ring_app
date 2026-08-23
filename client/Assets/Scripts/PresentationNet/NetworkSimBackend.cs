@@ -1287,6 +1287,18 @@ namespace Ring.Presentation.Net
                 + $"queue={d.SnapshotQueueCount}/{d.SnapshotQueueDepth} "
                 + $"dropped={d.DroppedSnapshots} stale={d.StaleSnapshots} dup={d.DuplicateSnapshots} "
                 + $"corrections={d.CorrectionCount} medianM={d.CorrectionMedianMeters:F3} "
+                // Т37 (Ф8, milestone В2): the ONE number the phase gate keys
+                // on that this line did not carry. Т37 step 4 says a dropped-
+                // entity count over 1% of frames becomes a delta-snapshot task
+                // (Р280) — and `FramesMissingEntities` is exactly the
+                // client-side reading of it (its own doc names the server's
+                // `NetStats.DroppedEntities` as its neighbor). It reached the
+                // on-screen panel and nothing else, so on a HEADLESS stand —
+                // which is the only stand that exists before three humans sit
+                // down — the gate had no evidence for its own threshold. Same
+                // seam as every other field here (`TryGetNetDiagnostics`), so
+                // panel and log still cannot disagree.
+                + $"framesMissing={d.FramesMissingEntities} "
                 + $"bytesDownPerSec={d.BytesDownPerSecond} "
                 + $"latSim={(d.LatencySimActive ? $"{d.LatencySimRttMs}ms/{d.LatencySimLossPercent:F1}%" : "off")}");
 #endif
