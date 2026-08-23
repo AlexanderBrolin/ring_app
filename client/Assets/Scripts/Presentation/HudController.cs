@@ -123,6 +123,35 @@ namespace Ring.Presentation
         // feel-timers (hitstop, vignette) use.
         float _staminaDeniedTimer;
 
+        /// The wave line's flash timer (Task Т7, bd `app-ggvz`, spec §3.10).
+        /// Counted down by `WaveAnnounceTimerAfter` ITSELF, called from
+        /// `LateUpdate` on `Time.unscaledDeltaTime` — same
+        /// hitstop-independent contract `_staminaDeniedTimer` above already
+        /// uses — rather than a separate decrement line, so this class does
+        /// not grow a third place where time flows.
+        float _waveAnnounceTimer;
+
+        /// The wave number `WaveAnnounceTimerAfter` last compared against, so
+        /// it can tell GROWTH from "held" next frame. -1 is the unseen
+        /// sentinel: no real `WaveState.WaveIndex` reaches it (`WaveSystem`'s
+        /// own doc — it is 1-based once assigned), so `LateUpdate` reads
+        /// unseen as "no growth yet" rather than comparing against it
+        /// literally. That is what keeps this class's actual first rendered
+        /// frame, and the first frame after `HandleWorldRestarted`, from
+        /// flashing over a transition nobody watched.
+        int _previousWaveNumber = -1;
+
+        /// `_waveText`'s own color before any flash ever touches it,
+        /// snapshotted once in `Awake` — the one Unity lifecycle callback
+        /// guaranteed to run exactly once regardless of later enable/disable
+        /// cycles, unlike `OnEnable` just below. No other color in this class
+        /// needs a memory like this: `UpdateStaminaBar`'s fill color is
+        /// always a fresh formula off `GameFeelConfig`, never a return to
+        /// something remembered.
+        Color _waveTextBaseColor;
+
+        void Awake() => _waveTextBaseColor = _waveText.color;
+
         void OnEnable() => _runner.WorldRestarted += HandleWorldRestarted;
 
         void OnDisable() => _runner.WorldRestarted -= HandleWorldRestarted;
@@ -199,7 +228,24 @@ namespace Ring.Presentation
 
             // F-8 fix: user-facing strings are Russian (ADR-003 §9 word list) — the
             // old "WAVE " placeholder predates the settled world vocabulary.
-            _waveText.text = "ВОЛНА " + curr.Wave.WaveIndex;
+            int waveNumber = curr.Wave.WaveIndex;
+            _waveText.text = "ВОЛНА " + waveNumber;
+
+            // Task Т7 (bd `app-ggvz`, spec §3.10): rearm/decay the flash
+            // timer off THIS frame's own number before folding
+            // _previousWaveNumber forward — the seam needs the OLD value to
+            // tell growth from "held", and turning it over a line early
+            // would make every frame read as "held". The unseen sentinel
+            // (-1, see the field's own doc) is read as "no growth yet" so
+            // neither this class's first rendered frame nor the first frame
+            // after a restart opens with a flash.
+            int previousForCompare = _previousWaveNumber < 0 ? waveNumber : _previousWaveNumber;
+            _waveAnnounceTimer = WaveAnnounceTimerAfter(previousForCompare, waveNumber,
+                _waveAnnounceTimer, _gameFeel.WaveAnnounceSeconds, Time.unscaledDeltaTime);
+            _previousWaveNumber = waveNumber;
+            _waveText.color = _waveAnnounceTimer > 0f
+                ? _gameFeel.WaveAnnounceFlashColor
+                : _waveTextBaseColor;
 
             // A frame that says nothing about the watched seat moves nothing:
             // its `PlayerState` would be `default` — full-health-less zero at
@@ -294,6 +340,28 @@ namespace Ring.Presentation
             return $"{safe / 60}:{safe % 60:00}";
         }
 
+        /// The wave line's flash timer, one tick forward (Task Т7, bd
+        /// `app-ggvz`, spec §3.10 — the canon's "announce -> wave -> quiet
+        /// window" cadence).
+        /// `waveNumber` is world-wide and monotonic — a raid-wide difficulty
+        /// step, not a per-ring counter — so GROWTH over `previousWaveNumber`
+        /// is the only event this seam reacts to; a raid with more rings does
+        /// not flash more often.
+        ///
+        /// On growth the timer is REARMED to `announceSeconds` outright, NOT
+        /// QUEUED: a fresh flash always starts at the full value no matter
+        /// what was already counting down, so back-to-back growth never
+        /// stacks or accumulates. Otherwise it DECAYS by one frame,
+        /// `Mathf.Max(0f, timerNow - deltaSeconds)` — never negative, so a
+        /// spent flash reads as done rather than as a debt.
+        public static float WaveAnnounceTimerAfter(int previousWaveNumber, int waveNumber,
+            float timerNow, float announceSeconds, float deltaSeconds)
+        {
+            return waveNumber > previousWaveNumber
+                ? announceSeconds
+                : Mathf.Max(0f, timerNow - deltaSeconds);
+        }
+
         /// The extraction channel, as a ring around the collector himself.
         ///
         /// `ExtractTimer` GROWS, unlike every other timer this project draws:
@@ -367,6 +435,17 @@ namespace Ring.Presentation
             // Т33: and the pickup mask with it — a mask armed in the last
             // match would hide the fresh one's opening emergency.
             _pickupMaskTimer = 0f;
+            // Т7 (bd `app-ggvz`): and the wave-announce flash with it — a
+            // pulse charged in the raid that just ended must not bleed into
+            // the new one's first frame. _previousWaveNumber resets to the
+            // -1 unseen sentinel rather than 0 (a real WaveIndex under this
+            // world's own numbering, see the field's own doc) alongside it,
+            // so the new raid's first rendered frame reads as "no growth
+            // yet" — the same protection this class's actual first frame
+            // ever gets — instead of misreading the drop from the old raid's
+            // wave N down to the new raid's opening number as GROWTH.
+            _waveAnnounceTimer = 0f;
+            _previousWaveNumber = -1;
             // Т35 (spec Р291, the restart reset list): the three surfaces Т33
             // added are taken down with it. THE RING IS THE ONE THAT MATTERS —
             // it is the only one that stays ON by itself: a collector who was

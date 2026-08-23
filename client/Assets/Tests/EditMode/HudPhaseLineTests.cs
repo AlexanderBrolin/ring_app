@@ -124,5 +124,26 @@ namespace Ring.Simulation.Tests
                 () => ExitRules.IsOpen(In(MatchPhase.Farm), 99),
                 "an exit kind the table does not know must say so, not default to open");
         }
+
+        [Test]
+        public void WaveAnnounce_RearmsOnGrowth_AndDecaysOtherwise()
+        {
+            // Task Т7 (bd `app-ggvz`, spec §3.10): the wave number is
+            // world-wide and monotonic (a raid-wide difficulty tick, not a
+            // per-ring counter), so the only event this seam reacts to is
+            // GROWTH. Three cases, in the order the seam has to tell them
+            // apart:
+            //   1. The number just grew: REARM to `announceSeconds`, full
+            //      value, no matter what the timer already held — a flash
+            //      restarts, it never queues or stacks.
+            //   2. The number held: DECAY the running timer by one frame's
+            //      `deltaSeconds`, same as any ordinary countdown.
+            //   3. The number held AND the decay would cross zero: CLAMP at
+            //      zero rather than go negative — a flash never reports
+            //      "done" as a negative duration.
+            Assert.AreEqual(1.5f, HudController.WaveAnnounceTimerAfter(3, 4, 0.2f, 1.5f, 0.016f), 1e-4f);
+            Assert.AreEqual(1.484f, HudController.WaveAnnounceTimerAfter(4, 4, 1.5f, 1.5f, 0.016f), 1e-4f);
+            Assert.AreEqual(0f, HudController.WaveAnnounceTimerAfter(4, 4, 0.01f, 1.5f, 0.016f), 1e-4f);
+        }
     }
 }

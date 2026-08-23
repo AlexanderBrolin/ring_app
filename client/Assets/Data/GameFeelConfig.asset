@@ -119,3 +119,5 @@ MonoBehaviour:
   DirectorVisualScale: 3.5
   PickupVisualDiameter: 0.5
   ContainerVisualScale: 1
+  WaveAnnounceSeconds: 1.5
+  WaveAnnounceFlashColor: {r: 1, g: 0.85, b: 0.35, a: 1}

@@ -543,7 +543,44 @@ namespace Ring.Data
         // owner can push crates up or down against the collector doll without
         // touching four prefabs.
         [Range(0.05f, 3f)] public float PickupVisualDiameter = 0.5f;
-        [Range(0.05f, 5f)] public float ContainerVisualScale = 1f; // sync-marker key — keep LAST
+        // Was the sync-marker key until Task Т7 (bd `app-ggvz`)'s
+        // `WaveAnnounceFlashColor` below superseded it.
+        [Range(0.05f, 5f)] public float ContainerVisualScale = 1f;
+
+        // Task Т7 (bd `app-ggvz`, spec §3.10): the wave line's flash — how
+        // long it lasts, and what color it wears while it lasts.
+        // `HudController.WaveAnnounceTimerAfter` rearms `_waveAnnounceTimer`
+        // to `WaveAnnounceSeconds` outright whenever the world-wide wave
+        // number grows and decays it otherwise; `WaveAnnounceFlashColor` is
+        // what `_waveText` wears while that timer is still counting down,
+        // its ordinary color the rest of the time.
+        //
+        // THE COLOR IS A FIELD, NOT A CODE CONSTANT — a recorded departure
+        // from the letter of spec §3.10, not an improvisation: the spec
+        // names only the seconds, but its own reasoning for that number
+        // (balance/feel numbers live in a ScriptableObject so the owner can
+        // retune them on playtest without a recompile, Critical Rule 6)
+        // applies to the color exactly the same way, and every other HUD
+        // color already in this project — `StaminaBarFullColor`/
+        // `StaminaBarLowColor`, `AimZoneBodyColor`/`AimZoneHeadColor` — lives
+        // here rather than as a literal in `HudController`.
+        //
+        // LDR, NOT HDR: this paints straight into `TMP_Text.color`, the same
+        // plain UI channel `StaminaBar*`/`AimZoneBodyColor` above already
+        // draw through. There is no Bloom-reacting emissive material behind
+        // a HUD label the way there is behind `RemotePlayerEmission`'s doll
+        // rim (that field's own doc), so a value above 1 here would only
+        // clip on-screen, never glow — an unattributed `Color` and Unity's
+        // ordinary LDR picker are exactly right.
+        //
+        // DEFAULT IS A WARM GOLD (1, 0.85, 0.35) — a "new wave" reads as
+        // progress, not a warning, so it deliberately avoids the danger-red
+        // `StaminaBarLowColor`/`AimZoneHeadColor` already share and the
+        // player's own signature cyan; gold against the label's ordinary
+        // white base is legible at the HUD's small font size without
+        // fighting either for the eye.
+        [Range(0f, 10f)] public float WaveAnnounceSeconds = 1.5f;
+        public Color WaveAnnounceFlashColor = new Color(1f, 0.85f, 0.35f); // sync-marker key — keep LAST
 
         /// THE one place an archetype becomes a visual scale (fix-round, Ф7
         /// review B-M5). `ViewRegistry` sizes the LIVE mob with it and
