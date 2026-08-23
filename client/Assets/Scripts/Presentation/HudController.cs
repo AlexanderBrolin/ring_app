@@ -127,8 +127,12 @@ namespace Ring.Presentation
         /// Counted down by `WaveAnnounceTimerAfter` ITSELF, called from
         /// `LateUpdate` on `Time.unscaledDeltaTime` — same
         /// hitstop-independent contract `_staminaDeniedTimer` above already
-        /// uses — rather than a separate decrement line, so this class does
-        /// not grow a third place where time flows.
+        /// uses. The decay lives INSIDE the tested seam rather than in a
+        /// decrement line of its own, so this class gains a third feel timer
+        /// without gaining a third hand-written countdown to keep in step
+        /// (review M-1: three timers do read the clock here — this one, the
+        /// pickup mask and the stamina pulse — and that is the point being
+        /// made, not a claim that only two do).
         float _waveAnnounceTimer;
 
         /// The wave number `WaveAnnounceTimerAfter` last compared against, so
@@ -446,6 +450,15 @@ namespace Ring.Presentation
             // wave N down to the new raid's opening number as GROWTH.
             _waveAnnounceTimer = 0f;
             _previousWaveNumber = -1;
+            // AND THE COLOR WITH IT, not just the timer (Т7 review I-1). The
+            // repaint below lives under the `!_runner.Ready` guard, and on the
+            // networked backend `Ready` DROPS at the epoch change
+            // (NetworkSimBackend.SyncMatchEpoch) and only comes back with the
+            // first pair of the new match — so a flash still burning when a
+            // raid ends would leave the dead raid's wave line sitting there in
+            // flash color for that whole window, with no frame running to
+            // repaint it. Same reason this method already blanks _phaseText
+            // and _ammoText below rather than trusting the next frame.
             // Т35 (spec Р291, the restart reset list): the three surfaces Т33
             // added are taken down with it. THE RING IS THE ONE THAT MATTERS —
             // it is the only one that stays ON by itself: a collector who was

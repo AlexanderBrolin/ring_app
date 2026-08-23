@@ -144,6 +144,16 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1.5f, HudController.WaveAnnounceTimerAfter(3, 4, 0.2f, 1.5f, 0.016f), 1e-4f);
             Assert.AreEqual(1.484f, HudController.WaveAnnounceTimerAfter(4, 4, 1.5f, 1.5f, 0.016f), 1e-4f);
             Assert.AreEqual(0f, HudController.WaveAnnounceTimerAfter(4, 4, 0.01f, 1.5f, 0.016f), 1e-4f);
+            //   4. The number went DOWN: still not a flash. Growth is the only
+            //      event, so a drop DECAYS exactly like a hold (review I-2).
+            //      Without this case the guard reads "the number changed"
+            //      rather than "the number grew", and a `>` weakened to `!=`
+            //      survives every assert above — the boundary would be wider
+            //      than both outcomes (lesson 441). Reachable in production:
+            //      a HUD disabled across a restart misses `WorldRestarted`
+            //      (OnDisable unsubscribes) and meets the new raid's smaller
+            //      number holding the old one.
+            Assert.AreEqual(0.184f, HudController.WaveAnnounceTimerAfter(5, 4, 0.2f, 1.5f, 0.016f), 1e-4f);
         }
     }
 }
