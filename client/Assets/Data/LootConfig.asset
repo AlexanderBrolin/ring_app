@@ -25,8 +25,8 @@ MonoBehaviour:
   - 0
   - 0
   - 0
-  CrateCount: 8
-  CacheCountMiddle: 5
+  CrateCount: 24
+  CacheCountMiddle: 15
   CacheCountCore: 2
   RepairKitChance: 0.25
   CellsPerMob: 01000000010000000400000014000000

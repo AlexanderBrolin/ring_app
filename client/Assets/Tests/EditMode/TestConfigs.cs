@@ -266,22 +266,31 @@ namespace Ring.Simulation.Tests
                 // mechanism of the re-pin: the golden scenarios run off this
                 // struct, so the arena moving here is what moves both
                 // digests.
-                Radius = 113f, ObstacleCount = 20,
+                // bd app-3cph: the mirror follows ArenaConfig's own C#
+                // defaults again — rim 113 -> 173, the two rings tripled in
+                // area around an UNCHANGED core, twelve circles and eight
+                // walls moved outward with their rings, the caps raised for
+                // the doubled mob density, the three portals re-radiused.
+                // The SO field docs carry every derivation; this side only
+                // mirrors. THIS is again the mechanism of the re-pin: both
+                // golden scenarios run off this struct.
+                Radius = 173f, ObstacleCount = 20,
                 ObstaclePos = new[] { new float2(10f, 4f), new float2(-8f, 9f),
                     new float2(2f, -12f), new float2(-13f, -6f), new float2(14f, -9f),
                     new float2(-40f, 8f), new float2(30f, 22f), new float2(-6f, -30f),
-                    new float2(78f, 0f), new float2(39f, 67.55f), new float2(-39f, 67.55f),
-                    new float2(-78f, 0f), new float2(-39f, -67.55f), new float2(39f, -67.55f),
-                    new float2(77.37f, 64.92f), new float2(17.54f, 99.47f),
-                    new float2(-94.91f, 34.54f), new float2(-94.91f, -34.54f),
-                    new float2(17.54f, -99.47f), new float2(77.37f, -64.92f) },
+                    new float2(97f, 0f), new float2(48.5f, 84.00446f),
+                    new float2(-48.5f, 84.00446f), new float2(-97f, 0f),
+                    new float2(-48.5f, -84.00446f), new float2(48.5f, -84.00446f),
+                    new float2(115.67271f, 97.06093f), new float2(26.22087f, 148.70597f),
+                    new float2(-141.89359f, 51.64504f), new float2(-141.89359f, -51.64504f),
+                    new float2(26.22087f, -148.70597f), new float2(115.67271f, -97.06093f) },
                 ObstacleRadius = new[] { 2.2f, 1.8f, 2.5f, 2.0f, 1.6f, 3.0f, 2.8f, 3.2f,
                     3.0f, 2.5f, 4.0f, 3.5f, 2.5f, 3.0f,
                     3.0f, 2.5f, 4.0f, 3.5f, 2.5f, 3.0f },
-                MaxMobs = 288, MaxProjectiles = 1024, MaxEventsPerFrame = 1024,
+                MaxMobs = 1350, MaxProjectiles = 4096, MaxEventsPerFrame = 4096,
                 // Stage 3 Task 3: same mirror discipline as the three caps
                 // above — ArenaConfig's own C# default.
-                MaxPickups = 256,
+                MaxPickups = 1200,
                 // Stage 3 Task 8: same mirror discipline — ArenaConfig's own
                 // C# defaults. Zone/door/portal arrays stay EMPTY (ZoneWallCount
                 // 0 gives the Stage 2 arena literally, same convention as
@@ -296,9 +305,9 @@ namespace Ring.Simulation.Tests
                 // are independent of the zone layout (only Hero.Radius/
                 // InventoryCapacity bound them), so they mirror the SO's real
                 // numbers like every other scalar in this method.
-                ZoneRadius = new[] { 65f, 92f },
+                ZoneRadius = new[] { 65f, 130f },
                 ZoneWallCount = 2,
-                ZoneWallRadius = new[] { 65f, 92f },
+                ZoneWallRadius = new[] { 65f, 130f },
                 ZoneWallHalfWidth = new[] { 1f, 1f },
                 ZoneWallDoorStart = new[] { 0, 3 },
                 ZoneWallDoorCount = new[] { 3, 3 },
@@ -309,12 +318,12 @@ namespace Ring.Simulation.Tests
                 // Owner decisions R-65 (radius 100 -> 102) and R-72 (angle
                 // 180 -> 300 deg) — ArenaConfig's own field carries the full
                 // arithmetic for both.
-                ExtractPos = new[] { new float2(51f, 88.33459f), new float2(51f, -88.33459f),
-                    new float2(0f, 78f), float2.zero },
+                ExtractPos = new[] { new float2(75f, 129.90381f), new float2(75f, -129.90381f),
+                    new float2(0f, 97f), float2.zero },
                 ExtractZone = new byte[] { 0, 0, 1, 2 },
                 ExtractKind = new byte[] { 0, 0, 0, 1 },
                 ExtractRadius = 8f,
-                MaxContainers = 64,
+                MaxContainers = 300,
                 MaxContainerSlots = 8,
                 // Stage 2 Task 4: same values as ArenaConfig's C# defaults
                 // (two-sources-of-numbers discipline — this is the test/code-default side).
@@ -324,17 +333,17 @@ namespace Ring.Simulation.Tests
                 WallA = new[] { new float2(-28f, 10f), new float2(-28f, 17.6f),
                     new float2(12f, -6f), new float2(12f, -13.6f),
                     new float2(2f, 24f), new float2(-34f, -20f),
-                    new float2(74f, -10f), new float2(81.6f, -10f),
-                    new float2(-74f, -10f), new float2(-81.6f, -10f),
-                    new float2(-10f, 97f), new float2(-10f, 104.6f),
-                    new float2(-10f, -97f), new float2(-10f, -104.6f) },
+                    new float2(94f, -10f), new float2(101.6f, -10f),
+                    new float2(-94f, -10f), new float2(-101.6f, -10f),
+                    new float2(-10f, 148f), new float2(-10f, 155.6f),
+                    new float2(-10f, -148f), new float2(-10f, -155.6f) },
                 WallB = new[] { new float2(-8f, 10f), new float2(-8f, 17.6f),
                     new float2(34f, -6f), new float2(34f, -13.6f),
                     new float2(2f, 44f), new float2(-16f, -34f),
-                    new float2(74f, 10f), new float2(81.6f, 10f),
-                    new float2(-74f, 10f), new float2(-81.6f, 10f),
-                    new float2(10f, 97f), new float2(10f, 104.6f),
-                    new float2(10f, -97f), new float2(10f, -104.6f) },
+                    new float2(94f, 10f), new float2(101.6f, 10f),
+                    new float2(-94f, 10f), new float2(-101.6f, 10f),
+                    new float2(10f, 148f), new float2(10f, 155.6f),
+                    new float2(10f, -148f), new float2(10f, -155.6f) },
                 WallHalfWidth = new[] { 0.8f, 0.8f, 0.8f, 0.8f, 0.6f, 0.6f,
                     0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f },
                 // Stage 2 Task 46 — THE ONE FIELD WHERE THIS MIRROR IS BROKEN

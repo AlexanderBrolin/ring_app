@@ -661,6 +661,40 @@ namespace Ring.Editor
                 .Contains("EliteVisualScale: 0.75");
             if (eliteScalePending)
                 feelChanged |= ApplyPlaytestOneVisuals(gameFeel);
+
+            // Playtest В1, round two (bd `app-3cph`): the arena's two RINGS
+            // triple in area around an unchanged core, and the mob density
+            // doubles. A third deliberately re-gated delivery of EXISTING
+            // values, for the same reason `app-oxyo` needed the second one —
+            // both gates above are permanently closed (the Stage 2 one reads
+            // a key Task 16 committed, the Stage 3 one a key Т12 committed).
+            //
+            // KEYED ON THE VALUE BEING REPLACED (lesson 413), like
+            // `app-oxyo`'s gate and unlike the two marker gates: every field
+            // this delivers has existed on disk since Т12, so no key's
+            // ARRIVAL can date the delivery. `"Radius: 113"` can — it is the
+            // rim's own line in the committed YAML, it appears exactly once
+            // in the file (the twelve obstacle radii are indented two spaces
+            // deeper and none of them is 113), and it is gone the moment this
+            // runs.
+            //
+            // AND IT LEAVES THE OWNER'S TUNING ALONE, which is the whole
+            // point of keying on the old value: the arena layout is the
+            // named tuning target of milestones В1/В2 (spec §3.15), so a
+            // gate reading "not yet 173" would wipe every hand-tuned radius
+            // on the next R-APPLY. Reading "still 113" fires once — and
+            // fires again only if the owner deliberately types 113 back,
+            // which is the one case where re-delivering is the right answer.
+            bool playtestOneArenaPending = System.IO.File
+                .ReadAllText($"{DataDir}/ArenaConfig.asset")
+                .Contains("Radius: 113");
+            bool lootChanged = false;
+            if (playtestOneArenaPending)
+            {
+                arenaChanged |= ApplyPlaytestOneArena(arena, loot, out bool lootDelta);
+                lootChanged |= lootDelta;
+            }
+            if (lootChanged) EditorUtility.SetDirty(loot);
             if (arenaChanged) EditorUtility.SetDirty(arena);
             if (waveChanged) EditorUtility.SetDirty(wave);
             if (feelChanged) EditorUtility.SetDirty(gameFeel);
@@ -2275,6 +2309,74 @@ namespace Ring.Editor
             finally
             {
                 Object.DestroyImmediate(feelDefaults);
+            }
+        }
+
+        /// The layout the В1 playtest sent back into the data (bd
+        /// `app-3cph`): the two rings tripled in area around an unchanged
+        /// core, and the per-match caps that the doubled mob density feeds.
+        /// Same shape as `ApplyStageThreeBalance` below — local defaults
+        /// instances, `SetIfDifferent` per field, destroyed in a `finally` —
+        /// so the numbers live in the C# field initializers (spec §0's
+        /// two-sources discipline) and this only decides WHICH fields are
+        /// sanctioned to move. The reasons for the numbers are on the fields
+        /// themselves; the reason for the gate is at its call site.
+        ///
+        /// THE SANCTIONED LIST is the arena's geometry plus every cap the new
+        /// population feeds, and nothing else: Radius (113 -> 173), the
+        /// Obstacles and Walls arrays (twelve circles and eight stadiums move
+        /// outward with their own rings), ZoneRadius/ZoneWallRadius
+        /// (92 -> 130, the inner 65 untouched), ExtractPos (all three portals
+        /// re-radiused against the new arcs), MaxMobs (288 -> 1350),
+        /// MaxProjectiles/MaxEventsPerFrame (1024 -> 4096), MaxPickups
+        /// (256 -> 1200), MaxContainers (64 -> 300); and on LootConfig, the
+        /// two RING container counts (CrateCount 8 -> 24, CacheCountMiddle
+        /// 5 -> 15) that keep loot density where it was.
+        ///
+        /// DELIBERATELY ABSENT: `CacheCountCore` and `PlayerSpawnRingFrac`.
+        /// The core did not move, so its cache count must not; and 0.92 of a
+        /// bigger rim is already the bigger ring (159.16 m), which is the
+        /// whole reason that field is a FRACTION. Wave pacing, SpawnClearance,
+        /// MaxPlayers, BarrierTop and every network number stay untouched for
+        /// the same reason the two gates above leave them alone.
+        ///
+        /// One `out` flag, for the reason both older gates have theirs
+        /// (fix-round 1, I-2): the two container counts live on LootConfig,
+        /// so a single dirty flag on `arena` would silently drop them.
+        static bool ApplyPlaytestOneArena(ArenaConfig arena, LootConfig loot, out bool lootChanged)
+        {
+            var arenaDefaults = ScriptableObject.CreateInstance<ArenaConfig>();
+            var lootDefaults = ScriptableObject.CreateInstance<LootConfig>();
+            try
+            {
+                bool arenaChanged = false;
+                arenaChanged |= SetIfDifferent(ref arena.Radius, arenaDefaults.Radius);
+                arenaChanged |= SetIfDifferent(ref arena.Obstacles, arenaDefaults.Obstacles);
+                arenaChanged |= SetIfDifferent(ref arena.Walls, arenaDefaults.Walls);
+                arenaChanged |= SetIfDifferent(ref arena.ZoneRadius, arenaDefaults.ZoneRadius);
+                arenaChanged |= SetIfDifferent(ref arena.ZoneWallRadius,
+                    arenaDefaults.ZoneWallRadius);
+                arenaChanged |= SetIfDifferent(ref arena.ExtractPos, arenaDefaults.ExtractPos);
+                arenaChanged |= SetIfDifferent(ref arena.MaxMobs, arenaDefaults.MaxMobs);
+                arenaChanged |= SetIfDifferent(ref arena.MaxProjectiles,
+                    arenaDefaults.MaxProjectiles);
+                arenaChanged |= SetIfDifferent(ref arena.MaxEventsPerFrame,
+                    arenaDefaults.MaxEventsPerFrame);
+                arenaChanged |= SetIfDifferent(ref arena.MaxPickups, arenaDefaults.MaxPickups);
+                arenaChanged |= SetIfDifferent(ref arena.MaxContainers,
+                    arenaDefaults.MaxContainers);
+
+                lootChanged = false;
+                lootChanged |= SetIfDifferent(ref loot.CrateCount, lootDefaults.CrateCount);
+                lootChanged |= SetIfDifferent(ref loot.CacheCountMiddle,
+                    lootDefaults.CacheCountMiddle);
+
+                return arenaChanged;
+            }
+            finally
+            {
+                Object.DestroyImmediate(arenaDefaults);
+                Object.DestroyImmediate(lootDefaults);
             }
         }
 

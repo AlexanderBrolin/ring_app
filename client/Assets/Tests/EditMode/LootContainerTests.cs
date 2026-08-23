@@ -659,13 +659,20 @@ namespace Ring.Simulation.Tests
             cfg.Loot.DropChance[(int)MobType.Chaser * 3 + (int)Zone.Outer] = 0f;
             cfg.Loot.DropChance[(int)MobType.Chaser * 3 + (int)Zone.Middle] = 1f;
             var w = new SimulationWorld(1, cfg);
-            w.SpawnMobForTest(MobType.Chaser, new float2(100f, 0f)); // Outer — chance 0
+            // bd app-3cph: both points are ZONE ARITHMETIC now, not literals.
+            // The middle/outer boundary went 92 -> 130, which quietly moved the
+            // "Outer" mob at x = 100 into the MIDDLE ring — where the fixture
+            // had just set the drop chance to 1, so the zero-chance assertion
+            // below started reading the wrong zone entirely.
+            float outer = (cfg.Arena.ZoneRadius[1] + cfg.Arena.Radius) * 0.5f;
+            float middle = (cfg.Arena.ZoneRadius[0] + cfg.Arena.ZoneRadius[1]) * 0.5f;
+            w.SpawnMobForTest(MobType.Chaser, new float2(outer, 0f)); // Outer — chance 0
 
             w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
 
             Assert.AreEqual(0, w.ContainerCount, "a zero-chance zone must not produce a corpse container");
 
-            w.SpawnMobForTest(MobType.Chaser, new float2(70f, 0f)); // Middle — chance 1
+            w.SpawnMobForTest(MobType.Chaser, new float2(middle, 0f)); // Middle — chance 1
             w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
 
             Assert.AreEqual(1, w.ContainerCount,

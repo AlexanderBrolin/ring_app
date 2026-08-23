@@ -33,8 +33,16 @@ namespace Ring.Data
             0.00f, 0.00f, 0.00f,
         };
 
-        [Range(0, 64)] public int CrateCount = 8;
-        [Range(0, 64)] public int CacheCountMiddle = 5;
+        // bd app-3cph: the two RING counts follow their zones' own tripling
+        // (8 -> 24 crates in the outer ring, 5 -> 15 caches in the middle
+        // one), so container DENSITY is exactly what it was — this is a
+        // geometry change, and letting it cut loot per square meter to a
+        // third would be a balance change nobody asked for, hidden inside
+        // one. CacheCountCore stays at 2: the core did not move (ArenaConfig
+        // .Radius carries the owner's "the core is right as it is").
+        // Both new counts stay well inside the [Range] ceiling of 64.
+        [Range(0, 64)] public int CrateCount = 24;
+        [Range(0, 64)] public int CacheCountMiddle = 15;
         [Range(0, 64)] public int CacheCountCore = 2;
         [Range(0f, 1f)] public float RepairKitChance = 0.25f;
 

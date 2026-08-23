@@ -137,10 +137,19 @@ namespace Ring.Simulation.Tests
             // by tick 31, inside this run's own 60.
             cfg.Weapon.AmmoStart = cfg.Arena.MaxProjectiles + 100;
             cfg.Weapon.AmmoMax = cfg.Weapon.AmmoStart;
-            static ulong Run(SimConfig c2)
+            // bd app-3cph: the RUN LENGTH has to be derived too, for the very
+            // reason Т12 derived the magazine one line above. At 33 rounds a
+            // tick the fixture's fixed 60 ticks filled 384 and then 1024
+            // slots, but not the 4096 the doubled mob density brought with it
+            // (ArenaConfig.MaxProjectiles' own doc) — the cap was simply never
+            // reached again and ProjectileSpawnsSkipped went back to 0.
+            // Ticks = cap/33 rounded up, doubled for slack, so the flood
+            // outlasts the cap whatever either number becomes later.
+            int ticks = 2 * (cfg.Arena.MaxProjectiles / 33 + 1);
+            ulong Run(SimConfig c2)
             {
                 var w2 = new SimulationWorld(1, c2);
-                for (int i = 0; i < 60; i++) w2.Tick(Fire);
+                for (int i = 0; i < ticks; i++) w2.Tick(Fire);
                 Assert.Greater(w2.WorldStats.ProjectileSpawnsSkipped, 0);
                 return w2.StateHash();
             }

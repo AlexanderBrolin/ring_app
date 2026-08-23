@@ -392,7 +392,20 @@ namespace Ring.Simulation.Tests
             // (MultiPlayerWorldTests.SoloTakesTheOnePlayerRingPoint_MultiplayerSpreadsAroundIt),
             // so querying from the center is an exact three-way tie — the
             // smaller index must win (spec Р85), not spawn/array order coincidence.
+            // bd app-3cph: the three are PLACED at an exact tie rather than
+            // trusted to spawn at one. The ring point is
+            // `cos/sin(k * 2pi/3) * Radius * SpawnRingFrac`, and whether those
+            // three products come out bit-identical is an accident of the
+            // radius: at 103.96 they did, at 159.16 they no longer do, and the
+            // test began measuring float noise instead of the tie-break rule
+            // it is named for. Three explicit points at the same distance from
+            // the query make the premise true by construction, at any arena
+            // size the owner ever tunes to.
             var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
+            const float Tie = 12f;
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(Tie, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, Tie));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(-Tie, 0f));
             bool found = Targeting.NearestAlivePlayer(w, float2.zero, out int index);
             Assert.IsTrue(found);
             Assert.AreEqual(0, index);
@@ -630,7 +643,20 @@ namespace Ring.Simulation.Tests
             // RangeTolerance 1.5) takes several seconds of pure Reposition — long
             // enough for the un-clamped cooldown to rack up multiple FireIntervals
             // (1.6s) of "debt" before it ever gets a legal shot.
-            w.SpawnMobForTest(MobType.Gunner, new float2(60f, 0f));
+            //
+            // bd app-3cph: the gunner is placed a fixed distance FROM THE
+            // PLAYER, radially inward, instead of at a literal point. The solo
+            // collector spawns on the one-player ring (Geometry.SpawnPosFor),
+            // so `(60, 0)` was ~44 m from its target while the ring sat at
+            // 103.96 — and ~99 m from it once the В1 playtest moved the ring to
+            // 159.16, which MaxSpeed 4 cannot close inside this test's 600
+            // ticks: the gunner never got its first shot and the sanity
+            // assertion below, not the F-1 one, is what failed. 44 m restores
+            // the approach this test was written around, at any rim.
+            // Inward, so the spawn point stays inside the arena by
+            // construction.
+            float2 target = w.Player.Pos;
+            w.SpawnMobForTest(MobType.Gunner, target - math.normalize(target) * 44f);
 
             int windowFired = 0;
             int windowTicksLeft = -1;

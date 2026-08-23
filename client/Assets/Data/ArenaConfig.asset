@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 39230840e4cee19e88a1b3184a7d8e3d, type: 3}
   m_Name: ArenaConfig
   m_EditorClassIdentifier: Ring.Data::Ring.Data.ArenaConfig
-  Radius: 113
+  Radius: 173
   Obstacles:
   - Pos: {x: 10, y: 4}
     Radius: 2.2
@@ -30,29 +30,29 @@ MonoBehaviour:
     Radius: 2.8
   - Pos: {x: -6, y: -30}
     Radius: 3.2
-  - Pos: {x: 78, y: 0}
+  - Pos: {x: 97, y: 0}
     Radius: 3
-  - Pos: {x: 39, y: 67.55}
+  - Pos: {x: 48.5, y: 84.00446}
     Radius: 2.5
-  - Pos: {x: -39, y: 67.55}
+  - Pos: {x: -48.5, y: 84.00446}
     Radius: 4
-  - Pos: {x: -78, y: 0}
+  - Pos: {x: -97, y: 0}
     Radius: 3.5
-  - Pos: {x: -39, y: -67.55}
+  - Pos: {x: -48.5, y: -84.00446}
     Radius: 2.5
-  - Pos: {x: 39, y: -67.55}
+  - Pos: {x: 48.5, y: -84.00446}
     Radius: 3
-  - Pos: {x: 77.37, y: 64.92}
+  - Pos: {x: 115.67271, y: 97.06093}
     Radius: 3
-  - Pos: {x: 17.54, y: 99.47}
+  - Pos: {x: 26.22087, y: 148.70596}
     Radius: 2.5
-  - Pos: {x: -94.91, y: 34.54}
+  - Pos: {x: -141.89359, y: 51.64504}
     Radius: 4
-  - Pos: {x: -94.91, y: -34.54}
+  - Pos: {x: -141.89359, y: -51.64504}
     Radius: 3.5
-  - Pos: {x: 17.54, y: -99.47}
+  - Pos: {x: 26.22087, y: -148.70596}
     Radius: 2.5
-  - Pos: {x: 77.37, y: -64.92}
+  - Pos: {x: 115.67271, y: -97.06093}
     Radius: 3
   Walls:
   - A: {x: -28, y: 10}
@@ -73,45 +73,45 @@ MonoBehaviour:
   - A: {x: -34, y: -20}
     B: {x: -16, y: -34}
     HalfWidth: 0.6
-  - A: {x: 74, y: -10}
-    B: {x: 74, y: 10}
+  - A: {x: 94, y: -10}
+    B: {x: 94, y: 10}
     HalfWidth: 0.8
-  - A: {x: 81.6, y: -10}
-    B: {x: 81.6, y: 10}
+  - A: {x: 101.6, y: -10}
+    B: {x: 101.6, y: 10}
     HalfWidth: 0.8
-  - A: {x: -74, y: -10}
-    B: {x: -74, y: 10}
+  - A: {x: -94, y: -10}
+    B: {x: -94, y: 10}
     HalfWidth: 0.8
-  - A: {x: -81.6, y: -10}
-    B: {x: -81.6, y: 10}
+  - A: {x: -101.6, y: -10}
+    B: {x: -101.6, y: 10}
     HalfWidth: 0.8
-  - A: {x: -10, y: 97}
-    B: {x: 10, y: 97}
+  - A: {x: -10, y: 148}
+    B: {x: 10, y: 148}
     HalfWidth: 0.8
-  - A: {x: -10, y: 104.6}
-    B: {x: 10, y: 104.6}
+  - A: {x: -10, y: 155.6}
+    B: {x: 10, y: 155.6}
     HalfWidth: 0.8
-  - A: {x: -10, y: -97}
-    B: {x: 10, y: -97}
+  - A: {x: -10, y: -148}
+    B: {x: 10, y: -148}
     HalfWidth: 0.8
-  - A: {x: -10, y: -104.6}
-    B: {x: 10, y: -104.6}
+  - A: {x: -10, y: -155.6}
+    B: {x: 10, y: -155.6}
     HalfWidth: 0.8
-  MaxMobs: 288
-  MaxProjectiles: 1024
-  MaxEventsPerFrame: 1024
+  MaxMobs: 1350
+  MaxProjectiles: 4096
+  MaxEventsPerFrame: 4096
   SpawnClearance: 1
   MaxPlayers: 3
   PlayerSpawnRingFrac: 0.92
   BarrierTop: 3
-  MaxPickups: 256
+  MaxPickups: 1200
   ZoneRadius:
   - 65
-  - 92
+  - 130
   ZoneWallCount: 2
   ZoneWallRadius:
   - 65
-  - 92
+  - 130
   ZoneWallHalfWidth:
   - 1
   - 1
@@ -133,12 +133,12 @@ MonoBehaviour:
   - 6
   DoorClearance: 1
   ExtractPos:
-  - {x: 51, y: 88.33459}
-  - {x: 51, y: -88.33459}
-  - {x: 0, y: 78}
+  - {x: 75, y: 129.90381}
+  - {x: 75, y: -129.90381}
+  - {x: 0, y: 97}
   - {x: 0, y: 0}
   ExtractZone: 00000102
   ExtractKind: 00000001
   ExtractRadius: 8
-  MaxContainers: 64
+  MaxContainers: 300
   MaxContainerSlots: 8

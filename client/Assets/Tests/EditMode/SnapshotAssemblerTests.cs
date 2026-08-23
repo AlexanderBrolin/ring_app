@@ -278,6 +278,19 @@ namespace Ring.Simulation.Tests
         /// A NetConfig with the three numbers the assembler reads, stated per
         /// fixture. `CreateInstance` rather than a shipped asset: the .asset is
         /// the game's numbers, a fixture is the test's (spec §0's two homes).
+        /// bd app-3cph: the byte cap the two GC fixtures need is a FUNCTION of
+        /// the mob cap, never a literal. Both fill the world to Arena.MaxMobs
+        /// with every mob inside the observers' sight, and both need the EVENT
+        /// block to ride as well — their own "events/resends must actually
+        /// ride" premises say so. Т12's hand-computed 4000 covered 288 mobs
+        /// (2595 B of records); at 1350 the mob block alone is 12 153 B, the
+        /// assembler's documented precedence gives events nothing, and the
+        /// premise fails without a single line of production code being wrong.
+        /// Fixed part + the whole crowd + room for the events, so the arithmetic
+        /// survives the next retune of MaxMobs too.
+        static int RoomyCapForFullCrowd(in SimConfig cfg)
+            => 64 + cfg.Arena.MaxMobs * SnapshotBlocks.MobRecordBytes + 512;
+
         static NetConfig Net(int maxBytes = 1000, int eventBudget = 16, int redundancyTicks = 4)
         {
             var net = ScriptableObject.CreateInstance<NetConfig>();
@@ -1241,7 +1254,8 @@ namespace Ring.Simulation.Tests
             // measure. The shipped 1000 stays honest in production, where an
             // observer sees the mobs within SightRadius 45 (about 46 of the
             // 288 at even density, 417 B), not all of them.
-            var asm = new SnapshotAssembler(cfg, Net(maxBytes: 4000), connectionCount: 3);
+            var asm = new SnapshotAssembler(cfg, Net(maxBytes: RoomyCapForFullCrowd(in cfg)),
+                connectionCount: 3);
 
             void EmitFixture()
             {
@@ -2096,7 +2110,8 @@ namespace Ring.Simulation.Tests
             // BeginTickAndBuildFor_DoNotAllocateGCMemory above: at the shipped
             // 1000 B the 288-mob crowd leaves nothing for events, and a resend
             // is an event.
-            var asm = new SnapshotAssembler(cfg, Net(maxBytes: 4000), connectionCount: 3);
+            var asm = new SnapshotAssembler(cfg, Net(maxBytes: RoomyCapForFullCrowd(in cfg)),
+                connectionCount: 3);
             var idle = new SimInput[3];
 
             // Three ticks of events, so every connection's history is populated
@@ -3352,13 +3367,24 @@ namespace Ring.Simulation.Tests
 
             // Everything close enough to be seen, so visibility is not what
             // this test is measuring.
+            // bd app-3cph: the SPACING is derived from SightRadius instead of
+            // the old 0.05 m literal. Each class is laid along its own axis
+            // starting 5 m out, so the last entity sat at 5 + (cap - 1) * step
+            // — fine while the caps were 288/64/256 (19.4 m at worst) and
+            // false the moment the В1 playtest doubled the mob density: at
+            // MaxMobs 1350 the tail reached 72 m, well past SightRadius 45,
+            // and 549 of them were filtered out by the very visibility this
+            // fixture exists to take out of the picture.
+            float step = (cfg.Visibility.SightRadius - 6f)
+                         / math.max(cfg.Arena.MaxMobs,
+                             math.max(cfg.Arena.MaxContainers, cfg.Arena.MaxPickups));
             for (int i = 0; i < cfg.Arena.MaxMobs; i++)
-                w.SpawnMobForTest(MobType.Chaser, new float2(5f + i * 0.05f, 0f));
+                w.SpawnMobForTest(MobType.Chaser, new float2(5f + i * step, 0f));
             for (int i = 0; i < cfg.Arena.MaxContainers; i++)
-                w.SpawnContainer(ContainerKind.Crate, new float2(-5f - i * 0.05f, 0f),
+                w.SpawnContainer(ContainerKind.Crate, new float2(-5f - i * step, 0f),
                     new byte[] { 1 });
             for (int i = 0; i < cfg.Arena.MaxPickups; i++)
-                w.SpawnPickup(PickupKind.EnergyCell, new float2(0f, 5f + i * 0.05f), 1);
+                w.SpawnPickup(PickupKind.EnergyCell, new float2(0f, 5f + i * step), 1);
             w.ClearEvents();
             Assert.AreEqual(cfg.Arena.MaxMobs, w.MobCount, "test setup: the mob cap is full");
             Assert.AreEqual(cfg.Arena.MaxContainers, w.ContainerCount, "…and the container cap");

@@ -40,7 +40,36 @@ namespace Ring.Data
         // the boundaries at 65 and 65*sqrt(2) = 92 and the rim at
         // 65*sqrt(3) = 112.6 -> 113. Areas: core 13 273, middle 13 317, outer
         // 13 525 m^2, under 2% apart.
-        [Range(5f, 150f)] public float Radius = 113f;
+        // bd app-3cph (owner decision on the В1 playtest, 2026-08-23):
+        // 113 -> 173, and the EQUAL-AREA rule above is deliberately retired
+        // with it. The owner played the shipped layout and reported two
+        // separate facts: the two RINGS are far too small ("the outer one
+        // wants to be about three times bigger", then "and the inner one
+        // too"), while THE CORE IS RIGHT AS IT IS — it is the Director's
+        // arena and it reads at 65. Equal area was arithmetic nobody had
+        // played yet; this is measurement, and measurement wins.
+        //
+        // So the core keeps its 65 and each RING triples in area:
+        //   middle: 13 317 -> 39 820 m^2  => boundary sqrt(65^2 + 3*13317/pi)
+        //                                    = 130.2 -> 130
+        //   outer:  13 525 -> 40 932 m^2  => rim sqrt(130^2 + 3*13525/pi)
+        //                                    = 172.7 -> 173
+        // Both land within 3% of exactly triple. Total area 40 115 ->
+        // 94 025 m^2 (x2.34); the arena is 346 m across against a round's
+        // own 78.75 m of reach, so the Stage 2 rationale above only gets
+        // truer.
+        //
+        // THE SECOND REASON IS THE CLOCK, and it is the one that makes this
+        // more than taste: a raid takes the owner 4-5 minutes against
+        // ADR-001's own "15-20". A bigger arena is one of the two levers
+        // (the other is MatchFlowConfig's timing, deliberately NOT touched
+        // here — out of this task's scope, to be measured at В2/В3).
+        //
+        // Ceiling 150 -> 250: 173 no longer fits, and an unwidened [Range]
+        // would let the owner's first Inspector touch silently snap the rim
+        // back inside its own middle ring (the same trap Т8 widened 100 ->
+        // 150 to avoid).
+        [Range(5f, 250f)] public float Radius = 173f;
 
         /// The first five circles are the Stage 1 layout, kept FIRST and in
         /// order: SweepArena walks them by index and that order is part of the
@@ -68,18 +97,33 @@ namespace Ring.Data
             // more than 30 m.
             // Radii stay inside the spec's own 2.5-4 band. Owner tuning
             // target at milestone В1 (spec §3.15's own wording).
-            new Obstacle { Pos = new Vector2(78f, 0f), Radius = 3.0f },
-            new Obstacle { Pos = new Vector2(39f, 67.55f), Radius = 2.5f },
-            new Obstacle { Pos = new Vector2(-39f, 67.55f), Radius = 4.0f },
-            new Obstacle { Pos = new Vector2(-78f, 0f), Radius = 3.5f },
-            new Obstacle { Pos = new Vector2(-39f, -67.55f), Radius = 2.5f },
-            new Obstacle { Pos = new Vector2(39f, -67.55f), Radius = 3.0f },
-            new Obstacle { Pos = new Vector2(77.37f, 64.92f), Radius = 3.0f },
-            new Obstacle { Pos = new Vector2(17.54f, 99.47f), Radius = 2.5f },
-            new Obstacle { Pos = new Vector2(-94.91f, 34.54f), Radius = 4.0f },
-            new Obstacle { Pos = new Vector2(-94.91f, -34.54f), Radius = 3.5f },
-            new Obstacle { Pos = new Vector2(17.54f, -99.47f), Radius = 2.5f },
-            new Obstacle { Pos = new Vector2(77.37f, -64.92f), Radius = 3.0f },
+            //
+            // bd app-3cph: THE TWELVE MOVE OUTWARD WITH THEIR OWN RINGS, and
+            // nothing else about them changes — same twelve angles, same
+            // twelve radii, so every clearance argument above is carried
+            // verbatim rather than re-derived. Only the ring each set sits on
+            // is restated, as the midpoint of the ring it belongs to:
+            //   middle six: 78 -> 97   (band 65..130, midpoint 97.5)
+            //   outer six:  101 -> 151 (band 130..173, midpoint 151.5)
+            // The lateral clearances only grow with the radius (the outer
+            // six's 10 deg is 26.3 m at 151, against 17.5 m at 101).
+            //
+            // THE FIRST EIGHT ABOVE DO NOT MOVE, and that is the layout half
+            // of the owner's "the core is right as it is": all eight sit
+            // within r = 41, the core keeps its 65, so the arena the Director
+            // fights in is byte-for-byte the one that was played.
+            new Obstacle { Pos = new Vector2(97f, 0f), Radius = 3.0f },
+            new Obstacle { Pos = new Vector2(48.5f, 84.00446f), Radius = 2.5f },
+            new Obstacle { Pos = new Vector2(-48.5f, 84.00446f), Radius = 4.0f },
+            new Obstacle { Pos = new Vector2(-97f, 0f), Radius = 3.5f },
+            new Obstacle { Pos = new Vector2(-48.5f, -84.00446f), Radius = 2.5f },
+            new Obstacle { Pos = new Vector2(48.5f, -84.00446f), Radius = 3.0f },
+            new Obstacle { Pos = new Vector2(115.67271f, 97.06093f), Radius = 3.0f },
+            new Obstacle { Pos = new Vector2(26.22087f, 148.70597f), Radius = 2.5f },
+            new Obstacle { Pos = new Vector2(-141.89359f, 51.64504f), Radius = 4.0f },
+            new Obstacle { Pos = new Vector2(-141.89359f, -51.64504f), Radius = 3.5f },
+            new Obstacle { Pos = new Vector2(26.22087f, -148.70597f), Radius = 2.5f },
+            new Obstacle { Pos = new Vector2(115.67271f, -97.06093f), Radius = 3.0f },
         };
 
         /// Stage 2 Task 16 starting layout (spec §3.15 — owner tuning target at
@@ -102,14 +146,25 @@ namespace Ring.Data
             // sit on the +X and -X flanks (radii 74-82), outer-zone ones on
             // +Y and -Y (radii 97-105) — clear of every arc band, of the
             // arena rim rule, and of every spawn point.
-            new Wall { A = new Vector2(74f, -10f), B = new Vector2(74f, 10f), HalfWidth = 0.8f },
-            new Wall { A = new Vector2(81.6f, -10f), B = new Vector2(81.6f, 10f), HalfWidth = 0.8f },
-            new Wall { A = new Vector2(-74f, -10f), B = new Vector2(-74f, 10f), HalfWidth = 0.8f },
-            new Wall { A = new Vector2(-81.6f, -10f), B = new Vector2(-81.6f, 10f), HalfWidth = 0.8f },
-            new Wall { A = new Vector2(-10f, 97f), B = new Vector2(10f, 97f), HalfWidth = 0.8f },
-            new Wall { A = new Vector2(-10f, 104.6f), B = new Vector2(10f, 104.6f), HalfWidth = 0.8f },
-            new Wall { A = new Vector2(-10f, -97f), B = new Vector2(10f, -97f), HalfWidth = 0.8f },
-            new Wall { A = new Vector2(-10f, -104.6f), B = new Vector2(10f, -104.6f), HalfWidth = 0.8f },
+            //
+            // bd app-3cph: the eight follow their own rings outward, keeping
+            // every number that defines them — 7.6 m between axes, 0.8 m of
+            // half-width, 6.0 m of free passage, 20 m of length. Only each
+            // corridor PAIR's distance from the center is restated, as the
+            // midpoint of the ring it serves:
+            //   middle flanks: 74/81.6  -> 94/101.6   (band 65..130)
+            //   outer flanks:  97/104.6 -> 148/155.6  (band 130..173)
+            // Both pairs keep more than 15 m of clearance from their band's
+            // two arcs, so no corridor mouth is choked by a zone wall.
+            // The Stage 1+2 six above stay put with the core (r <= 44).
+            new Wall { A = new Vector2(94f, -10f), B = new Vector2(94f, 10f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(101.6f, -10f), B = new Vector2(101.6f, 10f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(-94f, -10f), B = new Vector2(-94f, 10f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(-101.6f, -10f), B = new Vector2(-101.6f, 10f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(-10f, 148f), B = new Vector2(10f, 148f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(-10f, 155.6f), B = new Vector2(10f, 155.6f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(-10f, -148f), B = new Vector2(10f, -148f), HalfWidth = 0.8f },
+            new Wall { A = new Vector2(-10f, -155.6f), B = new Vector2(10f, -155.6f), HalfWidth = 0.8f },
         };
 
         // Stage 2 Task 16 (spec §3.4, arithmetic): three players on a 65 m arena.
@@ -126,9 +181,33 @@ namespace Ring.Data
         // doubles for a 288-mob wave start plus the cell drops of one death
         // tick. All three are numbers to MEASURE at milestone В2 under
         // --cpus=1, not balance statements.
-        [Range(1, 400)] public int MaxMobs = 288;
-        [Range(1, 2000)] public int MaxProjectiles = 1024;
-        [Range(1, 2000)] public int MaxEventsPerFrame = 1024;
+        // bd app-3cph (owner decision on the В1 playtest: "there are very
+        // few mobs", asked for twice — density x2, owner's own option C):
+        // 288 -> 1350. The number is not a guess and not a round figure: the
+        // shipped arena plays at 288 / 40 115 m^2 = one mob per 139 m^2, and
+        // 1350 / 94 025 m^2 = one per 70 m^2 is exactly twice that. Scaling
+        // the cap with the AREA alone (which would have given 675) was the
+        // rejected half-answer — it triples the mob count and leaves the
+        // arena feeling precisely as empty per square meter as the playtest
+        // found it.
+        //
+        // THE OTHER TWO FOLLOW THE MOB CAP, NOT THE AREA, because the mobs
+        // are what feed them, and a cap left behind does not fail loudly —
+        // it silently drops entities (WorldStats' own PickupSpawnsSkipped /
+        // ContainerSpawnsSkipped counters). x4 against the mob cap's x4.69,
+        // which keeps the SAME slack ratio the Т12 numbers were taken with:
+        //   MaxProjectiles: ~0.42 of the cap are live shooters (the Т12
+        //     figure, 120 of 288), so 563 x (1/1.6) x 3.0 = 1055 rounds
+        //     steady, players add ~37, a volley peak doubles it to ~2185 —
+        //     4096 leaves the same ~1.9x margin 1024 left over ~520.
+        //   MaxEventsPerFrame: one wave start plus the cell drops of one
+        //     death tick, at the new population.
+        // Both are numbers to MEASURE at milestone В2 under --cpus=1 (Т37
+        // step 3), not balance statements — and with the mob cap up x4.69
+        // that measurement is now a real risk rather than a formality.
+        [Range(1, 2000)] public int MaxMobs = 1350;
+        [Range(1, 8192)] public int MaxProjectiles = 4096;
+        [Range(1, 8192)] public int MaxEventsPerFrame = 4096;
 
         /// Minimum clear distance an obstacle must keep from the player spawn point
         /// (arena center), on top of its own radius and the hero radius. Used only by
@@ -187,7 +266,12 @@ namespace Ring.Data
         /// MaxMobs/MaxProjectiles/MaxEventsPerFrame above.
         // Was the sync-marker key until Stage 3 Task 8's MaxContainerSlots
         // field below superseded it.
-        [Range(1, 1000)] public int MaxPickups = 256;
+        /// bd app-3cph: 256 -> 1200, the mob cap's own x4.69. Cells are
+        /// dropped BY mobs (LootDrops), so this cap is fed by MaxMobs and
+        /// not by the arena's area — left at 256 it would start refusing
+        /// drops (WorldStats.PickupSpawnsSkipped) the moment the new
+        /// population got going, and refuse them silently.
+        [Range(1, 4000)] public int MaxPickups = 1200;
 
         /// Stage 3 Task 8 (spec §3.2, Р206/Р207): zone boundaries and the
         /// zone-wall arc barriers — mirrors ArenaSimConfig's own fields one
@@ -212,9 +296,16 @@ namespace Ring.Data
         /// is no "spawn -> core" corridor. ConfigTests.
         /// Layout_NoDirectRayFromAnyOuterDoorToCore pins it with the margin
         /// (60 deg of offset against a 3.53 deg door cutout).
-        public float[] ZoneRadius = { 65f, 92f };
+        /// bd app-3cph: the OUTER boundary moves 92 -> 130 and the inner one
+        /// stays at 65 — the owner's two facts, side by side (the Radius
+        /// field above carries the arithmetic). The door angles below do not
+        /// move at all: the 60 deg offset that forbids a straight
+        /// "spawn -> core" ray is an ANGULAR property, and it survives any
+        /// radius. What grows is its margin — the same 3.53 deg door cutout
+        /// is narrower in radians-per-meter at 130 than it was at 92.
+        public float[] ZoneRadius = { 65f, 130f };
         public int ZoneWallCount = 2;
-        public float[] ZoneWallRadius = { 65f, 92f };
+        public float[] ZoneWallRadius = { 65f, 130f };
         public float[] ZoneWallHalfWidth = { 1f, 1f };
         public int[] ZoneWallDoorStart = { 0, 3 };
         public int[] ZoneWallDoorCount = { 3, 3 };
@@ -266,12 +357,26 @@ namespace Ring.Data
         /// The GATE keeps spec §3.15's (0, 0): it opens only on the
         /// Director's death, and it stands where the Director dies so the
         /// sharing window (ADR-001 §4.1) happens over the body.
+        ///
+        /// bd app-3cph: all three portals move out with their zones, keeping
+        /// their ANGLES (60/300/90 deg) and therefore both arguments R-65 and
+        /// R-72 were made to satisfy. The radii are re-derived against the new
+        /// arcs by the very rule R-65 states — a portal is a circle of
+        /// ExtractRadius 8 and may not touch an arc body:
+        ///   outer pair 102 -> 150. The middle arc now sits at 130 +/- 1, so
+        ///     the forbidden band for a center is [121, 139]; 150 clears it by
+        ///     11 m and still fits the arena (150 + 8 = 158 &lt;= 173).
+        ///   middle one 78 -> 97. Legal band between the two arcs is
+        ///     (74, 121); 97 is its midpoint, and it clears each arc by 15 m.
+        /// R-72's spawn rule holds with room to spare: the three-player spawn
+        /// ring is now 159.16 m and 60 deg is over 150 m of arc away from
+        /// every spawn point of every ring size.
         public Vector2[] ExtractPos =
         {
-            new Vector2(51f, 88.33459f),   // outer portal, r = 102 at 60 deg
-            new Vector2(51f, -88.33459f),  // outer portal, r = 102 at 300 deg
-            new Vector2(0f, 78f),          // middle portal, r = 78 at 90 deg
-            new Vector2(0f, 0f),           // the gate, core center
+            new Vector2(75f, 129.90381f),   // outer portal, r = 150 at 60 deg
+            new Vector2(75f, -129.90381f),  // outer portal, r = 150 at 300 deg
+            new Vector2(0f, 97f),           // middle portal, r = 97 at 90 deg
+            new Vector2(0f, 0f),            // the gate, core center
         };
         /// Must agree with Geometry.ZoneOf(ExtractPos[i]) — SimConfigBuilder
         /// validates exactly that (owner decision R-79), because these two
@@ -293,7 +398,14 @@ namespace Ring.Data
         /// not an arbitrary round number: R-5 ties the value to spec §3.12's
         /// single-BYTE occupancy mask (one bit per slot) — a ceiling above 8
         /// would invite a value the mask cannot represent.
-        [Range(1, 1000)] public int MaxContainers = 64;
+        /// bd app-3cph: 64 -> 300. This cap is fed by MOB CORPSES
+        /// (SimulationWorld spawns a ContainerKind.MobCorpse on a drop), so
+        /// it scales with the mob cap and not with the area — and 64 was
+        /// already the tighter of the two numbers at 288 mobs. Same silent
+        /// failure mode as MaxPickups above: over the cap, SpawnContainer
+        /// refuses and only WorldStats.ContainerSpawnsSkipped says so, which
+        /// is precisely the counter Т37 step 4 exists to read.
+        [Range(1, 1000)] public int MaxContainers = 300;
         [Range(1, 8)] public int MaxContainerSlots = 8; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.

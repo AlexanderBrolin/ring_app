@@ -53,7 +53,17 @@ namespace Ring.Simulation.Tests
         /// past even the wire's own rail — asserted against the config rather
         /// than assumed, in `HostileInputPremise`.
         const float OverLongMoveDir = 5f;
-        const float FarAimMeters = 500f;
+        /// bd app-3cph: 500 -> 5000, and it stays a CONST because
+        /// `HostileFrame` is handed to `RunParity` as a plain
+        /// `Func&lt;int, SimInput&gt;` and has no config to read. The wire's rail
+        /// is `3 * Arena.Radius`; 500 cleared 3 * 113 = 339 and stopped
+        /// clearing 3 * 173 = 519 the moment the В1 playtest widened the arena,
+        /// which is exactly what `HostileInputPremise` reported. 5000 clears
+        /// the rail at the widest arena ArenaConfig's own [Range] can express
+        /// (3 * 250 = 750) with almost seven times the margin — and the
+        /// premise assertion below is what keeps the claim honest rather than
+        /// assumed, which is why a const is safe here at all.
+        const float FarAimMeters = 5000f;
 
         /// Slack for "…and Sanitize pulled it back onto its cap": the aim point
         /// arrives quantized (`Quantize.Aim`), and the clamp itself normalizes,
