@@ -865,4 +865,100 @@ namespace Ring.Simulation.Tests
                 "an already-started roster must answer ShouldStart false — the _started half of the OR");
         }
     }
+
+    /// bd `app-qrew`: the witnesses for "does this process play another match".
+    /// The mechanism they guard is FishNet wiring and therefore invisible to
+    /// EditMode; the DECISION is not, which is the whole reason it was pulled
+    /// out of `ServerBootstrap` into a class of its own.
+    public class MatchRerunPolicyTests
+    {
+        [Test]
+        public void OneMatch_IsTheShippedDefault_AndNeverReruns()
+        {
+            Assert.AreEqual(1, MatchRerunPolicy.DefaultMatchesToPlay,
+                "the default has to stay 1 — every container since Stage 2 plays one match and "
+                + "exits, and the meta will schedule matches itself from Э5 on");
+            Assert.IsFalse(
+                MatchRerunPolicy.ShouldRerun(MatchRerunPolicy.DefaultMatchesToPlay, 1),
+                "…so a default process that has finished its one match exits rather than reruns");
+            // The witness for the FIRST term specifically, added because a
+            // mutation that deleted it survived every assertion above (the
+            // count comparison alone answers all of them). `matchesPlayed 0`
+            // is not a state the bootstrap ever asks about — it asks only
+            // after a match ended — but this class is public and takes plain
+            // ints, and "0 of 1 finished" must not read as "go again".
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(MatchRerunPolicy.DefaultMatchesToPlay, 0),
+                "a one-match process never reruns, whatever it has or has not finished yet");
+        }
+
+        [Test]
+        public void AskedForThree_RerunsTwice_ThenStops()
+        {
+            // The whole point of a COUNT: it stops. Stated across the boundary
+            // rather than at it, so an off-by-one in either direction shows up.
+            Assert.IsTrue(MatchRerunPolicy.ShouldRerun(3, 1), "after the first of three");
+            Assert.IsTrue(MatchRerunPolicy.ShouldRerun(3, 2), "after the second of three");
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(3, 3),
+                "after the third of three the process is done — a count that did not stop would "
+                + "be the runaway container this field exists to make impossible");
+        }
+
+        [Test]
+        public void APlayedCountPastTheAsk_StillStops()
+        {
+            // The guard, not a restatement of the boundary: `matchesPlayed` is
+            // incremented by a caller this class cannot see, and ">=" rather
+            // than "==" is what keeps a miscounted process from looping
+            // forever instead of stopping one match late.
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(2, 5),
+                "having somehow played more than asked, the answer is still stop");
+        }
+
+        [Test]
+        public void ANonPositiveAsk_NeverReruns()
+        {
+            // The loader refuses these before they can reach a config, but this
+            // class is public and takes plain ints: "no matches asked for"
+            // must not read as "unlimited" by accident of arithmetic.
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(0, 0), "zero is not infinity");
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(-1, 0), "and neither is a negative ask");
+        }
+    }
+
+    public class MatchConfigRerunLoadTests
+    {
+        static string Json(string extra) =>
+            "{\"matchId\":\"m\",\"seed\":1,\"maxPlayers\":3,\"port\":7000,"
+            + "\"startMode\":\"countdown\",\"countdownSeconds\":5" + extra + "}";
+
+        [Test]
+        public void MatchesToPlay_IsOptional_AndDefaultsToOne()
+        {
+            // OPTIONAL is the contract, not a convenience: every match.json
+            // already deployed to the host predates this field, and a required
+            // field would refuse all three of them on the next image.
+            MatchConfigLoadResult r = MatchConfigLoader.Parse(Json(string.Empty), 3);
+            Assert.IsTrue(r.Ok, r.Error);
+            Assert.AreEqual(MatchRerunPolicy.DefaultMatchesToPlay, r.Config.MatchesToPlay);
+        }
+
+        [Test]
+        public void MatchesToPlay_IsReadWhenPresent()
+        {
+            MatchConfigLoadResult r = MatchConfigLoader.Parse(Json(",\"matchesToPlay\":4"), 3);
+            Assert.IsTrue(r.Ok, r.Error);
+            Assert.AreEqual(4, r.Config.MatchesToPlay);
+        }
+
+        [Test]
+        public void MatchesToPlay_BelowOne_IsRefused()
+        {
+            // A present-but-zero value is an operator saying something
+            // impossible, and the loader's own convention is to refuse rather
+            // than to reinterpret (the countdownSeconds precedent one field up).
+            MatchConfigLoadResult r = MatchConfigLoader.Parse(Json(",\"matchesToPlay\":0"), 3);
+            Assert.IsFalse(r.Ok, "zero matches is not a match this process can play");
+            StringAssert.Contains("matchesToPlay", r.Error);
+        }
+    }
 }
