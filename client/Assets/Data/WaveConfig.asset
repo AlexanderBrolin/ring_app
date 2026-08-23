@@ -13,10 +13,9 @@ MonoBehaviour:
   m_Name: WaveConfig
   m_EditorClassIdentifier: Ring.Data::Ring.Data.WaveConfig
   FirstWaveDelay: 2.5
-  WavePause: 4
   SpawnRingInset: 2
   MinSpawnDistanceToPlayer: 8
-  BaseCount: 4
+  BaseCount: 16
   CountGrowth: 2
   MaxMobsPerWave: 72
   MaxSpawnAttempts: 16
@@ -24,10 +23,13 @@ MonoBehaviour:
   GunnerShareBase: 0.2
   GunnerShareGrowth: 0.05
   PerPlayerCountFrac: 0.7
-  ZoneWeights:
-  - 0.45
-  - 0.45
-  - 0.1
   EliteShareMiddle: 0.35
-  EliteShareOuterGrowth: 0.02
+  EliteShareOuterGrowth: 0.007
   EliteShareOuterCap: 0.25
+  WavePauseByZone:
+  - 20
+  - 30
+  - 30
+  MaxAliveByZone: 960000006e0000000a000000
+  MaxSpawnsPerZonePerTick: 2
+  DifficultyStepSeconds: 20

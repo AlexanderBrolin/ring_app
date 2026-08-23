@@ -21,7 +21,12 @@ namespace Ring.Data
         [Range(0f, 60f)] public float FirstWaveDelay = 2.5f;
         [Range(0f, 20f)] public float SpawnRingInset = 2f;
         [Range(0f, 50f)] public float MinSpawnDistanceToPlayer = 8f;
-        [Range(1, 50)] public int BaseCount = 4;
+        // Task Т6 (app-ggvz, owner decision К5): base wave size x4, 4 -> 16. At
+        // three players the per-player wave scale multiplies BaseCount by
+        // 1 + (playerCount - 1) * PerPlayerCountFrac = 1 + 2 * 0.7 = 2.4
+        // (WaveSystem.CountForTest), so the first ring wave becomes
+        // round(16 * 2.4) = 38 mobs instead of round(4 * 2.4) = 10.
+        [Range(1, 50)] public int BaseCount = 16;
         [Range(0, 20)] public int CountGrowth = 2;
         // Stage 2 Task 16 (spec §3.4): 24 -> 36, headroom for the x2.4 three-player scale.
         // Stage 3 Task 12 (spec §3.13): 36 -> 72, because a single wave was
@@ -51,8 +56,18 @@ namespace Ring.Data
         // Both are indexed by the raid's DIFFICULTY STEP from Т4 on, not by
         // a ring's own wave counter (spec Р315) — see
         // WaveSystem.DifficultyStepFor.
+        //
+        // Task Т6 (app-ggvz, decision Р311): EliteShareOuterGrowth 0.02 -> 0.007.
+        // The outer ring's elite share is EliteShareOuterGrowth * (step - 1),
+        // capped at EliteShareOuterCap (0.25), so it saturates at
+        // step = 1 + EliteShareOuterCap / EliteShareOuterGrowth. At 0.02 that
+        // was step 13.5 -> 14, i.e. FirstWaveDelay + 13 * DifficultyStepSeconds
+        // = 2.5 + 260 = 262.5s (~4.5 min) into the raid. At 0.007 the cap
+        // moves to step 37 (0.007 * 36 = 0.252 >= 0.25), i.e.
+        // 2.5 + 36 * 20 = 722.5s (~12.0 min), matching the canonical ramp in
+        // ADR-001 §3.1.
         [Range(0f, 1f)] public float EliteShareMiddle = 0.35f;
-        [Range(0f, 1f)] public float EliteShareOuterGrowth = 0.02f;
+        [Range(0f, 1f)] public float EliteShareOuterGrowth = 0.007f;
         // Coordinator R-60: the fourth wave field, not a code constant —
         // CRITICAL RULE 6 (ADR-002 §4) puts every wave balance number in a
         // ScriptableObject, this one included, so the owner can retune the

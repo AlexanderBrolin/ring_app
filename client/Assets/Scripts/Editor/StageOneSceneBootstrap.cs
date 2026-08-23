@@ -503,6 +503,28 @@ namespace Ring.Editor
 
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
+
+            // Task Т6 (app-ggvz, rule 413): snapshot the ZoneWeights key
+            // BEFORE any EnsureAssetHasKey/SetDirty/SaveAssets call below can
+            // touch WaveConfig.asset — same "read before mutate" drill as
+            // gunnerMarkerPresent above and stageTwoPending/stageThreePending
+            // below. "ZoneWeights:" is the field bd app-ggvz Т4 deleted from
+            // WaveConfig.cs (owner decision К3, spec Р319) along with the
+            // shared zone budget it weighted — it cannot come back, so once
+            // this run's own SaveAssets re-serializes the asset and drops the
+            // key, it is gone from this clone for good, exactly the
+            // "cannot reappear" property a one-time gate needs.
+            //
+            // A value-keyed gate like eliteScalePending's/
+            // playtestOneArenaPending's own was ruled out: it would have to
+            // read a substring like "BaseCount: 4", and that substring also
+            // matches a future "BaseCount: 40" (or 41, 42, ...) — the very
+            // first owner retune of this same field would silently refire
+            // the gate and stomp the new number back down to 16.
+            bool waveCadencePending = System.IO.File
+                .ReadAllText($"{DataDir}/WaveConfig.asset")
+                .Contains("ZoneWeights:");
+
             // Stage 3 Task 12 (errata E-2): match-flow pacing — a brand-new SO
             // CLASS, so its C# field initializers ARE the shipped numbers and
             // no seeding method is needed (VisibilityConfig's own precedent).
@@ -717,6 +739,14 @@ namespace Ring.Editor
                 arenaChanged |= ApplyPlaytestOneArena(arena, loot, out bool lootDelta);
                 lootChanged |= lootDelta;
             }
+
+            // Task Т6 (app-ggvz, owner decisions К5/Р311): the wave-cadence
+            // delivery, gated by waveCadencePending (snapshotted above,
+            // before this run's own EnsureAssetHasKey/SetDirty/SaveAssets
+            // calls could touch WaveConfig.asset). Single `waveChanged |=`,
+            // same precedent as every gated call above.
+            if (waveCadencePending) waveChanged |= ApplyWaveCadence(wave);
+
             if (lootChanged) EditorUtility.SetDirty(loot);
             if (arenaChanged) EditorUtility.SetDirty(arena);
             if (waveChanged) EditorUtility.SetDirty(wave);
@@ -789,13 +819,16 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
             // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
-            // R-58) moves it to EliteShareOuterCap — the class's newest
-            // field (zone budget + elite composition, spec §3.3) — same
-            // migration pattern as ArenaConfig/HeroConfig/WeaponConfig's own
-            // comments above: the committed asset already carries
-            // PerPlayerCountFrac, so leaving the marker there would leave
-            // the four new keys unable to reach the file at all.
-            EditorBootstrapUtils.EnsureAssetHasKey(wave, $"{DataDir}/WaveConfig.asset", "EliteShareOuterCap"); // Stage 3 Task 11 (was PerPlayerCountFrac, Stage 2 Task 16)
+            // R-58) moved it to EliteShareOuterCap — the class's newest
+            // field at the time (zone budget + elite composition, spec
+            // §3.3) — same migration pattern as ArenaConfig/HeroConfig/
+            // WeaponConfig's own comments above. bd app-ggvz Т2 (spec §3.8)
+            // appends DifficultyStepSeconds as the class's new LAST field
+            // (the sync-marker convention, WaveConfig.cs's own doc) and
+            // moves the marker again — the committed asset already carries
+            // EliteShareOuterCap, so leaving the marker there would leave
+            // the four Т2 keys unable to reach the file at all.
+            EditorBootstrapUtils.EnsureAssetHasKey(wave, $"{DataDir}/WaveConfig.asset", "DifficultyStepSeconds"); // app-ggvz Т6 (was EliteShareOuterCap, Stage 3 Task 11)
             // VisibilityConfig joins the marker mechanism for the first time
             // here, in Stage 2 Task 22, with HearPositionGridMeters (the
             // class's own newest/last field) as its marker — the asset is
@@ -2433,6 +2466,44 @@ namespace Ring.Editor
                 Object.DestroyImmediate(arenaDefaults);
                 Object.DestroyImmediate(waveDefaults);
                 Object.DestroyImmediate(netDefaults);
+            }
+        }
+
+        /// Task Т6 (app-ggvz, owner decisions К5/Р311): the wave-cadence
+        /// delivery — same shape as ApplyStageThreeBalance above (a local
+        /// defaults instance, SetIfDifferent per field, destroyed in a
+        /// finally) so the shipped numbers live in WaveConfig.cs's own field
+        /// initializers (spec §0's two-sources discipline) and this method
+        /// only decides WHICH fields are sanctioned to move. The reasons for
+        /// the numbers themselves are on WaveConfig.cs's own BaseCount/
+        /// EliteShareOuterGrowth doc comments; the reason for the gate
+        /// (waveCadencePending, keyed on "ZoneWeights:") is at this method's
+        /// call site.
+        ///
+        /// THE SANCTIONED LIST is exactly two fields, both owner-decided
+        /// retunes of an EXISTING value, not a new field the marker
+        /// mechanism (EnsureAssetHasKey, above) would deliver on its own:
+        /// BaseCount (4 -> 16, decision К5) and EliteShareOuterGrowth
+        /// (0.02 -> 0.007, decision Р311). Nothing else on WaveConfig moves
+        /// here — WavePauseByZone/MaxAliveByZone/DifficultyStepSeconds are
+        /// Т2's own delivery with their own gate, and MaxMobsPerWave is
+        /// ApplyStageThreeBalance's; both stay untouched for the same
+        /// reason ApplyPlaytestOneArena's own doc gives for its DELIBERATELY
+        /// ABSENT fields.
+        static bool ApplyWaveCadence(WaveConfig wave)
+        {
+            var waveDefaults = ScriptableObject.CreateInstance<WaveConfig>();
+            try
+            {
+                bool changed = false;
+                changed |= SetIfDifferent(ref wave.BaseCount, waveDefaults.BaseCount);
+                changed |= SetIfDifferent(ref wave.EliteShareOuterGrowth,
+                    waveDefaults.EliteShareOuterGrowth);
+                return changed;
+            }
+            finally
+            {
+                Object.DestroyImmediate(waveDefaults);
             }
         }
 

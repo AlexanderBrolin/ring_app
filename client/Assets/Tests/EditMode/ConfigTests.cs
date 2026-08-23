@@ -261,22 +261,53 @@ namespace Ring.Simulation.Tests
             AssertMobEqual(expected.Chaser, cfg.Chaser);
             AssertMobEqual(expected.Gunner, cfg.Gunner);
             AssertWaveEqual(expected.Wave, cfg.Wave);
-            // Task Т2 (app-ggvz, spec §3.8 Р337): three more Wave fields
-            // where the two number sources disagree ON PURPOSE, same
-            // documented-deviation category as AmmoStart/BarrierTop above
-            // and CellsPerMob/DropChance below — the shipped SO carries the
-            // real per-zone cadence numbers ({20,30,30}s pause,
+            // Task Т2 (app-ggvz, spec §3.8 Р337) and Task Т6 (app-ggvz,
+            // owner decisions К5/Р311): FIVE Wave fields where the two
+            // number sources disagree ON PURPOSE, same documented-deviation
+            // category as AmmoStart/BarrierTop above and CellsPerMob/
+            // DropChance below.
+            //
+            // Three of them are Т2's own delivery — the shipped SO carries
+            // the real per-zone cadence numbers ({20,30,30}s pause,
             // {150,110,10} ceilings, 20s difficulty step), while the shared
             // TestConfigs baseline stays on its own scaled-down fixture
             // (spec Р325: {2,3,3}s, {24,16,8}, 2s) so the 3000-18000-tick
             // DeterminismTests scenarios stay a determinism check, not a
-            // load test. AssertWaveEqual above deliberately excludes all
-            // three; each gets the same triple form here instead: the real
-            // SO reaches the builder untouched, TestConfigs stays at its
-            // own scaled-down number, and the two provably differ.
+            // load test.
+            //
+            // The other two — BaseCount and EliteShareOuterGrowth — disagree
+            // for a DIFFERENT reason, from Т6: the owner RAISED the real
+            // number (BaseCount 4 -> 16, decision К5; EliteShareOuterGrowth
+            // 0.02 -> 0.007, decision Р311), and the TestConfigs fixture
+            // deliberately stayed pinned at its own OLD values (4, 0.02f)
+            // instead of following it up — not because the fixture was ever
+            // "scaled down" against these two, but because a fixture that
+            // tracked BaseCount up to 16 would turn the golden scenarios
+            // into a load test rather than a determinism check, same
+            // consequence as the three Т2 fields above for a different
+            // cause.
+            //
+            // AssertWaveEqual above deliberately excludes all five; each
+            // gets the same triple form here instead: the real SO reaches
+            // the builder untouched, TestConfigs stays at its own pinned
+            // number, and the two provably differ.
             // MaxSpawnsPerZonePerTick is NOT here — it agrees on both sides
             // (2 = 2) and is covered by ordinary equality inside
             // AssertWaveEqual instead.
+            Assert.AreEqual(wv.BaseCount, cfg.Wave.BaseCount,
+                "WaveConfig.BaseCount must reach WaveSimConfig through the builder");
+            Assert.AreEqual(4, expected.Wave.BaseCount,
+                "the TestConfigs baseline must stay at its own determinism-safe fixture value");
+            Assert.AreNotEqual(expected.Wave.BaseCount, cfg.Wave.BaseCount,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            Assert.AreEqual(wv.EliteShareOuterGrowth, cfg.Wave.EliteShareOuterGrowth, Eps,
+                "WaveConfig.EliteShareOuterGrowth must reach WaveSimConfig through the builder");
+            Assert.AreEqual(0.02f, expected.Wave.EliteShareOuterGrowth, Eps,
+                "the TestConfigs baseline must stay at its own determinism-safe fixture value");
+            Assert.AreNotEqual(expected.Wave.EliteShareOuterGrowth, cfg.Wave.EliteShareOuterGrowth,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
             CollectionAssert.AreEqual(wv.WavePauseByZone, cfg.Wave.WavePauseByZone,
                 "WaveConfig.WavePauseByZone must reach WaveSimConfig through the builder");
             CollectionAssert.AreEqual(new[] { 2f, 3f, 3f }, expected.Wave.WavePauseByZone,
@@ -1510,7 +1541,11 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.FirstWaveDelay, a.FirstWaveDelay, Eps);
             Assert.AreEqual(e.SpawnRingInset, a.SpawnRingInset, Eps);
             Assert.AreEqual(e.MinSpawnDistanceToPlayer, a.MinSpawnDistanceToPlayer, Eps);
-            Assert.AreEqual(e.BaseCount, a.BaseCount);
+            // Task Т6 (app-ggvz, owner decision К5): BaseCount is EXCLUDED
+            // here on purpose — see
+            // Build_DefaultAssets_MatchesTestConfigsBaseline's own comment,
+            // same documented-deviation category as ArenaConfig.BarrierTop/
+            // WeaponConfig.AmmoStart above.
             Assert.AreEqual(e.CountGrowth, a.CountGrowth);
             Assert.AreEqual(e.MaxMobsPerWave, a.MaxMobsPerWave);
             Assert.AreEqual(e.MaxSpawnAttempts, a.MaxSpawnAttempts);
@@ -1532,7 +1567,11 @@ namespace Ring.Simulation.Tests
             // (ZoneWeights was the fourth of them and stood right here until
             // Т4 deleted the field with the shared wave budget it weighted.)
             Assert.AreEqual(e.EliteShareMiddle, a.EliteShareMiddle, Eps);
-            Assert.AreEqual(e.EliteShareOuterGrowth, a.EliteShareOuterGrowth, Eps);
+            // Task Т6 (app-ggvz, decision Р311): EliteShareOuterGrowth is
+            // EXCLUDED here on purpose — see
+            // Build_DefaultAssets_MatchesTestConfigsBaseline's own comment,
+            // same documented-deviation category as ArenaConfig.BarrierTop/
+            // WeaponConfig.AmmoStart above.
             Assert.AreEqual(e.EliteShareOuterCap, a.EliteShareOuterCap, Eps);
             // Task Т2 (app-ggvz, spec §3.8 Р337): MaxSpawnsPerZonePerTick
             // agrees on both sides of the fixture (2 = 2) — ordinary
