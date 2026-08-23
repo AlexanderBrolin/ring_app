@@ -879,7 +879,7 @@ namespace Ring.Simulation.Tests
                 "the default has to stay 1 — every container since Stage 2 plays one match and "
                 + "exits, and the meta will schedule matches itself from Э5 on");
             Assert.IsFalse(
-                MatchRerunPolicy.ShouldRerun(MatchRerunPolicy.DefaultMatchesToPlay, 1),
+                MatchRerunPolicy.ShouldRerun(MatchRerunPolicy.DefaultMatchesToPlay, 1, 3),
                 "…so a default process that has finished its one match exits rather than reruns");
             // The witness for the FIRST term specifically, added because a
             // mutation that deleted it survived every assertion above (the
@@ -887,7 +887,7 @@ namespace Ring.Simulation.Tests
             // is not a state the bootstrap ever asks about — it asks only
             // after a match ended — but this class is public and takes plain
             // ints, and "0 of 1 finished" must not read as "go again".
-            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(MatchRerunPolicy.DefaultMatchesToPlay, 0),
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(MatchRerunPolicy.DefaultMatchesToPlay, 0, 3),
                 "a one-match process never reruns, whatever it has or has not finished yet");
         }
 
@@ -896,9 +896,9 @@ namespace Ring.Simulation.Tests
         {
             // The whole point of a COUNT: it stops. Stated across the boundary
             // rather than at it, so an off-by-one in either direction shows up.
-            Assert.IsTrue(MatchRerunPolicy.ShouldRerun(3, 1), "after the first of three");
-            Assert.IsTrue(MatchRerunPolicy.ShouldRerun(3, 2), "after the second of three");
-            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(3, 3),
+            Assert.IsTrue(MatchRerunPolicy.ShouldRerun(3, 1, 3), "after the first of three");
+            Assert.IsTrue(MatchRerunPolicy.ShouldRerun(3, 2, 3), "after the second of three");
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(3, 3, 3),
                 "after the third of three the process is done — a count that did not stop would "
                 + "be the runaway container this field exists to make impossible");
         }
@@ -910,8 +910,25 @@ namespace Ring.Simulation.Tests
             // incremented by a caller this class cannot see, and ">=" rather
             // than "==" is what keeps a miscounted process from looping
             // forever instead of stopping one match late.
-            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(2, 5),
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(2, 5, 3),
                 "having somehow played more than asked, the answer is still stop");
+        }
+
+        [Test]
+        public void NobodyLeftOnTheLine_NeverReruns()
+        {
+            // bd `app-a8r5`, found on the owner's live playtest: the raid count
+            // is not the only question. When the last client leaves, a policy
+            // that only counts matches keeps saying "go again" — and the server
+            // obliged, burning one of the owner's remaining raids every ten
+            // seconds (the linger) into an empty arena, three of eight gone
+            // before anyone noticed. A rerun is for the people still there.
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(8, 1, 0),
+                "with seven raids left and nobody on the line, there is nobody to play them");
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(8, 1, -1),
+                "and a miscounted line is not a populated one either");
+            Assert.IsTrue(MatchRerunPolicy.ShouldRerun(8, 1, 1),
+                "…while one collector still connected is reason enough to go again");
         }
 
         [Test]
@@ -920,8 +937,8 @@ namespace Ring.Simulation.Tests
             // The loader refuses these before they can reach a config, but this
             // class is public and takes plain ints: "no matches asked for"
             // must not read as "unlimited" by accident of arithmetic.
-            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(0, 0), "zero is not infinity");
-            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(-1, 0), "and neither is a negative ask");
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(0, 0, 3), "zero is not infinity");
+            Assert.IsFalse(MatchRerunPolicy.ShouldRerun(-1, 0, 3), "and neither is a negative ask");
         }
     }
 

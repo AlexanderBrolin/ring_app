@@ -30,7 +30,24 @@ namespace Ring.Server
         ///
         /// `matchesPlayed` counts matches that have ENDED, so the first call
         /// after the first match sees 1.
-        public static bool ShouldRerun(int matchesToPlay, int matchesPlayed)
-            => matchesToPlay > DefaultMatchesToPlay && matchesPlayed < matchesToPlay;
+        ///
+        /// AND A REMAINING RAID IS NOT A REASON ON ITS OWN — SOMEBODY HAS TO
+        /// BE THERE TO PLAY IT (bd `app-a8r5`, found on the owner's live
+        /// playtest). The first shape of this method asked only about the
+        /// count, and when the last client left the server kept obliging:
+        /// rerun, empty arena, `AllPlayersDead` on tick one, ten seconds of
+        /// linger, rerun again — three of the owner's eight raids gone before
+        /// anyone looked. Two different facts ("the raids are not used up" and
+        /// "the collectors are still on the line") had been folded into one
+        /// question, which is this project's most-repeated defect (lessons
+        /// 399/401/410); here the second fact was not asked at all.
+        ///
+        /// `liveConnections` is how many roster slots still hold an active
+        /// connection at the moment the question is asked. Zero — or a
+        /// miscount below zero — is an empty arena either way.
+        public static bool ShouldRerun(int matchesToPlay, int matchesPlayed, int liveConnections)
+            => matchesToPlay > DefaultMatchesToPlay
+               && matchesPlayed < matchesToPlay
+               && liveConnections > 0;
     }
 }

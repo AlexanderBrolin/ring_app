@@ -843,11 +843,21 @@ namespace Ring.Server
         /// shadowing is a property of `MatchServer`'s current end policy, not
         /// of this class: a policy that ever stops ending matches on an empty
         /// arena must not silently leave the process running forever.
-        void PollAbandonWatchdog(double now)
+        /// Roster slots that still hold an active connection. Extracted for bd
+        /// `app-a8r5` (rule 2): the abandon watchdog below and the rerun gate
+        /// in `PollLinger` ask the very same question, and two hand-rolled
+        /// loops would be two places for "is anybody still here" to drift.
+        int LiveConnectionCount()
         {
             int live = 0;
             for (int i = 0; i < _slotCount; i++)
                 if (_slotConnections[i].IsActive) live++;
+            return live;
+        }
+
+        void PollAbandonWatchdog(double now)
+        {
+            int live = LiveConnectionCount();
 
             if (live > 0)
             {
@@ -1069,7 +1079,8 @@ namespace Ring.Server
             // snapshot it belongs to, and a rerun that skipped it would put a
             // fresh match's first frame in front of clients still assembling
             // the last one's ending.
-            if (MatchRerunPolicy.ShouldRerun(_config.MatchesToPlay, _matchesPlayed))
+            if (MatchRerunPolicy.ShouldRerun(_config.MatchesToPlay, _matchesPlayed,
+                    LiveConnectionCount()))
             {
                 RerunMatch(now);
                 return;
