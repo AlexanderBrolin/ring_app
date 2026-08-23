@@ -52,12 +52,12 @@ namespace Ring.Simulation.Core
         public int ContainerCount;
         public ContainerState[] Containers;
         public byte[] ContainerSlots;
-        public WaveState Wave;
+        public WaveState[] Waves;
         /// Stage 3 Т6: the match's flow state (Stage 3 Task 1's struct),
         /// saved right after the wave — one per match, not per player.
         public MatchState Match;
-        /// Stage 2 Task 5: match-wide counters, not per player — a single field
-        /// like Wave above, not an array.
+        /// Stage 2 Task 5: match-wide counters, not per player — a single field,
+        /// unlike the per-zone Waves array above.
         public WorldStats WorldStats;
         /// Stage 2 Task 5: one MatchStats per player, same length/indexing
         /// contract as Players/PlayerCount above.

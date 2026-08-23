@@ -2160,12 +2160,21 @@ namespace Ring.Presentation.Net
             return true;
         }
 
-        /// The wave director's public face. The nine zone/archetype
-        /// `Pending*` debt fields (Stage 3 Task 11 — was two,
-        /// PendingChasers/PendingGunners, before the zone budget split
-        /// them) and `PhaseTimer` are not on the wire — they are the
-        /// director's own bookkeeping and no client draws them — so they
-        /// stay at zero rather than being guessed from the counts that are.
+        /// The wave director's public face. What arrives is the SERVER'S
+        /// WORLD AGGREGATE of its three per-ring wave states
+        /// (SimulationWorld.WorldWave, bd app-ggvz Т3): phase = Active if any
+        /// ring is, waveIndex = the largest difficulty step across the rings,
+        /// aliveCount = their sum. The three `Pending*` debt fields and
+        /// `PhaseTicks` are not on the wire — they are the director's own
+        /// bookkeeping and no client draws them — so they stay at zero here
+        /// rather than being guessed from the counts that are.
+        ///
+        /// `aliveCount` SATURATES at 255 (the writer's own
+        /// `math.min(..., byte.MaxValue)`, SnapshotAssembler): the per-ring
+        /// ceilings can total more than a byte holds. Nothing reads the field
+        /// today, so the saturation costs nothing; widening it is a
+        /// side-quest for the next protocol bump, not a reason to cap the
+        /// rings.
         bool ReadWave(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
         {
             if (!SnapshotBlocks.TryReadWaveBlock(payload, out WavePhase phase, out ushort waveIndex,

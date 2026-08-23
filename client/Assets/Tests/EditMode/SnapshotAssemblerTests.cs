@@ -482,9 +482,9 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(f.ContainsMob(mobA));
             Assert.IsTrue(f.ContainsMob(mobB));
 
-            Assert.AreEqual(w.WaveRef.Phase, f.WavePhase);
-            Assert.AreEqual((ushort)w.WaveRef.WaveIndex, f.WaveIndex);
-            Assert.AreEqual((byte)w.WaveRef.AliveCount, f.WaveAliveCount);
+            Assert.AreEqual(w.WaveRef(Zone.Outer).Phase, f.WavePhase);
+            Assert.AreEqual((ushort)w.WaveRef(Zone.Outer).WaveIndex, f.WaveIndex);
+            Assert.AreEqual((byte)w.WaveRef(Zone.Outer).AliveCount, f.WaveAliveCount);
 
             Assert.AreEqual(1, f.EventCount, "exactly the one event emitted this tick");
             Assert.AreEqual((byte)SnapshotEventKind.WaveStarted, f.Events[0].Kind);
@@ -493,6 +493,52 @@ namespace Ring.Simulation.Tests
                 "an All-channel event must carry no position — otherwise every observer learns "
                 + "the position WaveSystem happened to take it from, for free, every wave");
             Assert.AreNotEqual(wavePos, f.Events[0].Pos);
+        }
+
+        /// Wave-cadence-per-zone (bd app-ggvz Т3, spec §3.9): the block's
+        /// alive count is ONE BYTE, and until this task nothing could put more
+        /// than a byte's worth of mobs on the arena through waves, so the
+        /// writer's `math.min(..., byte.MaxValue)` had no witness at all. Three
+        /// rings running their own waves under their own ceilings can total
+        /// 270, which is exactly the number spec §3.9 works through — so the
+        /// saturation stops being theoretical and gets a test.
+        ///
+        /// The alternative it rules out is not "some other number": it is
+        /// TRUNCATION. A cast without the min gives 270 &amp; 0xFF = 14, i.e. a
+        /// packed arena reported to the client as nearly empty, which is worse
+        /// than a saturated count in every way.
+        [Test]
+        public void WaveAliveCount_SaturatesAtTheByteMax_RatherThanWrapping()
+        {
+            SimulationWorld w = Trio(out SimConfig cfg, float2.zero, new float2(6f, 0f), new float2(0f, 8f));
+            w.ClearEvents();
+
+            // Stated PER RING, and with three DIFFERENT numbers, so the byte
+            // below can only come out right by summing all three: any two of
+            // them, and ring zero's own 100, are still under the ceiling.
+            SetRingAlive(Zone.Outer, 100);
+            SetRingAlive(Zone.Middle, 100);
+            SetRingAlive(Zone.Core, 70);
+
+            var capture = new RenderSnapshot(in cfg);
+            w.CaptureSnapshot(capture);
+            Assert.AreEqual(270, capture.Wave.AliveCount,
+                "fixture premise: the three rings must total MORE than a byte holds, or the "
+                + "saturation this test is about is never reached at all");
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, connection: 0, identityIndex: 0, viewpointIndex: 0);
+
+            Assert.AreEqual((byte)255, f.WaveAliveCount,
+                "270 alive on the arena must reach the wire as 255 — a plain cast would wrap it "
+                + "to 14 and describe a packed arena as an empty one");
+
+            void SetRingAlive(Zone zone, int alive)
+            {
+                WaveState ring = w.WaveRef(zone);
+                ring.AliveCount = alive;
+                w.SetWaveForTest(zone, ring);
+            }
         }
 
         // ---- T28.A2. A corpse is ordinary replicated state ----

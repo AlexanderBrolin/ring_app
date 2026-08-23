@@ -117,15 +117,23 @@ namespace Ring.Simulation.Tests
                 (Zone.Middle, MobType.Chaser), (Zone.Middle, MobType.Gunner), (Zone.Middle, MobType.Elite),
                 (Zone.Core, MobType.Chaser), (Zone.Core, MobType.Gunner), (Zone.Core, MobType.Elite),
             };
-            WaveState w = default;
+            // Wave-cadence-per-zone (bd app-ggvz Т3): the zone half of the
+            // pair moved out of the field NAMES and into the index of the
+            // WaveState instance, so the nine distinct storages are three
+            // fields in each of three instances -- the claim under test is
+            // unchanged.
+            var waves = new WaveState[Zones.Count];
             for (int i = 0; i < pairs.Length; i++)
-                WaveSystem.PendingRef(ref w, pairs[i].zone, pairs[i].type) = i + 1;
+                WaveSystem.PendingRef(ref waves[(int)pairs[i].zone], pairs[i].type) = i + 1;
 
             int[] actual =
             {
-                w.PendingOuterChaser, w.PendingOuterGunner, w.PendingOuterElite,
-                w.PendingMiddleChaser, w.PendingMiddleGunner, w.PendingMiddleElite,
-                w.PendingCoreChaser, w.PendingCoreGunner, w.PendingCoreElite,
+                waves[(int)Zone.Outer].PendingChaser, waves[(int)Zone.Outer].PendingGunner,
+                waves[(int)Zone.Outer].PendingElite,
+                waves[(int)Zone.Middle].PendingChaser, waves[(int)Zone.Middle].PendingGunner,
+                waves[(int)Zone.Middle].PendingElite,
+                waves[(int)Zone.Core].PendingChaser, waves[(int)Zone.Core].PendingGunner,
+                waves[(int)Zone.Core].PendingElite,
             };
             CollectionAssert.AreEqual(new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9 }, actual,
                 "each (zone, type) pair through PendingRef must address its OWN field -- a " +
@@ -143,7 +151,7 @@ namespace Ring.Simulation.Tests
             // is why this test is red at Step 2 too).
             WaveState w = default;
             Assert.Throws<ArgumentOutOfRangeException>(
-                () => WaveSystem.PendingRef(ref w, Zone.Outer, MobType.Director));
+                () => WaveSystem.PendingRef(ref w, MobType.Director));
         }
 
         // ------------------------------------------------------------------
@@ -177,7 +185,7 @@ namespace Ring.Simulation.Tests
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
 
-            Assert.AreEqual(0, w.WaveRef.PendingOuterElite,
+            Assert.AreEqual(0, w.WaveRef(Zone.Outer).PendingElite,
                 "wave 1 (WaveIndex-1=0) must carry zero outer elite debt -- mutating " +
                 "(WaveIndex-1) to WaveIndex would give round(100*0.02)=2");
         }
@@ -187,7 +195,7 @@ namespace Ring.Simulation.Tests
         {
             // Mutation M3 (EliteShareOuterCap dropped from the min()):
             // jumping straight to WaveIndex 20 (SetWaveForTest injects
-            // WaveIndex=19, Phase=Waiting, PhaseTimer=0 -- StartWave
+            // WaveIndex=19, Phase=Waiting, PhaseTicks=0 -- StartWave
             // increments to 20 on the very next tick, same test seam
             // WorldLifecycleTests already uses) gives a real, capped share
             // of min(0.02*19, 0.25) = 0.25 -> round(100*0.25) = 25. The
@@ -201,14 +209,14 @@ namespace Ring.Simulation.Tests
             c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
 
             var w = new SimulationWorld(11, c);
-            WaveState wv = w.WaveRef;
+            WaveState wv = w.WaveRef(Zone.Outer);
             wv.WaveIndex = 19;
             wv.Phase = WavePhase.Waiting;
-            wv.PhaseTimer = 0f;
-            w.SetWaveForTest(wv);
+            wv.PhaseTicks = 0;
+            w.SetWaveForTest(Zone.Outer, wv);
             w.Tick(default);
 
-            Assert.AreEqual(25, w.WaveRef.PendingOuterElite,
+            Assert.AreEqual(25, w.WaveRef(Zone.Outer).PendingElite,
                 "wave 20: min(EliteShareOuterGrowth*19, EliteShareOuterCap) = min(0.38,0.25) " +
                 "= 0.25 -> round(100*0.25) = 25 -- an uncapped share would give round(100*0.38) = 38");
         }
@@ -236,14 +244,14 @@ namespace Ring.Simulation.Tests
             c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
 
             var w = new SimulationWorld(11, c);
-            WaveState wv = w.WaveRef;
+            WaveState wv = w.WaveRef(Zone.Outer);
             wv.WaveIndex = 5;
             wv.Phase = WavePhase.Waiting;
-            wv.PhaseTimer = 0f;
-            w.SetWaveForTest(wv);
+            wv.PhaseTicks = 0;
+            w.SetWaveForTest(Zone.Outer, wv);
             w.Tick(default);
 
-            Assert.AreEqual(10, w.WaveRef.PendingOuterElite,
+            Assert.AreEqual(10, w.WaveRef(Zone.Outer).PendingElite,
                 "wave 6: min(EliteShareOuterGrowth*5, EliteShareOuterCap) = min(0.10,0.25) = " +
                 "0.10 -> round(100*0.10) = 10 -- a doubled growth rate would give " +
                 "round(100*0.20) = 20");
@@ -271,9 +279,9 @@ namespace Ring.Simulation.Tests
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
 
-            int elite = w.WaveRef.PendingMiddleElite;
-            int gunner = w.WaveRef.PendingMiddleGunner;
-            int chaser = w.WaveRef.PendingMiddleChaser;
+            int elite = w.WaveRef(Zone.Middle).PendingElite;
+            int gunner = w.WaveRef(Zone.Middle).PendingGunner;
+            int chaser = w.WaveRef(Zone.Middle).PendingChaser;
             // Coordinator F2: the name's own claim, asserted directly --
             // this holds for ANY elite/gunner share values as long as the
             // peel-then-subtract STRUCTURE holds (chaser = rest - gunner,
@@ -318,7 +326,8 @@ namespace Ring.Simulation.Tests
             // ...Gunner) would leave the chaser-vs-gunner split itself
             // unobserved if the elite assert ever failed first.
             CollectionAssert.AreEqual(new[] { 7, 0, 0 },
-                new[] { w.WaveRef.PendingCoreElite, w.WaveRef.PendingCoreChaser, w.WaveRef.PendingCoreGunner },
+                new[] { w.WaveRef(Zone.Core).PendingElite, w.WaveRef(Zone.Core).PendingChaser,
+                    w.WaveRef(Zone.Core).PendingGunner },
                 "Core spawns ONLY elite -- the whole budget (7) as elite, zero chaser, zero gunner");
         }
 
@@ -358,7 +367,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(ceiling, w.MobCount,
                 "the wave stops at MaxMobs - DirectorReserveSlots and holds there for the whole " +
                 "raid (Р254): the activation cannot be predicted, so the slots must be free ALWAYS");
-            Assert.Greater(w.WaveRef.PendingTotal, 0,
+            Assert.Greater(w.WaveRef(Zone.Outer).PendingTotal, 0,
                 "the units it could not place stay as debt, exactly like the existing cap branch");
             Assert.AreEqual(0, w.WorldStats.MobSpawnsSkipped,
                 "MobSpawnsSkipped counts the world hitting its PHYSICAL cap (SpawnMob's own " +
@@ -381,13 +390,13 @@ namespace Ring.Simulation.Tests
             TestWorlds.IdleTicks(w);
             Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase, "premise: activated");
 
-            WaveState wave = w.WaveRef;
-            wave.PhaseTimer = SimulationWorld.TickDt; // let the next tick start the wave
-            w.SetWaveForTest(in wave);
+            WaveState wave = w.WaveRef(Zone.Outer);
+            wave.PhaseTicks = 1; // let the next tick start the wave
+            w.SetWaveForTest(Zone.Outer, in wave);
             TestWorlds.IdleTicks(w);
 
-            Assert.AreEqual(0, w.WaveRef.PendingCoreElite + w.WaveRef.PendingCoreChaser
-                + w.WaveRef.PendingCoreGunner,
+            Assert.AreEqual(0, w.WaveRef(Zone.Core).PendingElite
+                + w.WaveRef(Zone.Core).PendingChaser + w.WaveRef(Zone.Core).PendingGunner,
                 "with the Director standing there the core stops receiving wave budget (spec §3.4): " +
                 "a boss fight plus a live wave in the same room is a mess MVP balance cannot win");
         }
@@ -407,13 +416,13 @@ namespace Ring.Simulation.Tests
             TestWorlds.RelocatePlayerForTest(w, 1, TestWorlds.InsideCore(in c));
             TestWorlds.IdleTicks(w);
 
-            WaveState wave = w.WaveRef;
-            wave.PhaseTimer = SimulationWorld.TickDt;
-            w.SetWaveForTest(in wave);
+            WaveState wave = w.WaveRef(Zone.Outer);
+            wave.PhaseTicks = 1;
+            w.SetWaveForTest(Zone.Outer, in wave);
             TestWorlds.IdleTicks(w);
 
-            int middle = w.WaveRef.PendingMiddleElite + w.WaveRef.PendingMiddleChaser
-                + w.WaveRef.PendingMiddleGunner;
+            int middle = w.WaveRef(Zone.Middle).PendingElite + w.WaveRef(Zone.Middle).PendingChaser
+                + w.WaveRef(Zone.Middle).PendingGunner;
             // The whole wave, stated the way the wave director states it — the
             // per-player scale is part of the size (three players here), so
             // BaseCount alone would be a different number wearing the same name.
@@ -448,13 +457,13 @@ namespace Ring.Simulation.Tests
             TestWorlds.IdleTicks(w, 5);
             Assert.AreEqual(MatchPhase.GateOpen, w.Match.Phase, "premise: the gate has opened");
 
-            WaveState wave = w.WaveRef;
-            wave.PhaseTimer = SimulationWorld.TickDt;
-            w.SetWaveForTest(in wave);
+            WaveState wave = w.WaveRef(Zone.Outer);
+            wave.PhaseTicks = 1;
+            w.SetWaveForTest(Zone.Outer, in wave);
             TestWorlds.IdleTicks(w);
 
-            Assert.AreEqual(0, w.WaveRef.PendingCoreElite + w.WaveRef.PendingCoreChaser
-                + w.WaveRef.PendingCoreGunner,
+            Assert.AreEqual(0, w.WaveRef(Zone.Core).PendingElite
+                + w.WaveRef(Zone.Core).PendingChaser + w.WaveRef(Zone.Core).PendingGunner,
                 "the budget does NOT come back after his death (Р253): the sharing window over his " +
                 "body has to pass without fresh elites, or it stops being a window");
         }

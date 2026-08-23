@@ -5,23 +5,23 @@ namespace Ring.Simulation.AI
 {
     /// Deterministic seed-driven wave director (spec §3.6, Task 22 Interfaces;
     /// zone budget spec §3.3, Stage 3 Task 11). While Waiting, counts
-    /// PhaseTimer down to zero and starts a wave: the TOTAL size (BaseCount +
+    /// PhaseTicks down to zero and starts a wave: the TOTAL size (BaseCount +
     /// CountGrowth*(WaveIndex-1), capped at MaxMobsPerWave — unchanged since
     /// Task 16, CountForTest below) is split across the three zones by
     /// SplitByZones, and each zone's own share is split again into
-    /// Elite/Chaser/Gunner debt (StartWave) — nine numbers total, one per
-    /// (zone, archetype) pair, WaveState.Pending{Zone}{Archetype}. While
+    /// Elite/Chaser/Gunner debt (StartWave) — nine numbers total, three in
+    /// each of the three per-zone WaveState instances (bd app-ggvz Т3). While
     /// Active, every tick attempts exactly one spawn per outstanding debt
     /// unit, zone-major then archetype-minor (Outer before Middle before
     /// Core; within a zone, Chaser before Gunner before Elite — coordinator
     /// R-50); a unit that can't find a valid spot leaves its debt untouched
     /// for the next tick — the debt can never grow mid-wave, so this can't
     /// hang even when the ring is fully blocked (spec §3.13 item 5). Once all
-    /// debt is gone (WaveState.PendingTotal == 0) and no mobs remain alive,
-    /// the wave is cleared and the director goes back to Waiting for
-    /// WavePause seconds. Does not tick at all while no player is alive (full
-    /// death semantics landed in Task 23; extended from "the one player" to
-    /// "every player" in Stage 2 Task 8).
+    /// debt is gone (WaveState.PendingTotal summed over the three zones is
+    /// 0) and no mobs remain alive, the wave is cleared and the director goes
+    /// back to Waiting for WavePause seconds. Does not tick at all while no
+    /// player is alive (full death semantics landed in Task 23; extended from
+    /// "the one player" to "every player" in Stage 2 Task 8).
     internal static class WaveSystem
     {
         /// Coordinator R-53: a zoneless arena (ArenaSimConfig.ZoneRadius.Length
@@ -49,13 +49,18 @@ namespace Ring.Simulation.AI
             if (!Targeting.NearestAlivePlayer(w, float2.zero, out int nearestIdx)) return;
             float2 nearestPlayerPos = w.PlayerAt(nearestIdx).Pos;
 
-            ref WaveState wave = ref w.WaveRef;
+            // Wave-cadence-per-zone (bd app-ggvz Т3): the debt now lives in
+            // three per-zone WaveState instances, but the CADENCE does not
+            // arrive until Т4 -- until then phase, timer, WaveIndex and
+            // AliveCount are still led by the Outer instance alone, so this
+            // task moves the shape of the state and nothing about behaviour.
+            ref WaveState wave = ref w.WaveRef(Zone.Outer);
             WaveSimConfig cfg = w.Config.Wave;
 
             if (wave.Phase == WavePhase.Waiting)
             {
-                wave.PhaseTimer -= SimulationWorld.TickDt;
-                if (wave.PhaseTimer <= 0f) StartWave(w, ref wave, in cfg, nearestPlayerPos);
+                wave.PhaseTicks--;
+                if (wave.PhaseTicks <= 0) StartWave(w, ref wave, in cfg, nearestPlayerPos);
             }
 
             // Deliberately re-reads wave.Phase rather than branching on the
@@ -68,16 +73,25 @@ namespace Ring.Simulation.AI
                 // order StartWave fills debt in and HashWave reads it in.
                 for (int z = 0; z < Zones.Count; z++)
                     for (int t = 0; t < WaveArchetypeCount; t++)
-                        SpawnPendingOfType(w, ref wave, in cfg, (Zone)z, (MobType)t);
+                        SpawnPendingOfType(w, ref w.WaveRef((Zone)z), in cfg, (Zone)z, (MobType)t);
 
-                if (wave.PendingTotal == 0 && w.MobCount == 0)
+                // The debt of the WHOLE world, summed over the three
+                // instances it now lives in -- reading the Outer instance
+                // alone would clear a wave that still owes mobs to the middle
+                // ring, which is a change of behaviour hidden inside a
+                // refactor, not a refactor.
+                int pendingTotal = 0;
+                for (int z = 0; z < Zones.Count; z++)
+                    pendingTotal += w.WaveRef((Zone)z).PendingTotal;
+
+                if (pendingTotal == 0 && w.MobCount == 0)
                 {
                     // Stage 2 Task 5: world-scoped counter — counted once per
                     // match regardless of player count, not per player.
                     w.WorldStatsRef.WavesCleared++;
                     w.Emit(SimEventKind.WaveCleared, nearestPlayerPos, wave.WaveIndex, default, 0f);
                     wave.Phase = WavePhase.Waiting;
-                    wave.PhaseTimer = cfg.WavePause;
+                    wave.PhaseTicks = SimulationWorld.TicksFromSeconds(cfg.WavePause);
                 }
             }
 
@@ -169,9 +183,10 @@ namespace Ring.Simulation.AI
                 // Active transition only fires once WaveState.PendingTotal ==
                 // 0), so a plain assignment through the ONE mapping home
                 // (coordinator R-51) is correct, not an accumulation.
-                PendingRef(ref wave, zone, MobType.Elite) = elites;
-                PendingRef(ref wave, zone, MobType.Gunner) = gunners;
-                PendingRef(ref wave, zone, MobType.Chaser) = chasers;
+                ref WaveState zoneWave = ref w.WaveRef(zone);
+                PendingRef(ref zoneWave, MobType.Elite) = elites;
+                PendingRef(ref zoneWave, MobType.Gunner) = gunners;
+                PendingRef(ref zoneWave, MobType.Chaser) = chasers;
             }
 
             // eventPos (Stage 2 Task 8): the nearest-alive-player position
@@ -238,31 +253,30 @@ namespace Ring.Simulation.AI
             }
         }
 
-        /// The ONE home for "(zone, archetype) -> which WaveState field
-        /// carries its debt" (coordinator R-51, lesson 279: a second mapping
-        /// home makes a mutation on this one invisible). StartWave (writer),
+        /// The ONE home for "archetype -> which WaveState field carries its
+        /// debt" (coordinator R-51, lesson 279: a second mapping home makes a
+        /// mutation on this one invisible). StartWave (writer),
         /// SpawnPendingOfType (reader/decrementer) and WaveZoneTests' own
         /// sentinel test go through this and nothing else. `default` is a
         /// THROW, not a silent fallback onto Chaser (spec Р251's own
         /// warning: "a new archetype silently counted as a gunner" is
         /// exactly the failure this project already refused once for
         /// MobType itself).
-        internal static ref int PendingRef(ref WaveState w, Zone zone, MobType type)
+        ///
+        /// Wave-cadence-per-zone (bd app-ggvz Т3): the ZONE half of the old
+        /// (zone, archetype) pair is gone from here -- it is the index of the
+        /// WaveState instance the caller hands in (SimulationWorld.WaveRef
+        /// (Zone)), so the nine-way switch is a three-way one again.
+        internal static ref int PendingRef(ref WaveState w, MobType type)
         {
-            switch (zone, type)
+            switch (type)
             {
-                case (Zone.Outer, MobType.Chaser): return ref w.PendingOuterChaser;
-                case (Zone.Outer, MobType.Gunner): return ref w.PendingOuterGunner;
-                case (Zone.Outer, MobType.Elite): return ref w.PendingOuterElite;
-                case (Zone.Middle, MobType.Chaser): return ref w.PendingMiddleChaser;
-                case (Zone.Middle, MobType.Gunner): return ref w.PendingMiddleGunner;
-                case (Zone.Middle, MobType.Elite): return ref w.PendingMiddleElite;
-                case (Zone.Core, MobType.Chaser): return ref w.PendingCoreChaser;
-                case (Zone.Core, MobType.Gunner): return ref w.PendingCoreGunner;
-                case (Zone.Core, MobType.Elite): return ref w.PendingCoreElite;
+                case MobType.Chaser: return ref w.PendingChaser;
+                case MobType.Gunner: return ref w.PendingGunner;
+                case MobType.Elite: return ref w.PendingElite;
                 default:
                     throw new System.ArgumentOutOfRangeException(nameof(type),
-                        $"no wave-debt field for (zone={zone}, type={type})");
+                        $"no wave-debt field for type={type}");
             }
         }
 
@@ -310,7 +324,7 @@ namespace Ring.Simulation.AI
             // debt is left untouched exactly as the cap branch below leaves it.
             int ceiling = w.Config.Arena.MaxMobs - w.Config.Flow.DirectorReserveSlots;
 
-            ref int pending = ref PendingRef(ref wave, zone, type);
+            ref int pending = ref PendingRef(ref wave, type);
             int n = pending;
             for (int i = 0; i < n; i++)
             {
@@ -337,9 +351,9 @@ namespace Ring.Simulation.AI
         /// closing over this call's own world/config/mob radius, to that
         /// shared home. `ref Random rng = ref w.WaveRng;` — same "local ref
         /// alias, then pass the LOCAL onward" idiom Update already uses for
-        /// `ref WaveState wave = ref w.WaveRef;` above — the shared search
-        /// mutates the SAME stream this call has always drawn from, not a
-        /// copy (coordinator danger #1).
+        /// `ref WaveState wave = ref w.WaveRef(Zone.Outer);` above — the
+        /// shared search mutates the SAME stream this call has always drawn
+        /// from, not a copy (coordinator danger #1).
         /// Stage 3 Т22 (coordinator R-183): `internal`, and named for what it
         /// is — THE one home for "where may a battle mob be put down in this
         /// zone". The Director's retinue is spawned by the phase machine, not

@@ -149,9 +149,10 @@ namespace Ring.Simulation.Tests
             //
             //   PlayerState 32 x 2 players = 64
             //   MatchStats 10 x 2 players  = 20
+            //   WaveState 7 x 3 zones      = 21
             //   WorldStats 5, MobState 10, ProjectileState 13, PickupState 5,
-            //   WaveState 13, MatchState 2, ContainerState 5 = 53
-            //   -> 137 bumps swept, ALL asserted NOT to equal baseline.
+            //   MatchState 2, ContainerState 5 = 40
+            //   -> 145 bumps swept, ALL asserted NOT to equal baseline.
             //
             // Stage 3 Task 11 (coordinator R-50/R-51): WaveState grew from
             // 6 fields to 13 (two named Pending counters -> nine, one per
@@ -170,6 +171,18 @@ namespace Ring.Simulation.Tests
             // whoever spawned it (spec §3.5, SimStates.cs' own field doc) --
             // recounted the same way, from a fresh typeof(MobState).
             // GetFields() reading, not incremented from memory -- 136 -> 137.
+            //
+            // Wave-cadence-per-zone (bd app-ggvz Т3): WaveState SHRANK from 13
+            // fields to 7 (the zone left the nine Pending field NAMES and
+            // became the index of the instance) and the world now holds THREE
+            // of them, so the wave line goes 13 x 1 -> 7 x 3 = 21 and the
+            // whole tally is re-derived, again from fresh typeof(X).
+            // GetFields() readings of every struct rather than adjusted from
+            // 137 -- 137 -> 145. The wave pass below is nested in a per-ZONE
+            // loop for the same reason it is counted per ring: a HashWave
+            // truncated to waves[0] passes a sweep that only ever bumps
+            // waves[0], and that is precisely the mutation this file is here
+            // to kill.
             //
             // ZERO asserted TO equal it: the thirteen PENDING names are gone
             // with the skip-list (see this file's header), which is the whole
@@ -225,13 +238,26 @@ namespace Ring.Simulation.Tests
                 w.SetContainerForTest(0, (ContainerState)boxed);
                 Assert.AreNotEqual(baseline, w.StateHash(), $"ContainerState.{field.Name} не в хеше");
             }
-            foreach (var field in typeof(WaveState).GetFields())
+            // bd app-ggvz Т3: EVERY RING, not just the first. StateHash folds
+            // three wave states now, and a digest that walked only waves[0]
+            // would satisfy a single-ring sweep completely while dropping two
+            // thirds of the wave state out of the hash — the same "a loop
+            // silently truncated to index 0 passes every single-player check
+            // ever written" argument the backpack pass below states, one
+            // struct over.
+            for (int z = 0; z < Zones.Count; z++)
             {
-                w.RestoreState(save);
-                object boxed = w.WaveRef; // ref-return read: an ordinary value copy here
-                field.SetValue(boxed, Bump(field.GetValue(boxed)));
-                w.SetWaveForTest((WaveState)boxed);
-                Assert.AreNotEqual(baseline, w.StateHash(), $"WaveState.{field.Name} не в хеше");
+                var zone = (Zone)z;
+                foreach (var field in typeof(WaveState).GetFields())
+                {
+                    w.RestoreState(save);
+                    // ref-return read: an ordinary value copy here
+                    object boxed = w.WaveRef(zone);
+                    field.SetValue(boxed, Bump(field.GetValue(boxed)));
+                    w.SetWaveForTest(zone, (WaveState)boxed);
+                    Assert.AreNotEqual(baseline, w.StateHash(),
+                        $"WaveState[{zone}].{field.Name} не в хеше");
+                }
             }
             // Т6: MatchState's own pass, on the same reasoning as PickupState
             // above — Т1 declared the struct with no hash pass because it was
@@ -265,7 +291,7 @@ namespace Ring.Simulation.Tests
             // which is all callers need (they only check the value changed,
             // never a specific new one).
             byte b8 => (byte)(b8 + 1),
-            // MobType/MobAiState/WavePhase/PickupKind/MatchPhase: step the
+            // MobType/MobAiState/WavePhase/PickupKind/MatchPhase/Zone: step the
             // enum's UNDERLYING value by one — see BumpEnum's own doc for why
             // it no longer walks the declared-member list.
             System.Enum e => BumpEnum(e),

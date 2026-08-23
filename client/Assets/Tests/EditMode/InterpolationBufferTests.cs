@@ -916,26 +916,23 @@ namespace Ring.Simulation.Tests
             // "copied" from "never written".
             for (int i = 0; i < s.ContainerCount; i++) s.ContainerIsEmpty[i] = true;
             s.Match = new MatchState { Phase = MatchPhase.GateOpen, DirectorDeathTick = 77 };
-            // Stage 3 Task 11 (errata A-I6): the debt grew from two named
-            // fields to nine (zone x archetype) -- every one gets a
-            // distinct nonzero value here, same "no field left at its
-            // constructor default" discipline the rest of this filler
-            // follows.
+            // Stage 3 Task 11 (errata A-I6) / bd app-ggvz Т3: the debt grew
+            // from two named fields to nine (zone x archetype) and then, when
+            // the zone moved out of the field names into the index of a
+            // per-zone WaveState instance, back to three -- and the frame
+            // carries the world AGGREGATE of the three, one plain WaveState.
+            // Every field gets a distinct nonzero value here, same "no field
+            // left at its constructor default" discipline the rest of this
+            // filler follows.
             s.Wave = new WaveState
             {
                 Phase = WavePhase.Active,
                 WaveIndex = 3,
-                PendingOuterChaser = 2,
-                PendingOuterGunner = 1,
-                PendingOuterElite = 4,
-                PendingMiddleChaser = 6,
-                PendingMiddleGunner = 7,
-                PendingMiddleElite = 8,
-                PendingCoreChaser = 9,
-                PendingCoreGunner = 10,
-                PendingCoreElite = 11,
+                PendingChaser = 2,
+                PendingGunner = 1,
+                PendingElite = 4,
                 AliveCount = 5,
-                PhaseTimer = 1.25f,
+                PhaseTicks = 6,
             };
             for (int i = 0; i < s.PlayerCount; i++)
                 s.PlayerStats[i] = new MatchStats

@@ -136,7 +136,15 @@ namespace Ring.Simulation.Tests
             w.CaptureSnapshot(snap);
             int ceiling = c.Arena.MaxMobs - c.Flow.DirectorReserveSlots;
             Assert.LessOrEqual(snap.MobCount, ceiling);
-            Assert.Greater(w.WaveRef.PendingTotal, 0,
+            // Wave-cadence-per-zone (bd app-ggvz Т3): the debt lives in three
+            // per-zone WaveState instances now, so "what the wave could not
+            // place" is their SUM. This fixture inherits the shipped
+            // three-way ZoneWeights, and the ceiling bites while the middle
+            // ring is still being served -- reading the Outer instance alone
+            // would read a zero and assert nothing.
+            int debt = 0;
+            for (int z = 0; z < Zones.Count; z++) debt += w.WaveRef((Zone)z).PendingTotal;
+            Assert.Greater(debt, 0,
                 "what the wave could not place stays as debt rather than being lost");
             static ulong Run(SimConfig cc)
             {

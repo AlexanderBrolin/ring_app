@@ -13,8 +13,6 @@ namespace Ring.Simulation.Tests
     /// expression over TestConfigs — never a literal lifted out of a .asset.
     public class WaveScalingTests
     {
-        const float Eps = 1e-4f;
-
         /// The one number spec §3.4 states end to end: BaseCount 4, three
         /// players, PerPlayerCountFrac 0.7 => 4 x 2.4 = 9.6 => round = 10.
         /// Stated as an explicit fixture so this is a real expectation rather
@@ -206,8 +204,12 @@ namespace Ring.Simulation.Tests
 
             var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
-            int outerDebt = snap.Wave.PendingOuterChaser + snap.Wave.PendingOuterGunner
-                + snap.Wave.PendingOuterElite;
+            // Wave-cadence-per-zone (bd app-ggvz Т3): the frame carries the
+            // world AGGREGATE of the three per-zone WaveState instances, and
+            // this fixture routes the whole wave to Outer -- so the aggregate
+            // IS the outer debt here.
+            int outerDebt = snap.Wave.PendingChaser + snap.Wave.PendingGunner
+                + snap.Wave.PendingElite;
             Assert.Greater(outerDebt, 0,
                 "fixture premise: the wave must actually owe mobs to the Outer zone, or the arc "
                 + "rejection below is never even attempted");
@@ -237,7 +239,7 @@ namespace Ring.Simulation.Tests
             var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             WavePhase phaseBefore = snap.Wave.Phase;
-            float timerBefore = snap.Wave.PhaseTimer;
+            int ticksBefore = snap.Wave.PhaseTicks;
             int indexBefore = snap.Wave.WaveIndex;
 
             var idle = new SimInput[w.PlayerCount];
@@ -245,7 +247,7 @@ namespace Ring.Simulation.Tests
 
             w.CaptureSnapshot(snap);
             Assert.AreEqual(phaseBefore, snap.Wave.Phase, "phase moved with nobody alive");
-            Assert.AreEqual(timerBefore, snap.Wave.PhaseTimer, Eps,
+            Assert.AreEqual(ticksBefore, snap.Wave.PhaseTicks,
                 "the wave timer kept counting down with nobody alive");
             Assert.AreEqual(indexBefore, snap.Wave.WaveIndex, "a wave started with nobody alive");
             Assert.AreEqual(0, snap.MobCount);

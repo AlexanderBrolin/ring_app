@@ -140,7 +140,7 @@ namespace Ring.Simulation.Core
         ContainerState[] _containers;
         int _containerCount;
         byte[] _containerSlots;
-        WaveState _wave;
+        WaveState[] _waves;
         // Stage 3 Task 1 (spec Ф1, errata E-1/E-2): match-flow phase state.
         // Declared inert by Т1 and driven since Т21 by Objectives.
         // MatchFlowSystem, the last step of TickAll and the ONLY writer of
@@ -151,7 +151,7 @@ namespace Ring.Simulation.Core
         // structural rebuild). Defaults to Phase = Farm (the enum's zero
         // value) and DirectorDeathTick = 0 ("Director alive or not yet
         // activated") — both already correct as the C# struct default,
-        // unlike WaveState's PhaseTimer above, so no explicit constructor
+        // unlike WaveState's PhaseTicks above, so no explicit constructor
         // init is needed.
         MatchState _match;
         int _nextEntityId = 1;
@@ -288,9 +288,14 @@ namespace Ring.Simulation.Core
             }
             // Wave director starts idle, counting down to the first wave (Task 22
             // Interfaces) — WavePhase.Waiting is the enum's zero value, but
-            // PhaseTimer must be set explicitly or the countdown would start
+            // PhaseTicks must be set explicitly or the countdown would start
             // already expired and fire a wave on tick 1.
-            _wave = new WaveState { Phase = WavePhase.Waiting, PhaseTimer = config.Wave.FirstWaveDelay };
+            _waves = new WaveState[Zones.Count];
+            _waves[(int)Zone.Outer] = new WaveState
+            {
+                Phase = WavePhase.Waiting,
+                PhaseTicks = TicksFromSeconds(config.Wave.FirstWaveDelay)
+            };
             _mobs = new MobState[config.Arena.MaxMobs];
             _sepForces = new float2[config.Arena.MaxMobs];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
@@ -515,7 +520,13 @@ namespace Ring.Simulation.Core
         /// collision/spawn geometry or array sizing that isn't reconciled here,
         /// so it throws instead; Presentation reacts by restarting the world.
         /// Migration: Hp clamps down to the new max, every player timer clamps into
-        /// [0, its new max], wave-state (including WaveIndex) is left untouched.
+        /// [0, its new max], and the THREE per-ring wave states (including
+        /// each ring's WaveIndex and its PhaseTicks countdown) are left
+        /// untouched — bd app-ggvz Т3, spec §3.2's "hot edit" note: a
+        /// WavePauseByZone retuned in PlayMode leaves up to three already-
+        /// armed countdowns to finish on the old number, and that is accepted
+        /// behaviour (the same every other timer in this world has), not
+        /// drift.
         /// Stage 2 Task 4: migrates every player in the match, not just player 0 — for
         /// a solo world (_players.Length == 1) this is byte-for-byte the same
         /// single migration as before.
@@ -1020,15 +1031,27 @@ namespace Ring.Simulation.Core
         /// rather than the difference between fitting and throwing.
         internal (float t, int kind, int index)[] ProjCandidates => _projCandidates;
 
-        /// WaveSystem's seam into the wave director's live state (Task 22) — same
-        /// ref-return pattern as SpreadRng/WaveRng, so the system mutates it in
-        /// place instead of round-tripping copies every tick.
-        internal ref WaveState WaveRef => ref _wave;
+        /// WaveSystem's seam into ONE RING's wave director state (Task 22) —
+        /// same ref-return pattern as SpreadRng/WaveRng, so the system
+        /// mutates it in place instead of round-tripping copies every tick.
+        ///
+        /// Wave-cadence-per-zone (bd app-ggvz Т3, spec §3.2): a METHOD taking
+        /// the ring, where it used to be a parameterless property over a
+        /// single WaveState — each ring runs its own wave now, so "the wave"
+        /// is not a thing the world has one of. Callers that legitimately
+        /// want a WORLD-level answer walk `for (int z = 0; z < Zones.Count;
+        /// z++)` (WaveSystem.Update's clear check) or read the frame's own
+        /// aggregate (WorldWave); reading ring zero and calling it the world
+        /// is the mistake this shape exists to make visible.
+        internal ref WaveState WaveRef(Zone zone) => ref _waves[(int)zone];
 
         /// Т21's seam into the match's own flow state (Stage 3 Task 1
-        /// Interfaces) — same ref-return pattern as WaveRef above, so the
-        /// phase state machine mutates it in place instead of round-tripping
-        /// copies every tick.
+        /// Interfaces) — the same ref-return seam idiom WaveRef above uses
+        /// (the two stopped being a symmetric PAIR when the wave became three
+        /// per-ring instances and its seam took a Zone; the match is genuinely
+        /// one per raid, so this one stays a property), so the phase state
+        /// machine mutates it in place instead of round-tripping copies every
+        /// tick.
         internal ref MatchState MatchRef => ref _match;
 
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
@@ -2110,6 +2133,58 @@ namespace Ring.Simulation.Core
             target.ContainerInteriorItemCount = pooled;
         }
 
+        /// The wave a FRAME carries (spec §3.9 Р318/Р338): ONE WaveState for
+        /// the whole world, aggregated from the three rings — never ring
+        /// zero's own, and never an array. Keeping the frame single-valued is
+        /// what spares the client a per-ring decoder, spares RenderSnapshot's
+        /// reflective ArrayCountField guard a new key, and makes aliasing
+        /// impossible here by construction (a struct is copied, not shared).
+        ///
+        /// Four rules, one per field group, each with its own assertion in
+        /// WaveCadenceTests:
+        ///
+        /// * `Phase` — Active if ANY ring is active. A raid with one live wave
+        ///   anywhere is a raid in a wave.
+        /// * `WaveIndex` — the MAXIMUM difficulty step across the rings.
+        ///   Steps only ever grow, so the number the HUD draws stays monotone
+        ///   (Р318: a per-ring number would FALL as a collector walked inward,
+        ///   and Geometry.ZoneOf is a hard threshold with no hysteresis to
+        ///   soften the flicker at a ring boundary).
+        /// * `PhaseTicks` — the smallest countdown among the rings that HAVE
+        ///   one, i.e. "ticks until the next wave anywhere", and 0 when no
+        ///   ring is counting at all. "Has one" is DERIVED, not stored: spec
+        ///   §3.3 states that a frozen ring carries PhaseTicks = 0, so the
+        ///   number already tells whether the ring is counting and a stored
+        ///   flag beside it would be a second home for one fact (Р206). A
+        ///   minimum over ALL rings would therefore read an eternal zero — on
+        ///   a zoneless arena, where only Outer ever counts, and in the core
+        ///   while the Director stands.
+        /// * `AliveCount` and the three `Pending` — plain SUMS.
+        ///
+        /// Derived, and it lives only in the UN-hashed frame: StateHash folds
+        /// the three rings themselves (StateHash's own canonical order), so
+        /// this aggregate is never a second home for hashed state.
+        WaveState WorldWave()
+        {
+            WaveState world = default;
+            for (int z = 0; z < Zones.Count; z++)
+            {
+                ref WaveState ring = ref _waves[z];
+                if (ring.Phase == WavePhase.Active) world.Phase = WavePhase.Active;
+                world.WaveIndex = math.max(world.WaveIndex, ring.WaveIndex);
+                if (ring.PhaseTicks > 0
+                    && (world.PhaseTicks == 0 || ring.PhaseTicks < world.PhaseTicks))
+                {
+                    world.PhaseTicks = ring.PhaseTicks;
+                }
+                world.AliveCount += ring.AliveCount;
+                world.PendingChaser += ring.PendingChaser;
+                world.PendingGunner += ring.PendingGunner;
+                world.PendingElite += ring.PendingElite;
+            }
+            return world;
+        }
+
         /// Copies the current tick's render-relevant state into a preallocated
         /// target — no allocation, safe to call every render frame.
         public void CaptureSnapshot(RenderSnapshot target)
@@ -2167,7 +2242,7 @@ namespace Ring.Simulation.Core
             // the same reason PlayerKnown is filled above.
             for (int i = 0; i < _containerCount; i++)
                 target.ContainerIsEmpty[i] = ContainerIsEmptyAt(i);
-            target.Wave = _wave;
+            target.Wave = WorldWave();
             // Stage 3 Т6: the match's flow state, a single plain-struct
             // assignment right after the wave — same shape as WorldStats
             // below, and the same canonical position it holds in StateHash.
@@ -2239,7 +2314,13 @@ namespace Ring.Simulation.Core
                 ContainerCount = _containerCount,
                 Containers = new ContainerState[_containers.Length],
                 ContainerSlots = new byte[_containerSlots.Length],
-                Wave = _wave,
+                // Wave-cadence-per-zone (bd app-ggvz Т3): one WaveState per
+                // ring, same "fresh array here, filled by Array.Copy below"
+                // contract as Mobs/Projectiles/Pickups above. A plain
+                // `Waves = _waves` would hand the save a REFERENCE to the
+                // live array and every later tick would rewrite the
+                // "snapshot" underneath its holder.
+                Waves = new WaveState[_waves.Length],
                 // Stage 3 Т6: the match's flow state, right after the wave.
                 Match = _match,
                 WorldStats = _worldStats,
@@ -2255,6 +2336,7 @@ namespace Ring.Simulation.Core
             System.Array.Copy(_pickups, save.Pickups, _pickups.Length);
             System.Array.Copy(_containers, save.Containers, _containers.Length);
             System.Array.Copy(_containerSlots, save.ContainerSlots, _containerSlots.Length);
+            System.Array.Copy(_waves, save.Waves, _waves.Length);
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
             System.Array.Copy(_matchStats, save.Stats, _matchStats.Length);
             // Stage 3 Task 4: Inventory is a reference type — unlike the
@@ -2329,7 +2411,11 @@ namespace Ring.Simulation.Core
             _containerCount = save.ContainerCount;
             System.Array.Copy(save.Containers, _containers, _containers.Length);
             System.Array.Copy(save.ContainerSlots, _containerSlots, _containerSlots.Length);
-            _wave = save.Wave;
+            // The other half of SaveState's own no-aliasing contract: the
+            // live array is FILLED from the save, never replaced by it — a
+            // `_waves = save.Waves` would leave the world writing into the
+            // holder's snapshot from the next tick on.
+            System.Array.Copy(save.Waves, _waves, _waves.Length);
             _match = save.Match;
             _worldStats = save.WorldStats;
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
@@ -2364,7 +2450,7 @@ namespace Ring.Simulation.Core
         internal void SetWorldStatsForTest(in WorldStats s) => _worldStats = s;
         internal void SetMobForTest(int index, in MobState m) => _mobs[index] = m;
         internal void SetProjectileForTest(int index, in ProjectileState p) => _projectiles[index] = p;
-        internal void SetWaveForTest(in WaveState w) => _wave = w;
+        internal void SetWaveForTest(Zone zone, in WaveState w) => _waves[(int)zone] = w;
         /// Stage 3 Task 1 Interfaces: test-only seam for MatchState, same
         /// contract as SetWaveForTest above — mutates the live slot directly,
         /// for a test that needs to force a specific phase/DirectorDeathTick.
@@ -2373,6 +2459,39 @@ namespace Ring.Simulation.Core
         /// through this seam is the only way to state "the raid ended on this
         /// tick" at all (coordinator R-172).
         internal void SetMatchForTest(in MatchState m) => _match = m;
+
+        /// Test-only: takes every mob off the arena. NEW seam -- no existing one
+        /// expresses it (_mobCount is private and its only decrement lives in
+        /// DamageMob), and the cadence tests need an emptied ring to observe a
+        /// clear.
+        ///
+        /// TAKEN OFF, NOT KILLED, and that is the whole point of it existing
+        /// beside TestWorlds.ClearFirstWave (which empties the arena the honest
+        /// way, by damaging every mob to death). A death is not a quiet event
+        /// here: DamageMob spawns a MobCorpse container or the Director's four
+        /// caches, rolls the loot stream, credits Kills/ShotsHit to a player's
+        /// MatchStats and emits MobDied. A test about a wave TIMER wants none
+        /// of that in its world.
+        ///
+        /// ONE ASSIGNMENT IS THE WHOLE OPERATION, and that is a fact about
+        /// this class rather than a shortcut. "Which mobs are on the arena" is
+        /// carried by exactly two pieces of state -- `_mobs` and `_mobCount`
+        /// -- and every reader walks `[0, _mobCount)`: StateHash, SaveState,
+        /// CaptureSnapshot, SeparationSystem, VisibilitySystem,
+        /// ProjectileSystem. Nothing holds a mob INDEX across a tick (MobState
+        /// itself stores none, and `_sepForces`/`_projCandidates` are per-tick
+        /// scratch, rewritten before they are read and deliberately outside
+        /// both the hash and the save -- see their own field docs), so no
+        /// reference is left dangling. What stays in `_mobs` past the new
+        /// count is debris of exactly the kind DamageMob's own swap-remove
+        /// (`_mobs[index] = _mobs[--_mobCount]`) leaves behind on every
+        /// ordinary death, and it is invisible for the same reason.
+        ///
+        /// It empties the arena COMPLETELY, the Director included. A caller
+        /// who leaves the raid in DirectorActive and clears will have the
+        /// phase machine read "the boss is gone" on the next tick and open the
+        /// gate -- the same conclusion it would draw if he had been killed.
+        internal void ClearMobsForTest() => _mobCount = 0;
 
         /// Test-only seam (Stage 3 Task 3), same contract as SetMobForTest/
         /// SetProjectileForTest above — mutates a live slot directly, and
@@ -2471,7 +2590,13 @@ namespace Ring.Simulation.Core
                 for (int s = 0; s < _containers[i].SlotCount; s++)
                     h = StateHash64.Add(h, (int)_containerSlots[offset + s]);
             }
-            h = HashWave(h, in _wave);
+            // Wave-cadence-per-zone (bd app-ggvz Т3, spec §3.2): THREE wave
+            // states now, one per ring, folded in Zone's own declared order
+            // (Outer -> Middle -> Core) at the SAME position in the sequence
+            // the single one held. No count step ahead of them, unlike the
+            // entity arrays above: Zones.Count is a fixed fact of the arena,
+            // not a live population.
+            for (int z = 0; z < Zones.Count; z++) h = HashWave(h, in _waves[z]);
             h = HashMatch(h, in _match);
             // Stage 2 Task 10: the match-wide counters get their own hash step at
             // their own canonical position instead of riding interleaved inside
@@ -2612,19 +2737,15 @@ namespace Ring.Simulation.Core
 
         static ulong HashWave(ulong h, in WaveState w)
         {
-            // Stage 3 Task 11 (coordinator R-50): nine Add steps replace the
-            // old two, SAME zone-major/archetype-minor order WaveState's own
-            // field declaration uses -- same position in the sequence
-            // (between WaveIndex and AliveCount) as the two fields they
-            // replace.
+            // Wave-cadence-per-zone (bd app-ggvz Т3): the zone left the field
+            // NAMES and moved into the instance index, so the nine Add steps
+            // are three again -- SAME archetype order (MobType's Chaser=0/
+            // Gunner=1/Elite=2) and the SAME position in the sequence (between
+            // WaveIndex and AliveCount) the matrix held.
             h = StateHash64.Add(h, (int)w.Phase); h = StateHash64.Add(h, w.WaveIndex);
-            h = StateHash64.Add(h, w.PendingOuterChaser); h = StateHash64.Add(h, w.PendingOuterGunner);
-            h = StateHash64.Add(h, w.PendingOuterElite);
-            h = StateHash64.Add(h, w.PendingMiddleChaser); h = StateHash64.Add(h, w.PendingMiddleGunner);
-            h = StateHash64.Add(h, w.PendingMiddleElite);
-            h = StateHash64.Add(h, w.PendingCoreChaser); h = StateHash64.Add(h, w.PendingCoreGunner);
-            h = StateHash64.Add(h, w.PendingCoreElite);
-            h = StateHash64.Add(h, w.AliveCount); h = StateHash64.Add(h, w.PhaseTimer);
+            h = StateHash64.Add(h, w.PendingChaser); h = StateHash64.Add(h, w.PendingGunner);
+            h = StateHash64.Add(h, w.PendingElite);
+            h = StateHash64.Add(h, w.AliveCount); h = StateHash64.Add(h, w.PhaseTicks);
             return h;
         }
 

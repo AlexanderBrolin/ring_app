@@ -328,47 +328,61 @@ namespace Ring.Simulation.Core
 
     public enum WavePhase : byte { Waiting = 0, Active = 1 }
 
-    /// Live state of the wave-spawning director.
+    /// Live state of the wave-spawning director IN ONE RING.
     ///
-    /// Stage 3 Task 11 (spec Р211/Р212/Р250, coordinator R-50): the debt used
-    /// to be two named counters (PendingChasers/PendingGunners) split by
-    /// archetype only. Three zones x three wave archetypes (Chaser/Gunner/
-    /// Elite -- Director never spawns through a wave, Р248) do not fit that
-    /// shape, so the debt becomes a 3x3 matrix of NINE named fields --
-    /// `allowUnsafeCode: false` on Ring.Simulation.asmdef rules out a
-    /// `fixed` buffer (errata A-I5), so nine plain int fields it is. Order
-    /// is ZONE-MAJOR, archetype-minor (Zone's own declared order Outer=0/
-    /// Middle=1/Core=2, then MobType's Chaser=0/Gunner=1/Elite=2) -- the
-    /// SAME order HashWave below walks. The ONE place that maps a (zone,
-    /// type) pair onto one of these nine fields is WaveSystem.PendingRef
+    /// Wave-cadence-per-zone (bd app-ggvz Т3, spec §3.2): SimulationWorld
+    /// holds THREE of these, one per Zone, reached through
+    /// SimulationWorld.WaveRef(Zone). This is not a growth of the state, it
+    /// is its re-shelving: Т11 of Stage 3 spread one director's debt across a
+    /// 3x3 matrix of NINE named `Pending{Zone}{Archetype}` fields because one
+    /// wave budget had to be split three ways; now each ring runs its own
+    /// wave, so the zone leaves the field NAMES and becomes the index of the
+    /// instance, and the matrix is three plain fields again. The ONE place
+    /// that maps an archetype onto one of them is WaveSystem.PendingRef
     /// (coordinator R-51) -- nothing else, including this struct's own
     /// callers, is allowed to grow a second mapping.
+    ///
+    /// The declared archetype order (MobType's own Chaser=0/Gunner=1/
+    /// Elite=2) is the SAME order HashWave walks, and SimulationWorld.
+    /// StateHash folds the three instances in Zone's own declared order
+    /// (Outer -> Middle -> Core) -- see that method's own canonical-order
+    /// doc.
+    ///
+    /// The FRAME does not carry three of these: RenderSnapshot.Wave is a
+    /// single aggregate of the world, computed by SimulationWorld.WorldWave
+    /// (spec §3.9 Р338), so nothing downstream of the simulation has to know
+    /// the ring count.
     public struct WaveState
     {
         public WavePhase Phase;
-        public int WaveIndex, AliveCount;
-        public float PhaseTimer;
+        /// Difficulty step of the wave running here.
+        public int WaveIndex;
+        /// WHOLE TICKS, never seconds — SimulationWorld.TicksFromSeconds'
+        /// own doc carries the rule and the two measurements that paid for it.
+        public int PhaseTicks, AliveCount;
+        public int PendingChaser, PendingGunner, PendingElite;
 
-        public int PendingOuterChaser, PendingOuterGunner, PendingOuterElite;
-        public int PendingMiddleChaser, PendingMiddleGunner, PendingMiddleElite;
-        public int PendingCoreChaser, PendingCoreGunner, PendingCoreElite;
-
-        /// Total outstanding wave-spawn debt across every zone and archetype
-        /// (coordinator R-52, spec Р206/Р219a): a DERIVED quantity, computed
-        /// wherever it is needed rather than stored -- deliberately NOT an
-        /// auto-property. An auto-property's compiler-generated backing
-        /// field would be a TENTH struct field invisible to both HashWave
-        /// (which lists the nine Pending fields by name) and the reflective
-        /// hash-completeness sweep (WorldLifecycleTests, which only walks
+        /// This RING's outstanding wave-spawn debt across the three
+        /// archetypes (coordinator R-52, spec Р206/Р219a): a DERIVED
+        /// quantity, computed wherever it is needed rather than stored --
+        /// deliberately NOT an auto-property. An auto-property's
+        /// compiler-generated backing field would be an EIGHTH struct field
+        /// invisible to both HashWave (which lists the three Pending fields
+        /// by name) and the reflective hash-completeness sweep
+        /// (WorldLifecycleTests, which only walks
         /// `typeof(WaveState).GetFields()` -- a private backing field never
         /// shows up there), i.e. exactly the "hidden field bypasses both
         /// guards" failure mode R-52 exists to rule out. WaveSystem.Update's
         /// "is the wave cleared" check and WaveTests both read this instead
-        /// of summing nine fields by hand at each call site (one home,
-        /// lesson 279).
-        public int PendingTotal => PendingOuterChaser + PendingOuterGunner + PendingOuterElite
-            + PendingMiddleChaser + PendingMiddleGunner + PendingMiddleElite
-            + PendingCoreChaser + PendingCoreGunner + PendingCoreElite;
+        /// of summing fields by hand at each call site (one home, lesson
+        /// 279).
+        ///
+        /// It is ONE RING's debt, not the world's: a caller asking "does the
+        /// world still owe mobs" sums this over Zones.Count instances
+        /// (WaveSystem.Update's own clear check does exactly that), and
+        /// RenderSnapshot.Wave.PendingTotal reads the aggregate's summed
+        /// fields.
+        public int PendingTotal => PendingChaser + PendingGunner + PendingElite;
     }
 
     /// Match-flow phase (Stage 3 Task 1 Interfaces, spec Ф1/§3.10): Farm (only
