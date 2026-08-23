@@ -44,8 +44,30 @@ namespace Ring.Data
         // CRITICAL RULE 6 (ADR-002 §4) puts every wave balance number in a
         // ScriptableObject, this one included, so the owner can retune the
         // periphery's difficulty ceiling on milestone В1 without a
-        // recompile.
-        [Range(0f, 1f)] public float EliteShareOuterCap = 0.25f; // sync-marker key — keep LAST
+        // recompile. Was the sync-marker key until app-ggvz's
+        // DifficultyStepSeconds field below superseded it.
+        [Range(0f, 1f)] public float EliteShareOuterCap = 0.25f;
+
+        // Task Т2 (app-ggvz, spec §3.4/§3.8): four per-zone wave cadence
+        // numbers — the pause between a zone's waves and its living-mob
+        // ceiling are per RING (Zones.Count entries, Outer/Middle/Core
+        // order, matching ZoneWeights above); the spawn-per-tick cap smooths
+        // a wave's arrival across several ticks instead of seating it all
+        // at once (spec Р317); the difficulty step is the divisor of the
+        // clock-based difficulty curve (spec §3.3 Р315). Not consumed by
+        // WaveSystem yet — the per-zone cadence itself lands in Т3+, and
+        // this task's own SimConfigBuilder.Validate rules are what gate
+        // them meanwhile. Ranges are not expressible per element via
+        // [Range] (Unity clamps the whole field) -- SimConfigBuilder.
+        // Validate is the real gate, the same convention ZoneWeights and
+        // ArenaConfig.ZoneRadius already follow.
+        public float[] WavePauseByZone = { 20f, 30f, 30f };
+        public int[] MaxAliveByZone = { 150, 110, 10 };
+        [Range(1, 20)] public int MaxSpawnsPerZonePerTick = 2;
+        // EliteShareOuterCap above was the sync-marker key until this field
+        // superseded it -- see its own doc for the historical chain before
+        // it.
+        [Range(1f, 120f)] public float DifficultyStepSeconds = 20f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

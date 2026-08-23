@@ -199,6 +199,41 @@ namespace Ring.Simulation.Core
         /// difficulty grows with the clock" playtest) without a recompile.
         /// A fourth WaveSimConfig field, not a local const in WaveSystem.
         public float EliteShareOuterCap;
+
+        /// Task Т2 (app-ggvz, spec §3.3/§3.4/§3.8): the per-zone wave pause —
+        /// spec §3.3's PhaseTicks reload (both StartWave and a clear) is
+        /// designed to read this by Zone index (Outer/Middle/Core). Not wired
+        /// yet: WaveSystem still reads the single WavePause field above,
+        /// which this one is meant to replace once the per-zone cadence
+        /// lands (Т3+) and Т4 removes it. SimConfigBuilder.Validate already
+        /// gates it: exactly Zones.Count elements, each at least two ticks
+        /// (TicksFromSeconds rounds to the nearest tick, so a one-tick floor
+        /// would let a near-zero pause slip through).
+        public float[] WavePauseByZone;
+
+        /// Task Т2 (spec §3.4/§3.8): the living-mob ceiling per zone — spec
+        /// §3.4's spawn guard is designed to check this before placing a
+        /// mob, alongside the existing Arena-wide Director reserve. Not
+        /// wired yet (Т3+). SimConfigBuilder.Validate gates it: each zone at
+        /// least 1 (zero would leave that zone's debt permanently unpayable,
+        /// spec Р321), and the three ceilings plus Flow.DirectorReserveSlots
+        /// together must not exceed Arena.MaxMobs.
+        public int[] MaxAliveByZone;
+
+        /// Task Т2 (spec §3.4/§3.8 Р317): caps how many of a zone's pending
+        /// spawns get placed in a single tick, smoothing a wave's arrival
+        /// across several ticks instead of seating it all at once. Not
+        /// wired yet (Т3+); SimConfigBuilder.Validate requires it positive.
+        public int MaxSpawnsPerZonePerTick;
+
+        /// Task Т2 (spec §3.3/§3.8 Р315): the clock-based difficulty step's
+        /// own divisor (`step = 1 + ticksSinceFirstWave / TicksFromSeconds(
+        /// DifficultyStepSeconds)`) — meant to replace indexing the wave-
+        /// size/elite-share curves by each zone's own wave counter, which
+        /// let a clean zone fall behind a passive one (spec Р315). Not
+        /// wired yet (Т3+); SimConfigBuilder.Validate requires at least two
+        /// ticks, same reasoning as WavePauseByZone above.
+        public float DifficultyStepSeconds;
     }
 
     /// Stage 3 Task 8 (spec §3.2, Р206): which of the arena's three concentric

@@ -47,8 +47,17 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EveryConfigNumberAffectsHash_Wave()
         {
-            AssertSectionAffectsHash("Wave", "ZoneWeights");
+            // Task Т2 (app-ggvz, spec §3.8): WavePauseByZone/MaxAliveByZone
+            // join ZoneWeights as skipped-by-the-sweep array fields, each
+            // covered by its own dedicated element-wise helper below.
+            // MaxSpawnsPerZonePerTick/DifficultyStepSeconds are plain
+            // scalars — AssertSectionAffectsHash's own reflection sweep
+            // already reaches them with no test-code change needed, the
+            // same way it already reaches BaseCount/GunnerShareBase/etc.
+            AssertSectionAffectsHash("Wave", "ZoneWeights", "WavePauseByZone", "MaxAliveByZone");
             AssertFloatArrayFieldAffectsHash("Wave", "ZoneWeights");
+            AssertFloatArrayFieldAffectsHash("Wave", "WavePauseByZone");
+            AssertInt32ArrayFieldAffectsHash("Wave", "MaxAliveByZone");
         }
 
         [Test]

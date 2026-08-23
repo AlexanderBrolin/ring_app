@@ -109,7 +109,23 @@ namespace Ring.Simulation.Tests
                     // guarded constant.
                     ZoneWeights = new[] { 0.45f, 0.45f, 0.10f },
                     EliteShareMiddle = 0.35f, EliteShareOuterGrowth = 0.02f,
-                    EliteShareOuterCap = 0.25f },
+                    EliteShareOuterCap = 0.25f,
+                    // Task Т2 (app-ggvz, spec §3.8 Р325): the fixture's OWN
+                    // scaled-down cadence numbers, deliberately NOT a mirror
+                    // of WaveConfig's real {20,30,30}s / {150,110,10} /
+                    // 20s — the golden scenarios in DeterminismTests run
+                    // 3000-18000 ticks, and the shipped ceilings would turn
+                    // a determinism check into a load test. Set only here;
+                    // the six other TestConfigs variants below are all
+                    // derived from Default() and never redeclare WaveSimConfig.
+                    WavePauseByZone = new[] { 2f, 3f, 3f },
+                    MaxAliveByZone = new[] { 24, 16, 8 },
+                    // MaxSpawnsPerZonePerTick agrees with the shipped number
+                    // on purpose (2 = 2, ConfigTests.AssertWaveEqual covers
+                    // it with ordinary equality) — nothing here needs to be
+                    // scaled down for a smoothing cap.
+                    MaxSpawnsPerZonePerTick = 2,
+                    DifficultyStepSeconds = 2f },
                 // Stage 3 Task 12 (spec §3.13/§3.4, owner decision R-75): the
                 // third and fourth archetypes, delivered as assets of the
                 // existing MobConfig class. Numbers and their sources, one

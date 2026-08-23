@@ -154,7 +154,16 @@ namespace Ring.Data
                     ZoneWeights = wave.ZoneWeights,
                     EliteShareMiddle = wave.EliteShareMiddle,
                     EliteShareOuterGrowth = wave.EliteShareOuterGrowth,
-                    EliteShareOuterCap = wave.EliteShareOuterCap
+                    EliteShareOuterCap = wave.EliteShareOuterCap,
+                    // Task Т2 (app-ggvz, spec §3.4/§3.8): the four per-zone
+                    // wave cadence numbers — direct alias, same convention
+                    // ZoneWeights above already follows (Wave is balance
+                    // data, not topology; nothing in SimulationWorld's
+                    // constructor sizes an array off it).
+                    WavePauseByZone = wave.WavePauseByZone,
+                    MaxAliveByZone = wave.MaxAliveByZone,
+                    MaxSpawnsPerZonePerTick = wave.MaxSpawnsPerZonePerTick,
+                    DifficultyStepSeconds = wave.DifficultyStepSeconds
                 },
                 Arena = ToArenaSimConfig(arena),
                 // Stage 3 Task 12 (errata E-2): the match-flow pacing block.
@@ -642,6 +651,68 @@ namespace Ring.Data
             ReqInRange(errors, "Wave.EliteShareMiddle", cfg.Wave.EliteShareMiddle, 0f, 1f);
             ReqInRange(errors, "Wave.EliteShareOuterGrowth", cfg.Wave.EliteShareOuterGrowth, 0f, 1f);
             ReqInRange(errors, "Wave.EliteShareOuterCap", cfg.Wave.EliteShareOuterCap, 0f, 1f);
+
+            // Task Т2 (app-ggvz, spec §3.8 rule 1, Р320 uniquely Р336): each
+            // zone's own wave pause — gated at >= 2 ticks, not "> 0" and not
+            // "one tick". TicksFromSeconds rounds to the nearest tick, so a
+            // one-tick floor would never fire: TicksFromSeconds(0.02) =
+            // round(0.6) = 1, and a one-tick pause genuinely does start a
+            // new wave on every tick.
+            if (cfg.Wave.WavePauseByZone == null || cfg.Wave.WavePauseByZone.Length != Zones.Count)
+            {
+                ReqZoneArrayLength(errors, "Wave.WavePauseByZone", cfg.Wave.WavePauseByZone);
+            }
+            else
+            {
+                for (int i = 0; i < cfg.Wave.WavePauseByZone.Length; i++)
+                    ReqAtLeastTwoTicks(errors, $"Wave.WavePauseByZone[{i}]", cfg.Wave.WavePauseByZone[i]);
+            }
+
+            // Task Т2 (spec §3.8 rules 2/4, Р321): each zone's living-mob
+            // ceiling, at least 1 — zero would leave the zone's timer
+            // ticking, StartWave firing every pause, the spawn guard
+            // rejecting every attempt, and the debt never clearing: a
+            // zombie ring that can never be swept. Rule 4 (the cross-field
+            // sum below) lives in this SAME else branch on purpose: summing
+            // MaxAliveByZone before the length check runs would throw
+            // IndexOutOfRangeException on a short array instead of the
+            // intended ArgumentException.
+            if (cfg.Wave.MaxAliveByZone == null || cfg.Wave.MaxAliveByZone.Length != Zones.Count)
+            {
+                ReqZoneArrayLength(errors, "Wave.MaxAliveByZone", cfg.Wave.MaxAliveByZone);
+            }
+            else
+            {
+                for (int i = 0; i < cfg.Wave.MaxAliveByZone.Length; i++)
+                    ReqInRange(errors, $"Wave.MaxAliveByZone[{i}]", cfg.Wave.MaxAliveByZone[i], 1, cfg.Arena.MaxMobs);
+
+                // Rule 4: the ceilings are a live population regulator,
+                // Arena.MaxMobs is the physical array size, and this rule
+                // keeps them from silently drifting apart (spec §3.4's own
+                // "1350 array size vs a 270-mob live ceiling today" note).
+                // Flow.DirectorReserveSlots < Arena.MaxMobs above stays —
+                // this rule is strictly stronger only once the sum is
+                // nonzero, and rule 2 no longer lets it be zeroed out.
+                int maxAliveSum = cfg.Wave.MaxAliveByZone[0] + cfg.Wave.MaxAliveByZone[1]
+                    + cfg.Wave.MaxAliveByZone[2];
+                if (maxAliveSum + cfg.Flow.DirectorReserveSlots > cfg.Arena.MaxMobs)
+                {
+                    errors.Add("Wave.MaxAliveByZone sum + Flow.DirectorReserveSlots must not " +
+                        $"exceed Arena.MaxMobs (got sum={maxAliveSum}, " +
+                        $"DirectorReserveSlots={cfg.Flow.DirectorReserveSlots}, " +
+                        $"MaxMobs={cfg.Arena.MaxMobs}).");
+                }
+            }
+
+            // Task Т2 (spec §3.8 rule 3): zero would stop a zone's spawn
+            // entirely — its debt would assign every pause and never pay
+            // down.
+            ReqPositive(errors, "Wave.MaxSpawnsPerZonePerTick", cfg.Wave.MaxSpawnsPerZonePerTick);
+
+            // Task Т2 (spec §3.8 rule 5, Р315/Р336): the difficulty step's
+            // own divisor, same >= 2 ticks rule and reasoning as
+            // WavePauseByZone above.
+            ReqAtLeastTwoTicks(errors, "Wave.DifficultyStepSeconds", cfg.Wave.DifficultyStepSeconds);
 
             ReqPositive(errors, "Arena.Radius", cfg.Arena.Radius);
             ReqPositive(errors, "Arena.MaxMobs", cfg.Arena.MaxMobs);
@@ -1808,6 +1879,40 @@ namespace Ring.Data
             ReqFinite(errors, name, value);
             if (value < min)
                 errors.Add($"{name} must be >= {min} (got {value:F3}).");
+        }
+
+        /// Task Т2 (app-ggvz, spec §3.8): the "array must have exactly
+        /// Zones.Count elements" message, factored out — the idiom itself
+        /// (`if (x == null || x.Length != N) errors.Add(...) else for (i)
+        /// Req...(...)`) was copied five times in this file (ZoneWeights
+        /// :608, CellsPerMob :994, TransferSeconds :1007, DropChance :1037,
+        /// ZoneRadius further down) with no shared home; WavePauseByZone and
+        /// MaxAliveByZone are the two callers that share the SAME N (Zones.
+        /// Count, Outer/Middle/Core) and earn one. Only ever called from the
+        /// invalid branch a caller already checked — it does not re-derive
+        /// validity, only formats the message.
+        static void ReqZoneArrayLength<T>(List<string> errors, string name, T[] a)
+        {
+            errors.Add($"{name} must have exactly {Zones.Count} elements (Outer, Middle, Core) " +
+                $"(got {a?.Length ?? 0}).");
+        }
+
+        /// Task Т2 (spec §3.8 rules 1/5, Р320/Р336): a seconds value that
+        /// must round to at least two simulation ticks. NOT "> 0" and NOT
+        /// "one tick" — TicksFromSeconds rounds to the nearest tick, so
+        /// TicksFromSeconds(0.02) = round(0.02 / TickDt) = 1, and a
+        /// one-tick floor would never catch a near-zero value that still
+        /// fires every tick (prose form: MatchEndPolicy's own "must be at
+        /// least one tick" doc; numeric form: EdgeRequestMinTicks's own
+        /// tick/seconds cross-check right above ReqAtLeast).
+        static void ReqAtLeastTwoTicks(List<string> errors, string name, float seconds)
+        {
+            int ticks = SimulationWorld.TicksFromSeconds(seconds);
+            if (ticks < 2)
+            {
+                errors.Add($"{name} must be at least two ticks " +
+                    $"(got {seconds:F3}s = {ticks} tick(s), TickDt={SimulationWorld.TickDt:F4}s).");
+            }
         }
     }
 }

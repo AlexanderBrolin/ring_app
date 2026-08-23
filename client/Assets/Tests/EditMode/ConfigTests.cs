@@ -261,6 +261,43 @@ namespace Ring.Simulation.Tests
             AssertMobEqual(expected.Chaser, cfg.Chaser);
             AssertMobEqual(expected.Gunner, cfg.Gunner);
             AssertWaveEqual(expected.Wave, cfg.Wave);
+            // Task Т2 (app-ggvz, spec §3.8 Р337): three more Wave fields
+            // where the two number sources disagree ON PURPOSE, same
+            // documented-deviation category as AmmoStart/BarrierTop above
+            // and CellsPerMob/DropChance below — the shipped SO carries the
+            // real per-zone cadence numbers ({20,30,30}s pause,
+            // {150,110,10} ceilings, 20s difficulty step), while the shared
+            // TestConfigs baseline stays on its own scaled-down fixture
+            // (spec Р325: {2,3,3}s, {24,16,8}, 2s) so the 3000-18000-tick
+            // DeterminismTests scenarios stay a determinism check, not a
+            // load test. AssertWaveEqual above deliberately excludes all
+            // three; each gets the same triple form here instead: the real
+            // SO reaches the builder untouched, TestConfigs stays at its
+            // own scaled-down number, and the two provably differ.
+            // MaxSpawnsPerZonePerTick is NOT here — it agrees on both sides
+            // (2 = 2) and is covered by ordinary equality inside
+            // AssertWaveEqual instead.
+            CollectionAssert.AreEqual(wv.WavePauseByZone, cfg.Wave.WavePauseByZone,
+                "WaveConfig.WavePauseByZone must reach WaveSimConfig through the builder");
+            CollectionAssert.AreEqual(new[] { 2f, 3f, 3f }, expected.Wave.WavePauseByZone,
+                "the TestConfigs baseline must stay at its own scaled-down fixture value");
+            CollectionAssert.AreNotEqual(expected.Wave.WavePauseByZone, cfg.Wave.WavePauseByZone,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            CollectionAssert.AreEqual(wv.MaxAliveByZone, cfg.Wave.MaxAliveByZone,
+                "WaveConfig.MaxAliveByZone must reach WaveSimConfig through the builder");
+            CollectionAssert.AreEqual(new[] { 24, 16, 8 }, expected.Wave.MaxAliveByZone,
+                "the TestConfigs baseline must stay at its own scaled-down fixture value");
+            CollectionAssert.AreNotEqual(expected.Wave.MaxAliveByZone, cfg.Wave.MaxAliveByZone,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            Assert.AreEqual(wv.DifficultyStepSeconds, cfg.Wave.DifficultyStepSeconds, Eps,
+                "WaveConfig.DifficultyStepSeconds must reach WaveSimConfig through the builder");
+            Assert.AreEqual(2f, expected.Wave.DifficultyStepSeconds, Eps,
+                "the TestConfigs baseline must stay at its own scaled-down fixture value");
+            Assert.AreNotEqual(expected.Wave.DifficultyStepSeconds, cfg.Wave.DifficultyStepSeconds,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
             AssertArenaEqual(expected.Arena, cfg.Arena);
             // Stage 2 Task 46 (bd app-r8x): BarrierTop is the ONE arena field
             // where the two number sources disagree on purpose, so it cannot
@@ -1499,6 +1536,15 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.EliteShareMiddle, a.EliteShareMiddle, Eps);
             Assert.AreEqual(e.EliteShareOuterGrowth, a.EliteShareOuterGrowth, Eps);
             Assert.AreEqual(e.EliteShareOuterCap, a.EliteShareOuterCap, Eps);
+            // Task Т2 (app-ggvz, spec §3.8 Р337): MaxSpawnsPerZonePerTick
+            // agrees on both sides of the fixture (2 = 2) — ordinary
+            // equality, same as every field above. WavePauseByZone/
+            // MaxAliveByZone/DifficultyStepSeconds are deliberately
+            // EXCLUDED here — same documented-deviation category as
+            // AmmoStart/BarrierTop — and get their own triple-form
+            // assertions at Build_DefaultAssets_MatchesTestConfigsBaseline's
+            // own call site instead, right after this method's own call.
+            Assert.AreEqual(e.MaxSpawnsPerZonePerTick, a.MaxSpawnsPerZonePerTick);
         }
 
         /// Ф2 review C1: the five MatchFlowConfig numbers, pinned against the

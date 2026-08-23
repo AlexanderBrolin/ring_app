@@ -140,6 +140,14 @@ namespace Ring.Simulation.Core
             h = HashFloatArray(h, c.ZoneWeights);
             h = StateHash64.Add(h, c.EliteShareMiddle); h = StateHash64.Add(h, c.EliteShareOuterGrowth);
             h = StateHash64.Add(h, c.EliteShareOuterCap);
+            // Task Т2 (app-ggvz, spec §3.8): the four per-zone wave cadence
+            // numbers, on the same "two arrays via the existing element-wise
+            // helpers, two scalars via StateHash64.Add" shape as everything
+            // else in this method.
+            h = HashFloatArray(h, c.WavePauseByZone);
+            h = HashInt32Array(h, c.MaxAliveByZone);
+            h = StateHash64.Add(h, c.MaxSpawnsPerZonePerTick);
+            h = StateHash64.Add(h, c.DifficultyStepSeconds);
             return h;
         }
 

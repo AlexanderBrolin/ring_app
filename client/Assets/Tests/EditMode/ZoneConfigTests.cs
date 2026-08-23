@@ -850,5 +850,88 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("DropChance"));
             Assert.That(ex.Message, Does.Contain("ZoneRadius"));
         }
+
+        // --- Task Т2 (app-ggvz, spec §3.8): five validation rules guarding
+        // the new per-zone wave cadence numbers (WavePauseByZone,
+        // MaxAliveByZone, MaxSpawnsPerZonePerTick, DifficultyStepSeconds).
+        // Same mutation discipline as above: index 0 stays a legal control,
+        // the violation sits on index 1.
+
+        [Test]
+        public void Validate_WavePauseBelowTwoTicks_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.WavePauseByZone = new[] { 20f, 0.02f, 30f };   // violation on the SECOND element
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Wave.WavePauseByZone[1]"));
+            Assert.That(ex.Message, Does.Contain("at least two ticks"));
+        }
+
+        [Test]
+        public void Validate_DifficultyStepBelowTwoTicks_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.DifficultyStepSeconds = 0.02f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Wave.DifficultyStepSeconds"));
+            Assert.That(ex.Message, Does.Contain("at least two ticks"));
+        }
+
+        [Test]
+        public void Validate_ZeroZoneCeiling_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.MaxAliveByZone = new[] { 150, 0, 10 };         // violation on the SECOND element
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Wave.MaxAliveByZone[1]"));
+        }
+
+        [Test]
+        public void Validate_WrongZoneArrayLength_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.MaxAliveByZone = new[] { 150, 110 };
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("exactly 3 elements"));
+        }
+
+        [Test]
+        public void Validate_CeilingsPlusDirectorReserveAboveMaxMobs_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.MaxAliveByZone = new[] { a.MaxMobs, 1, 1 };    // strictly above the ceiling
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("must not exceed Arena.MaxMobs"));
+        }
+
+        [Test]
+        public void Validate_CeilingsExactlyAtMaxMobs_IsLegal()
+        {
+            // The boundary case is legal — witness for the `>` -> `>=` mutation.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            // The reserve is read from ITS OWN source, not a literal: a change
+            // to MatchFlowConfig's C# default would otherwise silently shift
+            // the fixture off the boundary, and the test would stop killing
+            // the `>` -> `>=` mutation (rule 397, re-review finding).
+            var flow = ScriptableObject.CreateInstance<MatchFlowConfig>();
+            int reserve = flow.DirectorReserveSlots;
+            wv.MaxAliveByZone = new[] { a.MaxMobs - reserve - 2, 1, 1 };
+            Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+        }
+
+        [Test]
+        public void Validate_ZeroSpawnsPerZonePerTick_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            wv.MaxSpawnsPerZonePerTick = 0;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Wave.MaxSpawnsPerZonePerTick"));
+        }
     }
 }
