@@ -277,10 +277,60 @@ namespace Ring.Simulation.Tests
         /// produces. Skipping the draw for the walking player would make every
         /// OTHER player's input depend on the walk-in, which is not a scenario
         /// anyone could reason about.
+        /// bd app-ggvz (wave cadence per ring): AN HP BUDGET FOR THE WHOLE
+        /// SCRIPTED RUN, handed to EVERY collector. Same seam and same
+        /// derivation TestWorlds.TrioSaturated already uses — not a second
+        /// invention, and not a number picked by eye.
+        ///
+        /// (1) WHY A FIXTURE MAY DO THIS AT ALL. These scenarios measure
+        /// DETERMINISM, never survivability — the reason every number in
+        /// TestConfigs is deliberately modest (Р325). A digest cannot tell a
+        /// run that walked the whole loop from one that died in its first
+        /// minute, which is precisely why ExtractionScenario_ReachesTheWholeLoop
+        /// stands beside it; a scenario whose collectors are corpses is the
+        /// same defect that guard already caught once from the other side (a
+        /// walker who spent 480 s against a wall).
+        ///
+        /// (2) WHY IT WAS NOT NEEDED BEFORE AND IS NEEDED NOW. Until the
+        /// per-ring cadence the arena held ONE wave of ten mobs for a whole
+        /// raid and a scripted random walk outlived it by default. With every
+        /// ring running its own cadence the farm phase is genuinely lethal.
+        /// MEASURED on this very generator, seed and tick count: the walker
+        /// died on tick 666 and all three collectors by tick 1247, while the
+        /// walk-in does not begin until CoreEntryTick (3600) — so nobody
+        /// reached the core at all, the guard went red, and the digest was
+        /// pinning a run of corpses. Ring ceilings do not fix it and were
+        /// measured not to: the walker's death tick is 666 with them and 666
+        /// without them, because the mobs that kill him are the ones that
+        /// arrive, not the ones that pile up behind.
+        ///
+        /// (3) WHY THE NUMBER IS SAFE RATHER THAN TIGHT. It is TrioSaturated's
+        /// own bound, term for term: the whole window at a deliberately
+        /// over-stated combined damage rate — the worst-case zone multiplier on
+        /// the weapon's own DPS, plus every single one of Arena.MaxMobs landing
+        /// Chaser.ContactDamage every Chaser.AttackCooldown at once. That
+        /// second term is impossible on its own terms, which is exactly the
+        /// point: the bound only has to hold, never to be tight, and a
+        /// safe-but-huge Hp costs these fixtures nothing (SetPlayerForTest
+        /// bypasses Hero.MaxHp's clamp, and neither scenario calls ApplyConfig).
+        ///
+        /// It hands out Hp and moves NOBODY: each collector's own current
+        /// position is read back and written unchanged.
+        static void BudgetHpForTheWholeRun(SimulationWorld world, in SimConfig cfg, int ticks)
+        {
+            float totalSeconds = ticks * SimulationWorld.TickDt;
+            float shotDps = cfg.Hero.HeadDamageMult * cfg.Weapon.Damage / cfg.Weapon.FireInterval;
+            float mobDps = cfg.Arena.MaxMobs * cfg.Chaser.ContactDamage / cfg.Chaser.AttackCooldown;
+            float hpBudget = totalSeconds * (shotDps + mobDps);
+            for (int p = 0; p < world.PlayerCount; p++)
+                TestWorlds.RelocatePlayerForTest(world, p, world.PlayerAt(p).Pos, hp: hpBudget);
+        }
+
         static ulong RunExtractionScripted(uint inputSeed, int ticks, int playerCount)
         {
             SimConfig cfg = TestConfigs.Extraction();
             var world = new SimulationWorld(42, cfg, playerCount);
+            BudgetHpForTheWholeRun(world, in cfg, ticks);
             var rng = new Random(inputSeed);
             var aimHeld = new bool[playerCount];
             var inputs = new SimInput[playerCount];
@@ -375,6 +425,11 @@ namespace Ring.Simulation.Tests
             // tick count, so it can never drift away from what the golden pins.
             SimConfig cfg = TestConfigs.Extraction();
             var world = new SimulationWorld(42, cfg, 3);
+            // The SAME budget the generator above hands out, through the same
+            // one home: this loop is a deliberate copy of that generator, and a
+            // copy that skipped the budget would measure a different run than
+            // the digest it exists to describe.
+            BudgetHpForTheWholeRun(world, in cfg, ExtractionTicks);
             var rng = new Random(123);
             var aimHeld = new bool[3];
             var inputs = new SimInput[3];

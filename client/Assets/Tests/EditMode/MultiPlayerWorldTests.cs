@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Simulation.AI;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -223,8 +224,50 @@ namespace Ring.Simulation.Tests
         [Test]
         public void WorldStats_CountedOnce_NotPerPlayer()
         {
-            var w = new SimulationWorld(1, TestConfigs.Default(), playerCount: 3);
-            TestWorlds.ClearFirstWave(w);
+            // ⚠ THE FIXTURE NARROWED IN Т4 (app-ggvz), THE CLAIM DID NOT.
+            // With three independent ring cadences all three rings seat their
+            // first wave on the same tick and would come out clear on the same
+            // tick too — the counter would read 3, correctly, and this test
+            // would be measuring the number of RINGS rather than the number of
+            // PLAYERS. So exactly one ring is left able to clear: the
+            // neighbors are handed debt, and the clearing tick therefore fails
+            // BOTH terms of their clear check at once (the debt they cannot
+            // finish, and the mobs that debt puts on the arena) — whichever of
+            // the two bites, neither neighbor can be counted.
+            //
+            // TestWorlds.ClearFirstWave cannot be used for the same narrowing:
+            // it kills every mob after every tick, so the neighbors' debt
+            // drains in one tick and they clear on the next, inside the
+            // helper's own loop.
+            // ⚠ THE WAIT IS THE WHOLE ARRIVAL OF THE WAVE, not one tick past
+            // its start (Т5): a ring seats at most MaxSpawnsPerZonePerTick mobs
+            // per tick, so a wave of `waveSize` needs ceil(waveSize / cap)
+            // ticks before its debt is closed — and a ring that still owes mobs
+            // cannot be cleared, which is what a one-tick wait quietly turned
+            // this test into. Stated as fixture arithmetic so a change to
+            // either number moves it.
+            SimConfig cfg = TestConfigs.Default();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            int waveSize = WaveSystem.CountForTest(in cfg.Wave, 0, w.PlayerCount);
+            int cap = cfg.Wave.MaxSpawnsPerZonePerTick;
+            int seatTicks = (waveSize + cap - 1) / cap;
+            TestWorlds.IdleTicks(w, SimulationWorld.TicksFromSeconds(cfg.Wave.FirstWaveDelay)
+                + seatTicks);
+            Assert.AreEqual(WavePhase.Active, w.WaveRef(Zone.Outer).Phase,
+                "premise: every ring has seated its first wave");
+            Assert.AreEqual(0, w.WaveRef(Zone.Outer).PendingTotal,
+                "premise: the outer ring owes nothing any more — a ring still holding debt "
+                + "cannot be cleared, and the assertion below would be measuring the wait");
+
+            foreach (Zone z in new[] { Zone.Middle, Zone.Core })
+            {
+                WaveState debt = w.WaveRef(z);
+                debt.PendingChaser = 99;
+                w.SetWaveForTest(z, debt);
+            }
+            w.ClearMobsForTest();
+            w.TickAll(new SimInput[w.PlayerCount]);
+
             Assert.AreEqual(1, w.WorldStats.WavesCleared,
                 "clearing one wave with three players in the match must bump the WORLD " +
                 "counter exactly once, not once per player");

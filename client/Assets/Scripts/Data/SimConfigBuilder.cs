@@ -139,7 +139,6 @@ namespace Ring.Data
                 Wave = new WaveSimConfig
                 {
                     FirstWaveDelay = wave.FirstWaveDelay,
-                    WavePause = wave.WavePause,
                     SpawnRingInset = wave.SpawnRingInset,
                     MinSpawnDistanceToPlayer = wave.MinSpawnDistanceToPlayer,
                     BaseCount = wave.BaseCount,
@@ -150,16 +149,15 @@ namespace Ring.Data
                     GunnerShareBase = wave.GunnerShareBase,
                     GunnerShareGrowth = wave.GunnerShareGrowth,
                     PerPlayerCountFrac = wave.PerPlayerCountFrac,
-                    // Stage 3 Task 11 (spec §3.3 Р211/Р212/Р298).
-                    ZoneWeights = wave.ZoneWeights,
+                    // Stage 3 Task 11 (spec §3.3 Р212/Р298).
                     EliteShareMiddle = wave.EliteShareMiddle,
                     EliteShareOuterGrowth = wave.EliteShareOuterGrowth,
                     EliteShareOuterCap = wave.EliteShareOuterCap,
                     // Task Т2 (app-ggvz, spec §3.4/§3.8): the four per-zone
-                    // wave cadence numbers — direct alias, same convention
-                    // ZoneWeights above already follows (Wave is balance
-                    // data, not topology; nothing in SimulationWorld's
-                    // constructor sizes an array off it).
+                    // wave cadence numbers — direct alias, the same
+                    // convention every array on this section follows (Wave is
+                    // balance data, not topology; nothing in
+                    // SimulationWorld's constructor sizes an array off it).
                     WavePauseByZone = wave.WavePauseByZone,
                     MaxAliveByZone = wave.MaxAliveByZone,
                     MaxSpawnsPerZonePerTick = wave.MaxSpawnsPerZonePerTick,
@@ -205,7 +203,7 @@ namespace Ring.Data
                 // CatalogIsCopiedIntoSimConfig is the test side of this).
                 // `loot`'s own array fields (DropChance/CellsPerMob/
                 // TransferSeconds) are NOT cloned — same direct-alias
-                // convention Wave.ZoneWeights above already follows, since
+                // convention Wave.WavePauseByZone above already follows, since
                 // Loot is balance data, not topology (nothing in
                 // SimulationWorld's constructor sizes an array off it).
                 // `null` on either parameter means "no override," same
@@ -592,7 +590,6 @@ namespace Ring.Data
             }
 
             ReqNonNegative(errors, "Wave.FirstWaveDelay", cfg.Wave.FirstWaveDelay);
-            ReqPositive(errors, "Wave.WavePause", cfg.Wave.WavePause);
             ReqNonNegative(errors, "Wave.SpawnRingInset", cfg.Wave.SpawnRingInset);
             ReqNonNegative(errors, "Wave.MinSpawnDistanceToPlayer", cfg.Wave.MinSpawnDistanceToPlayer);
             ReqPositive(errors, "Wave.BaseCount", cfg.Wave.BaseCount);
@@ -609,36 +606,6 @@ namespace Ring.Data
             // fixture — same precedent as Arena.MaxPlayers (Task 4) and
             // Hero.EdgeRequestMinTicks (app-zx8).
             ReqInRange(errors, "Wave.PerPlayerCountFrac", cfg.Wave.PerPlayerCountFrac, 0f, 2f);
-            // Stage 3 Task 11 (spec §3.3 Р211, coordinator R-56): the zone
-            // budget weights — exactly three (Outer/Middle/Core, Zone's own
-            // declared order), summing to 1 within float epsilon (same
-            // допуск form as every other share-of-a-whole rule in this
-            // file).
-            if (cfg.Wave.ZoneWeights == null || cfg.Wave.ZoneWeights.Length != 3)
-            {
-                errors.Add("Wave.ZoneWeights must have exactly 3 elements (Outer, Middle, Core) " +
-                    $"(got {cfg.Wave.ZoneWeights?.Length ?? 0}).");
-            }
-            else
-            {
-                float zoneWeightSum = cfg.Wave.ZoneWeights[0] + cfg.Wave.ZoneWeights[1]
-                    + cfg.Wave.ZoneWeights[2];
-                if (math.abs(zoneWeightSum - 1f) > 1e-4f)
-                {
-                    errors.Add("Wave.ZoneWeights must sum to 1 " +
-                        $"(got {zoneWeightSum:F5}: [{cfg.Wave.ZoneWeights[0]:F3}, " +
-                        $"{cfg.Wave.ZoneWeights[1]:F3}, {cfg.Wave.ZoneWeights[2]:F3}]).");
-                }
-                // Ф2 review A-1 = B-I2.2 (both reviewers, independently): the
-                // SUM alone is not the rule. {-0.5, 1.4, 0.1} sums to 1 and
-                // sails through — and SplitByZones then hands WaveSystem a
-                // NEGATIVE per-zone budget, which PendingTotal can never
-                // discharge, so the wave phase hangs for the rest of the match
-                // with no error anywhere. Per element, not just in aggregate.
-                for (int i = 0; i < cfg.Wave.ZoneWeights.Length; i++)
-                    ReqNonNegative(errors, $"Wave.ZoneWeights[{i}]", cfg.Wave.ZoneWeights[i]);
-            }
-
             // Ф2 review A-1 = B-I2.2: the three elite shares. Until R-60 turned
             // the periphery cap into a config field, "the share is in [0,1]" was
             // guaranteed by the constant 0.25 in code; after it, by nobody —
@@ -652,8 +619,8 @@ namespace Ring.Data
             ReqInRange(errors, "Wave.EliteShareOuterGrowth", cfg.Wave.EliteShareOuterGrowth, 0f, 1f);
             ReqInRange(errors, "Wave.EliteShareOuterCap", cfg.Wave.EliteShareOuterCap, 0f, 1f);
 
-            // Task Т2 (app-ggvz, spec §3.8 rule 1, Р320 uniquely Р336): each
-            // zone's own wave pause — gated at >= 2 ticks, not "> 0" and not
+            // Task Т2 (app-ggvz, spec §3.8 rule 1, Р320 as refined by Р336):
+            // each ring's own wave pause — gated at >= 2 ticks, not "> 0" and not
             // "one tick". TicksFromSeconds rounds to the nearest tick, so a
             // one-tick floor would never fire: TicksFromSeconds(0.02) =
             // round(0.6) = 1, and a one-tick pause genuinely does start a
@@ -1884,9 +1851,9 @@ namespace Ring.Data
         /// Task Т2 (app-ggvz, spec §3.8): the "array must have exactly
         /// Zones.Count elements" message, factored out — the idiom itself
         /// (`if (x == null || x.Length != N) errors.Add(...) else for (i)
-        /// Req...(...)`) was copied five times in this file (ZoneWeights
-        /// :608, CellsPerMob :994, TransferSeconds :1007, DropChance :1037,
-        /// ZoneRadius further down) with no shared home; WavePauseByZone and
+        /// Req...(...)`) was copied five times in this file (Wave.ZoneWeights
+        /// — deleted with Т4 — CellsPerMob, TransferSeconds, DropChance and
+        /// ZoneRadius) with no shared home; WavePauseByZone and
         /// MaxAliveByZone are the two callers that share the SAME N (Zones.
         /// Count, Outer/Middle/Core) and earn one. Only ever called from the
         /// invalid branch a caller already checked — it does not re-derive
@@ -1907,6 +1874,14 @@ namespace Ring.Data
         /// tick/seconds cross-check right above ReqAtLeast).
         static void ReqAtLeastTwoTicks(List<string> errors, string name, float seconds)
         {
+            // Т4 (Т2 tail): the same first line every other float validator in
+            // this file opens with (ReqPositive/ReqNonNegative/ReqInRange/
+            // ReqAtLeast). The refusal was already fail-safe without it — a
+            // NaN or an infinity cannot round to two or more ticks — but the
+            // MESSAGE was the odd one out, naming a tick count for a value
+            // that has no tick count. Now the caller is told what is actually
+            // wrong with the number, in the form the rest of the file uses.
+            ReqFinite(errors, name, seconds);
             int ticks = SimulationWorld.TicksFromSeconds(seconds);
             if (ticks < 2)
             {

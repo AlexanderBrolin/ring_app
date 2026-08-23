@@ -3,22 +3,33 @@ using UnityEngine;
 namespace Ring.Data
 {
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).
-    /// Field defaults mirror Ring.Simulation.Tests.TestConfigs.Default().Wave.
+    ///
+    /// ⚠ THE DEFAULTS HERE ARE NO LONGER A MIRROR OF
+    /// Ring.Simulation.Tests.TestConfigs.Default().Wave, and saying they were
+    /// stopped being true in Т2 (bd app-ggvz, spec §0/Р325). The cadence
+    /// numbers below are the numbers OF THE GAME; the fixture deliberately
+    /// ships its own scaled-down cadence, because the golden scenarios in
+    /// DeterminismTests run 3000-18000 ticks and the shipped ceilings would
+    /// turn a determinism check into a load test. Where the two agree they
+    /// agree ON PURPOSE and ConfigTests.AssertWaveEqual pins them with plain
+    /// equality; where they differ, that same helper pins the difference in
+    /// its three-part form (the BarrierTop precedent) so neither side can
+    /// drift unnoticed.
     [CreateAssetMenu(menuName = "Ring/Wave Config", fileName = "WaveConfig")]
     public sealed class WaveConfig : ScriptableObject
     {
         [Range(0f, 60f)] public float FirstWaveDelay = 2.5f;
-        [Range(0.1f, 60f)] public float WavePause = 4f;
         [Range(0f, 20f)] public float SpawnRingInset = 2f;
         [Range(0f, 50f)] public float MinSpawnDistanceToPlayer = 8f;
         [Range(1, 50)] public int BaseCount = 4;
         [Range(0, 20)] public int CountGrowth = 2;
         // Stage 2 Task 16 (spec §3.4): 24 -> 36, headroom for the x2.4 three-player scale.
-        // Stage 3 Task 12 (spec §3.13): 36 -> 72. The arena is three zones
-        // now and a wave is split across all three by ZoneWeights — at 36 the
-        // core's 10% share rounds to three or four mobs and the periphery
-        // never fills at all, so a wave could not populate the arena it is
-        // spread over.
+        // Stage 3 Task 12 (spec §3.13): 36 -> 72, because a single wave was
+        // then split across all three rings and at 36 the core's share
+        // rounded to three or four mobs while the periphery never filled at
+        // all. bd app-ggvz Т4 removed the split — every ring now draws a
+        // WHOLE wave of this size — so the number is a per-RING ceiling from
+        // here on, and 72 is what one ring may hold from one wave.
         [Range(1, 100)] public int MaxMobsPerWave = 72;
         [Range(1, 100)] public int MaxSpawnAttempts = 16;
         [Range(0, 100)] public int FallbackSlots = 24;
@@ -31,13 +42,15 @@ namespace Ring.Data
         // Stage 1 solo-sized waves at any player count.
         [Range(0f, 2f)] public float PerPlayerCountFrac = 0.7f;
 
-        // Stage 3 Task 11 (spec §3.3 Р211/Р212/Р298, coordinator R-58): the
-        // zone budget and elite-composition numbers. Array element ranges
-        // are not expressible via [Range] (Unity's attribute clamps the
-        // whole field, not per-element) — SimConfigBuilder.Validate is the
-        // real gate for ZoneWeights (sums to 1, exactly three elements,
-        // coordinator R-56).
-        public float[] ZoneWeights = { 0.45f, 0.45f, 0.10f };
+        // Stage 3 Task 11 (spec §3.3 Р212/Р298, coordinator R-58): the
+        // elite-composition numbers. ZoneWeights stood here until bd
+        // app-ggvz Т4 (owner decision К3): with an independent wave per ring
+        // there is no single budget left to apportion, so the weights had
+        // nothing to weigh.
+        //
+        // Both are indexed by the raid's DIFFICULTY STEP from Т4 on, not by
+        // a ring's own wave counter (spec Р315) — see
+        // WaveSystem.DifficultyStepFor.
         [Range(0f, 1f)] public float EliteShareMiddle = 0.35f;
         [Range(0f, 1f)] public float EliteShareOuterGrowth = 0.02f;
         // Coordinator R-60: the fourth wave field, not a code constant —
@@ -49,18 +62,20 @@ namespace Ring.Data
         [Range(0f, 1f)] public float EliteShareOuterCap = 0.25f;
 
         // Task Т2 (app-ggvz, spec §3.4/§3.8): four per-zone wave cadence
-        // numbers — the pause between a zone's waves and its living-mob
-        // ceiling are per RING (Zones.Count entries, Outer/Middle/Core
-        // order, matching ZoneWeights above); the spawn-per-tick cap smooths
-        // a wave's arrival across several ticks instead of seating it all
-        // at once (spec Р317); the difficulty step is the divisor of the
-        // clock-based difficulty curve (spec §3.3 Р315). Not consumed by
-        // WaveSystem yet — the per-zone cadence itself lands in Т3+, and
-        // this task's own SimConfigBuilder.Validate rules are what gate
-        // them meanwhile. Ranges are not expressible per element via
-        // [Range] (Unity clamps the whole field) -- SimConfigBuilder.
-        // Validate is the real gate, the same convention ZoneWeights and
-        // ArenaConfig.ZoneRadius already follow.
+        // numbers — the pause between a ring's waves and its living-mob
+        // ceiling are per RING (Zones.Count entries, Outer/Middle/Core, the
+        // Zone enum's own declared order); the spawn-per-tick cap smooths a
+        // wave's arrival across several ticks instead of seating it all at
+        // once (spec Р317); the difficulty step is the divisor of the
+        // clock-based difficulty curve (spec §3.3 Р315).
+        //
+        // WavePauseByZone and DifficultyStepSeconds are consumed by
+        // WaveSystem as of Т4 (the cadence itself); MaxAliveByZone and
+        // MaxSpawnsPerZonePerTick are still gated by SimConfigBuilder.Validate
+        // alone and get their consumer in Т5. Ranges are not expressible per
+        // element via [Range] (Unity clamps the whole field) --
+        // SimConfigBuilder.Validate is the real gate, the same convention
+        // ArenaConfig.ZoneRadius already follows.
         public float[] WavePauseByZone = { 20f, 30f, 30f };
         public int[] MaxAliveByZone = { 150, 110, 10 };
         [Range(1, 20)] public int MaxSpawnsPerZonePerTick = 2;

@@ -718,7 +718,16 @@ namespace Ring.Simulation.Tests
             cfg.Wave.BaseCount = 40;
             cfg.Wave.CountGrowth = 0;
             cfg.Wave.MaxMobsPerWave = 40;
-            cfg.Wave.ZoneWeights = new[] { 1f, 0f, 0f }; // the wave fills the OUTER ring only
+            // ⚠ Т4 (app-ggvz): the premise used to be bought with
+            // ZoneWeights = {1,0,0} — "the wave fills the OUTER ring only", so
+            // nothing it seats could be counted as retinue standing in the
+            // core. The weights are gone with the shared budget (owner
+            // decision К3) and the premise now holds by CADENCE instead:
+            // WaveSystem.Update walks the rings Outer -> Middle -> Core, the
+            // outer ring alone owes forty mobs against a ceiling of nine, and
+            // the reserve is therefore spent before the core is ever reached.
+            // LiveRetinue below counts ELITES in the core, and the outer
+            // ring's own elite share at difficulty step 1 is zero besides.
             cfg.Wave.MinSpawnDistanceToPlayer = 0f;
 
             var w = new SimulationWorld(1, cfg, playerCount: 3);

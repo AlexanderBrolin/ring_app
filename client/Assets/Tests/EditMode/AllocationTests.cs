@@ -74,6 +74,24 @@ namespace Ring.Simulation.Tests
             // its own Hp budget is derived from the SAME loop length used below,
             // not a constant living in a different file that could silently
             // drift out of sync with it.
+            //
+            // Т4 (app-ggvz, spec §3.3) EXTENDED THIS TEST rather than adding a
+            // second one: the per-ring cadence put two new things on the hot
+            // path, and both of them run inside the measured window below.
+            // (1) A FULL SCAN OF THE MOB ARRAY every tick, tallying the living
+            //     by MobState.SpawnZone — this fixture is saturated to
+            //     Arena.MaxMobs, so that scan is as long here as it will ever
+            //     be in a real raid.
+            // (2) A `System.Span<int> alive = stackalloc int[Zones.Count]` per
+            //     tick — the stack, never the heap. The precedent it follows is
+            //     the one SplitByZones used to hold before Т4 deleted it, and
+            //     the reason it is stated out loud is that an earlier task
+            //     already lost a buffer to the heap on this very path (the
+            //     reweighting variant of Р253's core-budget move, caught by
+            //     THIS test).
+            // The fixture is ZONELESS (TrioSaturated's own doc), so the run
+            // also covers the frozen-ring branch — Middle and Core are reset
+            // every tick — alongside Outer's live one.
             const int measuredTicks = 1000;
             var w = TestWorlds.TrioSaturated(out SimConfig config, measuredTicks);
 
@@ -115,6 +133,13 @@ namespace Ring.Simulation.Tests
             // the world's OWN player positions, not restated literals) — a
             // `new SimInput[3]` inside the lambda below would be the test's own
             // allocation, not the world's.
+            // Т4: proof that the wave director is genuinely RUNNING across the
+            // window and not short-circuited by something the fixture happens
+            // to do — the difficulty step is a function of the world's tick, so
+            // a director that keeps starting waves keeps moving this number,
+            // and a director that returned early would leave it frozen.
+            int stepBefore = w.WaveRef(Zone.Outer).WaveIndex;
+
             float2 p0Pos = w.PlayerAt(0).Pos, p1Pos = w.PlayerAt(1).Pos;
             var inputs = new SimInput[3];
             inputs[0] = new SimInput { FireHeld = true, AimPoint = p1Pos };
@@ -124,6 +149,15 @@ namespace Ring.Simulation.Tests
             {
                 for (int i = 0; i < measuredTicks; i++) w.TickAll(inputs);
             }, Is.Not.AllocatingGCMemory());
+
+            Assert.Greater(w.WaveRef(Zone.Outer).WaveIndex, stepBefore,
+                "fixture premise: the wave director must have kept starting waves across the "
+                + "measured window — the per-ring loop and its stackalloc are what this test "
+                + "now also covers, and a frozen director would measure neither");
+            for (Zone z = Zone.Middle; z <= Zone.Core; z++)
+                Assert.AreEqual(0, w.WaveRef(z).PendingTotal,
+                    $"fixture premise: {z} is frozen on this zoneless arena, so the freeze "
+                    + "branch is what ran for it on every measured tick");
 
             // Fix-round 1 (I-1b): fixture-sanity doesn't stop at the FIRST tick
             // of the measured window — prove the world was still loaded on the

@@ -6,96 +6,112 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.Tests
 {
-    /// Stage 3 Task 11 (spec §3.3 Р211/Р212/Р250/Р298, coordinator R-50..R-63):
-    /// the zone wave-spawn budget — WaveSystem.SplitByZones (the pure
-    /// largest-remainder split), WaveSystem.PendingRef (the one (zone,
-    /// archetype) -> WaveState field mapping), the elite/chaser/gunner mix
-    /// within a zone, and Geometry.ZoneSpawnRingRadius (each zone's own wave
+    /// Stage 3 Task 11 (spec §3.3 Р212/Р250/Р298, coordinator R-50..R-63):
+    /// what a ring's own wave is made of — WaveSystem.PendingRef (the one
+    /// archetype -> WaveState field mapping), the elite/chaser/gunner mix
+    /// inside a ring, and Geometry.ZoneSpawnRingRadius (each ring's own wave
     /// spawn ring).
     ///
-    /// Mutation discipline (coordinator notes, lesson 244/245/227): every
-    /// zone-mix fixture below ISOLATES the zone under test via a ZoneWeights
-    /// array like {1,0,0}/{0,1,0}/{0,0,1} — the OTHER two zones get zero
-    /// budget, so their (irrelevant, potentially rounding-ambiguous) mix
-    /// never has to be reasoned about, and the fixture's own numbers are
-    /// picked so every expected count is exact integer arithmetic (no
-    /// float .5 rounding-mode ambiguity anywhere).
+    /// ⚠ REWRITTEN IN Т4 (bd app-ggvz, owner decision К3). The zone BUDGET is
+    /// gone: there is no single wave to apportion any more, every ring draws
+    /// a whole one, and with it went WaveSystem.SplitByZones and
+    /// Wave.ZoneWeights. Three largest-remainder tests and
+    /// CoreBudgetMovesToMiddle_TotalUnchanged (Р253's own witness, deleted
+    /// with Р312) went with them, because the mechanisms they described no
+    /// longer exist; Debt_IsNeverLostOnRounding stayed, retargeted at the
+    /// split that does.
+    ///
+    /// Mutation discipline (coordinator notes, lesson 244/245/227): the mix
+    /// fixtures below no longer need to isolate a ring — each ring's wave is
+    /// independent by construction, so a fixture simply asserts on the ring
+    /// it names and never has to reason about its neighbors. Their numbers
+    /// are still picked so every expected count is exact integer arithmetic
+    /// (no float .5 rounding-mode ambiguity anywhere), and every one of them
+    /// blocks placement outright (MinSpawnDistanceToPlayer far past the
+    /// arena) so the DEBT stands still to be read.
+    ///
+    /// ⚠ WaveState.WaveIndex IS THE RAID'S DIFFICULTY STEP from Т4 on, not a
+    /// ring's wave ordinal (spec Р315). It can no longer be injected through
+    /// SetWaveForTest — StartWave ASSIGNS it from the world's tick — so the
+    /// growth-curve tests below drive the CLOCK instead, with a fixture whose
+    /// pause and difficulty step are the same two ticks: wave number k then
+    /// lands on tick FirstDelay + 2*(k-1) carrying step k exactly.
     public class WaveZoneTests
     {
-        // ------------------------------------------------------------------
-        // WaveSystem.SplitByZones — pure largest-remainder split, no world.
-        // ------------------------------------------------------------------
-
-        [Test]
-        public void SplitByZones_SumEqualsTotal_ForEveryTotalFromOneToFifty()
+        /// The shape every mix fixture below shares (rule 2 — before Т4 the
+        /// same six lines were copied into five of them): a three-ring arena
+        /// small enough to state, a first wave a few ticks in, and placement
+        /// blocked outright, so the DEBT stands still to be read instead of
+        /// turning into mobs.
+        ///
+        /// THE PAUSE AND THE DIFFICULTY STEP ARE BOTH TWO TICKS, which is what
+        /// makes the clock legible here: wave k starts on tick
+        /// FirstWaveTick + 2*(k - 1) and carries difficulty step k exactly.
+        /// Two ticks is also SimConfigBuilder.Validate's own floor for both
+        /// numbers (Р336), so this is a configuration the game would accept
+        /// rather than one only a hand-built fixture can reach.
+        static SimConfig MixFixture()
         {
-            // Mutation M1 (largest remainder -> simple truncation): for
-            // ANY of these fifty totals, floor(total*w) summed across the
-            // three zones under-counts by the leftover the remainder step
-            // exists to redistribute — the very first total (1) already
-            // floors to [0,0,0], sum 0 != 1.
-            ReadOnlySpan<float> weights = stackalloc float[] { 0.45f, 0.45f, 0.10f };
-            for (int total = 1; total <= 50; total++)
-            {
-                Span<int> perZone = stackalloc int[3];
-                WaveSystem.SplitByZones(total, weights, perZone);
-                Assert.AreEqual(total, perZone[0] + perZone[1] + perZone[2],
-                    $"total={total}: the three zone parts must sum back to the whole");
-            }
+            SimConfig c = TestConfigs.Default();
+            c.Arena.ZoneRadius = new[] { 20f, 40f };
+            c.Wave.CountGrowth = 0;
+            c.Wave.MaxMobsPerWave = 1000;
+            c.Wave.FirstWaveDelay = 0.1f;
+            float twoTicks = 2f * SimulationWorld.TickDt;
+            c.Wave.WavePauseByZone = new[] { twoTicks, twoTicks, twoTicks };
+            c.Wave.DifficultyStepSeconds = twoTicks;
+            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
+            return c;
         }
 
-        [Test]
-        public void SplitByZones_ZeroTotal_GivesThreeZeros()
-        {
-            // Errata E-7 ("SplitByZones(0) покрывается тестом"), kept
-            // SEPARATE from the loop above (coordinator: widening that
-            // test's own range to include 0 would leave its name
-            // "...FromOneToFifty" describing something its body no longer
-            // does — lesson 277).
-            ReadOnlySpan<float> weights = stackalloc float[] { 0.45f, 0.45f, 0.10f };
-            Span<int> perZone = stackalloc int[3];
-            WaveSystem.SplitByZones(0, weights, perZone);
-            CollectionAssert.AreEqual(new[] { 0, 0, 0 }, perZone.ToArray());
-        }
+        /// The tick every ring's FIRST wave lands on.
+        static int FirstWaveTick(in SimConfig c) =>
+            SimulationWorld.TicksFromSeconds(c.Wave.FirstWaveDelay);
+
+        /// The tick a wave carrying difficulty `step` starts on, for
+        /// MixFixture's own two-tick pause and two-tick step. Stated as
+        /// arithmetic over the fixture rather than by calling
+        /// WaveSystem.DifficultyStepFor — a test must not ask the function
+        /// under test what to expect (lesson 428).
+        static int TickOfStep(in SimConfig c, int step) =>
+            FirstWaveTick(in c) + 2 * (step - 1);
+
+        // ------------------------------------------------------------------
+        // The three-way split inside ONE ring — no world needed beyond the
+        // debt it leaves standing.
+        // ------------------------------------------------------------------
 
         [Test]
         public void Debt_IsNeverLostOnRounding()
         {
-            // Mutation M1's second victim: an adversarial single case where
-            // floor-only truncation visibly loses a unit. weights
-            // {0.2,0.3,0.5} against total 7 give exact shares [1.4,2.1,3.5]
-            // -- floor sums to 1+2+3=6, one short. The largest remainder
-            // (zone 2's 0.5) must claim the seventh unit, so the correct
-            // split is [1,2,4].
-            ReadOnlySpan<float> weights = stackalloc float[] { 0.2f, 0.3f, 0.5f };
-            Span<int> perZone = stackalloc int[3];
-            WaveSystem.SplitByZones(7, weights, perZone);
-            Assert.AreEqual(7, perZone[0] + perZone[1] + perZone[2],
-                "7 split by {0.2,0.3,0.5}: floor-only truncation gives 1+2+3=6, losing one " +
-                "unit of debt that the largest-remainder step (zone 2, remainder 0.5) must " +
-                "claim instead");
-        }
+            // ⚠ REWRITTEN IN Т4 against the split that still exists. Until Т4
+            // this test guarded SplitByZones' largest-remainder step, where
+            // floor-only truncation visibly lost units ({0.2,0.3,0.5} of 7
+            // floors to 1+2+3=6). That apportionment is gone with the shared
+            // budget, but the CLAIM survives one level down, where it is now
+            // the only place a wave can lose a mob to rounding: StartWave
+            // peels the elite share off with round(), then splits the
+            // REMAINDER with round() again.
+            //
+            // The structure that makes it exact is `rest = count - elites`
+            // and `chasers = rest - gunners` — subtraction, never a third
+            // round(). A mutant that computed chasers as
+            // `round(rest * (1 - gunnerShare))` instead would lose or invent
+            // a mob on exactly the half-integers this sweep walks over.
+            SimConfig c = MixFixture();
+            c.Wave.EliteShareMiddle = 0.5f;   // half of an odd count is a half-integer
+            for (int count = 1; count <= 40; count++)
+            {
+                SimConfig one = c;
+                one.Wave.BaseCount = count;
+                var w = new SimulationWorld(11, one);
+                TestWorlds.IdleTicks(w, FirstWaveTick(in one));
 
-        [Test]
-        public void SplitByZones_IsDeterministic_ForEqualRemainders()
-        {
-            // Mutation M2 (fixed tie-break order -> a different order): a
-            // dead tie between zone 0 and zone 1 (both floor to 0 with
-            // remainder 0.5) must always resolve to the LOWER index (Zone's
-            // own declared order, Outer first) -- flipping the scan's
-            // comparison (`>` -> `>=`) would hand the one leftover unit to
-            // zone 1 instead.
-            ReadOnlySpan<float> weights = stackalloc float[] { 0.5f, 0.5f, 0f };
-            Span<int> perZone = stackalloc int[3];
-            WaveSystem.SplitByZones(1, weights, perZone);
-            // Coordinator F1: one CollectionAssert over both zones instead
-            // of two sequential Asserts -- a mutation that instead hands
-            // the unit to zone 1 shows up in the SAME run, not masked by
-            // zone 0 having already failed (or, under a DIFFERENT
-            // mutation, having already passed and hidden zone 1's own
-            // defect).
-            CollectionAssert.AreEqual(new[] { 1, 0 }, new[] { perZone[0], perZone[1] },
-                "a tied remainder between zones 0 and 1 must go to the LOWER index (fixed order)");
+                WaveState mid = w.WaveRef(Zone.Middle);
+                Assert.AreEqual(count, mid.PendingTotal,
+                    $"count={count}: the three archetype debts must sum back to the ring's " +
+                    "whole wave — a mob lost to rounding is a debt that can never close");
+            }
         }
 
         // ------------------------------------------------------------------
@@ -155,38 +171,31 @@ namespace Ring.Simulation.Tests
         }
 
         // ------------------------------------------------------------------
-        // Zone mix: elite share peeled off first, existing GunnerShare
-        // splits what is left. Every fixture isolates ONE zone via
-        // ZoneWeights so the OTHER two never spawn and never need reasoning
-        // about.
+        // Ring mix: elite share peeled off first, the existing GunnerShare
+        // splits what is left. Each fixture asserts on the ring it names;
+        // since Т4 the neighbors run their own independent waves and never
+        // need reasoning about.
         // ------------------------------------------------------------------
 
         [Test]
         public void OuterZone_GetsNoElite_OnFirstWave()
         {
             // Mutation M4 ((WaveIndex-1) -> WaveIndex in the growth term):
-            // wave 1 is WaveIndex 1, so (WaveIndex-1)=0 and the real formula
+            // the first wave is difficulty step 1, so (WaveIndex-1)=0 and the real formula
             // gives exactly zero elite regardless of BaseCount. The mutant
             // reads WaveIndex directly (=1), giving
             // round(100*EliteShareOuterGrowth) = round(100*0.02) = 2 --
             // BaseCount is picked large enough (100) that this 2-vs-0 gap is
             // visible; a smaller zone budget could round the mutant back
             // down to 0 and hide the defect.
-            var c = TestConfigs.Default();
-            c.Arena.ZoneRadius = new[] { 20f, 40f };
-            c.Wave.ZoneWeights = new[] { 1f, 0f, 0f };
+            SimConfig c = MixFixture();
             c.Wave.BaseCount = 100;
-            c.Wave.CountGrowth = 0;
-            c.Wave.MaxMobsPerWave = 1000;
-            c.Wave.FirstWaveDelay = 0.1f;
-            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
 
             var w = new SimulationWorld(11, c);
-            int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
-            for (int i = 0; i < delayTicks; i++) w.Tick(default);
+            TestWorlds.IdleTicks(w, FirstWaveTick(in c));
 
             Assert.AreEqual(0, w.WaveRef(Zone.Outer).PendingElite,
-                "wave 1 (WaveIndex-1=0) must carry zero outer elite debt -- mutating " +
+                "step 1 (WaveIndex-1=0) must carry zero outer elite debt -- mutating " +
                 "(WaveIndex-1) to WaveIndex would give round(100*0.02)=2");
         }
 
@@ -194,30 +203,23 @@ namespace Ring.Simulation.Tests
         public void OuterZone_EliteShareGrows_WithWaveIndex_UpToCap()
         {
             // Mutation M3 (EliteShareOuterCap dropped from the min()):
-            // jumping straight to WaveIndex 20 (SetWaveForTest injects
-            // WaveIndex=19, Phase=Waiting, PhaseTicks=0 -- StartWave
-            // increments to 20 on the very next tick, same test seam
-            // WorldLifecycleTests already uses) gives a real, capped share
-            // of min(0.02*19, 0.25) = 0.25 -> round(100*0.25) = 25. The
-            // uncapped mutant gives 0.38 -> round(100*0.38) = 38.
-            var c = TestConfigs.Default();
-            c.Arena.ZoneRadius = new[] { 20f, 40f };
-            c.Wave.ZoneWeights = new[] { 1f, 0f, 0f };
+            // difficulty step 20 gives a real, capped share of
+            // min(0.02*19, 0.25) = 0.25 -> round(100*0.25) = 25. The uncapped
+            // mutant gives 0.38 -> round(100*0.38) = 38.
+            //
+            // ⚠ THE STEP IS REACHED BY TICKING, not by injecting it: since Т4
+            // StartWave ASSIGNS WaveIndex from the world's own tick (Р315), so
+            // the old seam — SetWaveForTest with WaveIndex=19 and a spent
+            // timer — would be silently overwritten and this test would have
+            // measured step 1 while claiming to measure step 20.
+            SimConfig c = MixFixture();
             c.Wave.BaseCount = 100;
-            c.Wave.CountGrowth = 0;
-            c.Wave.MaxMobsPerWave = 1000;
-            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
 
             var w = new SimulationWorld(11, c);
-            WaveState wv = w.WaveRef(Zone.Outer);
-            wv.WaveIndex = 19;
-            wv.Phase = WavePhase.Waiting;
-            wv.PhaseTicks = 0;
-            w.SetWaveForTest(Zone.Outer, wv);
-            w.Tick(default);
+            TestWorlds.IdleTicks(w, TickOfStep(in c, 20));
 
             Assert.AreEqual(25, w.WaveRef(Zone.Outer).PendingElite,
-                "wave 20: min(EliteShareOuterGrowth*19, EliteShareOuterCap) = min(0.38,0.25) " +
+                "step 20: min(EliteShareOuterGrowth*19, EliteShareOuterCap) = min(0.38,0.25) " +
                 "= 0.25 -> round(100*0.25) = 25 -- an uncapped share would give round(100*0.38) = 38");
         }
 
@@ -231,28 +233,18 @@ namespace Ring.Simulation.Tests
             // leaves BOTH of them green: wave 1 is still 0 no matter the
             // rate, wave 20 is still capped at 0.25 no matter the rate
             // (0.02*2*19=0.76 is capped exactly the same as 0.02*19=0.38).
-            // This test pins a wave where the share has grown but has NOT
-            // yet reached the cap: wave 6, min(0.02*5, 0.25) = 0.10 ->
+            // This test pins a step where the share has grown but has NOT
+            // yet reached the cap: step 6, min(0.02*5, 0.25) = 0.10 ->
             // round(100*0.10) = 10; the doubled-rate mutant gives
             // min(0.04*5, 0.25) = 0.20 -> round(100*0.20) = 20.
-            var c = TestConfigs.Default();
-            c.Arena.ZoneRadius = new[] { 20f, 40f };
-            c.Wave.ZoneWeights = new[] { 1f, 0f, 0f };
+            SimConfig c = MixFixture();
             c.Wave.BaseCount = 100;
-            c.Wave.CountGrowth = 0;
-            c.Wave.MaxMobsPerWave = 1000;
-            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
 
             var w = new SimulationWorld(11, c);
-            WaveState wv = w.WaveRef(Zone.Outer);
-            wv.WaveIndex = 5;
-            wv.Phase = WavePhase.Waiting;
-            wv.PhaseTicks = 0;
-            w.SetWaveForTest(Zone.Outer, wv);
-            w.Tick(default);
+            TestWorlds.IdleTicks(w, TickOfStep(in c, 6));
 
             Assert.AreEqual(10, w.WaveRef(Zone.Outer).PendingElite,
-                "wave 6: min(EliteShareOuterGrowth*5, EliteShareOuterCap) = min(0.10,0.25) = " +
+                "step 6: min(EliteShareOuterGrowth*5, EliteShareOuterCap) = min(0.10,0.25) = " +
                 "0.10 -> round(100*0.10) = 10 -- a doubled growth rate would give " +
                 "round(100*0.20) = 20");
         }
@@ -260,24 +252,17 @@ namespace Ring.Simulation.Tests
         [Test]
         public void MiddleZone_MixSumsToOne()
         {
-            // Isolated Middle budget (10), EliteShareMiddle=0.4 (fixture,
+            // The Middle ring's own wave (10), EliteShareMiddle=0.4 (fixture,
             // not the .asset's 0.35) -> elites=round(10*0.4)=4 exactly;
             // remainder 6 split by the EXISTING GunnerShareBase=0.2 (Task
-            // 16's own TestConfigs mirror, wave 1 so GunnerShareGrowth's
+            // 16's own TestConfigs mirror, step 1 so GunnerShareGrowth's
             // term is zero) -> gunners=round(6*0.2)=1, chasers=5.
-            var c = TestConfigs.Default();
-            c.Arena.ZoneRadius = new[] { 20f, 40f };
-            c.Wave.ZoneWeights = new[] { 0f, 1f, 0f };
+            SimConfig c = MixFixture();
             c.Wave.EliteShareMiddle = 0.4f;
             c.Wave.BaseCount = 10;
-            c.Wave.CountGrowth = 0;
-            c.Wave.MaxMobsPerWave = 1000;
-            c.Wave.FirstWaveDelay = 0.1f;
-            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
 
             var w = new SimulationWorld(11, c);
-            int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
-            for (int i = 0; i < delayTicks; i++) w.Tick(default);
+            TestWorlds.IdleTicks(w, FirstWaveTick(in c));
 
             int elite = w.WaveRef(Zone.Middle).PendingElite;
             int gunner = w.WaveRef(Zone.Middle).PendingGunner;
@@ -290,7 +275,7 @@ namespace Ring.Simulation.Tests
             // follows (it is reached on every run, real or mutant, that
             // does not break the subtraction structure itself).
             Assert.AreEqual(10, elite + gunner + chaser,
-                "the three-way mix must sum to the zone's own budget (10)");
+                "the three-way mix must sum to the ring's own wave (10)");
             // Coordinator F1: one CollectionAssert over all three
             // components instead of three sequential Asserts -- exact
             // counts, not just their sum, so a wrong EliteShareMiddle
@@ -302,22 +287,16 @@ namespace Ring.Simulation.Tests
         [Test]
         public void CoreZone_SpawnsOnlyElite()
         {
-            // Isolated Core budget (7). Spec's own table: Core's elite share
-            // is always 1, so the whole budget becomes elite regardless of
+            // The Core ring's own wave (7). Spec's own table: Core's elite
+            // share is always 1, so the whole wave becomes elite regardless of
             // GunnerShare -- rest is 0, so chaser and gunner are 0 no matter
-            // what GunnerShareBase/Growth happen to be.
-            var c = TestConfigs.Default();
-            c.Arena.ZoneRadius = new[] { 20f, 40f };
-            c.Wave.ZoneWeights = new[] { 0f, 0f, 1f };
+            // what GunnerShareBase/Growth happen to be. The core is running at
+            // all here because the match is still in Farm (§3.6).
+            SimConfig c = MixFixture();
             c.Wave.BaseCount = 7;
-            c.Wave.CountGrowth = 0;
-            c.Wave.MaxMobsPerWave = 1000;
-            c.Wave.FirstWaveDelay = 0.1f;
-            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
 
             var w = new SimulationWorld(11, c);
-            int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
-            for (int i = 0; i < delayTicks; i++) w.Tick(default);
+            TestWorlds.IdleTicks(w, FirstWaveTick(in c));
 
             // Coordinator F1: one CollectionAssert over all three
             // archetypes -- "only elite" is a claim about ALL THREE
@@ -328,7 +307,7 @@ namespace Ring.Simulation.Tests
             CollectionAssert.AreEqual(new[] { 7, 0, 0 },
                 new[] { w.WaveRef(Zone.Core).PendingElite, w.WaveRef(Zone.Core).PendingChaser,
                     w.WaveRef(Zone.Core).PendingGunner },
-                "Core spawns ONLY elite -- the whole budget (7) as elite, zero chaser, zero gunner");
+                "Core spawns ONLY elite -- its whole wave (7) as elite, zero chaser, zero gunner");
         }
 
         // ------------------------------------------------------------------
@@ -339,9 +318,17 @@ namespace Ring.Simulation.Tests
         // ------------------------------------------------------------------
 
         /// A wave fixture that will genuinely try to overfill the world: a
-        /// small cap, one huge wave, and no spawn-distance rule to block it.
-        /// The wave is aimed at the OUTER ring only, so nothing it spawns can
-        /// be mistaken for the retinue standing in the core.
+        /// small cap, one huge wave per ring, and no spawn-distance rule to
+        /// block it.
+        ///
+        /// ⚠ Т4: the ZoneWeights = {1,0,0} line that used to aim the wave at
+        /// the OUTER ring is gone with the weights themselves, and it is not
+        /// missed. Update walks the rings in the fixed order Outer -> Middle
+        /// -> Core, and the outer ring alone owes forty mobs against a
+        /// ceiling of nine, so the reserve is already spent before the middle
+        /// ring is reached and the core still spawns nothing at all — the very
+        /// property the old line bought, now a consequence of the cadence
+        /// rather than of a fixture number.
         static SimConfig ReserveFixture()
         {
             SimConfig c = TestConfigs.Open();
@@ -350,7 +337,6 @@ namespace Ring.Simulation.Tests
             c.Wave.BaseCount = 40;
             c.Wave.CountGrowth = 0;
             c.Wave.MaxMobsPerWave = 40;
-            c.Wave.ZoneWeights = new[] { 1f, 0f, 0f };
             c.Wave.MinSpawnDistanceToPlayer = 0f;
             return c;
         }
@@ -377,66 +363,61 @@ namespace Ring.Simulation.Tests
         [Test]
         public void CoreLosesItsWaveBudget_AfterActivation()
         {
+            // ⚠ REWRITTEN IN Т4 to the FREEZE semantics (spec §3.3/§3.6). The
+            // core does not "stop receiving budget" any more — there is no
+            // budget to receive; the ring is switched off outright, and the
+            // claim is now three-fold: phase back to Waiting, timer at zero,
+            // no debt. All three, because a ring left Active with a spent
+            // timer would fire a wave the instant the phase changed back, and
+            // a ring left holding debt would seat it the same tick.
             SimConfig c = TestConfigs.Open();
-            c.Wave.ZoneWeights = new[] { 0f, 0f, 1f }; // every unit would go to the core...
             c.Wave.BaseCount = 8;
             c.Wave.CountGrowth = 0;
             c.Wave.MaxMobsPerWave = 100;
-            c.Wave.FirstWaveDelay = 1e6f;             // ...but no wave starts until we allow it
             c.Wave.MinSpawnDistanceToPlayer = 1_000_000f; // block every spawn -- debt freezes
+            // The core has to have been RUNNING before the Director woke, or
+            // "it fell silent" is indistinguishable from "it never started":
+            // one tick of Farm seats a full core wave (8 elites of debt), and
+            // the activation on the next tick is what has to clear it.
+            c.Wave.FirstWaveDelay = SimulationWorld.TickDt;
 
             var w = new SimulationWorld(11, c, playerCount: 3);
+            TestWorlds.IdleTicks(w);
+            Assert.Greater(w.WaveRef(Zone.Core).PendingTotal, 0,
+                "premise: the core ran a wave of its own while the match was still Farm");
+
             TestWorlds.RelocatePlayerForTest(w, 1, TestWorlds.InsideCore(in c));
             TestWorlds.IdleTicks(w);
             Assert.AreEqual(MatchPhase.DirectorActive, w.Match.Phase, "premise: activated");
 
-            WaveState wave = w.WaveRef(Zone.Outer);
-            wave.PhaseTicks = 1; // let the next tick start the wave
-            w.SetWaveForTest(Zone.Outer, in wave);
+            // ONE MORE TICK, and the reason is the system order, not padding:
+            // WaveSystem.Update runs next-to-last and MatchFlowSystem.Update
+            // last, so the tick that ACTIVATES the Director had already asked
+            // the wave director its question while the match was still Farm.
+            // The core is frozen on the first tick that sees the new phase,
+            // which is this one.
             TestWorlds.IdleTicks(w);
 
-            Assert.AreEqual(0, w.WaveRef(Zone.Core).PendingElite
-                + w.WaveRef(Zone.Core).PendingChaser + w.WaveRef(Zone.Core).PendingGunner,
-                "with the Director standing there the core stops receiving wave budget (spec §3.4): " +
-                "a boss fight plus a live wave in the same room is a mess MVP balance cannot win");
-        }
-
-        [Test]
-        public void CoreBudgetMovesToMiddle_TotalUnchanged()
-        {
-            SimConfig c = TestConfigs.Open();
-            c.Wave.ZoneWeights = new[] { 0f, 0.5f, 0.5f }; // half the wave would be the core's
-            c.Wave.BaseCount = 8;
-            c.Wave.CountGrowth = 0;
-            c.Wave.MaxMobsPerWave = 100;
-            c.Wave.FirstWaveDelay = 1e6f;
-            c.Wave.MinSpawnDistanceToPlayer = 1_000_000f;
-
-            var w = new SimulationWorld(11, c, playerCount: 3);
-            TestWorlds.RelocatePlayerForTest(w, 1, TestWorlds.InsideCore(in c));
-            TestWorlds.IdleTicks(w);
-
-            WaveState wave = w.WaveRef(Zone.Outer);
-            wave.PhaseTicks = 1;
-            w.SetWaveForTest(Zone.Outer, in wave);
-            TestWorlds.IdleTicks(w);
-
-            int middle = w.WaveRef(Zone.Middle).PendingElite + w.WaveRef(Zone.Middle).PendingChaser
-                + w.WaveRef(Zone.Middle).PendingGunner;
-            // The whole wave, stated the way the wave director states it — the
-            // per-player scale is part of the size (three players here), so
-            // BaseCount alone would be a different number wearing the same name.
-            int waveSize = WaveSystem.CountForTest(in c.Wave, 0, w.PlayerCount);
-            Assert.AreEqual(waveSize, middle,
-                "the core's share MOVES to the middle zone (spec §3.4), it is not lost — a wave " +
-                "that quietly shrank would be a silent break of Р211's own closing-debt rule");
+            WaveState core = w.WaveRef(Zone.Core);
+            CollectionAssert.AreEqual(
+                new[] { (int)WavePhase.Waiting, 0, 0 },
+                new[] { (int)core.Phase, core.PhaseTicks, core.PendingTotal },
+                "with the Director standing there the core is frozen outright (spec §3.6): " +
+                "phase Waiting, timer zero, no debt — a boss fight plus a live wave in the " +
+                "same room is a mess MVP balance cannot win");
         }
 
         [Test]
         public void CoreDoesNotRegainBudget_AfterTheDirectorDies()
         {
+            // ⚠ REWRITTEN IN Т4 to the freeze semantics, same as
+            // CoreLosesItsWaveBudget_AfterActivation above. The half this test
+            // owns is the ONE-WAY LATCH: `!= Farm` rather than
+            // `== DirectorActive`, so GateOpen keeps the core switched off.
+            // The timer is forced spent before the last tick precisely so a
+            // mutant that only froze DirectorActive would have to start a
+            // wave here and be caught.
             SimConfig c = TestConfigs.Open();
-            c.Wave.ZoneWeights = new[] { 0f, 0f, 1f };
             c.Wave.BaseCount = 8;
             c.Wave.CountGrowth = 0;
             c.Wave.MaxMobsPerWave = 100;
@@ -457,14 +438,16 @@ namespace Ring.Simulation.Tests
             TestWorlds.IdleTicks(w, 5);
             Assert.AreEqual(MatchPhase.GateOpen, w.Match.Phase, "premise: the gate has opened");
 
-            WaveState wave = w.WaveRef(Zone.Outer);
-            wave.PhaseTicks = 1;
-            w.SetWaveForTest(Zone.Outer, in wave);
+            WaveState armed = w.WaveRef(Zone.Core);
+            armed.PhaseTicks = 1; // a spent timer: an unfrozen core WOULD start a wave now
+            w.SetWaveForTest(Zone.Core, in armed);
             TestWorlds.IdleTicks(w);
 
-            Assert.AreEqual(0, w.WaveRef(Zone.Core).PendingElite
-                + w.WaveRef(Zone.Core).PendingChaser + w.WaveRef(Zone.Core).PendingGunner,
-                "the budget does NOT come back after his death (Р253): the sharing window over his " +
+            WaveState core = w.WaveRef(Zone.Core);
+            CollectionAssert.AreEqual(
+                new[] { (int)WavePhase.Waiting, 0, 0 },
+                new[] { (int)core.Phase, core.PhaseTicks, core.PendingTotal },
+                "the core does NOT come back after his death (Р253): the sharing window over his " +
                 "body has to pass without fresh elites, or it stops being a window");
         }
 
@@ -517,10 +500,10 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ZoneSpawnRingRadius_MiddleOrCoreOnZonelessArena_ThrowsNamedInvariantViolation()
         {
-            // Coordinator R-64: the zoneless-routing invariant
-            // (WaveSystem.StartWave's ZonelessWeights + SplitByZones,
-            // R-53) is NONLOCAL -- held by two call sites, paid for by a
-            // third. Batch 2's rejected mutation run (M2+M11 together)
+            // Coordinator R-64: the zoneless-routing invariant is NONLOCAL --
+            // held elsewhere (WaveSystem.RingIsFrozen since Т4; the
+            // ZonelessWeights + SplitByZones pair before it), paid for here.
+            // Batch 2's rejected mutation run (M2+M11 together)
             // demonstrated exactly this failure mode live: a bare
             // IndexOutOfRangeException four frames deep, naming no broken
             // rule. This is that guard's own witness, not a mutation

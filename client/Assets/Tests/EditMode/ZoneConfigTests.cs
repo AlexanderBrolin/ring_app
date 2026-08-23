@@ -207,20 +207,6 @@ namespace Ring.Simulation.Tests
         // check only the first entry cannot pass.
 
         [Test]
-        public void Validate_NegativeZoneWeight_Throws()
-        {
-            // Ф2 review A-1 = B-I2.2 (two independent reviewers). The sum rule
-            // alone is satisfiable by a negative weight, and SplitByZones then
-            // hands WaveSystem a negative per-zone budget that PendingTotal can
-            // never discharge — the wave phase hangs for the rest of the match.
-            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-            wv.ZoneWeights = new[] { 1.5f, -0.5f, 0f }; // sums to 1, second element illegal
-            var ex = Assert.Throws<System.ArgumentException>(
-                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
-            Assert.That(ex.Message, Does.Contain("Wave.ZoneWeights[1]"));
-        }
-
-        [Test]
         public void Validate_EliteShareMiddleAboveOne_Throws()
         {
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
@@ -655,21 +641,6 @@ namespace Ring.Simulation.Tests
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("spawn point"));
-        }
-
-        [Test]
-        public void Validate_RejectsZoneWeightsNotSummingToOne()
-        {
-            // Coordinator R-56 (spec §3.3 Р211): Wave.ZoneWeights must sum
-            // to 1 -- WaveConfig's own default {0.45, 0.45, 0.10} already
-            // does (every OTHER fixture in this file inherits it
-            // unexamined via ConfigTests.MakeDefaults()), so this is the
-            // one test that deliberately breaks it.
-            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-            wv.ZoneWeights = new[] { 0.5f, 0.5f, 0.5f };
-            var ex = Assert.Throws<System.ArgumentException>(
-                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
-            Assert.That(ex.Message, Does.Contain("ZoneWeights"));
         }
 
         [Test]

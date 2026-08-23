@@ -81,7 +81,7 @@ namespace Ring.Simulation.Tests
                     LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
                     MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
-                Wave = new WaveSimConfig { FirstWaveDelay = 2.5f, WavePause = 4f,
+                Wave = new WaveSimConfig { FirstWaveDelay = 2.5f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f, BaseCount = 4,
                     CountGrowth = 2, MaxMobsPerWave = 72, MaxSpawnAttempts = 16,
                     FallbackSlots = 24, GunnerShareBase = 0.2f, GunnerShareGrowth = 0.05f,
@@ -96,18 +96,25 @@ namespace Ring.Simulation.Tests
                     // EliteShareOuterGrowth/Cap were "exactly what moves both
                     // golden scenarios". Both halves are false since Т12, and
                     // the second half was never true: DefaultArena() below
-                    // ships ZoneRadius {65, 92}, so the wave budget is split
-                    // three ways and EliteShareMiddle — not the Outer growth —
-                    // is what puts Elites into both golden runs; and Т11's own
-                    // mutations M4/M12 doubled the Outer growth rate and moved
-                    // NEITHER golden, because both scenarios live at
-                    // WaveIndex = 1 where the (WaveIndex - 1) factor is
-                    // identically zero. Leaving it stood was worse than a stale
-                    // number: DeterminismTests' pinned re-pin justification
-                    // says the opposite in as many words, so the repository
-                    // held two contradictory statements about its most
-                    // guarded constant.
-                    ZoneWeights = new[] { 0.45f, 0.45f, 0.10f },
+                    // ships zone boundaries, so EliteShareMiddle — not the
+                    // Outer growth — is what puts Elites into both golden
+                    // runs; and Т11's own mutations M4/M12 doubled the Outer
+                    // growth rate and moved NEITHER golden, because both
+                    // scenarios lived at WaveIndex = 1 where the
+                    // (WaveIndex - 1) factor is identically zero. Leaving it
+                    // stood was worse than a stale number: DeterminismTests'
+                    // pinned re-pin justification says the opposite in as many
+                    // words, so the repository held two contradictory
+                    // statements about its most guarded constant.
+                    //
+                    // ⚠ AMENDED AGAIN IN Т4 (app-ggvz): ZoneWeights stood here
+                    // and is gone with the single shared wave budget it
+                    // weighted (owner decision К3) — every ring now draws a
+                    // WHOLE wave. WaveIndex is no longer any ring's wave
+                    // ordinal either: it is the raid's DIFFICULTY STEP (Р315),
+                    // so the "(WaveIndex - 1) is identically zero" sentence
+                    // above holds only for the first DifficultyStepSeconds of
+                    // a run, not for a whole scenario.
                     EliteShareMiddle = 0.35f, EliteShareOuterGrowth = 0.02f,
                     EliteShareOuterCap = 0.25f,
                     // Task Т2 (app-ggvz, spec §3.8 Р325): the fixture's OWN

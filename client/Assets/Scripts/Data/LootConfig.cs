@@ -16,7 +16,7 @@ namespace Ring.Data
         // archetype indexed like MobType (Chaser/Gunner/Elite/Director), zone
         // like Zone (Outer/Middle/Core) — see LootSimConfig.DropChance's own
         // doc for why the Director's row stays unread. Array element ranges
-        // are not expressible via [Range] (same WaveConfig.ZoneWeights
+        // are not expressible via [Range] (same WaveConfig.WavePauseByZone
         // precedent) — SimConfigBuilder.Validate is the real gate, where one
         // exists (owner decision R-92: only a validation with a named
         // consequence is added).

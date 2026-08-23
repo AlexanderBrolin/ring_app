@@ -154,8 +154,7 @@ namespace Ring.Simulation.Core
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).
     public struct WaveSimConfig
     {
-        public float FirstWaveDelay, WavePause, SpawnRingInset,
-            MinSpawnDistanceToPlayer;
+        public float FirstWaveDelay, SpawnRingInset, MinSpawnDistanceToPlayer;
         public int BaseCount, CountGrowth, MaxMobsPerWave,
             MaxSpawnAttempts, FallbackSlots;
         public float GunnerShareBase, GunnerShareGrowth;
@@ -167,27 +166,31 @@ namespace Ring.Simulation.Core
         /// owns the formula. 0 keeps solo-sized waves at any player count.
         public float PerPlayerCountFrac;
 
-        /// Stage 3 Task 11 (spec §3.3 Р211/Р212/Р298): the zone budget and
-        /// elite-composition numbers. Stage 3 Task 13 (owner decision R-17):
-        /// EliteShareMiddle/EliteShareOuterGrowth/EliteShareOuterCap and
-        /// ZoneWeights are part of SimConfigHash.Compute as of this task —
-        /// R-17 lifted the whole deferred-wiring skip-set in one move, arrays
-        /// included. ZoneWeights sums to 1 across exactly three elements
-        /// (Outer/Middle/Core, Zone's own declared order) — validated in
-        /// SimConfigBuilder (coordinator R-56), never assumed here.
-        public float[] ZoneWeights;
-
-        /// Elite's flat share of the Middle zone's own budget (spec's own
+        /// Elite's flat share of the Middle ring's own wave (spec's own
         /// table, Р212) — a constant, does not grow with WaveIndex the way
-        /// the Outer share below does (the Core zone needs no field at all:
+        /// the Outer share below does (the Core ring needs no field at all:
         /// its share is always 1, spec's own table, Р212).
+        ///
+        /// Stage 3 Task 13 (owner decision R-17): the elite-share numbers are
+        /// part of SimConfigHash.Compute — R-17 lifted the whole
+        /// deferred-wiring skip-set in one move, arrays included.
+        /// Wave.ZoneWeights stood alongside them until bd app-ggvz Т4 (owner
+        /// decision К3): with an independent wave per ring there is no single
+        /// budget left to apportion.
         public float EliteShareMiddle;
 
-        /// Elite's share of the Outer zone's budget GROWS by this amount per
-        /// wave (`EliteShareOuterGrowth * (WaveIndex - 1)`, spec Р298) up to
-        /// EliteShareOuterCap below — "the periphery gets harder from the
-        /// clock, not from a static split" (ADR-001 §3.1, the exact clause
-        /// spec Р298 exists to satisfy).
+        /// Elite's share of the Outer ring's own wave GROWS by this amount
+        /// per DIFFICULTY STEP (`EliteShareOuterGrowth * (WaveIndex - 1)`,
+        /// spec Р298) up to EliteShareOuterCap below — "the periphery gets
+        /// harder from the clock, not from a static split" (ADR-001 §3.1, the
+        /// exact clause spec Р298 exists to satisfy).
+        ///
+        /// ⚠ WaveState.WaveIndex IS THAT STEP from bd app-ggvz Т4 on, not the
+        /// ring's own wave ordinal (spec Р315, WaveSystem.DifficultyStepFor):
+        /// with a per-ring counter, every clear pushed this curve back by a
+        /// whole pause, and a ring that was cleared often would have grown
+        /// SOFTER than one nobody touched. The clause above only holds with
+        /// the clock behind it.
         public float EliteShareOuterGrowth;
 
         /// Ceiling on the Outer zone's growing elite share above (spec's own
@@ -200,21 +203,22 @@ namespace Ring.Simulation.Core
         /// A fourth WaveSimConfig field, not a local const in WaveSystem.
         public float EliteShareOuterCap;
 
-        /// Task Т2 (app-ggvz, spec §3.3/§3.4/§3.8): the per-zone wave pause —
-        /// spec §3.3's PhaseTicks reload (both StartWave and a clear) is
-        /// designed to read this by Zone index (Outer/Middle/Core). Not wired
-        /// yet: WaveSystem still reads the single WavePause field above,
-        /// which this one is meant to replace once the per-zone cadence
-        /// lands (Т3+) and Т4 removes it. SimConfigBuilder.Validate already
-        /// gates it: exactly Zones.Count elements, each at least two ticks
-        /// (TicksFromSeconds rounds to the nearest tick, so a one-tick floor
-        /// would let a near-zero pause slip through).
+        /// Task Т2 (app-ggvz, spec §3.3/§3.4/§3.8): the per-ring wave pause,
+        /// read by Zone index (Outer/Middle/Core). WIRED as of Т4: it is the
+        /// PhaseTicks reload at BOTH ends of a ring's cycle — StartWave, and a
+        /// clear, where the FULL window is handed back however little of it
+        /// was left. It replaced the single arena-wide Wave.WavePause, which
+        /// Т4 deleted. SimConfigBuilder.Validate gates it: exactly Zones.Count
+        /// elements, each at least two ticks (TicksFromSeconds rounds to the
+        /// nearest tick, so a one-tick floor would let a near-zero pause slip
+        /// through).
         public float[] WavePauseByZone;
 
         /// Task Т2 (spec §3.4/§3.8): the living-mob ceiling per zone — spec
         /// §3.4's spawn guard is designed to check this before placing a
         /// mob, alongside the existing Arena-wide Director reserve. Not
-        /// wired yet (Т3+). SimConfigBuilder.Validate gates it: each zone at
+        /// wired yet — its consumer lands in Т5, and Т4 deliberately left it
+        /// alone. SimConfigBuilder.Validate gates it: each zone at
         /// least 1 (zero would leave that zone's debt permanently unpayable,
         /// spec Р321), and the three ceilings plus Flow.DirectorReserveSlots
         /// together must not exceed Arena.MaxMobs.
@@ -223,16 +227,19 @@ namespace Ring.Simulation.Core
         /// Task Т2 (spec §3.4/§3.8 Р317): caps how many of a zone's pending
         /// spawns get placed in a single tick, smoothing a wave's arrival
         /// across several ticks instead of seating it all at once. Not
-        /// wired yet (Т3+); SimConfigBuilder.Validate requires it positive.
+        /// wired yet — its consumer lands in Т5, together with MaxAliveByZone
+        /// above; SimConfigBuilder.Validate requires it positive meanwhile.
         public int MaxSpawnsPerZonePerTick;
 
         /// Task Т2 (spec §3.3/§3.8 Р315): the clock-based difficulty step's
         /// own divisor (`step = 1 + ticksSinceFirstWave / TicksFromSeconds(
-        /// DifficultyStepSeconds)`) — meant to replace indexing the wave-
-        /// size/elite-share curves by each zone's own wave counter, which
-        /// let a clean zone fall behind a passive one (spec Р315). Not
-        /// wired yet (Т3+); SimConfigBuilder.Validate requires at least two
-        /// ticks, same reasoning as WavePauseByZone above.
+        /// DifficultyStepSeconds)`) — it replaced indexing the wave-size and
+        /// elite-share curves by each ring's own wave counter, which let a
+        /// clean ring fall behind a passive one (spec Р315). WIRED as of Т4:
+        /// WaveSystem.DifficultyStepFor is its one reader, and
+        /// WaveState.WaveIndex carries the result.
+        /// SimConfigBuilder.Validate requires at least two ticks, same
+        /// reasoning as WavePauseByZone above.
         public float DifficultyStepSeconds;
     }
 

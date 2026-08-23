@@ -130,14 +130,13 @@ namespace Ring.Simulation.Core
 
         static ulong HashWave(ulong h, in WaveSimConfig c)
         {
-            h = StateHash64.Add(h, c.FirstWaveDelay); h = StateHash64.Add(h, c.WavePause);
+            h = StateHash64.Add(h, c.FirstWaveDelay);
             h = StateHash64.Add(h, c.SpawnRingInset); h = StateHash64.Add(h, c.MinSpawnDistanceToPlayer);
             h = StateHash64.Add(h, c.BaseCount); h = StateHash64.Add(h, c.CountGrowth);
             h = StateHash64.Add(h, c.MaxMobsPerWave); h = StateHash64.Add(h, c.MaxSpawnAttempts);
             h = StateHash64.Add(h, c.FallbackSlots);
             h = StateHash64.Add(h, c.GunnerShareBase); h = StateHash64.Add(h, c.GunnerShareGrowth);
             h = StateHash64.Add(h, c.PerPlayerCountFrac);
-            h = HashFloatArray(h, c.ZoneWeights);
             h = StateHash64.Add(h, c.EliteShareMiddle); h = StateHash64.Add(h, c.EliteShareOuterGrowth);
             h = StateHash64.Add(h, c.EliteShareOuterCap);
             // Task Т2 (app-ggvz, spec §3.8): the four per-zone wave cadence

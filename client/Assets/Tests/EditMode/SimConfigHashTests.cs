@@ -48,14 +48,18 @@ namespace Ring.Simulation.Tests
         public void EveryConfigNumberAffectsHash_Wave()
         {
             // Task Т2 (app-ggvz, spec §3.8): WavePauseByZone/MaxAliveByZone
-            // join ZoneWeights as skipped-by-the-sweep array fields, each
-            // covered by its own dedicated element-wise helper below.
-            // MaxSpawnsPerZonePerTick/DifficultyStepSeconds are plain
-            // scalars — AssertSectionAffectsHash's own reflection sweep
-            // already reaches them with no test-code change needed, the
-            // same way it already reaches BaseCount/GunnerShareBase/etc.
-            AssertSectionAffectsHash("Wave", "ZoneWeights", "WavePauseByZone", "MaxAliveByZone");
-            AssertFloatArrayFieldAffectsHash("Wave", "ZoneWeights");
+            // are skipped-by-the-sweep array fields, each covered by its own
+            // dedicated element-wise helper below. MaxSpawnsPerZonePerTick/
+            // DifficultyStepSeconds are plain scalars —
+            // AssertSectionAffectsHash's own reflection sweep already reaches
+            // them with no test-code change needed, the same way it already
+            // reaches BaseCount/GunnerShareBase/etc.
+            //
+            // ⚠ Т4: ZoneWeights was the third array here and is gone with the
+            // shared wave budget (owner decision К3). Its name had to leave
+            // BOTH lines — the skip-set is checked by NAME against the
+            // section's real fields, so a stale entry is itself a failure.
+            AssertSectionAffectsHash("Wave", "WavePauseByZone", "MaxAliveByZone");
             AssertFloatArrayFieldAffectsHash("Wave", "WavePauseByZone");
             AssertInt32ArrayFieldAffectsHash("Wave", "MaxAliveByZone");
         }

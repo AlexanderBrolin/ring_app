@@ -35,6 +35,50 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(Run(), Run());
         }
 
+        /// Т4 (app-ggvz, spec §3.2): retuning Wave.WavePauseByZone mid-match
+        /// does NOT re-arm a timer that is already counting. The new number
+        /// takes effect the next time the ring reloads its own timer, which is
+        /// at a wave start or at a clear and nowhere else.
+        ///
+        /// THIS IS ACCEPTED BEHAVIOR, AND THIS TEST IS WHAT MAKES IT A
+        /// DECISION RATHER THAN DRIFT. The alternative — snapping every live
+        /// timer to the new value — would let the owner's slider stall a wave
+        /// that was two ticks from arriving, or fire three rings at once the
+        /// moment he lowered the number, which is exactly the surprise a hot
+        /// tweak must not produce during a playtest. It also matches what
+        /// ApplyConfig does everywhere else: it clamps magnitudes against the
+        /// new ceilings and never re-seeds a running countdown.
+        [Test]
+        public void HotTweak_WavePauseChange_LeavesArmedTimersRunning()
+        {
+            SimConfig c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            TestWorlds.IdleTicks(w, 10);
+            int armed = w.WaveRef(Zone.Outer).PhaseTicks;
+            Assert.Greater(armed, 0, "premise: the outer ring's timer is mid-countdown");
+
+            SimConfig next = c;
+            // Far longer than the fixture's own {2, 3, 3}s, so "unchanged" and
+            // "reloaded" cannot possibly read the same number.
+            next.Wave.WavePauseByZone = new[] { 30f, 30f, 30f };
+            w.ApplyConfig(next);
+
+            Assert.AreEqual(armed, w.WaveRef(Zone.Outer).PhaseTicks,
+                "правка пауз перезарядила уже заряженный таймер: горячая правка меняет " +
+                "СЛЕДУЮЩЕЕ окно тишины, а не то, что уже идёт");
+
+            // ...and the new number IS what the ring reloads with, the first
+            // time it reloads at all. `armed` more ticks land exactly on the
+            // first wave, and a wave start is a reload.
+            TestWorlds.IdleTicks(w, armed);
+            Assert.AreEqual(WavePhase.Active, w.WaveRef(Zone.Outer).Phase,
+                "premise: the first wave of the outer ring has started");
+            Assert.AreEqual(
+                SimulationWorld.TicksFromSeconds(next.Wave.WavePauseByZone[(int)Zone.Outer]),
+                w.WaveRef(Zone.Outer).PhaseTicks,
+                "новая пауза не применилась при первой же перезарядке таймера кольца");
+        }
+
         [Test]
         public void ApplyConfig_ArenaTopologyChange_Throws()
         {

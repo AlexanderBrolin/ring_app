@@ -320,12 +320,14 @@ namespace Ring.Simulation.Core
         /// PushOutOfArc's own "start inside" guard, kept and documented for
         /// exactly this reason): callers never request Middle/Core on a
         /// zoneless arena (ZoneRadius.Length &lt; 2). That promise is NONLOCAL
-        /// — held jointly by WaveSystem.StartWave's zoneless branch
-        /// (ZonelessWeights = {1,0,0}, R-53) and by SplitByZones' own
-        /// correctness (a bug in either can route debt to Middle/Core with
-        /// no zone data to serve it), neither of which this method can see
-        /// or re-derive. ADDRESSEE of a violation is whichever of those two
-        /// broke the routing promise, not this method — but this method is
+        /// — held by WaveSystem.RingIsFrozen (bd app-ggvz Т4): on a zoneless
+        /// arena every ring but Outer is frozen, so no debt is ever assigned
+        /// to Middle/Core and no spawn is ever attempted for them. Until Т4
+        /// the same promise was held jointly by ZonelessWeights = {1,0,0} and
+        /// by SplitByZones' own correctness, which is TWO places a bug could
+        /// break it; now there is one, and it is the one a mutation against
+        /// this rule has to be aimed at. ADDRESSEE of a violation is whoever
+        /// broke that guard, not this method — but this method is
         /// where the broken promise would otherwise surface, four stack
         /// frames deep in a hot loop, as a bare IndexOutOfRangeException
         /// naming no rule at all (observed exactly this way, IndexOutOfRange
@@ -337,14 +339,14 @@ namespace Ring.Simulation.Core
             {
                 Zone.Core when arena.ZoneRadius.Length < 2 => throw new System.InvalidOperationException(
                     "ZoneSpawnRingRadius(Zone.Core): Arena.ZoneRadius has fewer than 2 elements. " +
-                    "The zoneless-routing invariant (WaveSystem.StartWave's ZonelessWeights + " +
-                    "SplitByZones, coordinator R-53) promises wave debt never reaches Core/Middle " +
-                    "on such an arena -- something upstream of this call broke that promise."),
+                    "The frozen-ring invariant (WaveSystem.RingIsFrozen, bd app-ggvz Т4) promises " +
+                    "every ring but Outer is frozen on such an arena, so wave debt never reaches " +
+                    "Core/Middle -- something upstream of this call broke that promise."),
                 Zone.Middle when arena.ZoneRadius.Length < 2 => throw new System.InvalidOperationException(
                     "ZoneSpawnRingRadius(Zone.Middle): Arena.ZoneRadius has fewer than 2 elements. " +
-                    "The zoneless-routing invariant (WaveSystem.StartWave's ZonelessWeights + " +
-                    "SplitByZones, coordinator R-53) promises wave debt never reaches Core/Middle " +
-                    "on such an arena -- something upstream of this call broke that promise."),
+                    "The frozen-ring invariant (WaveSystem.RingIsFrozen, bd app-ggvz Т4) promises " +
+                    "every ring but Outer is frozen on such an arena, so wave debt never reaches " +
+                    "Core/Middle -- something upstream of this call broke that promise."),
                 Zone.Core => arena.ZoneRadius[0],
                 Zone.Middle => arena.ZoneRadius[1],
                 Zone.Outer => arena.Radius,

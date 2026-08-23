@@ -1508,7 +1508,6 @@ namespace Ring.Simulation.Tests
         static void AssertWaveEqual(WaveSimConfig e, WaveSimConfig a)
         {
             Assert.AreEqual(e.FirstWaveDelay, a.FirstWaveDelay, Eps);
-            Assert.AreEqual(e.WavePause, a.WavePause, Eps);
             Assert.AreEqual(e.SpawnRingInset, a.SpawnRingInset, Eps);
             Assert.AreEqual(e.MinSpawnDistanceToPlayer, a.MinSpawnDistanceToPlayer, Eps);
             Assert.AreEqual(e.BaseCount, a.BaseCount);
@@ -1530,9 +1529,8 @@ namespace Ring.Simulation.Tests
             // copy line in Build left the whole suite green while the shipped
             // game lost the middle zone's elites. That is Р251 verbatim, and
             // AssertArenaEqual's own note warns about it three times over.
-            Assert.AreEqual(e.ZoneWeights.Length, a.ZoneWeights.Length);
-            for (int i = 0; i < e.ZoneWeights.Length; i++)
-                Assert.AreEqual(e.ZoneWeights[i], a.ZoneWeights[i], Eps, $"ZoneWeights[{i}]");
+            // (ZoneWeights was the fourth of them and stood right here until
+            // Т4 deleted the field with the shared wave budget it weighted.)
             Assert.AreEqual(e.EliteShareMiddle, a.EliteShareMiddle, Eps);
             Assert.AreEqual(e.EliteShareOuterGrowth, a.EliteShareOuterGrowth, Eps);
             Assert.AreEqual(e.EliteShareOuterCap, a.EliteShareOuterCap, Eps);

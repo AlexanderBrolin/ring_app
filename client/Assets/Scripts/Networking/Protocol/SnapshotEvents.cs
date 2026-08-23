@@ -189,6 +189,15 @@ namespace Ring.Networking.Protocol
         public MobType MobType;
 
         /// `WaveStarted`/`WaveCleared` only.
+        ///
+        /// ⚠ THE NUMBER IS THE RAID'S DIFFICULTY STEP from bd app-ggvz Т4 on,
+        /// not a wave ordinal, and it belongs to ONE RING (the ring whose wave
+        /// started or was cleared) rather than to the arena: the three rings
+        /// run independent cadences, so several events with the SAME number
+        /// are ordinary, and a number that repeats or skips across consecutive
+        /// events is not a gap in delivery. The step is a pure function of the
+        /// tick (Simulation.AI.WaveSystem.DifficultyStepFor); the wire shape,
+        /// the width and the codec are unchanged.
         public ushort WaveIndex;
     }
 

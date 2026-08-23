@@ -145,7 +145,9 @@ namespace Ring.Simulation.Loot
             // loop, hoisted OUTSIDE the per-container loop below rather
             // than allocated per-iteration — 2 trophies + a possible
             // repair kit, same "call outside the hot path, reuse the
-            // buffer" shape SplitByZones' own stackalloc follows.
+            // buffer" shape WaveSystem.Update's own per-ring `alive`
+            // stackalloc follows (SplitByZones held this precedent until
+            // Т4 deleted it).
             System.Span<byte> items = stackalloc byte[3];
             // Coordinator fix-round (Ф3 review m7): the filter is
             // IMMUTABLE across the loop (same w/arena/radius every

@@ -3,36 +3,53 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.AI
 {
-    /// Deterministic seed-driven wave director (spec §3.6, Task 22 Interfaces;
-    /// zone budget spec §3.3, Stage 3 Task 11). While Waiting, counts
-    /// PhaseTicks down to zero and starts a wave: the TOTAL size (BaseCount +
-    /// CountGrowth*(WaveIndex-1), capped at MaxMobsPerWave — unchanged since
-    /// Task 16, CountForTest below) is split across the three zones by
-    /// SplitByZones, and each zone's own share is split again into
-    /// Elite/Chaser/Gunner debt (StartWave) — nine numbers total, three in
-    /// each of the three per-zone WaveState instances (bd app-ggvz Т3). While
-    /// Active, every tick attempts exactly one spawn per outstanding debt
-    /// unit, zone-major then archetype-minor (Outer before Middle before
-    /// Core; within a zone, Chaser before Gunner before Elite — coordinator
-    /// R-50); a unit that can't find a valid spot leaves its debt untouched
-    /// for the next tick — the debt can never grow mid-wave, so this can't
-    /// hang even when the ring is fully blocked (spec §3.13 item 5). Once all
-    /// debt is gone (WaveState.PendingTotal summed over the three zones is
-    /// 0) and no mobs remain alive, the wave is cleared and the director goes
-    /// back to Waiting for WavePause seconds. Does not tick at all while no
-    /// player is alive (full death semantics landed in Task 23; extended from
-    /// "the one player" to "every player" in Stage 2 Task 8).
+    /// Deterministic seed-driven wave director. THREE INDEPENDENT CADENCES,
+    /// one per ring (bd app-ggvz Т4, spec §3.3): every WaveState instance
+    /// runs its own timer, its own phase and its own debt, and the rings are
+    /// only ever walked in the fixed order Outer -> Middle -> Core.
+    ///
+    /// THE TIMER RUNS ALWAYS, IN BOTH PHASES, and that is the whole fix.
+    /// While it counts down the ring is quiet; when it reaches zero the ring
+    /// gets a wave, whatever it was doing. What this replaces was the defect
+    /// the task exists for: until Т4 the queue was moved by a full wipe of
+    /// the WHOLE arena and by nothing else, so a live 252-second raid
+    /// three-handed met exactly one wave of ten mobs.
+    ///
+    /// DIFFICULTY COMES FROM THE CLOCK, NEVER FROM A RING'S OWN HISTORY
+    /// (DifficultyStepFor, spec Р315): the size (CountForTest) and the elite
+    /// share (EliteShareFor) are indexed by the raid's difficulty step, so
+    /// clearing a ring early buys SILENCE — a full pause window, handed back
+    /// at the clear — and never a weaker wave.
+    ///
+    /// EVERY RING GETS A WHOLE WAVE OF ITS OWN. There is no single budget to
+    /// divide any longer (SplitByZones and Wave.ZoneWeights are gone with Т4,
+    /// spec §3.7): each ring calls CountForTest once, and the composition
+    /// inside it is the existing elite-then-gunner-then-chaser split
+    /// (StartWave).
+    ///
+    /// A RING THAT IS NOT RUNNING IS FROZEN IDEMPOTENTLY (RingIsFrozen):
+    /// phase back to Waiting, timer to zero, all three debts to zero, EVERY
+    /// TICK rather than on a detected transition — nothing has to remember
+    /// whether the ring was live a tick ago, and no ring carries phantom debt
+    /// it will never spawn. Two cases are frozen: everything but Outer on a
+    /// zoneless arena, and Core from the moment the Director wakes (§3.6).
+    ///
+    /// While Active, every tick attempts one spawn per outstanding debt unit,
+    /// archetype-minor inside the ring (Chaser before Gunner before Elite —
+    /// coordinator R-50); a unit that cannot find a valid spot leaves its
+    /// debt untouched for the next tick — the debt can never grow mid-wave,
+    /// so this cannot hang even when the ring is fully blocked (spec §3.13
+    /// item 5). A ring is CLEARED when its OWN debt is closed and none of its
+    /// OWN mobs is left alive; that grows WorldStats.WavesCleared (still one
+    /// counter for the world, meaning "rings cleared" from this task on) and
+    /// reloads the ring's timer with the FULL WavePauseByZone window rather
+    /// than with whatever was left of it.
+    ///
+    /// Does not tick at all while no player is alive (full death semantics
+    /// landed in Task 23; extended from "the one player" to "every player" in
+    /// Stage 2 Task 8).
     internal static class WaveSystem
     {
-        /// Coordinator R-53: a zoneless arena (ArenaSimConfig.ZoneRadius.Length
-        /// &lt; 2 — every TestConfigs fixture before Т12) is a LEGAL input that
-        /// must mean exactly what it meant before this task: the WHOLE wave
-        /// budget lands in Zone.Outer, byte-for-byte the old one-group wave.
-        /// StartWave reaches this through SplitByZones (the SAME code path a
-        /// real 3-zone arena uses), not a parallel branch — a real
-        /// ZoneWeights array is simply swapped for this one.
-        static readonly float[] ZonelessWeights = { 1f, 0f, 0f };
-
         // Wave archetypes only — Chaser(0)/Gunner(1)/Elite(2). Director(3)
         // never spawns through a wave (spec Р248/§3.4).
         const int WaveArchetypeCount = 3;
@@ -49,60 +66,130 @@ namespace Ring.Simulation.AI
             if (!Targeting.NearestAlivePlayer(w, float2.zero, out int nearestIdx)) return;
             float2 nearestPlayerPos = w.PlayerAt(nearestIdx).Pos;
 
-            // Wave-cadence-per-zone (bd app-ggvz Т3): the debt now lives in
-            // three per-zone WaveState instances, but the CADENCE does not
-            // arrive until Т4 -- until then phase, timer, WaveIndex and
-            // AliveCount are still led by the Outer instance alone, so this
-            // task moves the shape of the state and nothing about behavior.
-            ref WaveState wave = ref w.WaveRef(Zone.Outer);
-            WaveSimConfig cfg = w.Config.Wave;
+            // ONE read of SimulationWorld.Config per TICK, not one per ring
+            // and not one per field: it is a PROPERTY returning the whole
+            // struct by value (the rule every caller in this file already
+            // obeys), so `w.Config.Arena.ZoneRadius.Length` inside the ring
+            // loop would copy all of SimConfig three times a tick to read one
+            // array length.
+            SimConfig config = w.Config;
+            WaveSimConfig cfg = config.Wave;
+            bool zoneless = config.Arena.ZoneRadius.Length < 2;
+            MatchPhase matchPhase = w.Match.Phase;
 
-            if (wave.Phase == WavePhase.Waiting)
+            // ONE pass over the mobs, counting the living by their RING OF
+            // ATTRIBUTION (MobState.SpawnZone, Т1) and not by where they
+            // happen to stand: a chaser that walked out of the middle ring is
+            // still the middle ring's wave, and a ring is cleared when ITS
+            // mobs are gone, not when the arena is empty. `stackalloc` keeps
+            // the hot path allocation-free (AllocationTests' own rule); this
+            // file has no `using System;`, hence the qualifier — the same one
+            // TryFindMobSpawnPos' neighbors below already carry.
+            System.Span<int> alive = stackalloc int[Zones.Count];
+            MobState[] mobs = w.Mobs;
+            int mobCount = w.MobCount;
+            for (int i = 0; i < mobCount; i++) alive[(int)mobs[i].SpawnZone]++;
+
+            for (int z = 0; z < Zones.Count; z++)
             {
-                wave.PhaseTicks--;
-                if (wave.PhaseTicks <= 0) StartWave(w, ref wave, in cfg, nearestPlayerPos);
-            }
+                var zone = (Zone)z;
+                ref WaveState wave = ref w.WaveRef(zone);
 
-            // Deliberately re-reads wave.Phase rather than branching on the
-            // Waiting check above: a wave that just started above falls straight
-            // through into working off its own debt this same tick (no wasted
-            // tick spent merely transitioning phase).
-            if (wave.Phase == WavePhase.Active)
-            {
-                // Zone-major, archetype-minor (coordinator R-50) — the SAME
-                // order StartWave fills debt in and HashWave reads it in.
-                for (int z = 0; z < Zones.Count; z++)
-                    for (int t = 0; t < WaveArchetypeCount; t++)
-                        SpawnPendingOfType(w, ref w.WaveRef((Zone)z), in cfg, (Zone)z, (MobType)t);
-
-                // The debt of the WHOLE world, summed over the three
-                // instances it now lives in -- reading the Outer instance
-                // alone would clear a wave that still owes mobs to the middle
-                // ring, which is a change of behavior hidden inside a
-                // refactor, not a refactor.
-                int pendingTotal = 0;
-                for (int z = 0; z < Zones.Count; z++)
-                    pendingTotal += w.WaveRef((Zone)z).PendingTotal;
-
-                if (pendingTotal == 0 && w.MobCount == 0)
+                if (RingIsFrozen(zone, zoneless, matchPhase))
                 {
-                    // Stage 2 Task 5: world-scoped counter — counted once per
-                    // match regardless of player count, not per player.
-                    w.WorldStatsRef.WavesCleared++;
-                    w.Emit(SimEventKind.WaveCleared, nearestPlayerPos, wave.WaveIndex, default, 0f);
+                    // Idempotent and unconditional, every tick, rather than on
+                    // a detected transition (spec §3.3): nothing has to
+                    // remember whether this ring was live a tick ago, and the
+                    // state cannot carry phantom debt for a ring that will
+                    // never spawn again. AliveCount is still written — the
+                    // ring's mobs are real and telemetry has to see them.
                     wave.Phase = WavePhase.Waiting;
-                    wave.PhaseTicks = SimulationWorld.TicksFromSeconds(cfg.WavePause);
+                    wave.PhaseTicks = 0;
+                    wave.PendingChaser = wave.PendingGunner = wave.PendingElite = 0;
+                    wave.AliveCount = alive[z];
+                    continue;
                 }
-            }
 
-            // Mirrors MobCount for wave-scoped telemetry/hash continuity (the field
-            // has been part of WaveState/StateHash since Task 5, before any system
-            // wrote to it). The clear-check above deliberately reads w.MobCount
-            // directly rather than this field — they're the same value by
-            // construction, this is just the seam DevOverlay/telemetry read off
-            // WaveState without needing a whole RenderSnapshot.
-            wave.AliveCount = w.MobCount;
+                // ONE unconditional decrement, in BOTH phases: while the ring
+                // is Active this is counting down to its NEXT wave, which is
+                // exactly what lets a wave arrive without a single kill.
+                wave.PhaseTicks--;
+                if (wave.PhaseTicks <= 0) StartWave(w, ref wave, in cfg, zone, nearestPlayerPos);
+
+                // Deliberately re-reads wave.Phase rather than branching on the
+                // countdown above: a wave that just started falls straight
+                // through into working off its own debt this same tick (no
+                // wasted tick spent merely transitioning phase).
+                if (wave.Phase == WavePhase.Active)
+                {
+                    // ONE spawn budget PER RING PER TICK, declared here and
+                    // threaded through all three archetypes by reference
+                    // (Т5, spec §3.4 Р317). Declaring it inside the archetype
+                    // loop — or letting SpawnPendingOfType keep its own — would
+                    // turn MaxSpawnsPerZonePerTick into "N per archetype", i.e.
+                    // three times the number the config actually names.
+                    int spawnedThisTick = 0;
+
+                    // Archetype-minor inside the ring (coordinator R-50) — the
+                    // SAME order StartWave fills the debt in and HashWave
+                    // reads it in. The ring-major half of that order is the
+                    // loop this sits inside.
+                    for (int t = 0; t < WaveArchetypeCount; t++)
+                        SpawnPendingOfType(w, ref wave, in cfg, zone, (MobType)t,
+                            alive, ref spawnedThisTick);
+
+                    // THIS ring's debt against THIS ring's living mobs — the
+                    // arena as a whole is no longer asked anything, which is
+                    // the interim Т3 left behind. `alive[z]` was kept current
+                    // by the spawns just above, so a ring can never be called
+                    // clear in the very tick it seated its own wave.
+                    if (wave.PendingTotal == 0 && alive[z] == 0)
+                    {
+                        // Stage 2 Task 5: world-scoped counter — counted once
+                        // per match regardless of player count, not per
+                        // player. Its MEANING moved with Т4 and that is a
+                        // decision, not drift (spec §3.3): with three
+                        // independent cycles it counts RINGS cleared rather
+                        // than waves. The results screen's own "waves
+                        // repelled" line (Presentation's DeathOverlayController)
+                        // reads true in the new sense too, so the label stays.
+                        w.WorldStatsRef.WavesCleared++;
+                        w.Emit(SimEventKind.WaveCleared, nearestPlayerPos, wave.WaveIndex, default, 0f);
+                        wave.Phase = WavePhase.Waiting;
+                        // THE FULL WINDOW, even when less of it was left: this
+                        // is the reward for clearing early (spec §3.3), and
+                        // the reason this assignment sits AFTER the decrement
+                        // above instead of before it.
+                        wave.PhaseTicks = SimulationWorld.TicksFromSeconds(cfg.WavePauseByZone[z]);
+                    }
+                }
+
+                wave.AliveCount = alive[z];
+            }
         }
+
+        /// THE ONE GUARD for "this ring runs no wave cycle at all" (spec
+        /// §3.3/§3.6) — one home, so a mutation against it has one point of
+        /// application and each of the two cases it covers is reachable by a
+        /// test of its own.
+        ///
+        /// A ZONELESS ARENA (ArenaSimConfig.ZoneRadius.Length &lt; 2 — a legal
+        /// input, lesson 315, and what several TestConfigs fixtures ship) has
+        /// exactly one ring, Zone.Outer. This guard is also what keeps
+        /// Geometry.ZoneSpawnRingRadius' named refusal for Middle/Core
+        /// unreachable: the promise once held jointly by ZonelessWeights and
+        /// SplitByZones is held here now, in a single place.
+        ///
+        /// THE CORE FALLS SILENT WITH THE DIRECTOR AND DOES NOT COME BACK
+        /// (owner decision К8, Р185/Р253). The condition is `!= Farm`, NOT
+        /// `== DirectorActive`, and that is the point: the latch is one-way,
+        /// so this one test says both "the core belongs to the Director from
+        /// the moment he wakes" and "waves never return to it after he dies"
+        /// — the window over his body has to pass without fresh elites, or it
+        /// stops being a window.
+        static bool RingIsFrozen(Zone zone, bool zoneless, MatchPhase matchPhase)
+            => (zone != Zone.Outer && zoneless)
+                || (zone == Zone.Core && matchPhase != MatchPhase.Farm);
 
         /// Wave size for `waveIndex`, scaled by the number of players and
         /// capped at MaxMobsPerWave (spec §3.4). Stage 2 Task 16 — the single
@@ -121,136 +208,86 @@ namespace Ring.Simulation.AI
             return math.min(scaled, cfg.MaxMobsPerWave);
         }
 
-        static void StartWave(SimulationWorld w, ref WaveState wave, in WaveSimConfig cfg, float2 eventPos)
+        /// THE ONE HOME OF THE DIFFICULTY CURVE (spec §3.3 Р315): the wave a
+        /// ring starts is sized by the CLOCK of the raid, never by how many
+        /// waves that ring has already seen. A counter would make every clear
+        /// push the curve back by a whole pause, so the player who clears well
+        /// would meet WEAKER waves than the one who ignores his ring — the
+        /// exact opposite of ADR-001 §3.1 ("difficulty is tied to the clock,
+        /// value to the place"). The step is stored NOWHERE (Р206): it is a
+        /// pure function of the tick, computed where it is needed.
+        ///
+        /// Named after this repository's own convention for pure mappings
+        /// (MobConfigFor, EliteShareFor, MaxHpFor, VisualScaleFor).
+        ///
+        /// Step 1 at the first wave and at every tick before it, then one more
+        /// per DifficultyStepSeconds of raid.
+        internal static int DifficultyStepFor(int tick, in WaveSimConfig cfg)
         {
-            wave.WaveIndex++;
+            int stepTicks = SimulationWorld.TicksFromSeconds(cfg.DifficultyStepSeconds);
+            // A NAMED REFUSAL TO DIVIDE, not math.max(1, stepTicks):
+            // SimConfigBuilder.Validate holds DifficultyStepSeconds at two
+            // ticks or more (Т2, Р336/Р320), so a non-positive divisor can
+            // only arrive from a hand-built fixture that skipped the builder.
+            // Same case and same answer as MatchFlowSystem's own `if
+            // (periodTicks <= 0) return;` (R-180): no curve at all rather than
+            // a DivideByZeroException, and never a silently invented number.
+            if (stepTicks <= 0) return 1;
+            int sinceFirstWave = tick - SimulationWorld.TicksFromSeconds(cfg.FirstWaveDelay);
+            return 1 + math.max(0, sinceFirstWave) / stepTicks;
+        }
+
+        /// Hands ONE ring a whole fresh wave of its own (spec §3.3/§3.4).
+        ///
+        /// THE SIZE COMES FROM THE CLOCK: WaveIndex is ASSIGNED this tick's
+        /// difficulty step, never incremented (Р334/Р315) — a counter would
+        /// let a ring that is cleared often fall behind a ring nobody
+        /// touches. `w.CurrentTick`, not `w.Tick`: the latter is the tick
+        /// METHOD, and the number the ring needs is the world's tick counter.
+        ///
+        /// THE DEBT IS ASSIGNED, NOT ACCUMULATED (Р305). Until Т4 a wave
+        /// could only begin on an empty debt, so a plain assignment was
+        /// merely correct; with a timer that fires whatever the ring is
+        /// doing, a wave can land on an unfinished one, and the remainder is
+        /// DELIBERATELY OVERWRITTEN — debt piling up on a saturated ring
+        /// would grow unbounded and discharge in one burst at the first
+        /// thinning, which is the bomb Р305 exists to refuse.
+        ///
+        /// The ring reloads its OWN pause here as well as at a clear, so the
+        /// next wave is one full window away either way.
+        static void StartWave(SimulationWorld w, ref WaveState wave, in WaveSimConfig cfg,
+            Zone zone, float2 eventPos)
+        {
+            wave.WaveIndex = DifficultyStepFor(w.CurrentTick, in cfg);
             int count = CountForTest(in cfg, wave.WaveIndex - 1, w.PlayerCount);
 
-            // Coordinator R-53: zoneless arena -> the whole budget goes to
-            // Outer, through the SAME SplitByZones call a real 3-zone arena
-            // uses (not a parallel branch).
-            bool zoneless = w.Config.Arena.ZoneRadius.Length < 2;
-            System.ReadOnlySpan<float> zoneWeights = zoneless ? ZonelessWeights : cfg.ZoneWeights;
-            System.Span<int> perZone = stackalloc int[Zones.Count];
-            SplitByZones(count, zoneWeights, perZone);
+            // Coordinator R-59: the elite share peels off first and the
+            // EXISTING GunnerShare formula (unchanged since Task 16) splits
+            // what is left — one extra line, not a second system. Both are
+            // indexed by the difficulty step, for the same reason the size is
+            // (Р315): a cleared ring must not come back softer.
+            float eliteShare = EliteShareFor(zone, wave.WaveIndex, in cfg);
+            int elites = (int)math.round(count * eliteShare);
+            int rest = count - elites;
+            float gunnerShare = math.saturate(cfg.GunnerShareBase
+                + cfg.GunnerShareGrowth * (wave.WaveIndex - 1));
+            int gunners = (int)math.round(rest * gunnerShare);
+            int chasers = rest - gunners;
 
-            // Stage 3 Т22 (spec §3.4 Р253, coordinator R-185): ONCE THE
-            // DIRECTOR HAS BEEN ACTIVATED THE CORE STOPS RECEIVING WAVE
-            // BUDGET, and its share MOVES to the middle zone rather than
-            // vanishing — a wave that quietly shrank would break Р211's own
-            // "the debt always closes" rule from the other end. A boss fight
-            // sharing its room with a live wave is a mess MVP balance cannot
-            // win three-handed, which is the whole reason for it.
-            //
-            // THE MOVE IS DONE ON THE SPLIT UNITS, NOT ON THE WEIGHTS, and
-            // that is a measured choice, not a stylistic one: reweighting
-            // needed a second stackalloc buffer to hold the adjusted weights,
-            // and AllocationTests.SaturatedTrio_TicksWithoutAllocations caught
-            // that buffer allocating on the hot path. Moving whole units after
-            // the split costs nothing, and it makes the "total unchanged"
-            // promise exact by construction — integers, no second rounding.
-            //
-            // THE CONDITION IS `!= Farm`, NOT `== DirectorActive`, AND THAT IS
-            // THE POINT (Р253): the latch is one-way, so this single test also
-            // says "and the budget never comes back after he dies" — the
-            // sharing window over his body has to pass without fresh elites,
-            // or it stops being a window. A raid that ended without anyone
-            // entering the core reads the same way; its waves no longer matter.
-            if (!zoneless && w.Match.Phase != MatchPhase.Farm)
-            {
-                perZone[(int)Zone.Middle] += perZone[(int)Zone.Core];
-                perZone[(int)Zone.Core] = 0;
-            }
-
-            for (int z = 0; z < Zones.Count; z++)
-            {
-                var zone = (Zone)z;
-                int zoneBudget = perZone[z];
-
-                // Coordinator R-59: elite share peels off first, the
-                // EXISTING GunnerShare formula (unchanged since Task 16)
-                // splits what is left — one extra line, not a second
-                // system.
-                float eliteShare = EliteShareFor(zone, wave.WaveIndex, in cfg);
-                int elites = (int)math.round(zoneBudget * eliteShare);
-                int rest = zoneBudget - elites;
-                float gunnerShare = math.saturate(cfg.GunnerShareBase
-                    + cfg.GunnerShareGrowth * (wave.WaveIndex - 1));
-                int gunners = (int)math.round(rest * gunnerShare);
-                int chasers = rest - gunners;
-
-                // Fresh wave: every zone's debt starts at 0 (the Waiting ->
-                // Active transition only fires once WaveState.PendingTotal ==
-                // 0), so a plain assignment through the ONE mapping home
-                // (coordinator R-51) is correct, not an accumulation.
-                ref WaveState zoneWave = ref w.WaveRef(zone);
-                PendingRef(ref zoneWave, MobType.Elite) = elites;
-                PendingRef(ref zoneWave, MobType.Gunner) = gunners;
-                PendingRef(ref zoneWave, MobType.Chaser) = chasers;
-            }
+            // Through the ONE mapping home (coordinator R-51), never by
+            // touching the three fields directly.
+            PendingRef(ref wave, MobType.Elite) = elites;
+            PendingRef(ref wave, MobType.Gunner) = gunners;
+            PendingRef(ref wave, MobType.Chaser) = chasers;
 
             // eventPos (Stage 2 Task 8): the nearest-alive-player position
             // Update already resolved above — see its own doc for why
-            // StartWave doesn't re-resolve it itself.
+            // StartWave doesn't re-resolve it itself. The number the event
+            // carries is the DIFFICULTY STEP from this task on, not a wave
+            // ordinal (SnapshotEvents' own doc says so on the wire side).
             w.Emit(SimEventKind.WaveStarted, eventPos, wave.WaveIndex, default, 0f);
             wave.Phase = WavePhase.Active;
-        }
-
-        /// Splits `total` indivisible units across `weights.Length` zones by
-        /// the LARGEST REMAINDER method (Hamilton apportionment) with a FIXED
-        /// zone order for tie-breaking (spec §3.3 Р211): every zone first
-        /// gets floor(total*weight), then the leftover units (total minus
-        /// that sum) go one-by-one to the zones with the largest fractional
-        /// remainder, ties broken by the LOWER index (Zone's own declared
-        /// order, Outer first) — so the parts always sum to EXACTLY `total`
-        /// no matter how the rounding falls (a naive per-zone round() can
-        /// under- or overshoot `total` by up to the number of zones, and
-        /// Р211 requires the debt to close, never drift).
-        ///
-        /// `leftover` itself can legitimately be 0 (every zone's exact share
-        /// already lands on an integer, e.g. total=0, or total=20 against
-        /// {0.45,0.45,0.10}) — the loop below is bounded by `leftover`
-        /// exactly, not forced to run at least once, which is what keeps
-        /// SplitByZones(0, ...) genuinely a no-op (WaveZoneTests.
-        /// SplitByZones_ZeroTotal_GivesThreeZeros) instead of inventing a
-        /// unit of debt nobody asked for.
-        ///
-        /// PRECONDITION, not checked (coordinator F5, R-36's own
-        /// "defensive-only, not load-bearing" precedent): `weights.Length
-        /// == perZone.Length`. Both live production call sites hand this
-        /// method a length-3 span on both sides (StartWave's `perZone` and
-        /// either `cfg.Wave.ZoneWeights` — SimConfigBuilder.Validate's own
-        /// new rule fixes it at exactly 3 elements — or the length-3
-        /// `ZonelessWeights` fallback), so the mismatch this precondition
-        /// names cannot occur through any path SimConfigBuilder.Build
-        /// gates. A hand-built fixture that skips the builder and violates
-        /// it gets `IndexOutOfRangeException` from `perZone[i]`/
-        /// `perZone[best]` (mismatched lengths) — a loud framework
-        /// exception, not a silently wrong split.
-        internal static void SplitByZones(int total, System.ReadOnlySpan<float> weights,
-            System.Span<int> perZone)
-        {
-            int n = weights.Length;
-            System.Span<float> remainder = stackalloc float[n];
-            int assigned = 0;
-            for (int i = 0; i < n; i++)
-            {
-                float exact = total * weights[i];
-                int flr = (int)math.floor(exact);
-                perZone[i] = flr;
-                remainder[i] = exact - flr;
-                assigned += flr;
-            }
-
-            int leftover = total - assigned;
-            for (int u = 0; u < leftover; u++)
-            {
-                int best = 0;
-                for (int i = 1; i < n; i++)
-                    if (remainder[i] > remainder[best]) best = i;
-                perZone[best]++;
-                remainder[best] = -1f; // claimed -- never picked twice
-            }
+            wave.PhaseTicks = SimulationWorld.TicksFromSeconds(cfg.WavePauseByZone[(int)zone]);
         }
 
         /// The ONE home for "archetype -> which WaveState field carries its
@@ -302,8 +339,19 @@ namespace Ring.Simulation.AI
         /// instead of hanging: a failed attempt neither grows nor re-tries
         /// within the same tick, it just leaves the loop counter to advance
         /// to the next (still-pending) unit.
+        ///
+        /// THREE LIMITS STAND IN THE LOOP, and every one of them leaves the
+        /// debt where it is for the next tick (Т5): the Director's arena-wide
+        /// slot reserve, the ring's living-mob ceiling, and the ring's
+        /// per-tick spawn budget. `alive` is the WHOLE per-ring tally Update
+        /// scanned this tick — not one ring's number — because the ceiling is
+        /// read and bumped through the same array Update's own clear check
+        /// reads afterwards. `spawnedThisTick` is `ref` and belongs to the
+        /// RING, not to this call: the method runs once per archetype, so a
+        /// by-value counter would spend the ring's budget three times over.
         static void SpawnPendingOfType(SimulationWorld w, ref WaveState wave,
-            in WaveSimConfig cfg, Zone zone, MobType type)
+            in WaveSimConfig cfg, Zone zone, MobType type,
+            System.Span<int> alive, ref int spawnedThisTick)
         {
             // Stage 3 Т22 (spec §3.4 Р254, coordinator R-182): THE DIRECTOR'S
             // SLOT RESERVE, HELD FOR THE WHOLE RAID. The wave stops
@@ -329,10 +377,34 @@ namespace Ring.Simulation.AI
             for (int i = 0; i < n; i++)
             {
                 if (w.MobCount >= ceiling) return; // reserve — debt stays, retried next tick
+                // Т5 (spec §3.4, owner decisions К6/Р317): the ring's own two
+                // limits, standing here for exactly the reasons the reserve
+                // paragraph above already gives — before the placement search,
+                // and deliberately not touching WorldStats.MobSpawnsSkipped,
+                // because neither of them is the arena refusing a spawn. The
+                // first is HOW MANY of this ring's mobs may stand at once, the
+                // second is HOW MANY of them may be seated in one tick.
+                //
+                // A RING WHOSE CEILING IS BELOW ITS WAVE IS NEVER CLEARED, and
+                // that is intended rather than tolerated (spec §3.4): its debt
+                // cannot reach zero, so its phase stays Active and its window
+                // of quiet never comes. For the core, whose ceiling is a
+                // garrison rather than a farm, that is the whole point.
+                if (alive[(int)zone] >= cfg.MaxAliveByZone[(int)zone]) return; // debt stays
+                if (spawnedThisTick >= cfg.MaxSpawnsPerZonePerTick) return;    // debt stays
                 if (!TryFindMobSpawnPos(w, in cfg, zone, type, out float2 pos)) continue; // debt stays
                 if (w.SpawnMob(type, pos, zone) < 0) continue; // MaxMobs cap — debt stays (MobSpawnsSkipped bumped)
 
                 pending--;
+                // BOTH counters follow the spawn WITHIN the tick. The ring's
+                // live count, because Update's clear check reads it after this
+                // loop and a stale zero would call a ring cleared in the very
+                // tick it seated its wave — and because the ceiling above is
+                // read once per attempt, so without this a single wave would
+                // step straight over it. The tick budget, because the same
+                // holds for it one archetype at a time.
+                alive[(int)zone]++;
+                spawnedThisTick++;
             }
         }
 

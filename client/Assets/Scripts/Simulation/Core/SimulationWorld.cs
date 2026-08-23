@@ -290,12 +290,20 @@ namespace Ring.Simulation.Core
             // Interfaces) — WavePhase.Waiting is the enum's zero value, but
             // PhaseTicks must be set explicitly or the countdown would start
             // already expired and fire a wave on tick 1.
+            //
+            // ALL THREE RINGS, one and the same number (bd app-ggvz Т4, spec
+            // §3.3): the rings do not need staggered starts because they
+            // diverge by themselves on their own pauses (Wave.WavePauseByZone),
+            // and a ring left at PhaseTicks 0 would fire a wave on tick 1
+            // instead — the very defect this explicit assignment exists to
+            // rule out, just moved to the two rings Т3 had no cadence for yet.
             _waves = new WaveState[Zones.Count];
-            _waves[(int)Zone.Outer] = new WaveState
-            {
-                Phase = WavePhase.Waiting,
-                PhaseTicks = TicksFromSeconds(config.Wave.FirstWaveDelay)
-            };
+            for (int z = 0; z < Zones.Count; z++)
+                _waves[z] = new WaveState
+                {
+                    Phase = WavePhase.Waiting,
+                    PhaseTicks = TicksFromSeconds(config.Wave.FirstWaveDelay)
+                };
             _mobs = new MobState[config.Arena.MaxMobs];
             _sepForces = new float2[config.Arena.MaxMobs];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
