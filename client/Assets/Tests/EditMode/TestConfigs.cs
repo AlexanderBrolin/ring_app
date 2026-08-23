@@ -82,7 +82,20 @@ namespace Ring.Simulation.Tests
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
                     MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f,
-                    SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f, BaseCount = 4,
+                    SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f,
+                    // Task Т6 (app-ggvz, owner decision К5/spec Р325):
+                    // BaseCount is a DELIBERATE MIRROR BREAK, same category as
+                    // WeaponConfig.AmmoStart above and DefaultArena's own
+                    // BarrierTop. WaveConfig's C# default moved to 16 (the
+                    // game's starting wave, x4 by owner decision); the fixture
+                    // deliberately stays at 4, because the golden scenarios in
+                    // DeterminismTests run 3000-18000 ticks and a fixture wave
+                    // of round(16 * 2.4) = 38 per ring would turn a
+                    // determinism check into a load test. The divergence is
+                    // pinned in triple form by
+                    // ConfigTests.Build_DefaultAssets_MatchesTestConfigsBaseline,
+                    // NOT by AssertWaveEqual, which excludes the field.
+                    BaseCount = 4,
                     CountGrowth = 2, MaxMobsPerWave = 72, MaxSpawnAttempts = 16,
                     FallbackSlots = 24, GunnerShareBase = 0.2f, GunnerShareGrowth = 0.05f,
                     // Stage 2 Task 16: mirrors WaveConfig's C# default
@@ -90,6 +103,17 @@ namespace Ring.Simulation.Tests
                     PerPlayerCountFrac = 0.7f,
                     // Stage 3 Task 11: mirrors WaveConfig's C# defaults (two-
                     // sources-of-numbers discipline — test/code-default side).
+                    //
+                    // ⚠ AMENDED IN Т6 (app-ggvz, decision Р311): the "mirrors"
+                    // claim above no longer covers EliteShareOuterGrowth. The
+                    // game's C# default moved to 0.007f so the outer ring's
+                    // elite share saturates on minute 12 rather than minute
+                    // 4.5 (ADR-001 §3.1); the fixture stays at 0.02f, and
+                    // NOTE THE DIRECTION -- here the fixture is the LARGER of
+                    // the two, so this is not a "scaled-down fixture" case.
+                    // EliteShareMiddle and EliteShareOuterCap still mirror.
+                    // The break is pinned in triple form by
+                    // ConfigTests.Build_DefaultAssets_MatchesTestConfigsBaseline.
                     //
                     // ⚠ REWRITTEN IN Т12 (Ф2 review B-I4): the Т11 text here
                     // said this arena was ZONELESS and that

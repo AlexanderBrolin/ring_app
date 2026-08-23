@@ -8,13 +8,26 @@ namespace Ring.Data
     /// Ring.Simulation.Tests.TestConfigs.Default().Wave, and saying they were
     /// stopped being true in Т2 (bd app-ggvz, spec §0/Р325). The cadence
     /// numbers below are the numbers OF THE GAME; the fixture deliberately
-    /// ships its own scaled-down cadence, because the golden scenarios in
+    /// ships its own cadence, because the golden scenarios in
     /// DeterminismTests run 3000-18000 ticks and the shipped ceilings would
-    /// turn a determinism check into a load test. Where the two agree they
-    /// agree ON PURPOSE and ConfigTests.AssertWaveEqual pins them with plain
-    /// equality; where they differ, that same helper pins the difference in
-    /// its three-part form (the BarrierTop precedent) so neither side can
-    /// drift unnoticed.
+    /// turn a determinism check into a load test.
+    ///
+    /// THE DIVERGENCE HAS TWO CAUSES AND TWO DIRECTIONS, so "the fixture is
+    /// scaled down" is only half of it (amended in Т6). Т2's three cadence
+    /// fields are indeed scaled down (the fixture is the smaller side); Т6's
+    /// two are the opposite kind -- the OWNER RAISED the shipped number and
+    /// the fixture stayed put, upward for BaseCount (16 shipped against the
+    /// fixture's 4, decision К5) and DOWNWARD for EliteShareOuterGrowth
+    /// (0.007 shipped against the fixture's 0.02, decision Р311), so on that
+    /// last field the fixture is the LARGER of the two.
+    ///
+    /// Where the two sources agree they agree ON PURPOSE and
+    /// ConfigTests.AssertWaveEqual pins them with plain equality. Where they
+    /// differ, AssertWaveEqual EXCLUDES the field by name and the difference
+    /// is pinned in three-part form (the BarrierTop precedent) at
+    /// AssertWaveEqual's caller,
+    /// ConfigTests.Build_DefaultAssets_MatchesTestConfigsBaseline -- so
+    /// neither side can drift unnoticed.
     [CreateAssetMenu(menuName = "Ring/Wave Config", fileName = "WaveConfig")]
     public sealed class WaveConfig : ScriptableObject
     {

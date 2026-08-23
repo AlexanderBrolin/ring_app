@@ -13,8 +13,15 @@ namespace Ring.Simulation.Tests
     /// expression over TestConfigs — never a literal lifted out of a .asset.
     public class WaveScalingTests
     {
-        /// The one number spec §3.4 states end to end: BaseCount 4, three
-        /// players, PerPlayerCountFrac 0.7 => 4 x 2.4 = 9.6 => round = 10.
+        /// The one number Stage 2 Task 16's spec §3.4 stated end to end:
+        /// BaseCount 4, three players, PerPlayerCountFrac 0.7 => 4 x 2.4
+        /// = 9.6 => round = 10. ⚠ The QUALIFIER matters (amended in Т6):
+        /// the live wave-cadence spec's own §3.4 now ships BaseCount 16 and
+        /// works the same example to round(16 x 2.4) = 38. This test is
+        /// unaffected either way -- it holds its own manual WaveSimConfig
+        /// below and reads neither TestConfigs nor the .asset -- but an
+        /// unqualified "spec §3.4" would send the next reader to a number
+        /// that contradicts the assert.
         /// Stated as an explicit fixture so this is a real expectation rather
         /// than the production formula copied into the assert.
         [Test]
