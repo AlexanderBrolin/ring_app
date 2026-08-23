@@ -1921,7 +1921,7 @@ namespace Ring.Simulation.Core
         /// (MobSpawnsSkipped) rather than growing the array; the caller (WaveSystem)
         /// is responsible for leaving the wave's spawn debt untouched when that
         /// happens so the skipped mob is retried once the cap has room again.
-        internal int SpawnMob(MobType type, float2 pos)
+        internal int SpawnMob(MobType type, float2 pos, Zone zone)
         {
             if (_mobCount >= _mobs.Length)
             {
@@ -1947,7 +1947,11 @@ namespace Ring.Simulation.Core
                 Ai = MobAiState.Idle,
                 // Deterministic handedness for Gunner strafe / SteerAround's dead-on
                 // tangent tiebreak (Task 19 Interfaces) — no RNG needed.
-                StrafeSign = (id & 1) == 0 ? 1 : -1
+                StrafeSign = (id & 1) == 0 ? 1 : -1,
+                // Wave-cadence-per-zone (bd app-ggvz Т1): the ring the
+                // CALLER put this mob into -- not derived from `pos` (see
+                // SpawnZone's own doc).
+                SpawnZone = zone
             };
             Emit(SimEventKind.MobSpawned, pos, id, type, 0f);
             return id;
@@ -1960,7 +1964,7 @@ namespace Ring.Simulation.Core
         /// (checked by grep — call-sites either don't inspect events at all or
         /// ClearEvents() before the window they measure), so this is not a
         /// behavioral change any existing test depends on.
-        internal int SpawnMobForTest(MobType type, float2 pos) => SpawnMob(type, pos);
+        internal int SpawnMobForTest(MobType type, float2 pos, Zone zone = Zone.Outer) => SpawnMob(type, pos, zone);
 
         /// Test-only wrapper over SpawnProjectile (Task 16 Interfaces) — same spawn
         /// path production code uses, named for test call-sites. Stage 2 Task 7:
@@ -2013,7 +2017,7 @@ namespace Ring.Simulation.Core
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// Dev-only mob placeholder spawn for Presentation milestone 2 (spec Interfaces).
         /// Stripped from production builds — the sole public dev-surface method here.
-        public int DevSpawnMob(MobType type, float2 pos) => SpawnMobForTest(type, pos);
+        public int DevSpawnMob(MobType type, float2 pos) => SpawnMobForTest(type, pos, Zone.Outer);
 #endif
 
         public SimEvent GetEvent(int i) => _events[i];
@@ -2537,6 +2541,12 @@ namespace Ring.Simulation.Core
         static ulong HashMob(ulong h, in MobState m)
         {
             h = StateHash64.Add(h, m.Id); h = StateHash64.Add(h, (int)m.Type);
+            // Wave-cadence-per-zone (bd app-ggvz Т1): SpawnZone right after
+            // the Type field it qualifies -- which ring a mob was PUT INTO
+            // by whoever spawned it, not where it stands now (see the
+            // field's own doc, SimStates.cs). Not on the wire (MobRecord is
+            // unchanged, 9 B).
+            h = StateHash64.Add(h, (int)m.SpawnZone);
             h = StateHash64.Add(h, m.Pos); h = StateHash64.Add(h, m.Vel);
             h = StateHash64.Add(h, m.Hp); h = StateHash64.Add(h, m.StateTimer);
             h = StateHash64.Add(h, m.FireCooldown); h = StateHash64.Add(h, (int)m.Ai);

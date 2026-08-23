@@ -120,7 +120,7 @@ namespace Ring.Simulation.Objectives
             // nobody had. His slot is guaranteed by WaveSystem's reserve, not
             // by luck (coordinator R-181's own validator rule ties the two
             // numbers together: DirectorReserveSlots >= 1 + RetinueCount).
-            w.SpawnMob(MobType.Director, float2.zero);
+            w.SpawnMob(MobType.Director, float2.zero, Zone.Core);
             TopUpRetinue(w);
 
             w.Emit(SimEventKind.DirectorActivated, float2.zero, 0, default, 0f);
@@ -211,7 +211,7 @@ namespace Ring.Simulation.Objectives
                 if (!WaveSystem.TryFindMobSpawnPos(w, in wave, Zone.Core, MobType.Elite,
                         out float2 pos))
                     return;
-                if (w.SpawnMob(MobType.Elite, pos) < 0) return;
+                if (w.SpawnMob(MobType.Elite, pos, Zone.Core) < 0) return;
             }
         }
 

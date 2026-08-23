@@ -55,14 +55,15 @@ namespace Ring.Simulation.Loot
 
         /// Stage 3 Task 16 (spec §3.7): whether `type`'s own death produces
         /// an item — Chaser/Gunner/Elite only, indexed into
-        /// LootSimConfig.DropChance by `[archetype * ZoneCount + zone]`
-        /// (errata E-6 A-I11). ZoneCount = 3 is Zone's own declared
+        /// LootSimConfig.DropChance by `[archetype * Zones.Count + zone]`
+        /// (errata E-6 A-I11). Zones.Count = 3 is Zone's own declared
         /// Outer/Middle/Core order (DropChance's own field doc,
-        /// Core/SimConfig.cs, states the same fact — this const is the
-        /// arithmetic side of it, local to the one reader that indexes by
-        /// it). The Director never reaches this method — its own drop is a
-        /// fixed rule, not a chance roll (coordinator R-126), handled by
-        /// DamageMob's own separate branch.
+        /// Core/SimConfig.cs, states the same fact — wave-cadence-per-zone
+        /// (bd app-ggvz Т1) retired this method's own second copy of the
+        /// count in favor of that one shared home, rule 2). The Director
+        /// never reaches this method — its own drop is a fixed rule, not a
+        /// chance roll (coordinator R-126), handled by DamageMob's own
+        /// separate branch.
         ///
         /// Golden risk R-120 (coordinator §1а): the archetype's own
         /// DropChance ROW is checked for all-zero BEFORE `Geometry.ZoneOf`
@@ -76,11 +77,10 @@ namespace Ring.Simulation.Loot
         /// fixture that skips Build (every test in this suite) is outside
         /// what that guarantee can reach, which is exactly why the row
         /// check has to run here too, not only in Validate.
-        const int ZoneCount = 3;
         public static bool TryRollMobItemTier(MobType type, float2 pos, in ArenaSimConfig arena,
             in LootSimConfig loot, ref Random rng, out byte tier)
         {
-            int rowOffset = (int)type * ZoneCount;
+            int rowOffset = (int)type * Zones.Count;
             if (loot.DropChance[rowOffset] <= 0f && loot.DropChance[rowOffset + 1] <= 0f &&
                 loot.DropChance[rowOffset + 2] <= 0f)
             {

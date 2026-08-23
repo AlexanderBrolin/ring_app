@@ -155,6 +155,20 @@ namespace Ring.Simulation.Core
         public float Hp, StateTimer, FireCooldown;
         public MobAiState Ai;
         public int StrafeSign;
+
+        /// The ring this mob was PUT INTO by whoever spawned it -- wave
+        /// bookkeeping only. NOT a retinue mark: who counts as the
+        /// Director's retinue is decided positionally by
+        /// MatchFlowSystem.LiveRetinueCount (Р215), and a core-wave elite is
+        /// indistinguishable from a retinue elite by this field.
+        /// NOT a "current zone" either -- the mob walks away from where it
+        /// was born, which is exactly why the value cannot be derived and
+        /// has to be stored.
+        /// On a CLIENT this stays default: there MobState is assembled from
+        /// MobRecord, which does not carry it -- Presentation must not read
+        /// this field.
+        /// A dev-key spawn is filed under Zone.Outer wherever it lands.
+        public Zone SpawnZone;
     }
 
     /// Stage 3 Т24: the values PlayerState.ExtractKind carries, named ONCE

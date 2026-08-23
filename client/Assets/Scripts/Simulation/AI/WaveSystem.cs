@@ -33,7 +33,6 @@ namespace Ring.Simulation.AI
         /// ZoneWeights array is simply swapped for this one.
         static readonly float[] ZonelessWeights = { 1f, 0f, 0f };
 
-        const int ZoneCount = 3;
         // Wave archetypes only — Chaser(0)/Gunner(1)/Elite(2). Director(3)
         // never spawns through a wave (spec Р248/§3.4).
         const int WaveArchetypeCount = 3;
@@ -67,7 +66,7 @@ namespace Ring.Simulation.AI
             {
                 // Zone-major, archetype-minor (coordinator R-50) — the SAME
                 // order StartWave fills debt in and HashWave reads it in.
-                for (int z = 0; z < ZoneCount; z++)
+                for (int z = 0; z < Zones.Count; z++)
                     for (int t = 0; t < WaveArchetypeCount; t++)
                         SpawnPendingOfType(w, ref wave, in cfg, (Zone)z, (MobType)t);
 
@@ -118,7 +117,7 @@ namespace Ring.Simulation.AI
             // uses (not a parallel branch).
             bool zoneless = w.Config.Arena.ZoneRadius.Length < 2;
             System.ReadOnlySpan<float> zoneWeights = zoneless ? ZonelessWeights : cfg.ZoneWeights;
-            System.Span<int> perZone = stackalloc int[ZoneCount];
+            System.Span<int> perZone = stackalloc int[Zones.Count];
             SplitByZones(count, zoneWeights, perZone);
 
             // Stage 3 Т22 (spec §3.4 Р253, coordinator R-185): ONCE THE
@@ -149,7 +148,7 @@ namespace Ring.Simulation.AI
                 perZone[(int)Zone.Core] = 0;
             }
 
-            for (int z = 0; z < ZoneCount; z++)
+            for (int z = 0; z < Zones.Count; z++)
             {
                 var zone = (Zone)z;
                 int zoneBudget = perZone[z];
@@ -317,7 +316,7 @@ namespace Ring.Simulation.AI
             {
                 if (w.MobCount >= ceiling) return; // reserve — debt stays, retried next tick
                 if (!TryFindMobSpawnPos(w, in cfg, zone, type, out float2 pos)) continue; // debt stays
-                if (w.SpawnMob(type, pos) < 0) continue; // MaxMobs cap — debt stays (MobSpawnsSkipped bumped)
+                if (w.SpawnMob(type, pos, zone) < 0) continue; // MaxMobs cap — debt stays (MobSpawnsSkipped bumped)
 
                 pending--;
             }

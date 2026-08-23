@@ -203,11 +203,35 @@ namespace Ring.Simulation.Core
 
     /// Stage 3 Task 8 (spec §3.2, Р206): which of the arena's three concentric
     /// rings a position falls in. A PURE function of position and
-    /// ArenaSimConfig.ZoneRadius (Geometry.ZoneOf) — nothing in PlayerState/
-    /// MobState stores "current zone": a stored duplicate would drift from
-    /// position and would enter the state hash for nothing (Р206). Computed
-    /// wherever it is needed instead — wave spawn, loot tier, portal gate.
+    /// ArenaSimConfig.ZoneRadius (Geometry.ZoneOf) — nothing in PlayerState
+    /// stores "current zone": a stored duplicate would drift from position
+    /// and would enter the state hash for nothing (Р206). Computed wherever
+    /// it is needed instead — wave spawn, loot tier, portal gate.
+    ///
+    /// Wave-cadence-per-zone amendment (bd app-ggvz Т1): MobState.SpawnZone
+    /// is a DIFFERENT thing and does not contradict the rule above. It does not
+    /// hold a mob's current zone either — that stays uncomputed and
+    /// unstored, exactly like PlayerState's. It holds the ring the mob was
+    /// PUT INTO by whoever spawned it, which position cannot answer once
+    /// the mob has walked away from its spawn point — see the field's own
+    /// doc (SimStates.cs) for why that one number is the exception this
+    /// enum's "compute, don't store" rule was never meant to cover.
     public enum Zone : byte { Outer = 0, Middle = 1, Core = 2 }
+
+    /// Wave-cadence-per-zone (bd app-ggvz Т1): the ONE home for "how many
+    /// zones the arena has," replacing two independent
+    /// `const int ZoneCount = 3` copies (WaveSystem, LootDrops — rule 2, two
+    /// homes of one number). A STATIC CLASS, not a const on a config struct,
+    /// on purpose: the reflective sweep SimConfigHashTests walks every
+    /// section with plain GetFields() and would hand a `const` sitting
+    /// inside a hashable struct straight to Bump(), which throws on
+    /// anything it does not know how to bump — the same reason
+    /// ItemCatalogLookup and LootTransferTimes, both further down this
+    /// file, are static classes rather than fields on a config struct.
+    public static class Zones
+    {
+        public const int Count = 3;
+    }
 
     /// Stage 3 Task 12: the two ExtractKind values, named once (rule 2 — the
     /// convention was prose only until this task put real data behind it).
@@ -519,8 +543,8 @@ namespace Ring.Simulation.Core
     /// convention, same as every other section in this file).
     public struct LootSimConfig
     {
-        /// [archetype * ZoneCount + zone] -> chance, flat 4x3 (owner
-        /// decision, errata E-6 A-I11). ZoneCount is 3 (Zone's own
+        /// [archetype * Zones.Count + zone] -> chance, flat 4x3 (owner
+        /// decision, errata E-6 A-I11). Zones.Count is 3 (Zone's own
         /// Outer/Middle/Core order); the archetype axis is 4, indexed
         /// exactly like MobType (Chaser/Gunner/Elite/Director), even though
         /// the spec's own per-archetype/zone table (§3.7) has no row for

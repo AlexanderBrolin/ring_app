@@ -149,9 +149,9 @@ namespace Ring.Simulation.Tests
             //
             //   PlayerState 32 x 2 players = 64
             //   MatchStats 10 x 2 players  = 20
-            //   WorldStats 5, MobState 9, ProjectileState 13, PickupState 5,
-            //   WaveState 13, MatchState 2, ContainerState 5 = 52
-            //   -> 136 bumps swept, ALL asserted NOT to equal baseline.
+            //   WorldStats 5, MobState 10, ProjectileState 13, PickupState 5,
+            //   WaveState 13, MatchState 2, ContainerState 5 = 53
+            //   -> 137 bumps swept, ALL asserted NOT to equal baseline.
             //
             // Stage 3 Task 11 (coordinator R-50/R-51): WaveState grew from
             // 6 fields to 13 (two named Pending counters -> nine, one per
@@ -164,6 +164,12 @@ namespace Ring.Simulation.Tests
             // Stage 3 Task 14: ContainerState is new (Id/Pos/Kind/SlotCount/
             // Ttl, five fields, same shape as PickupState) -- 131 -> 136,
             // recounted the same way, not incremented from memory.
+            //
+            // Wave-cadence-per-zone (bd app-ggvz Т1): MobState grew from 9
+            // fields to 10 -- SpawnZone, the ring a mob was PUT INTO by
+            // whoever spawned it (spec §3.5, SimStates.cs' own field doc) --
+            // recounted the same way, from a fresh typeof(MobState).
+            // GetFields() reading, not incremented from memory -- 136 -> 137.
             //
             // ZERO asserted TO equal it: the thirteen PENDING names are gone
             // with the skip-list (see this file's header), which is the whole
