@@ -119,7 +119,7 @@ namespace Ring.Simulation.Tests
         // ------------------------------------------------------------------
 
         [Test]
-        public void PendingRef_EveryZoneArchetypePair_AddressesDistinctStorage()
+        public void PendingRef_EveryArchetypeOfEveryRingInstance_AddressesDistinctStorage()
         {
             // Coordinator R-51's mandatory sentinel, T10's
             // MobRadiusFor_AgreesWith_MobConfigFor... precedent: write a
@@ -157,7 +157,7 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void PendingRef_UnknownTypeForZone_Throws()
+        public void PendingRef_UnknownArchetype_Throws()
         {
             // Spec Р251's own warning, applied to the debt matrix itself:
             // MobType.Director never spawns through a wave and has no

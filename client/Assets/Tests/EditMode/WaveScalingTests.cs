@@ -243,9 +243,17 @@ namespace Ring.Simulation.Tests
             Assert.Greater(outerDebt, 0,
                 "fixture premise: the wave must actually owe mobs to the Outer zone, or the arc "
                 + "rejection below is never even attempted");
-            Assert.AreEqual(snap.Wave.PendingTotal, outerDebt,
-                "fixture premise: the WHOLE debt belongs to Outer — the Middle and Core rings sit "
-                + "at negative radii under this inset and are not what this test measures");
+            // ⚠ WAS A TAUTOLOGY until the review of this task: it compared
+            // snap.Wave.PendingTotal against the sum of the same three fields
+            // of the same snapshot, and PendingTotal is the computed property
+            // of exactly that sum — true under any implementation whatsoever.
+            // The claim it MEANT to make is about the OTHER two rings, so it
+            // now reads them.
+            Assert.AreEqual(0,
+                w.WaveRef(Zone.Middle).PendingTotal + w.WaveRef(Zone.Core).PendingTotal,
+                "fixture premise: the WHOLE debt belongs to Outer — the middle and core rings are "
+                + "frozen on this zoneless arena and own nothing, so the aggregate above IS the "
+                + "outer ring's own debt");
             Assert.AreEqual(0, w.MobCount,
                 "every fallback slot sits inside the zone wall's body — none should have spawned");
         }

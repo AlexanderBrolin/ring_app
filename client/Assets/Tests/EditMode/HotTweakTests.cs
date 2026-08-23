@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using Ring.Simulation.AI;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -77,6 +78,62 @@ namespace Ring.Simulation.Tests
                 SimulationWorld.TicksFromSeconds(next.Wave.WavePauseByZone[(int)Zone.Outer]),
                 w.WaveRef(Zone.Outer).PhaseTicks,
                 "новая пауза не применилась при первой же перезарядке таймера кольца");
+        }
+
+        /// Т5 (app-ggvz, spec §3.2/§4 — the SECOND hot-tweak case the spec
+        /// asks for, beside the pause one above): lowering
+        /// Wave.MaxAliveByZone BELOW a ring's standing population freezes that
+        /// ring's spawning until natural attrition brings it back under the new
+        /// number, and REMOVES NOBODY.
+        ///
+        /// THIS IS ACCEPTED BEHAVIOR AND THIS TEST IS WHAT MAKES IT A DECISION.
+        /// The alternative — culling the excess on ApplyConfig — would delete
+        /// live mobs out from under the players mid-fight because the owner
+        /// dragged a slider, and it would do it to mobs that are already
+        /// engaged. Freezing instead is also what ApplyConfig does everywhere
+        /// else: it clamps what a NEW value governs and never retroactively
+        /// undoes what the old one produced.
+        ///
+        /// The debt assertion at the end is what makes this a witness rather
+        /// than a description: without it, "the population did not grow" would
+        /// also be true of a ring that simply had no wave to seat. The ring
+        /// DID start its next wave, owes it in full, and is refused every tick.
+        [Test]
+        public void HotTweak_MaxAliveLoweredBelowPopulation_FreezesSpawn_AndRemovesNoMobs()
+        {
+            SimConfig c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            int start = SimulationWorld.TicksFromSeconds(c.Wave.FirstWaveDelay);
+            int cap = c.Wave.MaxSpawnsPerZonePerTick;
+            int perRing = WaveSystem.CountForTest(in c.Wave, 0, w.PlayerCount);
+            TestWorlds.IdleTicks(w, start + (perRing + cap - 1) / cap);
+
+            int standing = w.WaveRef(Zone.Outer).AliveCount;
+            int onArena = w.MobCount;
+            Assert.AreEqual(perRing, standing,
+                "premise: the outer ring has seated its whole first wave, so there is a "
+                + "population to lower the ceiling BELOW");
+
+            SimConfig next = c;
+            next.Wave.MaxAliveByZone = new[]
+                { 1, c.Wave.MaxAliveByZone[1], c.Wave.MaxAliveByZone[2] };
+            w.ApplyConfig(next);
+
+            Assert.AreEqual(onArena, w.MobCount,
+                "понижение потолка удалило мобов с арены: горячая правка меняет то, что кольцу " +
+                "ПОЗВОЛЕНО впредь, и никогда не отменяет уже рождённое");
+
+            // Past the ring's own next wave: it starts, owes its whole debt,
+            // and is refused every single tick by the new ceiling.
+            TestWorlds.IdleTicks(w,
+                SimulationWorld.TicksFromSeconds(c.Wave.WavePauseByZone[(int)Zone.Outer]) + 4);
+
+            Assert.AreEqual(standing, w.WaveRef(Zone.Outer).AliveCount,
+                "кольцо продолжило спавнить поверх понижённого потолка: спавн обязан замереть " +
+                "до естественной убыли");
+            Assert.Greater(w.WaveRef(Zone.Outer).PendingTotal, 0,
+                "кольцо не пыталось спавнить вовсе — тогда «население не выросло» ничего не " +
+                "доказывает");
         }
 
         [Test]

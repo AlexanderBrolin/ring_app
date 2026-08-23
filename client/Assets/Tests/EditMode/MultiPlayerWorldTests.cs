@@ -253,8 +253,10 @@ namespace Ring.Simulation.Tests
             int seatTicks = (waveSize + cap - 1) / cap;
             TestWorlds.IdleTicks(w, SimulationWorld.TicksFromSeconds(cfg.Wave.FirstWaveDelay)
                 + seatTicks);
-            Assert.AreEqual(WavePhase.Active, w.WaveRef(Zone.Outer).Phase,
-                "premise: every ring has seated its first wave");
+            for (int z = 0; z < Zones.Count; z++)
+                Assert.AreEqual(WavePhase.Active, w.WaveRef((Zone)z).Phase,
+                    $"premise: ring {(Zone)z} has seated its first wave — the sentence says EVERY "
+                    + "ring, so every ring is what it reads");
             Assert.AreEqual(0, w.WaveRef(Zone.Outer).PendingTotal,
                 "premise: the outer ring owes nothing any more — a ring still holding debt "
                 + "cannot be cleared, and the assertion below would be measuring the wait");

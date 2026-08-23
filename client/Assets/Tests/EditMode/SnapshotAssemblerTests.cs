@@ -457,6 +457,30 @@ namespace Ring.Simulation.Tests
             var wavePos = new float2(11f, -13f);
             w.Emit(SimEventKind.WaveStarted, wavePos, 0, default, 0f);
 
+            // ⚠ THE THREE RINGS ARE DELIBERATELY GIVEN DIFFERENT NUMBERS
+            // (bd app-ggvz, review of the merged Т4+Т5 task). Since the wave
+            // became one instance per ring, the wire's wave block carries the
+            // WORLD AGGREGATE — Active if ANY ring is, the MAXIMUM difficulty
+            // step, the SUM of the living. This fixture never starts a wave, so
+            // its three rings were identical zeros, and the old assertion
+            // (against w.WaveRef(Zone.Outer)) was green under BOTH rules at
+            // once: it stated a general law it could not tell apart from
+            // reading ring zero. Distinct per-ring values are what make the
+            // three assertions below able to fail.
+            int expectedIndex = 0, expectedAlive = 0;
+            for (int z = 0; z < Zones.Count; z++)
+            {
+                WaveState ring = w.WaveRef((Zone)z);
+                ring.WaveIndex = z + 1;                       // Core carries the highest step
+                ring.AliveCount = (z + 1) * 2;
+                // Only the MIDDLE ring is running: Outer stays Waiting, so a
+                // block that read ring zero would report Waiting here.
+                ring.Phase = (Zone)z == Zone.Middle ? WavePhase.Active : WavePhase.Waiting;
+                w.SetWaveForTest((Zone)z, ring);
+                expectedIndex = math.max(expectedIndex, ring.WaveIndex);
+                expectedAlive += ring.AliveCount;
+            }
+
             var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
             AssembledFrame f = Build(asm, w, cfg, connection: 0, identityIndex: 0, viewpointIndex: 0);
 
@@ -482,9 +506,12 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(f.ContainsMob(mobA));
             Assert.IsTrue(f.ContainsMob(mobB));
 
-            Assert.AreEqual(w.WaveRef(Zone.Outer).Phase, f.WavePhase);
-            Assert.AreEqual((ushort)w.WaveRef(Zone.Outer).WaveIndex, f.WaveIndex);
-            Assert.AreEqual((byte)w.WaveRef(Zone.Outer).AliveCount, f.WaveAliveCount);
+            Assert.AreEqual(WavePhase.Active, f.WavePhase,
+                "the block is Active while ANY ring is — ring zero is Waiting in this fixture");
+            Assert.AreEqual((ushort)expectedIndex, f.WaveIndex,
+                "the block carries the MAXIMUM difficulty step across the rings, not ring zero's");
+            Assert.AreEqual((byte)expectedAlive, f.WaveAliveCount,
+                "the block carries the SUM of the rings' living mobs, not ring zero's");
 
             Assert.AreEqual(1, f.EventCount, "exactly the one event emitted this tick");
             Assert.AreEqual((byte)SnapshotEventKind.WaveStarted, f.Events[0].Kind);
