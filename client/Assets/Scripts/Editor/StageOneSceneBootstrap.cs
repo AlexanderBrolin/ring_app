@@ -521,9 +521,14 @@ namespace Ring.Editor
             // matches a future "BaseCount: 40" (or 41, 42, ...) — the very
             // first owner retune of this same field would silently refire
             // the gate and stomp the new number back down to 16.
-            bool waveCadencePending = System.IO.File
-                .ReadAllText($"{DataDir}/WaveConfig.asset")
-                .Contains("ZoneWeights:");
+            //
+            // ONE READ FOR BOTH GATES (fix-round, rule 2): app-jmb2's own gate
+            // below keys on the same file, and the whole point of a
+            // read-before-mutate snapshot is that every gate reading this
+            // asset sees the SAME bytes -- two separate ReadAllText calls
+            // would be a second source of truth for one file.
+            string waveAssetText = System.IO.File.ReadAllText($"{DataDir}/WaveConfig.asset");
+            bool waveCadencePending = waveAssetText.Contains("ZoneWeights:");
 
             // Task app-jmb2 (owner decision Р347, rule 413): the gunner-share
             // retune, snapshotted in the same "read before mutate" window as
@@ -550,9 +555,7 @@ namespace Ring.Editor
             // owner deliberately types 0.05 back -- the one case where
             // re-delivering is the right answer, since 0.05 is the number the
             // saturation arithmetic calls wrong.
-            bool gunnerShareRetunePending = System.IO.File
-                .ReadAllText($"{DataDir}/WaveConfig.asset")
-                .Contains("GunnerShareGrowth: 0.05\n");
+            bool gunnerShareRetunePending = waveAssetText.Contains("GunnerShareGrowth: 0.05\n");
 
             // Stage 3 Task 12 (errata E-2): match-flow pacing — a brand-new SO
             // CLASS, so its C# field initializers ARE the shipped numbers and
