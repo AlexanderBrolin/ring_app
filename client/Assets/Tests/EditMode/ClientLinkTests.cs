@@ -107,6 +107,19 @@ namespace Ring.Simulation.Tests
                 CreditsTotal = new[] { 41, 42 },
             };
 
+        /// This collector's own end-of-raid tally (bd `app-qw01`). `Reason`
+        /// is `MatchEndReason.None` = 0, which is the message's own contract:
+        /// the MATCH has not ended. `Kills` differs from `Ended`'s above so a
+        /// tally that arrived can be told from the match's own.
+        static RaidEndedNet RaidEnded(ushort epoch, uint raidEndTick = 300u)
+            => new RaidEndedNet
+            {
+                Tally = new MatchEndedNet
+                {
+                    Reason = 0, MatchEpoch = epoch, FinalTick = raidEndTick, Kills = 9,
+                },
+            };
+
         /// A state that has already been admitted to `FirstEpoch` — the
         /// starting point of every life-cycle test below.
         static ClientLinkState Joined()
@@ -495,6 +508,68 @@ namespace Ring.Simulation.Tests
         // split out of `ClientMatchLink` so that every branch of it could be
         // driven from a test.
         // ------------------------------------------------------------------
+
+        // ------------------------------------------------------------------
+        // bd `app-qw01`: the collector's OWN raid ends before the match does.
+        // Until this message his counters travelled nowhere and the end-of-raid
+        // screen printed dashes at him — nineteen seconds for one who walked
+        // out on the В2 playtest, over four minutes for one who died early.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void RaidTally_IsApplied_WhileTheMatchIsStillRunning_AndMovesNothing()
+        {
+            ClientLinkState state = Joined();
+            Assert.IsFalse(state.HasRaidEnded, "fixture premise: no tally before the raid ends");
+
+            ClientLinkState.LinkAction action = state.OnRaidEnded(RaidEnded(FirstEpoch));
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.Applied, action.Verdict,
+                "a collector's own raid ending is news the server is entitled to send "
+                + "in the middle of a match");
+            Assert.IsFalse(action.ResetSeams,
+                "a personal tally resets nothing: the epoch has not changed and the "
+                + "buffer is still feeding the raid onto the screen behind the panel");
+            Assert.IsTrue(state.HasRaidEnded, "ClientLinkState.HasRaidEnded");
+            Assert.AreEqual(9, state.RaidEnded.Tally.Kills,
+                "ClientLinkState.RaidEnded must hold the tally the message carried");
+            // ⚠ THE CLAIM THE WHOLE MESSAGE EXISTS FOR. An early MatchEndedNet
+            // would have cost no new type and would have landed the link in
+            // MatchEnded — the phase that shuts spectating down and answers
+            // every later life-cycle message with AlreadyEnded, while other
+            // collectors are still playing.
+            Assert.AreEqual(ClientLinkState.LinkPhase.Joined, state.Phase,
+                "the collector's own raid ending must NOT end the match for the link");
+        }
+
+        [Test]
+        public void RaidTally_OfAForeignEpoch_IsRefused()
+        {
+            ClientLinkState state = Joined();
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.ForeignEpoch,
+                state.OnRaidEnded(RaidEnded(SecondEpoch)).Verdict,
+                "a tally stamped with another match is not this match's news");
+            Assert.IsFalse(state.HasRaidEnded,
+                "and a refused tally must leave nothing behind");
+        }
+
+        [Test]
+        public void RaidTally_DoesNotSurviveTheMatchItDescribes()
+        {
+            ClientLinkState state = Joined();
+            state.OnRaidEnded(RaidEnded(FirstEpoch));
+            Assert.IsTrue(state.HasRaidEnded, "fixture premise: the raid left a tally");
+
+            state.OnRestarted(Restarted(SecondEpoch));
+
+            // Same argument as the board directly below: a tally left standing
+            // would be handed to the screen on the first frame of the NEW raid
+            // and read as "your raid is already over", with the previous
+            // raid's numbers on it.
+            Assert.IsFalse(state.HasRaidEnded,
+                "a new epoch clears the previous raid's tally");
+        }
 
         [Test]
         public void Board_IsApplied_AfterTheMatchEnded_AndResetsNothing()

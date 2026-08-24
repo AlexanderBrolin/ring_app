@@ -32,6 +32,31 @@ namespace Ring.Presentation.Net
     /// stand up at all (bd `app-xkir`).
     public static class FinalStats
     {
+        /// WHICH TALLY ANSWERS THE END-OF-RAID SCREEN (bd `app-qw01`).
+        ///
+        /// Two messages can carry this collector's numbers and they arrive at
+        /// different moments: `RaidEndedNet` when HIS raid ends, `MatchEndedNet`
+        /// when the MATCH does. The match's own message outranks it when both
+        /// are in hand — it is the authoritative final tally and it is the only
+        /// one carrying the match's end reason — but between the two the raid
+        /// message is all there is, and that gap is the whole defect: it was
+        /// measured at nineteen seconds for a collector who walked out and over
+        /// four minutes for one who died early.
+        ///
+        /// THE ORDER IS THE RULE, not an implementation detail: the match's own
+        /// message is asked FIRST because when it has arrived it is the
+        /// authoritative final tally and the only one carrying an end reason.
+        /// The raid tally answers in the gap before it — and that gap is the
+        /// whole defect.
+        public static bool TryTally(bool matchEnded, in MatchEndedNet ended,
+            bool raidEnded, in RaidEndedNet raid, out MatchEndedNet tally)
+        {
+            if (matchEnded) { tally = ended; return true; }
+            if (raidEnded) { tally = raid.Tally; return true; }
+            tally = default;
+            return false;
+        }
+
         /// This collector's own half of the message.
         public static MatchStats PersonalFrom(in MatchEndedNet ended) => new MatchStats
         {

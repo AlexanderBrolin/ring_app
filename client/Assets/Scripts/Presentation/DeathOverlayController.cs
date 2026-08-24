@@ -58,7 +58,11 @@ namespace Ring.Presentation
     /// the one thing decision 4b was taken to remove. Where the numbers are
     /// somebody else's
     /// (`HasMatchStats`), the metrics print dashes instead of the zeros the
-    /// render pair holds.
+    /// render pair holds — ⚠ BUT ONLY UNTIL A TALLY ARRIVES (bd `app-qw01`):
+    /// the server now sends this collector his own numbers the moment HIS raid
+    /// ends, not only when the whole match does, so on a networked raid the
+    /// dashes are the state before that message rather than the state for the
+    /// rest of the match.
     public sealed class DeathOverlayController : MonoBehaviour
     {
         // Unscaled seconds after Show() before the keyboard shortcuts activate —

@@ -544,11 +544,20 @@ namespace Ring.Presentation.Net
         /// measurement: no kills, no waves cleared, and — worse, because the
         /// dev overlay colors them red above zero — no skipped spawns.
         ///
-        /// THE NUMBERS DO ARRIVE, ONCE, AT THE END. `MatchEndedNet` carries
-        /// eleven of them and `ClientLinkState.EndedNet` holds the message
-        /// whole. What is missing is a consumer: the end-of-match screen reads
-        /// the render pair today, and pointing it at the link's summary is not
-        /// this task's.
+        /// THE NUMBERS ARRIVE ON THEIR OWN MESSAGES, AND THEY HAVE A CONSUMER
+        /// NOW (amended by bd `app-qw01`; this paragraph used to end with "what
+        /// is missing is a consumer", which stopped being true in Ф7 and is
+        /// corrected here rather than left to read as a standing gap).
+        /// `MatchEndedNet` carries the tally when the MATCH ends and
+        /// `RaidEndedNet` when THIS collector's raid does — the second exists
+        /// precisely because the first can be minutes away for a collector who
+        /// already finished. `TryGetFinalStats` below is the consumer, and
+        /// `FinalStats.TryTally` decides which of the two answers.
+        ///
+        /// NONE OF THAT CHANGES THIS MEMBER'S ANSWER, which is about the
+        /// PER-FRAME picture and stays permanently false: a lifecycle message
+        /// is not a frame, and `Curr.Stats`/`Curr.WorldStats` are still cleared
+        /// by `BeginSlot` on every decode.
         public bool HasMatchStats => false;
 
         /// Events this CLIENT lost, which is a different number from the
@@ -759,7 +768,19 @@ namespace Ring.Presentation.Net
         public bool TryGetFinalStats(out MatchStats stats, out WorldStats world,
             out int survivedSeconds)
         {
-            if (_link == null || _link.State.Phase != ClientLinkState.LinkPhase.MatchEnded)
+            // bd `app-qw01`: TWO MESSAGES CAN ANSWER THIS NOW, and which one
+            // does is `FinalStats.TryTally`'s decision rather than a condition
+            // spelled out here — the same discipline this method's own numbers
+            // already follow, and the only shape an EditMode test can reach
+            // (`FinalStats`' own doc: nothing can stand this class up).
+            // THE GATE IS NO LONGER THE PHASE ALONE: a collector whose raid
+            // ended while the match runs on holds a tally and no phase change.
+            if (_link == null
+                || !FinalStats.TryTally(
+                        _link.State.Phase == ClientLinkState.LinkPhase.MatchEnded,
+                        _link.State.EndedNet,
+                        _link.State.HasRaidEnded, _link.State.RaidEnded,
+                        out MatchEndedNet ended))
             {
                 stats = default;
                 world = default;
@@ -767,7 +788,6 @@ namespace Ring.Presentation.Net
                 return false;
             }
 
-            MatchEndedNet ended = _link.State.EndedNet;
             stats = FinalStats.PersonalFrom(in ended);
             world = FinalStats.WorldFrom(in ended);
             // Read rather than re-derived (bd `app-oypt`): the server answered

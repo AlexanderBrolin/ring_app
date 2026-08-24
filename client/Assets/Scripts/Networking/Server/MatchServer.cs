@@ -377,6 +377,13 @@ namespace Ring.Networking.Server
         // `IsActive` at the end, because a player who fell fighting in the
         // second minute and closed his window in the tenth died fighting.
         int[] _extractedTick;
+
+        /// bd `app-qw01`: whether slot `i` has already been sent the news that
+        /// HIS OWN raid is over. One send per collector per match — the news
+        /// is a fact about a moment, not a state to be re-announced every tick.
+        /// Allocated and released with `_extractedTick`, which is the same
+        /// per-match memory in the same shape.
+        bool[] _raidEndNotified;
         bool[] _disconnectKilled;
 
         ushort _epoch;
@@ -600,6 +607,7 @@ namespace Ring.Networking.Server
             _lastLoggedRefusal = lastLoggedRefusal;
             _lastLoggedRefusalTick = lastLoggedRefusalTick;
             _extractedTick = extractedTick;
+            _raidEndNotified = new bool[extractedTick.Length];
             _disconnectKilled = disconnectKilled;
             _tickTime.Reset();
 
@@ -861,6 +869,7 @@ namespace Ring.Networking.Server
             _lastLoggedRefusal = null;
             _lastLoggedRefusalTick = null;
             _extractedTick = null;
+            _raidEndNotified = null;
             _disconnectKilled = null;
         }
 
@@ -1213,6 +1222,25 @@ namespace Ring.Networking.Server
                 MatchEndReason reason =
                     _endPolicy.Evaluate(postTickWorldTick, alivePlayers, activePlayers, anyExtracted);
 
+                // 2c. bd `app-qw01`: TELL EACH COLLECTOR THAT HIS OWN RAID IS
+                // OVER, once, on the tick it ends. A raid ends for one player
+                // long before the match does — he dies, or he walks out — and
+                // until this send his own counters travelled nowhere at all,
+                // so his end-of-raid screen printed dashes until everyone else
+                // had finished too.
+                //
+                // AFTER `Evaluate`, BECAUSE THE MATCH'S OWN ENDING OUTRANKS
+                // THIS ONE: when the same tick also ends the match, step 5b's
+                // `EndMatch` sends the authoritative `MatchEndedNet` to
+                // everybody, and sending both would hand the screen two
+                // tallies of the same raid in one frame.
+                //
+                // BEFORE THE FRAME (step 4) RATHER THAN AFTER, for the reason
+                // fix-round 1 C-1 gives about `PlayerDied`: this tick still
+                // owes its clients a frame, and the reliable message may as
+                // well be queued alongside it.
+                SendRaidEndNotices(reason != MatchEndReason.None);
+
                 // 3. One capture + wire-event expansion shared by every
                 // connection this tick (SnapshotAssembler.BeginTick's own doc).
                 _assembler.BeginTick(_world);
@@ -1392,6 +1420,54 @@ namespace Ring.Networking.Server
         /// to every connection ahead of the failing one and never letting the
         /// process exit. The exception itself still propagates; only the
         /// match's own state is settled first.
+        /// bd `app-qw01`: one personal `RaidEndedNet` per collector whose raid
+        /// has just ended, and never a second one.
+        ///
+        /// WIRING ONLY — the decision is `RaidEndNotice.IsDue`'s, the numbers
+        /// are `BuildSummary`/`EndedNetFor`'s, and this method does nothing a
+        /// test would want to reach that those two do not already own (the
+        /// class doc's "not unit-tested, on purpose" covers exactly this
+        /// shape).
+        ///
+        /// THE SUMMARY IS BUILT ONLY IF SOMEBODY IS OWED ONE. It is a whole-
+        /// roster capture — three arrays and a walk over every player — and a
+        /// raid ends for a given collector exactly once, so at most three of
+        /// these are built in a match. Building it per tick regardless would
+        /// be a per-tick allocation on the server's hot path for nothing.
+        ///
+        /// `MatchEndReason.None` IS THE REASON IT CARRIES, and that is the
+        /// contract `RaidEndedNet`'s own doc states: the match has not ended.
+        void SendRaidEndNotices(bool matchEnding)
+        {
+            MatchSummary summary = default;
+            bool summaryBuilt = false;
+
+            for (int i = 0; i < _connections.Length; i++)
+            {
+                if (!RaidEndNotice.IsDue(_world.PlayerAt(i).Alive, _raidEndNotified[i],
+                        matchEnding))
+                    continue;
+
+                // MARKED EVEN IF THE CONNECTION IS GONE: the news is owed to a
+                // raid, not to a socket, and a collector who dropped out will
+                // not come back to be told. Leaving the flag clear would make
+                // this loop re-ask about him on every remaining tick of the
+                // match.
+                _raidEndNotified[i] = true;
+                if (!_connections[i].IsActive) continue;
+
+                if (!summaryBuilt)
+                {
+                    summary = BuildSummary(MatchEndReason.None);
+                    summaryBuilt = true;
+                }
+
+                _nm.ServerManager.Broadcast(_connections[i],
+                    new RaidEndedNet { Tally = EndedNetFor(in summary, i) },
+                    channel: Channel.Reliable);
+            }
+        }
+
         void EndMatch(MatchEndReason reason)
         {
             // Stage 3 Т24 (coordinator R-172): the raid is over IN THE WORLD
@@ -1659,6 +1735,36 @@ namespace Ring.Networking.Server
     /// what lives inline there can be reached by no EditMode test and
     /// therefore caught by no mutation. Same split, and the same file, as
     /// EffectiveInputBatch and InputStarvation already occupy.
+    /// WHEN A COLLECTOR IS OWED THE NEWS THAT HIS OWN RAID IS OVER
+    /// (bd `app-qw01`) — a pure core beside `MatchEndPolicy`/`MatchProgress`,
+    /// the same split `EffectiveInputBatch` and `HandshakeDecision` already
+    /// occupy in this folder.
+    ///
+    /// ONE PREDICATE COVERS BOTH WAYS OUT. A raid ends for a collector when he
+    /// dies or when he walks out, and extraction CLEARS `Alive` as well as
+    /// setting `Extracted` (Р223 — the body leaves the arena), which
+    /// `MatchProgress.Observe`'s own doc measures and states. So `!alive` is
+    /// the whole test, and naming `Extracted` beside it would be a second
+    /// clause with no witness that could kill a mutation of it — the exact
+    /// thing that doc says out loud about its own redundant clause rather than
+    /// leaving for a reviewer to find.
+    ///
+    /// ONCE PER COLLECTOR PER MATCH. The news is a fact about a MOMENT, not a
+    /// state to be re-announced: without the second argument this would put a
+    /// reliable message on the wire every remaining tick of the match for
+    /// every collector who had already finished.
+    ///
+    /// AND NEVER ON THE TICK THE MATCH ITSELF ENDS. `EndMatch` sends the
+    /// authoritative `MatchEndedNet` to everybody on that tick; sending both
+    /// would hand the end-of-raid screen two tallies of one raid in a single
+    /// frame, and the personal one would be the weaker of the two (no end
+    /// reason, no final tick of the match).
+    internal static class RaidEndNotice
+    {
+        internal static bool IsDue(bool alive, bool alreadyNotified, bool matchEnding)
+            => !alive && !alreadyNotified && !matchEnding;
+    }
+
     internal static class MatchProgress
     {
         /// `worldTick` is the POST-TickAll reading — "the tick that just

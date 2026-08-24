@@ -775,6 +775,92 @@ namespace Ring.Simulation.Tests
             return frame;
         }
 
+        // ---- when a collector is owed the news (bd `app-qw01`) ----
+
+        [Test]
+        public void RaidEndNotice_IsDue_OnTheTickTheCollectorLeavesTheRaid()
+        {
+            // Extraction clears Alive as well as setting Extracted (Р223 — the
+            // body leaves the arena), so ONE predicate covers both ways out;
+            // MatchProgress.Observe's own doc measures and states that.
+            Assert.IsTrue(RaidEndNotice.IsDue(alive: false, alreadyNotified: false,
+                matchEnding: false));
+        }
+
+        [Test]
+        public void RaidEndNotice_IsNotDue_WhileTheCollectorIsStillInTheRaid()
+        {
+            Assert.IsFalse(RaidEndNotice.IsDue(alive: true, alreadyNotified: false,
+                matchEnding: false));
+        }
+
+        [Test]
+        public void RaidEndNotice_IsNotDue_Twice()
+        {
+            // The news is a fact about a moment, not a state: re-announcing it
+            // every remaining tick would put a reliable message per tick on the
+            // wire for every collector who had already finished.
+            Assert.IsFalse(RaidEndNotice.IsDue(alive: false, alreadyNotified: true,
+                matchEnding: false));
+        }
+
+        [Test]
+        public void RaidEndNotice_IsNotDue_WhenTheSameTickAlsoEndsTheMatch()
+        {
+            // EndMatch sends the authoritative MatchEndedNet to everybody on
+            // this same tick; sending both would hand the screen two tallies of
+            // one raid in a single frame.
+            Assert.IsFalse(RaidEndNotice.IsDue(alive: false, alreadyNotified: false,
+                matchEnding: true));
+        }
+
+        // ---- which tally answers the screen (bd `app-qw01`) ----
+        //
+        // Two messages can carry this collector's numbers, and they arrive at
+        // different moments. Until this task only the match's own message was
+        // asked, so a collector who had finished his raid watched dashes until
+        // everybody else finished too.
+
+        static MatchEndedNet MatchTally() => new MatchEndedNet { Reason = 1, Kills = 3 };
+
+        static RaidEndedNet RaidTally()
+            => new RaidEndedNet { Tally = new MatchEndedNet { Reason = 0, Kills = 9 } };
+
+        [Test]
+        public void Tally_ComesFromTheRaidMessage_WhileTheMatchIsStillRunning()
+        {
+            bool answered = FinalStats.TryTally(matchEnded: false, MatchTally(),
+                raidEnded: true, RaidTally(), out MatchEndedNet tally);
+
+            Assert.IsTrue(answered,
+                "a collector whose own raid ended holds his numbers — printing dashes "
+                + "at him until the match ends is the defect this seam removes");
+            Assert.AreEqual(9, tally.Kills, "and they are the RAID message's numbers");
+        }
+
+        [Test]
+        public void Tally_ComesFromTheMatchMessage_OnceTheMatchHasEnded()
+        {
+            // BOTH IN HAND, and the match's own message wins: it is the
+            // authoritative final tally and the only one carrying an end
+            // reason. A test with only the match message in hand could not
+            // tell "the match wins" from "the raid message was ignored".
+            bool answered = FinalStats.TryTally(matchEnded: true, MatchTally(),
+                raidEnded: true, RaidTally(), out MatchEndedNet tally);
+
+            Assert.IsTrue(answered);
+            Assert.AreEqual(3, tally.Kills,
+                "the match's own message outranks the raid tally when both are held");
+        }
+
+        [Test]
+        public void Tally_IsRefused_WhileTheRaidIsStillGoing()
+        {
+            Assert.IsFalse(FinalStats.TryTally(matchEnded: false, MatchTally(),
+                    raidEnded: false, RaidTally(), out _),
+                "with neither message in hand there is nothing to print but dashes");
+        }
+
         // ---- the headline the panel wears (bd `app-qz30`) ----
         //
         // The owner killed the Director, walked out through the gate with 430

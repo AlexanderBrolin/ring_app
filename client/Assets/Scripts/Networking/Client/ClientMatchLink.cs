@@ -230,6 +230,16 @@ namespace Ring.Networking.Client
         /// board that arrived.
         public bool HasResults { get; private set; }
 
+        /// The tally of THIS collector's own raid, as it arrived (bd
+        /// `app-qw01`). Held whole for the same reason `EndedNet` above is.
+        public RaidEndedNet RaidEnded { get; private set; }
+
+        /// Whether that tally has arrived at all — a separate bit for the same
+        /// reason `HasResults` above is one: the message's own contents are
+        /// its business, and a raid that ended with nothing shot is still a
+        /// raid that ended.
+        public bool HasRaidEnded { get; private set; }
+
         /// May the hello go out now? `true` EXACTLY ONCE per instance, and
         /// the caller must send it when told `true` — this method has already
         /// recorded that it did.
@@ -374,6 +384,38 @@ namespace Ring.Networking.Client
             return new LinkAction(LinkVerdict.Applied, resetSeams: false, MatchEpoch);
         }
 
+        /// THIS collector's own raid is over (bd `app-qw01`).
+        ///
+        /// IT DOES NOT MOVE THE PHASE, and that is the whole reason it is a
+        /// message of its own rather than an early `MatchEndedNet`: the MATCH
+        /// is still running, other collectors are still in it, and
+        /// `LinkPhase.MatchEnded` is the phase that shuts spectating down and
+        /// answers every later life-cycle message with `AlreadyEnded`. Same
+        /// shape as `OnResults` directly above, for the same reason.
+        ///
+        /// AND IT RESETS NOTHING, same as both of them: the epoch has not
+        /// changed and the buffer is still feeding the raid onto the screen
+        /// behind the panel.
+        ///
+        /// THE PHASE GATE IS THE SAME TWO `OnResults` ACCEPTS. `Joined` is the
+        /// ordinary case; `MatchEnded` is legal too, because a tally that
+        /// crosses the match's own ending on the wire is late news, not wrong
+        /// news, and refusing it would be the `AlreadyEnded` shape this
+        /// message exists to stay out of.
+        public LinkAction OnRaidEnded(in RaidEndedNet raidEnded)
+        {
+            if (Phase == LinkPhase.Refused) return Refuse(LinkVerdict.LinkRefused);
+            if (Phase != LinkPhase.Joined && Phase != LinkPhase.MatchEnded)
+                return Refuse(LinkVerdict.Unexpected);
+            if (raidEnded.Tally.MatchEpoch != MatchEpoch)
+                return Refuse(LinkVerdict.ForeignEpoch);
+
+            RaidEnded = raidEnded;
+            HasRaidEnded = true;
+
+            return new LinkAction(LinkVerdict.Applied, resetSeams: false, MatchEpoch);
+        }
+
         /// A new match is starting under a new epoch. THE ONE MESSAGE BESIDE
         /// THE OPENING WELCOME THAT CARRIES THE RIGHT TO RESET — never a
         /// snapshot: `ClientMatchReset`'s own doc refuses that outright, and
@@ -427,6 +469,12 @@ namespace Ring.Networking.Client
             // such line: nothing reads it without `HasResults`' equivalent, and
             // this bit is that equivalent.
             HasResults = false;
+            // bd `app-qw01`: AND NEITHER DOES THE RAID TALLY. Same argument as
+            // the board directly above — a tally left standing would be handed
+            // to the screen on the first frame of the NEW raid and read as
+            // "your raid is already over", with the previous raid's numbers on
+            // it.
+            HasRaidEnded = false;
             Seed = restarted.Seed;
             Phase = LinkPhase.Joined;
 
@@ -606,6 +654,9 @@ namespace Ring.Networking.Client
             _nm.ClientManager.RegisterBroadcast<MatchRestartedNet>(OnRestarted);
             // Stage 3 Т34: the public board, a fifth life-cycle message.
             _nm.ClientManager.RegisterBroadcast<MatchResultsNet>(OnResults);
+            // bd `app-qw01`: the personal end-of-RAID tally, a sixth life-cycle
+            // message.
+            _nm.ClientManager.RegisterBroadcast<RaidEndedNet>(OnRaidEnded);
             _nm.ClientManager.OnClientConnectionState += OnClientConnectionState;
         }
 
@@ -619,6 +670,7 @@ namespace Ring.Networking.Client
             _nm.ClientManager.UnregisterBroadcast<MatchEndedNet>(OnEnded);
             _nm.ClientManager.UnregisterBroadcast<MatchRestartedNet>(OnRestarted);
             _nm.ClientManager.UnregisterBroadcast<MatchResultsNet>(OnResults);
+            _nm.ClientManager.UnregisterBroadcast<RaidEndedNet>(OnRaidEnded);
             _nm.ClientManager.OnClientConnectionState -= OnClientConnectionState;
         }
 
@@ -675,6 +727,9 @@ namespace Ring.Networking.Client
 
         void OnResults(MatchResultsNet results, Channel channel)
             => Apply(_state.OnResults(in results), nameof(MatchResultsNet));
+
+        void OnRaidEnded(RaidEndedNet raidEnded, Channel channel)
+            => Apply(_state.OnRaidEnded(in raidEnded), nameof(RaidEndedNet));
 
         /// The one place a decision of the core becomes an effect. Two
         /// statements, no judgement: do what the action says, then say what
