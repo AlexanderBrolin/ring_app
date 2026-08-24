@@ -1,8 +1,10 @@
 using System;
 using NUnit.Framework;
+using Ring.Data;
 using Ring.Simulation.AI;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
+using UnityEngine;
 
 namespace Ring.Simulation.Tests
 {
@@ -247,6 +249,63 @@ namespace Ring.Simulation.Tests
                 "step 6: min(EliteShareOuterGrowth*5, EliteShareOuterCap) = min(0.10,0.25) = " +
                 "0.10 -> round(100*0.10) = 10 -- a doubled growth rate would give " +
                 "round(100*0.20) = 20");
+        }
+
+        [Test]
+        public void OuterZone_StillSpawnsChasers_AtTheStepTheOldGunnerCurveSaturated()
+        {
+            // Task app-jmb2 (owner decision Р347). THE TWO SHARE NUMBERS COME
+            // FROM THE SHIPPED SO, NOT FROM THE FIXTURE, and that is the whole
+            // point of this test: TestConfigs deliberately stays at the OLD
+            // GunnerShareGrowth (0.05) so the golden digests never move
+            // (ConfigTests' own sixth divergence note), so a fixture-valued
+            // test here would be green on both states of the tree and witness
+            // nothing (lesson 447/451).
+            //
+            // STEP 17 IS THE OLD NUMBER'S OWN SATURATION POINT:
+            // 0.2 + 0.05 * (17 - 1) = 1.0 exactly, which is 5.4 minutes into a
+            // raid at the shipped 20-second difficulty step. From there the
+            // saturated share handed the WHOLE non-elite remainder to gunners
+            // and chasers stopped spawning on every ring for the rest of the
+            // raid. The retuned number leaves 0.2 + 0.0135 * 16 = 0.416, so
+            // the remainder still splits.
+            //
+            // The assertion is "chasers exist", not their exact count: the
+            // shipped share is a balance number the owner tunes (spec §0),
+            // and what must survive a retune is that both kinds of pressure
+            // reach the player, not one particular split.
+            var shipped = ScriptableObject.CreateInstance<WaveConfig>();
+            try
+            {
+                SimConfig c = MixFixture();
+                c.Wave.BaseCount = 100;
+                c.Wave.GunnerShareBase = shipped.GunnerShareBase;
+                c.Wave.GunnerShareGrowth = shipped.GunnerShareGrowth;
+
+                var w = new SimulationWorld(11, c);
+                TestWorlds.IdleTicks(w, TickOfStep(in c, 17));
+
+                int elite = w.WaveRef(Zone.Outer).PendingElite;
+                int gunner = w.WaveRef(Zone.Outer).PendingGunner;
+                int chaser = w.WaveRef(Zone.Outer).PendingChaser;
+                // The structural half, same role as MiddleZone_MixSumsToOne's
+                // own sum assertion: it holds for any share values as long as
+                // chaser = rest - gunner survives, so it can never mask the
+                // claim below.
+                Assert.AreEqual(100, elite + gunner + chaser,
+                    "the three-way mix must sum to the ring's own wave (100)");
+                Assert.Greater(chaser, 0,
+                    $"step 17 gave elite={elite}, gunner={gunner}, chaser={chaser} — a "
+                    + "gunner share that has reached 1 by this step takes the entire "
+                    + "non-elite remainder and the arena stops producing chasers for "
+                    + "the rest of the raid");
+            }
+            finally
+            {
+                // Fully qualified: this file's own `using System;` makes a
+                // bare `Object` ambiguous against `object`.
+                UnityEngine.Object.DestroyImmediate(shipped);
+            }
         }
 
         [Test]

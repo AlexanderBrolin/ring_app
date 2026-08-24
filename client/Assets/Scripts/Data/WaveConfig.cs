@@ -13,13 +13,15 @@ namespace Ring.Data
     /// turn a determinism check into a load test.
     ///
     /// THE DIVERGENCE HAS TWO CAUSES AND TWO DIRECTIONS, so "the fixture is
-    /// scaled down" is only half of it (amended in Т6). Т2's three cadence
-    /// fields are indeed scaled down (the fixture is the smaller side); Т6's
-    /// two are the opposite kind -- the OWNER RAISED the shipped number and
-    /// the fixture stayed put, upward for BaseCount (16 shipped against the
-    /// fixture's 4, decision К5) and DOWNWARD for EliteShareOuterGrowth
-    /// (0.007 shipped against the fixture's 0.02, decision Р311), so on that
-    /// last field the fixture is the LARGER of the two.
+    /// scaled down" is only half of it (amended in Т6, extended in
+    /// app-jmb2). Т2's three cadence fields are indeed scaled down (the
+    /// fixture is the smaller side); the other three are the opposite kind
+    /// -- the OWNER RETUNED the shipped number and the fixture stayed put,
+    /// upward for BaseCount (16 shipped against the fixture's 4, decision
+    /// К5) and DOWNWARD for EliteShareOuterGrowth (0.007 against 0.02,
+    /// decision Р311) and for GunnerShareGrowth (0.0135 against 0.05,
+    /// decision Р347), so on those last two the fixture is the LARGER of the
+    /// two.
     ///
     /// Where the two sources agree they agree ON PURPOSE and
     /// ConfigTests.AssertWaveEqual pins them with plain equality. Where they
@@ -52,7 +54,30 @@ namespace Ring.Data
         [Range(1, 100)] public int MaxSpawnAttempts = 16;
         [Range(0, 100)] public int FallbackSlots = 24;
         [Range(0f, 1f)] public float GunnerShareBase = 0.2f;
-        [Range(0f, 1f)] public float GunnerShareGrowth = 0.05f;
+        // Task app-jmb2 (owner decision Р347): GunnerShareGrowth 0.05 ->
+        // 0.0135. The gunner share is
+        // saturate(GunnerShareBase + GunnerShareGrowth * (step - 1)) and
+        // WaveSystem.StartWave hands the REMAINDER to chasers, so the step
+        // where this share reaches 1 is the step the arena stops producing
+        // chasers at all -- on every ring, for the rest of the raid. At 0.05
+        // that was step 17 (0.2 + 0.05 * 16 = 1.0), i.e.
+        // FirstWaveDelay + 16 * DifficultyStepSeconds = 2.5 + 320 = 322.5s,
+        // 5.4 minutes into a raid ADR-001 §4 lets run for twenty: two thirds
+        // of every raid had nothing left that closes to melee.
+        //
+        // THE NEW NUMBER IS DERIVED FROM THE RAID'S OWN LENGTH, not picked:
+        // the last difficulty step of a 20-minute raid is
+        // 1 + (1200 - 2.5) / 20 = 60, and the share has to still be below 1
+        // there, so the growth must stay under 0.8 / 59 = 0.01356. 0.0135
+        // leaves 0.9965 on step 60, and chasers survive to step 59 (19.4
+        // min) once the remainder's own rounding is counted.
+        //
+        // The owner's own reason for the retune is the other end of the same
+        // curve: the early raid was too hard. At 0.05 the share was already
+        // 0.55 by step 8 (2.4 min); at 0.0135 it is 0.2945 there, so the
+        // first minutes send mostly chasers and the gunners build up over
+        // the whole raid instead of over two minutes.
+        [Range(0f, 1f)] public float GunnerShareGrowth = 0.0135f;
 
         // Stage 2 Task 16 (spec §3.4): per-extra-player wave scale — the wave
         // size is multiplied by (1 + (playerCount - 1) * PerPlayerCountFrac)

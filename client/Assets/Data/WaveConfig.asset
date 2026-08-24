@@ -21,7 +21,7 @@ MonoBehaviour:
   MaxSpawnAttempts: 16
   FallbackSlots: 24
   GunnerShareBase: 0.2
-  GunnerShareGrowth: 0.05
+  GunnerShareGrowth: 0.0135
   PerPlayerCountFrac: 0.7
   EliteShareMiddle: 0.35
   EliteShareOuterGrowth: 0.007

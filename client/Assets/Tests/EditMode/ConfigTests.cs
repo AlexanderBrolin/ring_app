@@ -166,6 +166,47 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(a.Obstacles.Length, cfg.Arena.ObstacleCount);
         }
 
+        /// Task app-jmb2 (owner decision Р347): THE SHIPPED GUNNER SHARE
+        /// MUST NOT SATURATE BEFORE THE RAID IS OVER.
+        ///
+        /// WaveSystem.StartWave splits what is left after the elites by
+        /// `saturate(GunnerShareBase + GunnerShareGrowth * (step - 1))` and
+        /// gives the REMAINDER to chasers, so the moment that share reaches
+        /// 1 the arena stops producing chasers ENTIRELY — on every ring, for
+        /// the rest of the raid. At the shipped 0.05 that happened on step
+        /// 17, i.e. 5.4 minutes into a raid ADR-001 §4 lets run for twenty,
+        /// which left two thirds of every raid with nothing that closes to
+        /// melee.
+        ///
+        /// The rule is asserted, not the number: balance numbers are the
+        /// owner's to tune (spec §0's two-sources discipline), and what must
+        /// survive a retune is the property that the mix keeps both kinds of
+        /// pressure to the end. The step arithmetic is RESTATED here rather
+        /// than taken from WaveSystem.DifficultyStepFor — a test must not ask
+        /// the function under test what to expect (lesson 428), the same
+        /// reason WaveZoneTests.TickOfStep spells its own out.
+        [Test]
+        public void ShippedGunnerShare_DoesNotSaturate_BeforeTheLongestRaidEnds()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis);
+
+            // ADR-001 §4: the hard match timer is 15-20 minutes. Twenty is
+            // the case that has to hold — it is the longest raid the design
+            // allows, so a share that survives it survives every shorter one.
+            const float LongestRaidSeconds = 20f * 60f;
+            int lastStep = 1 + (int)((LongestRaidSeconds - cfg.Wave.FirstWaveDelay)
+                / cfg.Wave.DifficultyStepSeconds);
+            float shareAtLastStep = cfg.Wave.GunnerShareBase
+                + cfg.Wave.GunnerShareGrowth * (lastStep - 1);
+
+            Assert.Less(shareAtLastStep, 1f,
+                $"the gunner share reaches saturation at difficulty step {lastStep} "
+                + "or earlier, and from that step on WaveSystem.StartWave hands the "
+                + "whole non-elite remainder to gunners — chasers stop spawning for "
+                + "the rest of the raid");
+        }
+
         [Test]
         public void Build_ObstacleOutsideArena_Throws()
         {
@@ -261,11 +302,11 @@ namespace Ring.Simulation.Tests
             AssertMobEqual(expected.Chaser, cfg.Chaser);
             AssertMobEqual(expected.Gunner, cfg.Gunner);
             AssertWaveEqual(expected.Wave, cfg.Wave);
-            // Task Т2 (app-ggvz, spec §3.8 Р337) and Task Т6 (app-ggvz,
-            // owner decisions К5/Р311): FIVE Wave fields where the two
-            // number sources disagree ON PURPOSE, same documented-deviation
-            // category as AmmoStart/BarrierTop above and CellsPerMob/
-            // DropChance below.
+            // Task Т2 (app-ggvz, spec §3.8 Р337), Task Т6 (app-ggvz, owner
+            // decisions К5/Р311) and task app-jmb2 (owner decision Р347):
+            // SIX Wave fields where the two number sources disagree ON
+            // PURPOSE, same documented-deviation category as AmmoStart/
+            // BarrierTop above and CellsPerMob/DropChance below.
             //
             // Three of them are Т2's own delivery — the shipped SO carries
             // the real per-zone cadence numbers ({20,30,30}s pause,
@@ -275,19 +316,24 @@ namespace Ring.Simulation.Tests
             // DeterminismTests scenarios stay a determinism check, not a
             // load test.
             //
-            // The other two — BaseCount and EliteShareOuterGrowth — disagree
-            // for a DIFFERENT reason, from Т6: the owner RAISED the real
-            // number (BaseCount 4 -> 16, decision К5; EliteShareOuterGrowth
-            // 0.02 -> 0.007, decision Р311), and the TestConfigs fixture
-            // deliberately stayed pinned at its own OLD values (4, 0.02f)
-            // instead of following it up — not because the fixture was ever
-            // "scaled down" against these two, but because a fixture that
-            // tracked BaseCount up to 16 would turn the golden scenarios
-            // into a load test rather than a determinism check, same
-            // consequence as the three Т2 fields above for a different
-            // cause.
+            // The other three — BaseCount, EliteShareOuterGrowth and
+            // GunnerShareGrowth — disagree for a DIFFERENT reason: the owner
+            // RETUNED the real number and the TestConfigs fixture
+            // deliberately stayed pinned at its own OLD value instead of
+            // following it up. From Т6: BaseCount 4 -> 16 (decision К5) and
+            // EliteShareOuterGrowth 0.02 -> 0.007 (decision Р311) — not
+            // because the fixture was ever "scaled down" against these two,
+            // but because a fixture that tracked BaseCount up to 16 would
+            // turn the golden scenarios into a load test rather than a
+            // determinism check, same consequence as the three Т2 fields
+            // above for a different cause. From app-jmb2:
+            // GunnerShareGrowth 0.05 -> 0.0135 (decision Р347), where the
+            // fixture stays at 0.05 for a THIRD reason again — the golden
+            // scenarios hash the wave composition, and the three digests
+            // have no re-pin sanction left, so the fixture's own share
+            // curve must not move at all.
             //
-            // AssertWaveEqual above deliberately excludes all five; each
+            // AssertWaveEqual above deliberately excludes all six; each
             // gets the same triple form here instead: the real SO reaches
             // the builder untouched, TestConfigs stays at its own pinned
             // number, and the two provably differ.
@@ -299,6 +345,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(4, expected.Wave.BaseCount,
                 "the TestConfigs baseline must stay at its own determinism-safe fixture value");
             Assert.AreNotEqual(expected.Wave.BaseCount, cfg.Wave.BaseCount,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
+            Assert.AreEqual(wv.GunnerShareGrowth, cfg.Wave.GunnerShareGrowth, Eps,
+                "WaveConfig.GunnerShareGrowth must reach WaveSimConfig through the builder");
+            Assert.AreEqual(0.05f, expected.Wave.GunnerShareGrowth, Eps,
+                "the TestConfigs baseline must stay at its own golden-safe fixture value");
+            Assert.AreNotEqual(expected.Wave.GunnerShareGrowth, cfg.Wave.GunnerShareGrowth,
                 "and the divergence is deliberate — if these ever agree, one of the two "
                 + "sources moved and the reason above no longer holds");
             Assert.AreEqual(wv.EliteShareOuterGrowth, cfg.Wave.EliteShareOuterGrowth, Eps,
@@ -1551,7 +1604,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.MaxSpawnAttempts, a.MaxSpawnAttempts);
             Assert.AreEqual(e.FallbackSlots, a.FallbackSlots);
             Assert.AreEqual(e.GunnerShareBase, a.GunnerShareBase, Eps);
-            Assert.AreEqual(e.GunnerShareGrowth, a.GunnerShareGrowth, Eps);
+            // Task app-jmb2 (decision Р347): GunnerShareGrowth is EXCLUDED
+            // here on purpose — see
+            // Build_DefaultAssets_MatchesTestConfigsBaseline's own comment,
+            // same documented-deviation category as ArenaConfig.BarrierTop/
+            // WeaponConfig.AmmoStart above. GunnerShareBase directly above
+            // still agrees on both sides (0.2 = 0.2) and stays here.
             // Stage 2 Task 16: same documented deviation from the brief's Files
             // list as AssertArenaEqual's own Task 4 note below — without this the
             // new field silently drops out of

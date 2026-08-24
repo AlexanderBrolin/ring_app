@@ -525,6 +525,35 @@ namespace Ring.Editor
                 .ReadAllText($"{DataDir}/WaveConfig.asset")
                 .Contains("ZoneWeights:");
 
+            // Task app-jmb2 (owner decision Р347, rule 413): the gunner-share
+            // retune, snapshotted in the same "read before mutate" window as
+            // waveCadencePending directly above and for the same reason.
+            //
+            // KEYED ON THE VALUE BEING REPLACED, like eliteScalePending's and
+            // playtestOneArenaPending's gates below: GunnerShareGrowth has
+            // existed on disk since Stage 2 Task 16, so no key's ARRIVAL can
+            // date this delivery -- only the departure of the old number can.
+            //
+            // THE TRAILING NEWLINE IS LOAD-BEARING. "GunnerShareGrowth: 0.05"
+            // without it is also a prefix of "GunnerShareGrowth: 0.055", so a
+            // later owner hand-tune into the 0.05x range would re-fire this
+            // gate and stomp the new number back down -- the exact failure
+            // waveCadencePending's own doc rejects a "BaseCount: 4" key for.
+            // With the newline the match is the whole serialized line, and
+            // Unity writes this file LF-terminated (verified on the committed
+            // asset, one occurrence, no other 0.05 anywhere in it).
+            //
+            // AND IT LEAVES THE OWNER'S TUNING ALONE: the share curve is a
+            // named milestone-В4 tuning target, so a gate reading "not yet
+            // 0.0135" would wipe every later hand-tune on the next Apply.
+            // Reading "still 0.05" fires once, and fires again only if the
+            // owner deliberately types 0.05 back -- the one case where
+            // re-delivering is the right answer, since 0.05 is the number the
+            // saturation arithmetic calls wrong.
+            bool gunnerShareRetunePending = System.IO.File
+                .ReadAllText($"{DataDir}/WaveConfig.asset")
+                .Contains("GunnerShareGrowth: 0.05\n");
+
             // Stage 3 Task 12 (errata E-2): match-flow pacing — a brand-new SO
             // CLASS, so its C# field initializers ARE the shipped numbers and
             // no seeding method is needed (VisibilityConfig's own precedent).
@@ -746,6 +775,15 @@ namespace Ring.Editor
             // calls could touch WaveConfig.asset). Single `waveChanged |=`,
             // same precedent as every gated call above.
             if (waveCadencePending) waveChanged |= ApplyWaveCadence(wave);
+
+            // Task app-jmb2 (owner decision Р347): the gunner-share retune,
+            // gated by gunnerShareRetunePending (snapshotted above, in the
+            // same read-before-mutate window as waveCadencePending). A
+            // SEPARATE gate rather than a second field on ApplyWaveCadence:
+            // that one's key is permanently spent -- "ZoneWeights:" left the
+            // asset when Т6 ran and cannot come back -- so a field added
+            // there would never be delivered at all.
+            if (gunnerShareRetunePending) waveChanged |= ApplyGunnerShareRetune(wave);
 
             if (lootChanged) EditorUtility.SetDirty(loot);
             if (arenaChanged) EditorUtility.SetDirty(arena);
@@ -2500,6 +2538,33 @@ namespace Ring.Editor
                 changed |= SetIfDifferent(ref wave.EliteShareOuterGrowth,
                     waveDefaults.EliteShareOuterGrowth);
                 return changed;
+            }
+            finally
+            {
+                Object.DestroyImmediate(waveDefaults);
+            }
+        }
+
+        /// Task app-jmb2 (owner decision Р347): the gunner-share retune --
+        /// same shape as ApplyWaveCadence directly above (a local defaults
+        /// instance, SetIfDifferent, destroyed in a finally), so the shipped
+        /// number lives in WaveConfig.cs's own field initializer and this
+        /// method only decides WHICH field is sanctioned to move.
+        ///
+        /// THE SANCTIONED LIST IS EXACTLY ONE FIELD. GunnerShareBase is
+        /// DELIBERATELY ABSENT: the decision retunes how fast the share
+        /// grows, not where it starts, and 0.2 is what both number sources
+        /// still agree on (ConfigTests.AssertWaveEqual pins it with plain
+        /// equality). The reason for the number itself is on WaveConfig.cs's
+        /// own GunnerShareGrowth doc; the reason for the gate is at this
+        /// method's call site.
+        static bool ApplyGunnerShareRetune(WaveConfig wave)
+        {
+            var waveDefaults = ScriptableObject.CreateInstance<WaveConfig>();
+            try
+            {
+                return SetIfDifferent(ref wave.GunnerShareGrowth,
+                    waveDefaults.GunnerShareGrowth);
             }
             finally
             {
