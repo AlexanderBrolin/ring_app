@@ -1163,17 +1163,32 @@ namespace Ring.Server
             MatchSummary summary = _matchServer.LastSummary;
             TickTimeAccumulator tickTime = _matchServer.TickTime;
 
+            // bd `app-ggvz` Т8: `pickupSpawnsSkipped` and
+            // `containerSpawnsSkipped` join the two skip counters that were
+            // already here. They are WRITTEN (SimulationWorld.SpawnPickup,
+            // ContainerStore) and were read by NOBODY outside the Editor
+            // harness, which made them the same genre of instrument this file
+            // refuses elsewhere: a counter that cannot be read says nothing,
+            // and the spec of `app-ggvz` names these two as the MEASUREMENT
+            // for its risk Р-В (a pickup is born on every death, so the rate
+            // of the loot follows the rate of the kills one for one, and the
+            // per-ring ceilings raised that rate by a factor the arena has
+            // never run at). A stand measurement that cannot report them is
+            // a measurement of something else.
             var sb = new StringBuilder(512);
             sb.AppendFormat(CultureInfo.InvariantCulture,
                 "ServerBootstrap: match-end matchId={0} seed={1} epoch={2} playerCount={3} " +
                 "reason={4} exitCode={5} finalTick={6} durationSeconds={7:F3} " +
                 "wavesCleared={8} mobSpawnsSkipped={9} projectileSpawnsSkipped={10} " +
-                "worldDroppedEvents={11} tickSamples={12} tickAvgMs={13:F3} tickMaxMs={14:F3} " +
-                "lingerSeconds={15}",
+                "pickupSpawnsSkipped={11} containerSpawnsSkipped={12} " +
+                "worldDroppedEvents={13} tickSamples={14} tickAvgMs={15:F3} tickMaxMs={16:F3} " +
+                "lingerSeconds={17}",
                 _config.MatchId, _config.Seed, summary.Epoch, summary.PlayerStats.Length,
                 summary.Reason, _pendingExitCode, summary.FinalTick, now - _matchStartedSeconds,
                 summary.World.WavesCleared, summary.World.MobSpawnsSkipped,
-                summary.World.ProjectileSpawnsSkipped, summary.DroppedEvents,
+                summary.World.ProjectileSpawnsSkipped,
+                summary.World.PickupSpawnsSkipped, summary.World.ContainerSpawnsSkipped,
+                summary.DroppedEvents,
                 tickTime.Count, tickTime.AverageMs, tickTime.MaxMs,
                 _net.MatchEndLingerSeconds);
 
