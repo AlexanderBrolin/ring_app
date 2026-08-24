@@ -12,7 +12,7 @@ namespace Ring.Networking.Protocol
     /// BUMP THIS ONLY DELIBERATELY. Client and server read the same constant
     /// from the same build, so a bump is invisible in a single-build test run
     /// and only shows up as "every snapshot refused" against an older peer.
-    /// SnapshotCodecTests.ProtocolVersion_Current_IsPinnedToTwo pins the
+    /// SnapshotCodecTests.ProtocolVersion_Current_IsPinnedToThree pins the
     /// literal for exactly that reason: the value cannot drift without a
     /// human editing a test that says, in words, that this is a
     /// compatibility break.
@@ -36,8 +36,35 @@ namespace Ring.Networking.Protocol
     ///   an old client would pass the config check and then silently lose
     ///   every PvP ending. The bump is what turns that into an honest
     ///   `HandshakeRefusal.ProtocolVersionMismatch`.
+    ///
+    ///   2 → 3 (Stage 3 Task 10, spec Р213/Р251): the DOMAIN of `MobType`
+    ///   grew by `Elite` = 2 and `Director` = 3 inside the existing Mobs
+    ///   block. Same rule as the 1 → 2 entry, not its exception: no new
+    ///   block kind was added, so an older reader does not skip and count
+    ///   anything — it validates the Mobs record's type nibble against its
+    ///   own `SnapshotBlocks.MaxMobTypeValue` (now `Director`, was `Gunner`)
+    ///   and rejects the WHOLE record as `MalformedContent`
+    ///   (SnapshotBlocks.TryReadMobsBlock). The handshake could not catch
+    ///   that on its own either: Elite's and Director's MobSimConfig
+    ///   sections are deliberately NOT part of `SimConfigHash.Compute` yet
+    ///   (owner decision R-17 — see SimConfig.Elite/Director's own doc; Т13
+    ///   wires them), so an old client would pass the config check and then
+    ///   silently misparse every Elite/Director Mobs record. The bump is
+    ///   what turns that into an honest
+    ///   `HandshakeRefusal.ProtocolVersionMismatch`.
+    ///
+    ///   2 → 3, SECOND REASON (Stage 3 Task 25, spec Р257) — recorded here
+    ///   rather than left to the commit log, because by the rule above it
+    ///   would have earned a bump of its own: the Liveness block's payload
+    ///   WIDTH changed, 1 byte to 2, and width is named in that rule
+    ///   explicitly. It rides the same 3 because both breaks land inside
+    ///   Stage 3 with no build released between them — a version is a
+    ///   promise to PEERS, and there is no peer that ever spoke "3 with a
+    ///   one-byte liveness block". Adding five new block KINDS in the same
+    ///   task needed no bump at all (Р282, the rule's own exception); the
+    ///   widening is what would have.
     public static class ProtocolVersion
     {
-        public const byte Current = 2;
+        public const byte Current = 3;
     }
 }

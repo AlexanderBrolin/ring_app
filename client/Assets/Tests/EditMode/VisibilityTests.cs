@@ -72,7 +72,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void BeyondSightRadius_NotVisible()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             // Open arena: no obstacles/walls, so LoS is never the reason this
             // mob is hidden — only the plain distance gate is exercised.
@@ -99,7 +99,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void BehindObstacle_NotVisible()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.ObstacleCount = 1;
             // Dead-centre on the ray, radius well past the mob's own (a
             // Chaser radius of 0.5), so this stays blocked even after the
@@ -129,7 +129,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void BehindWall_NotVisible()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // Vertical wall straddling the ray's crossing point on its flat
             // side (same shape as MobAiTests.LineOfFire_BlockedByWall),
@@ -159,7 +159,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EdgePeek_IsVisible_ConservativeLos()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             float mobRadius = cfg.Chaser.Radius; // 0.5 — the target's own radius the LoS gate must pad by
             cfg.Arena.ObstacleCount = 1;
             // Obstacle's perpendicular offset from the ray sits strictly
@@ -207,7 +207,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EdgePeek_UsesTargetTypeRadius_NotHeroRadius()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             float mobRadius = cfg.Chaser.Radius;  // 0.5
             float heroRadius = cfg.Hero.Radius;   // 0.45
             // Fix-round 1 (M-3): EdgePeek_IsVisible_ConservativeLos's own
@@ -257,7 +257,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Hysteresis_KeepsVisibleUntilExitRadius()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(cfg.Visibility.SightRadius - 1f, 0f));
 
@@ -323,7 +323,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void HysteresisBand_ReenteredFromLinger_ReadsAsVisibleNow()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
@@ -380,7 +380,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void LingerTicks_KeepVisibleAfterRangeLoss()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
@@ -419,7 +419,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void LingerTicks_KeepVisibleAfterLosBreak()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // Same wall shape as BehindWall_NotVisible: blocks anything
             // crossing x=5 within roughly y in [-6,6] but leaves the y-axis
@@ -435,7 +435,7 @@ namespace Ring.Simulation.Tests
             // near the wall) to blocked (dead ahead, straight through the
             // wall's own stadium). Isolates a pure LoS break from a range
             // break, which LingerTicks_KeepVisibleAfterRangeLoss
-            // (TestConfigs.Open(), no geometry at all) cannot exercise no
+            // (TestConfigs.OpenField(), no geometry at all) cannot exercise no
             // matter how it moves its mob.
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));
 
@@ -479,7 +479,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SwapRemove_DoesNotTransferState()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
 
             // Fresh world: SimulationWorld's own _nextEntityId counter starts
@@ -1162,7 +1162,7 @@ namespace Ring.Simulation.Tests
             // apart IN THE FIXTURE (the shipped balance may legitimately keep
             // them equal — that is a balance choice, not a contract this test
             // is entitled to depend on).
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             float chaserRadius = cfg.Chaser.Radius;
             cfg.Gunner.Radius = chaserRadius * 2f;
             float gunnerRadius = cfg.Gunner.Radius;
@@ -1398,6 +1398,360 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(VisibilityIds.ForPlayer(2), result.IdAt(2));
             Assert.AreEqual(mobA, result.IdAt(3), "mobs follow the players, in the world's own slot order");
             Assert.AreEqual(mobB, result.IdAt(4));
+        }
+
+        // --- 34: PickupBeyondSightRadius_IsNotVisible (Stage 3 Task 26) ---
+
+        [Test]
+        public void PickupBeyondSightRadius_IsNotVisible()
+        {
+            // Spec §3.9 Р240: a pickup is filtered by the SAME rule a mob is —
+            // distance, then line of sight, then hysteresis and linger. This
+            // is the distance half, on an open field so LoS can never be the
+            // reason (the same discipline BeyondSightRadius_NotVisible above
+            // keeps for mobs).
+            var cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(1, cfg);
+            int farId = w.SpawnPickup(PickupKind.EnergyCell,
+                new float2(cfg.Visibility.SightRadius + 1f, 0f), 1);
+            // The witness (fix-round 1's I-1 idiom, applied at birth): without
+            // a pickup that MUST be reported, an empty ComputePickups body
+            // satisfies the negative assertion just as well as a correct one.
+            int nearId = w.SpawnPickup(PickupKind.EnergyCell, new float2(5f, 0f), 1);
+
+            var previous = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            var result = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            VisibilitySystem.ComputePickups(w, 0, cfg.Visibility, previous, result);
+
+            Assert.IsFalse(result.Contains(farId),
+                "a pickup past SightRadius must not reach the observer");
+            Assert.IsTrue(result.Contains(nearId),
+                "witness: a clearly-visible pickup must actually be reported visible");
+        }
+
+        // --- 35: PickupBehindArc_IsNotVisible (Stage 3 Task 26) ---
+
+        [Test]
+        public void PickupBehindArc_IsNotVisible()
+        {
+            // The LoS half of the same rule, broken by a ZONE ARC rather than
+            // by an obstacle or an interior wall — the barrier kind Stage 3
+            // introduced (spec §3.15) and the one §3.9 names in as many words:
+            // "a cell behind a wall is not visible, and that is correct — it
+            // would light up a fight the observer has no right to watch".
+            // Arc geometry follows MobAiTests.LineOfFire_BlockedByArcBody: one
+            // ring, one door, the door deliberately NOT on the blocked ray.
+            var cfg = TestConfigs.OpenField();
+            const float ringRadius = 10f;
+            cfg.Arena.ZoneWallCount = 1;
+            cfg.Arena.ZoneWallRadius = new[] { ringRadius };
+            cfg.Arena.ZoneWallHalfWidth = new[] { 1f };
+            cfg.Arena.ZoneWallDoorStart = new[] { 0 };
+            cfg.Arena.ZoneWallDoorCount = new[] { 1 };
+            cfg.Arena.DoorCenterRad = new[] { math.PI / 2f };   // the door faces +Y
+            cfg.Arena.DoorFreeWidth = new[] { 4f };
+
+            var w = new SimulationWorld(1, cfg);
+            // Behind the SOLID part of the ring (+X, a quarter turn off the
+            // door) and comfortably inside SightRadius, so distance cannot be
+            // the reason it is hidden.
+            var blockedPos = new float2(ringRadius * 2f, 0f);
+            var throughDoorPos = new float2(0f, ringRadius * 2f);
+            Assert.Less(math.length(blockedPos), cfg.Visibility.SightRadius,
+                "test setup: the blocked pickup must be within SightRadius, or this fixture "
+                + "would be testing the distance gate a second time");
+            int blockedId = w.SpawnPickup(PickupKind.EnergyCell, blockedPos, 1);
+            int doorId = w.SpawnPickup(PickupKind.EnergyCell, throughDoorPos, 1);
+
+            // test setup: the two angles really are what this fixture claims —
+            // one crosses the arc's body, the other its door cutout. Without
+            // this pair the fixture could be green on an arena whose arc never
+            // blocked anything at all.
+            float pad = -cfg.Visibility.PickupRadiusForVisibility;
+            Assert.IsFalse(Targeting.HasLineOfFire(float2.zero, blockedPos, pad, cfg.Arena),
+                "test setup: the +X ray must actually cross the solid arc");
+            Assert.IsTrue(Targeting.HasLineOfFire(float2.zero, throughDoorPos, pad, cfg.Arena),
+                "test setup: the +Y ray must actually pass through the door");
+
+            var previous = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            var result = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            VisibilitySystem.ComputePickups(w, 0, cfg.Visibility, previous, result);
+
+            Assert.IsFalse(result.Contains(blockedId),
+                "a pickup behind the solid body of a zone arc must not reach the observer");
+            Assert.IsTrue(result.Contains(doorId),
+                "witness: a pickup seen straight through the door must be reported visible");
+        }
+
+        // --- 36: PickupEdgePeek_UsesPickupRadius_NotContainerRadius (Task 26) ---
+
+        [Test]
+        public void PickupEdgePeek_UsesPickupRadius_NotContainerRadius()
+        {
+            // Plan errata E-6 A-I7 / spec §3.9 Р268 item 3: neither new class
+            // has a MobConfig to read a radius off, so each states its own in
+            // VisibilitySimConfig — and each Compute must read ITS OWN. The
+            // two numbers ship EQUAL (0.4 m each in VisibilityConfig.asset),
+            // so a fixture that inherited them could never tell the two apart;
+            // these are the test's own numbers (spec §0's two homes), spread
+            // far enough that one radius clears the obstacle's edge and the
+            // other does not.
+            var cfg = TestConfigs.OpenField();
+            const float obstacleRadius = 2f;
+            const float offset = 1f;            // the obstacle's perpendicular
+                                                // distance from the ray
+            cfg.Visibility.PickupRadiusForVisibility = 1.5f;    // 2.0 - 1.5 = 0.5 < 1.0 -> clears
+            cfg.Visibility.ContainerRadiusForVisibility = 0.1f; // 2.0 - 0.1 = 1.9 > 1.0 -> blocked
+            cfg.Arena.ObstacleCount = 1;
+            cfg.Arena.ObstaclePos = new[] { new float2(5f, offset) };
+            cfg.Arena.ObstacleRadius = new[] { obstacleRadius };
+
+            var target = new float2(10f, 0f);
+            var w = new SimulationWorld(1, cfg);
+            int pickupId = w.SpawnPickup(PickupKind.EnergyCell, target, 1);
+            int containerId = w.SpawnContainer(ContainerKind.Crate, target, new byte[] { 1 });
+
+            // test setup: the STRICT centre-to-centre ray is blocked, so both
+            // classes really are in the edge-peek case and the fixture is
+            // discriminating the pad, not the geometry (the same premise
+            // EdgePeek_IsVisible_ConservativeLos states for mobs).
+            Assert.IsFalse(Targeting.HasLineOfFire(float2.zero, target, 0f, cfg.Arena),
+                "test setup: strict centre-to-centre LoS must be blocked for this to be an "
+                + "edge-peek case at all");
+
+            var pickupPrev = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            var pickups = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            VisibilitySystem.ComputePickups(w, 0, cfg.Visibility, pickupPrev, pickups);
+
+            var containerPrev = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+            var containers = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+            VisibilitySystem.ComputeContainers(w, 0, cfg.Visibility, containerPrev, containers);
+
+            // Same spot, same obstacle, same observer: the ONLY difference is
+            // which config field each call reads. A ComputePickups that read
+            // the container radius (or a shared constant, or a mob's) fails
+            // the first of these; a ComputeContainers that read the pickup's
+            // fails the second.
+            Assert.IsTrue(pickups.Contains(pickupId),
+                "the pickup's own radius clears the obstacle's edge — ComputePickups must "
+                + "pad the ray by PickupRadiusForVisibility");
+            Assert.IsFalse(containers.Contains(containerId),
+                "the container's own (smaller) radius does NOT clear the same edge — "
+                + "ComputeContainers must pad by ContainerRadiusForVisibility, not by the "
+                + "pickup's");
+        }
+
+        // --- 37: ContainerHysteresisAndLinger (Stage 3 Task 26) ---
+
+        [Test]
+        public void ContainerHysteresisAndLinger()
+        {
+            // Spec §3.9: "a container seen once is NOT remembered by the
+            // client — gone behind a wall, gone from the frame; the
+            // EntityFadeTicks fade works as it does for mobs". That sentence
+            // is only true if a container gets the same hysteresis band and
+            // the same linger countdown a mob does, which is what this walks
+            // end to end: visible -> hysteresis band (visible NOW, not
+            // lingering) -> past it (freshly lingering) -> countdown -> gone.
+            var cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(1, cfg);
+            int id = w.SpawnContainer(ContainerKind.Crate, new float2(5f, 0f), new byte[] { 1 });
+
+            var setA = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+            var setB = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+            VisibilitySystem.ComputeContainers(w, 0, cfg.Visibility, setA, setB);
+            Assert.IsTrue(setB.Contains(id), "test setup: must start visible");
+            Assert.AreEqual(0, setB.LingerOf(id), "test setup: must start visible NOW, not lingering");
+
+            // Into the hysteresis band: past the plain SightRadius, inside
+            // SightRadius + ExitHysteresis. LingerOf 0 is the discriminating
+            // half — a build with no hysteresis bonus would still report
+            // Contains() true through the linger grace, with a NONZERO counter.
+            MoveContainer(w, id, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis * 0.5f);
+            VisibilitySystem.ComputeContainers(w, 0, cfg.Visibility, setB, setA);
+            Assert.IsTrue(setA.Contains(id),
+                "hysteresis must keep a previously-visible container visible past SightRadius");
+            Assert.AreEqual(0, setA.LingerOf(id),
+                "still WITHIN the hysteresis band counts as visible now, not lingering");
+
+            // Past the widened radius: the linger countdown starts at its full
+            // value rather than the container being dropped outright.
+            MoveContainer(w, id, cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis + 1f);
+            VisibilitySet prev = setA, cur = setB;
+            for (int expected = cfg.Visibility.LingerTicks; expected >= 1; expected--)
+            {
+                VisibilitySystem.ComputeContainers(w, 0, cfg.Visibility, prev, cur);
+                Assert.IsTrue(cur.Contains(id), $"must still linger at counter {expected}");
+                Assert.AreEqual(expected, cur.LingerOf(id),
+                    "a container's linger counts down exactly like a mob's");
+                (prev, cur) = (cur, prev);
+            }
+
+            VisibilitySystem.ComputeContainers(w, 0, cfg.Visibility, prev, cur);
+            Assert.IsFalse(cur.Contains(id),
+                "linger must expire after exactly LingerTicks ticks, containers included");
+        }
+
+        /// Moves the container `id` out along +X through the world's own
+        /// test seam — the container store is swap-removed, so its SLOT is
+        /// not its identity and has to be looked up by id every time.
+        static void MoveContainer(SimulationWorld w, int id, float distance)
+        {
+            int index = w.IndexOfContainer(id);
+            Assert.GreaterOrEqual(index, 0, "test setup: the container must still be in the world");
+            ContainerState c = w.Containers[index];
+            c.Pos = new float2(distance, 0f);
+            w.SetContainerForTest(index, c);
+        }
+
+        // --- 38: CapacityFor_IsOneHome_ForThreeClasses (Task 26, errata C-I3) ---
+
+        [Test]
+        public void CapacityFor_IsOneHome_ForThreeClasses()
+        {
+            // Plan errata E-6 C-I3. Before this task the mob formula was
+            // spelled out in TWO places (SnapshotAssembler.Connection and
+            // TestWorlds.Capacity) and the two new classes had no capacity at
+            // all. Each class's cap is its OWN: a pickup set sized by the mob
+            // formula is merely wasteful, but a container set sized by
+            // MaxContainers when the caller meant mobs refuses 227 of the 288
+            // entities it was supposed to hold — silently, now that Add
+            // counts refusals instead of throwing.
+            var cfg = TestConfigs.Default();
+
+            Assert.AreEqual(cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers,
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Mobs),
+                "the mob set holds every live mob PLUS every player — Compute produces both "
+                + "in one pass, told apart by the sign of the id");
+            Assert.AreEqual(cfg.Arena.MaxPickups,
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups),
+                "the pickup set holds every pickup the arena can carry and no players");
+            Assert.AreEqual(cfg.Arena.MaxContainers,
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers),
+                "the container set holds every container the arena can carry and no players");
+
+            // The second home delegates rather than restating (the whole point
+            // of the debt): a mutant that changes the formula in one place
+            // moves BOTH sides of this comparison, which is exactly why the
+            // three assertions above state the caps independently.
+            Assert.AreEqual(VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Mobs),
+                TestWorlds.Capacity(cfg),
+                "TestWorlds.Capacity must delegate to the one home, not carry a copy");
+        }
+
+        // --- 39: SetOverflow_IsRefusedAndCounted_NotThrown (Task 26) ---
+
+        [Test]
+        public void SetOverflow_IsRefusedAndCounted_NotThrown()
+        {
+            // Spec §3.9 item 1: `Add` used to write `_ids[_count]` with no
+            // bounds check at all, so a set that ran out of room threw
+            // IndexOutOfRangeException from INSIDE the per-tick snapshot
+            // assembly path — the one place a server may not fail. It now
+            // refuses the newcomer and counts the refusal, the same shape
+            // SnapshotAssembler's own DroppedEntities keeps: a bounded
+            // degradation that is visible in a counter rather than a crash or
+            // a silence.
+            var set = new VisibilitySet(2);
+            set.Add(11, 0);
+            set.Add(22, 3);
+
+            Assert.DoesNotThrow(() =>
+            {
+                set.Add(33, 1);
+                set.Add(44, 2);
+            }, "a full set must refuse quietly — throwing here takes down a server tick");
+
+            Assert.AreEqual(2, set.Count, "a refused entry must not grow the set");
+            Assert.AreEqual(2, set.RefusedCount, "both refusals must be counted, not just the first");
+
+            // The INCUMBENTS survive, the newcomer is what goes: the set is
+            // read as this tick's answer, and evicting an entry already
+            // written would make the answer depend on Add order in a way the
+            // insertion-order contract (IdAt/LingerAt) forbids.
+            Assert.IsTrue(set.Contains(11), "the first entry must survive a refused newcomer");
+            Assert.IsTrue(set.Contains(22), "the second entry must survive a refused newcomer");
+            Assert.IsFalse(set.Contains(33), "the refused newcomer must not be in the set");
+            Assert.IsFalse(set.Contains(44));
+            Assert.AreEqual(22, set.IdAt(1),
+                "second element (lesson 227): the refusal must not have overwritten an incumbent");
+
+            // Clear resets the tick's extent, NOT the counter: refusals are a
+            // per-connection health number like DroppedEntities, and one that
+            // reset every tick could never be read by anything slower than a
+            // tick.
+            set.Clear();
+            Assert.AreEqual(0, set.Count);
+            Assert.AreEqual(2, set.RefusedCount, "Clear resets the extent, never the refusal tally");
+        }
+
+        // --- 40: the aliasing guard covers ALL THREE entry points (T26 review, I1) ---
+
+        [Test]
+        public void ComputePickupsAndContainers_ThrowOnAliasedBuffers_LikeComputeDoes()
+        {
+            // Task 26 review, I1. Compute_ThrowsOnAliasedBuffers (fixture 15)
+            // pins the guard on ONE of the three entry points, and Task 26
+            // added the other two — each with its own RequireDistinct call
+            // that no test reached. The failure the guard prevents is SILENT
+            // by its own doc: result.Clear() runs before previous is ever
+            // read, so aliasing does not crash, it just leaves the class with
+            // a permanently-empty hysteresis/linger window. A guard nobody
+            // exercises is a guard that can be deleted without a red.
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+
+            var pickupSet = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            Assert.Throws<System.ArgumentException>(
+                () => VisibilitySystem.ComputePickups(w, 0, cfg.Visibility, pickupSet, pickupSet),
+                "ComputePickups must refuse two aliased sets exactly as Compute does");
+
+            var containerSet = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+            Assert.Throws<System.ArgumentException>(
+                () => VisibilitySystem.ComputeContainers(w, 0, cfg.Visibility, containerSet,
+                    containerSet),
+                "ComputeContainers must refuse two aliased sets exactly as Compute does");
+
+            // The negative half, same shape as Compute_AcceptsDistinctBuffers:
+            // a guard that misfired on the ordinary calling convention would
+            // take down every frame instead of none.
+            var otherPickups = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+            var otherContainers = new VisibilitySet(
+                VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+            Assert.DoesNotThrow(
+                () => VisibilitySystem.ComputePickups(w, 0, cfg.Visibility, pickupSet, otherPickups));
+            Assert.DoesNotThrow(
+                () => VisibilitySystem.ComputeContainers(w, 0, cfg.Visibility, containerSet,
+                    otherContainers));
+        }
+
+        // --- 41: CapacityFor refuses a class it has no cap for (T26 review, Minor) ---
+
+        [Test]
+        public void CapacityFor_RefusesAnUnknownClass_RatherThanFallingBackToTheMobs()
+        {
+            // Task 26 review, Minor: the default arm's own message forbids
+            // exactly the thing a missing default would do — hand back another
+            // class's number. Without a witness, "return arena.MaxMobs +
+            // arena.MaxPlayers" is a green mutation, and a fourth entity class
+            // would then silently get a set sized for mobs.
+            var cfg = TestConfigs.Default();
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => VisibilitySet.CapacityFor(in cfg.Arena, (VisibilityClass)3),
+                "a VisibilityClass with no cap of its own must throw, not inherit one");
         }
     }
 }

@@ -102,7 +102,7 @@ namespace Ring.Simulation.Tests
             // circle into a phantom of radius |r| = 0.25 (padR -0.45 + cR
             // 0.2) — big enough to swallow the 0.1m offset below and falsely
             // block the ray. Clamped to padR' = max(padR, -cR) = -0.2,
-            // r' = 0: the circle degenerates to its own centre point, which
+            // r' = 0: the circle degenerates to its own center point, which
             // the ray — offset by 0.1, not colinear with it — genuinely misses.
             float2 circlePos = new float2(5f, 0.1f);
             float circleR = 0.2f;
@@ -268,6 +268,111 @@ namespace Ring.Simulation.Tests
                 0.15f, arena));
         }
 
+        // --- Stage 3 Task 9 (bd app-35g, spec Р64): HasLineOfFire grows an
+        // arc loop mirroring the existing obstacle/wall loops above. ---
+
+        [Test]
+        public void LineOfFire_BlockedByArcBody()
+        {
+            float ringR = 10f, halfW = 1f;
+            float[] doorCenter = { math.PI / 2f, 0f }; // index 1 = the door under test
+            float[] doorFreeWidth = { 4f, 4f };
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+                ZoneWallCount = 1,
+                ZoneWallRadius = new[] { ringR },
+                ZoneWallHalfWidth = new[] { halfW },
+                ZoneWallDoorStart = new[] { 0 },
+                ZoneWallDoorCount = new[] { 2 },
+                DoorCenterRad = doorCenter,
+                DoorFreeWidth = doorFreeWidth,
+            };
+            // Straight through the solid wall at angle pi — clear of both doors.
+            Assert.IsFalse(Targeting.HasLineOfFire(new float2(-2f, 0f), new float2(-14f, 0f),
+                0.15f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_PassesThroughDoor()
+        {
+            // Control for LineOfFire_BlockedByArcBody above (the
+            // ThroughDoor_NoContact idiom, ZoneGeometryTests.cs): without it,
+            // a mutant that always blocks (InDoorCutout disabled) or that
+            // simply forgets the door slicing would still pass the body test
+            // alone.
+            float ringR = 10f, halfW = 1f;
+            float[] doorCenter = { math.PI / 2f, 0f };
+            float[] doorFreeWidth = { 4f, 4f };
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+                ZoneWallCount = 1,
+                ZoneWallRadius = new[] { ringR },
+                ZoneWallHalfWidth = new[] { halfW },
+                ZoneWallDoorStart = new[] { 0 },
+                ZoneWallDoorCount = new[] { 2 },
+                DoorCenterRad = doorCenter,
+                DoorFreeWidth = doorFreeWidth,
+            };
+            // Dead down the middle of door 1 (angle 0) — clears the wall untouched.
+            Assert.IsTrue(Targeting.HasLineOfFire(new float2(2f, 0f), new float2(14f, 0f),
+                0.15f, arena));
+        }
+
+        [Test]
+        public void LineOfFire_NegativePadClamped_ArcBody()
+        {
+            // Р64: same clamp discipline as LineOfFire_NegativePadClamped /
+            // _Wall above — a target's own radius passed as a negative padR
+            // must not phantom-inflate a zone wall's half-width past its own
+            // negation. Unclamped, halfW+padR = 0.2-0.45 = -0.25 (negative,
+            // undefined per PushOutOfArc/SegmentArc's own doc): the outer and
+            // inner effective radii INVERT (effective outer 9.75 < effective
+            // core 10.25, since SegmentCircleInterval folds padR into each
+            // one's own r), and neither of SegmentArc's two band candidates
+            // fires — hand-verified: the ray reads as clear when it must be
+            // blocked. Clamped, halfW+max(padR,-halfW) = 0 exactly:
+            // degenerate but well-ordered, and the ray is genuinely stopped.
+            float ringR = 10f, halfW = 0.2f;
+            float[] doorCenter = System.Array.Empty<float>();
+            float[] doorFreeWidth = System.Array.Empty<float>();
+            var arena = new ArenaSimConfig
+            {
+                Radius = 35f,
+                ObstacleCount = 0,
+                ObstaclePos = System.Array.Empty<float2>(),
+                ObstacleRadius = System.Array.Empty<float>(),
+                WallCount = 0,
+                WallA = System.Array.Empty<float2>(),
+                WallB = System.Array.Empty<float2>(),
+                WallHalfWidth = System.Array.Empty<float>(),
+                ZoneWallCount = 1,
+                ZoneWallRadius = new[] { ringR },
+                ZoneWallHalfWidth = new[] { halfW },
+                ZoneWallDoorStart = new[] { 0 },
+                ZoneWallDoorCount = new[] { 0 },
+                DoorCenterRad = doorCenter,
+                DoorFreeWidth = doorFreeWidth,
+            };
+            Assert.IsFalse(Targeting.HasLineOfFire(new float2(2f, 0f), new float2(14f, 0f),
+                -0.45f, arena));
+        }
+
         [Test]
         public void NearestAlivePlayer_ZeroAlive_ReturnsFalseAndMinusOne()
         {
@@ -284,10 +389,23 @@ namespace Ring.Simulation.Tests
         {
             // Fresh multiplayer world: every player spawns on the ring at the
             // SAME radius from the arena center
-            // (MultiPlayerWorldTests.SoloSpawnsAtOrigin_MultiplayerSpawnsOnRing),
+            // (MultiPlayerWorldTests.SoloTakesTheOnePlayerRingPoint_MultiplayerSpreadsAroundIt),
             // so querying from the center is an exact three-way tie — the
             // smaller index must win (spec Р85), not spawn/array order coincidence.
+            // bd app-3cph: the three are PLACED at an exact tie rather than
+            // trusted to spawn at one. The ring point is
+            // `cos/sin(k * 2pi/3) * Radius * SpawnRingFrac`, and whether those
+            // three products come out bit-identical is an accident of the
+            // radius: at 103.96 they did, at 159.16 they no longer do, and the
+            // test began measuring float noise instead of the tie-break rule
+            // it is named for. Three explicit points at the same distance from
+            // the query make the premise true by construction, at any arena
+            // size the owner ever tunes to.
             var w = new SimulationWorld(1, TestConfigs.Open(), playerCount: 3);
+            const float Tie = 12f;
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(Tie, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, Tie));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(-Tie, 0f));
             bool found = Targeting.NearestAlivePlayer(w, float2.zero, out int index);
             Assert.IsTrue(found);
             Assert.AreEqual(0, index);
@@ -301,11 +419,11 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_ClosesDistanceToPlayer()
         {
-            var w = new SimulationWorld(1, TestConfigs.Open());
+            var w = new SimulationWorld(1, TestConfigs.OpenField());
             w.SpawnMobForTest(MobType.Chaser, new float2(15f, 0f));
             float d0 = 15f;
             for (int i = 0; i < 60; i++) w.Tick(Idle);
-            var snap = new RenderSnapshot(TestConfigs.Open().Arena);
+            var snap = new RenderSnapshot(TestConfigs.OpenField());
             w.CaptureSnapshot(snap);
             Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), d0 - 3f);
         }
@@ -313,7 +431,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_TelegraphThenStrike_DamagesPlayer()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(1.0f, 0f)); // already within AttackRange
             float hp0 = c.Hero.MaxHp;
@@ -326,7 +444,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_TelegraphsAheadOfRunner_AndConnects()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f));
             var run = new SimInput { MoveDir = new float2(1f, 0f) }; // player charges straight at the chaser
@@ -388,7 +506,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_LeadClampedByMaxMeters()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Chaser.MaxSpeed = 0f; // isolate the cap check from the chaser's own approach
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(20f, 0f));
@@ -412,7 +530,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SwingLeadZero_EntryTickEqualsE1Rule()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             // Factor 0 -> PredictPos degenerates to the raw player position exactly
             // (offset = lead * (seconds * 0) = zero vector) — the pre-Task-13 (E1)
             // raw-distance rule as a special case, bit-exact.
@@ -430,7 +548,7 @@ namespace Ring.Simulation.Tests
             }
 
             // Sim B: identical setup/seed, independently tracking the first tick the
-            // raw centre-to-centre distance crosses AttackRange — using exactly the
+            // raw center-to-center distance crosses AttackRange — using exactly the
             // positions the entry check itself reads: the mob's position as it stood
             // BEFORE this tick's motion, against the player's position AFTER this
             // tick's movement (movement runs before the AI check inside Tick()).
@@ -453,14 +571,14 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chaser_BehindObstacle_SteersAroundNotStuck()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Arena.ObstacleCount = 1;
             c.Arena.ObstaclePos = new[] { new float2(7f, 0f) };
             c.Arena.ObstacleRadius = new[] { 2f };
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(14f, 0f)); // player at (0,0) behind the obstacle
             for (int i = 0; i < 300; i++) w.Tick(Idle);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), 3f); // reached it by going around
         }
@@ -468,7 +586,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Gunner_KeepsPreferredRange_AndFiresOnlyWithLoS()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Gunner, new float2(20f, 0f));
             int fired = 0;
@@ -479,7 +597,7 @@ namespace Ring.Simulation.Tests
                 for (int e = 0; e < w.EventCount; e++)
                     if (w.GetEvent(e).Kind == SimEventKind.ProjectileFired) fired++;
             }
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             float dist = math.distance(snap.Mobs[0].Pos, w.Player.Pos);
             Assert.That(dist, Is.InRange(c.Gunner.PreferredRange - 2f, c.Gunner.PreferredRange + 2f));
@@ -525,7 +643,20 @@ namespace Ring.Simulation.Tests
             // RangeTolerance 1.5) takes several seconds of pure Reposition — long
             // enough for the un-clamped cooldown to rack up multiple FireIntervals
             // (1.6s) of "debt" before it ever gets a legal shot.
-            w.SpawnMobForTest(MobType.Gunner, new float2(60f, 0f));
+            //
+            // bd app-3cph: the gunner is placed a fixed distance FROM THE
+            // PLAYER, radially inward, instead of at a literal point. The solo
+            // collector spawns on the one-player ring (Geometry.SpawnPosFor),
+            // so `(60, 0)` was ~44 m from its target while the ring sat at
+            // 103.96 — and ~99 m from it once the В1 playtest moved the ring to
+            // 159.16, which MaxSpeed 4 cannot close inside this test's 600
+            // ticks: the gunner never got its first shot and the sanity
+            // assertion below, not the F-1 one, is what failed. 44 m restores
+            // the approach this test was written around, at any rim.
+            // Inward, so the spawn point stays inside the arena by
+            // construction.
+            float2 target = w.Player.Pos;
+            w.SpawnMobForTest(MobType.Gunner, target - math.normalize(target) * 44f);
 
             int windowFired = 0;
             int windowTicksLeft = -1;
@@ -560,7 +691,7 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(10f, 0f));
             w.KillPlayerForTest();
             for (int i = 0; i < 30; i++) w.Tick(Idle);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(MobAiState.Idle, snap.Mobs[0].Ai);
         }
@@ -582,7 +713,7 @@ namespace Ring.Simulation.Tests
             var inputs = new SimInput[2];
             for (int i = 0; i < 30; i++) w.TickAll(inputs);
 
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(MobAiState.Idle, snap.Mobs[0].Ai);
         }
@@ -625,7 +756,7 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(12.1f, 10f));
             w.KillPlayerForTest(); // mobs go Idle — only separation acts
             for (int i = 0; i < 60; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             float dist = math.distance(snap.Mobs[0].Pos, snap.Mobs[1].Pos);
             Assert.Greater(dist, 1.0f); // pushed apart
@@ -659,7 +790,7 @@ namespace Ring.Simulation.Tests
             // collide-and-slide cancels the resulting velocity, and the next
             // tick reproduces the same geometry. A mutation that reintroduces
             // tangent-to-end-cap steering for walls reddens this test.
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Arena.WallCount = 1;
             c.Arena.WallA = new[] { new float2(7f, -3f) };
             c.Arena.WallB = new[] { new float2(7f, 3f) };
@@ -667,7 +798,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, c);
             w.SpawnMobForTest(MobType.Chaser, new float2(14f, 0f)); // player at (0,0) behind the wall
             for (int i = 0; i < 300; i++) w.Tick(Idle);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), 3f); // reached it by going around
         }
@@ -685,7 +816,7 @@ namespace Ring.Simulation.Tests
             // inside the padded circle), `theta` becomes 90 degrees, and the
             // resulting tangent gives the mob its MAXIMUM possible axial
             // component, i.e. exactly the "commit to a detour along the
-            // wall" behaviour this test wants, not the churn it's meant to
+            // wall" behavior this test wants, not the churn it's meant to
             // catch. What DOES redden it: dropping the wall loop entirely
             // (SteerAround never even sees the wall, so the mob walks
             // straight into its flat side and the physical collide-and-slide
@@ -705,9 +836,9 @@ namespace Ring.Simulation.Tests
 
             var w = new SimulationWorld(1, c);
             var player = w.Player;
-            player.Pos = new float2(-6f, -1f); // west of the wall, off-centre like the chaser below
+            player.Pos = new float2(-6f, -1f); // west of the wall, off-center like the chaser below
             w.SetPlayerForTest(player);
-            // East of the wall, at the same off-centre offset — squarely on
+            // East of the wall, at the same off-center offset — squarely on
             // the flat side, far from either rounded end.
             w.SpawnMobForTest(MobType.Chaser, new float2(12f, -1f));
 
@@ -729,6 +860,67 @@ namespace Ring.Simulation.Tests
                 $"axial progress along the wall ({axialProgress:F2}) should track a " +
                 $"meaningful fraction of the total distance travelled ({pathLength:F2}) — " +
                 "a mob rubbing along the wall face instead of heading for its end would fail this");
+        }
+
+        [Test]
+        public void Chaser_FindsDoor_InsteadOfPressingIntoArc()
+        {
+            // Stage 3 Task 9 (spec Р118): SteerAround grows an arc branch —
+            // when the direct line to the target crosses a zone wall, the mob
+            // heads for a waypoint at the nearest DOOR (not the wall's own
+            // tangent — a tangent to a full-circle barrier never converges,
+            // the mob would skate the ring forever without finding the
+            // opening).
+            //
+            // RED-discipline note: physical collision (MoveWithCollisions ->
+            // SweepArena) is EQUALLY unaware of ZoneWallCount before this
+            // task's Step 3 lands, so a plain "did it eventually reach the
+            // player" assertion would pass today too — the mob would simply
+            // walk straight through the wall, uncollided, and get there fast.
+            // The `everEmbeddedInSolidWall` guard below is what actually
+            // reddens: it fails the instant the mob's own center is found
+            // inside the wall's solid body (OverlapsArc true) at any tick,
+            // which the current straight-line walk-through triggers almost
+            // immediately (spawn angle 135 degrees is well outside the door's
+            // +-17 degree cutout).
+            var c = TestConfigs.OpenField();
+            float ringR = 10f, halfW = 1f;
+            c.Arena.ZoneWallCount = 1;
+            c.Arena.ZoneWallRadius = new[] { ringR };
+            c.Arena.ZoneWallHalfWidth = new[] { halfW };
+            c.Arena.ZoneWallDoorStart = new[] { 0 };
+            c.Arena.ZoneWallDoorCount = new[] { 1 };
+            c.Arena.DoorCenterRad = new[] { 0f }; // door on the +x side
+            c.Arena.DoorFreeWidth = new[] { 4f };
+
+            var w = new SimulationWorld(1, c);
+            // Player at the arena center, inside the wall's hole. Chaser
+            // spawns outside, 135 degrees from the door, so one direction
+            // around is unambiguously shorter — the direct line to the player
+            // crosses the wall's SOLID body, so a "press into the arc" mob
+            // would either dead-stop (if collision respected it) or, today,
+            // walk straight through it (collision does not yet).
+            float dist = ringR + halfW + 3f;
+            float angle = 3f * math.PI / 4f;
+            float2 spawnPos = dist * new float2(math.cos(angle), math.sin(angle));
+            w.SpawnMobForTest(MobType.Chaser, spawnPos);
+
+            bool everEmbeddedInSolidWall = false;
+            for (int i = 0; i < 600; i++)
+            {
+                w.Tick(Idle);
+                float2 pos = w.Mobs[0].Pos;
+                if (Geometry.OverlapsArc(pos, c.Chaser.Radius, ringR, halfW,
+                        c.Arena.DoorCenterRad, c.Arena.DoorFreeWidth))
+                    everEmbeddedInSolidWall = true;
+            }
+
+            var snap = new RenderSnapshot(c);
+            w.CaptureSnapshot(snap);
+            Assert.Less(math.distance(snap.Mobs[0].Pos, w.Player.Pos), 3f); // reached it through the door
+            Assert.IsFalse(everEmbeddedInSolidWall,
+                "the chaser must never be caught embedded in the wall's solid body — " +
+                "collision and steering must both respect it, not just eventually arrive");
         }
 
         [Test]

@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Simulation.AI;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -9,13 +10,43 @@ namespace Ring.Simulation.Tests
         [Test]
         public void FirstWave_SpawnsAfterDelay_WithBaseCount()
         {
+            // Т4 (app-ggvz): THREE rings, each drawing a whole wave of its
+            // own — the single budget the three used to share is gone (owner
+            // decision К3), so the arena's first wave is Zones.Count times
+            // what one ring gets.
+            //
+            // ⚠ REWRITTEN IN Т5: the wave no longer ARRIVES all at once. A ring
+            // seats at most MaxSpawnsPerZonePerTick mobs per tick (spec Р317),
+            // so the wave takes ceil(waveSize / cap) ticks, and the old form —
+            // "count the mobs `delay + 2` ticks in" — was true only by the one
+            // tick of slack it happened to carry. It would have gone on passing
+            // with the smoothing deleted, which is precisely what a count test
+            // must not do. Both ends of the arrival are pinned instead: what
+            // one tick may seat, and that the debt is closed by the last tick
+            // the arithmetic allows. Every number is a fixture expression.
             var c = TestConfigs.Default();
             var w = new SimulationWorld(11, c);
-            int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
-            for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            int start = SimulationWorld.TicksFromSeconds(c.Wave.FirstWaveDelay);
+            int perRing = WaveSystem.CountForTest(in c.Wave, 0, w.PlayerCount);
+            int cap = c.Wave.MaxSpawnsPerZonePerTick;
+            int firstTick = math.min(cap, perRing);
+            int seatTicks = (perRing + cap - 1) / cap;
+
+            TestWorlds.IdleTicks(w, start);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
-            Assert.AreEqual(c.Wave.BaseCount, snap.MobCount);
+            Assert.AreEqual(Zones.Count * firstTick, snap.MobCount,
+                "the starting tick must seat exactly one tick's budget in each ring, no more");
+            Assert.AreEqual(perRing - firstTick, w.WaveRef(Zone.Outer).PendingTotal,
+                "…and what it could not seat has to stay as debt, not vanish");
+
+            TestWorlds.IdleTicks(w, seatTicks - 1);
+            w.CaptureSnapshot(snap);
+            Assert.AreEqual(Zones.Count * perRing, snap.MobCount,
+                "the whole wave must be seated once ceil(waveSize / cap) ticks have passed");
+            Assert.AreEqual(0, snap.Wave.PendingTotal, "…and the debt closed with it");
+            // The aggregate takes the MAXIMUM step across the rings, and on
+            // the first wave all three carry difficulty step 1.
             Assert.AreEqual(1, snap.Wave.WaveIndex);
         }
 
@@ -28,7 +59,7 @@ namespace Ring.Simulation.Tests
             // chance to move yet
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0);
             for (int m = 0; m < snap.MobCount; m++)
@@ -58,15 +89,30 @@ namespace Ring.Simulation.Tests
         [Test]
         public void FullyBlockedRing_NoHang_DebtCarriesOver()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Wave.FirstWaveDelay = 0.1f;
-            c.Wave.MinSpawnDistanceToPlayer = 100f; // no valid points at all
+            // Stage 3 Task 12: "no valid points at all" is a claim about EVERY
+            // ring's spawn ring, not about one. The literal 100 blocked the
+            // single 63 m ring of the Stage 2 arena; once the arena grew, the
+            // outer ring was left legal and the wave duly seated mobs there,
+            // which is exactly what this assertion saw. Derived from the arena
+            // so it can never fall behind a ring again.
+            //
+            // Т4: the fixture is OpenField(), i.e. ZONELESS, so only the outer
+            // ring runs at all (WaveSystem.RingIsFrozen) — but the assertion
+            // below reads the snapshot's WORLD aggregate, which sums all three,
+            // so it stays true either way.
+            c.Wave.MinSpawnDistanceToPlayer = c.Arena.Radius + 10f; // no valid points on ANY ring
             var w = new SimulationWorld(11, c);
             for (int i = 0; i < 60; i++) w.Tick(default); // not hanging is already success
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.AreEqual(0, snap.MobCount);
-            Assert.Greater(snap.Wave.PendingChasers + snap.Wave.PendingGunners, 0);
+            // Stage 3 Task 11: the debt is nine fields now (zone x
+            // archetype) -- PendingTotal is the one computed home for
+            // "how much debt is outstanding" (coordinator R-52), not a
+            // hand-summed pair.
+            Assert.Greater(snap.Wave.PendingTotal, 0);
             // the debt clears once conditions allow it (spec §3.13 item 5)
             var relaxed = c;
             relaxed.Wave.MinSpawnDistanceToPlayer = 8f;
@@ -74,17 +120,31 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < 60; i++) w.Tick(default);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0);
-            Assert.AreEqual(0, snap.Wave.PendingChasers + snap.Wave.PendingGunners);
+            Assert.AreEqual(0, snap.Wave.PendingTotal);
         }
 
         [Test]
         public void WaveComposition_FollowsGunnerShare()
         {
             var c = TestConfigs.Default();
+            // Stage 3 Task 12: this test's subject is the GUNNER SHARE, which
+            // is a within-RING number, so the fixture reduces the arena to one
+            // ring instead of counting gunners across three of them (the
+            // middle ring spends EliteShareMiddle on elites and the core is
+            // all elite, so a three-ring count would be measuring composition
+            // routing — WaveZoneTests' subject — rather than the share this
+            // test names).
+            //
+            // ⚠ Т4: the isolation used to be ZoneWeights = {1,0,0}; with the
+            // weights gone (owner decision К3) a ring is isolated by making
+            // the arena ZONELESS, which WaveSystem.RingIsFrozen answers by
+            // running Zone.Outer and freezing the other two. Same one-ring
+            // world, expressed through the mechanism that still exists.
+            c.Arena.ZoneRadius = System.Array.Empty<float>();
             var w = new SimulationWorld(11, c);
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 2;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             int gunners = 0;
             for (int m = 0; m < snap.MobCount; m++)
@@ -97,15 +157,37 @@ namespace Ring.Simulation.Tests
         [Test]
         public void MobCap_SkipsSpawnsDeterministically()
         {
+            // Stage 3 Т22 (spec §3.4 Р254, coordinator R-182): the wave now
+            // stops DirectorReserveSlots short of MaxMobs, so it can never
+            // reach the physical cap and can never bump MobSpawnsSkipped —
+            // that counter's own branch is witnessed separately, by
+            // PhysicalCap_SkipsAndCounts below. What THIS test has always been
+            // about survives unchanged: the degradation at the ceiling is
+            // deterministic. MaxMobs is stated large enough for the reserve to
+            // leave room (the validator's own rule, R-181), not at the old 2,
+            // where the ceiling would be negative and the fixture would be a
+            // configuration the game refuses to start on.
             var c = TestConfigs.Default();
-            c.Arena.MaxMobs = 2;
+            c.Arena.MaxMobs = 8;
             c.Wave.BaseCount = 6;
             var w = new SimulationWorld(11, c);
             for (int i = 0; i < 200; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
-            Assert.LessOrEqual(snap.MobCount, 2);
-            Assert.Greater(w.WorldStats.MobSpawnsSkipped, 0);
+            int ceiling = c.Arena.MaxMobs - c.Flow.DirectorReserveSlots;
+            Assert.LessOrEqual(snap.MobCount, ceiling);
+            // Wave-cadence-per-zone (bd app-ggvz Т3): the debt lives in three
+            // per-ring WaveState instances now, so "what the wave could not
+            // place" is their SUM. Since Т4 each ring owes a WHOLE wave of
+            // BaseCount 6 against a ceiling of MaxMobs - DirectorReserveSlots,
+            // so the outer ring alone already outruns the ceiling and the
+            // other two never place a mob -- but the sum is what the claim is
+            // about, and summing keeps it true whichever ring the ceiling
+            // stops.
+            int debt = 0;
+            for (int z = 0; z < Zones.Count; z++) debt += w.WaveRef((Zone)z).PendingTotal;
+            Assert.Greater(debt, 0,
+                "what the wave could not place stays as debt rather than being lost");
             static ulong Run(SimConfig cc)
             {
                 var ww = new SimulationWorld(11, cc);
@@ -113,6 +195,32 @@ namespace Ring.Simulation.Tests
                 return ww.StateHash();
             }
             Assert.AreEqual(Run(c), Run(c)); // deterministic degradation under the cap
+        }
+
+        /// The physical cap of SpawnMob itself — the branch that skips and
+        /// counts (WorldStats.MobSpawnsSkipped). Since Т22 the wave director
+        /// stops at MaxMobs - DirectorReserveSlots and can no longer reach it,
+        /// so the branch needs a witness that spawns straight through the seam
+        /// instead of through a wave. It is not dead code: the Director and his
+        /// retinue spawn past the wave ceiling by design (Р254), and they are
+        /// the callers that can still meet the cap in a world filled by
+        /// something other than waves.
+        [Test]
+        public void PhysicalCap_SkipsAndCounts_PastTheWaveCeiling()
+        {
+            var c = TestConfigs.Quiet(); // no waves — this is about the seam, not the director
+            c.Arena.MaxMobs = 4;
+            var w = new SimulationWorld(11, c);
+            for (int i = 0; i < c.Arena.MaxMobs; i++)
+                w.SpawnMobForTest(MobType.Chaser, new float2(10f + i * 3f, 0f));
+            Assert.AreEqual(c.Arena.MaxMobs, w.MobCount, "premise: the world is filled to its cap");
+            Assert.AreEqual(0, w.WorldStats.MobSpawnsSkipped, "premise: nothing has been skipped yet");
+
+            int id = w.SpawnMobForTest(MobType.Chaser, new float2(-10f, 0f));
+
+            Assert.AreEqual(-1, id, "past the cap the spawn is refused, not queued");
+            Assert.AreEqual(c.Arena.MaxMobs, w.MobCount, "…and the array is not grown");
+            Assert.AreEqual(1, w.WorldStats.MobSpawnsSkipped, "…and the refusal is counted exactly once");
         }
 
         [Test]
@@ -145,7 +253,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(11, c);
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 10;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0); // the wave still found room elsewhere on the ring
             // M-7 (fix-round T14): IsValidSpawn checks each mob against its
@@ -164,7 +272,7 @@ namespace Ring.Simulation.Tests
         {
             // Coordinator addition: Spawn_InsideWall_Rejected above only
             // exercises rejection via a wall's FLAT side. This fixture is a
-            // short wall ending a few metres short of the spawn ring, so a
+            // short wall ending a few meters short of the spawn ring, so a
             // candidate at that angle can only be rejected through the
             // ROUNDED END CAP (Geometry.ClosestPointOnSegment clamps to the
             // endpoint out there, not the flat band) — proving IsValidSpawn's
@@ -186,7 +294,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(11, c);
             int delayTicks = (int)math.ceil(c.Wave.FirstWaveDelay / SimulationWorld.TickDt) + 10;
             for (int i = 0; i < delayTicks; i++) w.Tick(default);
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             Assert.Greater(snap.MobCount, 0);
             // M-7 (fix-round T14): same fix as Spawn_InsideWall_Rejected

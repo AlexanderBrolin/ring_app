@@ -3,6 +3,7 @@ using FishNet.Managing;
 using FishNet.Transporting;
 using Ring.Data;
 using Ring.Networking.Protocol;
+using Ring.Simulation.Loot;
 
 namespace Ring.Networking.Client
 {
@@ -217,6 +218,28 @@ namespace Ring.Networking.Client
         /// add a second place for a swapped pair to hide.
         public MatchEndedNet EndedNet { get; private set; }
 
+        /// The PUBLIC board of that same match (Stage 3 Т34), held for the
+        /// same reason and in the same shape as `EndedNet` above: whole,
+        /// rather than picked apart into per-seat properties that could drift
+        /// from each other.
+        public MatchResultsNet ResultsNet { get; private set; }
+
+        /// Whether a board has arrived at all. A separate bit rather than a
+        /// null test on the arrays, because the arrays are the MESSAGE's own
+        /// business — a board of a raid with nobody left in it is still a
+        /// board that arrived.
+        public bool HasResults { get; private set; }
+
+        /// The tally of THIS collector's own raid, as it arrived (bd
+        /// `app-qw01`). Held whole for the same reason `EndedNet` above is.
+        public RaidEndedNet RaidEnded { get; private set; }
+
+        /// Whether that tally has arrived at all — a separate bit for the same
+        /// reason `HasResults` above is one: the message's own contents are
+        /// its business, and a raid that ended with nothing shot is still a
+        /// raid that ended.
+        public bool HasRaidEnded { get; private set; }
+
         /// May the hello go out now? `true` EXACTLY ONCE per instance, and
         /// the caller must send it when told `true` — this method has already
         /// recorded that it did.
@@ -334,6 +357,65 @@ namespace Ring.Networking.Client
             return new LinkAction(LinkVerdict.Applied, resetSeams: false, MatchEpoch);
         }
 
+        /// The public scoreboard of the match that just ended (Stage 3 Т34).
+        ///
+        /// IT DOES NOT MOVE THE PHASE, and that is the difference between it
+        /// and `OnEnded` above. The board is a SECOND statement about a match
+        /// whose ending has already been recorded — the server sends it on the
+        /// Reliable channel immediately after the personal message, so it
+        /// normally arrives with the link already at `MatchEnded`, which
+        /// `OnEnded` treats as a repeat and refuses. Arriving there is this
+        /// message's ordinary case, not its error case.
+        ///
+        /// AND IT RESETS NOTHING. Same reason `OnEnded` does not: the epoch has
+        /// not changed, the interpolation buffer is still feeding the last
+        /// seconds of the match onto the screen behind the board, and clearing
+        /// the seams would throw exactly those frames away.
+        public LinkAction OnResults(in MatchResultsNet results)
+        {
+            if (Phase == LinkPhase.Refused) return Refuse(LinkVerdict.LinkRefused);
+            if (Phase != LinkPhase.Joined && Phase != LinkPhase.MatchEnded)
+                return Refuse(LinkVerdict.Unexpected);
+            if (results.MatchEpoch != MatchEpoch) return Refuse(LinkVerdict.ForeignEpoch);
+
+            ResultsNet = results;
+            HasResults = true;
+
+            return new LinkAction(LinkVerdict.Applied, resetSeams: false, MatchEpoch);
+        }
+
+        /// THIS collector's own raid is over (bd `app-qw01`).
+        ///
+        /// IT DOES NOT MOVE THE PHASE, and that is the whole reason it is a
+        /// message of its own rather than an early `MatchEndedNet`: the MATCH
+        /// is still running, other collectors are still in it, and
+        /// `LinkPhase.MatchEnded` is the phase that shuts spectating down and
+        /// answers every later life-cycle message with `AlreadyEnded`. Same
+        /// shape as `OnResults` directly above, for the same reason.
+        ///
+        /// AND IT RESETS NOTHING, same as both of them: the epoch has not
+        /// changed and the buffer is still feeding the raid onto the screen
+        /// behind the panel.
+        ///
+        /// THE PHASE GATE IS THE SAME TWO `OnResults` ACCEPTS. `Joined` is the
+        /// ordinary case; `MatchEnded` is legal too, because a tally that
+        /// crosses the match's own ending on the wire is late news, not wrong
+        /// news, and refusing it would be the `AlreadyEnded` shape this
+        /// message exists to stay out of.
+        public LinkAction OnRaidEnded(in RaidEndedNet raidEnded)
+        {
+            if (Phase == LinkPhase.Refused) return Refuse(LinkVerdict.LinkRefused);
+            if (Phase != LinkPhase.Joined && Phase != LinkPhase.MatchEnded)
+                return Refuse(LinkVerdict.Unexpected);
+            if (raidEnded.Tally.MatchEpoch != MatchEpoch)
+                return Refuse(LinkVerdict.ForeignEpoch);
+
+            RaidEnded = raidEnded;
+            HasRaidEnded = true;
+
+            return new LinkAction(LinkVerdict.Applied, resetSeams: false, MatchEpoch);
+        }
+
         /// A new match is starting under a new epoch. THE ONE MESSAGE BESIDE
         /// THE OPENING WELCOME THAT CARRIES THE RIGHT TO RESET — never a
         /// snapshot: `ClientMatchReset`'s own doc refuses that outright, and
@@ -379,6 +461,20 @@ namespace Ring.Networking.Client
             if (restarted.MatchEpoch == MatchEpoch) return Refuse(LinkVerdict.DuplicateEpoch);
 
             MatchEpoch = restarted.MatchEpoch;
+            // Stage 3 Т34: THE BOARD DOES NOT SURVIVE THE MATCH IT DESCRIBES.
+            // A board left standing would be handed to the results screen on
+            // the first frame of the NEW raid, which reads as "this raid is
+            // already over" — and it would list the previous raid's endings
+            // while the new one is being played behind it. `EndedNet` needs no
+            // such line: nothing reads it without `HasResults`' equivalent, and
+            // this bit is that equivalent.
+            HasResults = false;
+            // bd `app-qw01`: AND NEITHER DOES THE RAID TALLY. Same argument as
+            // the board directly above — a tally left standing would be handed
+            // to the screen on the first frame of the NEW raid and read as
+            // "your raid is already over", with the previous raid's numbers on
+            // it.
+            HasRaidEnded = false;
             Seed = restarted.Seed;
             Phase = LinkPhase.Joined;
 
@@ -388,6 +484,31 @@ namespace Ring.Networking.Client
         /// A refusal carries the verdict and nothing else — never the right
         /// to reset, and never an epoch worth reading.
         static LinkAction Refuse(LinkVerdict verdict) => new LinkAction(verdict, resetSeams: false, 0);
+
+        /// One outgoing loot request, stamped with the match this link is
+        /// actually in (Stage 3 Т28, spec §3.8 Р237/Р292).
+        ///
+        /// THE STAMP LIVES IN THE CORE, NOT IN THE WIRING, and that is the
+        /// point of the method rather than a tidy detail: `MatchEpoch` above
+        /// is this process's one answer to "which match is this", and a stamp
+        /// applied inside `ClientMatchLink.RequestLoot` would be a decision
+        /// standing where no test can reach it (that class's whole reason for
+        /// being separate). Here it is an ordinary pure function of this
+        /// core's own state, and `LootProtocolTests` witnesses it.
+        ///
+        /// NO PHASE TEST, like every other method here that decides nothing:
+        /// before the welcome `MatchEpoch` is still 0, and the far end's
+        /// `LootNet.IsCurrentEpoch` refuses a zero-stamped request without
+        /// this core inventing a second opinion about when it is legal to
+        /// ask.
+        public LootRequestNet LootRequestFor(LootOp op, int containerId, byte slot)
+            => new LootRequestNet
+            {
+                MatchEpoch = MatchEpoch,
+                Op = (byte)op,
+                ContainerId = containerId,
+                Slot = slot,
+            };
 
         /// The wire byte to the ONE refusal vocabulary (`HandshakeRefusal`,
         /// HandshakeNet.cs). Written as an explicit switch rather than a cast
@@ -531,6 +652,11 @@ namespace Ring.Networking.Client
             _nm.ClientManager.RegisterBroadcast<MatchRefusedNet>(OnRefused);
             _nm.ClientManager.RegisterBroadcast<MatchEndedNet>(OnEnded);
             _nm.ClientManager.RegisterBroadcast<MatchRestartedNet>(OnRestarted);
+            // Stage 3 Т34: the public board, a fifth life-cycle message.
+            _nm.ClientManager.RegisterBroadcast<MatchResultsNet>(OnResults);
+            // bd `app-qw01`: the personal end-of-RAID tally, a sixth life-cycle
+            // message.
+            _nm.ClientManager.RegisterBroadcast<RaidEndedNet>(OnRaidEnded);
             _nm.ClientManager.OnClientConnectionState += OnClientConnectionState;
         }
 
@@ -543,6 +669,8 @@ namespace Ring.Networking.Client
             _nm.ClientManager.UnregisterBroadcast<MatchRefusedNet>(OnRefused);
             _nm.ClientManager.UnregisterBroadcast<MatchEndedNet>(OnEnded);
             _nm.ClientManager.UnregisterBroadcast<MatchRestartedNet>(OnRestarted);
+            _nm.ClientManager.UnregisterBroadcast<MatchResultsNet>(OnResults);
+            _nm.ClientManager.UnregisterBroadcast<RaidEndedNet>(OnRaidEnded);
             _nm.ClientManager.OnClientConnectionState -= OnClientConnectionState;
         }
 
@@ -596,6 +724,12 @@ namespace Ring.Networking.Client
 
         void OnRestarted(MatchRestartedNet restarted, Channel channel)
             => Apply(_state.OnRestarted(in restarted), nameof(MatchRestartedNet));
+
+        void OnResults(MatchResultsNet results, Channel channel)
+            => Apply(_state.OnResults(in results), nameof(MatchResultsNet));
+
+        void OnRaidEnded(RaidEndedNet raidEnded, Channel channel)
+            => Apply(_state.OnRaidEnded(in raidEnded), nameof(RaidEndedNet));
 
         /// The one place a decision of the core becomes an effect. Two
         /// statements, no judgement: do what the action says, then say what
@@ -728,6 +862,53 @@ namespace Ring.Networking.Client
         {
             _nm.ClientManager.Broadcast(new SpectateRequestNet { TargetIndex = targetIndex },
                 Channel.Reliable);
+        }
+
+        /// Asks the server for one loot operation (Stage 3 Т28, spec §3.8).
+        ///
+        /// IT LIVES HERE FOR THE SAME REASON `RequestSpectate` DOES (AGENT.md
+        /// rule 2, and see that method's own doc): this class is the one
+        /// place in the project that speaks to the server, and a second one
+        /// would be a second place to keep the channel, the guard and the
+        /// teardown right.
+        ///
+        /// THE MESSAGE IS BUILT BY THE CORE, NOT HERE — see
+        /// `ClientLinkState.LootRequestFor`, which stamps it with the epoch
+        /// this link tracks. That keeps the one decision in the request (which
+        /// match it belongs to) where tests can reach it and leaves this
+        /// method with what every other method of this class has: a channel
+        /// and a send.
+        ///
+        /// IT DECIDES NOTHING ELSE, like every other method here. WHETHER to
+        /// ask — including whether a ghost is already outstanding — belongs to
+        /// the caller's own `LootRequestTracker`; whether to ACT on the asking
+        /// is the server's alone (`LootOps.Validate`).
+        ///
+        /// Reliable, the "Lifecycle" class of spec §3.7's table Р27, and for
+        /// the sharper reason this one shares with the spectate request: a
+        /// dropped request is a keypress that did nothing, with nothing on the
+        /// wire to say which of the two happened. UNLIKE that one, this wire
+        /// does answer — `LootResultNet` comes back for every request the
+        /// server acted on, accepted or refused.
+        public bool RequestLoot(LootOp op, int containerId, byte slot)
+        {
+            // IT REPORTS WHETHER THE BYTES ACTUALLY LEFT (review Т28, I-1),
+            // which `RequestSpectate` above has no need of. FishNet's own
+            // `ClientManager.Broadcast<T>` opens with `if (!Started) {
+            // LogWarning(...); return; }` — verified in the pinned 4.7.2
+            // (Managing/Client/ClientManager.Broadcast.cs) — so a request made
+            // while the transport is down costs a warning line and NO packet,
+            // silently. The spectate request survives that silently too,
+            // because its caller's window decays; the loot ghost has no decay
+            // by design (it waits for a reply this wire really does send), so
+            // a send that never happened would strand it forever. `Started`
+            // is FishNet's own predicate, read here rather than duplicated:
+            // this returns the same answer its guard is about to give.
+            if (!_nm.ClientManager.Started) return false;
+
+            _nm.ClientManager.Broadcast(_state.LootRequestFor(op, containerId, slot),
+                Channel.Reliable);
+            return true;
         }
     }
 }

@@ -12,8 +12,13 @@ namespace Ring.Data
     {
         [Range(0.1f, 20f)] public float MaxSpeed = 5.2f;
         [Range(1f, 200f)] public float Accel = 30f;
-        [Range(0.1f, 2f)] public float Radius = 0.5f;
-        [Range(1f, 500f)] public float MaxHp = 30f;
+        // Stage 3 Task 8 (spec §3.13, Р284, errata E-6 D-I6): ceilings
+        // widened 2 -> 4 (Radius) and 500 -> 5000 (MaxHp) so Т10's Elite
+        // (Radius 0.8) and Director (MaxHp 2500, Radius 2.2) assets fit the
+        // Inspector slider without the owner's first touch silently
+        // clamping them back down.
+        [Range(0.1f, 4f)] public float Radius = 0.5f;
+        [Range(1f, 5000f)] public float MaxHp = 30f;
         [Range(0f, 200f)] public float ContactDamage = 15f;
         [Range(0f, 20f)] public float AttackRange = 1.1f;
         [Range(0f, 5f)] public float TelegraphSeconds = 0.35f;
@@ -53,7 +58,7 @@ namespace Ring.Data
         [Range(0f, 5f)] public float MuzzleHeight = 0.95f;
 
         // Task 1: melee swing-attack target lead — how far ahead of a moving target's
-        // position a Chaser's swing aims (Task 15+); capped in metres so a fast-fleeing
+        // position a Chaser's swing aims (Task 15+); capped in meters so a fast-fleeing
         // target does not pull the swing absurdly far off its own body.
         [Range(0f, 2f)] public float SwingLeadFactor = 1.0f;
         [Range(0f, 6f)] public float SwingLeadMaxMeters = 2.0f; // sync-marker key — keep LAST

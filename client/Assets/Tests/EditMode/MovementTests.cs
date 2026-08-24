@@ -6,7 +6,7 @@ namespace Ring.Simulation.Tests
 {
     public class MovementTests
     {
-        static SimulationWorld World() => new SimulationWorld(1, TestConfigs.Open());
+        static SimulationWorld World() => new SimulationWorld(1, TestConfigs.OpenField());
 
         static SimInput Move(float x, float y)
             => new SimInput { MoveDir = new float2(x, y) };
@@ -14,10 +14,15 @@ namespace Ring.Simulation.Tests
         static SimInput MoveAim(float x, float y)
             => new SimInput { MoveDir = new float2(x, y), AimHeld = true };
 
+        /// Stage 3 Task 20 (coordinator D-7): the loot-window counterpart of
+        /// MoveAim above.
+        static SimInput MoveWindow(float x, float y)
+            => new SimInput { MoveDir = new float2(x, y), InventoryOpen = true };
+
         [Test]
         public void AimHeld_CapsRunSpeed()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = World();
             for (int i = 0; i < 60; i++) w.Tick(MoveAim(1f, 0f)); // 2 s — enough to reach the capped speed
             float expected = cfg.Hero.MaxSpeed * cfg.Hero.AimMoveSpeedFrac; // fixture expr, PD5
@@ -25,9 +30,24 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void InventoryOpen_CapsRunSpeed()
+        {
+            // Stage 3 Task 20 (spec §3.8/§3.11, coordinator D-1/D-7): the loot
+            // window pays the SAME price as AimHeld (Hero.AimMoveSpeedFrac, no
+            // second number, Р239) — mirrors AimHeld_CapsRunSpeed exactly, one
+            // flag swapped for the other, to prove the shared SlowsMovement
+            // predicate really reads InventoryOpen and not just AimHeld.
+            var cfg = TestConfigs.OpenField();
+            var w = World();
+            for (int i = 0; i < 60; i++) w.Tick(MoveWindow(1f, 0f)); // 2 s
+            float expected = cfg.Hero.MaxSpeed * cfg.Hero.AimMoveSpeedFrac; // fixture expr
+            Assert.AreEqual(expected, w.Player.Vel.x, 0.05f);
+        }
+
+        [Test]
         public void AimReleased_RestoresMaxSpeed()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = World();
             for (int i = 0; i < 60; i++) w.Tick(MoveAim(1f, 0f)); // capped under aim
             float capped = cfg.Hero.MaxSpeed * cfg.Hero.AimMoveSpeedFrac;
@@ -59,7 +79,7 @@ namespace Ring.Simulation.Tests
         {
             var w = World();
             for (int i = 0; i < 60; i++) w.Tick(Move(1f, 0f)); // 2 s — enough to reach top speed
-            Assert.AreEqual(TestConfigs.Open().Hero.MaxSpeed, w.Player.Vel.x, 0.05f);
+            Assert.AreEqual(TestConfigs.OpenField().Hero.MaxSpeed, w.Player.Vel.x, 0.05f);
             Assert.Greater(w.Player.Pos.x, 5f);
         }
 
@@ -81,7 +101,17 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.Open();
             float rim = cfg.Arena.Radius - cfg.Hero.Radius;
             var w = World();
-            for (int i = 0; i < 400; i++) w.Tick(Move(1f, 0f)); // run into the wall
+            // Stage 3 Task 12: the RUN LENGTH is a fixture expression now, for
+            // exactly the reason the ring radius already was. 400 ticks covered
+            // 400 * MaxSpeed * TickDt = 93.3 m, which crossed the 65 m arena
+            // twice over and stops 20 m short of the 113 m one — the run ended
+            // at |pos| = 92.83 with the player still walking, and the assertion
+            // below read that as "the wall is in the wrong place" (it is not:
+            // 92.83 = 93.3 minus the acceleration ramp, to the centimeter).
+            // + 30 ticks of slack covers the ramp and leaves the player pinned
+            // against the rim rather than arriving exactly on the last tick.
+            int runTicks = (int)math.ceil(rim / (cfg.Hero.MaxSpeed * SimulationWorld.TickDt)) + 30;
+            for (int i = 0; i < runTicks; i++) w.Tick(Move(1f, 0f)); // run into the wall
             float2 atWall = w.Player.Pos;
             Assert.AreEqual(rim, math.length(atWall), 0.05f);
             for (int i = 0; i < 30; i++) w.Tick(Move(1f, 1f)); // diagonal into the wall -> slides
@@ -112,7 +142,7 @@ namespace Ring.Simulation.Tests
             // Stage 2 Task 16: the obstacle sits a fixed 2 m short of the rim
             // (fixture expression, C14) instead of the old literal 33 that only
             // meant "at the rim" while Arena.Radius was 35.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             float rim = cfg.Arena.Radius - cfg.Hero.Radius;
             cfg.Arena.ObstacleCount = 1;
             cfg.Arena.ObstaclePos = new[] { new float2(cfg.Arena.Radius - 2f, 0f) };

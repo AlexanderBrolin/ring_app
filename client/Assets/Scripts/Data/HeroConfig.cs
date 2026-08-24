@@ -90,8 +90,29 @@ namespace Ring.Data
         // (SimConfigHash arrives in Task 23), so the field itself stays
         // hash-neutral by construction even though what it gates is not.
         // LinkRefund above was the sync-marker key until this field superseded
-        // it — see its own doc for the historical chain before it.
-        [Range(0, 15)] public int EdgeRequestMinTicks = 3; // sync-marker key — keep LAST
+        // it — see its own doc for the historical chain before it. Was itself
+        // the sync-marker key until Stage 3 Task 3's PickupRadius field below
+        // superseded it.
+        [Range(0, 15)] public int EdgeRequestMinTicks = 3;
+
+        /// Stage 3 Task 3 (spec §3.6 table, owner decision R-4): auto-pickup
+        /// collection radius — Loot.PickupSystem.Update gathers energy cells
+        /// within this distance of a live, un-extracted player. R-4 moved
+        /// this class's sync-marker onto this field in Stage 3 Task 3
+        /// (errata E-7 precedent, same as ArenaConfig.MaxPickups) —
+        /// EdgeRequestMinTicks above was the marker until then.
+        [Range(0.1f, 10f)] public float PickupRadius = 2f;
+
+        /// Stage 3 Task 4 (spec §3.6 "Рюкзак", errata E-6 D-I8): the
+        /// backpack's two capacity numbers — InventoryCapacity in SLOT
+        /// POINTS (Loot.Inventory.TryAdd's own capacity check), MaxInventoryItems
+        /// as the hard ceiling on item COUNT that sizes SimulationWorld's
+        /// per-player Loot.Inventory backing array. R-4 moves this class's
+        /// sync-marker onto MaxInventoryItems in THIS task (same errata E-7
+        /// precedent PickupRadius followed one task ago) — PickupRadius
+        /// above was the marker until now.
+        [Range(1, 32)] public int InventoryCapacity = 8;
+        [Range(1, 32)] public int MaxInventoryItems = 16; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a

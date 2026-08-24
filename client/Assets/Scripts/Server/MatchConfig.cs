@@ -65,8 +65,17 @@ namespace Ring.Server
         public readonly MatchStartMode StartMode;
         public readonly int CountdownSeconds;
 
+        /// bd `app-qrew`: how many matches this process plays before it exits.
+        /// OPTIONAL in the JSON and 1 when absent, which is byte-for-byte the
+        /// behavior every container has had since Stage 2 — see
+        /// `MatchRerunPolicy` for why this is a count rather than a flag, and
+        /// `MatchConfigLoader` for the presence mechanism that makes "absent"
+        /// mean 1 instead of 0.
+        public readonly int MatchesToPlay;
+
         public MatchConfig(string matchId, long seed, int maxPlayers, int port,
-            MatchPlayerEntry[] players, MatchStartMode startMode, int countdownSeconds)
+            MatchPlayerEntry[] players, MatchStartMode startMode, int countdownSeconds,
+            int matchesToPlay = MatchRerunPolicy.DefaultMatchesToPlay)
         {
             MatchId = matchId;
             Seed = seed;
@@ -75,6 +84,7 @@ namespace Ring.Server
             Players = players ?? Array.Empty<MatchPlayerEntry>();
             StartMode = startMode;
             CountdownSeconds = countdownSeconds;
+            MatchesToPlay = matchesToPlay;
         }
     }
 }

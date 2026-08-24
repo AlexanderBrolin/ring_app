@@ -63,6 +63,16 @@ namespace Ring.Networking.Protocol
         public int DeathTick;
         public float DamageTaken;
 
+        // Stage 3 Т24 (spec §3.10, errata E-3): this player's own RESULT —
+        // how his raid ended, what he carried out of it and what it was
+        // worth. Flat fields for the reason the doc above gives.
+        public byte Outcome;
+        public int CreditsTotal;
+        public byte[] Loot;
+        public int AmmoSpent;
+        public int CellsPicked;
+        public int SurvivedSeconds;
+
         // World-scoped, identical in every copy of this message (WorldStats).
         public int WavesCleared;
         public int MobSpawnsSkipped;

@@ -15,6 +15,30 @@ namespace Ring.Simulation.Core
         /// — here they only travel through SimInputFrame.ForTick and Sanitize.
         public float AimHeight;
         public bool AimHeld, SlideRequested;
+
+        /// Stage 3 Task 17 (spec §3.8 check 2, Р239, plan errata E-5): whether
+        /// the looting window is open this tick. It lives HERE and not in
+        /// PlayerState because it changes PREDICTED MOVEMENT — an open window
+        /// slows the step to Hero.AimMoveSpeedFrac and takes the weapon away —
+        /// so client and server must read the exact same value for the exact
+        /// same tick, which is what the input path guarantees and a
+        /// server-only state field could not.
+        ///
+        /// A LEVEL, not an edge: SimInputFrame.ForTick copies it unchanged to
+        /// every sub-tick (like FireHeld/AimHeld, unlike the two *Requested
+        /// latches), because "the window is open" is a state the player holds,
+        /// not an event they fire.
+        ///
+        /// CARRIED IN FULL AS OF STAGE 3 TASK 20. Wire bit —
+        /// InputCodec.InventoryOpenBit (byte 7, bit 4); movement slowdown —
+        /// PlayerMovementSystem.SlowsMovement, read once inside
+        /// RegularMoveVel (its three call sites pass the input, not the
+        /// predicate); WeaponSystem.CanFire's fifth
+        /// eligibility term; SimInputSanitizer.Sanitize forces the flag back
+        /// down for a dead, extracted, dashing or sliding player (that
+        /// method's own doc explains why gating there, not only in
+        /// LootOps.Validate, matters).
+        public bool InventoryOpen;
     }
 
     /// Distributes one frame sample over N sub-ticks: held values copy to every

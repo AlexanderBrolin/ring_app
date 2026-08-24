@@ -48,7 +48,7 @@ namespace Ring.Editor
         {
             SimConfig cfg = BuildBattleConfig();
             var world = new SimulationWorld(WorldSeed, in cfg);
-            var snapshot = new RenderSnapshot(in cfg.Arena);
+            var snapshot = new RenderSnapshot(in cfg);
             var rng = new Unity.Mathematics.Random(InputSeed);
 
             Debug.Log($"LongRunHarness: starting {TotalTicks}-tick run " +
@@ -125,7 +125,21 @@ namespace Ring.Editor
             WaveConfig wave = Load<WaveConfig>("WaveConfig");
             ArenaConfig arena = Load<ArenaConfig>("ArenaConfig");
             VisibilityConfig visibility = Load<VisibilityConfig>("VisibilityConfig");
-            SimConfig cfg = SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena, visibility);
+            // Stage 3 Task 12 (owner decision R-73): the harness measures the
+            // REAL battle config, so it loads the two new archetype assets and
+            // the match-flow one alongside the seven it already had — an
+            // Elite-free long run would stop measuring the arena the game
+            // actually ships.
+            MobConfig elite = Load<MobConfig>("MobEliteConfig");
+            MobConfig director = Load<MobConfig>("MobDirectorConfig");
+            MatchFlowConfig flow = Load<MatchFlowConfig>("MatchFlowConfig");
+            // Stage 3 Task 13: the catalog and loot balance sheet — same
+            // "measure the real battle config" reasoning as elite/director/
+            // flow above.
+            ItemCatalog items = Load<ItemCatalog>("ItemCatalog");
+            LootConfig loot = Load<LootConfig>("LootConfig");
+            SimConfig cfg = SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena,
+                visibility, elite, director, flow, items, loot);
             cfg.Hero.MaxHp = 1e9f;
             return cfg;
         }

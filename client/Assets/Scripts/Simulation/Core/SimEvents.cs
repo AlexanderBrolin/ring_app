@@ -66,7 +66,71 @@ namespace Ring.Simulation.Core
         /// available at the emit site at all. A consumer that needs "damage that
         /// actually landed" must read `PlayerDamaged`, which is not emitted when
         /// the blow is refused.
-        ProjectileHitPlayer
+        ProjectileHitPlayer,
+        /// Stage 3 Т21 (spec §3.4/§3.5, Р299): a live collector stood in the
+        /// core and the raid's endgame began — the Director is on his way and
+        /// the early portals have just closed. Fired ON THE TRANSITION, once
+        /// per raid, by MatchFlowSystem.
+        ///
+        /// PAYLOAD: none. Pos is float2.zero and every other field is unused —
+        /// this kind rides the All channel (EventRelevance.ChannelFor), which
+        /// carries no position by rule (Р28), and the position it would
+        /// otherwise carry is the location of whichever collector walked in.
+        /// Same shape as WaveStarted/WaveCleared next to it.
+        DirectorActivated,
+        /// Stage 3 Т21 (spec §3.4/§3.5): the Director has fallen, and the
+        /// window of sharing at his corpse (GateDelaySeconds) starts now.
+        /// Fired by MatchFlowSystem on the tick its scan first finds him gone
+        /// — liveness is a scan over _mobs by type, never a field (Р218).
+        ///
+        /// PAYLOAD: none, for the same reason as DirectorActivated above —
+        /// where he fell is where everyone is about to fight, and the All
+        /// channel does not carry positions.
+        DirectorDied,
+        /// Stage 3 Т23 (spec §3.5 Р222/Р223): a collector held his channel to
+        /// the end and LEFT THE RAID — PlayerIndex names him, Pos is the exit
+        /// he walked out of. Deliberately its own kind rather than a
+        /// PlayerDied with a flag: the two differ in everything a consumer
+        /// cares about (no corpse, nothing to loot, and the man is not dead —
+        /// Р223's own reason for Extracted being a separate bit at all).
+        PlayerExtracted,
+
+        /// Stage 3 Т29 (spec §3.6/§3.12 Р281): a ground cell was actually
+        /// COLLECTED — the moment PickupSystem.Collect folds it into the
+        /// collector's ammo. Deliberately NOT emitted when a cell ages out on
+        /// its TTL: PickupSystem.AdvanceTtl's own doc records that a pickup
+        /// quietly expiring is not a VFX/SFX-relevant occurrence, and this is
+        /// the kind it contrasts itself with.
+        ///
+        /// PAYLOAD: `EntityId` = the cell's own id (it rides the wire as the
+        /// same u16 code every long-lived entity does, Р278); `PlayerIndex` =
+        /// the COLLECTOR, and it is load-bearing rather than informational —
+        /// this kind rides the Owner channel, which addresses its recipient
+        /// by exactly that field (EventRelevance.ShouldDeliver), so an emit
+        /// that omitted it would deliver to nobody. `Pos` is the cell's, for
+        /// the surface that wants to play the pop where it lay.
+        PickupTaken,
+
+        /// Stage 3 Т29 (spec §3.16, §3.12 Р281): a container's LAST item just
+        /// left it — emitted by Loot.LootOps.Update on the tick a transfer
+        /// completes and finds nothing behind it. The state itself already
+        /// rides every frame (the Containers block's "already looted" flag);
+        /// what this kind carries is the MOMENT, which a per-frame flag
+        /// cannot express to a surface that wants to react once.
+        ///
+        /// PAYLOAD: `EntityId` = the container's own id (u16 on the wire, as
+        /// above). `Pos` is the container's.
+        ///
+        /// ⚠ DELIVERED BY VISIBILITY, BUT ROUTED `None` (coordinator R-236).
+        /// The two collectors who can see the box are exactly who the news is
+        /// for — and `EventRelevance.ChannelFor` still answers `None` for it,
+        /// because that table's `ShouldDeliver` is handed ONE visibility set
+        /// (the mobs', where players ride on the signed trick) while a
+        /// container's id lives in the containers set. `None` is that file's
+        /// own word for "decided elsewhere"; the decision lives in
+        /// `SnapshotAssembler`, against `ContainersCurrent`. Do not "fix" the
+        /// routing table here — see its own entry for this kind.
+        ContainerEmptied
     }
 
     public struct SimEvent
@@ -134,15 +198,24 @@ namespace Ring.Simulation.Core
         public float2 HitDir;
         /// Stage 2 Task 7: which player this event concerns, under three
         /// conventions picked per kind.
-        /// ACTOR — the five "own-action" kinds ProjectileFired, PlayerDashed,
-        /// PlayerSlideStarted, DashRicocheted, StaminaDenied
+        /// ACTOR — the six "own-action" kinds ProjectileFired, PlayerDashed,
+        /// PlayerSlideStarted, DashRicocheted, StaminaDenied and, since
+        /// Stage 3 Т29, PickupTaken
         /// (SimulationWorld.TickMovement's own per-player loop index /
-        /// SpawnProjectile's ownerIndex).
-        /// VICTIM — PlayerDamaged/PlayerDied (mirrors EntityId's convention for
-        /// those two kinds, spec §3.2); the attacker is deliberately not
+        /// SpawnProjectile's ownerIndex / PickupSystem.Collect's collector).
+        /// ⚠ PickupTaken's is LOAD-BEARING rather than informational: the kind
+        /// rides the Owner channel, which addresses its recipient by exactly
+        /// this field (EventRelevance.ShouldDeliver), so an emit without it
+        /// delivers to nobody at all.
+        /// VICTIM — PlayerDamaged/PlayerDied and, since Stage 3 Т23/Т29,
+        /// PlayerExtracted (mirrors EntityId's convention for those three
+        /// kinds, spec §3.2); the attacker is deliberately not
         /// reported, there is only one player slot on the struct and for a
         /// damage/death pair the victim is the one Presentation places the
-        /// feedback on.
+        /// feedback on. An extraction is the same SHAPE of subject rather
+        /// than a blow — the collector the news is about — which is why
+        /// EventRelevance.VisibleSubjectId resolves all three through the
+        /// same ForPlayer(ev.PlayerIndex).
         /// ATTACKER — ProjectileHit/MobDied, added by Stage 2 Task 17
         /// (carryover-t17.md item 2), and ProjectileHitPlayer, added by Stage 2
         /// Task 44a: the SHOOTER behind the blow, i.e. the

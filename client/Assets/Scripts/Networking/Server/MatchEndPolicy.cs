@@ -1,10 +1,11 @@
 using System;
+using Ring.Simulation.Core;
 
 namespace Ring.Networking.Server
 {
     /// Why a match stopped (Stage 2 Task 40, spec §3.10/§3.11). `None` is not
     /// an outcome — it is the reading of a match that is still running, and it
-    /// is what `MatchServer.Outcome` answers until one of the other two
+    /// is what `MatchServer.Outcome` answers until one of the other members
     /// happens.
     ///
     /// VALUES ARE PINNED, AND THAT IS A WIRE CONTRACT, NOT A STYLE RULE:
@@ -12,12 +13,44 @@ namespace Ring.Networking.Server
     /// members would silently change the meaning of a reason already in flight
     /// between a client build and a server build compiled from different
     /// sources. `MatchLifecycleTests.MatchEndReason_ValuesAreStableOnTheWire`
-    /// pins every value, the same discipline `HandshakeRefusal` carries.
+    /// pins every value that existed before Stage 3, the same discipline
+    /// `HandshakeRefusal` carries; `MatchFlowTests.
+    /// EndReasonValues_AreStableOnTheWire` (Stage 3 Task 1) pins the full set
+    /// 0-3, including the member that task appended, `AllPlayersResolved`.
     public enum MatchEndReason : byte
     {
         None = 0,
         AllPlayersDead = 1,
         MaxDurationReached = 2,
+        /// Stage 3 Task 1 (spec §3.10, errata E-1/E-6 D-I2): a run every
+        /// player left by dying, extracting, or some mix of the two — added
+        /// at the END of this pinned enumeration (Interfaces), same
+        /// append-only discipline the rest of this doc requires, so no value
+        /// already in flight changes meaning.
+        AllPlayersResolved = 3,
+    }
+
+    /// How the raid ended for ONE collector (Stage 3 Т24, spec §3.10) — the
+    /// per-player half of the result record, carried on MatchEndedNet as a
+    /// single byte.
+    ///
+    /// VALUES ARE PINNED, AND THAT IS A WIRE CONTRACT, exactly as for
+    /// MatchEndReason above: reordering the members would silently change the
+    /// meaning of a result already in flight between a client build and a
+    /// server build compiled from different sources.
+    /// ResultsTests.MatchOutcome_ValuesAreStableOnTheWire pins all five.
+    ///
+    /// Died IS ZERO ON PURPOSE, and it is the only member that can be reached
+    /// by a zeroed array: "the collector did not come back" is the safe
+    /// direction for a default to point in — the opposite mistake would credit
+    /// somebody with an extraction that never happened.
+    public enum MatchOutcome : byte
+    {
+        Died = 0,
+        ExtractedEarly = 1,
+        ExtractedCore = 2,
+        Disconnected = 3,
+        Stranded = 4,
     }
 
     /// Stage 2 Task 40 (spec §3.10 "end of match" and Р43, §3.11's exit
@@ -79,20 +112,41 @@ namespace Ring.Networking.Server
 
         /// The verdict for the tick that just finished. `worldTick` is the
         /// POST-`TickAll` reading of `SimulationWorld.CurrentTick` ("the tick
-        /// this call just finished") and `alivePlayers` is counted AFTER that
-        /// same step, disconnect-kills included — both are facts about the
-        /// world as it now stands, not as it stood coming into the tick.
+        /// this call just finished"); `alivePlayers`/`activePlayers`/
+        /// `anyExtracted` are all counted AFTER that same step, disconnect-
+        /// kills included — every one of them is a fact about the world as it
+        /// now stands, not as it stood coming into the tick.
         ///
-        /// PRIORITY IS FIXED: `AllPlayersDead` IS CHECKED FIRST. When both
-        /// conditions come true on the same tick the match ended in substance,
-        /// not on the timer — and the difference is observable outside the
-        /// process, because the two reasons carry different exit codes (0
-        /// against 4, §3.11). `AllDeadWinsOverMaxDuration` pins it.
+        /// Stage 3 Task 1 (spec §3.10, errata E-1/E-6 D-I2) adds the two
+        /// EXTRACTION-aware parameters. `activePlayers` is "alive AND not yet
+        /// extracted" (spec's own definition of "active"; `MatchServer`'s own
+        /// count); `anyExtracted` is whether at least one player left through
+        /// a portal or the gate this match. Both are inert on every
+        /// production path until later Ф1 tasks give `PlayerState.Extracted`
+        /// a writer — until then `activePlayers == alivePlayers` and
+        /// `anyExtracted` is always false, so this method's observable
+        /// behavior on a real match is unchanged from before this task.
+        ///
+        /// PRIORITY IS FIXED, AND `AllPlayersResolved` IS CHECKED FIRST NOW
+        /// (Stage 3 Task 1 — the priority flip errata E-1 mandates over the
+        /// plan's original ordering). A run where the last active player just
+        /// extracted, on the same tick some other player happened to die,
+        /// ended in success, not in a wipe — `Resolved_OutranksAllDead_
+        /// WhenSomeoneExtracted` (`MatchFlowTests`) pins it, the same way
+        /// `AllDeadWinsOverMaxDuration` (`MatchLifecycleTests`) pins the
+        /// UNCHANGED second priority: `AllPlayersDead` still beats
+        /// `MaxDurationReached` when both are true on the same tick, because
+        /// the two carry different exit codes (0 against 4, §3.11) and a
+        /// match that ended in substance must report that, not the timer.
         ///
         /// The duration boundary is `>=`: AT `maxDurationTicks` completed
         /// ticks the match is over, not one tick later.
-        public MatchEndReason Evaluate(int worldTick, int alivePlayers)
+        public MatchEndReason Evaluate(int worldTick, int alivePlayers, int activePlayers, bool anyExtracted)
         {
+            // Resolved beats everything else (see the priority paragraph
+            // above): nobody is left to act, and at least one of the players
+            // who left did so by extracting rather than dying.
+            if (activePlayers <= 0 && anyExtracted) return MatchEndReason.AllPlayersResolved;
             // `<= 0` rather than `== 0`: a count can only reach this method
             // from a loop over the world's own players, so a negative value is
             // a caller bug — and ending the match is the safe direction to be
@@ -103,8 +157,10 @@ namespace Ring.Networking.Server
         }
 
         /// The process exit code spec §3.11 attaches to each outcome: 0 for a
-        /// match that was played out, 4 for one that exhausted
-        /// `MatchMaxDurationSeconds`.
+        /// match that was played out — a wipe or a fully resolved run both
+        /// count as "played out" (Stage 3 Task 1 adds `AllPlayersResolved`
+        /// beside `AllPlayersDead` on the same code, spec §3.11) — and 4 for
+        /// one that exhausted `MatchMaxDurationSeconds`.
         ///
         /// `None` THROWS RATHER THAN ANSWERING. Asking a RUNNING match for its
         /// exit code is a bug in the caller — there is no code that means
@@ -115,6 +171,7 @@ namespace Ring.Networking.Server
             switch (reason)
             {
                 case MatchEndReason.AllPlayersDead: return 0;
+                case MatchEndReason.AllPlayersResolved: return 0;
                 case MatchEndReason.MaxDurationReached: return 4;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(reason), reason,
@@ -137,5 +194,55 @@ namespace Ring.Networking.Server
         /// a predicate that means nothing.)
         public static bool ShouldKillOnDisconnect(bool connectionActive, bool playerAlive)
             => !connectionActive && playerAlive;
+
+        /// Spec §3.10: how the raid ended for the collector in one slot.
+        /// Beside ShouldKillOnDisconnect for the same reason that predicate
+        /// lives here rather than inline in MatchServer — it is a decision,
+        /// it is pure, and a decision no EditMode test can reach is a decision
+        /// no mutation can be caught in.
+        ///
+        /// EXTRACTION IS CHECKED FIRST, AND THE ORDER IS THE MEANING. A
+        /// collector who walked out is not Alive either — ExtractionSystem
+        /// clears the body deliberately, because leaving is NOT dying (Р223)
+        /// and there must be no corpse to loot — so any test of Alive ahead
+        /// of Extracted would report every man who got out as a casualty.
+        /// `extractKind` is PlayerState.ExtractKind's own encoding, compared
+        /// against the constants declared with that field rather than against
+        /// a literal, so the two ends of the wire cannot drift apart.
+        ///
+        /// THE DISCONNECT IS THE SERVER'S MEMORY, NOT THE WORLD'S (Р271). A
+        /// dropped connection kills through KillPlayerNoDamage, which is the
+        /// same seam and leaves the same corpse as any other death: the world
+        /// genuinely cannot tell the two apart, and should not be taught to.
+        /// `disconnectKilled` is MatchServer's own per-slot record of having
+        /// done it, and what it buys is diagnostic — a line in the log and a
+        /// column in the future meta, not different loot on the ground.
+        ///
+        /// STRANDED IS THE OUTCOME THE PLAN DID NOT NAME (owner decision
+        /// R-194). MaxDurationReached is the only end that can leave
+        /// collectors ALIVE in the arena — a raid nobody walks into the core
+        /// is legitimate (spec §3.5) and simply runs its 900 s out — and the
+        /// plan's four members had nothing to say about that man. In the
+        /// world it is not an edge case but the AI winning: the factory
+        /// closes the communication corridor the operator's link to his shell
+        /// runs through, which is what its waves have been buying time for
+        /// since it detected the intrusion, and the shell is lost where it
+        /// stands with everything in its backpack. Calling him Died would be
+        /// a lie about a living body; crediting him with loot he never
+        /// carried out would be the opposite lie. Naming the state closes
+        /// both — see MatchServer.CreditsCarriedOut for the second half.
+        public static MatchOutcome OutcomeFor(bool alive, bool extracted, byte extractKind,
+            bool disconnectKilled)
+        {
+            if (extracted)
+            {
+                return extractKind == ExtractKinds.Gate
+                    ? MatchOutcome.ExtractedCore
+                    : MatchOutcome.ExtractedEarly;
+            }
+            if (disconnectKilled) return MatchOutcome.Disconnected;
+            if (!alive) return MatchOutcome.Died;
+            return MatchOutcome.Stranded;
+        }
     }
 }

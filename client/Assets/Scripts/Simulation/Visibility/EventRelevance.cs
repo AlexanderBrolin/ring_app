@@ -41,6 +41,15 @@ namespace Ring.Simulation.Visibility
             switch (kind)
             {
                 case SimEventKind.StaminaDenied:
+                // Stage 3 Т29 (spec §3.6, Р281): a collected cell is the
+                // COLLECTOR's own business. The other two see the cell
+                // disappear from the Pickups block either way; telling them
+                // WHO took it, and therefore that somebody was standing on
+                // that spot this tick, is exactly the information CR 4 keeps
+                // off the wire. The Owner channel addresses its recipient by
+                // `ev.PlayerIndex`, which is why PickupSystem.Collect's emit
+                // is obliged to set it.
+                case SimEventKind.PickupTaken:
                     return DeliveryChannel.Owner;
 
                 case SimEventKind.PlayerDashed:
@@ -52,10 +61,31 @@ namespace Ring.Simulation.Visibility
                 case SimEventKind.MobDied:
                 case SimEventKind.PlayerDamaged:
                 case SimEventKind.PlayerDied:
+                // Stage 3 Т23: an extraction is something the other two SEE
+                // happen — the same channel a death rides, for the same reason
+                // (it is an event about a body at a place, not an announcement
+                // about the raid). What the raid announces to everyone —
+                // portals closing, the Director falling — is above.
+                case SimEventKind.PlayerExtracted:
                     return DeliveryChannel.Visible;
 
                 case SimEventKind.WaveStarted:
                 case SimEventKind.WaveCleared:
+                // Stage 3 Т21 (spec §3.4/§3.5, Р299): both of the raid's own
+                // turning points reach everyone, and neither carries a
+                // position — the first would otherwise leak the location of
+                // whichever collector walked into the core, the second the
+                // spot the corpse everyone is about to fight over lies on.
+                // Their WIRE catalog (SnapshotEventKind, priority, payload
+                // size) WAS Т29's and now exists — until that task both kinds
+                // were emitted into a catalog with no entry for them and
+                // SnapshotAssembler dropped them silently, which is precisely
+                // what the routing living here from the moment the kinds
+                // exist could not prevent: this switch throws on a kind it
+                // does not know and ChannelFor_HandlesEveryKind walks the
+                // whole enumeration, but neither of them watches the wire.
+                case SimEventKind.DirectorActivated:
+                case SimEventKind.DirectorDied:
                     return DeliveryChannel.All;
 
                 // Projectile relevance needs the round's own trajectory
@@ -74,6 +104,20 @@ namespace Ring.Simulation.Visibility
                 // the victim's visibility, so the per-kind table above cannot
                 // express it and must not pretend to.
                 case SimEventKind.ProjectileHitPlayer:
+                // Stage 3 Т29 (R-236). AN EMPTIED BOX IS DELIVERED BY
+                // VISIBILITY — and this table still cannot say so, for the
+                // same structural reason the projectile kinds above are here.
+                // Since Т26 there are THREE visibility sets, one per class
+                // (Р268 п.2), and `ShouldDeliver` is handed exactly ONE: the
+                // MOBS set, which is also where players ride on the signed
+                // trick. A container's id lives in the CONTAINERS set, which
+                // this seam never sees, so answering `Visible` here would send
+                // `VisibleSubjectId` looking for a container id among mobs and
+                // silently deliver to whoever happened to share the number.
+                // `None` is this file's own word for "decided elsewhere, by
+                // Task 28's SnapshotAssembler" — and that is exactly where the
+                // decision now lives, against `c.ContainersCurrent`.
+                case SimEventKind.ContainerEmptied:
                     return DeliveryChannel.None;
 
                 default:
@@ -103,6 +147,16 @@ namespace Ring.Simulation.Visibility
 
                 case SimEventKind.PlayerDamaged:
                 case SimEventKind.PlayerDied:
+                // Stage 3 Т29: a collector walking out is the same shape of
+                // subject as a collector dying — the VICTIM convention of
+                // SimEvent.PlayerIndex, resolved through the signed trick
+                // into the mobs set players share (Р268 п.2). The kind has
+                // routed to Visible since Т23, but nothing ever reached this
+                // method with it: the assembler had no wire entry for it, so
+                // the event was dropped before delivery was ever asked about.
+                // Т29 gave it that entry, and this line is what keeps the
+                // first frame it rides in from throwing inside a server tick.
+                case SimEventKind.PlayerExtracted:
                     return VisibilityIds.ForPlayer(ev.PlayerIndex);
 
                 default:
@@ -258,16 +312,22 @@ namespace Ring.Simulation.Visibility
                 }
 
                 case DeliveryChannel.None:
-                    // Projectile relevance needs trajectory data this seam
-                    // does not have (Task 28's SnapshotAssembler owns it) — a
-                    // silent `false` here would be indistinguishable from a
-                    // correct "nobody nearby" answer and would make a future
-                    // caller that reaches this by oversight quietly drop every
-                    // projectile event instead of failing its own tests.
+                    // TWO DIFFERENT REASONS LAND HERE, and neither is
+                    // "nobody" (gate Ф6, own finding): a projectile kind needs
+                    // the round's trajectory this seam does not have, and
+                    // ContainerEmptied needs the CONTAINERS visibility set
+                    // this seam is never handed (R-236). Both are decided by
+                    // Stage 2 Task 28's SnapshotAssembler. A silent `false`
+                    // here would be indistinguishable from a correct "nobody
+                    // nearby" answer and would make a future caller that
+                    // reaches this by oversight quietly drop every such event
+                    // instead of failing its own tests.
                     throw new System.ArgumentException(
                         $"EventRelevance.ShouldDeliver: {ev.Kind} delivery is decided elsewhere " +
-                        "(Task 28's SnapshotAssembler, by projectile trajectory relevance) — this seam " +
-                        "must not be called for a None-channel kind.", nameof(ev));
+                        "(the SnapshotAssembler — by projectile trajectory relevance for the " +
+                        "projectile kinds, against the containers visibility set for " +
+                        "ContainerEmptied) — this seam must not be called for a None-channel kind.",
+                        nameof(ev));
 
                 default:
                     throw new System.ArgumentException(

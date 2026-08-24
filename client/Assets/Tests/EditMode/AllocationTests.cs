@@ -21,10 +21,30 @@ namespace Ring.Simulation.Tests
         {
             var w = TestWorlds.Saturated(out SimConfig config);
             // Sanity-check the fixture itself before measuring: every mob slot
-            // must actually be filled (TestWorlds.Saturated's SpawnMobForTest
-            // loop emits one MobSpawned event per mob, still buffered — nothing
-            // in the 100-tick warm-up clears events).
-            Assert.AreEqual(config.Arena.MaxMobs, TestEvents.CountOf(w, SimEventKind.MobSpawned));
+            // must actually be filled AT THE MOMENT OF MEASUREMENT — live
+            // population, not cumulative spawn events. Stage 3 Task 5 fix-round
+            // 1 (spec Р252, coordinator R-22): the OLD proxy asserted
+            // `TestEvents.CountOf(w, SimEventKind.MobSpawned) ==
+            // config.Arena.MaxMobs`, reading "one MobSpawned per mob, nothing
+            // clears the buffer across the 100-tick warm-up" as "population is
+            // saturated" — friendly fire broke that reading (a Gunner's own
+            // round can now connect with a neighboring mob in Saturated's
+            // packed golden-angle crowd instead of sailing through untouched,
+            // and each wave refill of a dead slot is its own EXTRA
+            // MobSpawned), so the cumulative count legitimately exceeded the
+            // cap while nobody had checked whether the LIVE population still
+            // did. Fix-round 1 replaced the proxy with a direct `w.MobCount`
+            // read — CORRECT IN FORM, still WRONG IN VALUE that round
+            // (`92`, not `96`): the wave's own refill had not caught the
+            // friendly-fire losses within the 100-tick warm-up window, so the
+            // direct read just told the truth the proxy had been hiding — the
+            // fixture itself was no longer saturated on return, which is a
+            // real defect in `TestWorlds.Saturated`, not a wrong assertion.
+            // Fix-round 2 closes THAT gap inside `Saturated` itself (a second
+            // `SpawnMobsToCap` call right after the warm-up — see its own
+            // doc), so this read is now checking a promise the builder
+            // actually keeps, not working around one it doesn't.
+            Assert.AreEqual(config.Arena.MaxMobs, w.MobCount);
             // F-4 fix-round (ledger T29): the fixture's whole point is a world
             // under sustained fire — its 100-tick hold-fire warm-up must have
             // actually produced live projectiles for the allocation measurement
@@ -54,6 +74,24 @@ namespace Ring.Simulation.Tests
             // its own Hp budget is derived from the SAME loop length used below,
             // not a constant living in a different file that could silently
             // drift out of sync with it.
+            //
+            // Т4 (app-ggvz, spec §3.3) EXTENDED THIS TEST rather than adding a
+            // second one: the per-ring cadence put two new things on the hot
+            // path, and both of them run inside the measured window below.
+            // (1) A FULL SCAN OF THE MOB ARRAY every tick, tallying the living
+            //     by MobState.SpawnZone — this fixture is saturated to
+            //     Arena.MaxMobs, so that scan is as long here as it will ever
+            //     be in a real raid.
+            // (2) A `System.Span<int> alive = stackalloc int[Zones.Count]` per
+            //     tick — the stack, never the heap. The precedent it follows is
+            //     the one SplitByZones used to hold before Т4 deleted it, and
+            //     the reason it is stated out loud is that an earlier task
+            //     already lost a buffer to the heap on this very path (the
+            //     reweighting variant of Р253's core-budget move, caught by
+            //     THIS test).
+            // The fixture is ZONELESS (TrioSaturated's own doc), so the run
+            // also covers the frozen-ring branch — Middle and Core are reset
+            // every tick — alongside Outer's live one.
             const int measuredTicks = 1000;
             var w = TestWorlds.TrioSaturated(out SimConfig config, measuredTicks);
 
@@ -95,6 +133,13 @@ namespace Ring.Simulation.Tests
             // the world's OWN player positions, not restated literals) — a
             // `new SimInput[3]` inside the lambda below would be the test's own
             // allocation, not the world's.
+            // Т4: proof that the wave director is genuinely RUNNING across the
+            // window and not short-circuited by something the fixture happens
+            // to do — the difficulty step is a function of the world's tick, so
+            // a director that keeps starting waves keeps moving this number,
+            // and a director that returned early would leave it frozen.
+            int stepBefore = w.WaveRef(Zone.Outer).WaveIndex;
+
             float2 p0Pos = w.PlayerAt(0).Pos, p1Pos = w.PlayerAt(1).Pos;
             var inputs = new SimInput[3];
             inputs[0] = new SimInput { FireHeld = true, AimPoint = p1Pos };
@@ -104,6 +149,15 @@ namespace Ring.Simulation.Tests
             {
                 for (int i = 0; i < measuredTicks; i++) w.TickAll(inputs);
             }, Is.Not.AllocatingGCMemory());
+
+            Assert.Greater(w.WaveRef(Zone.Outer).WaveIndex, stepBefore,
+                "fixture premise: the wave director must have kept starting waves across the "
+                + "measured window — the per-ring loop and its stackalloc are what this test "
+                + "now also covers, and a frozen director would measure neither");
+            for (Zone z = Zone.Middle; z <= Zone.Core; z++)
+                Assert.AreEqual(0, w.WaveRef(z).PendingTotal,
+                    $"fixture premise: {z} is frozen on this zoneless arena, so the freeze "
+                    + "branch is what ran for it on every measured tick");
 
             // Fix-round 1 (I-1b): fixture-sanity doesn't stop at the FIRST tick
             // of the measured window — prove the world was still loaded on the
@@ -188,9 +242,13 @@ namespace Ring.Simulation.Tests
                 + "to exercise the FULL per-tick mob-evaluation loop, not a near-empty world");
 
             // Phase Ф5 fix-wave (minor): the shared TestWorlds.Capacity seam,
-            // not a hand-rolled second copy of the same sum — it is the one
-            // place the "MaxMobs + MaxPlayers covers every entity a single
-            // Compute call can visit" rule lives.
+            // not a hand-rolled second copy of the same sum. Stage 3 Task 26
+            // moved the rule itself one step further out — "MaxMobs +
+            // MaxPlayers covers every entity a single Compute call can visit"
+            // now lives in VisibilitySet.CapacityFor, the one home of all
+            // THREE classes' caps, and TestWorlds.Capacity is a delegate to
+            // it. This line named the old home and was corrected with the
+            // move (Task 26 review, Minor).
             int capacity = TestWorlds.Capacity(config);
             var setA = new VisibilitySet(capacity);
             var setB = new VisibilitySet(capacity);
@@ -245,8 +303,8 @@ namespace Ring.Simulation.Tests
                 + "scan is a realistically long one rather than a near-empty array");
             // Observer 0 into the middle of the crowd (SpawnMobsToCap spreads
             // mobs over radii ~4…31 around the origin) — the natural
-            // three-player spawn ring sits at radius 52, from where very
-            // little is visible at all.
+            // three-player spawn ring sits at radius 103.96 (Stage 3 Task 12;
+            // 52 before it), from where very little is visible at all.
             TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
 
             var setA = new VisibilitySet(TestWorlds.Capacity(config));
@@ -255,7 +313,7 @@ namespace Ring.Simulation.Tests
 
             // A subject the observer genuinely sees, taken from the set itself
             // rather than assumed: DefaultArena()'s obstacles and walls decide
-            // which of the 96 mobs clear LoS, and this measurement has no
+            // which of the Arena.MaxMobs mobs clear LoS, and this measurement has no
             // business restating that geometry.
             int visibleMobId = 0;
             float2 visibleMobPos = float2.zero;

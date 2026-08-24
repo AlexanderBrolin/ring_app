@@ -26,9 +26,9 @@ namespace Ring.Networking.Protocol
     ///
     /// `math.round` is `MidpointRounding.ToEven` (Р134, `math.cs:2618` ->
     /// `System.Math.Round(double)`): a half-integer input rounds to its
-    /// EVEN neighbour. ToEven is an odd function, so the mapping stays
+    /// EVEN neighbor. ToEven is an odd function, so the mapping stays
     /// symmetric around zero and no cell around the origin is wider than
-    /// its neighbours. Fix-round honesty note (F4): the QuantizeTests
+    /// its neighbors. Fix-round honesty note (F4): the QuantizeTests
     /// symmetry test does NOT distinguish ToEven from half-up — the whole
     /// suite stays green under either, because no test value lands on
     /// `k + 0.5` with an even `k`. ToEven is a documented FACT about the
@@ -43,8 +43,10 @@ namespace Ring.Networking.Protocol
     /// `Pos(0, 0) == Pos(5, 0) == 65535`), while `PosBack` returns 0 for
     /// every code, so idempotency cannot hold. Neither is reachable through
     /// the shipped data
-    /// (`ArenaConfig.Radius` is `[Range(5, 100)]`, `HeroConfig.MaxAimHeight`
-    /// is `[Range(1, 6)]`), so no guard is spent here — but a caller
+    /// (`ArenaConfig.Radius` is `[Range(5, 150)]` as of Stage 3 Task 8 — was
+    /// `[Range(5, 100)]` before the Т12 three-zone arena needed more room —
+    /// `HeroConfig.MaxAimHeight` is `[Range(1, 6)]`), so no guard is spent
+    /// here — but a caller
     /// inventing its own scale must not pass zero. A negative `radius`
     /// merely mirrors the axis and stays idempotent.
     ///
@@ -80,7 +82,7 @@ namespace Ring.Networking.Protocol
         /// Aim point on one axis, `[-3*radius, +3*radius] -> [0, 65535]`
         /// (spec §3.8, Р30: `Sanitize` allows `AimPoint` at `2*Radius` from
         /// the player and `AimProvider` casts its ray out to `Radius*2`,
-        /// i.e. up to `3*Radius` from the arena centre — a wider range than
+        /// i.e. up to `3*Radius` from the arena center — a wider range than
         /// `Pos`, sharing its exact shape). Implemented as `Pos` over the
         /// tripled range (rule "reuse, not duplication") rather than a
         /// second copy of the same formula.

@@ -18,16 +18,31 @@ namespace Ring.Simulation.Tests
         /// of straight-line travel with no obstacle in the way.
         static SimConfig Fixture()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Hero.DashSpeed = 30f;
             cfg.Hero.DashDuration = 0.09f;
             cfg.Hero.RicochetRetention = 0.8f;
+            // Stage 3 Task 12: the ARENA RADIUS joins the numbers this fixture
+            // owns. Ricochet_OncePerTick's own doc has said "the ring wall
+            // (r=35)" since Task 12 of Stage 1, and the obstacle it wedges
+            // against the wall sits at x=33 — but the shared arena grew to 65
+            // in Stage 2 and to 113 here, so the wall walked away from the
+            // obstacle and the documented corner stopped existing. It survived
+            // at 65 because 200 ticks still carried the player past the wall
+            // somewhere; at 113 the run covers ~47 m of a 112.55 m radius, the
+            // player never reaches any wall, and the fixture health check went
+            // red with zero ricochets — the drift finally becoming visible two
+            // stages after it started. Pinning the radius here restores the
+            // corner exactly as documented and makes every ricochet number in
+            // this file independent of arena tuning for good (file convention
+            // C14/PD5, stated at the top of this method).
+            TestConfigs.ShrinkArena(ref cfg, 35f);
             return cfg;
         }
 
         /// Fixture() plus a single obstacle head-on at (2,0): the dash's very
         /// first tick (1 m step) already reaches the obstacle's padded surface
-        /// (Hero.Radius 0.45 + ObstacleRadius 0.6 = 1.05 m from its centre, so
+        /// (Hero.Radius 0.45 + ObstacleRadius 0.6 = 1.05 m from its center, so
         /// contact lands at x ~= 0.95), giving a perfectly axial normal
         /// (-1, 0) — the contact tick is also the dash-start tick.
         static SimConfig ObstacleFixture()

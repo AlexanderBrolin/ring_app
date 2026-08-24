@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Simulation.AI;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -34,23 +35,42 @@ namespace Ring.Simulation.Tests
             Assert.Throws<System.InvalidOperationException>(() => w.Tick(default));
         }
 
+        /// Stage 3 Ф5-0 (owner decision R-173) rewrote what this pins. It used
+        /// to assert the OPPOSITE of the line below — "solo spawns at the arena
+        /// center" — which was the Stage 2 special case Geometry.SpawnPosFor
+        /// carried until the three-zone arena made the center the Director's
+        /// own ground (that method's own account). The fixture is Open(), not
+        /// OpenField(): OpenField zeroes PlayerSpawnRingFrac so that movement
+        /// fixtures can keep stating their geometry around the origin, and a
+        /// rule about the spawn RING cannot be pinned on a fixture that has
+        /// no ring.
         [Test]
-        public void SoloSpawnsAtOrigin_MultiplayerSpawnsOnRing()
+        public void SoloTakesTheOnePlayerRingPoint_MultiplayerSpreadsAroundIt()
         {
             var cfg = TestConfigs.Open();
+            float ring = cfg.Arena.Radius * cfg.Arena.PlayerSpawnRingFrac;
+
             var solo = new SimulationWorld(1, cfg);
-            Assert.AreEqual(0f, solo.Player.Pos.x, 1e-5f);
-            Assert.AreEqual(0f, solo.Player.Pos.y, 1e-5f);
+            // The n=1 ring point is angle 0 — the same formula every other
+            // lobby size takes, with no special case in front of it. Checked
+            // as a POSITION, not as "not the origin": the arena center is
+            // where the Director spawns and where the gate stands (spec
+            // §3.4/§3.15), so "solo is not there" is exactly half of what
+            // this test exists to say, and the other half is where it IS.
+            Assert.AreEqual(ring, solo.Player.Pos.x, 1e-4f);
+            Assert.AreEqual(0f, solo.Player.Pos.y, 1e-4f);
+            Assert.Greater(math.length(solo.Player.Pos), cfg.Arena.ZoneRadius[1],
+                "a solo collector must start OUTSIDE the middle boundary, i.e. nowhere near the core — " +
+                "a live collector standing in the core is what activates the Director (Р299)");
 
             var multi = new SimulationWorld(1, cfg, playerCount: 3);
             // Fixture arithmetic (Global Constraints C14): expected ring points
             // built from the SAME TestConfigs numbers the world was constructed
             // with, not a literal copied out of the .asset.
-            float ringRadius = cfg.Arena.Radius * cfg.Arena.PlayerSpawnRingFrac;
             for (int i = 0; i < 3; i++)
             {
                 float angle = i * 2f * math.PI / 3;
-                float2 expected = new float2(math.cos(angle), math.sin(angle)) * ringRadius;
+                float2 expected = new float2(math.cos(angle), math.sin(angle)) * ring;
                 Assert.AreEqual(expected.x, multi.PlayerAt(i).Pos.x, 1e-4f);
                 Assert.AreEqual(expected.y, multi.PlayerAt(i).Pos.y, 1e-4f);
             }
@@ -204,8 +224,52 @@ namespace Ring.Simulation.Tests
         [Test]
         public void WorldStats_CountedOnce_NotPerPlayer()
         {
-            var w = new SimulationWorld(1, TestConfigs.Default(), playerCount: 3);
-            TestWorlds.ClearFirstWave(w);
+            // ⚠ THE FIXTURE NARROWED IN Т4 (app-ggvz), THE CLAIM DID NOT.
+            // With three independent ring cadences all three rings seat their
+            // first wave on the same tick and would come out clear on the same
+            // tick too — the counter would read 3, correctly, and this test
+            // would be measuring the number of RINGS rather than the number of
+            // PLAYERS. So exactly one ring is left able to clear: the
+            // neighbors are handed debt, and the clearing tick therefore fails
+            // BOTH terms of their clear check at once (the debt they cannot
+            // finish, and the mobs that debt puts on the arena) — whichever of
+            // the two bites, neither neighbor can be counted.
+            //
+            // TestWorlds.ClearFirstWave cannot be used for the same narrowing:
+            // it kills every mob after every tick, so the neighbors' debt
+            // drains in one tick and they clear on the next, inside the
+            // helper's own loop.
+            // ⚠ THE WAIT IS THE WHOLE ARRIVAL OF THE WAVE, not one tick past
+            // its start (Т5): a ring seats at most MaxSpawnsPerZonePerTick mobs
+            // per tick, so a wave of `waveSize` needs ceil(waveSize / cap)
+            // ticks before its debt is closed — and a ring that still owes mobs
+            // cannot be cleared, which is what a one-tick wait quietly turned
+            // this test into. Stated as fixture arithmetic so a change to
+            // either number moves it.
+            SimConfig cfg = TestConfigs.Default();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            int waveSize = WaveSystem.CountForTest(in cfg.Wave, 0, w.PlayerCount);
+            int cap = cfg.Wave.MaxSpawnsPerZonePerTick;
+            int seatTicks = (waveSize + cap - 1) / cap;
+            TestWorlds.IdleTicks(w, SimulationWorld.TicksFromSeconds(cfg.Wave.FirstWaveDelay)
+                + seatTicks);
+            for (int z = 0; z < Zones.Count; z++)
+                Assert.AreEqual(WavePhase.Active, w.WaveRef((Zone)z).Phase,
+                    $"premise: ring {(Zone)z} has seated its first wave — the sentence says EVERY "
+                    + "ring, so every ring is what it reads");
+            Assert.AreEqual(0, w.WaveRef(Zone.Outer).PendingTotal,
+                "premise: the outer ring owes nothing any more — a ring still holding debt "
+                + "cannot be cleared, and the assertion below would be measuring the wait");
+
+            foreach (Zone z in new[] { Zone.Middle, Zone.Core })
+            {
+                WaveState debt = w.WaveRef(z);
+                debt.PendingChaser = 99;
+                w.SetWaveForTest(z, debt);
+            }
+            w.ClearMobsForTest();
+            w.TickAll(new SimInput[w.PlayerCount]);
+
             Assert.AreEqual(1, w.WorldStats.WavesCleared,
                 "clearing one wave with three players in the match must bump the WORLD " +
                 "counter exactly once, not once per player");
@@ -265,7 +329,7 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg, playerCount: 3);
             w.SetStatsForTest(1, new MatchStats { Kills = 7, ShotsFired = 9 });
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             Assert.AreEqual(7, snap.PlayerStats[1].Kills);

@@ -1,24 +1,60 @@
 using Ring.Simulation.AI;
 using Ring.Simulation.Combat;
+using Ring.Simulation.Loot;
 using Ring.Simulation.Movement;
 using Unity.Mathematics;
 
 namespace Ring.Simulation.Core
 {
-    /// Deterministic world: fixed-dt ticks, two independent RNG streams seeded
-    /// from match-config (Task 3: split from the former single shared Random) —
-    /// weapon spread (_spreadRng) and wave director (_waveRng) draw from
-    /// separate streams so one system's RNG consumption never perturbs the
-    /// other's sequence.
+    /// Deterministic world: fixed-dt ticks, three independent RNG streams seeded
+    /// from match-config (Task 3: split from the former single shared Random;
+    /// Stage 3 Т6 added the third) — weapon spread (_spreadRng), wave director
+    /// (_waveRng) and loot placement (_lootRng) draw from separate streams so
+    /// one system's RNG consumption never perturbs the other's sequence.
     /// No UnityEngine (asmdef: noEngineReferences) — Critical Rule 1.
     public sealed class SimulationWorld
     {
         /// ADR-002 T5: simulation runs at 30 Hz. The single source of dt.
         public const float TickDt = 1f / 30f;
 
+        /// A length stated in SECONDS, expressed in the only unit a
+        /// deterministic comparison may use: WHOLE TICKS (Stage 3, R-178 and
+        /// R-190; Ф5 gate, review B-4).
+        ///
+        /// THIS PHASE PAID FOR THE RULE TWICE, BOTH TIMES BY MEASUREMENT, and
+        /// then left it transcribed by hand in four places — which is how a
+        /// rule stops being a rule. Т21: `elapsed * TickDt >= GateDelaySeconds`
+        /// survived its mutation because at the boundary the two sides are
+        /// bit-equal when spilled to float locals and NOT equal when the
+        /// product stays inline at higher precision — an answer that depends
+        /// on the compiler has no place in state that feeds StateHash. Т23:
+        /// the extraction channel finished a whole tick LATE, because a SUM of
+        /// six TickDt is 0.2f while six times TickDt is 0.20000002f.
+        ///
+        /// ROUNDING IS TO THE NEAREST TICK, and it is exact for every number
+        /// that matters: the division is far more accurate than half a tick at
+        /// any raid length, so both the shipped values (90 s = 2700 ticks,
+        /// 20 s = 600) and every fixture stated as `N * TickDt` land on their
+        /// own integer. Callers compare the RESULT, never the seconds.
+        public static int TicksFromSeconds(float seconds)
+            => (int)Unity.Mathematics.math.round(seconds / TickDt);
+
+
         int _tick;
         Random _spreadRng;
         Random _waveRng;
+        /// Stage 3 Т6 (spec Р230): the THIRD stream, for loot placement —
+        /// container layout at world start (Т15) and the drop rolls that
+        /// follow it. Declared here, ahead of its consumer, because it is
+        /// canonical world state the moment it exists: it enters StateHash
+        /// and WorldSave in this task (spec Р294), and a replay that
+        /// restored a save without it would diverge from the live world at
+        /// the first draw Т15 makes. Kept out of _waveRng for the reason
+        /// Р230 states outright — placing containers pulls RNG at world
+        /// start, so sharing the wave stream would make a purely numeric
+        /// balance change (one crate more) shift every later wave draw, i.e.
+        /// move the golden for no behavioral reason.
+        Random _lootRng;
         SimConfig _config;
         // Stage 2 Task 4: length is the match's fixed playerCount (constructor
         // param), not a cap — unlike _mobs/_projectiles below, the player
@@ -37,6 +73,15 @@ namespace Ring.Simulation.Core
         // is a single struct — counted once for the whole match, not per player.
         readonly MatchStats[] _matchStats;
         WorldStats _worldStats;
+        // Stage 3 Task 4 (spec §3.6 "Рюкзак", Р232): one Inventory instance
+        // per player, next to _matchStats above — lives outside PlayerState
+        // (see PlayerState's own doc for why) so its backing byte array
+        // never rides along on a wholesale PlayerState copy
+        // (ReconcileData, snapshot fixtures, prediction). Length fixed to
+        // playerCount like every other per-player array in this class; each
+        // instance is itself sized to Hero.MaxInventoryItems at
+        // construction (below) and never resized.
+        readonly Inventory[] _inventories;
 
         // Entities appear in Phase 5/6 — arrays are preallocated to arena caps
         // now so the hot path never allocates once systems start filling them.
@@ -57,11 +102,16 @@ namespace Ring.Simulation.Core
         // to MaxMobs + MaxPlayers + 2 — the exact worst case once the gather
         // fanned out over every live player instead of packing a single one:
         // one slot per live mob, one per live player, plus barrier and floor.
-        // Neither owner can reach that bound on its own (a Player-owned round
-        // skips its own shooter, a Mob-owned one gathers no mobs at all), so
-        // the array carries one slot of slack rather than being tight; sizing
-        // it to the union keeps the bound obvious instead of depending on
-        // which branch of the damage matrix a given round took.
+        // Neither owner reaches that bound on its own — a Player-owned round
+        // gathers every mob (its OwnerEntityId is always the literal 0, never a
+        // live mob id) but skips its own shooter among players, a Mob-owned one
+        // (Stage 3 Task 5, spec Р252: friendly fire) gathers every OTHER live
+        // mob (its own shooter excluded by id) and every player without
+        // exclusion — so BOTH branches land on exactly
+        // MaxMobs + MaxPlayers + 2 - 1 candidates, one short of the union.
+        // Sizing to the union keeps the bound obvious instead of depending on
+        // which branch of the damage matrix a given round took, at the cost of
+        // one slot of slack neither branch actually spends.
         // Stage 2 Task 46: + 3 rather than + 2 — the barrier is TWO slots now
         // (interior obstacles/walls, and the ring boundary separately, since
         // only the interior ones have a modelled top). The true worst case rose
@@ -70,7 +120,40 @@ namespace Ring.Simulation.Core
         // array to its last slot and still not overflow. It is the one slot of
         // slack described above, kept rather than quietly spent.
         readonly (float t, int kind, int index)[] _projCandidates;
-        WaveState _wave;
+        // Stage 3 Task 3 (spec §3.6): ground pickups — same capped-array/
+        // swap-remove shape as _mobs/_projectiles above (rule 4). Sized to
+        // Arena.MaxPickups at construction; ArenaTopologyMatches rejects a
+        // hot-tweak that changes the cap, same contract as MaxMobs/
+        // MaxProjectiles.
+        PickupState[] _pickups;
+        int _pickupCount;
+        // Stage 3 Task 14 (spec §3.7, Р229): containers — same capped-
+        // array/swap-remove shape as _pickups above, PLUS the flat
+        // per-container slot content. `_containerSlots` is ONE array for
+        // every container, sized MaxContainers * MaxContainerSlots and
+        // addressed by a container's POSITION in `_containers` (its index,
+        // times the fixed block width) — never by `Id`, and never resized:
+        // RemoveContainerAt's swap-remove copies the moved container's own
+        // block across when it relocates a struct, see that method's own
+        // doc. Sized at construction, same ArenaTopologyMatches-guarded
+        // immutable-cap contract as every other entity array here.
+        ContainerState[] _containers;
+        int _containerCount;
+        byte[] _containerSlots;
+        WaveState[] _waves;
+        // Stage 3 Task 1 (spec Ф1, errata E-1/E-2): match-flow phase state.
+        // Declared inert by Т1 and driven since Т21 by Objectives.
+        // MatchFlowSystem, the last step of TickAll and the ONLY writer of
+        // these two fields outside save/restore; Т1
+        // only gave the phase a home so every field the extraction economy
+        // needs entered StateHash together at the sanctioned re-pin (Т6,
+        // done) instead of dribbling in across later Ф1 tasks (errata E-1's
+        // structural rebuild). Defaults to Phase = Farm (the enum's zero
+        // value) and DirectorDeathTick = 0 ("Director alive or not yet
+        // activated") — both already correct as the C# struct default,
+        // unlike WaveState's PhaseTicks above, so no explicit constructor
+        // init is needed.
+        MatchState _match;
         int _nextEntityId = 1;
 
         readonly SimEvent[] _events;
@@ -86,6 +169,10 @@ namespace Ring.Simulation.Core
         /// Match counters that are counted once for the whole match, not per
         /// player (Stage 2 Task 5) — WavesCleared, MobSpawnsSkipped, ProjectileSpawnsSkipped.
         public WorldStats WorldStats => _worldStats;
+        /// The match's own flow phase (Stage 3 Task 1 Interfaces) — one per
+        /// match, same "single struct field" shape as WorldStats above.
+        /// Read-only here; Т21's state machine mutates it through MatchRef.
+        public MatchState Match => _match;
         /// Synonym for PlayerAt(0) (Stage 2 Task 4) — every solo call site that
         /// predates Stage 2 Task 4 keeps compiling unchanged.
         public PlayerState Player => PlayerAt(0);
@@ -136,9 +223,14 @@ namespace Ring.Simulation.Core
         public int RejectedEdgeRequestsFor(int index) => _rejectedEdgeRequests[index];
 
         /// `playerCount` defaults to 1 so every call site that predates Stage 2
-        /// Task 4 (136 existing constructions) keeps compiling and behaving
-        /// identically — solo still spawns at the arena center (spec §3.2), not
-        /// on the ring.
+        /// Task 4 (136 existing constructions) keeps compiling. Where it
+        /// SPAWNS that lone player stopped being a special case in Stage 3
+        /// Ф5-0 (owner decision R-173): solo takes the one-player point of the
+        /// same ring every other lobby size takes (Geometry.SpawnPosFor), the
+        /// arena center having become the Director's own ground. A fixture
+        /// that wants its player at the origin says so through its config
+        /// (TestConfigs.OpenField zeroes PlayerSpawnRingFrac) instead of
+        /// leaning on a branch in a production formula.
         public SimulationWorld(long seed, in SimConfig config, int playerCount = 1)
         {
             if (playerCount < 1 || playerCount > config.Arena.MaxPlayers)
@@ -155,6 +247,10 @@ namespace Ring.Simulation.Core
             // are required so the XOR operands stay uint (PA9).
             _spreadRng = new Random(Fold(folded ^ 0xB5297A4Du));
             _waveRng = new Random(Fold(folded ^ 0x68E31DA4u));
+            // Stage 3 Т6 (spec Р230): the loot stream, folded from the SAME
+            // seed with its own constant, exactly like the two above — same
+            // per-stream zero-guard, same u-suffix requirement (PA9).
+            _lootRng = new Random(Fold(folded ^ 0x1B56C4E9u));
             _config = config;
             _players = new PlayerState[playerCount];
             _sanitizedInputs = new SimInput[playerCount];
@@ -167,8 +263,14 @@ namespace Ring.Simulation.Core
             // per-player scratch and never resized — the roster is fixed for a
             // match (spec §3.1).
             _rejectedEdgeRequests = new int[playerCount];
+            // Stage 3 Task 4: one backpack per player, same "allocated with
+            // the rest of the per-player scratch, never resized" contract —
+            // each instance's own backing array is sized to
+            // Hero.MaxInventoryItems inside the loop below.
+            _inventories = new Inventory[playerCount];
             for (int i = 0; i < playerCount; i++)
             {
+                _inventories[i] = new Inventory(config.Hero.MaxInventoryItems);
                 float2 pos = Geometry.SpawnPosFor(i, playerCount, in config.Arena);
                 float2 vel = float2.zero; // fresh spawn, no inherited velocity
                 // Same depenetration seam PlayerMovementSystem/SeparationSystem
@@ -177,19 +279,55 @@ namespace Ring.Simulation.Core
                 // obstacle still overlaps a spawn point.
                 Geometry.Depenetrate(ref pos, ref vel, config.Hero.Radius, in config.Arena, 1);
                 _players[i] = new PlayerState
-                    { Pos = pos, Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true };
+                    {
+                        Pos = pos, Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true,
+                        // Stage 3 Task 2 (spec Р261): the magazine starts full at
+                        // the config's own starting count.
+                        Ammo = config.Weapon.AmmoStart
+                    };
             }
             // Wave director starts idle, counting down to the first wave (Task 22
             // Interfaces) — WavePhase.Waiting is the enum's zero value, but
-            // PhaseTimer must be set explicitly or the countdown would start
+            // PhaseTicks must be set explicitly or the countdown would start
             // already expired and fire a wave on tick 1.
-            _wave = new WaveState { Phase = WavePhase.Waiting, PhaseTimer = config.Wave.FirstWaveDelay };
+            //
+            // ALL THREE RINGS, one and the same number (bd app-ggvz Т4, spec
+            // §3.3): the rings do not need staggered starts because they
+            // diverge by themselves on their own pauses (Wave.WavePauseByZone),
+            // and a ring left at PhaseTicks 0 would fire a wave on tick 1
+            // instead — the very defect this explicit assignment exists to
+            // rule out, just moved to the two rings Т3 had no cadence for yet.
+            _waves = new WaveState[Zones.Count];
+            for (int z = 0; z < Zones.Count; z++)
+                _waves[z] = new WaveState
+                {
+                    Phase = WavePhase.Waiting,
+                    PhaseTicks = TicksFromSeconds(config.Wave.FirstWaveDelay)
+                };
             _mobs = new MobState[config.Arena.MaxMobs];
             _sepForces = new float2[config.Arena.MaxMobs];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
             _projCandidates = new (float t, int kind, int index)[
                 config.Arena.MaxMobs + config.Arena.MaxPlayers + 3];
+            // Stage 3 Task 3: same "preallocated to the arena cap, never
+            // grown" contract as _mobs/_projectiles above.
+            _pickups = new PickupState[config.Arena.MaxPickups];
+            // Stage 3 Task 14: same contract — _containers preallocated to
+            // MaxContainers, _containerSlots preallocated to the full
+            // MaxContainers * MaxContainerSlots block grid, both zero-
+            // valued at start (no container, no item, exactly like the
+            // arrays above).
+            _containers = new ContainerState[config.Arena.MaxContainers];
+            _containerSlots = new byte[config.Arena.MaxContainers * config.Arena.MaxContainerSlots];
             _events = new SimEvent[config.Arena.MaxEventsPerFrame];
+
+            // Stage 3 Task 15 (spec §3.7, Interfaces): the ONE legal call
+            // site, last line of the constructor — every entity array this
+            // task's search touches (_containers/_containerSlots above) and
+            // every other one (players, mobs, ...) already exists by this
+            // point, and player depenetration (the loop above, spec's own
+            // "after player depenetration" requirement) has already run.
+            ContainerStore.PlaceStartingContainers(this);
         }
 
         /// Solo overload (Stage 2 Task 4) — throws for a multiplayer world (spec §3.2): the
@@ -254,6 +392,63 @@ namespace Ring.Simulation.Core
             // movement/combat has settled — a mob spawned here doesn't get an
             // extra, unbudgeted movement/combat sub-step on its own spawn tick.
             WaveSystem.Update(this);
+            // Stage 3 Task 17 (owner decision R-149): the loot channel ticks
+            // HERE — after combat, before ContainerStore/PickupSystem. R-2's
+            // canonical tail (see PickupSystem's call below) orders LootOps
+            // against those two and against MatchFlowSystem; WaveSystem is not
+            // in that chain at all and carries its own recorded requirement to
+            // run last among the combat systems, so inserting BEFORE it would
+            // reopen that decision without writing anything down. Nothing is
+            // shared either way: looting never reads mobs, spawning never
+            // reads loot timers.
+            // Stage 3 Task 18 (coordinator R-162): the SANITIZED inputs ride
+            // in as a parameter. The channel's completion re-check has to read
+            // the window flag OF THIS TICK (spec §3.8 check 2), and this
+            // project's precedent for that is the explicit hand-off
+            // WeaponSystem.Update gets above, not a getter over
+            // _sanitizedInputs whose only consumer would be one system.
+            LootOps.Update(this, _sanitizedInputs);
+            // Stage 3 Т23 (spec §3.5 Р256, R-2's canonical tail): the
+            // extraction channel ticks HERE — after combat and after the loot
+            // channel, before ContainerStore/PickupSystem, and therefore
+            // before MatchFlowSystem, which is the last step of all. The order
+            // is a rule, not a placement: a collector who fills the last tick
+            // of his channel on the very tick a companion walks into the core
+            // still gets out, because the portal closes from the NEXT tick
+            // (Р256 п.1). Put after the phase machine, that same collector
+            // would be caught by a door that shut retroactively.
+            Objectives.ExtractionSystem.Update(this);
+            // Stage 3 Task 14 (coordinator R-101): container TTL decay slots
+            // in HERE, BEFORE PickupSystem — not after. The slot after
+            // PickupSystem is reserved for MatchFlowSystem (Т21, see that
+            // call's own R-2 doc immediately below): "THE SLOT AFTER THIS
+            // CALL BELONGS TO MatchFlowSystem (Т21)… those two [LootOps/
+            // ExtractionSystem] insert themselves BEFORE this call
+            // instead" — ContainerStore is a third system in that same
+            // "inserts before PickupSystem" set, not a fourth claimant on
+            // Т21's own slot. Digest-inert today (no fixture spawns a
+            // container before this tick runs), which is exactly why the
+            // order has to be fixed by doc now rather than left for
+            // whichever call compiles first and then have Т21 need to
+            // shift a step that already sits at its position — a re-pin
+            // with both sanctions already spent.
+            ContainerStore.Update(this);
+            // Stage 3 Task 3 (owner decision R-2): the canonical tail is
+            // combat -> LootOps.Update (Т17, above) -> ExtractionSystem.Update
+            // (Т23 — it landed BEFORE this call, not after, and
+            // ChannelCompletingOnTheActivationTick_StillGetsOut is its
+            // witness) -> PickupSystem.Update (this call) -> MatchFlowSystem.
+            // Update (Т21, below). Spec §3.6's own "подбор после машины фазы"
+            // phrasing disagrees with this order; R-2 resolves that
+            // disagreement in favor of Р256 and the phase machine's own
+            // ordering, not the spec sentence.
+            PickupSystem.Update(this);
+            // Stage 3 Т21: the phase machine, and it is LAST on purpose (Р256)
+            // — it reads settled positions and settled mob liveness, so a
+            // collector who crossed into the core during this tick activates
+            // the Director on this tick, not the next one. See
+            // MatchFlowSystem's own doc for the rest of the ordering contract.
+            Objectives.MatchFlowSystem.Update(this);
         }
 
         /// One player's movement sub-step of TickAll (Stage 2 Task 4 — split out of the
@@ -325,23 +520,32 @@ namespace Ring.Simulation.Core
         /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
         /// the tick boundary (caller must only invoke this between ticks). Arena
         /// topology — radius, obstacle count/positions/radii, wall count/endpoints/
-        /// half-width, player cap, spawn ring fraction, and the three per-match
-        /// entity caps (see ArenaTopologyMatches below for the full field list) —
-        /// must stay identical: a change there invalidates collision/spawn geometry
-        /// or array sizing that isn't reconciled here, so it throws instead;
-        /// Presentation reacts by restarting the world.
+        /// half-width, player cap, spawn ring fraction, the three per-match
+        /// entity caps, (Stage 3 Task 4, owner decision R-19) the backpack's
+        /// two capacity numbers, and (Stage 3 Task 13, spec §3.7 Р264) the
+        /// item catalog itself (see ArenaTopologyMatches below for the full
+        /// field list) — must stay identical: a change there invalidates
+        /// collision/spawn geometry or array sizing that isn't reconciled here,
+        /// so it throws instead; Presentation reacts by restarting the world.
         /// Migration: Hp clamps down to the new max, every player timer clamps into
-        /// [0, its new max], wave-state (including WaveIndex) is left untouched.
+        /// [0, its new max], and the THREE per-ring wave states (including
+        /// each ring's WaveIndex and its PhaseTicks countdown) are left
+        /// untouched — bd app-ggvz Т3, spec §3.2's "hot edit" note: a
+        /// WavePauseByZone retuned in PlayMode leaves up to three already-
+        /// armed countdowns to finish on the old number, and that is accepted
+        /// behavior (the same every other timer in this world has), not
+        /// drift.
         /// Stage 2 Task 4: migrates every player in the match, not just player 0 — for
         /// a solo world (_players.Length == 1) this is byte-for-byte the same
         /// single migration as before.
         public void ApplyConfig(in SimConfig next)
         {
-            if (!ArenaTopologyMatches(in _config.Arena, in next.Arena))
+            if (!ArenaTopologyMatches(in _config.Arena, in next.Arena, in _config.Hero, in next.Hero,
+                    _config.Items, next.Items))
             {
                 throw new System.ArgumentException("SimulationWorld.ApplyConfig: arena topology " +
-                    "changed (radius/obstacles/walls/player cap/spawn ring/entity caps) — restart " +
-                    "the world instead of hot-tweaking it.");
+                    "changed (radius/obstacles/walls/player cap/spawn ring/entity caps/backpack " +
+                    "capacity/item catalog) — restart the world instead of hot-tweaking it.");
             }
 
             _config = next;
@@ -361,6 +565,11 @@ namespace Ring.Simulation.Core
                 p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
                 p.DashBufferTimer = math.clamp(p.DashBufferTimer, 0f, next.Hero.DashBufferWindow);
                 p.FireCooldown = math.clamp(p.FireCooldown, 0f, next.Weapon.FireInterval);
+                // Stage 3 Task 2 (spec Interfaces): the magazine clamps down to
+                // the new AmmoMax ceiling, same hot-tweak contract as every
+                // other magnitude in this loop — never clamped UP, a hot-tweak
+                // raising AmmoMax does not hand out free ammo.
+                p.Ammo = math.min(p.Ammo, next.Weapon.AmmoMax);
                 // Task 10: slide timers, same clamp-to-new-ceiling contract as the
                 // dash timers above.
                 p.SlideTimer = math.clamp(p.SlideTimer, 0f, next.Hero.SlideDuration);
@@ -370,6 +579,12 @@ namespace Ring.Simulation.Core
                 p.LinkWindowTimer = math.clamp(p.LinkWindowTimer, 0f, next.Hero.LinkWindowSeconds);
                 // Task 14: aim-settle progress, same clamp-to-new-ceiling contract.
                 p.AimSettleTimer = math.clamp(p.AimSettleTimer, 0f, next.Hero.AimSettleSeconds);
+                // Stage 3 Т23 (spec Р286, debt of this task): the extraction
+                // channel is measured against Flow.ExtractChannelSeconds, so a
+                // live timer must be clamped when that number is retuned mid-
+                // match — otherwise a shortened channel would leave a collector
+                // ALREADY past its end without ever having stood there.
+                p.ExtractTimer = math.clamp(p.ExtractTimer, 0f, next.Flow.ExtractChannelSeconds);
                 // Stage 2 Task 10: the two edge-request counters clamp into
                 // [0, the new EdgeRequestMinTicks] — same contract as the timers
                 // above, just counted in ticks instead of seconds. Without this,
@@ -379,6 +594,30 @@ namespace Ring.Simulation.Core
                     math.clamp(p.DashRequestCooldownTicks, 0, next.Hero.EdgeRequestMinTicks);
                 p.SlideRequestCooldownTicks =
                     math.clamp(p.SlideRequestCooldownTicks, 0, next.Hero.EdgeRequestMinTicks);
+                // Stage 3 Task 17 (errata E-6 A-I8): the loot channel clamps
+                // down to the new tier table's longest transfer, same
+                // clamp-to-the-new-ceiling contract as every timer above.
+                // Its ceiling is an AGGREGATE, not one named number, which is
+                // the one way this line differs from its neighbors — the
+                // channel's own target tier is not recoverable here (the
+                // container may already be gone), so the longest time any
+                // tier can ask for is the only honest bound. The aggregate
+                // itself lives in LootTransferTimes.Longest, next to the
+                // table, and its own doc says why it is a max rather than the
+                // last element. Called inside the loop like every neighbor
+                // reads its own ceiling inside the loop — hoisting it would
+                // make this the ONE line here with a precomputed operand, and
+                // there is nothing to buy: ApplyConfig runs on a hot-tweak,
+                // not on the tick, over at most Arena.MaxPlayers players and a
+                // four-element table. ExtractTimer stays unclamped until Т23
+                // gives it behavior and, with it, its ceiling.
+                p.LootTimer = math.clamp(p.LootTimer, 0f, LootTransferTimes.Longest(in next.Loot));
+                // Stage 3 Task 19: the repair channel clamps down to the new
+                // config's own ceiling, same clamp-to-new-ceiling contract
+                // as every timer above — and unlike LootTimer's neighbor, a
+                // single named number, not an aggregate (there is exactly
+                // one repair-kit channel length, not a per-tier table).
+                p.RepairTimer = math.clamp(p.RepairTimer, 0f, next.Loot.RepairKitChannelSeconds);
                 _players[i] = p;
             }
         }
@@ -387,7 +626,8 @@ namespace Ring.Simulation.Core
         /// constant (Task 3, same zero-guard as Task 1's single-stream version).
         static uint Fold(uint x) => x == 0 ? 0x9E3779B9u : x;
 
-        static bool ArenaTopologyMatches(in ArenaSimConfig a, in ArenaSimConfig b)
+        static bool ArenaTopologyMatches(in ArenaSimConfig a, in ArenaSimConfig b,
+            in HeroSimConfig heroA, in HeroSimConfig heroB, ItemDef[] itemsA, ItemDef[] itemsB)
         {
             if (a.Radius != b.Radius || a.ObstacleCount != b.ObstacleCount) return false;
             for (int i = 0; i < a.ObstacleCount; i++)
@@ -433,11 +673,84 @@ namespace Ring.Simulation.Core
             // Radius is: they size arrays / define spawn geometry at
             // construction time, not something ApplyConfig reconciles
             // mid-match.
+            // Stage 3 Task 9 (spec Р287): zone walls and their doors are
+            // topology exactly like interior walls are (the same reasoning
+            // WallHalfWidth's own comment above states) — a hot-tweak moving
+            // a door would leave Depenetrate/SweepArena resolving collisions
+            // against the OLD opening while the config already claims the
+            // new one. The flat door arrays are compared as a whole rather
+            // than re-sliced per wall here — the per-wall start/count pair is
+            // already checked in the loop below, so re-deriving the same
+            // slice a second time would only restate that comparison (rule 2).
+            if (a.ZoneWallCount != b.ZoneWallCount) return false;
+            for (int i = 0; i < a.ZoneWallCount; i++)
+            {
+                if (a.ZoneWallRadius[i] != b.ZoneWallRadius[i]) return false;
+                if (a.ZoneWallHalfWidth[i] != b.ZoneWallHalfWidth[i]) return false;
+                if (a.ZoneWallDoorStart[i] != b.ZoneWallDoorStart[i]) return false;
+                if (a.ZoneWallDoorCount[i] != b.ZoneWallDoorCount[i]) return false;
+            }
+            if (a.DoorCenterRad.Length != b.DoorCenterRad.Length
+                || a.DoorFreeWidth.Length != b.DoorFreeWidth.Length)
+                return false;
+            for (int i = 0; i < a.DoorCenterRad.Length; i++)
+            {
+                if (a.DoorCenterRad[i] != b.DoorCenterRad[i]) return false;
+                if (a.DoorFreeWidth[i] != b.DoorFreeWidth[i]) return false;
+            }
+            // Spec §3.13 (Р286/Р287): the zone-boundary radii are topology
+            // alongside the zone-wall/door geometry just checked above —
+            // Geometry.ZoneOf reads them to decide loot tier and wave zone
+            // budget, so a hot-tweak moving a boundary mid-match would
+            // silently change that semantic without a restart. Named in the
+            // spec, missed by Т9's own plan text (coordinator finding,
+            // same shape as Т8's R-39 — plan text omits what the spec
+            // states).
+            if (a.ZoneRadius.Length != b.ZoneRadius.Length) return false;
+            for (int i = 0; i < a.ZoneRadius.Length; i++)
+                if (a.ZoneRadius[i] != b.ZoneRadius[i]) return false;
             if (a.MaxPlayers != b.MaxPlayers || a.PlayerSpawnRingFrac != b.PlayerSpawnRingFrac)
                 return false;
             if (a.MaxMobs != b.MaxMobs || a.MaxProjectiles != b.MaxProjectiles
                 || a.MaxEventsPerFrame != b.MaxEventsPerFrame)
                 return false;
+            // Stage 3 Task 3: MaxPickups joins the three per-match entity
+            // caps above — same "backing array sized at construction, cannot
+            // grow mid-match" reasoning (the constructor sizes _pickups off
+            // exactly this field).
+            if (a.MaxPickups != b.MaxPickups) return false;
+            // Stage 3 Task 9 (spec Р287): the container caps join MaxPickups
+            // above — same "backing array sized at construction, cannot grow
+            // mid-match" reasoning (Т13/loot's own containers array, once it
+            // exists, sizes off exactly these two fields).
+            if (a.MaxContainers != b.MaxContainers) return false;
+            if (a.MaxContainerSlots != b.MaxContainerSlots) return false;
+            // Spec §3.13/§3.15 (Р186/Р287): portals are topology for the
+            // same reason BarrierTop below is — the CLIENT draws them from
+            // its own copy of the config (Presentation reads ArenaSimConfig
+            // to place the greybox), so a hot-tweak moving one would desync
+            // the picture from the server exactly the way an unchecked
+            // BarrierTop change did (the lesson Р186 records). Named in the
+            // spec, missed by Т9's own plan text — same coordinator finding
+            // as ZoneRadius above.
+            if (a.ExtractPos.Length != b.ExtractPos.Length) return false;
+            // Ф2 review B-m4: the three portal arrays are parallel by
+            // convention, and SimConfigBuilder enforces it — but a hand-built
+            // config never passes through the builder, and this comparator is
+            // reached from ApplyConfig on exactly such configs in tests. A
+            // comparator must answer false, not throw out of an index.
+            if (a.ExtractZone.Length != a.ExtractPos.Length
+                || a.ExtractKind.Length != a.ExtractPos.Length
+                || b.ExtractZone.Length != b.ExtractPos.Length
+                || b.ExtractKind.Length != b.ExtractPos.Length)
+                return false;
+            for (int i = 0; i < a.ExtractPos.Length; i++)
+            {
+                if (!math.all(a.ExtractPos[i] == b.ExtractPos[i])) return false;
+                if (a.ExtractZone[i] != b.ExtractZone[i]) return false;
+                if (a.ExtractKind[i] != b.ExtractKind[i]) return false;
+            }
+            if (a.ExtractRadius != b.ExtractRadius) return false;
             // Stage 2 Task 46 (bd app-r8x): the interior barriers' modelled
             // height is topology for the same reason WallHalfWidth is — it
             // decides which shots the geometry stops, and there is nothing for
@@ -447,6 +760,44 @@ namespace Ring.Simulation.Core
             // picture and the collision out of step silently, which is exactly
             // the mine Task 14 closed one field over.
             if (a.BarrierTop != b.BarrierTop) return false;
+            // Stage 3 Task 4 (owner decision R-19, spec Р286/Р287): the
+            // backpack's two capacity numbers are topology too, despite
+            // living on HeroSimConfig rather than ArenaSimConfig — same
+            // "backing array sized at construction, cannot grow mid-match"
+            // reasoning as MaxPickups above (Stage 3 Task 3 precedent,
+            // HotTweak_MaxPickupsChange_Throws): MaxInventoryItems sizes
+            // Loot.Inventory's own byte[] directly. InventoryCapacity earns
+            // the same treatment for a different reason (Р286): unlike a
+            // float magnitude (Hp, Stamina, ...) that ApplyConfig clamps
+            // down continuously, backpack contents are DISCRETE items — a
+            // hot-tweak lowering InventoryCapacity below a player's
+            // currently occupied slot points has no sound reconciliation
+            // (there is no fractional item to partially evict), so ANY
+            // change to either number forces a restart instead.
+            if (heroA.InventoryCapacity != heroB.InventoryCapacity) return false;
+            if (heroA.MaxInventoryItems != heroB.MaxInventoryItems) return false;
+            // Stage 3 Task 13 (spec §3.7 Р264, owner decision): the item
+            // catalog is topology — its length and every record's SlotCost
+            // decide what a wire byte Id and an occupied slot point MEAN in
+            // a live world, so a hot-tweak changing it desyncs meaning, not
+            // just a number (same reasoning MaxContainerSlots/MaxContainers
+            // above already state for the arrays they size). Null-safe by
+            // the same "answer false, not throw" contract ExtractZone/
+            // ExtractKind's own comparison above follows (Ф2 review B-m4) —
+            // a hand-built fixture can reach this comparator with a null
+            // array, and a length of -1 (never a real array's length) makes
+            // "one null, one not" compare unequal without a special case.
+            int itemsALength = itemsA?.Length ?? -1;
+            int itemsBLength = itemsB?.Length ?? -1;
+            if (itemsALength != itemsBLength) return false;
+            for (int i = 0; i < itemsALength; i++)
+            {
+                if (itemsA[i].Id != itemsB[i].Id || itemsA[i].Tier != itemsB[i].Tier
+                    || itemsA[i].SlotCost != itemsB[i].SlotCost
+                    || itemsA[i].CreditValue != itemsB[i].CreditValue
+                    || itemsA[i].Kind != itemsB[i].Kind)
+                    return false;
+            }
             return true;
         }
 
@@ -510,9 +861,27 @@ namespace Ring.Simulation.Core
         /// from SpreadRng so weapon fire never shifts wave spawn draws.
         internal ref Random WaveRng => ref _waveRng;
 
+        /// The loot-placement stream's seam (Stage 3 Т6, spec Р230), same
+        /// ref-return shape as the two above so container layout mutates it in
+        /// place instead of round-tripping copies. Its production consumer is
+        /// Т15 (container placement); until then the only draws through it are
+        /// the ones WorldLifecycleTests makes to prove the stream is really
+        /// hashed and really saved — which is exactly the property Т15 will
+        /// depend on and cannot verify for itself after the fact.
+        internal ref Random LootRng => ref _lootRng;
+
         /// Combat systems' seam into one player's personal counters (ShotsFired, ...)
         /// (Stage 2 Task 5 — was a single-slot property, now indexed by shooter).
         internal ref MatchStats StatsRef(int index) => ref _matchStats[index];
+
+        /// Stage 3 Task 17: a system's seam into live player storage, same
+        /// ref-return shape as StatsRef above and as the `ref _players[i]`
+        /// TickAll already hands WeaponSystem. Loot.LootOps.Update needs to
+        /// write one field of every player without copying the whole struct
+        /// out and back, and it must NOT reach for SetPlayerForTest to do it —
+        /// a battle path calling a method named "ForTest" is the exact defect
+        /// Loot.PickupSystem.AdvanceTtl's own doc records being fixed.
+        internal ref PlayerState PlayerRef(int index) => ref _players[index];
 
         /// WaveSystem's (and future shared-resource systems') seam into the
         /// match's world-scoped counters (WavesCleared, spawn-skip counts) —
@@ -528,9 +897,134 @@ namespace Ring.Simulation.Core
         internal MobState[] Mobs => _mobs;
         internal int MobCount => _mobCount;
 
+        /// Loot.PickupSystem's seam into live pickup storage (Stage 3 Task 3)
+        /// — same shape as Projectiles/Mobs above.
+        internal PickupState[] Pickups => _pickups;
+        internal int PickupCount => _pickupCount;
+
+        /// Loot.ContainerStore's seam into live container storage (Stage 3
+        /// Task 14) — same shape as Pickups/PickupCount above. Slot
+        /// CONTENT has no array-typed accessor of its own: every reader
+        /// goes through ContainerSlotAt/ContainerItemsInto/TryTakeFromContainer,
+        /// which resolve the offset once rather than handing out the flat
+        /// backing array for every caller to re-derive. (Т27 added the middle
+        /// one — the same read addressed by container ID, for the snapshot
+        /// assembler on the far side of the assembly boundary; Т32б made it
+        /// the only id-addressed form, see its own doc.)
+        internal ContainerState[] Containers => _containers;
+        internal int ContainerCount => _containerCount;
+
+        /// Whether a Director is standing in the arena right now (Stage 3
+        /// Т27, coordinator R-218) — ONE home, two readers on two sides of an
+        /// assembly boundary.
+        ///
+        /// WHY IT IS PUBLIC AND WHY IT IS HERE. `MatchFlowSystem` has asked
+        /// this question since Т21 and owns the phase machine that acts on
+        /// the answer; Т27 gives it a second reader that cannot see the
+        /// first — `SnapshotAssembler` lives in `Ring.Networking`, and the
+        /// Match block's `DirectorAlive` bit is NOT derivable from the phase
+        /// (MatchWireFlags' own doc: he dies GateDelaySeconds before the
+        /// phase moves, and that window is exactly when a client needs to
+        /// know). The alternatives were a second copy of this loop over the
+        /// networked side's own capture, or an assembly-wide
+        /// InternalsVisibleTo — the same two the owner weighed and rejected
+        /// for container slots (R-216), answered the same way and for the
+        /// same reason: one public accessor beside the ones the assembler
+        /// already reads.
+        ///
+        /// Linear over live mobs, like every other scan here; it runs once
+        /// per tick for the phase machine and once per connection for the
+        /// frame, against Arena.MaxMobs.
+        public bool DirectorAlive
+        {
+            get
+            {
+                for (int i = 0; i < _mobCount; i++)
+                    if (_mobs[i].Type == MobType.Director) return true;
+                return false;
+            }
+        }
+
+        /// Stage 3 Task 4 Interfaces: number of items currently carried by
+        /// one player's backpack.
+        public int InventoryCountOf(int playerIndex) => _inventories[playerIndex].Count;
+
+        /// Stage 3 Task 4 Interfaces: the item id at one backpack slot —
+        /// meaningful only for slot < InventoryCountOf(playerIndex), same
+        /// "no bounds guard beyond the backing array" contract as
+        /// PlayerAt/Pickups.
+        public byte InventoryItemAt(int playerIndex, int slot) => _inventories[playerIndex].ItemAt(slot);
+
+        /// Stage 3 Task 4 Interfaces: sum of Loot.Inventory.SlotCostOf
+        /// across every item this player carries — what TryAddItem checks
+        /// against Hero.InventoryCapacity, not InventoryCountOf itself.
+        /// Stage 3 Task 13: the catalog is read fresh off _config.Items
+        /// every call, same "hot-tweak honored next call" contract Capacity
+        /// below already follows (moot for the catalog itself — it is
+        /// topology, ArenaTopologyMatches rejects any change — but the seam
+        /// stays uniform).
+        public int InventoryUsedSlots(int playerIndex) => _inventories[playerIndex].UsedSlots(_config.Items);
+
+        /// Stage 3 Т24 (spec §3.10): the price of one player's backpack,
+        /// read through the world's own catalog — the same shape, and for the
+        /// same reason, as InventoryUsedSlots above. `_inventories` is
+        /// private and `StopMatch` releases the whole world, so the summary
+        /// has exactly one moment to ask, and this is the seam it asks
+        /// through.
+        public int InventoryCreditsOf(int playerIndex)
+            => _inventories[playerIndex].CreditsTotal(_config.Items);
+
+        /// Stage 3 Task 4 Interfaces: adds one item to a player's backpack,
+        /// refusing (false, backpack byte-for-byte unchanged) once the
+        /// item's own SlotCostOf would push UsedSlots past
+        /// Hero.InventoryCapacity, or the backing array is already at its
+        /// Hero.MaxInventoryItems ceiling. Capacity is read fresh off
+        /// _config every call, same "hot-tweak honored next call" contract
+        /// Loot.PickupSystem.Collect's own PickupRadius read follows.
+        internal bool TryAddItem(int playerIndex, byte itemId)
+            => _inventories[playerIndex].TryAdd(itemId, _config.Hero.InventoryCapacity, _config.Items);
+
+        /// Stage 3 Task 17: "would this item fit", asked without adding it —
+        /// spec §3.8 check 8. Delegates to Loot.Inventory.CanAdd, the SAME
+        /// predicate TryAddItem's own add is gated on (see that method's doc),
+        /// reading capacity and catalog fresh off _config exactly as TryAddItem
+        /// does, so a hot-tweak is honored the next call for both alike.
+        internal bool CanAddItem(int playerIndex, byte itemId)
+            => _inventories[playerIndex].CanAdd(itemId, _config.Hero.InventoryCapacity, _config.Items);
+
+        /// Stage 3 Task 4 Interfaces: removes one item by backpack slot —
+        /// swap-remove, same idiom as RemovePickupAt/RemoveProjectileAt.
+        /// False (itemId left at its default) for a slot outside
+        /// [0, InventoryCountOf(playerIndex)).
+        internal bool TryRemoveItemAt(int playerIndex, int slot, out byte itemId)
+            => _inventories[playerIndex].TryRemoveAt(slot, out itemId);
+
+        /// Test-only seam (Stage 3 Task 4): overwrites a player's whole
+        /// backpack with exactly these items, same "direct write" contract
+        /// as SetPlayerForTest/SetPickupForTest above.
+        internal void SetInventoryForTest(int playerIndex, params byte[] items)
+            => _inventories[playerIndex].SetForTest(items);
+
         /// MobAiSystem's seam into the per-archetype balance numbers (Task 19).
-        internal MobSimConfig MobConfigFor(MobType type)
-            => type == MobType.Chaser ? _config.Chaser : _config.Gunner;
+        /// Stage 3 Task 10 (spec Р213/Р251): four-way switch, not the old
+        /// Chaser/"everything else" ternary — Elite and Director are the
+        /// third and fourth archetype, each with their OWN section
+        /// (Core/SimConfig.cs). `default` throws rather than silently
+        /// falling back to Gunner: a `MobState.Type` can only ever be one
+        /// of the four values SpawnMob below constructs (this is the
+        /// single choke point that does), so an unmatched value here means
+        /// something upstream is already broken — the same "refuse loudly"
+        /// contract SnapshotBlocks.MaxHpFor's own decode-time domain gate
+        /// documents, applied at the call site instead of the wire.
+        internal MobSimConfig MobConfigFor(MobType type) => type switch
+        {
+            MobType.Chaser => _config.Chaser,
+            MobType.Gunner => _config.Gunner,
+            MobType.Elite => _config.Elite,
+            MobType.Director => _config.Director,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
 
         /// SeparationSystem's seam into its preallocated per-tick force buffer
         /// (Task 20) — sized to Arena.MaxMobs, recomputed every tick, never grown.
@@ -545,10 +1039,28 @@ namespace Ring.Simulation.Core
         /// rather than the difference between fitting and throwing.
         internal (float t, int kind, int index)[] ProjCandidates => _projCandidates;
 
-        /// WaveSystem's seam into the wave director's live state (Task 22) — same
-        /// ref-return pattern as SpreadRng/WaveRng, so the system mutates it in
-        /// place instead of round-tripping copies every tick.
-        internal ref WaveState WaveRef => ref _wave;
+        /// WaveSystem's seam into ONE RING's wave director state (Task 22) —
+        /// same ref-return pattern as SpreadRng/WaveRng, so the system
+        /// mutates it in place instead of round-tripping copies every tick.
+        ///
+        /// Wave-cadence-per-zone (bd app-ggvz Т3, spec §3.2): a METHOD taking
+        /// the ring, where it used to be a parameterless property over a
+        /// single WaveState — each ring runs its own wave now, so "the wave"
+        /// is not a thing the world has one of. Callers that legitimately
+        /// want a WORLD-level answer walk `for (int z = 0; z < Zones.Count;
+        /// z++)` (WaveSystem.Update's clear check) or read the frame's own
+        /// aggregate (WorldWave); reading ring zero and calling it the world
+        /// is the mistake this shape exists to make visible.
+        internal ref WaveState WaveRef(Zone zone) => ref _waves[(int)zone];
+
+        /// Т21's seam into the match's own flow state (Stage 3 Task 1
+        /// Interfaces) — the same ref-return seam idiom WaveRef above uses
+        /// (the two stopped being a symmetric PAIR when the wave became three
+        /// per-ring instances and its seam took a Zone; the match is genuinely
+        /// one per raid, so this one stays a property), so the phase state
+        /// machine mutates it in place instead of round-tripping copies every
+        /// tick.
+        internal ref MatchState MatchRef => ref _match;
 
         /// Spawns a projectile (spec §3.5/§3.6). Capped at Arena.MaxProjectiles —
         /// once full, spawns are skipped and counted rather than growing the array,
@@ -556,9 +1068,13 @@ namespace Ring.Simulation.Core
         /// `ownerIndex` (Stage 2 Task 7) is the shooter's own PlayerAt index for a
         /// Player-owned shot, else ProjectileIds.NoOwner — required (no default):
         /// both battle call sites (WeaponSystem, MobAiSystem) must say explicitly
-        /// who fired.
-        internal int SpawnProjectile(ProjectileOwner owner, byte ownerIndex, float2 pos, float2 vel,
-            float height, float velZ, float damage, float radius, float ttl)
+        /// who fired. `ownerEntityId` (Stage 3 Task 5, spec Р252) is the shooting
+        /// MOB's own entity id for a Mob-owned shot (MobAiSystem passes `m.Id`),
+        /// else 0 (WeaponSystem's own literal — see ProjectileState.OwnerEntityId's
+        /// own doc for why 0 can never collide with a live mob) — also required,
+        /// same "say explicitly" discipline as ownerIndex.
+        internal int SpawnProjectile(ProjectileOwner owner, byte ownerIndex, int ownerEntityId,
+            float2 pos, float2 vel, float height, float velZ, float damage, float radius, float ttl)
         {
             if (_projectileCount >= _projectiles.Length)
             {
@@ -569,7 +1085,8 @@ namespace Ring.Simulation.Core
             int id = _nextEntityId++;
             _projectiles[_projectileCount++] = new ProjectileState
             {
-                Id = id, Owner = owner, OwnerIndex = ownerIndex, Pos = pos, PrevPos = pos, Vel = vel,
+                Id = id, Owner = owner, OwnerIndex = ownerIndex, OwnerEntityId = ownerEntityId,
+                Pos = pos, PrevPos = pos, Vel = vel,
                 Height = height, PrevHeight = height, VelZ = velZ,
                 Damage = damage, Radius = radius, Ttl = ttl
             };
@@ -598,6 +1115,382 @@ namespace Ring.Simulation.Core
         {
             _projectiles[index] = _projectiles[--_projectileCount];
         }
+
+        /// Spawns a pickup (spec §3.6). `amount <= 0` is not a pathological
+        /// cap-overflow, it is "no drop at all" — refused silently, BEFORE
+        /// the cap check and BEFORE _nextEntityId is touched (owner decision
+        /// R-18): a drop source configured to zero (TestConfigs' own
+        /// Loot.CellsPerMob/CorpseCellFraction, this task's own
+        /// golden-safety fixture) must burn no id and leave every hashed
+        /// channel exactly as it was — spawning a PickupState with
+        /// Amount = 0 would still advance _nextEntityId and, now that
+        /// Pickups is in StateHash (Т6), shift the digest for a config that
+        /// legitimately drops nothing.
+        /// Capped at Arena.MaxPickups exactly like SpawnMob/SpawnProjectile
+        /// above: past the cap the NEW drop is skipped and counted
+        /// (WorldStats.PickupSpawnsSkipped) — the OLD pickups already on the
+        /// ground are never evicted to make room (spec §3.6, Р260: eviction
+        /// would take back loot a player already earned). Ttl seeds at
+        /// Loot.PickupTtlSeconds (moved off this class's own TEMPORARY
+        /// const, Т13, R-3) — not a parameter here for the same reason it
+        /// never was: SpawnPickup's own Interfaces signature (kind, pos,
+        /// amount) carries no ttl parameter.
+        internal int SpawnPickup(PickupKind kind, float2 pos, int amount)
+        {
+            if (amount <= 0) return -1;
+            if (_pickupCount >= _pickups.Length)
+            {
+                // Stage 3 Task 3: shared arena resource, world-scoped counter
+                // (same pattern as MobSpawnsSkipped/ProjectileSpawnsSkipped).
+                _worldStats.PickupSpawnsSkipped++;
+                return -1;
+            }
+            int id = _nextEntityId++;
+            _pickups[_pickupCount++] = new PickupState
+            {
+                Id = id, Pos = pos, Kind = kind, Amount = amount, Ttl = _config.Loot.PickupTtlSeconds
+            };
+            return id;
+        }
+
+        /// Removes a pickup by swapping the last slot into its place — O(1),
+        /// same swap-remove pattern as RemoveProjectileAt above. Consumer:
+        /// Loot.PickupSystem (TTL expiry and auto-pickup collection).
+        internal void RemovePickupAt(int index)
+        {
+            _pickups[index] = _pickups[--_pickupCount];
+        }
+
+        // ---------------------------------------------------------------
+        // Stage 3 Task 14 (spec §3.7, Р229): containers.
+        // ---------------------------------------------------------------
+
+        /// Spawns a container (spec §3.7). `SlotCount` is set to
+        /// `items.Length` — the caller (a future task's drop table / corpse
+        /// dump) decides how many slots this instance actually offers,
+        /// simply by how many items it hands in; the storage layer carries
+        /// no per-Kind policy of its own (coordinator R-100 — `Kind` is
+        /// read exactly once, by ContainerStore.InitialTtlFor below, never
+        /// here). Coordinator R-99 (named refusal, checked and tested):
+        /// `items.Length` past `MaxContainerSlots` is refused BEFORE any
+        /// mutation — same "guard first, touch nothing on refusal"
+        /// contract TickAll's own inputs.Length check follows — because an
+        /// unchecked write would run past this container's own reserved
+        /// block and corrupt the NEXT container's slots on this flat
+        /// array, with no exception and no other observable sign.
+        ///
+        /// Capped at Arena.MaxContainers exactly like SpawnPickup above:
+        /// past the cap the spawn is skipped and counted
+        /// (WorldStats.ContainerSpawnsSkipped) — no id consumed, same
+        /// "refuse before touching _nextEntityId" contract SpawnPickup's
+        /// own doc states for a zero-amount drop.
+        internal int SpawnContainer(ContainerKind kind, float2 pos, System.ReadOnlySpan<byte> items)
+        {
+            if (items.Length > _config.Arena.MaxContainerSlots)
+            {
+                throw new System.ArgumentException(
+                    $"SimulationWorld.SpawnContainer: items.Length ({items.Length}) exceeds " +
+                    $"Arena.MaxContainerSlots ({_config.Arena.MaxContainerSlots}) — writing past " +
+                    "this container's own block would corrupt its neighbor's slots.", nameof(items));
+            }
+            if (_containerCount >= _containers.Length)
+            {
+                _worldStats.ContainerSpawnsSkipped++;
+                return -1;
+            }
+            int id = _nextEntityId++;
+            int index = _containerCount++;
+            _containers[index] = new ContainerState
+            {
+                Id = id, Pos = pos, Kind = kind, SlotCount = (byte)items.Length,
+                Ttl = ContainerStore.InitialTtlFor(kind, in _config.Loot)
+            };
+            int offset = index * _config.Arena.MaxContainerSlots;
+            for (int i = 0; i < items.Length; i++) _containerSlots[offset + i] = items[i];
+            // Coordinator fix-round (Ф3 review A-2/I2): this array position
+            // may hold a PREVIOUS occupant's leftover tail bytes past
+            // `items.Length` — RemoveContainerAt moves a container's FULL
+            // slot-width block, not just its own SlotCount, so a smaller
+            // container spawned into a position a larger one just vacated
+            // would otherwise read the larger one's own stale byte as a
+            // phantom item. `ContainerState`'s own doc ("slots at or past
+            // it are never read") is a promise about READERS staying
+            // within SlotCount, not a guarantee those bytes are actually
+            // zero — this loop is what makes it true regardless.
+            for (int i = items.Length; i < _config.Arena.MaxContainerSlots; i++) _containerSlots[offset + i] = 0;
+            return id;
+        }
+
+        /// Removes a container by swapping the last slot into its place —
+        /// O(1), same swap-remove idiom as RemovePickupAt, PLUS the slot
+        /// BLOCK (spec Р229): the moved container's own content must
+        /// follow it to its new array position, or the position it
+        /// vacates keeps stale bytes that the NEXT spawn (or, worse,
+        /// nothing at all — the position simply stops being read once the
+        /// count shrinks past it) would leave silently attributed to
+        /// whichever struct now lives at that index. `Array.Copy` handles
+        /// the `index == last` case (removing the LAST container) as a
+        /// same-range no-op, same as the struct-array swap one line above.
+        internal void RemoveContainerAt(int index)
+        {
+            int last = --_containerCount;
+            _containers[index] = _containers[last];
+            int slotWidth = _config.Arena.MaxContainerSlots;
+            System.Array.Copy(_containerSlots, last * slotWidth, _containerSlots, index * slotWidth, slotWidth);
+        }
+
+        /// Takes one item out of a container slot (spec §3.7/§3.8).
+        /// Addressed by the container's own `Id` (a linear search, same
+        /// named-refusal-adjacent idiom as ItemCatalogLookup.Find, though
+        /// "not found" reads as an ordinary `false` here rather than a
+        /// thrown exception — a stale id from a container that already
+        /// expired/emptied is exactly as ordinary an outcome as an empty
+        /// slot, not a caller bug), then reads/writes by the found
+        /// container's POSITION (Р229) — never by `containerId` itself,
+        /// which would silently misread a container that isn't at the
+        /// position matching its own id (true for every container after
+        /// the FIRST one any world ever spawns, since ids start at 1 and
+        /// positions start at 0). Consuming: a successful take zeroes the
+        /// slot, so a second take of the same slot reads back "empty"
+        /// (spec: 0 = пусто) instead of handing out the same item twice.
+        ///
+        /// ⚠ ASSUMPTION THIS METHOD CANNOT ENFORCE, WITH ITS ADDRESSEE NAMED
+        /// (coordinator fix-round Ф3 review A-2/I2, same MaxBodyRadius/
+        /// MinCatalogSlotCost shape): `slot` is NOT checked against
+        /// `SlotCount` or `Arena.MaxContainerSlots` — a value in
+        /// [SlotCount, MaxContainerSlots) reads a guaranteed-zeroed tail
+        /// byte (SpawnContainer's own zeroing, R-99's mirror fix) and
+        /// correctly returns false, but a value >= MaxContainerSlots reads
+        /// (and, on a would-be successful take, ZEROES) a NEIGHBORING
+        /// container's own slot — the exact cross-block corruption
+        /// SpawnContainer's own named refusal (R-99) exists to prevent from
+        /// the write side. `slot` is meant to arrive over the wire as
+        /// `LootRequestNet.Slot` (spec §3.8) from an untrusted client — the
+        /// server is authoritative (CR 3) and the range check belongs to
+        /// that request's own validation. ADDRESSEE — Т17 (spec §3.8 point
+        /// 5: "Slot ∈ [0, SlotCount)").
+        ///
+        /// Stage 3 Task 17 — THE ADDRESSEE HAS PAID. Loot.LootOps.Validate
+        /// refuses `slot` outside [0, SlotCount) with its own
+        /// LootRefusal.SlotOutOfRange BEFORE the byte is ever read, and the
+        /// wire path (Т28 — LootRequestNet) has no caller here TODAY and,
+        /// when it lands, reaches this method only through that same
+        /// validation.
+        /// The assumption stands as an assumption — this method still checks
+        /// nothing itself, and a future SECOND caller would inherit the same
+        /// obligation — but it now names a check that exists rather than one
+        /// that is owed.
+        internal bool TryTakeFromContainer(int containerId, int slot, out byte itemId)
+        {
+            int index = IndexOfContainer(containerId);
+            if (index < 0)
+            {
+                itemId = 0;
+                return false;
+            }
+            int offset = index * _config.Arena.MaxContainerSlots + slot;
+            byte item = _containerSlots[offset];
+            if (item == 0)
+            {
+                itemId = 0;
+                return false;
+            }
+            _containerSlots[offset] = 0;
+            itemId = item;
+            return true;
+        }
+
+        /// Stage 3 Task 17: the ONE home of "container Id -> its position in
+        /// the array", -1 when no live container carries that id. Extracted
+        /// from TryTakeFromContainer above, which is now its first caller —
+        /// Loot.LootOps.Validate is the second, and it needs the position
+        /// WITHOUT taking anything (spec §3.8 checks 4/5/7 read SlotCount, the
+        /// slot byte and Pos before anything moves). A second copy of this
+        /// loop is exactly what rule 2 forbids and what ItemCatalogLookup's
+        /// own doc records the cost of.
+        ///
+        /// Linear, like every other id lookup here: the array is capped at
+        /// Arena.MaxContainers. ⚠ IT NO LONGER RUNS ONLY ON A REQUEST — that
+        /// premise was Т17's and Stage 3 Ф6 outgrew it (gate Ф6, review B-4).
+        /// Two per-tick paths reach it now: Loot.LootOps.Update asks
+        /// `ContainerIsEmpty` on the tick a transfer completes, and the frame
+        /// builder resolves a box before reading its slots. Hence
+        /// `ContainerItemsInto` and `ContainerIsEmptyAt` below: a caller with
+        /// many slots to read resolves the id ONCE for the whole box instead
+        /// of once per slot, which is what the per-slot accessor cost before
+        /// them.
+        internal int IndexOfContainer(int containerId)
+        {
+            for (int i = 0; i < _containerCount; i++)
+                if (_containers[i].Id == containerId) return i;
+            return -1;
+        }
+
+        /// Reads a container's slot content by the container's own
+        /// POSITION in the array (spec Р229) — 0 = empty. Same "no bounds
+        /// guard beyond the backing array" contract as Loot.Inventory.
+        /// ItemAt: callers stay within [0, SlotCount) for the container at
+        /// `containerIndex`, exactly as every other indexed read in this
+        /// codebase already assumes of its own caller.
+        internal byte ContainerSlotAt(int containerIndex, int slot)
+            => _containerSlots[containerIndex * _config.Arena.MaxContainerSlots + slot];
+
+        /// Every slot of the container with this ID, ascending, into
+        /// `destination` — 0 for an empty slot, and zeros throughout for a
+        /// container no longer alive (Stage 3 Т27, owner decision R-216, form
+        /// R-217; bulk shape from gate Ф6, review B-4). ONE id resolution for
+        /// the whole box: the frame builder was paying up to eight scans of
+        /// the container array for a single box's mask, every box, every
+        /// connection, every tick.
+        ///
+        /// WHY IT IS PUBLIC. Slot CONTENT had no reader outside this assembly
+        /// when this accessor was added: `RenderSnapshot` carried container
+        /// metadata and no content, and `ContainerSlotAt` above is `internal`.
+        /// (Т32б gave the render frame a flat interior pool of its own — see
+        /// `RenderSnapshot.ContainerInteriors` — but that is the RECEIVING
+        /// side's copy, filled through this very accessor on the local path.)
+        /// Stage 3 spec §3.12 puts the content on the WIRE —
+        /// the ContainerSlots block, sent only to a collector inside
+        /// LootRadius — and `SnapshotAssembler` lives in `Ring.Networking`.
+        /// The owner weighed three routes (grow RenderSnapshot, open the
+        /// assembly's internals, or add one public accessor) and chose this
+        /// one: it is the same route the backpack already takes through
+        /// `InventoryItemAt`/`InventoryCountOf`/`InventoryUsedSlots` right
+        /// above, and it costs no per-tick copy of data one connection out of
+        /// three needs only while standing next to the box.
+        ///
+        /// BY ID, NOT BY ARRAY POSITION (R-217), which is what separates it
+        /// from `ContainerSlotAt` above rather than merely a widening of it.
+        /// A caller outside the simulation holds IDs — a visibility set
+        /// carries them — and the position is this class's own business,
+        /// resolved through `IndexOfContainer`, the one home of that mapping
+        /// since Т17. An unknown id answers zeros rather than throwing: a
+        /// container can legally disappear (TTL) between the tick that saw it
+        /// and the tick that describes it, which is ordinary rather than
+        /// exceptional.
+        ///
+        /// ⚠ THERE USED TO BE A PER-SLOT FORM BESIDE THIS ONE, and Т32б
+        /// retired it (bd `app-ivy5`, owner decision 2026-08-22).
+        /// `ContainerItemAt(containerId, slot)` was Т27's original shape; gate
+        /// Ф6 (review B-4) moved the frame builder onto this bulk form because
+        /// asking per slot cost an id resolution per slot, and after that
+        /// nothing in production called the per-slot form at all — its only
+        /// callers were the tests pinning the addressing, which now ask the
+        /// same four questions of this method. A public entry point kept for
+        /// symmetry with `InventoryItemAt` alone is a feature for its own sake
+        /// (AGENT.md rule 3), and the addressing it pinned is a property of
+        /// the LOOKUP rather than of the arity.
+        ///
+        /// `destination.Length` IS THE CALLER'S PROMISE, the same one
+        /// `ContainerSlotAt` already asks of everyone: at most the container's
+        /// own `SlotCount`. The wire's clamp to
+        /// `Protocol.SnapshotBlocks.ContainerSlotsMaskWidth` deliberately
+        /// stays in the assembler — R-235's whole point is that the format's
+        /// ceiling and the world's fact are not one home.
+        public void ContainerItemsInto(int containerId, System.Span<byte> destination)
+        {
+            int index = IndexOfContainer(containerId);
+            if (index < 0)
+            {
+                destination.Clear();
+                return;
+            }
+
+            for (int i = 0; i < destination.Length; i++)
+                destination[i] = ContainerSlotAt(index, i);
+        }
+
+        /// One loot request from the wire, validated and — if legal — taken
+        /// up, answering with the refusal code the client shows on the slot
+        /// it pressed (Stage 3 Т28, spec §3.8, coordinator R-224). The ONE
+        /// production entry into Loot.LootOps.Validate/Begin: until this
+        /// method neither had a caller outside tests at all, which is why
+        /// Begin's own doc has been written since Т17 in terms of "Т28's
+        /// networking switch".
+        ///
+        /// WHY THE PAIR IS NOT CALLED FROM THE NETWORKING LAYER DIRECTLY, in
+        /// two parts. First, Validate needs THIS tick's SANITIZED input
+        /// (check 2 reads the window flag, and Т20's sanitizer is what forces
+        /// that flag back down inside a dash or a slide) — and those live in
+        /// this class's own private `_sanitizedInputs`, which LootOps.Update's
+        /// doc refuses to put a getter on for a consumer that would be the
+        /// only one. Second, Begin ASSUMES Validate has already answered
+        /// `None` and re-checks nothing; splitting the two across an assembly
+        /// boundary would put that contract in a place where breaking it is
+        /// silent and the damage is a world mutation nobody validated.
+        ///
+        /// THE MOMENT IS THE TICK BOUNDARY, AND THE INPUT IS THE LAST
+        /// COMPLETED TICK'S (spec §3.8: "on a tick boundary, in arrival
+        /// order"). The caller is a FishNet broadcast handler, which the
+        /// package dispatches inside `TimeManager.IncreaseTick`'s own loop
+        /// BETWEEN `OnPreTick` and `OnPostTick` (TimeManager.cs:726/734/752 of
+        /// the pinned 4.7.2) — i.e. after the last tick this world ran and
+        /// before the next one, never inside `TickAll`. `_sanitizedInputs`
+        /// therefore holds the inputs of the tick that just finished, which
+        /// is the freshest authoritative view there is: the next tick's input
+        /// has not been gathered, let alone sanitized. The one-tick lag this
+        /// leaves is the same one `SimInputSanitizer.Sanitize` already
+        /// documents for its own `reference`.
+        ///
+        /// `playerIndex` is NOT range-checked, the same contract PlayerAt and
+        /// LootOps.Validate's own doc state: it is the server's connection ->
+        /// slot mapping, not a wire value. `op`, `containerId` and `slot` ARE
+        /// wire values, and every bound on them is Validate's.
+        public LootRefusal TryBeginLoot(int playerIndex, LootOp op, int containerId, int slot)
+        {
+            LootRefusal refusal = LootOps.Validate(this, playerIndex, op, containerId, slot,
+                in _sanitizedInputs[playerIndex]);
+            if (refusal == LootRefusal.None) LootOps.Begin(this, playerIndex, op, containerId, slot);
+            return refusal;
+        }
+
+        /// Stage 3 Т29: does this container hold nothing at all? -1 slots
+        /// (no such container) answers `false` — a box that is not there is
+        /// not an empty box, and the one caller (Loot.LootOps.Update, on the
+        /// tick a transfer completes) asks about a container it has just
+        /// taken from.
+        ///
+        /// ⚠ IT IS NOT `SnapshotAssembler.OccupancyMaskOf` UNDER ANOTHER
+        /// NAME, and the difference is the reason both exist. That one builds
+        /// the WIRE's mask and is clamped to `SnapshotBlocks.
+        /// ContainerSlotsMaskWidth` — eight bits, the format's ceiling. This
+        /// one is a fact about the WORLD and reads every slot the container
+        /// actually has. Today `ArenaConfig.MaxContainerSlots` carries
+        /// `[Range(1, 8)]` so the two always agree; the day that range grows,
+        /// the wire's answer must stay clamped and this one must not, which
+        /// is exactly what a single shared home would make impossible to say.
+        internal bool ContainerIsEmpty(int containerId)
+        {
+            int index = IndexOfContainer(containerId);
+            return index >= 0 && ContainerIsEmptyAt(index);
+        }
+
+        /// The same question asked of a container whose index the caller has
+        /// ALREADY resolved (gate Ф6, review B-3). The predicate itself lives
+        /// here and `ContainerIsEmpty` above delegates, so R-235's home does
+        /// not split in two: the id form keeps the "no such container is not
+        /// an empty container" guard, this one keeps the reading.
+        ///
+        /// It exists because the one caller resolves the index anyway — it
+        /// needs the box's POSITION for the event it may emit — and asking by
+        /// id would scan the array a second time for an answer already in
+        /// hand. Same "no bounds guard beyond the backing array" contract as
+        /// `ContainerSlotAt`: `containerIndex` is a live index.
+        internal bool ContainerIsEmptyAt(int containerIndex)
+        {
+            int slots = _containers[containerIndex].SlotCount;
+            for (int i = 0; i < slots; i++)
+                if (ContainerSlotAt(containerIndex, i) != 0) return false;
+            return true;
+        }
+
+        /// Test-only seam (Stage 3 Task 14), same contract as
+        /// SetPickupForTest/SetMobForTest above — mutates a live slot
+        /// directly, for the reflective hash sweep
+        /// (WorldLifecycleTests.EveryPlayerAndStatsFieldAffectsHash) and for
+        /// fixtures that need to force a specific Ttl without going through
+        /// SpawnContainer's own seeding.
+        internal void SetContainerForTest(int index, in ContainerState c) => _containers[index] = c;
 
         /// Applies projectile damage to a mob (spec Interfaces, Task 16); on death
         /// it swap-removes the mob the same way RemoveProjectileAt does for projectiles.
@@ -643,6 +1536,74 @@ namespace Ring.Simulation.Core
                 }
                 Emit(SimEventKind.MobDied, pos, _mobs[index].Id, _mobs[index].Type, dmg,
                     zone: zone, hitDir: dir, playerIndex: ownerIndex);
+                // Stage 3 Task 3 (spec §3.6, errata E-6 C-I10): energy-cell
+                // drop — arithmetic lives in the ONE shared home
+                // Loot.LootDrops.MobDeathCells, KillPlayer's own corpse drop
+                // below is the second caller. A zero-configured drop (every
+                // golden scenario, TestConfigs' own Loot.CellsPerMob = all
+                // zero) is refused by SpawnPickup itself before
+                // _nextEntityId moves — see that method's own doc.
+                // Stage 3 Task 13 (R-3): MobDeathCells now indexes
+                // Loot.CellsPerMob by archetype directly — no MobSimConfig
+                // copy needed at this call site any more (CellsOnDeath
+                // itself is gone from that struct).
+                SpawnPickup(PickupKind.EnergyCell, pos,
+                    LootDrops.MobDeathCells(_mobs[index].Type, in _config.Loot));
+
+                // Stage 3 Task 16 (spec §3.7): item drop on death. The
+                // Director's own drop is a fixed rule — three tier-3
+                // containers plus one separate tier-4 memory-core
+                // container — never a DropChance read (coordinator R-126);
+                // every other archetype rolls through
+                // LootDrops.TryRollMobItemTier, whose own doc carries the
+                // golden-risk guard-before-ZoneOf requirement (R-120).
+                //
+                // Kind = Cache for all four (coordinator fix-round, Ф3
+                // review A-1 — corrects this task's own original choice of
+                // MobCorpse, recorded here for the reader who follows an
+                // old cross-reference). Spec §3.6 names the non-expiring
+                // trio "труп сборщика, ящик и тайник… там лежит
+                // заработанное" — the guaranteed boss drop and the
+                // 1000-credit, once-per-match memory core are exactly that,
+                // and MobCorpse's own Ttl (ContainerTtlSeconds, 180s) would
+                // let the core expire roughly 90s after the gate opens
+                // (GateDelaySeconds). Spec §3.7 itself calls these "three
+                // containers" and "a separate container with the memory
+                // core", never "a corpse" — "труп моба" in that same
+                // section names what an ORDINARY archetype leaves behind
+                // when an item drops, a different case entirely (the
+                // `else if` branch below, still Kind = MobCorpse). Kind
+                // remains skin/spawn-table only (Р229) — Cache is not a
+                // new state machine, just the existing permanent-Ttl kind
+                // (ContainerStore.InitialTtlFor) applied to a death instead
+                // of world-start placement.
+                //
+                // All four containers land at the SAME `pos` (R-129, spec
+                // silent on a spread radius — a new balance number in code
+                // would need a data-delivery gate this stage has already
+                // spent, Т13). Accepted consequence, not a defect: owner
+                // tuning item for milestone В1 (R-105's own open question
+                // about a container layout radius covers this too).
+                if (_mobs[index].Type == MobType.Director)
+                {
+                    System.Span<byte> trophyBuf = stackalloc byte[2];
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int n = LootDrops.RollTierItems(3, _config.Items, ref _lootRng, trophyBuf);
+                        SpawnContainer(ContainerKind.Cache, pos, trophyBuf.Slice(0, n));
+                    }
+                    System.Span<byte> core = stackalloc byte[1];
+                    core[0] = ItemCatalogLookup.FindByTier(4, _config.Items).Id;
+                    SpawnContainer(ContainerKind.Cache, pos, core);
+                }
+                else if (LootDrops.TryRollMobItemTier(_mobs[index].Type, pos, in _config.Arena,
+                             in _config.Loot, ref _lootRng, out byte tier))
+                {
+                    System.Span<byte> item = stackalloc byte[1];
+                    item[0] = ItemCatalogLookup.FindByTier(tier, _config.Items).Id;
+                    SpawnContainer(ContainerKind.MobCorpse, pos, item);
+                }
+
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
@@ -658,6 +1619,25 @@ namespace Ring.Simulation.Core
         void IncrementShotsHit(int index) { if (_players[index].Alive) _matchStats[index].ShotsHit++; }
         void IncrementKills(int index) { if (_players[index].Alive) _matchStats[index].Kills++; }
         void IncrementHeadshotKills(int index) { if (_players[index].Alive) _matchStats[index].HeadshotKills++; }
+
+        /// Stage 3 Task 19 (errata E-6/C-I7): the ONE home of "damage
+        /// cancels a hold-to-act channel". Т23 adds ExtractTimer to this
+        /// SAME method rather than growing a second copy of the rule — the
+        /// errata's own text names this requirement by number. `ref`
+        /// because the caller already holds one live PlayerState by
+        /// reference (DamagePlayer's own `p`) and a copy-in/copy-out here
+        /// would be the "lighter copy" this file's other channel code
+        /// (Loot.LootOps.Update's own doc) explicitly refuses to write.
+        static void AbortChannels(ref PlayerState p)
+        {
+            p.RepairTimer = 0f;
+            // Stage 3 Т23 (spec §3.5 Р222, errata E-6/C-I7): the extraction
+            // channel is canceled by damage too — ONE line in the ONE home,
+            // exactly as this method's own doc and Т19's promised. Both callers
+            // inherit it: DamagePlayer (after both guards, so an i-frame-eaten
+            // blow does not break a channel it never landed on) and KillPlayer.
+            p.ExtractTimer = 0f;
+        }
 
         /// Applies damage to one player (spec Interfaces, Task 16/23): a
         /// no-op once the player is already dead (spec §3.12 — stats stay frozen and
@@ -692,6 +1672,14 @@ namespace Ring.Simulation.Core
             ref PlayerState p = ref _players[victimIndex];
             if (!p.Alive) return;
             if (p.IframeTimer > 0f) return;
+
+            // Stage 3 Task 19 (spec §3.7, errata E-6/C-I7): AFTER both
+            // guards — an absorbed or posthumous "hit" must not reach here,
+            // same "only an APPLIED blow counts" contract this method's own
+            // credit gate follows a few lines below (Р222 — symmetry with
+            // the extraction channel's own i-frame rule, which Т23 will
+            // point at this same call).
+            AbortChannels(ref p);
 
             p.Hp -= dmg;
             // Credit sits AFTER both guards on purpose: an absorbed or
@@ -753,27 +1741,21 @@ namespace Ring.Simulation.Core
             }
         }
 
-        /// Stage 2 Task 8: single home for player-death bookkeeping — zeroes
-        /// every death-relevant timer, sets Alive=false + DeathTick, and emits
-        /// exactly one PlayerDied. Extracted verbatim (same fields, same order,
-        /// same values) from DamagePlayer's former death branch above, so a
-        /// damage-caused death is byte-for-byte unchanged; KillPlayerNoDamage
-        /// below is the second, no-damage caller. `blowPos` (fix-round 1 I-1):
-        /// the two callers disagree on what this SHOULD be — DamagePlayer
-        /// forwards its own `pos` (the blow's origin, same value the paired
-        /// PlayerDamaged event above it already carries), while
-        /// KillPlayerNoDamage has no blow at all and passes the victim's own
-        /// position instead — so it is a required parameter here, not derived
-        /// from `p.Pos` internally (that would have silently dropped the
-        /// blow's origin for the damage-death path — the bug fix-round 1
-        /// caught: `PlayerDamaged` and `PlayerDied` from the SAME hit used to
-        /// carry the same Pos, and briefly didn't). See `SimEvent.Pos`'s own
-        /// doc for the reader-facing version of this contract.
-        void KillPlayer(int index, HitZone zone, float2 dir, float2 blowPos)
+        /// EVERY TIMER A BODY LEAVING THE FIGHT MUST DROP (Stage 3 Т23, errata
+        /// E-6/C-I9). Lifted verbatim out of KillPlayer the moment a SECOND way
+        /// of leaving arrived — extraction — because the reason each line
+        /// exists is not "he died", it is "he is no longer fighting", and all
+        /// of these fields are HASHED: a body left mid-dash or mid-transfer
+        /// would carry stale state into the digest and into WorldSave whichever
+        /// way it left. Callers: KillPlayer and ExtractionSystem.
+        ///
+        /// The transfer trio (LootTimer and its target) belongs HERE and not in
+        /// AbortChannels, and that distinction is load-bearing: damage must NOT
+        /// abort a transfer (spec §3.8 is explicit that this is where it
+        /// differs from the extraction channel), but leaving the fight
+        /// certainly does.
+        internal static void ClearCombatTimers(ref PlayerState p)
         {
-            ref PlayerState p = ref _players[index];
-            p.Alive = false;
-            _matchStats[index].DeathTick = _tick;
             p.DashTimer = 0f;
             // Task 12: DashSpeedCur has no meaning without an active dash
             // (DashTimer == 0 already says "not dashing") — zeroed for the
@@ -803,8 +1785,104 @@ namespace Ring.Simulation.Core
             // every timer above.
             p.DashRequestCooldownTicks = 0;
             p.SlideRequestCooldownTicks = 0;
+            // Stage 3 Task 17 (spec §3.8: "прерывание — ... смерть"; errata
+            // E-6 A-I8): the transfer channel dies with its owner — timer AND
+            // target, because a target without a running timer is exactly the
+            // inconsistent read DashSpeedCur's own doc above warns about.
+            // Damage alone does NOT interrupt a transfer (spec §3.8 is
+            // explicit that this is where it differs from the extraction
+            // channel), so this belongs to death, not to DamagePlayer. It
+            // matters more than a movement timer would: all three fields are
+            // HASHED (since the Т6 re-pin), so a corpse left mid-channel would
+            // carry stale state into the digest and into WorldSave.
+            p.LootTimer = 0f;
+            p.LootTargetContainerId = 0;
+            p.LootTargetSlot = 0;
+            // Stage 3 Task 19 (spec §3.8 symmetry, errata E-6/A-I8): the
+            // repair channel dies with its owner too — a corpse left
+            // mid-channel would carry stale state into the digest and
+            // WorldSave, same reason the three lines above already exist.
+            // Through AbortChannels rather than a second copy of its body
+            // (phase review Ф4, B-4): that method is the ONE home of "this
+            // channel is cancellable", and every channel damage cancels,
+            // death cancels too — so Т23's ExtractTimer line lands there once
+            // and death inherits it for free. The three transfer lines ABOVE
+            // stay KillPlayer's own on purpose: damage must NOT abort a
+            // transfer (spec §3.8), so they do not belong to that home.
+            AbortChannels(ref p);
+        }
+
+        /// Stage 2 Task 8: single home for player-death bookkeeping — zeroes
+        /// every death-relevant timer (through ClearCombatTimers above, which
+        /// Т23 lifted out of this method when extraction became a SECOND way
+        /// of leaving the fight), sets Alive=false + DeathTick, and emits
+        /// exactly one PlayerDied. Extracted verbatim (same fields, same order,
+        /// same values) from DamagePlayer's former death branch above, so a
+        /// damage-caused death is byte-for-byte unchanged; KillPlayerNoDamage
+        /// below is the second, no-damage caller. `blowPos` (fix-round 1 I-1):
+        /// the two callers disagree on what this SHOULD be — DamagePlayer
+        /// forwards its own `pos` (the blow's origin, same value the paired
+        /// PlayerDamaged event above it already carries), while
+        /// KillPlayerNoDamage has no blow at all and passes the victim's own
+        /// position instead — so it is a required parameter here, not derived
+        /// from `p.Pos` internally (that would have silently dropped the
+        /// blow's origin for the damage-death path — the bug fix-round 1
+        /// caught: `PlayerDamaged` and `PlayerDied` from the SAME hit used to
+        /// carry the same Pos, and briefly didn't). See `SimEvent.Pos`'s own
+        /// doc for the reader-facing version of this contract.
+        ///
+        /// Ф5 gate, review B-2: this block had drifted onto ClearCombatTimers
+        /// when Т23 extracted that method — leaving the extraction helper
+        /// claiming to set Alive/DeathTick and to take a `blowPos` it has no
+        /// parameter for, and leaving this method with no doc at all.
+        void KillPlayer(int index, HitZone zone, float2 dir, float2 blowPos)
+        {
+            ref PlayerState p = ref _players[index];
+            p.Alive = false;
+            _matchStats[index].DeathTick = _tick;
+            ClearCombatTimers(ref p);
             Emit(SimEventKind.PlayerDied, blowPos, index, default, 0f, zone: zone, hitDir: dir,
                 playerIndex: (byte)index);
+            // Stage 3 Task 3 (spec §3.6, errata E-6 C-I10): the corpse's
+            // remaining Ammo rasps out as energy cells — same shared home as
+            // DamageMob's drop above (Loot.LootDrops.CorpseCells). p.Ammo is
+            // deliberately NOT among the "clean corpse" timers zeroed above —
+            // it has no further meaning once Alive is false, but zeroing it
+            // BEFORE this line would erase the exact number this drop is
+            // computed from, so it still reads whatever the player was
+            // carrying at the moment of death. A zero-configured fraction
+            // (every golden scenario, TestConfigs' own Loot.CorpseCellFraction
+            // = 0) is refused by SpawnPickup itself before _nextEntityId
+            // moves — see that method's own doc (owner decision R-18).
+            // Stage 3 Task 13 (R-3): CorpseCellFraction moved off
+            // WeaponSimConfig into Loot — ShotsPerCell stays on Weapon (the
+            // ammo economy, not loot), so the call now takes both sections.
+            SpawnPickup(PickupKind.EnergyCell, p.Pos,
+                LootDrops.CorpseCells(p.Ammo, in _config.Weapon, in _config.Loot));
+
+            // Stage 3 Task 16 (spec §3.7, С21, coordinator R-123): the
+            // corpse holds the WHOLE backpack, created only when
+            // non-empty — an unconditional spawn would waste
+            // _nextEntityId/_containerCount on every player death, same
+            // "refuse before touching _nextEntityId" contract SpawnPickup's
+            // own zero-amount guard follows. Inventory.Count can never
+            // exceed Arena.MaxContainerSlots (SimConfigBuilder's own
+            // MaxContainerSlots >= InventoryCapacity/min(SlotCost) rule),
+            // so no clamp/truncation is needed here — SpawnContainer's own
+            // named refusal (R-99) is a backstop, not a path this call
+            // takes.
+            Inventory inv = _inventories[index];
+            int invCount = inv.Count;
+            if (invCount > 0)
+            {
+                System.Span<byte> items = stackalloc byte[invCount];
+                for (int i = 0; i < invCount; i++) items[i] = inv.ItemAt(i);
+                SpawnContainer(ContainerKind.PlayerCorpse, p.Pos, items);
+                // Coordinator R-128: the container is now the sole owner of
+                // these item ids — leaving them in the live backpack too
+                // would let the same item exist twice, both hashed/saved.
+                inv.Clear();
+            }
         }
 
         /// Stage 2 Task 8 Interfaces: exits a player from the match with no
@@ -844,6 +1922,27 @@ namespace Ring.Simulation.Core
             KillPlayer(index, HitZone.None, float2.zero, _players[index].Pos);
         }
 
+        /// THE ONE PRODUCTION WRITER OF MatchPhase.Ended (Stage 3 Т24,
+        /// coordinator R-172) — and it is deliberately outside the
+        /// simulation's own systems.
+        ///
+        /// WHY THIS CANNOT BE MatchFlowSystem'S DECISION: a raid ends when
+        /// MatchEndPolicy says it does, that class lives in
+        /// Ring.Networking.Server, and the assembly reference runs one way —
+        /// the simulation neither sees it nor can. The duration limit it
+        /// reads is NetConfig.MatchMaxDurationSeconds, which is not part of
+        /// SimConfig at all (Р72). So the phase machine only ever READS Ended
+        /// (its own first line, Р256 п.2/п.3) and refuses to move a raid that
+        /// is over, while the writer is whoever holds the verdict:
+        /// MatchServer, through this seam, once per match.
+        ///
+        /// IDEMPOTENT, AND SILENT ABOUT THE PHASE IT REPLACES. A raid can end
+        /// on the very tick its gate would have opened (spec §3.5 п.3: Ended
+        /// wins the tie), so overwriting GateOpen — or DirectorActive, or
+        /// Farm — is the CORRECT behavior, not a case worth guarding. Calling
+        /// it twice changes nothing.
+        public void MarkMatchEnded() => _match.Phase = MatchPhase.Ended;
+
         /// Battle mob spawn (Task 22 Interfaces) — WaveSystem's sole entry point for
         /// turning a validated spawn position into a live mob. Spawned mobs start at
         /// Idle AI, but since Task 19 (Phase 6) MobAiSystem ticks every live mob
@@ -853,7 +1952,7 @@ namespace Ring.Simulation.Core
         /// (MobSpawnsSkipped) rather than growing the array; the caller (WaveSystem)
         /// is responsible for leaving the wave's spawn debt untouched when that
         /// happens so the skipped mob is retried once the cap has room again.
-        internal int SpawnMob(MobType type, float2 pos)
+        internal int SpawnMob(MobType type, float2 pos, Zone zone)
         {
             if (_mobCount >= _mobs.Length)
             {
@@ -861,15 +1960,29 @@ namespace Ring.Simulation.Core
                 _worldStats.MobSpawnsSkipped++;
                 return -1;
             }
+            // Stage 3 Task 10 (spec Р251, second of the fourteen two-way
+            // branches — the one that briefly masked
+            // ProjectileGather_UsesArchetypeRadius_ForElite on RED):
+            // resolved through MobConfigFor, not a second, independent
+            // ternary — one home for "which archetype's numbers", per rule
+            // 2. Read BEFORE _nextEntityId/_mobCount are touched:
+            // MobConfigFor throws for an unrecognized type, and resolving
+            // it first keeps a rejected spawn from leaking an entity id or
+            // committing a half-built array slot.
+            float maxHp = MobConfigFor(type).MaxHp;
             int id = _nextEntityId++;
             _mobs[_mobCount++] = new MobState
             {
                 Id = id, Type = type, Pos = pos,
-                Hp = type == MobType.Chaser ? _config.Chaser.MaxHp : _config.Gunner.MaxHp,
+                Hp = maxHp,
                 Ai = MobAiState.Idle,
                 // Deterministic handedness for Gunner strafe / SteerAround's dead-on
                 // tangent tiebreak (Task 19 Interfaces) — no RNG needed.
-                StrafeSign = (id & 1) == 0 ? 1 : -1
+                StrafeSign = (id & 1) == 0 ? 1 : -1,
+                // Wave-cadence-per-zone (bd app-ggvz Т1): the ring the
+                // CALLER put this mob into -- not derived from `pos` (see
+                // SpawnZone's own doc).
+                SpawnZone = zone
             };
             Emit(SimEventKind.MobSpawned, pos, id, type, 0f);
             return id;
@@ -882,7 +1995,7 @@ namespace Ring.Simulation.Core
         /// (checked by grep — call-sites either don't inspect events at all or
         /// ClearEvents() before the window they measure), so this is not a
         /// behavioral change any existing test depends on.
-        internal int SpawnMobForTest(MobType type, float2 pos) => SpawnMob(type, pos);
+        internal int SpawnMobForTest(MobType type, float2 pos, Zone zone = Zone.Outer) => SpawnMob(type, pos, zone);
 
         /// Test-only wrapper over SpawnProjectile (Task 16 Interfaces) — same spawn
         /// path production code uses, named for test call-sites. Stage 2 Task 7:
@@ -898,9 +2011,17 @@ namespace Ring.Simulation.Core
         /// part of StateHash from that task on, and the five Mob-owned fixtures
         /// that used to ride the `0` default (HitZoneTests.cs x2,
         /// ProjectileTests.cs x3) now pass ProjectileIds.NoOwner explicitly.
+        /// `ownerEntityId` (Stage 3 Task 5, errata E-6 A-I1/A-I2) is a NEW
+        /// trailing parameter with a default — every existing call site above
+        /// keeps compiling unchanged, defaulting to 0 ("no shooter to exclude"),
+        /// correct for a Player-owned fixture and for a Mob-owned one that is
+        /// not itself testing the friendly-fire exclusion
+        /// (MobFriendlyFireTests.MobRound_DoesNotDamageItsOwnShooter passes the
+        /// real shooter's own id explicitly).
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
-            float height, float velZ, float damage, float radius, float ttl, byte ownerIndex = 0)
-            => SpawnProjectile(owner, ownerIndex, pos, vel, height, velZ, damage, radius, ttl);
+            float height, float velZ, float damage, float radius, float ttl, byte ownerIndex = 0,
+            int ownerEntityId = 0)
+            => SpawnProjectile(owner, ownerIndex, ownerEntityId, pos, vel, height, velZ, damage, radius, ttl);
 
         /// Test-only seam (Task 19 Interfaces): kills the player outright via the
         /// normal damage path (overkill amount) so MobAiSystem's "player dead"
@@ -927,12 +2048,150 @@ namespace Ring.Simulation.Core
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// Dev-only mob placeholder spawn for Presentation milestone 2 (spec Interfaces).
         /// Stripped from production builds — the sole public dev-surface method here.
-        public int DevSpawnMob(MobType type, float2 pos) => SpawnMobForTest(type, pos);
+        public int DevSpawnMob(MobType type, float2 pos) => SpawnMobForTest(type, pos, Zone.Outer);
 #endif
 
         public SimEvent GetEvent(int i) => _events[i];
 
         public void ClearEvents() => _eventCount = 0;
+
+        /// The half of a frame that belongs to WHOEVER IS LOOKING rather than
+        /// to the world (Stage 3 Т32б): `ownerIndex`'s backpack, and the
+        /// interiors of the boxes within his reach.
+        ///
+        /// A SEPARATE CALL FROM `CaptureSnapshot`, AND THE OWNER IS A
+        /// PARAMETER. `CaptureSnapshot` states in its own doc that this class
+        /// has no notion of "the local client's player", and that stays true:
+        /// nothing here is asked who is watching, it is TOLD, exactly as
+        /// `InventoryItemAt(playerIndex, slot)` is told. What would have
+        /// broken the invariant is folding this into the capture and reading
+        /// the answer off the frame.
+        ///
+        /// WHY IT EXISTS. These fields reach a networked client through the
+        /// Self and ContainerSlots blocks (spec §3.12 tags 7 and 10). Left
+        /// unfilled on the local path, the inventory window would be full over
+        /// the wire and blank in the PlayMode the owner tunes in — a system
+        /// with a half, which AGENT.md rule 1 refuses.
+        ///
+        /// AND WHY BY THE SAME RULE THE WIRE USES. Only boxes within
+        /// `Loot.LootOps.WithinLootReach` are described, exactly as spec Р238
+        /// makes the assembler send them. That is meaning rather than thrift:
+        /// the pool lists the boxes a frame DESCRIBES, so a box missing from it
+        /// says "nothing known here" — and a local path that described every
+        /// box on the map while the networked one described two would make the
+        /// same field mean two things. The per-tick copy the owner rejected in
+        /// R-216 — the whole `MaxContainers * MaxContainerSlots` table, every
+        /// tick, for data one connection in three wants only while standing
+        /// over a box — is not taken here either.
+        public void CaptureOwnerView(RenderSnapshot target, int ownerIndex)
+        {
+            if (ownerIndex < 0 || ownerIndex >= _players.Length) return;
+
+            int items = math.min(InventoryCountOf(ownerIndex), target.InventoryItems.Length);
+            for (int i = 0; i < items; i++)
+                target.InventoryItems[i] = InventoryItemAt(ownerIndex, i);
+            target.InventoryItemCount = items;
+            target.InventorySlotPoints = InventoryUsedSlots(ownerIndex);
+
+            float2 eye = _players[ownerIndex].Pos;
+            int records = 0;
+            int pooled = 0;
+            System.Span<byte> slots = stackalloc byte[math.max(1, _config.Arena.MaxContainerSlots)];
+            for (int i = 0; i < target.ContainerCount; i++)
+            {
+                ContainerState box = target.Containers[i];
+                if (!Loot.LootOps.WithinLootReach(eye, box.Pos, in _config.Loot)) continue;
+
+                int width = math.min(box.SlotCount, slots.Length);
+                // The pool is sized `MaxContainers * MaxContainerSlots` and the
+                // reach filter can admit at most that many boxes of that many
+                // slots, so this cannot overrun — but a promise that holds "by
+                // construction" is the kind that stops holding when a cap
+                // moves, and asking costs one comparison per box.
+                if (pooled + width > target.ContainerInteriorItems.Length) break;
+
+                System.Span<byte> mine = slots.Slice(0, width);
+                ContainerItemsInto(box.Id, mine);
+
+                // ONLY THE OCCUPIED SLOTS ARE POOLED, in ascending slot order —
+                // the wire's own contract for these bytes and the one a reader
+                // walks them by. Pooling the empty ones too would put a zero
+                // where the next box's first item belongs, and the mask would
+                // no longer index the pool.
+                int written = 0;
+                for (int slot = 0; slot < width; slot++)
+                {
+                    if (mine[slot] == 0) continue;
+                    target.ContainerInteriorItems[pooled + written] = mine[slot];
+                    written++;
+                }
+
+                target.ContainerInteriors[records] = new ContainerInterior
+                {
+                    Id = box.Id,
+                    OccupancyMask = Loot.LootOps.OccupancyMaskOf(mine),
+                    ItemOffset = pooled,
+                    ItemCount = written,
+                };
+                pooled += written;
+                records++;
+            }
+
+            target.ContainerInteriorCount = records;
+            target.ContainerInteriorItemCount = pooled;
+        }
+
+        /// The wave a FRAME carries (spec §3.9 Р318/Р338): ONE WaveState for
+        /// the whole world, aggregated from the three rings — never ring
+        /// zero's own, and never an array. Keeping the frame single-valued is
+        /// what spares the client a per-ring decoder, spares RenderSnapshot's
+        /// reflective ArrayCountField guard a new key, and makes aliasing
+        /// impossible here by construction (a struct is copied, not shared).
+        ///
+        /// Four rules, one per field group, each with its own assertion in
+        /// WaveCadenceTests:
+        ///
+        /// * `Phase` — Active if ANY ring is active. A raid with one live wave
+        ///   anywhere is a raid in a wave.
+        /// * `WaveIndex` — the MAXIMUM difficulty step across the rings.
+        ///   Steps only ever grow, so the number the HUD draws stays monotone
+        ///   (Р318: a per-ring number would FALL as a collector walked inward,
+        ///   and Geometry.ZoneOf is a hard threshold with no hysteresis to
+        ///   soften the flicker at a ring boundary).
+        /// * `PhaseTicks` — the smallest countdown among the rings that HAVE
+        ///   one, i.e. "ticks until the next wave anywhere", and 0 when no
+        ///   ring is counting at all. "Has one" is DERIVED, not stored: spec
+        ///   §3.3 states that a frozen ring carries PhaseTicks = 0, so the
+        ///   number already tells whether the ring is counting and a stored
+        ///   flag beside it would be a second home for one fact (Р206). A
+        ///   minimum over ALL rings would therefore read an eternal zero — on
+        ///   a zoneless arena, where only Outer ever counts, and in the core
+        ///   while the Director stands.
+        /// * `AliveCount` and the three `Pending` — plain SUMS.
+        ///
+        /// Derived, and it lives only in the UN-hashed frame: StateHash folds
+        /// the three rings themselves (StateHash's own canonical order), so
+        /// this aggregate is never a second home for hashed state.
+        WaveState WorldWave()
+        {
+            WaveState world = default;
+            for (int z = 0; z < Zones.Count; z++)
+            {
+                ref WaveState ring = ref _waves[z];
+                if (ring.Phase == WavePhase.Active) world.Phase = WavePhase.Active;
+                world.WaveIndex = math.max(world.WaveIndex, ring.WaveIndex);
+                if (ring.PhaseTicks > 0
+                    && (world.PhaseTicks == 0 || ring.PhaseTicks < world.PhaseTicks))
+                {
+                    world.PhaseTicks = ring.PhaseTicks;
+                }
+                world.AliveCount += ring.AliveCount;
+                world.PendingChaser += ring.PendingChaser;
+                world.PendingGunner += ring.PendingGunner;
+                world.PendingElite += ring.PendingElite;
+            }
+            return world;
+        }
 
         /// Copies the current tick's render-relevant state into a preallocated
         /// target — no allocation, safe to call every render frame.
@@ -957,20 +2216,80 @@ namespace Ring.Simulation.Core
             {
                 target.PlayerKnown[i] = true;
                 target.PlayerAliveInMatch[i] = _players[i].Alive;
+                // Playtest В1 round two (bd `app-1kei`): and WHY a seat stopped
+                // being alive, which the bit above cannot say. Written here
+                // beside its sibling rather than left to the reader's own
+                // `Players[i].Extracted` — that field is only true for oneself
+                // on the networked path, so a picture built on it would work in
+                // solo and bury every teammate who made it out.
+                target.PlayerExtractedInMatch[i] = _players[i].Extracted;
             }
             target.MobCount = _mobCount;
             System.Array.Copy(_mobs, target.Mobs, _mobCount);
             target.ProjectileCount = _projectileCount;
             System.Array.Copy(_projectiles, target.Projectiles, _projectileCount);
-            target.Wave = _wave;
+            // Stage 3 Т6 (spec Р294): ground pickups take their canonical
+            // place right after the projectiles, same count-then-copy shape
+            // as the two entity arrays above.
+            target.PickupCount = _pickupCount;
+            System.Array.Copy(_pickups, target.Pickups, _pickupCount);
+            // Stage 3 Т14: container METADATA only (position/kind/etc, for
+            // drawing the prop) — same count-then-copy shape as Pickups
+            // above. Slot CONTENT is deliberately NOT copied here, on the
+            // same reasoning CaptureSnapshot's own backpack note gives
+            // below: it isn't rendered by the interpolated frame, only
+            // carried by the ContainerSlots snapshot block (spec §3.12 tag
+            // 10, Т25) and only inside LootRadius (Р238) — never by the
+            // reliable pair, which carries requests and refusal codes (Т28).
+            target.ContainerCount = _containerCount;
+            System.Array.Copy(_containers, target.Containers, _containerCount);
+            // Stage 3 Т32б: "already emptied" is a world fact about each box,
+            // and the frame is where it is delivered rather than stored (see
+            // RenderSnapshot.ContainerIsEmpty). Filled here so the local
+            // backend and the networked one describe a box in the same words —
+            // the same reason PlayerKnown is filled above.
+            for (int i = 0; i < _containerCount; i++)
+                target.ContainerIsEmpty[i] = ContainerIsEmptyAt(i);
+            target.Wave = WorldWave();
+            // Stage 3 Т6: the match's flow state, a single plain-struct
+            // assignment right after the wave — same shape as WorldStats
+            // below, and the same canonical position it holds in StateHash.
+            target.Match = _match;
+            // Стадия 3, фикс-раунд гейта Ф7 (находка ревью B-2): the phase
+            // alone does not say whether the boss is still standing —
+            // `DirectorActive` covers the stretch AFTER he falls too, while the
+            // sharing window runs, which is why the wire carries a separate bit
+            // (R-257). Filled here for the same reason `ContainerIsEmpty` is:
+            // so the local backend and the networked one describe the raid in
+            // the same words. Left unfilled, solo read "the Director has
+            // fallen" over a living Director for the whole phase.
+            target.DirectorAlive = DirectorAlive;
             // Stage 2 Task 5: PlayerStats mirrors Players' array-copy pattern
             // above; WorldStats is a single plain-struct assignment, same as Wave.
             System.Array.Copy(_matchStats, target.PlayerStats, _matchStats.Length);
             target.WorldStats = _worldStats;
+            // Backpacks are deliberately NOT copied here (Stage 3 Т6). Every
+            // other field of RenderSnapshot is a struct or a struct array, so
+            // its CopyFrom is a plain assignment/indexed copy — an Inventory
+            // is a reference type, and putting one in the render frame would
+            // either alias the live world's own backpack into a frame the
+            // renderer keeps across ticks, or force a per-frame clone on a
+            // path whose whole contract is "no allocation". The backpack's
+            // own consumer is the inventory window (Т32, Ф7), which reads the
+            // world / the Self snapshot block (spec §3.12 tag 7) rather than
+            // the interpolated render frame, so nothing is lost by leaving it
+            // out. StateHash and
+            // WorldSave — the two places backpacks ARE canonical state — do
+            // carry them, at the canonical order's own last position.
         }
 
         /// Deep-copies the full canonical state (config excluded) for rollback/replay.
         /// Allocates — call outside the hot tick path.
+        ///
+        /// Stage 3 Т6: the initializer below is written in the canonical order
+        /// of spec Р294, the same order StateHash folds the world in — so the
+        /// two lists can be read side by side and a field present in one but
+        /// missing from the other is visible by position, not only by search.
         public WorldSave SaveState()
         {
             var save = new WorldSave
@@ -978,6 +2297,11 @@ namespace Ring.Simulation.Core
                 Tick = _tick,
                 SpreadRng = _spreadRng,
                 WaveRng = _waveRng,
+                // Stage 3 Т6 (spec Р230/Р294): the loot stream is saved with
+                // the other two. Without it a restore would rewind the world
+                // but not the stream Т15 draws container positions from, and
+                // the replay would diverge at the first draw after the load.
+                LootRng = _lootRng,
                 NextEntityId = _nextEntityId,
                 PlayerCount = _players.Length,
                 Players = new PlayerState[_players.Length],
@@ -985,15 +2309,51 @@ namespace Ring.Simulation.Core
                 Mobs = new MobState[_mobs.Length],
                 ProjectileCount = _projectileCount,
                 Projectiles = new ProjectileState[_projectiles.Length],
-                Wave = _wave,
+                // Stage 3 Т6: pickups join the two entity arrays above, same
+                // "whole backing array copied, live count carried beside it"
+                // contract.
+                PickupCount = _pickupCount,
+                Pickups = new PickupState[_pickups.Length],
+                // Stage 3 Т14: containers join the entity arrays above, same
+                // "whole backing array copied, live count carried beside it"
+                // contract — the slot content array copies whole too
+                // (ContainerSlots), not just up to any one container's
+                // SlotCount, so a restore doesn't have to re-derive offsets.
+                ContainerCount = _containerCount,
+                Containers = new ContainerState[_containers.Length],
+                ContainerSlots = new byte[_containerSlots.Length],
+                // Wave-cadence-per-zone (bd app-ggvz Т3): one WaveState per
+                // ring, same "fresh array here, filled by Array.Copy below"
+                // contract as Mobs/Projectiles/Pickups above. A plain
+                // `Waves = _waves` would hand the save a REFERENCE to the
+                // live array and every later tick would rewrite the
+                // "snapshot" underneath its holder.
+                Waves = new WaveState[_waves.Length],
+                // Stage 3 Т6: the match's flow state, right after the wave.
+                Match = _match,
+                WorldStats = _worldStats,
                 Stats = new MatchStats[_matchStats.Length],
-                WorldStats = _worldStats
+                // Stage 3 Task 4: one slot per player, same length contract
+                // as Players/Stats above. LAST, per spec Р294 — see the
+                // field's own doc in WorldSave.
+                Inventories = new Inventory[_inventories.Length]
             };
             System.Array.Copy(_players, save.Players, _players.Length);
             System.Array.Copy(_mobs, save.Mobs, _mobs.Length);
             System.Array.Copy(_projectiles, save.Projectiles, _projectiles.Length);
+            System.Array.Copy(_pickups, save.Pickups, _pickups.Length);
+            System.Array.Copy(_containers, save.Containers, _containers.Length);
+            System.Array.Copy(_containerSlots, save.ContainerSlots, _containerSlots.Length);
+            System.Array.Copy(_waves, save.Waves, _waves.Length);
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
             System.Array.Copy(_matchStats, save.Stats, _matchStats.Length);
+            // Stage 3 Task 4: Inventory is a reference type — unlike the
+            // struct arrays above, System.Array.Copy would only copy
+            // REFERENCES, aliasing the live world's own backpacks into the
+            // save instead of deep-copying them (WorldSave's own "deep
+            // copy" contract, see this class's own doc). Clone() allocates
+            // a fresh instance per player instead.
+            for (int i = 0; i < _inventories.Length; i++) save.Inventories[i] = _inventories[i].Clone();
             return save;
         }
 
@@ -1027,19 +2387,53 @@ namespace Ring.Simulation.Core
                     $"SimulationWorld.RestoreState: save.Stats.Length ({save.Stats.Length}) must " +
                     $"match this world's PlayerCount ({_matchStats.Length}).", nameof(save));
             }
+            // Stage 3 Task 4: same cross-check as Players/Stats above,
+            // guarding the same hand-built-WorldSave scenario their own
+            // comments describe.
+            if (save.Inventories.Length != _inventories.Length)
+            {
+                throw new System.ArgumentException(
+                    $"SimulationWorld.RestoreState: save.Inventories.Length ({save.Inventories.Length}) " +
+                    $"must match this world's PlayerCount ({_inventories.Length}).", nameof(save));
+            }
             _tick = save.Tick;
             _spreadRng = save.SpreadRng;
             _waveRng = save.WaveRng;
+            _lootRng = save.LootRng;
             _nextEntityId = save.NextEntityId;
             System.Array.Copy(save.Players, _players, _players.Length);
             _mobCount = save.MobCount;
             System.Array.Copy(save.Mobs, _mobs, _mobs.Length);
             _projectileCount = save.ProjectileCount;
             System.Array.Copy(save.Projectiles, _projectiles, _projectiles.Length);
-            _wave = save.Wave;
+            // Stage 3 Т6: pickups restore exactly like the two entity arrays
+            // above — no length cross-check of their own, same as Mobs/
+            // Projectiles, whose backing arrays are sized from the same
+            // ArenaSimConfig caps ApplyConfig refuses to hot-tweak.
+            _pickupCount = save.PickupCount;
+            System.Array.Copy(save.Pickups, _pickups, _pickups.Length);
+            // Stage 3 Т14: containers restore exactly like Pickups above —
+            // no length cross-check of their own, same immutable-topology
+            // reasoning (MaxContainers/MaxContainerSlots are guarded by
+            // ArenaTopologyMatches, same as every other entity cap here).
+            _containerCount = save.ContainerCount;
+            System.Array.Copy(save.Containers, _containers, _containers.Length);
+            System.Array.Copy(save.ContainerSlots, _containerSlots, _containerSlots.Length);
+            // The other half of SaveState's own no-aliasing contract: the
+            // live array is FILLED from the save, never replaced by it — a
+            // `_waves = save.Waves` would leave the world writing into the
+            // holder's snapshot from the next tick on.
+            System.Array.Copy(save.Waves, _waves, _waves.Length);
+            _match = save.Match;
+            _worldStats = save.WorldStats;
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
             System.Array.Copy(save.Stats, _matchStats, _matchStats.Length);
-            _worldStats = save.WorldStats;
+            // Stage 3 Task 4: RestoreFrom copies INTO each live Inventory
+            // instance rather than replacing _inventories[i] with
+            // save.Inventories[i] directly — same "live objects keep their
+            // identity across a restore" contract SaveState's own Clone()
+            // doc states for the opposite direction.
+            for (int i = 0; i < _inventories.Length; i++) _inventories[i].RestoreFrom(save.Inventories[i]);
         }
 
         /// Test-only seam for EveryPlayerAndStatsFieldAffectsHash (spec §3.13 item 12).
@@ -1064,19 +2458,105 @@ namespace Ring.Simulation.Core
         internal void SetWorldStatsForTest(in WorldStats s) => _worldStats = s;
         internal void SetMobForTest(int index, in MobState m) => _mobs[index] = m;
         internal void SetProjectileForTest(int index, in ProjectileState p) => _projectiles[index] = p;
-        internal void SetWaveForTest(in WaveState w) => _wave = w;
+        internal void SetWaveForTest(Zone zone, in WaveState w) => _waves[(int)zone] = w;
+        /// Stage 3 Task 1 Interfaces: test-only seam for MatchState, same
+        /// contract as SetWaveForTest above — mutates the live slot directly,
+        /// for a test that needs to force a specific phase/DirectorDeathTick.
+        /// Its consumers arrived with Т21 (MatchFlowTests' own Ended
+        /// fixtures): Ended has no production writer until Т24, so forcing it
+        /// through this seam is the only way to state "the raid ended on this
+        /// tick" at all (coordinator R-172).
+        internal void SetMatchForTest(in MatchState m) => _match = m;
+
+        /// Test-only: takes every mob off the arena. NEW seam -- no existing one
+        /// expresses it (_mobCount is private and its only decrement lives in
+        /// DamageMob), and the cadence tests need an emptied ring to observe a
+        /// clear.
+        ///
+        /// TAKEN OFF, NOT KILLED, and that is the whole point of it existing
+        /// beside TestWorlds.ClearFirstWave (which empties the arena the honest
+        /// way, by damaging every mob to death). A death is not a quiet event
+        /// here: DamageMob spawns a MobCorpse container or the Director's four
+        /// caches, rolls the loot stream, credits Kills/ShotsHit to a player's
+        /// MatchStats and emits MobDied. A test about a wave TIMER wants none
+        /// of that in its world.
+        ///
+        /// ONE ASSIGNMENT IS THE WHOLE OPERATION, and that is a fact about
+        /// this class rather than a shortcut. "Which mobs are on the arena" is
+        /// carried by exactly two pieces of state -- `_mobs` and `_mobCount`
+        /// -- and every reader walks `[0, _mobCount)`: StateHash, SaveState,
+        /// CaptureSnapshot, SeparationSystem, VisibilitySystem,
+        /// ProjectileSystem. Nothing holds a mob INDEX across a tick (MobState
+        /// itself stores none, and `_sepForces`/`_projCandidates` are per-tick
+        /// scratch, rewritten before they are read and deliberately outside
+        /// both the hash and the save -- see their own field docs), so no
+        /// reference is left dangling. What stays in `_mobs` past the new
+        /// count is debris of exactly the kind DamageMob's own swap-remove
+        /// (`_mobs[index] = _mobs[--_mobCount]`) leaves behind on every
+        /// ordinary death, and it is invisible for the same reason.
+        ///
+        /// It empties the arena COMPLETELY, the Director included. A caller
+        /// who leaves the raid in DirectorActive and clears will have the
+        /// phase machine read "the boss is gone" on the next tick and open the
+        /// gate -- the same conclusion it would draw if he had been killed.
+        internal void ClearMobsForTest() => _mobCount = 0;
+
+        /// Test-only seam (Stage 3 Task 3), same contract as SetMobForTest/
+        /// SetProjectileForTest above — mutates a live slot directly, and
+        /// genuinely test-only again since the Ф1 fix-round (review B-I-5):
+        /// PickupSystem.AdvanceTtl used to write TTL decay through it and now
+        /// takes the `ref w.Pickups[i]` ProjectileSystem.Update has always
+        /// used, so the promise SetPlayerForTest's own doc makes — "no
+        /// *ForTest wrapper ships in the battle surface" — holds here too.
+        internal void SetPickupForTest(int index, in PickupState p) => _pickups[index] = p;
+
+        /// The world's own ammo-refill seam (Stage 3 Task 2, renamed out of a
+        /// `*ForTest` name in the Ф1 fix-round — review B-I-5): supplies the
+        /// player slot and the weapon config to WeaponSystem.AddAmmo, the ONE
+        /// home of the AmmoMax ceiling and of the FireCooldown clamp-down on
+        /// the 0-to-positive edge, so no caller restates either (CR 2).
+        /// Deliberately not a raw field write like SetPlayerForTest above —
+        /// that clamp is the whole point of routing through here.
+        ///
+        /// Production caller: Loot.PickupSystem.Collect (auto-pickup, Т3);
+        /// AmmoTests drives the same seam directly. The old name described the
+        /// one task before Т3 during which no production caller existed yet,
+        /// and stopped being true the moment Т3 landed.
+        internal void AddAmmo(int index, int shots)
+            => WeaponSystem.AddAmmo(ref _players[index], _config.Weapon, shots);
 
         /// Test-only seam (Task 4): reads a live projectile slot back —
         /// SetProjectileForTest's counterpart, for tests asserting on
         /// post-tick projectile state (e.g. Height/PrevHeight after VelZ integration).
         internal ProjectileState GetProjectileForTest(int index) => _projectiles[index];
 
-        /// Canonical order (spec §3.3; Task 3 — split rng into spreadRng/waveRng;
-        /// Stage 2 Task 10 — multiplayer reorder, the one sanctioned golden re-pin
-        /// of the stage-2 network phase):
-        /// tick → spreadRng → waveRng → nextEntityId → playerCount → players[0..n)
-        /// → mobCount+mobs → projectileCount+projectiles → wave → worldStats
-        /// → stats[0..n).
+        /// Canonical order (spec §3.3 and, since Stage 3, spec Р294; Task 3 —
+        /// split rng into spreadRng/waveRng; Stage 2 Task 10 — multiplayer
+        /// reorder, the one sanctioned golden re-pin of the stage-2 network
+        /// phase; Stage 3 Т6 — the extraction economy's own state, the FIRST
+        /// of the two sanctioned golden re-pins of stage 3):
+        /// tick → spreadRng → waveRng → lootRng → nextEntityId → playerCount
+        /// → players[0..n) → mobCount+mobs → projectileCount+projectiles
+        /// → pickupCount+pickups → containerCount+containers+containerSlots
+        /// → wave → matchState → worldStats → stats[0..n) → inventories[0..n).
+        ///
+        /// THE CONTAINERS' STEP WAS RESERVED BY Т6 AND IS FILLED HERE, Т14
+        /// (spec Р294). Two walks follow `_containerCount`, both bounded by
+        /// it and neither carrying a length marker of its own: walk A hashes
+        /// each live `ContainerState` (HashContainer, same one-helper-per-
+        /// entity shape as HashPickup); walk B hashes the flat
+        /// `_containerSlots` content, per container bounded by THAT
+        /// container's own `SlotCount` (already folded into the digest
+        /// inside walk A) rather than the fixed `MaxContainerSlots` block
+        /// width — the same "walk only what's counted, not the backing
+        /// array" contract HashInventory below already follows for the
+        /// exact same reason (a container's block can carry a previous
+        /// occupant's leftover bytes past its own SlotCount, same as a
+        /// swap-removed backpack slot). At `_containerCount == 0` both walks
+        /// run zero iterations, so a world with no containers hashes
+        /// identically to before this task — `StateHash64.Add` is an FNV-1a
+        /// chain, and stage 3's two sanctioned golden movements (Т6, Т12)
+        /// are both already spent.
         ///
         /// playerCount, _mobCount and _projectileCount are each hashed before
         /// their arrays for the same reason: a length is state in its own right,
@@ -1097,6 +2577,7 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, (ulong)_tick);
             h = StateHash64.Add(h, _spreadRng.state);
             h = StateHash64.Add(h, _waveRng.state);
+            h = StateHash64.Add(h, _lootRng.state);
             h = StateHash64.Add(h, _nextEntityId);
             h = StateHash64.Add(h, _players.Length);
             for (int i = 0; i < _players.Length; i++) h = HashPlayer(h, in _players[i]);
@@ -1104,12 +2585,36 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < _mobCount; i++) h = HashMob(h, in _mobs[i]);
             h = StateHash64.Add(h, _projectileCount);
             for (int i = 0; i < _projectileCount; i++) h = HashProjectile(h, in _projectiles[i]);
-            h = HashWave(h, in _wave);
+            h = StateHash64.Add(h, _pickupCount);
+            for (int i = 0; i < _pickupCount; i++) h = HashPickup(h, in _pickups[i]);
+            // Containers (Т14) — the reserved step, see this method's own
+            // doc for the shape of the two walks and why they stay
+            // digest-neutral at zero containers.
+            h = StateHash64.Add(h, _containerCount);
+            for (int i = 0; i < _containerCount; i++) h = HashContainer(h, in _containers[i]);
+            for (int i = 0; i < _containerCount; i++)
+            {
+                int offset = i * _config.Arena.MaxContainerSlots;
+                for (int s = 0; s < _containers[i].SlotCount; s++)
+                    h = StateHash64.Add(h, (int)_containerSlots[offset + s]);
+            }
+            // Wave-cadence-per-zone (bd app-ggvz Т3, spec §3.2): THREE wave
+            // states now, one per ring, folded in Zone's own declared order
+            // (Outer -> Middle -> Core) at the SAME position in the sequence
+            // the single one held. No count step ahead of them, unlike the
+            // entity arrays above: Zones.Count is a fixed fact of the arena,
+            // not a live population.
+            for (int z = 0; z < Zones.Count; z++) h = HashWave(h, in _waves[z]);
+            h = HashMatch(h, in _match);
             // Stage 2 Task 10: the match-wide counters get their own hash step at
             // their own canonical position instead of riding interleaved inside
             // HashStats as Task 5 temporarily left them.
             h = HashWorldStats(h, in _worldStats);
             for (int i = 0; i < _matchStats.Length; i++) h = HashStats(h, in _matchStats[i]);
+            // Backpacks LAST (spec Р294, and the debt Stage 3 Task 4 recorded
+            // on WorldSave.Inventories for this task to discharge): after the
+            // statistics, one entry per player, in player order.
+            for (int i = 0; i < _inventories.Length; i++) h = HashInventory(h, _inventories[i]);
             return h;
         }
 
@@ -1122,7 +2627,21 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.DashTimer); h = StateHash64.Add(h, p.DashCooldown);
             h = StateHash64.Add(h, p.IframeTimer); h = StateHash64.Add(h, p.DashBufferTimer);
             h = StateHash64.Add(h, p.DashSpeedCur); // Task 12: ricochet-retained dash speed
-            h = StateHash64.Add(h, p.FireCooldown); h = StateHash64.Add(h, p.Alive);
+            h = StateHash64.Add(h, p.FireCooldown);
+            // Stage 3 Т6 (Task 2's field, spec Р261): the magazine, folded in
+            // right after the cooldown it shares a weapon with — the pair is
+            // what decides whether the next tick fires at all and on which
+            // interval, so a replay that ignored either could take a
+            // different branch and still claim the same hash.
+            h = StateHash64.Add(h, p.Ammo);
+            h = StateHash64.Add(h, p.Alive);
+            // Stage 3 Т6 (Task 1's fields): Extracted rides next to Alive —
+            // the two carry one invariant between them, !(Alive && Extracted)
+            // — and ExtractKind next to Extracted, the field it qualifies
+            // (same "beside what it qualifies" placement Stage 2 Task 10 used
+            // for ProjectileState.OwnerIndex).
+            h = StateHash64.Add(h, p.Extracted);
+            h = StateHash64.Add(h, (int)p.ExtractKind);
             // Task 14: aim-down-sights settle progress.
             h = StateHash64.Add(h, p.AimSettleTimer);
             // Task 10: slide state.
@@ -1135,12 +2654,32 @@ namespace Ring.Simulation.Core
             // would diverge the moment a request lands.
             h = StateHash64.Add(h, p.DashRequestCooldownTicks);
             h = StateHash64.Add(h, p.SlideRequestCooldownTicks);
+            // Stage 3 Т6 (Task 1's fields): the three hold-to-act channel
+            // timers and the loot channel's own target, as one trailing group
+            // — a new subsystem with no existing neighbor to sit beside, kept
+            // in declaration order among themselves. Т17 gave the loot timer
+            // and its target their writers, Т19 gave RepairTimer its own; only
+            // ExtractTimer is still inert, until Т23. Hashed from today,
+            // which is the whole point
+            // of errata E-1 (a field that joins the hash later moves the
+            // digest later, and stage 3 has only two sanctioned movements).
+            h = StateHash64.Add(h, p.LootTimer);
+            h = StateHash64.Add(h, p.RepairTimer);
+            h = StateHash64.Add(h, p.ExtractTimer);
+            h = StateHash64.Add(h, p.LootTargetContainerId);
+            h = StateHash64.Add(h, (int)p.LootTargetSlot);
             return h;
         }
 
         static ulong HashMob(ulong h, in MobState m)
         {
             h = StateHash64.Add(h, m.Id); h = StateHash64.Add(h, (int)m.Type);
+            // Wave-cadence-per-zone (bd app-ggvz Т1): SpawnZone right after
+            // the Type field it qualifies -- which ring a mob was PUT INTO
+            // by whoever spawned it, not where it stands now (see the
+            // field's own doc, SimStates.cs). Not on the wire (MobRecord is
+            // unchanged, 9 B).
+            h = StateHash64.Add(h, (int)m.SpawnZone);
             h = StateHash64.Add(h, m.Pos); h = StateHash64.Add(h, m.Vel);
             h = StateHash64.Add(h, m.Hp); h = StateHash64.Add(h, m.StateTimer);
             h = StateHash64.Add(h, m.FireCooldown); h = StateHash64.Add(h, (int)m.Ai);
@@ -1158,6 +2697,12 @@ namespace Ring.Simulation.Core
             // player and still claim the same hash. Cast is explicit: byte has
             // implicit conversions to several StateHash64.Add overloads at once.
             h = StateHash64.Add(h, (int)p.OwnerIndex);
+            // Stage 3 Т6 (Stage 3 Task 5's field, spec Р252): the shooting
+            // ENTITY, beside the two owner fields it completes. It decides
+            // which mob a round may NOT damage, so a replay that dropped it
+            // could resolve a different friendly-fire outcome and still claim
+            // the same digest — the same argument OwnerIndex was admitted on.
+            h = StateHash64.Add(h, p.OwnerEntityId);
             h = StateHash64.Add(h, p.Pos); h = StateHash64.Add(h, p.PrevPos);
             h = StateHash64.Add(h, p.Vel); h = StateHash64.Add(h, p.Damage);
             h = StateHash64.Add(h, p.Radius); h = StateHash64.Add(h, p.Ttl);
@@ -1166,11 +2711,60 @@ namespace Ring.Simulation.Core
             return h;
         }
 
+        /// Stage 3 Т6: one ground pickup, fields in declaration order like
+        /// every other Hash* helper here. `Kind` is cast for the same reason
+        /// every other enum in this file is (MobState.Type/Ai,
+        /// WaveState.Phase): an enum has no implicit conversion to any
+        /// StateHash64.Add overload at all, so the cast is required, not
+        /// merely disambiguating the way the byte casts above are.
+        static ulong HashPickup(ulong h, in PickupState p)
+        {
+            h = StateHash64.Add(h, p.Id); h = StateHash64.Add(h, p.Pos);
+            h = StateHash64.Add(h, (int)p.Kind); h = StateHash64.Add(h, p.Amount);
+            h = StateHash64.Add(h, p.Ttl);
+            return h;
+        }
+
+        /// Stage 3 Т14: one container's own struct fields — walk A of the
+        /// two StateHash() adds for this task (see that method's own doc).
+        /// `SlotCount` is included here, NOT re-added by walk B — walk B
+        /// only uses it as a loop bound, so the field's own value already
+        /// entering the digest here is what stands in for it, same
+        /// "walked in the count position instead of a redundant marker"
+        /// role _containerCount itself plays one level up. `Kind` and
+        /// `SlotCount` both cast for the reasons HashPickup's own doc gives
+        /// (enum has no implicit Add overload; byte matches every other
+        /// byte field this file hashes, e.g. ProjectileState.OwnerIndex).
+        static ulong HashContainer(ulong h, in ContainerState c)
+        {
+            h = StateHash64.Add(h, c.Id); h = StateHash64.Add(h, c.Pos);
+            h = StateHash64.Add(h, (int)c.Kind); h = StateHash64.Add(h, (int)c.SlotCount);
+            h = StateHash64.Add(h, c.Ttl);
+            return h;
+        }
+
         static ulong HashWave(ulong h, in WaveState w)
         {
+            // Wave-cadence-per-zone (bd app-ggvz Т3): the zone left the field
+            // NAMES and moved into the instance index, so the nine Add steps
+            // are three again -- SAME archetype order (MobType's Chaser=0/
+            // Gunner=1/Elite=2) and the SAME position in the sequence (between
+            // WaveIndex and AliveCount) the matrix held.
             h = StateHash64.Add(h, (int)w.Phase); h = StateHash64.Add(h, w.WaveIndex);
-            h = StateHash64.Add(h, w.PendingChasers); h = StateHash64.Add(h, w.PendingGunners);
-            h = StateHash64.Add(h, w.AliveCount); h = StateHash64.Add(h, w.PhaseTimer);
+            h = StateHash64.Add(h, w.PendingChaser); h = StateHash64.Add(h, w.PendingGunner);
+            h = StateHash64.Add(h, w.PendingElite);
+            h = StateHash64.Add(h, w.AliveCount); h = StateHash64.Add(h, w.PhaseTicks);
+            return h;
+        }
+
+        /// Stage 3 Т6: the match's own flow state, hashed once for the whole
+        /// world right after the wave — the two are the same kind of thing
+        /// (a single director-ish struct, one per match) and sit next to each
+        /// other in the canonical order for that reason.
+        static ulong HashMatch(ulong h, in MatchState m)
+        {
+            h = StateHash64.Add(h, (int)m.Phase);
+            h = StateHash64.Add(h, m.DirectorDeathTick);
             return h;
         }
 
@@ -1184,6 +2778,15 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, s.ShotsFired); h = StateHash64.Add(h, s.ShotsHit);
             h = StateHash64.Add(h, s.DashesUsed); h = StateHash64.Add(h, s.SlidesUsed);
             h = StateHash64.Add(h, s.DeathTick); h = StateHash64.Add(h, s.DamageTaken);
+            // Stage 3 Т6 (Task 1's fields, errata E-1): the run's own two
+            // economy counters. Both got their writers in the Ф1 fix-round
+            // (review C1 / B-I-1, owner decision R-24) — AmmoSpent in
+            // WeaponSystem.Advance's spend branch, CellsPicked in
+            // Loot.PickupSystem.Collect — so this step is no longer a
+            // placeholder for behavior that had not arrived: the composition
+            // of state and the behavior behind it entered the digest in the
+            // same phase, which is what errata E-1 asked for.
+            h = StateHash64.Add(h, s.AmmoSpent); h = StateHash64.Add(h, s.CellsPicked);
             return h;
         }
 
@@ -1196,6 +2799,34 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, w.WavesCleared);
             h = StateHash64.Add(h, w.MobSpawnsSkipped);
             h = StateHash64.Add(h, w.ProjectileSpawnsSkipped);
+            h = StateHash64.Add(h, w.PickupSpawnsSkipped);
+            h = StateHash64.Add(h, w.ContainerSpawnsSkipped);
+            return h;
+        }
+
+        /// Stage 3 Т6: one player's backpack. NOT `in`, and not a struct: an
+        /// Inventory is a class (spec Р232 — it owns a byte array, and living
+        /// inside PlayerState would make every wholesale PlayerState copy
+        /// allocate), so this takes the reference itself.
+        ///
+        /// COUNT FIRST, THEN ONLY THE CARRIED ITEMS. The count is state in its
+        /// own right, folded in ahead of its contents for the same reason
+        /// playerCount/_mobCount/_projectileCount are. The walk then stops at
+        /// Count rather than running the whole MaxInventoryItems array,
+        /// because the bytes past Count are NOT state: Inventory.TryRemoveAt
+        /// is a swap-remove and leaves the vacated tail slot holding whatever
+        /// it held before, while SetForTest overwrites only a prefix. Hashing
+        /// that tail would make two backpacks that carry exactly the same
+        /// items disagree purely over how they got there — a false desync
+        /// between a live world and a replay that reached the same contents by
+        /// another route.
+        static ulong HashInventory(ulong h, Inventory inv)
+        {
+            int count = inv.Count;
+            h = StateHash64.Add(h, count);
+            // Explicit cast for the same overload-resolution reason as
+            // ProjectileState.OwnerIndex above.
+            for (int i = 0; i < count; i++) h = StateHash64.Add(h, (int)inv.ItemAt(i));
             return h;
         }
     }

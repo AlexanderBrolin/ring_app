@@ -3,10 +3,12 @@ using Unity.Mathematics;
 
 namespace Ring.Networking.Protocol
 {
-    /// Stage 2 Task 27 (spec §3.8, §3.12 Р68, Р29/Р60/Р70/Р82/Р101): the FIVE
+    /// Stage 2 Task 27 (spec §3.8, §3.12 Р68, Р29/Р60/Р70/Р82/Р101): the
     /// state blocks that ride inside the SnapshotWriter/SnapshotReader frame
-    /// (Task 26) — players, liveness, mobs, wave and events. Task 26 gave the
-    /// frame; this file gives the frame's content. Task 27 does not decide
+    /// (Task 26). Task 27 gave five — players, liveness, mobs, wave and
+    /// events; Stage 3 Task 25 (spec §3.12) added five more — match, self,
+    /// pickups, containers and container slots — and widened liveness to two
+    /// masks. Task 26 gave the frame; this file gives the frame's content. Task 27 does not decide
     /// WHO is in a snapshot (Task 28's filter/budget) nor WHAT event kinds
     /// exist (Task 28's catalog, since it owns the producer) — only how a
     /// record of each kind is laid out on the wire.
@@ -33,10 +35,24 @@ namespace Ring.Networking.Protocol
     /// `count` is DERIVED, and a payload whose length is not an exact
     /// multiple of the record size is rejected outright
     /// (`SnapshotBlockError.MalformedLength`), never floor-divided. Liveness
-    /// and Wave are fixed-size single "records" (1 and 4 bytes respectively)
-    /// with the same rule: any other length is malformed. Events cannot be
-    /// counted this way at all — its records vary in size — so it is walked
-    /// length-by-length instead (see EventRecord below).
+    /// and Wave are fixed-size single "records" (2 and 4 bytes respectively —
+    /// liveness was 1 until Stage 3 Task 25 gave it a second mask) with the
+    /// same rule: any other length is malformed. Events and ContainerSlots
+    /// cannot be counted this way at all — their records vary in size — so
+    /// they are walked length-by-length instead (see EventRecord below, and
+    /// ContainerSlotsRecord, whose per-record length is its mask's popcount).
+    ///
+    /// THE Self BLOCK IS THE ONE EXCEPTION, AND IT IS THE SPEC'S CALL, NOT A
+    /// LAPSE (Stage 3 Task 25 review, Minor). Spec §3.12's table gives it an
+    /// explicit item-count byte ("число предметов u8" in its own table,
+    /// English here per the convention that caught this very line twice)
+    /// even though `payload.Length - 2` would
+    /// derive the same number — so the wire CAN contradict itself here, which
+    /// is what the paragraph above exists to rule out. The count is therefore
+    /// not trusted: `TryReadSelfBlock` refuses any payload whose length and
+    /// declared count disagree, so the redundancy is checked rather than
+    /// believed, and a hostile sender gains nothing from it. Recorded as the
+    /// deviation it is instead of being quietly implemented.
     ///
     /// ERROR TAXONOMY IS ITS OWN, SEPARATE FROM SnapshotReader'S
     /// Failed/Truncated/VersionMismatch (task-27-brief §2.9). A block that
@@ -86,12 +102,51 @@ namespace Ring.Networking.Protocol
         public const int EventHeaderBytes = 9;
 
         /// The Liveness block's payload is always exactly this many bytes —
-        /// one mask byte, no record framing (task-27-brief §2.3).
-        public const int LivenessBlockPayloadBytes = 1;
+        /// two mask bytes, no record framing (task-27-brief §2.3; Stage 3
+        /// Task 25 grew it from one, spec Р257: alive first, extracted
+        /// second).
+        public const int LivenessBlockPayloadBytes = 2;
 
         /// The Wave block's payload is always exactly this many bytes —
         /// phase(1) + waveIndex(2) + aliveCount(1) = 4.
         public const int WaveBlockPayloadBytes = 4;
+
+        /// Stage 3 Task 25 (spec §3.12's own table): the Match block's
+        /// payload is always exactly this many bytes — phase(1) +
+        /// secondsRemaining(2) + flags(1) = 4.
+        public const int MatchBlockPayloadBytes = 4;
+
+        /// Bytes of the Self block's FIXED head, before the variable run of
+        /// item ids that follows it: slotPoints(1) + itemCount(1) = 2.
+        public const int SelfBlockHeaderBytes = 2;
+
+        /// Bytes of one Pickups record: id(2) + posX(2) + posY(2) + kind(1).
+        public const int PickupRecordBytes = 7;
+
+        /// Bytes of one Containers record: id(2) + posX(2) + posY(2) +
+        /// kindAndEmpty(1) — the last byte packs two nibbles, exactly as the
+        /// Mobs record packs MobType and MobAiState.
+        public const int ContainerRecordBytes = 7;
+
+        /// Bytes of one ContainerSlots record's FIXED head, before the item
+        /// ids of its occupied slots: id(2) + occupancyMask(1) = 3. The
+        /// number of ids that follows is the mask's POPCOUNT — derived,
+        /// never a second field that could disagree with it (this file's own
+        /// "no record count" doctrine, applied to a mask).
+        public const int ContainerSlotsRecordHeaderBytes = 3;
+
+        /// How many slots ONE occupancy mask can speak about — a bit per slot
+        /// in a single byte (Stage 3 Т27 review, Minor-7).
+        ///
+        /// THE NUMBER WAS ALREADY LOAD-BEARING IN THREE PLACES and named in
+        /// none: the popcount below walked 0..7, `ArenaConfig.MaxContainerSlots`
+        /// carries `[Range(1, 8)]` with this very reason written in its own
+        /// doc ("a single-BYTE occupancy mask — a ceiling above 8 would invite
+        /// a value the mask cannot represent"), and the assembler clamps a
+        /// container's SlotCount to it while building the mask. Named here so
+        /// that a wider mask is one edit rather than three, and so that the
+        /// arena's own cap can point at the format constant that binds it.
+        public const int ContainerSlotsMaskWidth = 8;
 
         /// Highest legal wire value of `MobType` / `MobAiState` / `WavePhase`
         /// (fix-round I1). The wire carries these as raw bits, so a hostile
@@ -111,23 +166,54 @@ namespace Ring.Networking.Protocol
         /// test that says in words that the wire domain moved, rather than
         /// silently making legal traffic unparseable. A wire domain change is
         /// also a ProtocolVersion bump (see ProtocolVersion's own doc).
-        public const byte MaxMobTypeValue = (byte)MobType.Gunner;
+        ///
+        /// Stage 3 Task 10 (spec Р213/Р251): `MobType` grew Elite/Director,
+        /// so this moves from `Gunner` to `Director` — exactly the
+        /// ProtocolVersion-bump case the doc above already named. MobAiState/
+        /// WavePhase are unchanged (Р214: Elite/Director reuse the existing
+        /// six-state FSM, no new state).
+        public const byte MaxMobTypeValue = (byte)MobType.Director;
         public const byte MaxMobAiStateValue = (byte)MobAiState.Fire;
         public const byte MaxWavePhaseValue = (byte)WavePhase.Active;
 
-        /// The `MaxHp` a mob record's HP byte is quantized against — Chaser
-        /// and Gunner do NOT share a cap, so the record's own type decides
+        /// Stage 3 Task 25: the same tripwire, extended to the three enums
+        /// the new blocks put on the wire. `MatchPhase` rides the Match
+        /// block, `PickupKind` the Pickups record's tail byte and
+        /// `ContainerKind` the high nibble of the Containers record's — and
+        /// every one of them is read by Tasks 30-32 as an index into a
+        /// prefab/tint/icon table, which is precisely the pass-through this
+        /// project already paid for once with MobType.
+        ///
+        /// `MaxPickupKindValue` IS ZERO TODAY, and that is a fact about the
+        /// catalog rather than a disabled check: `PickupKind` has exactly one
+        /// member (EnergyCell), so every byte above 0 is out of domain. The
+        /// day a second pickup kind lands, EnumDomainBounds_
+        /// MatchTheSimulationEnums reddens here first.
+        public const byte MaxMatchPhaseValue = (byte)MatchPhase.Ended;
+        public const byte MaxPickupKindValue = (byte)PickupKind.EnergyCell;
+        public const byte MaxContainerKindValue = (byte)ContainerKind.PlayerCorpse;
+
+        /// The `MaxHp` a mob record's HP byte is quantized against — no two
+        /// archetypes share a cap, so the record's own type decides
         /// (task-27-brief §2.7). One home for the rule, called by both sides
         /// (fix-round M1): it was written out twice, and a third `MobType` in
         /// Stage 3 would have needed both edits with neither a compile error
-        /// nor a red test to demand the second — the new type would simply
-        /// have decoded against the Gunner's cap.
+        /// nor a red test to demand the second — Stage 3 Task 10 is that
+        /// third (and fourth) `MobType`, exactly as predicted.
         ///
-        /// The two-way branch is safe because both call sites reject anything
-        /// above `MaxMobTypeValue` first, and that constant is pinned by the
-        /// test named above.
-        public static float MaxHpFor(MobType type, in SimConfig cfg)
-            => type == MobType.Chaser ? cfg.Chaser.MaxHp : cfg.Gunner.MaxHp;
+        /// The four-way switch is safe because both call sites reject
+        /// anything above `MaxMobTypeValue` first, and that constant is
+        /// pinned by the test named above — the `_` arm below is
+        /// unreachable in practice, not a real fallback, same reasoning as
+        /// ProjectileSystem.Update's own radius switch.
+        public static float MaxHpFor(MobType type, in SimConfig cfg) => type switch
+        {
+            MobType.Chaser => cfg.Chaser.MaxHp,
+            MobType.Gunner => cfg.Gunner.MaxHp,
+            MobType.Elite => cfg.Elite.MaxHp,
+            MobType.Director => cfg.Director.MaxHp,
+            _ => cfg.Gunner.MaxHp,
+        };
 
         /// Decoded Players record (task-27-brief §2.2, §2.4). `Pos`/`Dir`/
         /// `Hp` are the DECODED values (Quantize's *Back methods), not wire
@@ -173,6 +259,74 @@ namespace Ring.Networking.Protocol
             public float2 Pos;
             public float2 Dir;
             public float Hp;
+        }
+
+        /// Decoded Pickups record (Stage 3 Task 25, spec §3.12). `Pos` is the
+        /// DECODED position, same convention as PlayerRecord/MobRecord above;
+        /// `Id` is the same lossy u16 code MobRecord's own doc describes, and
+        /// spec Р278 adds the part that is new here — a container or a cell
+        /// can outlive a mob by the whole raid, so the receiver may map the
+        /// code to a live entity ONLY within the current epoch and the
+        /// current frame, never remember it between frames.
+        ///
+        /// `Amount` IS DELIBERATELY NOT ON THE WIRE (plan errata E-7, written
+        /// out rather than left implicit). A cell's charge decides what the
+        /// SERVER adds to the picker's ammo (PickupSystem.Collect); the
+        /// client draws the same blue sphere either way, and CRITICAL RULE 3
+        /// puts the arithmetic on the server regardless. Two bytes per record
+        /// bought nothing and would have been a second authority on a number
+        /// the client cannot act on.
+        public struct PickupRecord
+        {
+            public int Id;
+            public PickupKind Kind;
+            public float2 Pos;
+        }
+
+        /// Decoded Containers record (Stage 3 Task 25, spec §3.12). The wire
+        /// packs `Kind` and `IsEmpty` into one byte's two nibbles — the same
+        /// packing MobRecord uses for type and AI state, and for the same
+        /// reason: two small domains, one byte, no third field.
+        ///
+        /// `IsEmpty` rides even though the ContainerSlots block would answer
+        /// the same question, because the two blocks travel on DIFFERENT
+        /// terms: slots are sent only to an observer inside LootRadius (spec
+        /// §3.8 Р238), while this record is sent to everyone who can see the
+        /// box. "Already looted" is what a player reads at a distance to
+        /// decide whether the walk is worth it, so it cannot depend on being
+        /// close enough to already know.
+        public struct ContainerRecord
+        {
+            public int Id;
+            public ContainerKind Kind;
+            public bool IsEmpty;
+            public float2 Pos;
+        }
+
+        /// Decoded ContainerSlots record (Stage 3 Task 25, spec §3.12 Р277).
+        /// One record per container whose interior is being sent.
+        ///
+        /// THE MASK IS THE POINT, NOT A COMPACTION (Р277, finding D-14).
+        /// `LootOps.Take` addresses a slot BY INDEX, so a compact "here are
+        /// the three items it still holds" list would systematically
+        /// disagree with the server's own numbering after any partial
+        /// looting — every second Take would be refused as "slot empty" by
+        /// construction, not by a race. Bit `i` of `OccupancyMask` means slot
+        /// `i` is occupied, and the ids that follow are those slots' items in
+        /// ascending slot order. At MaxContainerSlots 8 one byte covers a
+        /// whole container.
+        ///
+        /// `ItemOffset` INDEXES DIFFERENT SPANS ON THE TWO SIDES, exactly
+        /// like EventRecord.PayloadOffset below: on WRITE it points into the
+        /// caller's own item pool, on READ into the block payload that was
+        /// handed to TryReadContainerSlotsBlock. There is no length field
+        /// beside it — the count is the mask's popcount, derived, so the wire
+        /// cannot contradict itself.
+        public struct ContainerSlotsRecord
+        {
+            public int Id;
+            public byte OccupancyMask;
+            public ushort ItemOffset;
         }
 
         /// One event record, shared by BOTH sides (task-27-brief §2.5) —
@@ -294,14 +448,17 @@ namespace Ring.Networking.Protocol
             return true;
         }
 
-        /// Decodes a Liveness block payload — exactly one mask byte
+        /// Decodes a Liveness block payload — exactly TWO mask bytes since
+        /// Stage 3 Task 25 (spec Р257): alive first, extracted second
         /// (task-27-brief §2.2, §2.4). Never throws.
         public static bool TryReadLivenessBlock(
             System.ReadOnlySpan<byte> payload,
             out byte aliveMask,
+            out byte extractedMask,
             out SnapshotBlockError error)
         {
             aliveMask = 0;
+            extractedMask = 0;
             if (payload.Length != LivenessBlockPayloadBytes)
             {
                 error = SnapshotBlockError.MalformedLength;
@@ -309,6 +466,7 @@ namespace Ring.Networking.Protocol
             }
 
             aliveMask = payload[0];
+            extractedMask = payload[1];
             error = SnapshotBlockError.None;
             return true;
         }
@@ -498,6 +656,342 @@ namespace Ring.Networking.Protocol
             return true;
         }
 
+        /// Decodes the Match block payload — exactly 4 bytes (spec §3.12).
+        /// Never throws. `secondsRemaining` is the raid's own countdown, not
+        /// an elapsed time: elapsed is already on the wire in the frame
+        /// header's tick, and the remaining half depends on
+        /// NetConfig.MatchMaxDurationSeconds, which lives on the server's
+        /// side of the authority line (CRITICAL RULE 3 names the match timer
+        /// among the things the server decides). Producing it is the
+        /// assembler's job (Task 27); this decoder only refuses a payload
+        /// whose shape or phase byte is not legal.
+        public static bool TryReadMatchBlock(
+            System.ReadOnlySpan<byte> payload,
+            out MatchPhase phase,
+            out ushort secondsRemaining,
+            out byte flags,
+            out SnapshotBlockError error)
+        {
+            phase = default;
+            secondsRemaining = 0;
+            flags = 0;
+            if (payload.Length != MatchBlockPayloadBytes)
+            {
+                error = SnapshotBlockError.MalformedLength;
+                return false;
+            }
+
+            // Same content pass every other decoder here runs, and for the
+            // same reason: `(MatchPhase)9` is a legal cast and an illegal
+            // value, and the HUD switches on it.
+            if (payload[0] > MaxMatchPhaseValue)
+            {
+                error = SnapshotBlockError.MalformedContent;
+                return false;
+            }
+
+            phase = (MatchPhase)payload[0];
+            secondsRemaining = ReadU16(payload, 1);
+            flags = payload[3];
+            error = SnapshotBlockError.None;
+            return true;
+        }
+
+        /// Decodes the Self block payload — the owner's own backpack (spec
+        /// §3.12 Р276: everything that is already a PlayerState field rides
+        /// reconciliation instead, so only the item ids and their slot-point
+        /// total are here). Never throws.
+        ///
+        /// The item ids are validated against the catalog, not passed
+        /// through: Loot.ItemCatalogLookup.Find THROWS on an unknown id, so
+        /// an unchecked byte off the wire would turn one hostile packet into
+        /// an exception inside whichever consumer resolved it first — the
+        /// exact shape Р82 rules out, and the same argument that already
+        /// makes a Players record's slot index a MalformedContent case.
+        public static bool TryReadSelfBlock(
+            System.ReadOnlySpan<byte> payload,
+            in SimConfig cfg,
+            System.Span<byte> itemDestination,
+            out byte slotPoints,
+            out int itemCount,
+            out SnapshotBlockError error)
+        {
+            slotPoints = 0;
+            itemCount = 0;
+            if (payload.Length < SelfBlockHeaderBytes)
+            {
+                error = SnapshotBlockError.MalformedLength;
+                return false;
+            }
+
+            int declared = payload[1];
+            if (payload.Length != SelfBlockHeaderBytes + declared)
+            {
+                error = SnapshotBlockError.MalformedLength;
+                return false;
+            }
+            if (declared > itemDestination.Length)
+            {
+                error = SnapshotBlockError.DestinationTooSmall;
+                return false;
+            }
+
+            // Content pass before a single byte is handed back, so "the whole
+            // block is refused" stays literally true.
+            for (int i = 0; i < declared; i++)
+                if (!InCatalog(payload[SelfBlockHeaderBytes + i], in cfg))
+                {
+                    error = SnapshotBlockError.MalformedContent;
+                    return false;
+                }
+
+            for (int i = 0; i < declared; i++)
+                itemDestination[i] = payload[SelfBlockHeaderBytes + i];
+
+            slotPoints = payload[0];
+            itemCount = declared;
+            error = SnapshotBlockError.None;
+            return true;
+        }
+
+        /// Decodes a Pickups block payload (spec §3.12). Same derived-count
+        /// discipline as Players/Mobs: a length that is not a multiple of
+        /// PickupRecordBytes is MalformedLength, an implied count past
+        /// `destination` is DestinationTooSmall, and both refuse the WHOLE
+        /// block without writing anything. Never throws.
+        public static bool TryReadPickupsBlock(
+            System.ReadOnlySpan<byte> payload,
+            in SimConfig cfg,
+            System.Span<PickupRecord> destination,
+            out int count,
+            out SnapshotBlockError error)
+        {
+            count = 0;
+            if (payload.Length % PickupRecordBytes != 0)
+            {
+                error = SnapshotBlockError.MalformedLength;
+                return false;
+            }
+
+            int recordCount = payload.Length / PickupRecordBytes;
+            if (recordCount > destination.Length)
+            {
+                error = SnapshotBlockError.DestinationTooSmall;
+                return false;
+            }
+
+            for (int i = 0; i < recordCount; i++)
+                if (payload[i * PickupRecordBytes + 6] > MaxPickupKindValue)
+                {
+                    error = SnapshotBlockError.MalformedContent;
+                    return false;
+                }
+
+            for (int i = 0; i < recordCount; i++)
+            {
+                int off = i * PickupRecordBytes;
+                ReadEntityRecord(payload, off, in cfg, out int id, out float2 pos, out byte tail);
+                destination[i] = new PickupRecord
+                {
+                    Id = id,
+                    Kind = (PickupKind)tail,
+                    Pos = pos,
+                };
+            }
+
+            count = recordCount;
+            error = SnapshotBlockError.None;
+            return true;
+        }
+
+        /// Decodes a Containers block payload (spec §3.12). The tail byte's
+        /// HIGH nibble is the kind and its LOW nibble is the "already empty"
+        /// flag; a kind outside ContainerKind's domain, or an empty nibble
+        /// that is neither 0 nor 1, is MalformedContent — a client indexes
+        /// prefab tables by the first and branches on the second.
+        /// Never throws.
+        public static bool TryReadContainersBlock(
+            System.ReadOnlySpan<byte> payload,
+            in SimConfig cfg,
+            System.Span<ContainerRecord> destination,
+            out int count,
+            out SnapshotBlockError error)
+        {
+            count = 0;
+            if (payload.Length % ContainerRecordBytes != 0)
+            {
+                error = SnapshotBlockError.MalformedLength;
+                return false;
+            }
+
+            int recordCount = payload.Length / ContainerRecordBytes;
+            if (recordCount > destination.Length)
+            {
+                error = SnapshotBlockError.DestinationTooSmall;
+                return false;
+            }
+
+            for (int i = 0; i < recordCount; i++)
+            {
+                byte packed = payload[i * ContainerRecordBytes + 6];
+                // The low nibble is a FLAG, so 0 and 1 are the only values it
+                // can mean. Anything else is content the format has no
+                // reading for, and truncating it to a bool would invent one.
+                if ((packed >> 4) > MaxContainerKindValue || (packed & 0x0F) > 1)
+                {
+                    error = SnapshotBlockError.MalformedContent;
+                    return false;
+                }
+            }
+
+            for (int i = 0; i < recordCount; i++)
+            {
+                int off = i * ContainerRecordBytes;
+                ReadEntityRecord(payload, off, in cfg, out int id, out float2 pos, out byte tail);
+                destination[i] = new ContainerRecord
+                {
+                    Id = id,
+                    Kind = (ContainerKind)((tail >> 4) & 0x0F),
+                    IsEmpty = (tail & 0x0F) != 0,
+                    Pos = pos,
+                };
+            }
+
+            count = recordCount;
+            error = SnapshotBlockError.None;
+            return true;
+        }
+
+        /// Decodes a ContainerSlots block payload by WALKING it, exactly as
+        /// TryReadEventsBlock does and for the same reason: its records vary
+        /// in size, so no count can be derived from the payload length alone.
+        /// Each record's own size is its 3-byte head plus the popcount of its
+        /// occupancy mask. Records decoded before a refusal REMAIN in
+        /// `destination` and are counted in `count`, the same contract the
+        /// Events walker documents. Never throws.
+        public static bool TryReadContainerSlotsBlock(
+            System.ReadOnlySpan<byte> payload,
+            in SimConfig cfg,
+            System.Span<ContainerSlotsRecord> destination,
+            out int count,
+            out SnapshotBlockError error)
+        {
+            count = 0;
+
+            // `ItemOffset` is a ushort, so an offset inside a payload longer
+            // than 65535 B would wrap silently and point a consumer at the
+            // wrong bytes — the same precondition TryReadEventsBlock enforces
+            // for the same field width, unreachable through SnapshotReader
+            // (block lengths are u16) and enforced anyway because this method
+            // is public.
+            if (payload.Length > ushort.MaxValue)
+            {
+                error = SnapshotBlockError.MalformedLength;
+                return false;
+            }
+
+            int pos = 0;
+            while (pos < payload.Length)
+            {
+                if (payload.Length - pos < ContainerSlotsRecordHeaderBytes)
+                {
+                    error = SnapshotBlockError.MalformedLength;
+                    return false;
+                }
+
+                int id = ReadU16(payload, pos);
+                byte mask = payload[pos + 2];
+                int occupied = OccupiedSlotCount(mask);
+                int itemStart = pos + ContainerSlotsRecordHeaderBytes;
+                if (payload.Length - itemStart < occupied)
+                {
+                    error = SnapshotBlockError.MalformedLength;
+                    return false;
+                }
+                if (count >= destination.Length)
+                {
+                    error = SnapshotBlockError.DestinationTooSmall;
+                    return false;
+                }
+                for (int i = 0; i < occupied; i++)
+                    if (!InCatalog(payload[itemStart + i], in cfg))
+                    {
+                        error = SnapshotBlockError.MalformedContent;
+                        return false;
+                    }
+
+                destination[count] = new ContainerSlotsRecord
+                {
+                    Id = id,
+                    OccupancyMask = mask,
+                    ItemOffset = (ushort)itemStart,
+                };
+                count++;
+                pos = itemStart + occupied;
+            }
+
+            error = SnapshotBlockError.None;
+            return true;
+        }
+
+        /// Number of occupied slots a ContainerSlots mask promises — the ONE
+        /// home of "how many item ids follow this record", called by the
+        /// decoder above and by SnapshotWriter.WriteContainerSlotsBlock, so
+        /// the two cannot drift apart.
+        ///
+        /// `SnapshotWriter.ContainerSlotsBlockBytes` is NOT a third caller
+        /// (Stage 3 Task 25 review, Minor — an earlier wording claimed it
+        /// was): it is handed `totalOccupiedSlots` as a parameter and never
+        /// sees a mask, because a budget calculator is asked "how big would N
+        /// records carrying M ids be" before any record exists.
+        public static int OccupiedSlotCount(byte occupancyMask)
+        {
+            int n = 0;
+            for (int bit = 0; bit < ContainerSlotsMaskWidth; bit++)
+                if ((occupancyMask & (1 << bit)) != 0) n++;
+            return n;
+        }
+
+        /// The head shared by the Pickups and Containers records — id, then
+        /// a quantized position, then one tail byte whose MEANING is each
+        /// block's own business (plan errata E-6 C-I5's second half: one
+        /// home for the ground entities' wire record, not two copies six
+        /// bytes long apiece). The tail is handed back raw precisely because
+        /// the two blocks read it differently: a plain kind for a pickup, two
+        /// nibbles for a container.
+        static void ReadEntityRecord(System.ReadOnlySpan<byte> payload, int offset,
+            in SimConfig cfg, out int id, out float2 pos, out byte tail)
+        {
+            id = ReadU16(payload, offset);
+            pos = new float2(
+                Quantize.PosBack(ReadU16(payload, offset + 2), cfg.Arena.Radius),
+                Quantize.PosBack(ReadU16(payload, offset + 4), cfg.Arena.Radius));
+            tail = payload[offset + 6];
+        }
+
+        /// Whether the catalog holds this item id (Stage 3 Task 25). An id it
+        /// does NOT hold makes Loot.ItemCatalogLookup.Find throw, so the two
+        /// decoders that carry ids off the wire refuse it here instead —
+        /// same argument as the Players record's slot index: both peers agree
+        /// on the catalog by construction (it is part of SimConfig and hence
+        /// of the SimConfigHash the handshake compares), so an id outside it
+        /// is hostile or stale, never legitimate.
+        ///
+        /// A config with NO catalog at all skips the check rather than
+        /// refusing everything: an empty catalog is a hand-built fixture, not
+        /// a live match (SimConfigBuilder.Validate refuses one for a real
+        /// config), and a decoder must not invent a domain it was handed
+        /// nothing to check against.
+        static bool InCatalog(byte itemId, in SimConfig cfg)
+        {
+            ItemDef[] catalog = cfg.Items;
+            if (catalog == null || catalog.Length == 0) return true;
+            // The SEARCH itself belongs to ItemCatalogLookup, which declares
+            // itself the one home of "item id -> entry" (owner decision R-89)
+            // — what lives here is only the decoder's own policy above.
+            return ItemCatalogLookup.Contains(itemId, catalog);
+        }
+
         static ushort ReadU16(System.ReadOnlySpan<byte> src, int offset)
             => (ushort)(src[offset] | (src[offset + 1] << 8));
     }
@@ -523,6 +1017,17 @@ namespace Ring.Networking.Protocol
         Mobs = 3,
         Wave = 4,
         Events = 5,
+
+        // Stage 3 Task 25 (spec §3.12). Appended, never renumbered: a tag is
+        // the one field of this format a reader of ANOTHER build still has to
+        // agree on, and Р282 is explicit that a new block kind does NOT bump
+        // ProtocolVersion — the tagged, length-prefixed frame exists so an
+        // older reader can walk past a tag it has never heard of.
+        Match = 6,
+        Self = 7,
+        Pickups = 8,
+        Containers = 9,
+        ContainerSlots = 10,
     }
 
     /// Bit positions of the Players record's `flags` byte (task-27-brief
@@ -552,6 +1057,30 @@ namespace Ring.Networking.Protocol
         public const byte AimHeld = 1 << 3;
         public const byte LinkWindow = 1 << 4;
         // bits 5..7 are free and NOT assigned.
+    }
+
+    /// Bit positions of the Match block's `flags` byte (Stage 3 Task 25,
+    /// spec §3.12: "flags u8 (Director alive, gate open)"). Bits 2-7 are
+    /// free and UNASSIGNED.
+    ///
+    /// THE TWO BITS ARE NOT THE SAME KIND OF FACT, and reading them as one
+    /// would be a mistake this comment exists to prevent.
+    ///   * `DirectorAlive` is NOT derivable from the phase. The Director can
+    ///     be dead while MatchState.Phase is still DirectorActive — the gate
+    ///     opens GateDelaySeconds AFTER his death (MatchFlowSystem stamps
+    ///     DirectorDeathTick and waits), and that whole window is exactly
+    ///     when a client most needs to know he is gone.
+    ///   * `GateOpen` IS derivable — it is `Phase == MatchPhase.GateOpen`,
+    ///     and it rides anyway for the same reason PlayerWireFlags.Alive
+    ///     duplicates the Liveness block: a consumer reading this byte should
+    ///     not have to re-derive the state machine's own verdict. THE PHASE
+    ///     IS THE SOURCE OF TRUTH; this bit is a convenience view of it, and
+    ///     a consumer that finds the two disagreeing believes the phase.
+    public static class MatchWireFlags
+    {
+        public const byte DirectorAlive = 1 << 0;
+        public const byte GateOpen = 1 << 1;
+        // bits 2..7 are free and NOT assigned.
     }
 
     /// Refusal reasons a block DECODER can report (task-27-brief §2.9) —

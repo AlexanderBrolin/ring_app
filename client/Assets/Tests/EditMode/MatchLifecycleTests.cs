@@ -1,10 +1,13 @@
 using Unity.Mathematics;
+using UnityEngine;
 using System;
 using FishNet.Broadcast;
 using FishNet.Connection;
 using NUnit.Framework;
+using Ring.Data;
 using Ring.Networking;
 using Ring.Networking.Client;
+using Ring.Simulation.Visibility;
 using Ring.Networking.Protocol;
 using Ring.Networking.Server;
 using Ring.Server;
@@ -88,9 +91,9 @@ namespace Ring.Simulation.Tests
 
         static SnapshotQueue NewQueue()
         {
-            var arena = TestConfigs.DefaultArena();
+            var cfg = TestConfigs.Default();
             var timings = Timings();
-            return new SnapshotQueue(in arena, in timings);
+            return new SnapshotQueue(in cfg, in timings);
         }
 
         /// Small, readable ceilings — this file never exercises ghost expiry
@@ -212,7 +215,12 @@ namespace Ring.Simulation.Tests
         }
 
         // ------------------------------------------------------------------
-        // End conditions (§2.3, spec §3.10/§3.11).
+        // End conditions (§2.3, spec §3.10/§3.11). Stage 3 Task 1 added two
+        // parameters to Evaluate (activePlayers, anyExtracted) and a third
+        // reason (AllPlayersResolved, pinned by MatchFlowTests instead — see
+        // that file) — every call below passes activePlayers == alivePlayers
+        // and anyExtracted: false, preserving this file's original
+        // wipe/duration-only scenarios byte-for-byte.
         // ------------------------------------------------------------------
 
         [Test]
@@ -221,7 +229,8 @@ namespace Ring.Simulation.Tests
             // The positive witness the three end tests below are measured
             // against: an ordinary tick of an ordinary match ends nothing.
             var policy = new MatchEndPolicy(maxDurationTicks: 100);
-            Assert.AreEqual(MatchEndReason.None, policy.Evaluate(worldTick: 10, alivePlayers: 1),
+            Assert.AreEqual(MatchEndReason.None,
+                policy.Evaluate(worldTick: 10, alivePlayers: 1, activePlayers: 1, anyExtracted: false),
                 "a match with a living player and time left on the clock is not over");
         }
 
@@ -230,7 +239,7 @@ namespace Ring.Simulation.Tests
         {
             var policy = new MatchEndPolicy(maxDurationTicks: 100);
             Assert.AreEqual(MatchEndReason.AllPlayersDead,
-                policy.Evaluate(worldTick: 10, alivePlayers: 0),
+                policy.Evaluate(worldTick: 10, alivePlayers: 0, activePlayers: 0, anyExtracted: false),
                 "no living players is the end of the match, well before the timer");
         }
 
@@ -244,10 +253,11 @@ namespace Ring.Simulation.Tests
             // than one, deliberately: this test is about the CLOCK, and a
             // fixture sitting on the edge of the "everyone is dead" condition
             // would answer for both at once.
-            Assert.AreEqual(MatchEndReason.None, policy.Evaluate(worldTick: 99, alivePlayers: 2),
+            Assert.AreEqual(MatchEndReason.None,
+                policy.Evaluate(worldTick: 99, alivePlayers: 2, activePlayers: 2, anyExtracted: false),
                 "witness: one tick short of the limit the match is still running");
             Assert.AreEqual(MatchEndReason.MaxDurationReached,
-                policy.Evaluate(worldTick: 100, alivePlayers: 2),
+                policy.Evaluate(worldTick: 100, alivePlayers: 2, activePlayers: 2, anyExtracted: false),
                 "AT the limit the match is over — the boundary is >=, not >");
         }
 
@@ -260,7 +270,7 @@ namespace Ring.Simulation.Tests
             // observable outside the process and must be pinned.
             var policy = new MatchEndPolicy(maxDurationTicks: 100);
             Assert.AreEqual(MatchEndReason.AllPlayersDead,
-                policy.Evaluate(worldTick: 100, alivePlayers: 0),
+                policy.Evaluate(worldTick: 100, alivePlayers: 0, activePlayers: 0, anyExtracted: false),
                 "a match whose players are all dead ended in substance, not on the timer — "
                 + "AllPlayersDead is checked first and its exit code (0) is the one reported");
         }
@@ -295,6 +305,14 @@ namespace Ring.Simulation.Tests
                     case MatchEndReason.MaxDurationReached:
                         Assert.AreEqual(4, MatchEndPolicy.ExitCodeFor(reason),
                             "spec §3.11: an exhausted MatchMaxDurationSeconds exits 4");
+                        covered++;
+                        break;
+                    case MatchEndReason.AllPlayersResolved:
+                        // Stage 3 Task 1 (errata E-1/E-6 D-I2): a run everyone
+                        // walked away from is "played out" exactly like a wipe
+                        // is — same exit code as AllPlayersDead, spec §3.11.
+                        Assert.AreEqual(0, MatchEndPolicy.ExitCodeFor(reason),
+                            "spec §3.11: a fully resolved run exits 0, same as a wipe");
                         covered++;
                         break;
                     default:
@@ -366,6 +384,44 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(dedup.TryAcceptState(NewEpoch, 50),
                 "after the restart the new epoch's own opening ticks must apply — a dedup "
                 + "still holding the previous match's epoch and lastAppliedTick refuses every one");
+        }
+
+        /// Stage 3 Т32б (bd `app-dut`): the EIGHTH seam, widened by Т33d (bd
+        /// `app-tut2`) to every entity class there is. A new match mints entity
+        /// ids from 1 again, so a tracker that survived the epoch would answer
+        /// "still fading" for an id belonging to the match before — and
+        /// `ViewRegistry` would hold a view for a mob, a cell or a box this
+        /// match never had.
+        ///
+        /// EVERY CLASS IS ASSERTED, not the mobs alone: the whole reason the
+        /// bookkeeping became a table is that a per-class field leaves the
+        /// classes nobody remembered silently uncovered, and a test naming one
+        /// class would have the same blind spot the code did.
+        [Test]
+        public void ResetForEpoch_ResetsEveryEntityClassStale()
+        {
+            SimConfig staleCfg = TestConfigs.Default();
+            var entityStale = new EntityStaleTrackers(in staleCfg.Arena, 4, 4);
+            foreach (VisibilityClass cls in System.Enum.GetValues(typeof(VisibilityClass)))
+            {
+                EntityStaleTracker tracker = entityStale.For(cls);
+                tracker.OnSeen(9001, frameTick: 100);
+                tracker.OnFrameApplied(100, truncated: false);
+                tracker.Advance(100);
+                Assert.IsTrue(tracker.ShouldKeep(9001),
+                    $"fixture premise: the old match's {cls} entity is being tracked");
+            }
+
+            var reset = NewReset(NewDedup(), NewQueue(), new RenderClock(), NewGhosts(),
+                NewStalePolicy(), entityStale: entityStale);
+            reset.ResetForEpoch(NewEpoch);
+
+            foreach (VisibilityClass cls in System.Enum.GetValues(typeof(VisibilityClass)))
+            {
+                Assert.IsFalse(entityStale.For(cls).ShouldKeep(9001),
+                    $"{cls}: after the restart the id belongs to nobody, and answering for it "
+                    + "would keep a view alive for an entity this match never had");
+            }
         }
 
         [Test]
@@ -618,41 +674,180 @@ namespace Ring.Simulation.Tests
             var policy = NewStalePolicy();
             var events = NewEventQueue();
 
-            // Seven separate guards, seven separate assertions on the
+            // Eight separate guards, eight separate assertions on the
             // PARAMETER NAME: "something threw" would pass even if one seam's
             // guard covered another's argument, which is precisely the mistake
-            // a seven-argument constructor invites.
+            // an eight-argument constructor invites.
             var tracers = new TracerProjectiles(8);
+            SimConfig staleCfg = TestConfigs.Default();
+            var entityStale = new EntityStaleTrackers(in staleCfg.Arena, 4, 4);
             Assert.AreEqual("dedup",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(null, queue, clock, ghosts, policy, events, tracers)).ParamName);
+                    () => new ClientMatchReset(null, queue, clock, ghosts, policy, events, tracers, entityStale)).ParamName);
             Assert.AreEqual("snapshotQueue",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy, events, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy, events, tracers, entityStale)).ParamName);
             Assert.AreEqual("renderClock",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy, events, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy, events, tracers, entityStale)).ParamName);
             Assert.AreEqual("ghosts",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, null, policy, events, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, null, policy, events, tracers, entityStale)).ParamName);
             Assert.AreEqual("stalePolicy",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null, events, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null, events, tracers, entityStale)).ParamName);
             // The sixth seam (Task 44b), by the same rule as the five above.
             Assert.AreEqual("eventQueue",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, null, tracers)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, null, tracers, entityStale)).ParamName);
 
             // The seventh seam (bd `app-s0u`), by the same rule as the six above.
             Assert.AreEqual("tracers",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, null))
-                    .ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, null,
+                        entityStale)).ParamName);
+
+            // The eighth seam (Т32б, bd `app-dut`; widened to every entity
+            // class by Т33d, bd `app-tut2`), by the same rule as the seven
+            // above: the entities' fade bookkeeping is a second thing an epoch
+            // change has to forget, and it fails exactly the way the player
+            // policy does when it is not. It is a TABLE rather than one
+            // tracker so this seam covers the classes added after it —
+            // `EntityStaleTrackers` — instead of the one class that happened
+            // to exist when the seam was written.
+            Assert.AreEqual("entityStale",
+                Assert.Throws<ArgumentNullException>(
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers,
+                        null)).ParamName);
 
             // Positive witness: a fully wired set constructs.
             Assert.DoesNotThrow(
-                () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers),
-                "witness: all seven seams present is the legal construction");
+                () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers,
+                    entityStale),
+                "witness: all eight seams present is the legal construction");
+        }
+
+        // ------------------------------------------------------------------
+        // Stage 3 Т35 (spec Р290/Р291): what a RESTART must leave behind
+        // ------------------------------------------------------------------
+
+        /// A restart's server half, and the finding that shrinks it: the plan
+        /// asked for "recreating three `VisibilitySet`s per connection and
+        /// `_lootRng` from the same seed", and BOTH already hold BY
+        /// CONSTRUCTION. `MatchServer.RestartMatch` calls `StartMatch`, which
+        /// builds a new `SimulationWorld` (that constructor seeds `_lootRng`)
+        /// and a new `SnapshotAssembler` (whose `Connection` constructor builds
+        /// all six sets). Nothing had to be added; what was missing was
+        /// anything that SAYS so, which is what these two tests are.
+        [Test]
+        public void RestartRecreatesAllThreeVisibilitySets()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            net.SnapshotMaxBytes = 1000;
+            net.SnapshotEventBudget = 16;
+            net.EventRedundancyTicks = 4;
+
+            var assembler = new SnapshotAssembler(in cfg, net, connectionCount: 2);
+
+            // EVERY CLASS, REFLECTIVELY, AND BOTH GENERATIONS. This is the
+            // server-side twin of the hole `app-tut2` cost a playtest to find
+            // on the client: six separately named fields state nothing about a
+            // class that has none, so a fourth `VisibilityClass` would ship
+            // with no set, no error and no picture.
+            foreach (VisibilityClass cls in Enum.GetValues(typeof(VisibilityClass)))
+            {
+                int expected = VisibilitySet.CapacityFor(in cfg.Arena, cls);
+                for (int connection = 0; connection < 2; connection++)
+                {
+                    foreach (bool previous in new[] { true, false })
+                    {
+                        VisibilitySet set = assembler.SetFor(connection, cls, previous);
+                        Assert.IsNotNull(set,
+                            $"connection {connection}, {cls}, previous={previous}: no set at all");
+                        Assert.AreEqual(0, set.Count,
+                            $"connection {connection}, {cls}: a fresh match remembers nobody");
+                        Assert.AreEqual(expected, set.Capacity,
+                            $"connection {connection}, {cls}: sized by somebody else's cap");
+                    }
+                }
+            }
+
+            // Two connections must not share a set — one collector's fog is
+            // not another's, and a shared instance would leak the whole point
+            // of interest management (CR 4).
+            foreach (VisibilityClass cls in Enum.GetValues(typeof(VisibilityClass)))
+            {
+                Assert.AreNotSame(assembler.SetFor(0, cls, previous: false),
+                    assembler.SetFor(1, cls, previous: false),
+                    $"{cls}: two connections were handed the same set");
+            }
+
+            ScriptableObject.DestroyImmediate(net);
+        }
+
+        [Test]
+        public void UnknownVisibilityClass_HasNoSet_AndSaysSo()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            var net = ScriptableObject.CreateInstance<NetConfig>();
+            net.SnapshotMaxBytes = 1000;
+            net.SnapshotEventBudget = 16;
+            net.EventRedundancyTicks = 4;
+            var assembler = new SnapshotAssembler(in cfg, net, connectionCount: 1);
+
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => assembler.SetFor(0, (VisibilityClass)99, previous: false),
+                "a class with no pair must say so, not hand back the mobs' set");
+
+            ScriptableObject.DestroyImmediate(net);
+        }
+
+        [Test]
+        public void RestartResetsLootRngToSameSeed()
+        {
+            const long Seed = 20260822L;
+            SimConfig cfg = TestConfigs.Default();
+
+            // A restart on the same seed IS a new world on that seed
+            // (`MatchServer.StartMatch`), so this is what the loot stream does
+            // across one: it starts over, at exactly the same place.
+            var first = new SimulationWorld(Seed, cfg);
+            var afterRestart = new SimulationWorld(Seed, cfg);
+            for (int draw = 0; draw < 4; draw++)
+            {
+                Assert.AreEqual(first.LootRng.NextUInt(), afterRestart.LootRng.NextUInt(),
+                    $"draw {draw}: a restart on the same seed must lay the same loot");
+            }
+
+            // The positive witness beside it (lesson 129): without this line a
+            // loot stream that ignored the seed entirely would satisfy the
+            // assertion above perfectly.
+            var otherSeed = new SimulationWorld(Seed + 1, cfg);
+            var firstAgain = new SimulationWorld(Seed, cfg);
+            Assert.AreNotEqual(firstAgain.LootRng.NextUInt(), otherSeed.LootRng.NextUInt(),
+                "…and a different seed must lay different loot, or the seed is not being read");
+        }
+
+        [Test]
+        public void ForeignEpochLootResult_IsDropped()
+        {
+            // A loot answer in flight when the match restarted describes a box
+            // in a raid nobody is in any more. `LootNet.IsCurrentEpoch` is the
+            // ONE place that decides it (that field's own doc), and
+            // `NetworkSimBackend.OnLootResult` asks it before touching the
+            // window's ghost.
+            const ushort Current = 9;
+            Assert.IsTrue(LootNet.IsCurrentEpoch(Current, Current),
+                "premise: this match's own answer is applied");
+            Assert.IsFalse(LootNet.IsCurrentEpoch((ushort)(Current - 1), Current),
+                "the previous match's answer is dropped");
+            Assert.IsFalse(LootNet.IsCurrentEpoch((ushort)(Current + 1), Current),
+                "…and so is one from an epoch this client has not reached");
+            // Epoch 0 is the reserved "no match" value, and a client that has
+            // not joined one must apply nothing at all.
+            Assert.IsFalse(LootNet.IsCurrentEpoch(0, 0),
+                "a client in no match applies no answer, not even a matching zero");
         }
 
         [Test]
@@ -704,9 +899,13 @@ namespace Ring.Simulation.Tests
                 ProjectileSpawnsSkipped = 23,
             };
 
+            // Т24 added the four RESULT arrays; this fixture is about the
+            // STATS half, so they carry two inert slots — ResultsTests owns
+            // the assertions on the other half.
             var summary = new MatchSummary(MatchEndReason.MaxDurationReached, NewEpoch,
                 finalTick: 4242, in world, droppedEvents: 31,
-                new[] { other, mine }, new[] { new NetStats(), new NetStats() });
+                new[] { other, mine }, new[] { new NetStats(), new NetStats() },
+                new MatchOutcome[2], new int[2], new byte[2][], new int[2]);
 
             MatchEndedNet net = MatchServer.EndedNetFor(in summary, slot: 1);
 
@@ -746,8 +945,15 @@ namespace Ring.Simulation.Tests
         /// and only the test that is ABOUT one of those seams has to name it.
         static ClientMatchReset NewReset(EventDedup dedup, SnapshotQueue queue, RenderClock clock,
             GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue = null,
-            TracerProjectiles tracers = null)
+            TracerProjectiles tracers = null, EntityStaleTrackers entityStale = null)
             => new ClientMatchReset(dedup, queue, clock, ghosts, stalePolicy,
-                eventQueue ?? NewEventQueue(), tracers ?? new TracerProjectiles(8));
+                eventQueue ?? NewEventQueue(), tracers ?? new TracerProjectiles(8),
+                entityStale ?? DefaultEntityStale());
+
+        static EntityStaleTrackers DefaultEntityStale()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            return new EntityStaleTrackers(in cfg.Arena, 4, 4);
+        }
     }
 }

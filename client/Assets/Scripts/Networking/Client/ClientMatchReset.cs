@@ -8,7 +8,7 @@ namespace Ring.Networking.Client
     /// that names a new epoch (`MatchRestartedNet`, and the welcome that opens
     /// the first match).
     ///
-    /// WHY ONE HANDLER AND NOT SEVEN CALL SITES. The seven objects below each
+    /// WHY ONE HANDLER AND NOT EIGHT CALL SITES. The eight objects below each
     /// carry a piece of "where this client is in the match", and each of them
     /// fails SILENTLY when it is the one that was forgotten — no exception, no
     /// log line, just one guarantee quietly dead for the whole next match:
@@ -55,9 +55,9 @@ namespace Ring.Networking.Client
     ///     never happened in — and until then it sits occupying capacity the
     ///     new match's own events are refused at (`OverflowDroppedEvents`).
     ///     This one does not merely lose a guarantee, it INVENTS events: the
-    ///     only seam of the seven that fails by producing something rather than
+    ///     only seam of the eight that fails by producing something rather than
     ///     by refusing.
-    /// Seven call sites spread across a receiver would be seven chances to
+    /// Eight call sites spread across a receiver would be eight chances to
     /// forget one; one call site is one.
     ///
     /// THE SET'S COMPLETENESS IS CONTRACTUAL, NOT SOMETHING THE TYPE SYSTEM
@@ -73,15 +73,17 @@ namespace Ring.Networking.Client
     /// by exactly this route, and the paragraph is left standing, with the
     /// number moved on, for the seventh.
     ///
-    /// THIS CLASS DOES NOT OWN THE SEVEN AND DOES NOT BUILD THEM. They are
+    /// THIS CLASS DOES NOT OWN THE EIGHT AND DOES NOT BUILD THEM. They are
     /// handed in. Their construction parameters have nothing in common (an
     /// arena config, per-match timings, capacities, an event budget, a
     /// `NetStats` sink), and pulling those in here would make this a second
     /// home for the client's network configuration. The owner is the network
-    /// backend of Task 44, which builds all seven for its own reasons and hands
+    /// backend of Task 44, which builds all eight for its own reasons and hands
     /// them here once.
     ///
-    /// THREE OF THE SEVEN TAKE NO EPOCH, AND THAT IS CORRECT.
+    /// FIVE OF THE EIGHT TAKE NO EPOCH, AND THAT IS CORRECT (fix round, Ф7
+    /// review A-5: this class doc still counted seven seams and three
+    /// epochless ones after the eighth arrived in Т32б — recount below).
     /// `GhostProjectiles.Reset`/`StalePolicy.Reset`/`ClientEventQueue.Reset`
     /// track no epoch at all — their reset is total by construction, which is
     /// why none of them has an epoch-shaped seam to pass one to.
@@ -114,20 +116,26 @@ namespace Ring.Networking.Client
         /// epoch that is over.
         readonly TracerProjectiles _tracers;
         readonly StalePolicy _stalePolicy;
+        /// Stage 3 Т32б (bd `app-dut`): the mobs' fade bookkeeping, which is a
+        /// SECOND thing to forget on an epoch change and fails exactly the way
+        /// the player policy above does when it is not — an id from the match
+        /// before, answered for.
+        readonly EntityStaleTrackers _entityStale;
         readonly ClientEventQueue _eventQueue;
 
         /// Every seam is required, and each is guarded separately so a wiring
-        /// mistake names the argument it was actually made in — seven guards
+        /// mistake names the argument it was actually made in — eight guards
         /// answering "one of them was null" would leave the caller to find out
         /// which.
         ///
-        /// `eventQueue` is APPENDED, not inserted (Task 44b), so every
-        /// existing positional call site keeps the meaning it already had —
-        /// the same discipline `HandshakeRefusal.UnrecognizedRejection`
-        /// followed when its own enum grew.
+        /// `eventQueue` was APPENDED, not inserted (Task 44b), and `mobStale`
+        /// is appended for the same reason (Т32б), so every existing
+        /// positional call site keeps the meaning it already had — the same
+        /// discipline `HandshakeRefusal.UnrecognizedRejection` followed when
+        /// its own enum grew.
         public ClientMatchReset(EventDedup dedup, SnapshotQueue snapshotQueue, RenderClock renderClock,
             GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue,
-            TracerProjectiles tracers)
+            TracerProjectiles tracers, EntityStaleTrackers entityStale)
         {
             _dedup = dedup ?? throw new ArgumentNullException(nameof(dedup));
             _snapshotQueue = snapshotQueue ?? throw new ArgumentNullException(nameof(snapshotQueue));
@@ -136,9 +144,10 @@ namespace Ring.Networking.Client
             _stalePolicy = stalePolicy ?? throw new ArgumentNullException(nameof(stalePolicy));
             _eventQueue = eventQueue ?? throw new ArgumentNullException(nameof(eventQueue));
             _tracers = tracers ?? throw new ArgumentNullException(nameof(tracers));
+            _entityStale = entityStale ?? throw new ArgumentNullException(nameof(entityStale));
         }
 
-        /// Clears all seven seams and starts tracking `epoch` in the three that
+        /// Clears all eight seams and starts tracking `epoch` in the three that
         /// track one. Call this on the Reliable lifecycle message that names
         /// the epoch — never on a snapshot: a snapshot of an unknown epoch is
         /// refused by these very objects and must never be the thing that
@@ -152,6 +161,10 @@ namespace Ring.Networking.Client
             _stalePolicy.Reset();
             _eventQueue.Reset();
             _tracers.Reset();
+            // EVERY visibility class, not just the mobs (Т33d, bd `app-tut2`):
+            // the table is what makes this seam cover the classes added after
+            // it without anyone remembering to come back here.
+            _entityStale.ResetAll();
         }
     }
 }

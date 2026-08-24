@@ -1,6 +1,7 @@
 using Ring.Data;
 using Ring.Networking.Protocol;
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 using Ring.Simulation.Visibility;
 using Unity.Mathematics;
 
@@ -89,15 +90,27 @@ namespace Ring.Networking.Server
     /// THE BUDGET IS DECIDED BEFORE THE FIRST BYTE (task-28-brief §2.8). The
     /// header is written first and its `flags` byte cannot be patched
     /// afterwards, and `SnapshotWriter` throws rather than truncating — so the
-    /// whole frame is sized with Task 27's calculators up front:
-    ///   1. fixed part — header, players, liveness, wave, and the two empty
-    ///      block headers that always ride: always fits, checked once in the
-    ///      constructor rather than per frame;
-    ///   2. mobs into the remainder; if they do not fit, the FARTHEST from the
-    ///      viewpoint are dropped first (smaller id survives a tie), the count
-    ///      goes to `NetStats.DroppedEntities`, and header bit 0 says so;
-    ///   3. events into whatever is left, by rank, capped by
-    ///      `NetConfig.SnapshotEventBudget`.
+    /// whole frame is sized with Task 27's calculators up front. `WriteFrame`
+    /// numbers its own steps to match this list, so the two can be read side
+    /// by side (Task 27 review, Minor-10 — they had drifted into three
+    /// different numberings):
+    ///   1-3. fixed part — header, self, match, players, liveness, wave and
+    ///      the five empty block headers that always ride: always fits,
+    ///      checked once in the constructor rather than per frame;
+    ///   4-5. the interiors of the boxes within `LootRadius`, then the three
+    ///      RECORD classes in Р243's order — mobs, then containers, then
+    ///      pickups. What a class cannot fit is cut FARTHEST-FIRST from the
+    ///      viewpoint (smaller id survives a tie), the count goes to
+    ///      `NetStats.DroppedEntities`, and header bit 0 says so;
+    ///   6-7. events into whatever is left, by rank, capped by
+    ///      `NetConfig.SnapshotEventBudget`, and then recorded for resend;
+    ///   8. the bytes, in the order they were budgeted.
+    /// MOBS AHEAD OF THE LITTER IS THE DECISION, NOT THE ORDER THEY HAPPENED
+    /// TO BE WRITTEN IN (Stage 3 Task 27, spec Р243 as corrected by findings
+    /// C-3/D-19): an earlier reading ranked pickups and containers above the
+    /// mobs, so a tight frame would have spent itself on cells and empty
+    /// crates instead of on the picture of the threat the snapshot exists to
+    /// carry.
     /// CONSEQUENCE WORTH KNOWING: entities outrank events, so a frame that
     /// truncates entities carries no events at all (mobs consume the remainder
     /// down to under one record). That is the intended precedence — state must
@@ -174,10 +187,77 @@ namespace Ring.Networking.Server
             return seqA < seqB;
         }
 
+        /// Bytes a frame spends BEFORE its first mob record or event — the
+        /// header plus every block that always rides, empty or not (see
+        /// WriteFrame step 2 for why they all ride).
+        ///
+        /// ONE HOME, TWO CALLERS (plan errata E-6 C-I2, coordinator R-12).
+        /// The constructor asks for the widest case — the whole roster, since
+        /// Stage 2 Task 47b started sending a dead recipient its own body —
+        /// and every frame asks for its own player count; the two spelled the
+        /// same sum out separately, so a new always-riding block had to be
+        /// added in both places with neither a compile error nor a red test
+        /// to demand the second edit. Stage 3 Task 27 adds exactly such
+        /// blocks (Match and Self, spec Р279), which is why this was settled
+        /// first: the ceiling and the frame cannot disagree about what a
+        /// frame costs. THE PREDICTION CAME TRUE, and the sum below is what
+        /// it grew into — five blocks became ten, in ONE place (six summands
+        /// became eleven: the header is a summand and not a block, and the
+        /// two bases must not be mixed — gate Ф6, review m4).
+        /// STAGE 3 TASK 27 GAVE IT A SECOND PARAMETER, AND THE REASON IS THE
+        /// ONE BLOCK THAT IS FIXED PER FRAME RATHER THAN PER MATCH. Nine of
+        /// the ten blocks cost the same bytes at a given player count; the
+        /// tenth — `Self` — costs one byte per item in the recipient's own
+        /// backpack (spec §3.12 tag 7). So the ceiling and the frame ask the
+        /// same question with different arguments: the constructor asks for
+        /// the WIDEST case (`Hero.MaxInventoryItems`, exactly as it already
+        /// asks for the whole roster), a frame asks for what its recipient
+        /// actually carries. One home, two arguments — never two homes.
+        public static int FixedFrameBytes(int playerCount, int itemCount)
+            => SnapshotWriter.HeaderBytes
+               + SnapshotWriter.SelfBlockBytes(itemCount)
+               + SnapshotWriter.MatchBlockBytes()
+               + SnapshotWriter.PlayersBlockBytes(playerCount)
+               + SnapshotWriter.LivenessBlockBytes()
+               + SnapshotWriter.WaveBlockBytes()
+               + SnapshotWriter.ContainerSlotsBlockBytes(0, 0)
+               + SnapshotWriter.MobsBlockBytes(0)
+               + SnapshotWriter.ContainersBlockBytes(0)
+               + SnapshotWriter.PickupsBlockBytes(0)
+               + SnapshotWriter.EventsBlockBytes(0, 0);
+
         readonly int _maxBytes;
         readonly int _eventBudget;
         readonly int _redundancyTicks;
         readonly int _projectileSubscriptionTicks;
+
+        /// The raid's whole length in TICKS, and the rate it was converted at
+        /// (Stage 3 Task 27, spec §3.12 / coordinator R-204): the Match block
+        /// carries what is LEFT of the raid, and the number it counts down
+        /// from lives in `NetConfig.MatchMaxDurationSeconds` — outside
+        /// `SimConfig` entirely, as `SimulationWorld`'s own Ended doc says in
+        /// as many words. Copied here at construction, like the three
+        /// NetConfig numbers above it and for the same reason.
+        ///
+        /// THE CONVERSION IS NOT DONE HERE (Task 27 review, Important-2). It
+        /// lives once, on `NetConfig.MatchMaxDurationTicks`, and the other
+        /// reader is `ServerBootstrap`, which hands the same number to
+        /// `MatchEndPolicy` — the class that actually ENDS the raid. A
+        /// countdown converted its own way could reach zero at a different
+        /// instant than the match it counts, which is the one thing a
+        /// countdown may not do.
+        ///
+        /// THE RATE IS `NetConfig.TickRate`, NOT `SimulationWorld.TickDt`,
+        /// and the two cannot drift apart in a live server: `NetInvariants`
+        /// #6 refuses to raise one whose `TickRate` does not name the rate
+        /// `TickDt` denotes, and `ServerBootstrap.TryValidateInvariants`
+        /// exits with `ExitBadConfig` on any violation. (R-219 recorded the
+        /// choice of rate but not that fence — its wording implied a
+        /// divergence the bootstrap already refuses to start with.) Hence no
+        /// clamp on the rate either: a value that would make the division
+        /// below meaningless never reaches a running match.
+        readonly int _matchMaxTicks;
+        readonly int _tickRate;
 
         readonly RenderSnapshot _capture;
         readonly Connection[] _connections;
@@ -204,6 +284,8 @@ namespace Ring.Networking.Server
             _maxBytes = net.SnapshotMaxBytes;
             _eventBudget = net.SnapshotEventBudget;
             _redundancyTicks = net.EventRedundancyTicks;
+            _tickRate = net.TickRate;
+            _matchMaxTicks = net.MatchMaxDurationTicks;
 
             // app-dsh PATCH (task-28-brief §2.6) — CONFIRMED by Task 44a, on a
             // NEW justification, the original one having expired with the very
@@ -242,11 +324,15 @@ namespace Ring.Networking.Server
                 (int)math.ceil(maxLifetime / SimulationWorld.TickDt) + net.EventRedundancyTicks;
 
             // The fixed part of a frame is the same size every tick at a given
-            // player count, and its worst case is tiny (52 B at the shipped
-            // caps: 8 header + 27 players + 4 liveness + 7 wave + 3 + 3 empty
-            // block headers — it was 44 before this task widened the Players
-            // term below, and an older wording of this line said 38, which was
-            // the same sum with the two empty block headers left out of it)
+            // player count and backpack size, and its worst case is tiny
+            // (90 B at the shipped caps: 8 header + 21 self at
+            // Hero.MaxInventoryItems 16 + 7 match + 27 players + 5 liveness
+            // + 7 wave + 3 + 3 + 3 + 3 + 3 empty block headers — it was 53
+            // before Stage 3 Task 27 put the five Task 25 blocks into a
+            // frame, 52 until Task 25 gave the liveness block its second
+            // mask, 44 before Task 47b widened the Players term below, and an
+            // older wording of this line said 38, which was the same sum with
+            // the empty block headers left out of it)
             // next to any legal SnapshotMaxBytes. Checking it ONCE here,
             // rather than per frame, means the per-frame path can subtract
             // without a guard — and a genuinely impossible configuration fails
@@ -262,19 +348,24 @@ namespace Ring.Networking.Server
             // would pass this check for a configuration whose worst frame does
             // not fit, and throw out of `SnapshotWriter.Reserve` INSIDE a
             // server tick, the moment the first player died.
-            int fixedCeiling = SnapshotWriter.HeaderBytes
-                               + SnapshotWriter.PlayersBlockBytes(math.max(0, cfg.Arena.MaxPlayers))
-                               + SnapshotWriter.LivenessBlockBytes()
-                               + SnapshotWriter.WaveBlockBytes()
-                               + SnapshotWriter.MobsBlockBytes(0)
-                               + SnapshotWriter.EventsBlockBytes(0, 0);
+            // AND THE FULLEST BACKPACK, NOT AN EMPTY ONE (Stage 3 Task 27,
+            // spec Р279) — the same argument as the whole roster above, one
+            // block over. The Self block is the only one whose width depends
+            // on the RECIPIENT rather than on the match, so a ceiling sized
+            // for an empty pack would pass this check for a configuration
+            // whose worst frame does not fit, and throw out of
+            // SnapshotWriter.Reserve INSIDE a server tick the first time a
+            // collector filled his pack.
+            int fixedCeiling = FixedFrameBytes(math.max(0, cfg.Arena.MaxPlayers),
+                math.max(0, cfg.Hero.MaxInventoryItems));
             if (_maxBytes < fixedCeiling)
                 throw new System.ArgumentException(
                     $"SnapshotAssembler: SnapshotMaxBytes ({_maxBytes}) cannot hold even the fixed part of a "
-                    + $"frame at Arena.MaxPlayers {cfg.Arena.MaxPlayers} ({fixedCeiling} bytes: header, "
-                    + "players, liveness, wave and two empty block headers).", nameof(net));
+                    + $"frame at Arena.MaxPlayers {cfg.Arena.MaxPlayers} and Hero.MaxInventoryItems "
+                    + $"{cfg.Hero.MaxInventoryItems} ({fixedCeiling} bytes: header, self, match, players, "
+                    + "liveness, wave and five empty block headers).", nameof(net));
 
-            _capture = new RenderSnapshot(in cfg.Arena);
+            _capture = new RenderSnapshot(in cfg);
 
             int wireCapacity = math.max(1, cfg.Arena.MaxEventsPerFrame * 2);
             _wire = new WireEvent[wireCapacity];
@@ -294,6 +385,37 @@ namespace Ring.Networking.Server
         /// are written here; the transport and interpolation layers write the
         /// rest (Tasks 33/35/36).
         public NetStats StatsFor(int connection) => _connections[connection].Stats;
+
+        /// One connection's visibility set for one class and one generation
+        /// (Stage 3 Т35).
+        ///
+        /// `internal` AS A TEST SEAM, the same choice the owner made for
+        /// `PlayerNetworkController`'s three mutators and `MatchServer.
+        /// EndedNetFor` over widening them to `public`: the sets are six
+        /// separate fields, so "does every class have a pair, sized by its own
+        /// cap" is a question nothing outside this file could ask — and it is
+        /// exactly the question `app-tut2` cost a playtest to answer on the
+        /// client, where a class quietly had no bookkeeping at all.
+        ///
+        /// THE SWITCH THROWS ON AN UNKNOWN CLASS (R-237), which is the point
+        /// rather than a formality: a fourth `VisibilityClass` must be given
+        /// its pair HERE, and the alternative — returning the mobs' set for a
+        /// class nobody wired — is one set answering another's question.
+        internal VisibilitySet SetFor(int connection, VisibilityClass cls, bool previous)
+        {
+            Connection c = _connections[connection];
+            switch (cls)
+            {
+                case VisibilityClass.Mobs: return previous ? c.MobsPrevious : c.MobsCurrent;
+                case VisibilityClass.Pickups: return previous ? c.PickupsPrevious : c.PickupsCurrent;
+                case VisibilityClass.Containers:
+                    return previous ? c.ContainersPrevious : c.ContainersCurrent;
+                default:
+                    throw new System.ArgumentOutOfRangeException(nameof(cls), cls,
+                        "SnapshotAssembler.SetFor: every VisibilityClass owns a pair of sets per "
+                        + "connection and a new one must be given its own here.");
+            }
+        }
 
         /// Clears `connection`'s VIEWPOINT memory — the visibility pair
         /// (`Previous`/`Current`) ONLY — so the very next `BuildFor` call
@@ -422,8 +544,55 @@ namespace Ring.Networking.Server
             // anything (this class's own aliasing-guard doc says as much).
             // It is kept because leaving one of a pair stale invites the next
             // reader to reason about which half is safe to skip.
-            c.Previous.Clear();
-            c.Current.Clear();
+            c.MobsPrevious.Clear();
+            c.MobsCurrent.Clear();
+            // All THREE pairs, for the one reason this method exists (Stage 3
+            // Task 26): every one of them is keyed on the VIEWPOINT, so a
+            // pickup or a container this connection could see from where it
+            // used to look would keep its hysteresis and its linger across a
+            // spectate switch exactly the way a mob would. Clearing two of
+            // three would close the leak for the class that happens to be
+            // replicated today and leave it open for the two that arrive next.
+            c.PickupsPrevious.Clear();
+            c.PickupsCurrent.Clear();
+            c.ContainersPrevious.Clear();
+            c.ContainersCurrent.Clear();
+        }
+
+        /// This connection's CURRENT visibility set for one entity class — the
+        /// decision CRITICAL RULE 4 is enforced by.
+        ///
+        /// `internal`, NOT `public` (Task 26 review, I4). The parallel with
+        /// `BufferFor` does not hold: that one has a production consumer
+        /// (Stage 2 Task 36 wraps its return into the broadcast), while this
+        /// has none — its only caller is the test that proves the three
+        /// classes really are sorted into three sets. This assembly already
+        /// opens its internals to the test assembly by name
+        /// (Networking/AssemblyInfo.cs), which is the route every other test
+        /// seam in the project takes (`SpawnMobForTest`, `SetContainerForTest`,
+        /// `StatsRef`), so `public` would have widened the shipped contract for
+        /// nobody's benefit. `VisibilitySet`'s own doc sets the precedent in
+        /// as many words when it refuses a span accessor: "a wider contract
+        /// than anything asked for".
+        ///
+        /// Read-only by contract even so: `VisibilitySet` names
+        /// `Count`/`IdAt`/`LingerAt`/`Contains` as its whole enumeration
+        /// contract, and a caller that mutates what it is handed here corrupts
+        /// the next tick's hysteresis.
+        internal VisibilitySet VisibleSetFor(int connection, VisibilityClass cls)
+        {
+            Connection c = _connections[connection];
+            switch (cls)
+            {
+                case VisibilityClass.Mobs: return c.MobsCurrent;
+                case VisibilityClass.Pickups: return c.PickupsCurrent;
+                case VisibilityClass.Containers: return c.ContainersCurrent;
+                default:
+                    throw new System.ArgumentOutOfRangeException(nameof(cls), cls,
+                        "SnapshotAssembler.VisibleSetFor: every VisibilityClass keeps its own "
+                        + "set — a new one has to be given a home here rather than fall back "
+                        + "to the mobs'.");
+            }
         }
 
         /// Per-tick, shared by every connection: captures the world once and
@@ -582,6 +751,84 @@ namespace Ring.Networking.Server
                         SnapshotEvents.WriteWaveCleared(PayloadSpan(slot), ev.EntityId);
                         break;
                     }
+
+                    // Stage 3 Т29 (spec §3.12 Р281). THE FIRST THREE CLOSE A
+                    // HOLE RATHER THAN ADD A FEATURE: MatchFlowSystem has
+                    // emitted DirectorActivated/DirectorDied since Т21 and
+                    // ExtractionSystem PlayerExtracted since Т23, and this
+                    // switch — which has no `default` — dropped all three on
+                    // the floor every tick they fired. Nothing reported it,
+                    // because a kind with no case here simply produces no
+                    // wire record.
+                    case SimEventKind.DirectorActivated:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.DirectorActivated);
+                        SnapshotEvents.WriteDirectorActivated(PayloadSpan(slot));
+                        break;
+                    }
+
+                    case SimEventKind.DirectorDied:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.DirectorDied);
+                        SnapshotEvents.WriteDirectorDied(PayloadSpan(slot));
+                        break;
+                    }
+
+                    case SimEventKind.PlayerExtracted:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.PlayerExtracted);
+                        SnapshotEvents.WritePlayerExtracted(PayloadSpan(slot), ev.PlayerIndex, in _cfg);
+                        break;
+                    }
+
+                    // EntityId is the entity's own id for these two (their
+                    // emit sites' own docs), truncated to the u16 code by the
+                    // writer — the same treatment MobRecord.Id gets.
+                    case SimEventKind.PickupTaken:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.PickupTaken);
+                        SnapshotEvents.WritePickupTaken(PayloadSpan(slot), ev.EntityId);
+                        break;
+                    }
+
+                    case SimEventKind.ContainerEmptied:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.ContainerEmptied);
+                        SnapshotEvents.WriteContainerEmptied(PayloadSpan(slot), ev.EntityId);
+                        break;
+                    }
+
+                    default:
+                        // Gate Ф6 (review A-1): THIS SWITCH IS THE NINTH HOME
+                        // OF THE EVENT CATALOG, and spec Р281 asks every home
+                        // to break LOUDLY on a kind it does not know. It was
+                        // the only one of the nine that answered silence, and
+                        // the price is measured rather than imagined:
+                        // DirectorActivated, DirectorDied (Т21) and
+                        // PlayerExtracted (Т23) were emitted every raid for two
+                        // stages and fell through here — no wire record, no
+                        // counter, no red test (lesson 382, the diagnosis Т29
+                        // opened with).
+                        //
+                        // Nothing else watches this seam, and
+                        // EventRelevance.ChannelFor's own doc says so: "neither
+                        // of them watches the wire". ChannelFor_HandlesEveryKind
+                        // walks the enumeration but asks only for a CHANNEL, and
+                        // ChannelFor's production caller (RouteEvents) reads the
+                        // already-assembled `_wire` — which is exactly what an
+                        // unmapped kind never reaches.
+                        //
+                        // Unreachable today by construction (all twenty
+                        // SimEventKind members are mapped above, and
+                        // UnmappedEventKind_ThrowsInsteadOfVanishing proves the
+                        // branch itself rather than asserting it in prose): it
+                        // guards the kind Stage 4 adds, on the tick it is first
+                        // emitted, instead of two stages later.
+                        throw new System.ArgumentException(
+                            $"SnapshotAssembler.BeginTick: SimEventKind {ev.Kind} has no wire mapping — "
+                            + "every kind the simulation emits must be given a SnapshotEventKind here "
+                            + "(spec Р281); a silent fall-through drops the event without a counter, "
+                            + "a log or a failing test.", nameof(world));
                 }
             }
         }
@@ -607,10 +854,31 @@ namespace Ring.Networking.Server
             // what carries hysteresis and linger continuity AND what MobDied is
             // routed against. Compute refuses aliased buffers outright, so the
             // swap is not optional bookkeeping.
-            VisibilitySet swap = c.Previous;
-            c.Previous = c.Current;
-            c.Current = swap;
-            VisibilitySystem.Compute(_world, viewpointIndex, in _cfg.Visibility, c.Previous, c.Current);
+            VisibilitySet swap = c.MobsPrevious;
+            c.MobsPrevious = c.MobsCurrent;
+            c.MobsCurrent = swap;
+            VisibilitySystem.Compute(_world, viewpointIndex, in _cfg.Visibility, c.MobsPrevious, c.MobsCurrent);
+
+            // The two new classes, each in its OWN pair and each ping-ponged
+            // the same way (Stage 3 Task 26). Their sets are computed here,
+            // one task before Task 27 spends them on blocks, because this is
+            // the task that decides an entity's CLASS — and a class decided
+            // wrongly is invisible at the frame, by construction (a positive
+            // id in the mob pair resolves to no mob and leaves through the
+            // lingering-corpse branch, silently). The frame writer arriving
+            // next is what they are computed for; nothing else reads them yet,
+            // and that is stated rather than left to be discovered.
+            swap = c.PickupsPrevious;
+            c.PickupsPrevious = c.PickupsCurrent;
+            c.PickupsCurrent = swap;
+            VisibilitySystem.ComputePickups(_world, viewpointIndex, in _cfg.Visibility,
+                c.PickupsPrevious, c.PickupsCurrent);
+
+            swap = c.ContainersPrevious;
+            c.ContainersPrevious = c.ContainersCurrent;
+            c.ContainersCurrent = swap;
+            VisibilitySystem.ComputeContainers(_world, viewpointIndex, in _cfg.Visibility,
+                c.ContainersPrevious, c.ContainersCurrent);
 
             _viewpointPos = _world.PlayerAt(viewpointIndex).Pos;
 
@@ -731,6 +999,26 @@ namespace Ring.Networking.Server
         {
             for (int i = 0; i < _capture.MobCount; i++)
                 if (_capture.Mobs[i].Id == id) return i;
+            return -1;
+        }
+
+        /// The same scan for the two classes Stage 3 Task 26 gave sets of
+        /// their own, over their own capture arrays. Three tiny methods
+        /// rather than one generic scan: the arrays are three different
+        /// struct types with no common interface, and boxing them into one
+        /// would put an allocation on the per-connection path this class's
+        /// own doc rules out.
+        int ContainerSlotOf(int id)
+        {
+            for (int i = 0; i < _capture.ContainerCount; i++)
+                if (_capture.Containers[i].Id == id) return i;
+            return -1;
+        }
+
+        int PickupSlotOf(int id)
+        {
+            for (int i = 0; i < _capture.PickupCount; i++)
+                if (_capture.Pickups[i].Id == id) return i;
             return -1;
         }
 
@@ -859,7 +1147,7 @@ namespace Ring.Networking.Server
                         // wording, is that "someone died over there" reaches an
                         // observer who cannot see the target.
                         if (EventRelevance.ShouldDeliver(in we.Source, identityIndex, viewpointIndex, _world,
-                                c.Previous, in _cfg.Visibility, out float2 seen))
+                                c.MobsPrevious, in _cfg.Visibility, out float2 seen))
                         {
                             Enqueue(c, i, seen);
                         }
@@ -870,12 +1158,32 @@ namespace Ring.Networking.Server
                         break;
                     }
 
+                    case SnapshotEventKind.ContainerEmptied:
+                    {
+                        // Stage 3 Т29 (R-236): delivered BY VISIBILITY, and
+                        // decided here rather than by `EventRelevance` — see
+                        // that file's own `None` entry for this kind. The
+                        // subject is a CONTAINER, whose id lives in
+                        // `ContainersCurrent`; the seam below is handed the
+                        // MOBS set and would resolve a container id against
+                        // the wrong space entirely.
+                        //
+                        // The CURRENT tick's set, not the previous one: unlike
+                        // a corpse, an emptied box is still standing where it
+                        // was and is still in this tick's visibility — what
+                        // changed is its contents. Its own position rides
+                        // along, exactly as a Visible-channel event's does.
+                        if (c.ContainersCurrent.Contains(we.Source.EntityId))
+                            Enqueue(c, i, we.Source.Pos);
+                        break;
+                    }
+
                     default:
                     {
                         // Every remaining kind goes through the seam, against
                         // the CURRENT tick's set.
                         if (!EventRelevance.ShouldDeliver(in we.Source, identityIndex, viewpointIndex, _world,
-                                c.Current, in _cfg.Visibility, out float2 pos))
+                                c.MobsCurrent, in _cfg.Visibility, out float2 pos))
                             break;
 
                         // The seam decides WHETHER; the latch decides WITH
@@ -953,7 +1261,7 @@ namespace Ring.Networking.Server
         /// this reason.
         float2 ResolveAudiblePos(Connection c, int sourceId, float2 truePos)
         {
-            if (c.Current.Contains(sourceId))
+            if (c.MobsCurrent.Contains(sourceId))
             {
                 ClearLatch(c, sourceId);
                 return truePos;
@@ -1136,10 +1444,10 @@ namespace Ring.Networking.Server
             // players by index, then mobs by world slot. That order is what
             // survives truncation, which is what makes the frame reproducible.
             int otherPlayers = 0;
-            c.CandidateCount = 0;
-            for (int i = 0; i < c.Current.Count; i++)
+            c.MobCandidates.Clear();
+            for (int i = 0; i < c.MobsCurrent.Count; i++)
             {
-                int id = c.Current.IdAt(i);
+                int id = c.MobsCurrent.IdAt(i);
                 if (id < 0)
                 {
                     int playerIndex = -id - 1;
@@ -1184,55 +1492,191 @@ namespace Ring.Networking.Server
                     // through its own stale policy (Task 37).
                     int slot = MobSlotOf(id);
                     if (slot < 0) continue;
-                    c.CandidateSlots[c.CandidateCount] = slot;
-                    c.CandidateDistance[c.CandidateCount] =
-                        math.distance(_capture.Mobs[slot].Pos, viewpointPos);
-                    c.CandidateDropped[c.CandidateCount] = false;
-                    c.CandidateCount++;
+                    c.MobCandidates.Add(slot, id, math.distance(_capture.Mobs[slot].Pos, viewpointPos));
                 }
             }
 
-            byte aliveMask = 0;
-            for (int i = 0; i < _capture.PlayerCount && i < 8; i++)
-                if (_capture.Players[i].Alive) aliveMask |= (byte)(1 << i);
+            // The two classes Т26 gave sets of their own, gathered exactly
+            // like the mobs above and for the same reasons: the SET decides
+            // what may ride (CRITICAL RULE 4), the capture decides what its
+            // record says, and an id the capture does not know is skipped
+            // rather than guessed at.
+            //
+            // WHAT THAT SKIP IS AND IS NOT (Task 27 review, Important-4,
+            // corrected by measurement). It is NOT "the TTL expired and the
+            // set still lingers": `VisibilitySystem.Compute*` walks the live
+            // storage and evaluates only what it finds there, so linger (Р19)
+            // holds an entity that left SIGHT, never one that left the WORLD —
+            // an id in `Current` implies the entity existed when the set was
+            // built. The skip is a defense for the ONE way the two can
+            // disagree: the capture is taken in `BeginTick`, the sets in
+            // `BuildFor`, and anything that removed an entity between them
+            // would otherwise index a slot that is not there.
+            c.ContainerCandidates.Clear();
+            for (int i = 0; i < c.ContainersCurrent.Count; i++)
+            {
+                int id = c.ContainersCurrent.IdAt(i);
+                int slot = ContainerSlotOf(id);
+                if (slot < 0) continue;
+                c.ContainerCandidates.Add(slot, id,
+                    math.distance(_capture.Containers[slot].Pos, viewpointPos));
+            }
 
-            // 2. The fixed part. Every one of the five blocks always rides,
+            c.PickupCandidates.Clear();
+            for (int i = 0; i < c.PickupsCurrent.Count; i++)
+            {
+                int id = c.PickupsCurrent.IdAt(i);
+                int slot = PickupSlotOf(id);
+                if (slot < 0) continue;
+                c.PickupCandidates.Add(slot, id,
+                    math.distance(_capture.Pickups[slot].Pos, viewpointPos));
+            }
+
+            // Stage 3 Task 25 (spec Р257): the Liveness block carries TWO
+            // masks. One byte of "alive" cannot tell an extracted collector
+            // apart from a dead one — the overlay would report a teammate who
+            // walked out as lost, and SpectatePolicy, written for corpses,
+            // would hand him someone else's eyes. The pair is protected by
+            // the invariant that a player is never both — which lives in the
+            // SIMULATION (SimulationWorld, witnessed by ResultsTests), not in
+            // NetInvariants, whose subject is NetConfig's own numbers (Stage
+            // 3 Task 25 review, Minor: this line named the wrong home) — so
+            // the two masks never share a bit.
+            byte aliveMask = 0;
+            byte extractedMask = 0;
+            for (int i = 0; i < _capture.PlayerCount && i < 8; i++)
+            {
+                if (_capture.Players[i].Alive) aliveMask |= (byte)(1 << i);
+                if (_capture.Players[i].Extracted) extractedMask |= (byte)(1 << i);
+            }
+
+            // 2. The recipient's own backpack (Stage 3 Task 27, spec §3.12
+            // tag 7, Р276). Read from the WORLD rather than from the capture:
+            // an Inventory is a reference type and `CaptureSnapshot` refuses
+            // to put one in a render frame on purpose (its own backpack note),
+            // so the three public accessors are the seam — the same ones the
+            // inventory window will read.
+            //
+            // BY IDENTITY, NEVER BY VIEWPOINT. This is the one block whose
+            // subject is WHO this connection is rather than WHERE it looks
+            // from: a dead player spectating a stranger still owns his own
+            // pack, and building it from the viewpoint would hand him the
+            // contents of someone else's.
+            int selfItemCount = math.min(_world.InventoryCountOf(identityIndex),
+                c.SelfScratch.Length);
+            for (int i = 0; i < selfItemCount; i++)
+                c.SelfScratch[i] = _world.InventoryItemAt(identityIndex, i);
+            byte selfSlotPoints = (byte)math.min(_world.InventoryUsedSlots(identityIndex),
+                byte.MaxValue);
+
+            // The raid's own countdown (R-204/R-219) — what is LEFT, since
+            // what has elapsed is already in the header's tick. Integer
+            // division rounds DOWN, so "0 seconds left" appears during the
+            // last second rather than a second early.
+            int remainingTicks = math.max(0, _matchMaxTicks - _tick);
+            var secondsRemaining = (ushort)math.min(remainingTicks / _tickRate, ushort.MaxValue);
+
+            // The two flag bits are NOT the same kind of fact (MatchWireFlags'
+            // own doc): the gate bit is a convenience view of the phase, while
+            // "the Director is down" is not derivable from the phase at all —
+            // he dies GateDelaySeconds BEFORE the phase moves, and that window
+            // is exactly when a client needs to know.
+            byte matchFlags = 0;
+            if (_world.DirectorAlive) matchFlags |= MatchWireFlags.DirectorAlive;
+            if (_capture.Match.Phase == MatchPhase.GateOpen) matchFlags |= MatchWireFlags.GateOpen;
+
+            // 3. The fixed part. Every one of the TEN blocks always rides,
             // empty or not, so the receiver never has to tell "absent" from
             // "empty" (SnapshotReader cannot: a frame cut on a block boundary
-            // parses as a shorter, valid one).
-            int fixedBytes = SnapshotWriter.HeaderBytes
-                             + SnapshotWriter.PlayersBlockBytes(otherPlayers)
-                             + SnapshotWriter.LivenessBlockBytes()
-                             + SnapshotWriter.WaveBlockBytes()
-                             + SnapshotWriter.MobsBlockBytes(0)
-                             + SnapshotWriter.EventsBlockBytes(0, 0);
-            int room = _maxBytes - fixedBytes;
+            // parses as a shorter, valid one). The Self block is the one term
+            // that varies per frame, which is why it is measured above before
+            // the subtraction.
+            int room = _maxBytes - FixedFrameBytes(otherPlayers, selfItemCount);
 
-            // 3. Mobs, then truncation: the FARTHEST from the viewpoint go
-            // first, the smaller id survives a tie. Both halves are needed —
-            // distance alone leaves ties to whatever order the scan happened to
-            // visit, and a frame that differs between two identical worlds is
-            // not debuggable.
-            byte flags = 0;
-            int mobCapacity = room / SnapshotBlocks.MobRecordBytes;
-            int mobCount = math.min(c.CandidateCount, mobCapacity);
-            int droppedEntities = c.CandidateCount - mobCount;
-            if (droppedEntities > 0)
+            // 4. The interiors of the boxes within arm's reach: SELECTED here
+            // and reserved one step below, budgeted
+            // AHEAD of every record class (Р243): what is inside a container
+            // is what a collector standing over it is looking at, and it is
+            // the smallest of the variable blocks by construction — only
+            // boxes inside LootRadius qualify (Р238), never everything he can
+            // see.
+            //
+            // TRUNCATED LIKE ANY OTHER CLASS (coordinator R-221 — the spec is
+            // silent here, and silence is not "cannot happen". Two measured
+            // cases, and the first is the one that binds: at the TIGHTEST cap
+            // the constructor accepts (90 B, i.e. 40 B of record room) eight
+            // full boxes need 88 B; at the SHIPPED cap the whole container
+            // array full and in reach needs 64 * (3 + 8) = 704 B of the ~918 B
+            // a living recipient has for everything. Without a cut
+            // SnapshotWriter would throw inside the server tick.
+            //
+            // A CANDIDATE HERE POINTS AT A CONTAINER CANDIDATE, NOT AT A
+            // CAPTURE SLOT (Task 27 review, Important-1). An interior is
+            // meaningless without the box's own record in the SAME frame —
+            // Р278 forbids the receiver to remember a u16 code between frames,
+            // so a ContainerSlots record whose Containers record was cut for
+            // room is unanchorable by construction, and its bytes were spent
+            // out of the highest-priority class of all. Keeping the index of
+            // the container CANDIDATE is what lets the write below ask
+            // whether that record survived its own budget.
+            c.SlotsCandidates.Clear();
+            for (int i = 0; i < c.ContainerCandidates.Count; i++)
             {
-                flags |= SnapshotHeaderFlags.Truncated;
-                c.Stats.DroppedEntities += droppedEntities;
-                for (int d = 0; d < droppedEntities; d++) DropFarthestCandidate(c);
+                if (!LootOps.WithinLootReach(c.ContainerCandidates.Distance[i], in _cfg.Loot))
+                    continue;
+                c.SlotsCandidates.Add(i, c.ContainerCandidates.Ids[i],
+                    c.ContainerCandidates.Distance[i]);
             }
-            room -= mobCount * SnapshotBlocks.MobRecordBytes;
+
+            // 5. The record classes, IN THE ORDER Р243 ranks them: mobs first,
+            // then containers, then pickups. Each is cut on its own by the
+            // same rule — the FARTHEST from the viewpoint go first, the
+            // smaller id survives a tie — and what a class does not spend
+            // stays for the next one. Both halves of the rule are needed:
+            // distance alone leaves ties to whatever order the scan happened
+            // to visit, and a frame that differs between two identical worlds
+            // is not debuggable.
+            //
+            // MOBS AHEAD OF THE LITTER IS THE DECISION, NOT AN ACCIDENT OF
+            // ORDER (Р243, corrected by findings C-3/D-19): in a tight frame
+            // cells and empty crates would otherwise push out the picture of
+            // the threat the snapshot exists to carry.
+            byte flags = 0;
+            int slotsReserved = ReserveContainerSlots(c, ref room);
+            int mobCount = Budget(c, c.MobCandidates, SnapshotBlocks.MobRecordBytes, ref room,
+                ref flags);
+            int containerCount = Budget(c, c.ContainerCandidates, SnapshotBlocks.ContainerRecordBytes,
+                ref room, ref flags);
+            int pickupCount = Budget(c, c.PickupCandidates, SnapshotBlocks.PickupRecordBytes,
+                ref room, ref flags);
+            // Only NOW can the interiors be written: an interior rides only if
+            // its own box got a record in this frame, and that is decided one
+            // line above. Whatever the orphans reserved goes back to the room
+            // — the events are the next in line for it.
+            int slotsCount = WriteContainerSlots(c, slotsReserved, ref room, out int slotsItemBytes);
 
             int written = 0;
-            for (int i = 0; i < c.CandidateCount; i++)
+            for (int i = 0; i < c.MobCandidates.Count; i++)
             {
-                if (c.CandidateDropped[i]) continue;
-                c.MobScratch[written++] = MobRecordOf(c.CandidateSlots[i]);
+                if (c.MobCandidates.Dropped[i]) continue;
+                c.MobScratch[written++] = MobRecordOf(c.MobCandidates.Slots[i]);
             }
 
-            // 4. Events into what is left, by rank — FRESH ones first, then the
+            written = 0;
+            for (int i = 0; i < c.ContainerCandidates.Count; i++)
+            {
+                if (c.ContainerCandidates.Dropped[i]) continue;
+                c.ContainerScratch[written++] = ContainerRecordOf(c.ContainerCandidates.Slots[i]);
+            }
+
+            written = 0;
+            for (int i = 0; i < c.PickupCandidates.Count; i++)
+            {
+                if (c.PickupCandidates.Dropped[i]) continue;
+                c.PickupScratch[written++] = PickupRecordOf(c.PickupCandidates.Slots[i]);
+            }
+
+            // 6. Events into what is left, by rank — FRESH ones first, then the
             // redundant resends of what already shipped (Р58), both inside the
             // one budget and the one byte remainder (Р61). The order is the
             // decision: a fresh event has been transmitted zero times and has
@@ -1242,22 +1686,45 @@ namespace Ring.Networking.Server
             int freshCount = SelectEvents(c, ref room, 0, ref payloadBytes);
             int eventCount = SelectResends(c, ref room, freshCount, ref payloadBytes);
 
-            // 5. And only NOW does this frame's own delivery enter the history:
+            // 7. And only NOW does this frame's own delivery enter the history:
             // an event must not be repeated in the very frame that first
             // carries it (task-29-brief §2.2/§2.6б).
             RecordDelivered(c, freshCount);
 
+            // 8. The bytes, IN THE ORDER THEY WERE BUDGETED (Stage 3 Task 27,
+            // spec Р243, coordinator R-220). Until this task the two orders
+            // were different sequences — the frame wrote Mobs before Wave
+            // while the budget spent Wave first — and carrying two orders for
+            // one frame is exactly how a reader ends up believing the wrong
+            // one. They are now the SAME order, so "mobs outrank the litter on
+            // the floor" is visible in the bytes and not only in the
+            // arithmetic above. The wire itself does not care: every block is
+            // tagged and self-delimiting (SnapshotWriter's own format doc),
+            // and every consumer switches on the tag.
             var writer = new SnapshotWriter(c.Buffer);
             writer.WriteHeader(epoch, (uint)_tick, flags);
+            writer.WriteSelfBlock(selfSlotPoints,
+                new System.ReadOnlySpan<byte>(c.SelfScratch, 0, selfItemCount));
+            writer.WriteMatchBlock(_capture.Match.Phase, secondsRemaining, matchFlags);
             writer.WritePlayersBlock(
                 new System.ReadOnlySpan<SnapshotBlocks.PlayerRecord>(c.PlayerScratch, 0, otherPlayers),
                 in _cfg);
-            writer.WriteLivenessBlock(aliveMask);
-            writer.WriteMobsBlock(
-                new System.ReadOnlySpan<SnapshotBlocks.MobRecord>(c.MobScratch, 0, mobCount), in _cfg);
+            writer.WriteLivenessBlock(aliveMask, extractedMask);
             writer.WriteWaveBlock(_capture.Wave.Phase,
                 (ushort)(_capture.Wave.WaveIndex & 0xFFFF),
                 (byte)math.min(_capture.Wave.AliveCount, byte.MaxValue));
+            writer.WriteContainerSlotsBlock(
+                new System.ReadOnlySpan<SnapshotBlocks.ContainerSlotsRecord>(c.SlotsScratch, 0,
+                    slotsCount),
+                new System.ReadOnlySpan<byte>(c.SlotsItemPool, 0, slotsItemBytes));
+            writer.WriteMobsBlock(
+                new System.ReadOnlySpan<SnapshotBlocks.MobRecord>(c.MobScratch, 0, mobCount), in _cfg);
+            writer.WriteContainersBlock(
+                new System.ReadOnlySpan<SnapshotBlocks.ContainerRecord>(c.ContainerScratch, 0,
+                    containerCount), in _cfg);
+            writer.WritePickupsBlock(
+                new System.ReadOnlySpan<SnapshotBlocks.PickupRecord>(c.PickupScratch, 0, pickupCount),
+                in _cfg);
             writer.WriteEventsBlock(
                 new System.ReadOnlySpan<SnapshotBlocks.EventRecord>(c.EventScratch, 0, eventCount),
                 new System.ReadOnlySpan<byte>(c.EventPayloadScratch, 0, payloadBytes), in _cfg);
@@ -1265,25 +1732,193 @@ namespace Ring.Networking.Server
             return writer.BytesWritten;
         }
 
+        /// PHASE ONE of the interiors (Stage 3 Task 27, spec Р238/Р277,
+        /// coordinator R-221): computes each candidate's occupancy mask, cuts
+        /// the ones that do not fit — farthest first — and TAKES their bytes
+        /// out of `room`. Returns how many bytes were taken, which phase two
+        /// hands back whatever it does not use.
+        ///
+        /// TWO PHASES, AND THE SPLIT IS THE FIX FOR Task 27's REVIEW
+        /// (Important-1). The interiors are budgeted FIRST — Р243 ranks them
+        /// above every record class — but an interior may only be WRITTEN
+        /// once it is known that its own box got a Containers record in the
+        /// same frame, and that is settled several budget steps later. So the
+        /// bytes are reserved here and the records are materialized in
+        /// `WriteContainerSlots` below.
+        ///
+        /// ITS OWN BUDGET LOOP, NOT `Budget` ABOVE, because a record here is
+        /// NOT a fixed width: it costs its own header plus the popcount of
+        /// its mask, so "how many fit" cannot be a division. The RULE is the
+        /// same one — the farthest go first — reusing the same
+        /// `DropFarthest` over the same candidate list shape.
+        ///
+        /// NEITHER THE TRUNCATION BIT NOR `DroppedEntities` MOVES HERE, and
+        /// that is a decision (coordinator R-222). Both are about ENTITIES
+        /// that stopped updating: a box whose interior did not fit is still
+        /// in the frame, at its own position, with its own "already looted"
+        /// flag — what it lost is a detail the collector standing over it can
+        /// ask for on the reliable channel (Т28), which is precisely the
+        /// mechanism that exists for it. Counting it as a dropped entity
+        /// would inflate the escalation threshold (Р280) with something
+        /// delta-snapshots would not fix.
+        int ReserveContainerSlots(Connection c, ref int room)
+        {
+            // Masks first: a record's cost IS its mask's popcount, so the two
+            // are computed once and reused by the fitting loop, by the write
+            // and by the refund.
+            int total = 0;
+            for (int i = 0; i < c.SlotsCandidates.Count; i++)
+            {
+                ContainerState box = BoxOfSlotsCandidate(c, i);
+                byte mask = OccupancyMaskOf(in box);
+                c.SlotsMask[i] = mask;
+                total += SlotsRecordBytes(mask);
+            }
+
+            for (int i = 0; i < c.SlotsCandidates.Count && total > room; i++)
+            {
+                DropFarthest(c.SlotsCandidates);
+                // Recompute rather than track which index was just dropped:
+                // the list is at most Arena.MaxContainers long and this runs
+                // only in a frame that is already over budget.
+                total = 0;
+                for (int j = 0; j < c.SlotsCandidates.Count; j++)
+                {
+                    if (c.SlotsCandidates.Dropped[j]) continue;
+                    total += SlotsRecordBytes(c.SlotsMask[j]);
+                }
+            }
+
+            room -= total;
+            return total;
+        }
+
+        /// PHASE TWO: fills `c.SlotsScratch`/`c.SlotsItemPool` with the
+        /// interiors whose OWN BOX survived the Containers budget, refunds
+        /// the rest of `reserved` into `room`, and returns the record count.
+        ///
+        /// AN ORPHANED INTERIOR IS NOT SHIPPED (Task 27 review, Important-1).
+        /// Р278 forbids the receiver to carry a u16 entity code from one frame
+        /// to the next — the mapping back to a live entity is valid inside the
+        /// current frame and nowhere else — so a ContainerSlots record whose
+        /// Containers record was cut for room names a box this frame never
+        /// mentions. The client could not anchor it even in principle, and the
+        /// bytes would have been spent out of the highest-priority class in the
+        /// whole budget. They are refunded instead, which puts them where they
+        /// would have gone had the interior never qualified: to the events.
+        int WriteContainerSlots(Connection c, int reserved, ref int room, out int itemBytes)
+        {
+            int written = 0;
+            int spent = 0;
+            itemBytes = 0;
+            System.Span<byte> items = stackalloc byte[SnapshotBlocks.ContainerSlotsMaskWidth];
+            for (int i = 0; i < c.SlotsCandidates.Count; i++)
+            {
+                if (c.SlotsCandidates.Dropped[i]) continue;
+                // `Slots[i]` is the index of this box's CONTAINER candidate,
+                // so its fate is one lookup away.
+                if (c.ContainerCandidates.Dropped[c.SlotsCandidates.Slots[i]]) continue;
+
+                ContainerState box = BoxOfSlotsCandidate(c, i);
+                byte mask = c.SlotsMask[i];
+                spent += SlotsRecordBytes(mask);
+                c.SlotsScratch[written++] = new SnapshotBlocks.ContainerSlotsRecord
+                {
+                    Id = box.Id,
+                    OccupancyMask = mask,
+                    ItemOffset = (ushort)itemBytes,
+                };
+                // Ascending slot order, occupied slots only — the mask is
+                // what maps them back onto slot numbers (Р277). One id
+                // resolution for the box, as in `OccupancyMaskOf` and for the
+                // same reason (gate Ф6, review B-4); the buffer is hoisted
+                // out of the loop because `stackalloc` inside one is not
+                // freed per iteration.
+                int slots = math.min(box.SlotCount, SnapshotBlocks.ContainerSlotsMaskWidth);
+                _world.ContainerItemsInto(box.Id, items.Slice(0, slots));
+                for (int s = 0; s < slots; s++)
+                {
+                    if ((mask & (1 << s)) == 0) continue;
+                    c.SlotsItemPool[itemBytes++] = items[s];
+                }
+            }
+
+            room += reserved - spent;
+            return written;
+        }
+
+        /// Bytes one ContainerSlots record costs: its own head plus one id per
+        /// occupied slot. Stated once — the reserve, the write and the refund
+        /// all ask it, and a second copy would be a chance for the three to
+        /// disagree about the same record.
+        static int SlotsRecordBytes(byte mask)
+            => SnapshotBlocks.ContainerSlotsRecordHeaderBytes
+               + SnapshotBlocks.OccupiedSlotCount(mask);
+
+        /// The captured container one slots candidate stands for — through its
+        /// container CANDIDATE, which is what the list holds since the review
+        /// fix above.
+        ContainerState BoxOfSlotsCandidate(Connection c, int index)
+            => _capture.Containers[c.ContainerCandidates.Slots[c.SlotsCandidates.Slots[index]]];
+
+        /// Fits one CLASS of records into what is left of the frame and
+        /// reports how many ride (Stage 3 Task 27, spec Р217/Р243/Р268 item
+        /// 4). Whatever does not fit is dropped farthest-first, counted once
+        /// per ENTITY in `NetStats.DroppedEntities`, and raises the header's
+        /// truncation bit for the whole frame.
+        ///
+        /// ONE HOME FOR THREE CLASSES. Until this task the arithmetic was
+        /// mob-specific and lived inline in `WriteFrame`; three copies of it
+        /// would have been three chances to rank one class by a different
+        /// rule than the others, which is precisely the bug Р243's own
+        /// correction is about. The class is described entirely by its
+        /// candidate list and its record width — nothing here knows what a
+        /// mob is.
+        ///
+        /// THE COUNTER IS PER ENTITY, NOT PER CLASS, on purpose: the
+        /// escalation threshold (Р280 — 1% of a client's frames at milestone
+        /// В2 opens a delta-snapshot task) is a statement about entities that
+        /// stopped updating, and a container that stopped updating is exactly
+        /// as stale as a mob that did.
+        static int Budget(Connection c, CandidateList list, int recordBytes, ref int room,
+            ref byte flags)
+        {
+            int capacity = room / recordBytes;
+            int riding = math.min(list.Count, capacity);
+            int dropped = list.Count - riding;
+            if (dropped > 0)
+            {
+                flags |= SnapshotHeaderFlags.Truncated;
+                c.Stats.DroppedEntities += dropped;
+                for (int d = 0; d < dropped; d++) DropFarthest(list);
+            }
+            room -= riding * recordBytes;
+            return riding;
+        }
+
         /// Marks the farthest surviving candidate as dropped; a tie goes to the
         /// LARGER id, so the smaller one survives.
-        void DropFarthestCandidate(Connection c)
+        ///
+        /// Stage 3 Task 27: the tie-break reads the id the candidate list
+        /// CARRIES rather than reaching back into `_capture.Mobs` for it —
+        /// which is what made this method mob-specific, and what made it
+        /// `static` impossible. The rule itself is unchanged.
+        static void DropFarthest(CandidateList list)
         {
             int worst = -1;
-            for (int i = 0; i < c.CandidateCount; i++)
+            for (int i = 0; i < list.Count; i++)
             {
-                if (c.CandidateDropped[i]) continue;
+                if (list.Dropped[i]) continue;
                 if (worst < 0) { worst = i; continue; }
-                if (c.CandidateDistance[i] > c.CandidateDistance[worst]) { worst = i; continue; }
-                if (c.CandidateDistance[i] < c.CandidateDistance[worst]) continue;
+                if (list.Distance[i] > list.Distance[worst]) { worst = i; continue; }
+                if (list.Distance[i] < list.Distance[worst]) continue;
                 // Tie on distance: the LARGER id goes, so the smaller one
                 // survives. Keyed on the entity's own id and never on its
                 // capture SLOT — slots move under swap-remove, so a slot-keyed
                 // tie-break would give two identical worlds different frames.
-                if (_capture.Mobs[c.CandidateSlots[i]].Id > _capture.Mobs[c.CandidateSlots[worst]].Id)
-                    worst = i;
+                if (list.Ids[i] > list.Ids[worst]) worst = i;
             }
-            if (worst >= 0) c.CandidateDropped[worst] = true;
+            if (worst >= 0) list.Dropped[worst] = true;
         }
 
         /// Fills `c.EventScratch`/`c.EventPayloadScratch` from the carry queue
@@ -1573,6 +2208,65 @@ namespace Ring.Networking.Server
             };
         }
 
+        SnapshotBlocks.PickupRecord PickupRecordOf(int slot)
+        {
+            PickupState p = _capture.Pickups[slot];
+            // `Amount` deliberately stays off the wire (Т25's own decision,
+            // recorded in PickupRecord's doc): a cell's charge decides what
+            // the SERVER adds to the picker's ammo, and the client draws the
+            // same sphere either way.
+            return new SnapshotBlocks.PickupRecord { Id = p.Id, Kind = p.Kind, Pos = p.Pos };
+        }
+
+        SnapshotBlocks.ContainerRecord ContainerRecordOf(int slot)
+        {
+            ContainerState box = _capture.Containers[slot];
+            return new SnapshotBlocks.ContainerRecord
+            {
+                Id = box.Id,
+                Kind = box.Kind,
+                Pos = box.Pos,
+                // DERIVED from the slots, never stored: "already looted" is
+                // what a collector reads at a distance to decide whether the
+                // walk is worth it (ContainerRecord's own doc), and a second
+                // authority on it could disagree with the box itself.
+                IsEmpty = OccupancyMaskOf(box) == 0,
+            };
+        }
+
+        /// Bit `i` is "slot `i` of this container holds something" — the mask
+        /// the ContainerSlots block ships (Р277) and the predicate the
+        /// Containers record's `IsEmpty` is derived from, in ONE place so the
+        /// two can never disagree.
+        ///
+        /// Slot content is not in the capture at all (`RenderSnapshot`'s own
+        /// account of why), so this reads the world through the public
+        /// accessor the owner's decision R-216 put there — by container ID,
+        /// which is what a visibility set carries (R-217).
+        byte OccupancyMaskOf(in ContainerState box)
+        {
+            // Clamped to the mask's own width, which is the format's ceiling
+            // and the reason `ArenaConfig.MaxContainerSlots` carries
+            // `[Range(1, 8)]`: a slot past the eighth has no bit to ride in.
+            // The clamp stays HERE and not in the world (R-235).
+            int slots = math.min(box.SlotCount, SnapshotBlocks.ContainerSlotsMaskWidth);
+
+            // ONE id resolution for the whole box (gate Ф6, review B-4).
+            // The per-slot form this replaced cost one per slot, and this
+            // method runs for every container record of every connection
+            // every tick — eight scans of a 64-long array where one does.
+            System.Span<byte> items = stackalloc byte[SnapshotBlocks.ContainerSlotsMaskWidth];
+            _world.ContainerItemsInto(box.Id, items.Slice(0, slots));
+
+            // The derivation itself is `LootOps.OccupancyMaskOf`'s since Т32б
+            // — the local frame builds the same mask for its own interior
+            // pool, and "occupied means not zero" may only be written once.
+            // The CLAMP above stays here: it is the format's ceiling, and
+            // R-235's whole point is that the format's ceiling and the world's
+            // fact are not one home.
+            return LootOps.OccupancyMaskOf(items.Slice(0, slots));
+        }
+
         struct WireEvent
         {
             public SnapshotEventKind Kind;
@@ -1631,13 +2325,65 @@ namespace Ring.Networking.Server
             public int DeliveredTick;
         }
 
+        /// One entity class's candidates for ONE frame: which capture slot
+        /// each is in, its own id (the tie-break key), how far it is from the
+        /// viewpoint, and whether the budget has dropped it (Stage 3 Task 27,
+        /// spec Р217/Р268 item 4).
+        ///
+        /// A CLASS, NOT THREE COPIES OF FOUR ARRAYS. Before this task the
+        /// four lived loose on `Connection` and were mob-only; three classes
+        /// would have meant twelve fields whose invariant ("all four grow
+        /// together") nothing states. Allocated once per connection per
+        /// class, like every other buffer here.
+        sealed class CandidateList
+        {
+            public readonly int[] Slots;
+            public readonly int[] Ids;
+            public readonly float[] Distance;
+            public readonly bool[] Dropped;
+            public int Count;
+
+            public CandidateList(int capacity)
+            {
+                int size = math.max(1, capacity);
+                Slots = new int[size];
+                Ids = new int[size];
+                Distance = new float[size];
+                Dropped = new bool[size];
+            }
+
+            public void Clear() => Count = 0;
+
+            /// Refuses silently once full rather than throwing on the frame
+            /// path — the capacity is the arena's own cap for the class, so a
+            /// full list means the world holds more of them than it declares.
+            public void Add(int slot, int id, float distance)
+            {
+                if (Count >= Slots.Length) return;
+                Slots[Count] = slot;
+                Ids[Count] = id;
+                Distance[Count] = distance;
+                Dropped[Count] = false;
+                Count++;
+            }
+        }
+
         /// Everything that belongs to ONE connection: the visibility pair, the
         /// spawn subscriptions, the audible latch, the carry queue and the
         /// scratch the frame is built through. All of it is allocated once.
         sealed class Connection
         {
-            public VisibilitySet Previous;
-            public VisibilitySet Current;
+            /// THREE PAIRS, NOT ONE (Stage 3 Task 26, spec §3.9 Р268 item 2 —
+            /// see VisibilityClass's own doc for why a shared set could not be
+            /// made to work by tagging). Each is ping-ponged by BuildFor
+            /// exactly like the mob pair always was; players ride in the mob
+            /// pair, told apart by the sign of their id.
+            public VisibilitySet MobsPrevious;
+            public VisibilitySet MobsCurrent;
+            public VisibilitySet PickupsPrevious;
+            public VisibilitySet PickupsCurrent;
+            public VisibilitySet ContainersPrevious;
+            public VisibilitySet ContainersCurrent;
             public readonly byte[] Buffer;
             public readonly NetStats Stats = new NetStats();
 
@@ -1665,22 +2411,56 @@ namespace Ring.Networking.Server
             public int HistoryCount;
 
             public readonly SnapshotBlocks.PlayerRecord[] PlayerScratch;
+            /// The owner's backpack ids, copied out of the world once per
+            /// frame (Stage 3 Task 27) — sized to Hero.MaxInventoryItems,
+            /// which is the same ceiling the constructor's own fixed-part
+            /// check is computed against.
+            public readonly byte[] SelfScratch;
             public readonly SnapshotBlocks.MobRecord[] MobScratch;
+            public readonly SnapshotBlocks.ContainerRecord[] ContainerScratch;
+            public readonly SnapshotBlocks.PickupRecord[] PickupScratch;
             public readonly SnapshotBlocks.EventRecord[] EventScratch;
             public readonly byte[] EventPayloadScratch;
-            public readonly int[] CandidateSlots;
-            public readonly float[] CandidateDistance;
-            public readonly bool[] CandidateDropped;
-            public int CandidateCount;
+            /// One candidate list per entity class (Stage 3 Task 27) — sized
+            /// from the class's own arena cap, so the budget can never be
+            /// handed more candidates than the world can hold.
+            public readonly CandidateList MobCandidates;
+            public readonly CandidateList ContainerCandidates;
+            public readonly CandidateList PickupCandidates;
+            /// The boxes within LootRadius this frame — a SUBSET of
+            /// ContainerCandidates, kept separately because it is cut on its
+            /// own budget and by its own variable record size.
+            public readonly CandidateList SlotsCandidates;
+            /// Each slots candidate's occupancy mask, computed once and read
+            /// by both the fitting loop and the write (the mask IS the
+            /// record's cost).
+            public readonly byte[] SlotsMask;
+            public readonly SnapshotBlocks.ContainerSlotsRecord[] SlotsScratch;
+            public readonly byte[] SlotsItemPool;
 
             public Connection(in SimConfig cfg, int maxBytes, int queueCapacity, int eventBudget,
                 int redundancyTicks)
             {
-                // Same capacity the visibility fixtures use: every live mob
-                // plus every player a single Compute call can visit.
-                int setCapacity = cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
-                Previous = new VisibilitySet(setCapacity);
-                Current = new VisibilitySet(setCapacity);
+                // ONE HOME FOR THE THREE CAPACITIES (plan errata E-6 C-I3,
+                // Stage 3 Task 26). The mob formula used to be spelled out
+                // here AND in TestWorlds.Capacity; both now ask
+                // VisibilitySet.CapacityFor, which is also the only place the
+                // two new classes' own caps are stated. Sizing a set by the
+                // wrong class's cap is silent in the cheap direction and
+                // catastrophic in the other, which is why it is not a literal
+                // in either file any more.
+                MobsPrevious = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Mobs));
+                MobsCurrent = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Mobs));
+                PickupsPrevious = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+                PickupsCurrent = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Pickups));
+                ContainersPrevious = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
+                ContainersCurrent = new VisibilitySet(
+                    VisibilitySet.CapacityFor(in cfg.Arena, VisibilityClass.Containers));
                 Buffer = new byte[maxBytes];
 
                 SubIds = new int[math.max(1, cfg.Arena.MaxProjectiles)];
@@ -1707,12 +2487,23 @@ namespace Ring.Networking.Server
                 HistoryEmitted = new bool[historyCapacity];
 
                 PlayerScratch = new SnapshotBlocks.PlayerRecord[math.max(1, cfg.Arena.MaxPlayers)];
+                SelfScratch = new byte[math.max(1, cfg.Hero.MaxInventoryItems)];
                 MobScratch = new SnapshotBlocks.MobRecord[math.max(1, cfg.Arena.MaxMobs)];
+                ContainerScratch = new SnapshotBlocks.ContainerRecord[
+                    math.max(1, cfg.Arena.MaxContainers)];
+                PickupScratch = new SnapshotBlocks.PickupRecord[math.max(1, cfg.Arena.MaxPickups)];
                 EventScratch = new SnapshotBlocks.EventRecord[math.max(1, eventBudget)];
                 EventPayloadScratch = new byte[EventScratch.Length * SnapshotEvents.MaxPayloadBytes];
-                CandidateSlots = new int[MobScratch.Length];
-                CandidateDistance = new float[MobScratch.Length];
-                CandidateDropped = new bool[MobScratch.Length];
+                MobCandidates = new CandidateList(MobScratch.Length);
+                ContainerCandidates = new CandidateList(ContainerScratch.Length);
+                PickupCandidates = new CandidateList(PickupScratch.Length);
+                SlotsCandidates = new CandidateList(ContainerScratch.Length);
+                SlotsMask = new byte[ContainerScratch.Length];
+                SlotsScratch = new SnapshotBlocks.ContainerSlotsRecord[ContainerScratch.Length];
+                // Every box at once, every slot of it: the pool is never the
+                // binding constraint, the frame's byte budget is.
+                SlotsItemPool = new byte[ContainerScratch.Length
+                                         * math.max(1, cfg.Arena.MaxContainerSlots)];
             }
         }
     }

@@ -133,19 +133,26 @@ namespace Ring.Presentation
             // flushes those Transform writes into PhysX so the cast below sees
             // THIS frame's proxy positions (C15).
             Physics.SyncTransforms();
-            if (TryAimProxy(out float2 proxySimPos, out float proxyHeight,
-                    out HitZone zone, out MobView hoveredMob, out Vector3 worldPoint))
+            // THE PLANE IS THE FALLBACK FOR A MISS ALONE (bd `app-1ru`). A cast
+            // the arena STOPPED already knows a better point than the plane
+            // does — its own stopping point — and taking the plane's answer
+            // there is what drew the aim ray through solid barriers while the
+            // rounds died in them. `Screened` and `Proxy` both carry a real
+            // point out of the cast; only `Miss` has nothing to carry.
+            AimCast cast = TryAimProxy(out float2 castSimPos, out float castHeight,
+                out HitZone zone, out MobView hoveredMob, out Vector3 worldPoint);
+            if (cast != AimCast.Miss)
             {
-                _cachedAimSimPos = proxySimPos;
-                _cachedAimHeight = proxyHeight;
+                _cachedAimSimPos = castSimPos;
+                _cachedAimHeight = castHeight;
                 _cachedAimZone = zone;
                 _cachedHoveredMob = hoveredMob;
-                _cachedAimWorldPoint = worldPoint; // the proxy's own real hit.point
+                _cachedAimWorldPoint = worldPoint; // the cast's own real hit.point
             }
             else
             {
                 _cachedAimSimPos = planeAimSimPos; // Э1 plane fallback
-                _cachedAimHeight = 0f; // "хоть в пол"
+                _cachedAimHeight = 0f; // at the floor, if nothing else
                 _cachedAimZone = HitZone.None;
                 _cachedHoveredMob = null;
                 _cachedAimWorldPoint = SimSpace.ToWorld(planeAimSimPos); // same floor fallback
@@ -175,15 +182,16 @@ namespace Ring.Presentation
         ///
         /// Aim at anything at or above the contact height — which is every mob
         /// body, and the player dolls, and nothing else — and the fraction is 1,
-        /// so this returns `CurrentAimWorldPoint` unchanged. A WALL IS NOT IN
-        /// THAT LIST (fix-round 1, G-5 item 8, correcting this paragraph's own
-        /// earlier claim): a cursor over a wall is a cast MISS, reads height 0
-        /// through the plane fallback, and gets the floor's own fraction. That
-        /// is the honest answer for it too — the round really does come down
-        /// short of the wall's foot — but it is not the "nothing moves" case.
-        /// Stage 2 Task 46 changed WHY that is a miss without changing THAT it
-        /// is one: arena geometry used to be outside the cast's mask entirely,
-        /// and is now inside it and deliberately reported as a miss.
+        /// so this returns `CurrentAimWorldPoint` unchanged. A WALL IS IN THAT
+        /// LIST AS OF Т33c (bd `app-1ru`, correcting this paragraph twice over
+        /// now): a cursor over a barrier is a `Screened` cast, and it reads the
+        /// barrier's OWN hit point and height rather than height 0 through the
+        /// plane fallback. Aimed at a face standing at or above the contact
+        /// height, the fraction is 1 and the impact point is the face itself —
+        /// which is exactly where the round stops. The earlier reading ("a
+        /// cast MISS ... the round really does come down short of the wall's
+        /// foot") described a point BEHIND the wall and called it honest; it
+        /// was the defect.
         ///
         /// ONE HEIGHT, READ ONCE. The aim height handed to the helper and the
         /// `y` of the far endpoint it interpolates toward must be the same
@@ -247,17 +255,21 @@ namespace Ring.Presentation
         /// (`GetComponentInParent` — the proxy is a direct child of the same
         /// root `MobView` sits on, `EnsureAimProxyChildren`'s own call sites).
         ///
-        /// ARENA GEOMETRY IS IN THE CAST, AND EVERY HIT ON IT IS A MISS (Stage
-        /// 2 Task 46, bd `app-1ru`). The mask covers `GreyboxBuilder.
+        /// ARENA GEOMETRY IS IN THE CAST, AND A HIT ON IT IS A SCREEN (Stage 2
+        /// Task 46 put it in the mask; Stage 3 Т33c made the answer its own —
+        /// bd `app-1ru`, both halves of it). The mask covers `GreyboxBuilder.
         /// CosmeticsLayer` as well as the proxies, and `Physics.Raycast`
-        /// returns the NEAREST hit, so the three cases fall out of that one
-        /// fact: cursor over bare floor — the floor is the nearest hit, miss,
-        /// Э1 plane fallback, exactly as before this task, since a miss was
-        /// already the answer there; cursor on a mob — its proxy sits above the
-        /// floor and therefore nearer along a descending camera ray, hover;
-        /// cursor on a mob standing BEHIND a wall — the wall is nearer, miss,
-        /// and the head pulse and red ray stop promising a target the round
-        /// cannot reach. The bug this closes was never that the cast hit walls
+        /// returns the NEAREST hit, so the cases fall out of that one fact:
+        /// cursor over bare floor — the floor is the nearest hit, miss, Э1
+        /// plane fallback, exactly as in Stage 1; cursor on a mob — its proxy
+        /// sits above the floor and therefore nearer along a descending camera
+        /// ray, hover; cursor on a mob standing BEHIND a wall — the wall is
+        /// nearer, `Screened`, and the head pulse and red ray stop promising a
+        /// target the round cannot reach. A SCREEN IS NOT A MISS, and reporting
+        /// it as one was the live remainder of this bug: the caller then took
+        /// the plane point, which sits on the floor BEHIND the barrier, so the
+        /// ray was drawn clean through arcs the rounds could not cross. The
+        /// aim point of a screened cast is the barrier's own face. The bug this closes was never that the cast hit walls
         /// (it never did — that is what `app-1ru`'s own description got wrong);
         /// it was that walls were invisible to it while the mob behind them was
         /// not. Layer 8 carries the arena greybox and nothing else — casings
@@ -293,8 +305,12 @@ namespace Ring.Presentation
         /// PvP half of the same bug.
         ///
         /// THAT GATE IS FLAT, AND TODAY THAT COSTS A NAMED BAND, NOT NOTHING.
-        /// `HasLineOfFire` knows obstacle circles and interior wall stadiums in
-        /// plan only; it has no height and no `Arena.BarrierTop`, and it does
+        /// `HasLineOfFire` knows obstacle circles, interior wall stadiums and —
+        /// since Stage 3 Task 9 — zone-wall ARCS in plan only (this sentence
+        /// named the first two until Task 30 drew the third: the arcs share
+        /// `BarrierTop` with the other interior barriers, so everything the
+        /// paragraph says below covers them unchanged); it has no height and no
+        /// `Arena.BarrierTop`, and it does
         /// not consult the outer ring boundary at all (its own doc says so) —
         /// harmless here, because a target beyond the rim is not a target. For
         /// every aim point at or below the barrier column the round's own radius
@@ -352,7 +368,41 @@ namespace Ring.Presentation
         /// (Before Task 45a that null was reachable only through this very
         /// self-hit branch, because the player's own doll carried the only
         /// proxy in the arena that was not a mob's.)
-        bool TryAimProxy(out float2 simPos, out float height, out HitZone zone,
+        /// What an aimed frame's one cast found. THREE ANSWERS, NOT TWO
+        /// (bd `app-1ru`, the owner's В1 playtest): the old `bool` collapsed
+        /// "the arena stopped the ray HERE" into the same "no" as "the ray
+        /// found nothing at all", and the caller answered both with the Э1
+        /// plane point — which for a screened cast is a point BEHIND the wall.
+        /// That is what the owner saw: the ray walked through the zone arcs
+        /// while the rounds stopped dead in them, the picture and the
+        /// simulation disagreeing in the direction Task 30 never suspected.
+        enum AimCast
+        {
+            /// Nothing in the way and no proxy under the cursor — the Э1 plane
+            /// point is the honest answer, as it has been since Stage 1.
+            Miss,
+            /// Arena geometry stopped the CAMERA's ray, and where it stopped
+            /// is the point.
+            ///
+            /// ⚠ THE LIMIT, NAMED RATHER THAN LEFT TO BE FOUND (fix round, Ф7
+            /// review B-10; the first wording promised "the round goes exactly
+            /// that far and no further"). This branch is not gated by
+            /// `HasLineOfFire`, unlike `Proxy` below — so with a SECOND barrier
+            /// between the muzzle and the barrier the cursor landed on, the
+            /// camera looks over the near one from its own height while a flat
+            /// shot does not, and the marker sits on the far wall while the
+            /// round dies in the near one. Gating it naively is not the fix:
+            /// the point lies ON a barrier's face, inside the same barrier
+            /// grown by `ProjectileRadius`, so the gate would refuse the honest
+            /// case too. The remainder belongs with the height question the
+            /// class doc already defers to post-MVP low cover.
+            Screened,
+            /// A proxy — a mob or another collector's doll — with the line of
+            /// fire agreeing.
+            Proxy,
+        }
+
+        AimCast TryAimProxy(out float2 simPos, out float height, out HitZone zone,
             out MobView hoveredMob, out Vector3 worldPoint)
         {
             Mouse mouse = Mouse.current;
@@ -363,7 +413,7 @@ namespace Ring.Presentation
                 zone = HitZone.None;
                 hoveredMob = null;
                 worldPoint = default;
-                return false;
+                return AimCast.Miss;
             }
 
             // One copy of the built config for the whole method — the cast's
@@ -387,21 +437,32 @@ namespace Ring.Presentation
                 zone = HitZone.None;
                 hoveredMob = null;
                 worldPoint = default;
-                return false;
+                return AimCast.Miss;
             }
 
-            // Arena geometry screens whatever stands behind it: report a miss,
-            // which sends the caller to the Э1 plane fallback — the same answer
-            // the cursor already got over bare floor, and the honest one for a
-            // point the round cannot reach (method doc).
+            // ARENA GEOMETRY STOPS THE RAY, AND WHERE IT STOPPED IS THE POINT
+            // (bd `app-1ru`, the owner's В1 playtest). This branch used to
+            // report a plain miss and let the caller fall through to the Э1
+            // plane cast — which lands the aim point on the floor BEHIND the
+            // barrier, because the plane cast knows no geometry at all. The
+            // round does not go there: `ProjectileSystem` kills it in the arc.
+            // So the ray was drawn straight through a wall the bullets bounced
+            // off, which is what the owner reported and the exact reverse of
+            // what Task 30 expected to find.
+            //
+            // A SCREEN IS STILL NOT A PROXY. `zone` stays `None` and
+            // `hoveredMob` stays null — nothing is hovered, nothing pulses and
+            // no target is promised. The one thing that changes is WHERE the
+            // aim point sits: on the barrier's own face, which is as far as the
+            // round gets.
             if (hit.collider.gameObject.layer == GreyboxBuilder.CosmeticsLayer)
             {
-                simPos = default;
-                height = default;
+                simPos = SimSpace.ToSim(hit.point);
+                height = hit.point.y;
                 zone = HitZone.None;
                 hoveredMob = null;
-                worldPoint = default;
-                return false;
+                worldPoint = hit.point;
+                return AimCast.Screened;
             }
 
             // I1: self-hit — behave exactly like the miss branch above (the
@@ -415,7 +476,7 @@ namespace Ring.Presentation
                 zone = HitZone.None;
                 hoveredMob = null;
                 worldPoint = default;
-                return false;
+                return AimCast.Miss;
             }
 
             // Fix-round 1 (Ф-2): the camera screened this hit, now the shot
@@ -433,7 +494,7 @@ namespace Ring.Presentation
                 zone = HitZone.None;
                 hoveredMob = null;
                 worldPoint = default;
-                return false;
+                return AimCast.Miss;
             }
 
             simPos = aimSimPos;
@@ -446,7 +507,7 @@ namespace Ring.Presentation
             // drift from the real cast result (class doc, K15 "one cast"
             // contract).
             worldPoint = hit.point;
-            return true;
+            return AimCast.Proxy;
         }
 
         static HitZone ClassifyProxyZone(Collider proxyCollider)

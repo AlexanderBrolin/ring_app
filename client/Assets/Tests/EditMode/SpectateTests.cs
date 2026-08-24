@@ -37,17 +37,61 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(SpectateRefusal.RequesterAlive,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: true, targetAlive: true,
+                    requesterAlive: true, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "a LIVE player's spectate request must be refused — only a dead client may ask to spectate (spec §3.10 :673)");
 
             // Positive witness: the same request, requester dead, passes.
             Assert.AreEqual(SpectateRefusal.None,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "witness: the identical request with a DEAD requester must be accepted — "
                 + "RequesterAlive is the only thing that changed");
+        }
+
+        [Test]
+        public void RequesterExtracted_IsRefused_AndIsNotTheSameRefusalAsBeingAlive()
+        {
+            // Spec §3.5 Р257, the half nobody had an addressee for (Ф5 gate,
+            // review A-1): the policy must refuse a collector who EXTRACTED —
+            // he left the objective, and watching through somebody else's
+            // eyes is not his to have any more. Since Т23
+            // an extraction sets Alive = false, so the collector who WALKED
+            // OUT passes the RequesterAlive gate exactly like a corpse does —
+            // the world cannot tell them apart, and the flag is the only
+            // thing that can.
+            var policy = new SpectatePolicy(cooldownTicks: 10);
+
+            Assert.AreEqual(SpectateRefusal.RequesterExtracted,
+                policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
+                    requesterAlive: false, requesterExtracted: true, targetAlive: true,
+                    lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
+                "a collector who left the raid is not a spectator of it — he is out of the "
+                + "arena entirely (Р257), and that is a DIFFERENT refusal from being alive");
+
+            // Positive witness: the identical request from a CORPSE passes.
+            Assert.AreEqual(SpectateRefusal.None,
+                policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
+                    lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
+                "witness: the identical request from a dead-but-not-extracted requester must "
+                + "still be accepted — Extracted is the only thing that changed");
+        }
+
+        [Test]
+        public void SpectateRefusal_ValuesAreStableOnTheWire()
+        {
+            // Same pinning discipline MatchEndReason and HandshakeRefusal
+            // carry: RequesterExtracted is APPENDED, so no code already in
+            // flight changes meaning.
+            Assert.AreEqual(0, (byte)SpectateRefusal.None);
+            Assert.AreEqual(1, (byte)SpectateRefusal.RequesterAlive);
+            Assert.AreEqual(2, (byte)SpectateRefusal.TargetOutOfRange);
+            Assert.AreEqual(3, (byte)SpectateRefusal.TargetIsSelf);
+            Assert.AreEqual(4, (byte)SpectateRefusal.TargetDead);
+            Assert.AreEqual(5, (byte)SpectateRefusal.CooldownActive);
+            Assert.AreEqual(6, (byte)SpectateRefusal.RequesterExtracted);
         }
 
         [Test]
@@ -57,14 +101,14 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(SpectateRefusal.TargetDead,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: false,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: false,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "spectating names a LIVING player as the target (spec §3.10 :674) — a dead target must be refused");
 
             // Positive witness: the same request, target alive, passes.
             Assert.AreEqual(SpectateRefusal.None,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "witness: the identical request with a LIVE target must be accepted — "
                 + "TargetDead is the only thing that changed");
@@ -77,13 +121,13 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(SpectateRefusal.TargetOutOfRange,
                 policy.Evaluate(requesterIndex: 0, targetIndex: -1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "a negative targetIndex is outside [0, playerCount) and must be refused");
 
             Assert.AreEqual(SpectateRefusal.TargetOutOfRange,
                 policy.Evaluate(requesterIndex: 0, targetIndex: PlayerCount, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "targetIndex == playerCount is one past the last legal slot and must be refused — "
                 + "the range is HALF-OPEN, [0, playerCount)");
@@ -91,7 +135,7 @@ namespace Ring.Simulation.Tests
             // Positive witness: the highest LEGAL index, playerCount - 1, passes.
             Assert.AreEqual(SpectateRefusal.None,
                 policy.Evaluate(requesterIndex: 0, targetIndex: PlayerCount - 1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "witness: playerCount - 1 is the highest legal slot and must be accepted");
         }
@@ -105,7 +149,7 @@ namespace Ring.Simulation.Tests
             // false here, since RequesterAlive already vetoes a live one.
             Assert.AreEqual(SpectateRefusal.TargetIsSelf,
                 policy.Evaluate(requesterIndex: 1, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: false,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: false,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "a dead player naming their own slot must be refused as TargetIsSelf, not TargetDead — "
                 + "the corpse belongs to them, this is not 'watching a stranger's body'");
@@ -116,7 +160,7 @@ namespace Ring.Simulation.Tests
             // slot passes. TargetIsSelf is the only thing that changed.
             Assert.AreEqual(SpectateRefusal.None,
                 policy.Evaluate(requesterIndex: 1, targetIndex: 0, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "witness: the same dead requester naming SOMEONE ELSE's living slot must be accepted — "
                 + "TargetIsSelf is the only thing that changed");
@@ -130,7 +174,7 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(SpectateRefusal.CooldownActive,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: 100, currentTick: 100 + cooldownTicks - 1),
                 "one tick short of the configured interval, the switch must still be refused");
 
@@ -138,7 +182,7 @@ namespace Ring.Simulation.Tests
             // switch is due, not one tick later.
             Assert.AreEqual(SpectateRefusal.None,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: 100, currentTick: 100 + cooldownTicks),
                 "AT exactly cooldownTicks ticks since the last switch, the next one must be accepted — "
                 + "the boundary is >=, not >");
@@ -151,14 +195,14 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(SpectateRefusal.None,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "a player's very first spectate switch of the match, requested on tick 0, "
                 + "must not be refused for a cooldown that never started");
 
             Assert.AreEqual(SpectateRefusal.None,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 1_000_000),
                 "the NoPriorSwitch sentinel must short-circuit the cooldown at ANY currentTick, "
                 + "not merely at tick 0 — it names 'no prior switch happened', not 'happened long ago'");
@@ -176,7 +220,7 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(SpectateRefusal.None,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: 100, currentTick: 100),
                 "a zero-tick cooldown must let the very next tick's switch through immediately");
         }
@@ -220,7 +264,7 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(SpectateRefusal.RequesterAlive,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 99, PlayerCount,
-                    requesterAlive: true, targetAlive: false,
+                    requesterAlive: true, requesterExtracted: false, targetAlive: false,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "a live requester must be refused RequesterAlive even when the target index is "
                 + "also invalid and the target is also dead — RequesterAlive is checked FIRST "
@@ -237,7 +281,7 @@ namespace Ring.Simulation.Tests
             // refuse for A DIFFERENT reason.
             Assert.AreEqual(SpectateRefusal.TargetOutOfRange,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 99, PlayerCount,
-                    requesterAlive: false, targetAlive: false,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: false,
                     lastSwitchTick: SpectatePolicy.NoPriorSwitch, currentTick: 0),
                 "witness: with a DEAD requester the same fixture must be refused TargetOutOfRange — "
                 + "an invalid index outranks a targetAlive value that was never even in range to matter");
@@ -256,7 +300,7 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(SpectateRefusal.TargetDead,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: false,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: false,
                     lastSwitchTick: 100, currentTick: 100 + cooldownTicks - 1),
                 "a dead target must be refused TargetDead even while the cooldown has not "
                 + "elapsed either — TargetDead is checked BEFORE CooldownActive");
@@ -267,7 +311,7 @@ namespace Ring.Simulation.Tests
             // the assert above did not report it.
             Assert.AreEqual(SpectateRefusal.CooldownActive,
                 policy.Evaluate(requesterIndex: 0, targetIndex: 1, PlayerCount,
-                    requesterAlive: false, targetAlive: true,
+                    requesterAlive: false, requesterExtracted: false, targetAlive: true,
                     lastSwitchTick: 100, currentTick: 100 + cooldownTicks - 1),
                 "witness: with a LIVE target the same unexpired cooldown must surface as "
                 + "CooldownActive — TargetDead was the only thing masking it above");

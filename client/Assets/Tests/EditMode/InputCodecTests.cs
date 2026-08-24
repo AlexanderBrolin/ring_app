@@ -13,9 +13,10 @@ namespace Ring.Simulation.Tests
 {
     // Stage 2 Task 25 (spec §3.8, Р30/Р34/Р84): InputCodec packs the four
     // SimInput fields that actually cross the wire (MoveDir, AimPoint,
-    // AimHeight, four flags — recounted by grep against SimInput.cs, not
-    // quoted from the brief, per task-25-brief §2's own warning) into 8
-    // bytes and back, using Quantize (Task 24) for every scalar mapping.
+    // AimHeight, five flags as of Stage 3 Task 20 — recounted by grep
+    // against SimInput.cs, not quoted from the brief, per task-25-brief
+    // §2's own warning) into 8 bytes and back, using Quantize (Task 24)
+    // for every scalar mapping.
     // Task 30's prediction-parity test depends on Decode(Encode(...))
     // reproducing the exact value the client is about to send (Р34), so the
     // contracts below are exercised directly, not assumed from Quantize's
@@ -457,7 +458,69 @@ namespace Ring.Simulation.Tests
             AssertSingleFlagByte(new SimInput { DashRequested = true }, 0b0000_0010, "DashRequested -> bit1");
             AssertSingleFlagByte(new SimInput { AimHeld = true }, 0b0000_0100, "AimHeld -> bit2");
             AssertSingleFlagByte(new SimInput { SlideRequested = true }, 0b0000_1000, "SlideRequested -> bit3");
+            // Stage 3 Task 20 (coordinator D-6): a fifth, independent case —
+            // same reasoning as the four above, not re-derived against the
+            // fresh combinatorics of five-in-eight (the "1679/59" figures
+            // above are the four-bit measurement and are not restated here).
+            // A round-trip test alone cannot catch Encode/Decode agreeing on
+            // the WRONG bit for InventoryOpen; only a raw-byte pin like this
+            // one can.
+            AssertSingleFlagByte(new SimInput { InventoryOpen = true }, 0b0001_0000, "InventoryOpen -> bit4");
             AssertSingleFlagByte(new SimInput(), 0b0000_0000, "no flags -> zero byte");
+        }
+
+        [Test]
+        public void InventoryOpenFlag_RoundTrips()
+        {
+            // Stage 3 Task 20 (spec §3.8/§3.11): the fifth flag bit — the loot
+            // window is now carried on the wire like the other four, in bits
+            // FlagCombinations_AllSixteen_RoundTripExactly does not touch:
+            // that sweep predates this bit and is deliberately NOT re-scoped
+            // to it (sixteen combinations of the original four). FlagBits_
+            // EachOccupiesItsDocumentedPosition, by contrast, WAS extended to
+            // bit 4 in this same task (decision D-6) and carries the direct
+            // byte-level pin.
+            var baseline = new SimInput
+            {
+                MoveDir = new float2(0.3f, -0.4f),
+                AimPoint = new float2(11f, -7f),
+                AimHeight = 1.5f
+            };
+
+            SimInput open = baseline; open.InventoryOpen = true;
+            SimInput decodedOpen = RoundTrip(open, ConfigA);
+            Assert.IsTrue(decodedOpen.InventoryOpen, "InventoryOpen=true must round-trip true");
+
+            SimInput closed = baseline; closed.InventoryOpen = false;
+            SimInput decodedClosed = RoundTrip(closed, ConfigA);
+            Assert.IsFalse(decodedClosed.InventoryOpen, "InventoryOpen=false must round-trip false");
+
+            // Independence from the other four flags (mirrors Flags_RoundTrip_
+            // EachIndividually's own "alone" premise): InventoryOpen true must
+            // not perturb the existing four, and vice versa.
+            SimInput mixed = baseline;
+            mixed.FireHeld = true; mixed.SlideRequested = true; mixed.InventoryOpen = true;
+            SimInput decodedMixed = RoundTrip(mixed, ConfigA);
+            Assert.IsTrue(decodedMixed.FireHeld, "InventoryOpen must not perturb FireHeld");
+            Assert.IsTrue(decodedMixed.SlideRequested, "InventoryOpen must not perturb SlideRequested");
+            Assert.IsTrue(decodedMixed.InventoryOpen);
+            Assert.IsFalse(decodedMixed.DashRequested, "InventoryOpen must not perturb DashRequested");
+            Assert.IsFalse(decodedMixed.AimHeld, "InventoryOpen must not perturb AimHeld");
+        }
+
+        [Test]
+        public void SizeBytes_IsStillEight()
+        {
+            // Stage 3 Task 20 (Global Constraints, hard prohibition #5): the
+            // fifth flag bit rides inside the EXISTING byte 7, not a ninth
+            // byte — SizeBytes_IsEightAndEveryByteIsWritten already pins this
+            // number for the pre-Task-20 layout; this is the same pin
+            // restated at the exact point a reader would otherwise expect the
+            // payload to grow, so a future editor reaching for "just add one
+            // more byte" finds a red test immediately instead of only
+            // discovering the constraint two tests away.
+            Assert.AreEqual(8, InputCodec.SizeBytes,
+                "InventoryOpen must fit inside byte 7's existing flags, not grow the payload");
         }
 
         static void AssertSingleFlagByte(in SimInput input, byte expected, string what)
@@ -565,13 +628,23 @@ namespace Ring.Simulation.Tests
             // Fix-round finding F5: Decode builds a fresh SimInput with an
             // object initializer, so a field added in a later stage would
             // come back as default and no test would notice. Same guard shape
-            // as SimConfigHashTests.SimConfig_CarriesExactlySevenSections —
-            // it does not prove a new field is carried, it forces whoever
-            // adds one to come here and decide.
+            // as SimConfigHashTests.SimConfig_CarriesExactlyTwelveFields
+            // (coordinator fix-round Ф3 review m4: renamed from
+            // …ExactlyEightSections since Т13 grew the section count to
+            // twelve) — it does not prove a new field is carried, it forces
+            // whoever adds one to come here and decide.
+            // Stage 3 Task 17: InventoryOpen joins the struct — the decision
+            // this sentinel exists to force, made and recorded here rather
+            // than defaulted into. Stage 3 Task 20 carries it the rest of
+            // the way: the bit lives in InputCodec.InventoryOpenBit (byte 7,
+            // bit 4) and ReplicateData's own Flags byte, with a dedicated
+            // round-trip case in InventoryOpenFlag_RoundTrips below — this
+            // sentinel's own job stays narrow (a field was added, not
+            // whether the wire carries it).
             string[] expected =
             {
                 "MoveDir", "AimPoint", "FireHeld", "DashRequested",
-                "AimHeight", "AimHeld", "SlideRequested"
+                "AimHeight", "AimHeld", "SlideRequested", "InventoryOpen"
             };
             var actual = new System.Collections.Generic.List<string>();
             foreach (System.Reflection.FieldInfo f in typeof(SimInput).GetFields()) actual.Add(f.Name);

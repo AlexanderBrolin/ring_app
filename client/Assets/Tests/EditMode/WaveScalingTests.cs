@@ -13,10 +13,15 @@ namespace Ring.Simulation.Tests
     /// expression over TestConfigs — never a literal lifted out of a .asset.
     public class WaveScalingTests
     {
-        const float Eps = 1e-4f;
-
-        /// The one number spec §3.4 states end to end: BaseCount 4, three
-        /// players, PerPlayerCountFrac 0.7 => 4 x 2.4 = 9.6 => round = 10.
+        /// The one number Stage 2 Task 16's spec §3.4 stated end to end:
+        /// BaseCount 4, three players, PerPlayerCountFrac 0.7 => 4 x 2.4
+        /// = 9.6 => round = 10. ⚠ The QUALIFIER matters (amended in Т6):
+        /// the live wave-cadence spec's own §3.4 now ships BaseCount 16 and
+        /// works the same example to round(16 x 2.4) = 38. This test is
+        /// unaffected either way -- it holds its own manual WaveSimConfig
+        /// below and reads neither TestConfigs nor the .asset -- but an
+        /// unqualified "spec §3.4" would send the next reader to a number
+        /// that contradicts the assert.
         /// Stated as an explicit fixture so this is a real expectation rather
         /// than the production formula copied into the assert.
         [Test]
@@ -102,6 +107,38 @@ namespace Ring.Simulation.Tests
             // of this test green).
             c.Wave.BaseCount = c.Wave.FallbackSlots;
             c.Wave.MaxMobsPerWave = c.Wave.FallbackSlots * 2;
+            // Stage 3 Task 12: the closing assertion counts the wave against
+            // ONE ring's worth of slots, so the fixture says so instead of
+            // letting three rings share the grid. With three rings the grid
+            // offers 3 * FallbackSlots = 72 seats, the two-player wave of
+            // round(24 * 1.7) = 41 fits into them without a single refusal,
+            // and the distance rule this test exists for is never exercised —
+            // the assertion said exactly that ("no ring slot was refused at
+            // all", 41 against 24) and was right.
+            //
+            // ⚠ Т4: the isolation was ZoneWeights = {1,0,0}; with the weights
+            // gone a ring is isolated by making the arena ZONELESS, which
+            // WaveSystem.RingIsFrozen answers by running Zone.Outer and
+            // freezing the other two. Same one-ring world, through the
+            // mechanism that still exists — and now the ring owes a WHOLE
+            // wave of 41 against 24 slots rather than a share of one.
+            c.Arena.ZoneRadius = System.Array.Empty<float>();
+            // ⚠ Т5: THIS TEST SWITCHES THE CADENCE'S TWO LIMITS OFF FOR ITSELF,
+            // and that is what keeps it a test of the PLACEMENT FILTER rather
+            // than of the cadence. Both would otherwise answer the closing
+            // assertion for it, silently:
+            //  - the per-tick budget (2) means the loop below, which stops at
+            //    the FIRST mob, would examine two mobs instead of a whole wave,
+            //    and "fewer seated than there are slots" would be trivially
+            //    true of any implementation at all — a vacuum, not a witness;
+            //  - the ring's ceiling in TestConfigs is 24, exactly FallbackSlots,
+            //    so a wave stopped by the CEILING would read as a wave stopped
+            //    by the distance rule.
+            // With the whole wave attempted in one tick, the mobs are also read
+            // where they were SEATED rather than wherever they have walked to,
+            // which is what the two distance assertions below are about.
+            c.Wave.MaxSpawnsPerZonePerTick = c.Wave.MaxMobsPerWave;
+            c.Wave.MaxAliveByZone = new[] { c.Wave.MaxMobsPerWave, 16, 8 };
             float ringRadius = c.Arena.Radius - c.Wave.SpawnRingInset;
             // Half the spawn ring's radius: comfortably larger than the gap
             // between a player parked on the ring and the ring itself, so the
@@ -129,7 +166,7 @@ namespace Ring.Simulation.Tests
             p1.Hp = 0f;
             w.SetPlayerForTest(1, p1);
 
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             var idle = new SimInput[w.PlayerCount];
             for (int i = 0; i < 200 && w.MobCount == 0; i++) w.TickAll(idle);
             w.CaptureSnapshot(snap);
@@ -156,12 +193,95 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void SpawnCandidateInsideArc_IsRejected()
+        {
+            // Stage 3 Task 9: WaveSystem.IsValidSpawn grows an arc-overlap
+            // rejection (Geometry.OverlapsArc), the same "reuse the existing
+            // overlap primitive" idiom as the obstacle/wall checks above it
+            // (IsValidSpawn's own doc). A zone wall's body placed squarely ON
+            // the spawn ring, with NO doors, must reject every fallback-grid
+            // candidate — none of the RNG-free grid slots can land outside
+            // the wall's body when the whole ring sits inside its band.
+            var c = TestConfigs.Default();
+            c.Wave.FirstWaveDelay = 0.1f;
+            c.Wave.MaxSpawnAttempts = 0; // fixed FallbackSlots grid only — no RNG luck
+            //
+            // ⚠ PREMISE REPAIRED IN Ф2's FIX-ROUND (review B-I3) — the same
+            // class of defect Т12 found in TrioSaturated and failed to sweep
+            // for here. The inset is chosen against Arena.Radius so the OUTER
+            // ring lands at 20, dead center of the band below; but Т12 turned
+            // the zones on, and the same inset put the Middle ring at
+            // 92 - 93 = -1 and the Core ring at 65 - 93 = -28. The budget then
+            // split across the rings, and the Middle candidates were refused
+            // by MinSpawnDistanceToPlayer rather than by any arc: green by a
+            // foreign rule for two zones out of three, with this method's own
+            // sentence ("the whole ring sits inside its band") false for both.
+            // Leaving only the Outer ring running makes the sentence true
+            // again; the premise assertions below make it checkable rather
+            // than narrated.
+            //
+            // ⚠ Т4: that used to be ZoneWeights = {1,0,0}; the ring is now
+            // left alone by making the arena ZONELESS (WaveSystem.RingIsFrozen
+            // runs Outer and freezes the other two). The ZONE WALL fixture
+            // below is untouched by that — a wall is arena geometry, not a
+            // zone boundary — which is exactly why the two can be set
+            // independently here.
+            c.Arena.ZoneRadius = System.Array.Empty<float>();
+            c.Wave.SpawnRingInset = c.Arena.Radius - 20f; // OUTER spawn ring lands at radius 20
+            c.Arena.ZoneWallCount = 1;
+            c.Arena.ZoneWallRadius = new[] { 20f };
+            c.Arena.ZoneWallHalfWidth = new[] { 5f }; // band covers [15,25] — the spawn ring sits dead center
+            c.Arena.ZoneWallDoorStart = new[] { 0 };
+            c.Arena.ZoneWallDoorCount = new[] { 0 };
+            c.Arena.DoorCenterRad = System.Array.Empty<float>();
+            c.Arena.DoorFreeWidth = System.Array.Empty<float>();
+
+            var w = new SimulationWorld(11, c);
+            for (int i = 0; i < 200; i++) w.Tick(default);
+
+            var snap = new RenderSnapshot(c);
+            w.CaptureSnapshot(snap);
+            // Wave-cadence-per-zone (bd app-ggvz Т3): the frame carries the
+            // world AGGREGATE of the three per-ring WaveState instances, and
+            // this fixture leaves only Outer running -- so the aggregate IS
+            // the outer debt here.
+            int outerDebt = snap.Wave.PendingChaser + snap.Wave.PendingGunner
+                + snap.Wave.PendingElite;
+            Assert.Greater(outerDebt, 0,
+                "fixture premise: the wave must actually owe mobs to the Outer zone, or the arc "
+                + "rejection below is never even attempted");
+            // ⚠ WAS A TAUTOLOGY until the review of this task: it compared
+            // snap.Wave.PendingTotal against the sum of the same three fields
+            // of the same snapshot, and PendingTotal is the computed property
+            // of exactly that sum — true under any implementation whatsoever.
+            // The claim it MEANT to make is about the OTHER two rings, so it
+            // now reads them.
+            Assert.AreEqual(0,
+                w.WaveRef(Zone.Middle).PendingTotal + w.WaveRef(Zone.Core).PendingTotal,
+                "fixture premise: the WHOLE debt belongs to Outer — the middle and core rings are "
+                + "frozen on this zoneless arena and own nothing, so the aggregate above IS the "
+                + "outer ring's own debt");
+            Assert.AreEqual(0, w.MobCount,
+                "every fallback slot sits inside the zone wall's body — none should have spawned");
+        }
+
+        [Test]
         public void NoAlivePlayers_WaveDirectorFreezes_PhaseAndTimerStandStill()
         {
             // Nobody alive => WaveSystem.Update returns before touching the
             // phase timer at all: neither the countdown nor the phase may move.
+            //
+            // ⚠ EXTENDED IN Т4 (app-ggvz), not duplicated: the early exit is
+            // ONE return, above the whole per-ring loop, so it either freezes
+            // ALL THREE rings or none — and a mutant that moved the exit
+            // INSIDE the loop, or applied it to the ring it happens to reach
+            // first, would leave the world aggregate below looking untouched
+            // while the middle and core rings ticked on. The aggregate is
+            // therefore no longer trusted alone: every ring is read by name.
             var c = TestConfigs.Default();
             var w = new SimulationWorld(11, c, 2);
+            var before = new WaveState[Zones.Count];
+            for (int z = 0; z < Zones.Count; z++) before[z] = w.WaveRef((Zone)z);
 
             for (int i = 0; i < w.PlayerCount; i++)
             {
@@ -171,10 +291,10 @@ namespace Ring.Simulation.Tests
                 w.SetPlayerForTest(i, p);
             }
 
-            var snap = new RenderSnapshot(c.Arena);
+            var snap = new RenderSnapshot(c);
             w.CaptureSnapshot(snap);
             WavePhase phaseBefore = snap.Wave.Phase;
-            float timerBefore = snap.Wave.PhaseTimer;
+            int ticksBefore = snap.Wave.PhaseTicks;
             int indexBefore = snap.Wave.WaveIndex;
 
             var idle = new SimInput[w.PlayerCount];
@@ -182,10 +302,21 @@ namespace Ring.Simulation.Tests
 
             w.CaptureSnapshot(snap);
             Assert.AreEqual(phaseBefore, snap.Wave.Phase, "phase moved with nobody alive");
-            Assert.AreEqual(timerBefore, snap.Wave.PhaseTimer, Eps,
+            Assert.AreEqual(ticksBefore, snap.Wave.PhaseTicks,
                 "the wave timer kept counting down with nobody alive");
             Assert.AreEqual(indexBefore, snap.Wave.WaveIndex, "a wave started with nobody alive");
             Assert.AreEqual(0, snap.MobCount);
+
+            for (int z = 0; z < Zones.Count; z++)
+            {
+                WaveState now = w.WaveRef((Zone)z);
+                CollectionAssert.AreEqual(
+                    new[] { (int)before[z].Phase, before[z].PhaseTicks, before[z].WaveIndex,
+                        before[z].PendingTotal },
+                    new[] { (int)now.Phase, now.PhaseTicks, now.WaveIndex, now.PendingTotal },
+                    $"ring {(Zone)z} moved with nobody alive — the early exit is one return "
+                    + "above the ring loop and must freeze every ring, not the first one");
+            }
         }
     }
 }

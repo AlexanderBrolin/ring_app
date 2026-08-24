@@ -94,6 +94,32 @@ namespace Ring.Simulation.Tests
         static MatchEndedNet Ended(ushort epoch, uint finalTick = 500u)
             => new MatchEndedNet { Reason = 1, MatchEpoch = epoch, FinalTick = finalTick, Kills = 3 };
 
+        /// The public board of a raid that ended (Stage 3 Т34). Two seats with
+        /// DIFFERENT credits, so a board that arrived can be told from a
+        /// zeroed one.
+        static MatchResultsNet Results(ushort epoch)
+            => new MatchResultsNet
+            {
+                Reason = 1,
+                MatchEpoch = epoch,
+                FinalTick = 500u,
+                Outcome = new byte[] { 0, 1 },
+                CreditsTotal = new[] { 41, 42 },
+            };
+
+        /// This collector's own end-of-raid tally (bd `app-qw01`). `Reason`
+        /// is `MatchEndReason.None` = 0, which is the message's own contract:
+        /// the MATCH has not ended. `Kills` differs from `Ended`'s above so a
+        /// tally that arrived can be told from the match's own.
+        static RaidEndedNet RaidEnded(ushort epoch, uint raidEndTick = 300u)
+            => new RaidEndedNet
+            {
+                Tally = new MatchEndedNet
+                {
+                    Reason = 0, MatchEpoch = epoch, FinalTick = raidEndTick, Kills = 9,
+                },
+            };
+
         /// A state that has already been admitted to `FirstEpoch` — the
         /// starting point of every life-cycle test below.
         static ClientLinkState Joined()
@@ -475,6 +501,167 @@ namespace Ring.Simulation.Tests
         // epoch with it.
         // ------------------------------------------------------------------
 
+        // ------------------------------------------------------------------
+        // Stage 3 Т34 (fix round, Ф7 review B-4): the PUBLIC board — the fifth
+        // life-cycle message. Its four branches had no witness at all, which
+        // is exactly what this class exists to prevent: the state machine was
+        // split out of `ClientMatchLink` so that every branch of it could be
+        // driven from a test.
+        // ------------------------------------------------------------------
+
+        // ------------------------------------------------------------------
+        // bd `app-qw01`: the collector's OWN raid ends before the match does.
+        // Until this message his counters travelled nowhere and the end-of-raid
+        // screen printed dashes at him — nineteen seconds for one who walked
+        // out on the В2 playtest, over four minutes for one who died early.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void RaidTally_IsApplied_WhileTheMatchIsStillRunning_AndMovesNothing()
+        {
+            ClientLinkState state = Joined();
+            Assert.IsFalse(state.HasRaidEnded, "fixture premise: no tally before the raid ends");
+
+            ClientLinkState.LinkAction action = state.OnRaidEnded(RaidEnded(FirstEpoch));
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.Applied, action.Verdict,
+                "a collector's own raid ending is news the server is entitled to send "
+                + "in the middle of a match");
+            Assert.IsFalse(action.ResetSeams,
+                "a personal tally resets nothing: the epoch has not changed and the "
+                + "buffer is still feeding the raid onto the screen behind the panel");
+            Assert.IsTrue(state.HasRaidEnded, "ClientLinkState.HasRaidEnded");
+            Assert.AreEqual(9, state.RaidEnded.Tally.Kills,
+                "ClientLinkState.RaidEnded must hold the tally the message carried");
+            // ⚠ THE CLAIM THE WHOLE MESSAGE EXISTS FOR. An early MatchEndedNet
+            // would have cost no new type and would have landed the link in
+            // MatchEnded — the phase that shuts spectating down and answers
+            // every later life-cycle message with AlreadyEnded, while other
+            // collectors are still playing.
+            Assert.AreEqual(ClientLinkState.LinkPhase.Joined, state.Phase,
+                "the collector's own raid ending must NOT end the match for the link");
+        }
+
+        [Test]
+        public void RaidTally_OfAForeignEpoch_IsRefused()
+        {
+            ClientLinkState state = Joined();
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.ForeignEpoch,
+                state.OnRaidEnded(RaidEnded(SecondEpoch)).Verdict,
+                "a tally stamped with another match is not this match's news");
+            Assert.IsFalse(state.HasRaidEnded,
+                "and a refused tally must leave nothing behind");
+        }
+
+        [Test]
+        public void RaidTally_DoesNotSurviveTheMatchItDescribes()
+        {
+            ClientLinkState state = Joined();
+            state.OnRaidEnded(RaidEnded(FirstEpoch));
+            Assert.IsTrue(state.HasRaidEnded, "fixture premise: the raid left a tally");
+
+            state.OnRestarted(Restarted(SecondEpoch));
+
+            // Same argument as the board directly below: a tally left standing
+            // would be handed to the screen on the first frame of the NEW raid
+            // and read as "your raid is already over", with the previous
+            // raid's numbers on it.
+            Assert.IsFalse(state.HasRaidEnded,
+                "a new epoch clears the previous raid's tally");
+        }
+
+        [Test]
+        public void Board_IsApplied_AfterTheMatchEnded_AndResetsNothing()
+        {
+            ClientLinkState state = Joined();
+            Assert.IsFalse(state.HasResults, "fixture premise: no board before the raid ends");
+            state.OnEnded(Ended(FirstEpoch));
+
+            ClientLinkState.LinkAction action = state.OnResults(Results(FirstEpoch));
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.Applied, action.Verdict,
+                "the board follows the personal message on the same reliable channel");
+            Assert.IsFalse(action.ResetSeams,
+                "a board resets nothing: the epoch has not changed and the buffer is still "
+                + "feeding the last seconds of the match onto the screen behind it");
+            Assert.IsTrue(state.HasResults, "ClientLinkState.HasResults");
+            Assert.AreEqual(42, state.ResultsNet.CreditsTotal[1],
+                "ClientLinkState.ResultsNet must hold the board the message carried");
+            Assert.AreEqual(ClientLinkState.LinkPhase.MatchEnded, state.Phase,
+                "the board does not move the phase — the END already did");
+        }
+
+        [Test]
+        public void Board_IsAppliedWhileStillJoined_Too()
+        {
+            // The ordinary case is "after the end", but the phase gate is the
+            // same two `OnEnded` accepts — a board that arrived first is news
+            // about this client's own match either way, and refusing it would
+            // trade a real screen for a strict ordering nothing needs.
+            ClientLinkState state = Joined();
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.Applied,
+                state.OnResults(Results(FirstEpoch)).Verdict);
+            Assert.IsTrue(state.HasResults);
+        }
+
+        [Test]
+        public void Board_OfAForeignEpoch_IsRefused_AndLeavesNoBoard()
+        {
+            ClientLinkState state = Joined();
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.ForeignEpoch,
+                state.OnResults(Results(SecondEpoch)).Verdict,
+                "a board about somebody else's match is not this client's news");
+            Assert.IsFalse(state.HasResults,
+                "…and it must not raise the flag the results screen watches");
+        }
+
+        [Test]
+        public void Board_BeforeAnyWelcome_IsUnexpected()
+        {
+            var state = new ClientLinkState();
+            Assert.IsTrue(state.TryBeginHello(), "fixture premise: hello sent, no welcome yet");
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.Unexpected,
+                state.OnResults(Results(FirstEpoch)).Verdict,
+                "a client that was never admitted to a match has no board to be given");
+            Assert.IsFalse(state.HasResults);
+        }
+
+        [Test]
+        public void Board_AfterARefusal_IsRefusedByValue()
+        {
+            var state = new ClientLinkState();
+            state.TryBeginHello();
+            state.OnRefused(new MatchRefusedNet { Reason = (byte)HandshakeRefusal.MatchFull });
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.LinkRefused,
+                state.OnResults(Results(FirstEpoch)).Verdict,
+                "a refused link stays refused for every message, the board included");
+            Assert.IsFalse(state.HasResults);
+        }
+
+        [Test]
+        public void Restart_ForgetsTheBoardOfThePreviousRaid()
+        {
+            // Т35's own subject, at the one seam that carries it: a board left
+            // standing would be handed to the results screen on the FIRST frame
+            // of the new raid, listing the previous one's endings while this one
+            // is being played behind it.
+            ClientLinkState state = Joined();
+            state.OnEnded(Ended(FirstEpoch));
+            state.OnResults(Results(FirstEpoch));
+            Assert.IsTrue(state.HasResults, "fixture premise: the finished raid left a board");
+
+            Assert.AreEqual(ClientLinkState.LinkVerdict.Applied,
+                state.OnRestarted(Restarted(SecondEpoch)).Verdict);
+
+            Assert.IsFalse(state.HasResults,
+                "a new epoch has no board yet, and the old one describes a raid nobody is in");
+        }
+
         [Test]
         public void MatchEnded_DoesNotResetTheSeams()
         {
@@ -574,9 +761,9 @@ namespace Ring.Simulation.Tests
             // tick buffered. Asserting against `SnapshotQueue.Depth` itself —
             // rather than restating `InterpBufferTicks + 2` here — is what
             // keeps the two from drifting apart silently.
-            var arena = TestConfigs.DefaultArena();
+            var cfg = TestConfigs.Default();
             var timings = Timings();
-            var ring = new SnapshotQueue(in arena, in timings);
+            var ring = new SnapshotQueue(in cfg, in timings);
 
             Assert.AreEqual(EventBudget * ring.Depth, NewQueue().Capacity,
                 "ClientEventQueue.Capacity must be the per-frame event budget times the number of "

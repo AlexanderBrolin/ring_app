@@ -1,4 +1,5 @@
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 using Unity.Mathematics;
 
 namespace Ring.Presentation
@@ -236,6 +237,46 @@ namespace Ring.Presentation
         /// moment, and it is the same one that permits the next request.
         bool SpectateRequestInFlight { get; }
 
+        /// Asks for ONE loot operation on behalf of the seat this client owns
+        /// (Stage 3 Т28 for the wire, raised here by Т32б); `true` when the
+        /// request was actually made. A REFUSAL IS A VALUE — a transport is not
+        /// a place to throw from.
+        ///
+        /// THE ANSWER IS NOT "THE OPERATION HAPPENED", and the two backends
+        /// disagree about how long the difference lasts. Over the wire `true`
+        /// means the bytes left the process and `LootRequestInFlight` stays up
+        /// until `LootResultNet` brings the verdict; in a local world the
+        /// verdict is the same tick's, and `LootRequestInFlight` is therefore
+        /// never up. Nothing is predicted in between either way (CR 3): the
+        /// caller dims the slot it pressed and waits, and locally that wait is
+        /// zero frames because there is no latency to hide.
+        ///
+        /// RAISED HERE ONLY NOW, AND THE OLD REASON WAS SOUND (R-229). Т28 kept
+        /// these five off the interface because `LocalSimBackend` would have had
+        /// to answer them with constants and nothing read them — a member for
+        /// its own sake (AGENT.md rule 3). Both halves of that are gone:
+        /// Т32б brings the reader (the inventory window), and
+        /// `SimulationWorld.TryBeginLoot` is public and synchronous, so the
+        /// local answers are the world's own rather than placeholders.
+        bool TryRequestLoot(LootOp op, int containerId, int slot);
+
+        /// Whether a loot request is still waiting for its verdict — the
+        /// interval §3.11 dims the addressed slot for.
+        bool LootRequestInFlight { get; }
+
+        /// The container half of the address the pending request — or the last
+        /// refusal — belongs to. Readable AFTER the answer, because that is
+        /// where the refusal has to be shown.
+        int LootRequestContainerId { get; }
+
+        /// The slot half of that address: a container slot for `Take`, a
+        /// backpack index for `Drop`/`Use`.
+        int LootRequestSlot { get; }
+
+        /// The verdict on the last answered request; `None` both before the
+        /// first answer and after an accepted one.
+        LootRefusal LastLootRefusal { get; }
+
         /// How much of player slot `slot`'s fade-out is already spent, in
         /// `[0, 1]` (Stage 2 Task 47c, bd `app-wcy`, spec §3.9 Р39/Р77) — `0`
         /// while the slot's records keep arriving, climbing to `1` once the
@@ -293,6 +334,98 @@ namespace Ring.Presentation
         /// "finished fading" want the same thing from the caller — let the doll
         /// go — and neither can strand one.
         bool ShouldKeepPlayerDoll(int slot);
+
+        /// How much of the MOB's fade-out is already spent, in `[0, 1]` (Stage
+        /// 3 Т32б, bd `app-dut`) — the entity-id twin of `PlayerFadeProgress`
+        /// above.
+        ///
+        /// IT EXISTS BECAUSE THE PICTURE WAS INCONSISTENT, not merely abrupt.
+        /// Since Task 47c a player at the edge of sight freezes and dims;
+        /// a mob at the same edge vanished instantly, because `StalePolicy`
+        /// indexes by SEAT and a mob carries a sparse entity id with nowhere to
+        /// write. The difference is what the owner sees on the milestone, and
+        /// it reads as a bug in the mobs rather than as a limit of the fog.
+        ///
+        /// `0` MEANS "NOTHING TO FADE" — for an id nothing remembers, and on a
+        /// backend with no fog at all. Same safe default `PlayerFadeProgress`
+        /// gives.
+        float MobFadeProgress(int id);
+
+        /// Whether the mob's view still has something to show — the twin of
+        /// `ShouldKeepPlayerDoll`, and what stops a view being retired the
+        /// frame its records stop arriving.
+        bool ShouldKeepMobView(int id);
+
+        /// The cell's and the box's halves of the same two questions (Stage 3
+        /// Т33d, bd `app-tut2`). Named per class rather than taking one enum,
+        /// because this interface is what `Presentation` sees and the class
+        /// enum is a WIRE concept living behind Р180's line — a view asks
+        /// "how far gone is this cell", not "how far gone is this member of
+        /// visibility class 1".
+        ///
+        /// THEY EXIST BECAUSE THE PICTURE WENT INCONSISTENT AGAIN, one task
+        /// after the mobs were fixed: Т32б started drawing cells and boxes and
+        /// they popped at the edge of sight beside mobs that faded. Same
+        /// defect, same shape, one class of entity later — which is why the
+        /// bookkeeping is a table now and not a field per class.
+        float PickupFadeProgress(int id);
+
+        bool ShouldKeepPickupView(int id);
+
+        float ContainerFadeProgress(int id);
+
+        bool ShouldKeepContainerView(int id);
+
+        /// The raid's PUBLIC scoreboard, ready to draw, or `null` while no
+        /// raid has ended (Stage 3 Т34, spec §3.10/§3.11).
+        ///
+        /// TEXT RATHER THAN A MESSAGE, BECAUSE OF Р180. `Presentation.asmdef`
+        /// does not reference `Ring.Networking` and must not — so
+        /// `MatchResultsNet` and `MatchOutcome` are types this layer cannot
+        /// name, and a byte handed across instead would need a second copy of
+        /// the outcome domain over here, one that keeps compiling and starts
+        /// printing the wrong word the day a sixth outcome is added. The
+        /// crossing happens once, in `Ring.Presentation.Net`, which is allowed
+        /// to see both sides (`MatchResultsBoard`).
+        ///
+        /// `null` AND NOT AN EMPTY STRING: a screen has to tell "no raid has
+        /// ended" from "a raid ended with nobody in it".
+        ///
+        /// ⚠ READING IT BUILDS IT. Ask `HasMatchResults` below to POLL and
+        /// this only when there is something to draw — a screen that read this
+        /// every frame would format the whole board every frame, on a layer
+        /// whose own rule is that it does not allocate per frame.
+        string MatchResultsBoard { get; }
+
+        /// Whether a board exists at all — the cheap question, so a screen can
+        /// watch for one without building it (Stage 3 Т34).
+        bool HasMatchResults { get; }
+
+        /// This collector's OWN end-of-raid counters, or `false` while the raid
+        /// has not ended (fix round of gate Ф7, review A-2).
+        ///
+        /// IT IS A SECOND SOURCE FOR THE SAME NUMBERS, AND DELIBERATELY SO.
+        /// `HasMatchStats` above answers whether the PER-FRAME picture carries
+        /// them, and on a networked backend it never will — no snapshot block
+        /// exists for them and none is planned (Р146). What DOES arrive, once,
+        /// is the end-of-match message; this is how the results screen reads it
+        /// without learning the wire's own types (Р180 — the structs handed out
+        /// here are `Ring.Simulation.Core`'s, and the crossing is made in
+        /// `Ring.Presentation.Net.FinalStats`).
+        ///
+        /// `survivedSeconds` RIDES BESIDE THE STRUCT RATHER THAN INSIDE IT (bd
+        /// `app-oypt`), and the reason is R-13's, not this seam's: how long a
+        /// raid lasted for one collector is NOT a `MatchStats` field — that
+        /// struct is a per-tick counter hashed every frame, and the answer here
+        /// is computed once at the end from three different clocks
+        /// (`MatchServer.SurvivedTicksFor`: an extraction stops at the tick he
+        /// stepped out, a corpse at `DeathTick`, anyone still standing at the
+        /// raid's own final tick). It travels in `MatchEndedNet.SurvivedSeconds`
+        /// and had NO READER until the results screen was caught deriving the
+        /// number itself out of `DeathTick` — which is zero for everyone who did
+        /// not die, i.e. for the two endings a player actually wants to see.
+        bool TryGetFinalStats(out MatchStats stats, out WorldStats world,
+            out int survivedSeconds);
 
         /// This frame's network instrument panel, or `false` when this backend
         /// HAS no network (Stage 2 Task 48, plan Ф9 :2100-2107). The dev

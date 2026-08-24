@@ -5,13 +5,17 @@ namespace Ring.Simulation.Combat
 {
     /// Advances every live projectile by one tick (spec §3.5/§3.6): swept-circle
     /// collision against the ring wall, obstacles, and eligible targets under the
-    /// damage matrix. Stage 2 Task 17 completed that matrix: a Player-owned round
-    /// hits mobs AND every live player except its own owner (no self-damage by
-    /// construction — the owner is never gathered), a Mob-owned round hits every
-    /// live player and no mobs. Player targets are gated only on Alive here — the
-    /// i-frame check happens inside SimulationWorld.DamagePlayer, not here. A
-    /// projectile is single-target: it is consumed on its first contact, no
-    /// piercing.
+    /// damage matrix. Stage 2 Task 17 completed the player half of that matrix: a
+    /// Player-owned round hits mobs AND every live player except its own owner (no
+    /// self-damage by construction — the owner is never gathered). Stage 3 Task 5
+    /// (spec Р252) opened the mob half: a Mob-owned round now hits every OTHER
+    /// live mob too — a gunner's round can wound another mob standing in its line
+    /// of fire (ADR-003 §1's diegesis: machine dementia, not rebellion — no aggro
+    /// follows, the shooter's target selection is untouched) — excluding only its
+    /// own shooter (mobs[m].Id == proj.OwnerEntityId, below). Player targets are
+    /// gated only on Alive here — the i-frame check happens inside
+    /// SimulationWorld.DamagePlayer, not here. A projectile is single-target: it
+    /// is consumed on its first contact, no piercing.
     internal static class ProjectileSystem
     {
         // HitRingWall (Stage 2 Task 46) splits off the arena's outer boundary,
@@ -33,8 +37,6 @@ namespace Ring.Simulation.Combat
             float dt = SimulationWorld.TickDt;
             SimConfig config = w.Config;
             ArenaSimConfig arena = config.Arena;
-            float chaserRadius = config.Chaser.Radius;
-            float gunnerRadius = config.Gunner.Radius;
             float heroRadius = config.Hero.Radius;
             (float t, int kind, int index)[] candidates = w.ProjCandidates;
 
@@ -79,17 +81,27 @@ namespace Ring.Simulation.Combat
                     candidates[candCount++] = (tRing, HitRingWall, -1);
                 }
 
-                if (proj.Owner == ProjectileOwner.Player)
+                // Stage 3 Task 5 (spec Р252): the gate that used to read
+                // `if (proj.Owner == ProjectileOwner.Player)` is GONE — every
+                // round, mob-owned or player-owned, now gathers mob candidates.
+                // The one exclusion left is the round's OWN shooter:
+                // `mobs[m].Id == proj.OwnerEntityId` skips it so a gunner never
+                // wounds itself at the muzzle (MobAiSystem's own spawn point
+                // sits ON its shooter's collision circle — see its own comment).
+                // A Player-owned round's OwnerEntityId is always the literal 0
+                // (WeaponSystem's own call), and no live mob can ever have id 0
+                // (SimulationWorld._nextEntityId starts at 1), so this same
+                // check is a no-op for that branch — nothing changes for a
+                // player's own shot.
+                int mobCount = w.MobCount;
+                for (int m = 0; m < mobCount; m++)
                 {
-                    int mobCount = w.MobCount;
-                    for (int m = 0; m < mobCount; m++)
+                    if (mobs[m].Id == proj.OwnerEntityId) continue;
+                    float mobRadius = MobRadiusFor(mobs[m].Type, in config);
+                    if (Geometry.SegmentCircle(startPos, target, proj.Radius,
+                            mobs[m].Pos, mobRadius, out float tm))
                     {
-                        float mobRadius = mobs[m].Type == MobType.Chaser ? chaserRadius : gunnerRadius;
-                        if (Geometry.SegmentCircle(startPos, target, proj.Radius,
-                                mobs[m].Pos, mobRadius, out float tm))
-                        {
-                            candidates[candCount++] = (tm, HitMob, m);
-                        }
+                        candidates[candCount++] = (tm, HitMob, m);
                     }
                 }
 
@@ -313,6 +325,48 @@ namespace Ring.Simulation.Combat
             }
         }
 
+        /// Stage 3 Task 10 (coordinator finding, Pack B): the body radius the
+        /// GATHER phase's candidate scan uses — its own home, deliberately
+        /// SEPARATE from SimulationWorld.MobConfigFor (AcceptCandidate below,
+        /// MobAiSystem, WaveSystem, SeparationSystem, VisibilitySystem all go
+        /// through that one instead). The split is a Stage 2 decision, not an
+        /// oversight: a per-mob MobConfigFor(...) call here would copy the
+        /// whole MobSimConfig struct (~30 floats) once per candidate in the
+        /// hottest loop in the simulation, where this needs exactly one of
+        /// them. `in SimConfig cfg` avoids copying SimConfig itself (a larger
+        /// struct still — Hero/Weapon/Chaser/Gunner/Wave/Arena/Visibility/
+        /// Flow/Elite/Director); the field reads below (`cfg.Chaser.Radius`
+        /// etc.) touch only the one float each returns, never materializing a
+        /// MobSimConfig copy — so this extraction changes nothing about that
+        /// Stage 2 tradeoff, only NAMES the switch that used to live inline
+        /// as four precomputed locals, so ProjectileGatherAndMobConfigForTests.
+        /// MobRadiusFor_AgreesWith_MobConfigFor_ForEveryArchetype can call it
+        /// directly and prove the two homes stay in sync.
+        ///
+        /// `default` THROWS, unlike SnapshotBlocks.MaxHpFor's own `_` arm:
+        /// that one is gated upstream by the wire's own MaxMobTypeValue check
+        /// (TryReadMobsBlock refuses an out-of-domain byte before MaxHpFor is
+        /// ever called), an independent gate that does not depend on this
+        /// switch's own case list staying current. This one has no such
+        /// second gate — SimulationWorld.SpawnMob's own MobConfigFor(type)
+        /// call keeps every LIVE mob's Type inside today's four archetypes,
+        /// but that guarantee is only as good as THIS switch being kept in
+        /// sync with MobConfigFor's, which is exactly the coordination the
+        /// agreement test above exists to enforce. A future archetype added
+        /// to MobConfigFor and forgotten here must fail loudly (a crash that
+        /// names the archetype) rather than silently render it Gunner-sized
+        /// for the rest of the match — the same lesson the `0x20` sentinel
+        /// literal (R-47) already cost this task once.
+        internal static float MobRadiusFor(MobType type, in SimConfig cfg) => type switch
+        {
+            MobType.Chaser => cfg.Chaser.Radius,
+            MobType.Gunner => cfg.Gunner.Radius,
+            MobType.Elite => cfg.Elite.Radius,
+            MobType.Director => cfg.Director.Radius,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
         /// Height gate + zone resolution for the candidate the min-scan just
         /// picked (Task 6). Returns false when the shot passes clear over (or
         /// under) the target's column, which sends the scan back for the next
@@ -389,7 +443,14 @@ namespace Ring.Simulation.Combat
             }
             else if (kind == HitBarrier)
             {
-                // Interior barrier — an obstacle circle or a stadium wall
+                // Interior barrier — an obstacle circle, a stadium wall or,
+                // since Т9, a zone-wall ARC (Ф2 fix-round: this line named only
+                // the first two, and the omission is why spec §3.2's "одно
+                // правило на все внутренние барьеры" held transitively but was
+                // executed by no test until BarrierHeightTests grew its two arc
+                // cases). All three arrive through the one SweepArena call
+                // above as the one HitBarrier candidate, so there is no
+                // per-shape height branch here and none is wanted
                 // (Stage 2 Task 46, bd app-r8x). They share one modelled top,
                 // Arena.BarrierTop; a non-positive value means there is none,
                 // which is what every barrier did before this task and what

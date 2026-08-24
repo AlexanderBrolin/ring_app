@@ -41,7 +41,7 @@ namespace Ring.Simulation.AI
         /// so a burst well above normal running speed (a dash) pulls the same lead
         /// a plain run at `maxSpeed` would, never further (A4/D2 — a dash must not
         /// bait the swing from farther away than running would). Then `maxLead`
-        /// bounds the resulting offset distance in metres, so the swing's
+        /// bounds the resulting offset distance in meters, so the swing's
         /// anticipation never reaches absurdly far even for a very fast target.
         public static float2 PredictPos(float2 pos, float2 vel, float maxSpeed,
             float seconds, float factor, float maxLead)
@@ -88,6 +88,24 @@ namespace Ring.Simulation.AI
                 float wallPad = math.max(padR, -arena.WallHalfWidth[i]);
                 if (Geometry.SegmentStadium(from, to, wallPad,
                         arena.WallA[i], arena.WallB[i], arena.WallHalfWidth[i], out _))
+                    return false;
+            }
+            // Stage 3 Task 9 (spec Р64): zone-wall arcs, same per-barrier
+            // clamp discipline as the obstacle/wall loops above — each arc
+            // clamps padR to at least its OWN half-width's negation, inside
+            // the loop, per wall, not once for the whole call (lesson 268:
+            // this function has no side dispatcher, so an unclamped deeply
+            // negative padR inverts the arc's effective outer/inner radii and
+            // silently stops reporting any contact at all).
+            for (int i = 0; i < arena.ZoneWallCount; i++)
+            {
+                float arcPad = math.max(padR, -arena.ZoneWallHalfWidth[i]);
+                var doorCenter = new System.ReadOnlySpan<float>(arena.DoorCenterRad,
+                    arena.ZoneWallDoorStart[i], arena.ZoneWallDoorCount[i]);
+                var doorFreeWidth = new System.ReadOnlySpan<float>(arena.DoorFreeWidth,
+                    arena.ZoneWallDoorStart[i], arena.ZoneWallDoorCount[i]);
+                if (Geometry.SegmentArc(from, to, arcPad, arena.ZoneWallRadius[i],
+                        arena.ZoneWallHalfWidth[i], doorCenter, doorFreeWidth, out _, out _))
                     return false;
             }
             return true;

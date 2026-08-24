@@ -26,11 +26,22 @@ namespace Ring.Simulation.AI
             ArenaSimConfig arena = w.Config.Arena;
             MobState[] mobs = w.Mobs;
             int count = w.MobCount;
+            // Stage 3 Ф5 gate (owner decision R-200): read ONCE for the tick —
+            // the leash below is a property of the raid's phase, not of any
+            // one mob, and re-reading a property inside the loop is the
+            // pattern this file already avoids for `arena`.
+            MatchPhase phase = w.Match.Phase;
 
             for (int i = 0; i < count; i++)
             {
                 ref MobState m = ref mobs[i];
                 MobSimConfig cfg = w.MobConfigFor(m.Type);
+                // DECIDED BEFORE THE MOB MOVES, and that is the whole trick
+                // (owner decision R-200): an elite is retinue because it
+                // STANDS in the core, so asking after the move would let a
+                // step across the boundary decide the answer — and asking
+                // about a mob that is already outside would TELEPORT it in.
+                float leashRing = LeashRingFor(in m, in arena, phase);
 
                 // Stage 2 Task 8: target selection now goes through
                 // NearestAlivePlayer (from THIS mob's own position) instead of
@@ -43,7 +54,7 @@ namespace Ring.Simulation.AI
                     m.Ai = MobAiState.Idle;
                     m.StateTimer = 0f;
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     continue;
                 }
                 PlayerState player = w.PlayerAt(targetIndex);
@@ -59,14 +70,43 @@ namespace Ring.Simulation.AI
                 // into the line of fire), so an index parameter there would be
                 // carried and never read.
                 if (m.Type == MobType.Chaser)
-                    UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt);
+                {
+                    UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt, leashRing);
+                }
+                else if (m.Type == MobType.Gunner)
+                {
+                    UpdateGunner(w, ref m, in cfg, in player, in arena, dt, leashRing);
+                }
                 else
-                    UpdateGunner(w, ref m, in cfg, in player, in arena, dt);
+                {
+                    // Elite/Director (Stage 3 Task 10, spec Р214/Р248,
+                    // fourth of the fourteen two-way branches): "an
+                    // enhanced chaser with ranged finishing" — no new
+                    // sub-FSM, UpdateChaser/UpdateGunner are reused
+                    // wholesale (rule 2), picked by DISTANCE to the
+                    // current target: inside AttackRange it fights like a
+                    // Chaser (melee windup + strike, Chase/Telegraph/
+                    // Recover); outside it holds/kites like a Gunner
+                    // (Reposition to PreferredRange, Fire under LoS). Both
+                    // archetypes share this same six-value MobAiState the
+                    // other two already use (Р214) — MaxMobAiStateValue
+                    // does not move. Director never leaving the arena core
+                    // (Р248) is NOT decided here: since Т22 it is enforced
+                    // in ApplyMotion below (LeashToRing), the one place
+                    // every mob's motion lands. This switch only decides HOW
+                    // it fights once a target is already in range, the same
+                    // as any other archetype here.
+                    if (math.distance(m.Pos, player.Pos) <= cfg.AttackRange)
+                        UpdateChaser(w, ref m, in cfg, in player, targetIndex, in arena, dt, leashRing);
+                    else
+                        UpdateGunner(w, ref m, in cfg, in player, in arena, dt, leashRing);
+                }
             }
         }
 
         static void UpdateChaser(SimulationWorld w, ref MobState m, in MobSimConfig cfg,
-            in PlayerState player, int targetIndex, in ArenaSimConfig arena, float dt)
+            in PlayerState player, int targetIndex, in ArenaSimConfig arena, float dt,
+            float leashRing)
         {
             switch (m.Ai)
             {
@@ -76,15 +116,15 @@ namespace Ring.Simulation.AI
                     m.Ai = MobAiState.Chase;
                     m.StateTimer = 0f;
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     return;
 
                 case MobAiState.Chase:
                 {
-                    // Entry criterion (Task 13/spec §3.6 v2): mob-centre to the
+                    // Entry criterion (Task 13/spec §3.6 v2): mob-center to the
                     // player's PREDICTED position (Targeting.PredictPos, fed
                     // Hero.MaxSpeed/TelegraphSeconds/SwingLeadFactor/
-                    // SwingLeadMaxMeters) <= AttackRange — not raw centre-to-centre.
+                    // SwingLeadMaxMeters) <= AttackRange — not raw center-to-center.
                     // A player closing in (running or dashing at the mob) gets a
                     // forward-shifted prediction, so the windup can start before
                     // raw contact and the strike below lands on a target that kept
@@ -98,13 +138,13 @@ namespace Ring.Simulation.AI
                     //
                     // This is intentionally NOT unified with the strike's hit
                     // criterion below (CircleOverlap, which folds in the hero's own
-                    // body radius: effectively centre-to-centre < AttackRange +
+                    // body radius: effectively center-to-center < AttackRange +
                     // hero.Radius) — which of the two is the looser check now
                     // depends on the player's velocity at the entry tick (the
                     // predictive lead can make entry the looser one while the
                     // player is closing fast; it reverts to the old
                     // always-tighter-than-the-hit-check relationship otherwise).
-                    // Either way, the strike still re-validates centre-to-centre
+                    // Either way, the strike still re-validates center-to-center
                     // distance honestly after TelegraphSeconds (see below) — an
                     // early predictive entry is never an automatic hit, only an
                     // earlier start of the windup clock.
@@ -125,14 +165,14 @@ namespace Ring.Simulation.AI
                         m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed,
                             cfg.Accel * dt);
                     }
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     return;
                 }
 
                 case MobAiState.Telegraph:
                 {
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     m.StateTimer += dt;
                     if (m.StateTimer >= cfg.TelegraphSeconds)
                     {
@@ -168,7 +208,7 @@ namespace Ring.Simulation.AI
                 case MobAiState.Recover:
                 {
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                     m.StateTimer += dt;
                     if (m.StateTimer >= cfg.AttackCooldown)
                     {
@@ -187,7 +227,7 @@ namespace Ring.Simulation.AI
         }
 
         static void UpdateGunner(SimulationWorld w, ref MobState m, in MobSimConfig cfg,
-            in PlayerState player, in ArenaSimConfig arena, float dt)
+            in PlayerState player, in ArenaSimConfig arena, float dt, float leashRing)
         {
             m.FireCooldown -= dt;
             // Floor clamp — mirrors WeaponSystem.cs's guarded player cooldown
@@ -219,7 +259,7 @@ namespace Ring.Simulation.AI
                 float2 dir = SteerAround(m.Pos, target, in arena, cfg.AvoidLookahead,
                     cfg.Radius, cfg.AvoidMargin, m.Id);
                 m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed, cfg.Accel * dt);
-                ApplyMotion(ref m, in cfg, in arena, dt);
+                ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
                 return;
             }
 
@@ -227,7 +267,7 @@ namespace Ring.Simulation.AI
             float2 radial = math.normalizesafe(toPlayer, new float2(1f, 0f));
             float2 tangent = new float2(-radial.y, radial.x) * m.StrafeSign;
             m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, tangent * cfg.StrafeSpeed, cfg.Accel * dt);
-            ApplyMotion(ref m, in cfg, in arena, dt);
+            ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
 
             if (cfg.StrafeSpeed > 0f && math.length(m.Vel) < StrafeBlockedFactor * cfg.StrafeSpeed)
                 m.StrafeSign = -m.StrafeSign;
@@ -240,7 +280,13 @@ namespace Ring.Simulation.AI
                 // Height/VelZ (Task 4): flat trajectory for now — spawns at the
                 // gunner's muzzle height with zero vertical velocity. ownerIndex
                 // (Stage 2 Task 7): a mob never owns a player slot — NoOwner.
-                w.SpawnProjectile(ProjectileOwner.Mob, ProjectileIds.NoOwner, m.Pos + aimDir * cfg.Radius,
+                // ownerEntityId (Stage 3 Task 5, spec Р252): this gunner's OWN
+                // id, so ProjectileSystem's gather phase can exclude it from its
+                // own round's mob targets — the muzzle spawn point below sits ON
+                // this mob's own collision circle, so without the exclusion a
+                // gunner would wound itself at the moment it fires.
+                w.SpawnProjectile(ProjectileOwner.Mob, ProjectileIds.NoOwner, m.Id,
+                    m.Pos + aimDir * cfg.Radius,
                     aimDir * cfg.ProjectileSpeed, cfg.MuzzleHeight, 0f,
                     cfg.ProjectileDamage, cfg.ProjectileRadius,
                     cfg.ProjectileLifetime);
@@ -254,11 +300,120 @@ namespace Ring.Simulation.AI
             => PlayerMovementSystem.MoveTowards(vel, float2.zero, maxDelta);
 
         /// Applies the current velocity through the shared collide-and-slide solver.
-        static void ApplyMotion(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena, float dt)
+        static void ApplyMotion(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena, float dt,
+            float leashRing)
         {
             float2 target = m.Pos + m.Vel * dt;
             PlayerMovementSystem.MoveWithCollisions(ref m.Pos, ref m.Vel, target, cfg.Radius, in arena,
                 out _, out _, out _);
+            if (leashRing > NoLeash) LeashToRing(ref m, in cfg, leashRing);
+        }
+
+        /// "No ring" — a leash radius no arena ring can take, because a ring
+        /// of zero radius is not a place a body can be held inside. Kept as a
+        /// named constant rather than a bare 0f so the one comparison in
+        /// ApplyMotion above reads as the question it asks.
+        const float NoLeash = 0f;
+
+        /// WHICH RING A MOB MAY NOT LEAVE — its radius, or NoLeash (spec §3.4
+        /// Р248 for the Director; Ф5 gate review A-5 and owner decision R-200
+        /// for his retinue; bd app-d2ki, owner decision on the В1 playtest, for
+        /// the middle ring's elite).
+        ///
+        /// A RADIUS, NOT A BOOL, SINCE app-d2ki: two different rings now hold
+        /// two different populations, and the caller threads ONE answer down
+        /// through the whole FSM to the single place motion lands. A second
+        /// bool would have meant a second clamp call at every one of those
+        /// eight sites (rule 2).
+        ///
+        /// THE DIRECTOR, ALWAYS — the unconditional half, unchanged from Т22:
+        /// his fight is the core's fight, and no FSM branch, not even the
+        /// "nobody alive, go Idle" drift, may carry him out.
+        ///
+        /// AN ELITE STANDING IN THE CORE, ONCE THE RAID'S ENDGAME HAS BEGUN.
+        /// This is the retinue, and it is derived exactly the way Р215 demands
+        /// — "retinue" is not a mark on a mob, it is a live elite in the core,
+        /// which is the same reading MatchFlowSystem.LiveRetinueCount takes.
+        /// Before this, that reading was GAMEABLE: nothing held the retinue in,
+        /// so a collector could walk two elites out of the core, the count
+        /// would drop, and the top-up would breed replacements every period —
+        /// an unbounded supply of loot-dropping elites, wave slots eaten, and
+        /// the "unreachable" cap branch in TopUpRetinue made reachable after
+        /// all. Holding them in makes the definition true by construction
+        /// instead of by hope.
+        ///
+        /// THE PHASE GUARD IS R-185'S, REUSED, NOT A SECOND RULE. The core
+        /// belongs to the Director from the moment he wakes — which is exactly
+        /// when it leaves the wave budget — so `Phase != Farm` says "the
+        /// endgame is running" once, for both. During Farm an elite in the
+        /// core is an ORDINARY WAVE MOB and keeps its ordinary freedom to
+        /// chase; that half is also what keeps every golden scenario
+        /// untouched, since neither ever leaves Farm.
+        ///
+        /// THE MIDDLE RING'S ELITE, IN EVERY PHASE (bd app-d2ki). The outer
+        /// ring is the raid's ENTRANCE: a collector lands there with nothing,
+        /// and ADR-001 §3.1 gives the arena a difficulty curve that RISES
+        /// toward the core. An elite that follows a runner out of the middle
+        /// ring carries the middle ring's difficulty to the entrance and
+        /// flattens that curve — which is what the owner reported on the В1
+        /// playtest. The ring it is held against is the one it STANDS in, so
+        /// an elite born in the entrance ring belongs to the entrance ring and
+        /// is never dragged inward: the clamp holds a body IN, it never pulls
+        /// one IN.
+        ///
+        /// AND IT CARRIES NO PHASE GUARD, deliberately. R-185's latch answers
+        /// "whose home ground is the core", a question only the endgame
+        /// raises. This rule answers "how hard may the entrance be", which is
+        /// true from the first wave to the last — and the FARM phase is the
+        /// only phase the reported defect ever occurred in.
+        ///
+        /// ZONELESS ARENAS ARE A LEGAL INPUT (lesson 315) and Geometry.ZoneOf
+        /// has no guard of its own — so the answer is NoLeash before anything
+        /// indexes ZoneRadius. Since app-d2ki that guard stands FIRST rather
+        /// than beside the core test: every branch below now returns a radius
+        /// read out of ZoneRadius, the Director's included. Its old home was
+        /// the clamp helper, which made the Director's "always" a half-truth —
+        /// true of the decision, silently false of the motion.
+        static float LeashRingFor(in MobState m, in ArenaSimConfig arena, MatchPhase phase)
+        {
+            if (arena.ZoneRadius.Length < 2) return NoLeash;
+            if (m.Type == MobType.Director) return arena.ZoneRadius[0];
+            if (m.Type != MobType.Elite) return NoLeash;
+
+            Zone zone = Geometry.ZoneOf(m.Pos, in arena);
+            if (zone == Zone.Middle) return arena.ZoneRadius[1];
+            if (zone == Zone.Core && phase != MatchPhase.Farm) return arena.ZoneRadius[0];
+            return NoLeash;
+        }
+
+        /// Stage 3 Т22 (spec §3.4 Р248, coordinator R-184): THE DIRECTOR NEVER
+        /// LEAVES THE CORE. Applied here, in the one place every mob's motion
+        /// actually lands, so no FSM branch — including the "nobody alive, go
+        /// Idle" one that drifts on decaying velocity — can carry him out.
+        ///
+        /// IT IS THE BODY THAT IS LEASHED, NOT THE TARGET, and that is a
+        /// deliberate departure from the plan's own wording (plan :1439 asks
+        /// for the TARGET to be clamped to the core radius). The dispatch above hands the
+        /// SAME target to the melee and the ranged half, so a clamped target
+        /// would have him SHOOTING AT THE ZONE BOUNDARY instead of at the
+        /// collector standing past it — the spec asks that he not walk out
+        /// (§3.4), not that he go blind. A clamped target would not even give
+        /// the invariant: inertia and SeparationSystem's push can carry a body
+        /// across a line its target never crossed.
+        ///
+        /// The primitive pair is the arena rim's own (Geometry.Depenetrate:
+        /// ClampInsideRing, then Slide against the returned normal) — the same
+        /// arithmetic that keeps every body inside the arena, aimed at a zone
+        /// boundary instead.
+        ///
+        /// SINCE app-d2ki IT TAKES THE RING AS A NUMBER and holds no opinion
+        /// about which one: LeashRingFor above is the single place that
+        /// decides, and it has already answered NoLeash for a zoneless arena
+        /// before this is ever reached (lesson 315). Two rules, one clamp.
+        static void LeashToRing(ref MobState m, in MobSimConfig cfg, float ringRadius)
+        {
+            if (Geometry.ClampInsideRing(ref m.Pos, cfg.Radius, ringRadius, out float2 normal))
+                m.Vel = Geometry.Slide(m.Vel, normal);
         }
 
         /// Steering direction toward `targetPos`: the direct line unless an
@@ -271,17 +426,17 @@ namespace Ring.Simulation.AI
         ///
         /// Circle blocker: the exact external tangent from the mob's position
         /// to the obstacle's padded circle (classic point-to-circle tangent —
-        /// right triangle pos/tangent point/centre, hypotenuse `d` = distance
-        /// to centre, opposite side = padded radius, half-angle at pos =
+        /// right triangle pos/tangent point/center, hypotenuse `d` = distance
+        /// to center, opposite side = padded radius, half-angle at pos =
         /// `asin(radius / d)`). Unlike a pure sideways tangent, this direction
         /// still has a net component toward the target — a pure-tangent
-        /// version left zero radial velocity relative to the obstacle centre,
+        /// version left zero radial velocity relative to the obstacle center,
         /// so the mob settled into a stable circular orbit right at the
         /// lookahead trigger boundary and never closed in (found via the RED
         /// run of Chaser_BehindObstacle_SteersAroundNotStuck: it parked at
-        /// exactly obstacleRadius+padR+lookahead from the centre). Side is the
+        /// exactly obstacleRadius+padR+lookahead from the center). Side is the
         /// sign of the cross product of the approach direction and the
-        /// direction to the obstacle's centre; a dead-on approach (cross == 0)
+        /// direction to the obstacle's center; a dead-on approach (cross == 0)
         /// breaks the tie on the mob's Id parity so the choice stays
         /// deterministic without RNG.
         ///
@@ -324,6 +479,7 @@ namespace Ring.Simulation.AI
 
             int blockedCircleIdx = -1;
             int blockedWallIdx = -1;
+            int blockedZoneWallIdx = -1;
             float bestT = 1f;
             for (int o = 0; o < arena.ObstacleCount; o++)
             {
@@ -333,6 +489,7 @@ namespace Ring.Simulation.AI
                     bestT = t;
                     blockedCircleIdx = o;
                     blockedWallIdx = -1;
+                    blockedZoneWallIdx = -1;
                 }
             }
             for (int wIdx = 0; wIdx < arena.WallCount; wIdx++)
@@ -343,9 +500,69 @@ namespace Ring.Simulation.AI
                     bestT = t;
                     blockedWallIdx = wIdx;
                     blockedCircleIdx = -1;
+                    blockedZoneWallIdx = -1;
                 }
             }
-            if (blockedCircleIdx < 0 && blockedWallIdx < 0) return dir;
+            // Stage 3 Task 9 (spec §3.2): zone-wall arcs join the SAME
+            // "nearest blocker" competition, checked after obstacles/walls —
+            // the same fixed circle-then-wall-then-arc order SweepArena uses.
+            for (int zIdx = 0; zIdx < arena.ZoneWallCount; zIdx++)
+            {
+                var doorCenter = new System.ReadOnlySpan<float>(arena.DoorCenterRad,
+                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                var doorFreeWidth = new System.ReadOnlySpan<float>(arena.DoorFreeWidth,
+                    arena.ZoneWallDoorStart[zIdx], arena.ZoneWallDoorCount[zIdx]);
+                if (Geometry.SegmentArc(pos, aheadEnd, padR, arena.ZoneWallRadius[zIdx],
+                        arena.ZoneWallHalfWidth[zIdx], doorCenter, doorFreeWidth,
+                        out float t, out _) && t < bestT)
+                {
+                    bestT = t;
+                    blockedZoneWallIdx = zIdx;
+                    blockedCircleIdx = -1;
+                    blockedWallIdx = -1;
+                }
+            }
+            if (blockedCircleIdx < 0 && blockedWallIdx < 0 && blockedZoneWallIdx < 0) return dir;
+
+            if (blockedZoneWallIdx >= 0)
+            {
+                // Р118: a full-circle barrier has no "end" a tangent could
+                // round — a tangent to it is a permanent mismatch with the
+                // arc's own curvature (the mob would skate the ring forever,
+                // never converging on the opening). The waypoint is instead
+                // the nearest DOOR of the blocking wall — "nearest" measured
+                // by total round-trip length (mob -> door -> target), the
+                // same detour-cost idiom the wall branch below uses for
+                // choosing an end. A near-tie (within Geometry.Skin) breaks
+                // on the mob's own Id parity, same stability reasoning as
+                // every other near-tie in this file (I-5/I-2 fix-round T14):
+                // a bare `<` comparison is one ULP of independent sqrt-chain
+                // rounding away from flipping which door two otherwise-
+                // identical mobs commit to.
+                int zIdx = blockedZoneWallIdx;
+                int doorStart = arena.ZoneWallDoorStart[zIdx];
+                int doorCount = arena.ZoneWallDoorCount[zIdx];
+                float ringR = arena.ZoneWallRadius[zIdx];
+
+                float2 bestDoorPoint = pos; // overwritten before use whenever doorCount > 0
+                float bestCost = float.MaxValue;
+                for (int j = 0; j < doorCount; j++)
+                {
+                    float doorAngle = arena.DoorCenterRad[doorStart + j];
+                    float2 doorPoint = ringR * new float2(math.cos(doorAngle), math.sin(doorAngle));
+                    float cost = math.distance(pos, doorPoint) + math.distance(doorPoint, targetPos);
+                    bool takeIt = j == 0
+                        || (math.abs(cost - bestCost) < Geometry.Skin ? (id & 1) == 0 : cost < bestCost);
+                    if (takeIt)
+                    {
+                        bestCost = cost;
+                        bestDoorPoint = doorPoint;
+                    }
+                }
+
+                float2 toDoor = bestDoorPoint - pos;
+                return math.normalizesafe(toDoor, dir);
+            }
 
             if (blockedWallIdx >= 0)
             {
@@ -400,7 +617,7 @@ namespace Ring.Simulation.AI
 
                 // Aim just OUTSIDE that end, offset off the wall's face on the
                 // mob's own side and past the cap along the axis. Steering at the
-                // end itself would aim at the cap's centre — into the wall.
+                // end itself would aim at the cap's center — into the wall.
                 float2 axis = math.normalizesafe(end - farEnd, dir);
                 float2 face = new float2(-axis.y, axis.x);
                 // I-2 (fix-round T14): the raw sign of this dot flips as the

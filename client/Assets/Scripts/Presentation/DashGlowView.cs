@@ -18,12 +18,22 @@ namespace Ring.Presentation
     /// family: an HDR color written straight to `_BaseColor` on an
     /// `Universal Render Pipeline/Unlit` material via `MaterialPropertyBlock`
     /// (same `MobView`-style pattern — one shared material, per-instance color
-    /// only through the property block, никогда per-instance material
+    /// only through the property block, never per-instance material
     /// instances) — that shader's `_BaseColor` IS what drives HDR bloom on an
     /// unlit surface, unlike a decal's.
     public sealed class DashGlowView : MonoBehaviour
     {
-        const float FloorLift = 0.01f; // avoid z-fighting with the floor mesh
+        /// How high the mark rides over the arena floor — the builder's own
+        /// answer rather than a number of this class's own (bd `app-57qf`).
+        ///
+        /// IT USED TO BE A LITERAL 0.01, and that was right exactly as long as
+        /// the floor was the only thing under it. Task 30 painted the zone
+        /// tints as discs stacked on that floor, the Middle one on the very
+        /// same 0.01, and two coplanar flat surfaces z-fight: the mark striped
+        /// in the second zone and in the core, and nowhere in the first, whose
+        /// tint rides the floor disc itself. One home for "how high is the
+        /// paint" means the next layer somebody stacks moves this too.
+        const float FloorLift = GreyboxBuilder.AboveFloorPaint;
 
         static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
         static readonly Color GlowColor = new Color(0f, 2.5f, 3f); // HDR, = PlayerEmissive (Э1)

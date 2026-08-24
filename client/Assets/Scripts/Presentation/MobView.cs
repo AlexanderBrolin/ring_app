@@ -13,8 +13,8 @@ namespace Ring.Presentation
     /// model's archetype identity lives in `Visual`/`MobVisual`, not a color tint.
     /// Task 21 (spec §3.6, resolution "Bind contract"): `Bind` now takes the full
     /// `MobState` (not just `MobType`) and only sets up the pool-rebind baseline
-    /// (base accent color, cleared flash). Every per-frame accent — the Chaser's
-    /// telegraph pulse and the Gunner's Fire-state glint — is computed by `Sync`,
+    /// (base accent color, cleared flash). Every per-frame accent — the melee
+    /// telegraph pulse and the ranged Fire-state glint — is computed by `Sync`,
     /// called once per render frame from `ViewRegistry`'s existing `LateUpdate`
     /// diff (П-1: no new `TicksFlushed` subscriber). All timing here rides
     /// `Time.unscaledTime`/`unscaledDeltaTime` — `Time.timeScale` is never used by
@@ -43,12 +43,14 @@ namespace Ring.Presentation
         const float TelegraphPulseHz = 6f;
         const float TelegraphPulseFloor = 0.35f;
 
-        // Gunner "aiming" glint (Fire state): a light, low-amplitude cool-white
-        // shimmer — deliberately subtler than the telegraph pulse, since a Gunner's
+        // Ranged "aiming" glint (Fire state): a light, low-amplitude cool-white
+        // shimmer — deliberately subtler than the telegraph pulse, since the
         // shot itself (muzzle flash / tracer) is the actual attack tell, this is
-        // just an ambient "I'm aiming" read.
-        static readonly Color GunnerGlintAccent = new Color(0.6f, 0.6f, 1.3f);
-        const float GunnerGlintHz = 3f;
+        // just an ambient "I'm aiming" read. Named for the BEHAVIOR rather than
+        // for the Gunner since Task 31: Elite and the Director enter the same
+        // state through the same procedure, and the tell belongs to the state.
+        static readonly Color RangedGlintAccent = new Color(0.6f, 0.6f, 1.3f);
+        const float RangedGlintHz = 3f;
 
         // В1/В2 fix-wave 2 (app-n6g item 3b, headshot readability): a rim
         // added on top of whatever accent is already active while this mob
@@ -69,7 +71,7 @@ namespace Ring.Presentation
         // `AimProvider.CurrentHoveredMob`/`CurrentAimZone` are cached from
         // the exact same proxy hit). Same accent-constant-vs-SO-number-
         // multiplier split every other pair here already makes
-        // (GunnerGlintAccent has no SO field of its own either; the multiplier
+        // (RangedGlintAccent has no SO field of its own either; the multiplier
         // is GameFeelConfig.AimHoverGlowBoost).
         internal static readonly Color HoverGlowAccent = new Color(1.3f, 1.3f, 1.3f);
 
@@ -85,6 +87,9 @@ namespace Ring.Presentation
         // once one exists, with no further change needed here.
         Renderer[] _renderers;
         MaterialPropertyBlock _block;
+        /// The emission `Sync` last built for this mob, kept so a fade can dim
+        /// it without re-deriving every accent that went into it.
+        Color _composedEmission;
         Color _baseEmission;
         float _flashTimer;
         float _flashDuration;
@@ -128,6 +133,7 @@ namespace Ring.Presentation
             _baseEmission = Color.black;
             _flashTimer = 0f;
             _freezePositionTimer = 0f; // pool-rebind hygiene, same as the flash timer above
+            _composedEmission = _baseEmission;
             ApplyEmission(_baseEmission);
         }
 
@@ -166,10 +172,18 @@ namespace Ring.Presentation
                 float intensity = ramp * Mathf.Lerp(TelegraphPulseFloor, 1f, wave);
                 emission += TelegraphAccent * intensity;
             }
-            else if (m.Type == MobType.Gunner && m.Ai == MobAiState.Fire)
+            // Task 31: the archetype test that used to guard this is gone —
+            // one of spec Р251's fourteen two-way branches, NARROWED away
+            // rather than made four-way. `MobAiState.Fire` is set by
+            // `MobAiSystem.UpdateGunner` and nowhere else (`:266`), so the
+            // state alone already says "this mob is shooting"; Elite and the
+            // Director reuse that same procedure at range, and keying on the
+            // type would have left the arena's two most dangerous shooters
+            // with no tell at all while a rank-and-file Gunner had one.
+            else if (m.Ai == MobAiState.Fire)
             {
-                float wave = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * GunnerGlintHz * Mathf.PI * 2f);
-                emission += GunnerGlintAccent * wave;
+                float wave = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * RangedGlintHz * Mathf.PI * 2f);
+                emission += RangedGlintAccent * wave;
             }
 
             if (_flashTimer > 0f)
@@ -180,8 +194,27 @@ namespace Ring.Presentation
 
             if (hovered) emission += hoverAccent * hoverGlowBoost;
 
+            // Stage 3 Т32б (bd `app-dut`): remembered so `FadeEmission` below
+            // can re-apply what THIS frame composed, dimmed — the same seam,
+            // and for the same reason, `PlayerView` keeps its own composed
+            // color for.
+            _composedEmission = emission;
             ApplyEmission(emission);
         }
+
+        /// Re-applies the emission this view last composed, scaled by how much
+        /// of a fade is left (Stage 3 Т32б, bd `app-dut`) — the mob-shaped twin
+        /// of `PlayerView.FadeEmission`.
+        ///
+        /// IT IS CALLED INSTEAD OF `Sync`, NOT AFTER IT. A fading mob is one the
+        /// frame has stopped mentioning: there is no `MobState` for it this
+        /// tick, so there is nothing to sync and the last pose is what stays on
+        /// screen. What changes is only how brightly it reads, which is the
+        /// whole of the fix: the pop is not abolished, it is made quieter and
+        /// later, and what vanishes at the end is an unlit shape the eye had
+        /// stopped tracking.
+        public void FadeEmission(float fadeRemaining)
+            => ApplyEmission(_composedEmission * fadeRemaining);
 
         /// Full hit-flash implementation (spec Interfaces, Task 17): decays the
         /// emission from `FlashAccent` back to the archetype's base color over

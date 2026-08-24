@@ -25,7 +25,17 @@ namespace Ring.Data
         // from an invisible source snap their reported position onto — see
         // VisibilitySystem.QuantizeAudiblePos (Task 20). 0 disables
         // quantization (exact position always reported).
-        [Range(0f, 10f)] public float HearPositionGridMeters = 3f; // sync-marker key — keep LAST
+        [Range(0f, 10f)] public float HearPositionGridMeters = 3f;
+
+        // Stage 3 Task 13 (spec §3.9, errata Р268 finding 3): the radius
+        // term VisibilitySystem.Compute needs for a pickup/container target,
+        // in place of the MobConfig.Radius a mob target reads. Both 0.4 m
+        // (spec's own numbers). Consumer: Т26 — this task only delivers the
+        // data. R-88: the marker moves here from HearPositionGridMeters
+        // above, same "append, don't reshuffle" migration as every other
+        // class's marker move in this codebase (lesson 40, fourth time).
+        [Range(0.1f, 5f)] public float PickupRadiusForVisibility = 0.4f;
+        [Range(0.1f, 5f)] public float ContainerRadiusForVisibility = 0.4f; // sync-marker key — keep LAST
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

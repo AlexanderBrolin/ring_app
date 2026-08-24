@@ -15,7 +15,7 @@ namespace Ring.Simulation.Tests
         /// Spread/recoil go to zero for the same reason.
         static SimConfig Range()
         {
-            var c = TestConfigs.Open();
+            var c = TestConfigs.OpenField();
             c.Weapon.SpreadRad = 0f;
             c.Weapon.RecoilPerShotRad = 0f;
             c.Chaser.MaxSpeed = 0f;

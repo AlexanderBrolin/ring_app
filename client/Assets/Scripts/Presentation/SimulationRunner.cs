@@ -1,6 +1,7 @@
 using Ring.Data;
 using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -98,6 +99,19 @@ namespace Ring.Presentation
         [SerializeField] ArenaConfig _arena;
         // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter.
         [SerializeField] VisibilityConfig _visibility;
+        // Stage 3 Task 12 (errata E-6 I5, owner decision R-73): the two new
+        // mob archetypes and the match-flow pacing block. Without them the
+        // shipped game builds SimConfig with Elite/Director/Flow all zero —
+        // and waves have been spawning Elites since Т11, so a zero-HP,
+        // zero-radius Elite would reach milestone В1 in silence. Assigned by
+        // StageOneSceneBootstrap like every reference above.
+        [SerializeField] MobConfig _elite;
+        [SerializeField] MobConfig _director;
+        [SerializeField] MatchFlowConfig _flow;
+        // Stage 3 Task 13 (spec §3.7/§3.8): the item catalog and loot
+        // balance sheet — same reasoning as _elite/_director/_flow above.
+        [SerializeField] ItemCatalog _items;
+        [SerializeField] LootConfig _loot;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] CameraConfig _camera;
         [SerializeField] InputActionAsset _actionsAsset;
@@ -161,6 +175,44 @@ namespace Ring.Presentation
         /// The simulation's own tick counter — dev overlay only.
         public int CurrentTick => _backend.CurrentTick;
 
+        // ---------------------------------------------------------------------
+        // The loot window's seam (Stage 3 Т32б). SEVEN FORWARDS AND NO EIGHTH,
+        // because `InventoryWindowController` is a VIEW: it reads what the
+        // frame and the backend already decided and turns a click into a
+        // request. It holds no `ISimBackend` of its own for the reason every
+        // other view here doesn't — the facade is what owns which backend is
+        // installed, and a view that cached one would keep the old one across a
+        // `TryUseBackend`.
+        // ---------------------------------------------------------------------
+
+        /// Whether the loot window is open. The state lives in `InputSampler`,
+        /// because the key is an edge and `SimInput.InventoryOpen` is a level;
+        /// this is the read side of it.
+        ///
+        /// FALSE BEFORE `Awake` HAS BUILT THE SAMPLER, which is the same answer
+        /// every other member here gives about a facade that is not up yet: a
+        /// window nobody can have opened is closed.
+        public bool InventoryOpen => _sampler != null && _sampler.InventoryOpen;
+
+        /// Shuts the window on behalf of a condition the sampler cannot see —
+        /// today, the collector's own death or extraction
+        /// (`InventoryWindowController.WindowMustClose`) and the pause menu
+        /// opening. Opening is deliberately NOT forwarded: it is the player's
+        /// own act, with exactly one way to perform it.
+        public void CloseInventory() => _sampler?.CloseInventory();
+
+        /// One loot operation, asked of whichever backend is installed.
+        public bool TryRequestLoot(LootOp op, int containerId, int slot)
+            => _backend.TryRequestLoot(op, containerId, slot);
+
+        public bool LootRequestInFlight => _backend.LootRequestInFlight;
+
+        public int LootRequestContainerId => _backend.LootRequestContainerId;
+
+        public int LootRequestSlot => _backend.LootRequestSlot;
+
+        public LootRefusal LastLootRefusal => _backend.LastLootRefusal;
+
         /// The ImmediateMuzzleFeedback prediction window both `MuzzleFlashView`
         /// and `AudioDirector` wait out (Stage 2 Task 45b fix-round 1, G-3) —
         /// forwarded from the backend, which is where the answer lives
@@ -209,6 +261,37 @@ namespace Ring.Presentation
         public float PlayerFadeProgress(int slot) => _backend.PlayerFadeProgress(slot);
 
         public bool ShouldKeepPlayerDoll(int slot) => _backend.ShouldKeepPlayerDoll(slot);
+
+        /// The same pair for MOBS (Stage 3 Т32б, bd `app-dut`), addressed by
+        /// entity id rather than by seat — see `ISimBackend.MobFadeProgress`
+        /// for why the two could not be one call.
+        public float MobFadeProgress(int id) => _backend.MobFadeProgress(id);
+
+        public bool ShouldKeepMobView(int id) => _backend.ShouldKeepMobView(id);
+
+        /// The cells' and the boxes' halves of the same pair (Stage 3 Т33d, bd
+        /// `app-tut2`) — forwards, like every other backend question here.
+        public float PickupFadeProgress(int id) => _backend.PickupFadeProgress(id);
+
+        public bool ShouldKeepPickupView(int id) => _backend.ShouldKeepPickupView(id);
+
+        public float ContainerFadeProgress(int id) => _backend.ContainerFadeProgress(id);
+
+        public bool ShouldKeepContainerView(int id) => _backend.ShouldKeepContainerView(id);
+
+        /// The raid's public scoreboard, or `null` while none has arrived
+        /// (Stage 3 Т34) — a forward, like every other backend question here.
+        public string MatchResultsBoard => _backend.MatchResultsBoard;
+
+        /// Whether a board exists — the cheap poll beside the property above,
+        /// which BUILDS what it returns.
+        public bool HasMatchResults => _backend.HasMatchResults;
+
+        /// This collector's own end-of-raid counters — a forward, like every
+        /// other backend question here (fix round Ф7, review A-2).
+        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world,
+            out int survivedSeconds)
+            => _backend.TryGetFinalStats(out stats, out world, out survivedSeconds);
 
         /// Task 28 (spec §3.11, ImmediateMuzzleFeedback): the exact `SimInput`
         /// this render frame was sampled with — `MuzzleFlashView`/
@@ -491,7 +574,7 @@ namespace Ring.Presentation
         /// (`AimRayView.LateUpdate`). One rule, one home, three readers — none
         /// of them keeps a copy of the state.
         ///
-        /// THREE TERMS, EACH FOR ITS OWN REASON:
+        /// FOUR TERMS, EACH FOR ITS OWN REASON:
         ///  - `Ready` — the backend has a picture at all. Every reader below
         ///    also touches `Config`/the render pair, which is what that guard
         ///    has always protected;
@@ -506,7 +589,29 @@ namespace Ring.Presentation
         ///    networked one the overlay shows a tick LATE (its `PlayerDied`
         ///    waits for `renderTick`), while this slot stops being written as
         ///    soon as prediction stops.
-        public bool AimActive => Ready && !Paused && RenderCurr.Player.Alive;
+        ///  - `!InventoryOpen` — the loot window is up (playtest В1 round two,
+        ///    bd `app-zg29`). The owner found this one from the other side:
+        ///    there was no MOUSE POINTER in the window, so he was picking items
+        ///    with the aim marker. The pointer is a function of this property
+        ///    (`CrosshairView.UpdateCursor`), and the window was not in it — the
+        ///    pause menu was, which is exactly why Escape's menu had a cursor
+        ///    and Tab's window did not. The term belongs here rather than in the
+        ///    cursor alone, because the game is not asking for aim while the
+        ///    window is up in the strictest possible sense: `WeaponSystem.
+        ///    CanFire` refuses the shot outright on `InventoryOpen`, with no
+        ///    exception of the kind the dash and slide terms have, so the
+        ///    marker, the spread cone and the aim ray were all promising a shot
+        ///    the server would not fire.
+        public bool AimActive
+            => IsAimActive(Ready, Paused, RenderCurr.Player.Alive, InventoryOpen);
+
+        /// The rule of the property above, as a pure function — so it can be
+        /// tested at all, the same split `InventoryWindowController.
+        /// WindowMustClose` and `Core.ExitRules.IsOpen` already are (the owner's
+        /// decision of 2026-08-10). Four facts in, one answer out; the property
+        /// gathers the facts, this decides.
+        public static bool IsAimActive(bool ready, bool paused, bool alive, bool inventoryOpen)
+            => ready && !paused && alive && !inventoryOpen;
 
         // ---- observation: which seat this client is looking from -----------
 
@@ -1067,7 +1172,8 @@ namespace Ring.Presentation
             if (_pendingApplyConfig)
             {
                 _pendingApplyConfig = false;
-                SimConfig next = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
+                SimConfig next = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave,
+                    _arena, _visibility, _elite, _director, _flow, _items, _loot);
                 try
                 {
                     _backend.ApplyConfig(next);
@@ -1515,7 +1621,8 @@ namespace Ring.Presentation
         /// playing.
         public void Restart(long seed)
         {
-            SimConfig cfg = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena, _visibility);
+            SimConfig cfg = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave, _arena,
+                _visibility, _elite, _director, _flow, _items, _loot);
             // The seven balance SOs stay serialized on THIS component (spec
             // §3.12 is about whose config is authoritative, not about where the
             // assets are wired): the backend is handed the finished `SimConfig`
@@ -1529,8 +1636,8 @@ namespace Ring.Presentation
             // call after the first, so this flag never stops a frame there.
             _restartedThisUpdate = true;
             Seed = seed;
-            _renderPrevFrozen = new RenderSnapshot(cfg.Arena);
-            _renderCurrFrozen = new RenderSnapshot(cfg.Arena);
+            _renderPrevFrozen = new RenderSnapshot(cfg);
+            _renderCurrFrozen = new RenderSnapshot(cfg);
             EndHitstop();
             RenderAlpha = 0f;
             ConfigTweaked = false;

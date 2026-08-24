@@ -1,3 +1,4 @@
+using Ring.Simulation.Core;
 using UnityEngine;
 
 namespace Ring.Data
@@ -424,9 +425,182 @@ namespace Ring.Data
         // the barrel, which is "sideways and slightly back". Each is a starting
         // pose for the owner's gizmo pass on the smoke test, not a measurement:
         // the model carries no sockets of its own to take them from.
+        // Was the sync-marker key until Stage 3 Task 30's `MeshSagMeters`
+        // below superseded it.
         public Vector3 GunMuzzleLocalPosition = new Vector3(0f, 0f, 0.18f);
         public Vector3 GunEjectLocalPosition = new Vector3(0.03f, 0.04f, 0.16f);
-        public Vector3 GunEjectLocalEuler = new Vector3(0f, 100f, 0f); // sync-marker key — keep LAST
+        public Vector3 GunEjectLocalEuler = new Vector3(0f, 100f, 0f);
+
+        // Stage 3 Task 30 (spec §3.11): the greybox's zone floor tint — one
+        // color per zone, read once by `GreyboxBuilder` when it builds the
+        // arena. THREE FLAT COLORS RATHER THAN ONE PLUS A GRADIENT, because
+        // the thing being communicated is a DISCRETE fact: `Geometry.ZoneOf`
+        // answers Outer/Middle/Core off two radii, and a player who has to
+        // judge a gradient to tell which zone their feet are in is being shown
+        // something the simulation does not believe. LDR, not HDR: this is the
+        // arena's own ground reading under the scene's lighting, not an accent
+        // — every emissive accent in this project is a separate material
+        // (`DashGlow`, `TracerTrail`, the extraction rings below), and a floor
+        // that emits would wash out the mobs standing on it.
+        //
+        // DEFAULTS. Outer is the coolest and darkest (the spawn belt, where
+        // the least happens), Middle warms slightly, Core is the warmest and
+        // brightest — so "further in" reads as "hotter" at a glance without
+        // any of the three competing with the player's own cyan or the
+        // Chaser's amber telegraph. All three sit low enough in value to keep
+        // the "dark environment + emissive VFX" look ADR-001 §10 asks for.
+        //
+        // BAKED AT BUILD TIME, NOT PER FRAME: `GreyboxBuilder` writes these
+        // into a `MaterialPropertyBlock` while constructing the floor, so an
+        // owner edit lands on the next arena build (a match restart, or a
+        // fresh PlayMode enter) rather than live — the same documented
+        // limitation the spark/decal numbers above already carry.
+        public Color ZoneTintOuter = new Color(0.24f, 0.26f, 0.32f);
+        public Color ZoneTintMiddle = new Color(0.34f, 0.30f, 0.28f);
+        public Color ZoneTintCore = new Color(0.46f, 0.33f, 0.26f);
+
+        // Stage 3 Task 30 (spec §3.11, Р273): how far a drawn arc is allowed
+        // to depart from the circle Simulation actually collides against —
+        // the SAGITTA of one mesh segment, in meters. `GreyboxBuilder` turns
+        // it into a segment count with the same arithmetic Р208 used to reject
+        // the "arc as a chain of stadiums" alternative: a chord of half-angle
+        // θ on a circle of radius R sags by R(1 − cos θ), so a full ring needs
+        // ⌈π / arccos(1 − sag/R)⌉ segments and every arc drawn on that ring
+        // steps by that same angle. That is what keeps the number out of the
+        // code: the ring wall's own 48 segments used to be a literal, and a
+        // literal cannot follow a radius the owner retunes (113 today, 65
+        // before Т12) — at a fixed count the picture silently drifts off the
+        // collision the further the radius moves, which is exactly the class
+        // of defect `app-1ru` was filed for.
+        //
+        // 0.05 IS THE SPEC'S NUMBER and it is a VISUAL tolerance, not a
+        // physical one: 5 cm is under the width of a round and far under the
+        // 1 m half-width of a zone wall, so no shot ever passes through a
+        // gap the eye can see. Raising it coarsens the mesh (fewer objects,
+        // visibly faceted rings); lowering it multiplies primitives with no
+        // gain the camera can resolve at this arena's scale.
+        [Range(0.005f, 0.5f)] public float MeshSagMeters = 0.05f;
+
+        // Stage 3 Task 31 (spec §3.11/Р251, owner decision R-192 — the
+        // acceptance condition of milestone В1): the two archetypes that had
+        // no visual identity of their own. Until this task `ViewRegistry`
+        // branched two ways on `MobType`, so Elite, the Director's escort and
+        // the DIRECTOR HIMSELF were all drawn with the Gunner's prefab at the
+        // Gunner's scale — a boss with 2500 HP that looked exactly like the
+        // mob a player had already killed forty times.
+        //
+        // THE NUMBERS ARE THE OWNER'S OWN, not this task's invention. The
+        // asset track put every candidate model on a stage and the owner tuned
+        // them by eye across two milestones; the surviving numbers live in
+        // `AssetPreviewSceneBootstrap` (`EliteScale` 1.5 on QuadShell,
+        // `TriloScale` 0.75 — "the biggest elite, halved" — and `DirectorScale`
+        // 3.5, "the director, doubled"). Those preview scales sit on the SAME
+        // base as these fields: the preview's own mech scale is 0.4, which is
+        // `ChaserVisualScale` exactly. Elite is drawn with `Enemy_Trilobite`,
+        // hence 0.75; the Director with `Enemy_QuadShell` in `DirectorSkin.mat`,
+        // hence 3.5 — a silhouette four and a half times the Gunner's.
+        //
+        // ⚠ ASSETS-001 §2.3 asks for x1.5-2 on the Director and this ships
+        // 3.5. The ADR number was written before the model was ever on a
+        // stage; 3.5 is what the owner asked for after looking at it (asset
+        // milestone 3). Both are starting points for the В1 tuning pass —
+        // this field is live-tweakable in PlayMode, which is exactly why it is
+        // a field.
+        // ⚠ ELITE WAS 0.75 AND IS 1.5 SINCE THE В1 PLAYTEST'S SECOND ROUND (bd
+        // `app-oxyo`), on the owner's call — "the elite has to be at least twice
+        // as big" — and the MEASUREMENT that call turned out to agree with. The
+        // drawn crown of every archetype was measured against the `AimProxy_Head`
+        // belt its own SO builds (renderer AABB of the prefab's `Visual`
+        // subtree): Chaser 2.70 m against a 1.85 m column, Gunner 4.21 against
+        // 3.5, Director 4.79 against 3.5 — and ELITE 1.79 against 3.5, the only
+        // archetype drawn SHORTER than its own hittable column, at barely half
+        // of it. The Head band is 2.7-3.5 m, so it stood entirely in the air
+        // ABOVE the model: an elite could not be headshot at the head a player
+        // could see, and the visible head read as body. 1.5 puts the crown at
+        // 3.58 m against the column's 3.5 — the paragraph above's warning
+        // ("a retune of one alone silently desyncs the visible model from its
+        // hittable silhouette") answered rather than repeated.
+        //
+        // The other three keep their measured mismatch (1.46 / 1.20 / 1.37 — the
+        // drawn model is TALLER than the column, so the top of it cannot be
+        // shot). That is bd `app-1cst`, and it is not a retune: the owner's
+        // decision is that hits should be resolved against the MODEL rather than
+        // a capsule, together with the projectile/mob physics of `app-afaz`.
+        [Range(0.05f, 6f)] public float EliteVisualScale = 1.5f;
+        [Range(0.05f, 6f)] public float DirectorVisualScale = 3.5f;
+
+        // Stage 3 Task 31 (spec §3.11): how big the raid's own furniture is
+        // drawn. Both are read fresh on every bind (`PickupView.Bind`'s own
+        // doc), so the owner can size them live on the В1 playtest — which is
+        // the point, because what these two numbers really control is whether a
+        // player can FIND loot on a 113 m arena from a three-quarter camera,
+        // and no number derived at a desk answers that.
+        //
+        // 0.5 m for a cell is a hand's width — big enough to catch the eye at
+        // the camera's distance, small enough not to read as a crate. The
+        // container scale is 1 because the Sci-Fi kit's props are authored at
+        // roughly human furniture size already; it exists as a field so the
+        // owner can push crates up or down against the collector doll without
+        // touching four prefabs.
+        [Range(0.05f, 3f)] public float PickupVisualDiameter = 0.5f;
+        // Was the sync-marker key until Task Т7 (bd `app-ggvz`)'s
+        // `WaveAnnounceFlashColor` below superseded it.
+        [Range(0.05f, 5f)] public float ContainerVisualScale = 1f;
+
+        // Task Т7 (bd `app-ggvz`, spec §3.10): the wave line's flash — how
+        // long it lasts, and what color it wears while it lasts.
+        // `HudController.WaveAnnounceTimerAfter` rearms `_waveAnnounceTimer`
+        // to `WaveAnnounceSeconds` outright whenever the world-wide wave
+        // number grows and decays it otherwise; `WaveAnnounceFlashColor` is
+        // what `_waveText` wears while that timer is still counting down,
+        // its ordinary color the rest of the time.
+        //
+        // THE COLOR IS A FIELD, NOT A CODE CONSTANT — a recorded departure
+        // from the letter of spec §3.10, not an improvisation: the spec
+        // names only the seconds, but its own reasoning for that number
+        // (balance/feel numbers live in a ScriptableObject so the owner can
+        // retune them on playtest without a recompile, Critical Rule 6)
+        // applies to the color exactly the same way, and every other HUD
+        // color already in this project — `StaminaBarFullColor`/
+        // `StaminaBarLowColor`, `AimZoneBodyColor`/`AimZoneHeadColor` — lives
+        // here rather than as a literal in `HudController`.
+        //
+        // LDR, NOT HDR: this paints straight into `TMP_Text.color`, the same
+        // plain UI channel `StaminaBar*`/`AimZoneBodyColor` above already
+        // draw through. There is no Bloom-reacting emissive material behind
+        // a HUD label the way there is behind `RemotePlayerEmission`'s doll
+        // rim (that field's own doc), so a value above 1 here would only
+        // clip on-screen, never glow — an unattributed `Color` and Unity's
+        // ordinary LDR picker are exactly right.
+        //
+        // DEFAULT IS A WARM GOLD (1, 0.85, 0.35) — a "new wave" reads as
+        // progress, not a warning, so it deliberately avoids the danger-red
+        // `StaminaBarLowColor`/`AimZoneHeadColor` already share and the
+        // player's own signature cyan; gold against the label's ordinary
+        // white base is legible at the HUD's small font size without
+        // fighting either for the eye.
+        [Range(0f, 10f)] public float WaveAnnounceSeconds = 1.5f;
+        public Color WaveAnnounceFlashColor = new Color(1f, 0.85f, 0.35f); // sync-marker key — keep LAST
+
+        /// THE one place an archetype becomes a visual scale (fix-round, Ф7
+        /// review B-M5). `ViewRegistry` sizes the LIVE mob with it and
+        /// `PersistentPropsDirector` sizes that mob's corpse and its gib parts
+        /// with it, and the two must never disagree — a body that changed size
+        /// the instant it died reads as a bug (В1/В2 fix-wave 2, app-n6g item
+        /// 2). Until this fix that rule was carried by two mirrored `switch`
+        /// blocks and a comment asking each to remember the other; now there is
+        /// nothing to remember. Throws on an unknown archetype rather than
+        /// answering with the Gunner's size, for the reason spec Р251 spent a
+        /// stage on.
+        public float VisualScaleFor(MobType type) => type switch
+        {
+            MobType.Chaser => ChaserVisualScale,
+            MobType.Gunner => GunnerVisualScale,
+            MobType.Elite => EliteVisualScale,
+            MobType.Director => DirectorVisualScale,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // GameFeelConfig itself is never consumed by SimConfigBuilder (class doc

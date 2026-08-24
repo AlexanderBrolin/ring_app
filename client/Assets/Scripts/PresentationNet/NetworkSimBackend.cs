@@ -6,6 +6,8 @@ using Ring.Networking;
 using Ring.Networking.Client;
 using Ring.Networking.Protocol;
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
+using Ring.Simulation.Visibility;
 using Unity.Mathematics;
 
 namespace Ring.Presentation.Net
@@ -133,18 +135,42 @@ namespace Ring.Presentation.Net
             (byte)SnapshotBlockKind.Mobs,
             (byte)SnapshotBlockKind.Wave,
             (byte)SnapshotBlockKind.Events,
+            // Stage 3 Т32б — the five the sender has been writing since Т27.
+            (byte)SnapshotBlockKind.Match,
+            (byte)SnapshotBlockKind.Self,
+            (byte)SnapshotBlockKind.Pickups,
+            (byte)SnapshotBlockKind.Containers,
+            (byte)SnapshotBlockKind.ContainerSlots,
         };
 
         /// The same five kinds as a bit per kind — the set a COMPLETE frame
         /// carries, which `ReadFrame` tests the walk against (fix-round 1,
         /// F-1). Every one of them is required because the SENDER sends every
-        /// one of them: `SnapshotAssembler` writes all five on every frame,
-        /// empty or not, and says why in its own comment — a receiver cannot
-        /// tell an absent block from an empty one, because a datagram cut on a
-        /// block boundary parses as a shorter, valid snapshot. So a kind
-        /// missing here is not "the server had nothing to say"; it is the tail
-        /// of the frame missing, and everything the walk did not re-decode is
-        /// still `BeginSlot`'s zeros.
+        /// one of them: `SnapshotAssembler` writes them on every frame, empty
+        /// or not, and says why in its own comment — a receiver cannot tell an
+        /// absent block from an empty one, because a datagram cut on a block
+        /// boundary parses as a shorter, valid snapshot. So a kind missing
+        /// here is not "the server had nothing to say"; it is the tail of the
+        /// frame missing, and everything the walk did not re-decode is still
+        /// `BeginSlot`'s zeros.
+        ///
+        /// TEN OF TEN SINCE Т32б, AND REQUIRING ALL TEN IS SAFE BECAUSE THE
+        /// SENDER WRITES ALL TEN. Between Т27 and Т32б this list held five and
+        /// the other five were stepped over by their own byte length — the
+        /// forward compatibility Р29 asks the format for — because this side
+        /// had no consumer for them, and requiring a block one cannot read
+        /// would turn every healthy frame into an incomplete one. Т32б brought
+        /// the consumers (the ground views, the rings and the inventory
+        /// window) and, as the paragraph this replaces required, adds them to
+        /// BOTH lists in the same edit.
+        ///
+        /// THE SAFETY WAS MEASURED, NOT ASSUMED, and it has two halves.
+        /// `SnapshotAssembler.WriteFrame` calls its ten writers in a straight
+        /// line with no condition around any of them; and a writer handed zero
+        /// records does not return early — it emits the tag with a length of
+        /// zero (`SnapshotWriter.WritePickupsBlock` and its siblings). So "the
+        /// block is absent" is not something a healthy frame can be: only
+        /// "the block is empty", which is different bytes.
         ///
         /// A BIT PER KIND RATHER THAN A COUNT: two copies of one kind and one
         /// each of two kinds are different frames, and a count cannot tell
@@ -155,15 +181,12 @@ namespace Ring.Presentation.Net
             | (1 << (byte)SnapshotBlockKind.Liveness)
             | (1 << (byte)SnapshotBlockKind.Mobs)
             | (1 << (byte)SnapshotBlockKind.Wave)
-            | (1 << (byte)SnapshotBlockKind.Events);
-
-        /// How many seats the Liveness mask can speak about, derived from the
-        /// protocol's own payload size rather than restated as an 8 (Stage 2
-        /// Task 47a): the block is one byte and a bit per seat, so widening it
-        /// on the wire moves this number with it instead of leaving a literal
-        /// here to go stale. See `ReadLiveness` for what happens to a seat past
-        /// the ceiling.
-        const int LivenessMaskSeats = SnapshotBlocks.LivenessBlockPayloadBytes * 8;
+            | (1 << (byte)SnapshotBlockKind.Events)
+            | (1 << (byte)SnapshotBlockKind.Match)
+            | (1 << (byte)SnapshotBlockKind.Self)
+            | (1 << (byte)SnapshotBlockKind.Pickups)
+            | (1 << (byte)SnapshotBlockKind.Containers)
+            | (1 << (byte)SnapshotBlockKind.ContainerSlots);
 
         /// How long a ghost that was confirmed but never ended may stay in the
         /// registry, expressed as `GhostProjectiles`' own `maxTrackTicks`.
@@ -266,6 +289,12 @@ namespace Ring.Presentation.Net
         // waiting, and the next request may go".
         float _spectateRequestWindow;
 
+        // Stage 3 Т28 (spec §3.8/§3.11): the one loot request this client is
+        // waiting on, and the code the last answered one came back with. The
+        // client PREDICTS NO LOOT (CR 3) — this is a wait, not a guess, and
+        // the tracker owns both of its rules (see its own doc).
+        readonly LootRequestTracker _lootRequests = new LootRequestTracker();
+
         // Decode scratch, sized once from the arena caps.
         //
         // NOTHING ON THE RECEIVE PATH ALLOCATES AFTER `Restart` RETURNS,
@@ -281,6 +310,24 @@ namespace Ring.Presentation.Net
         SnapshotBlocks.PlayerRecord[] _playerScratch;
         SnapshotBlocks.MobRecord[] _mobScratch;
         SnapshotBlocks.EventRecord[] _eventScratch;
+        // Stage 3 Т32б, sized from the same caps `SnapshotAssembler` sizes its
+        // own sending scratch from, so a legal frame can never overrun one of
+        // these: a decoder handed a destination too small refuses the WHOLE
+        // block (`SnapshotBlockError.DestinationTooSmall`), which would drop a
+        // frame the sender built inside the very caps this client was
+        // configured with.
+        byte[] _selfScratch;
+        /// Fade bookkeeping for every entity class the wire describes (Stage 3
+        /// Т32б for mobs, bd `app-dut`; Т33d for pickups and containers, bd
+        /// `app-tut2`). Players have had theirs since Task 47c in `_stale`;
+        /// entities could not share it, because `StalePolicy` indexes by seat
+        /// and an entity carries a sparse id — see `EntityStaleTracker`. One
+        /// TABLE rather than one field per class, so "is every class covered"
+        /// is a question a test can ask (`EntityStaleTrackers`' own doc).
+        EntityStaleTrackers _entityStale;
+        SnapshotBlocks.PickupRecord[] _pickupScratch;
+        SnapshotBlocks.ContainerRecord[] _containerScratch;
+        SnapshotBlocks.ContainerSlotsRecord[] _slotsScratch;
 
         // This flush's event buffer — the `EventCount`/`GetEvent` window the
         // facade opens with `Advance` and closes with `EndFrame`.
@@ -295,8 +342,10 @@ namespace Ring.Presentation.Net
         //
         // Frames that arrived with entities missing: either the SENDER dropped
         // some for room (the header's `Truncated` bit) or the frame turned up
-        // without all five blocks it must carry. `ReadFrame` already computes
-        // that exact test for `StalePolicy`; this counts it. It is the honest
+        // without all the blocks this build REQUIRES — the five of
+        // `RequiredBlockKinds`, which is a subset of the ten the sender writes
+        // since Stage 3 Т27 (see that constant's own doc). `ReadFrame` already
+        // computes that exact test for `StalePolicy`; this counts it. It is the honest
         // client-side neighbor of the server's `NetStats.DroppedEntities`,
         // which lives in the other process and which nothing here can read.
         int _framesMissingEntities;
@@ -495,11 +544,20 @@ namespace Ring.Presentation.Net
         /// measurement: no kills, no waves cleared, and — worse, because the
         /// dev overlay colors them red above zero — no skipped spawns.
         ///
-        /// THE NUMBERS DO ARRIVE, ONCE, AT THE END. `MatchEndedNet` carries
-        /// eleven of them and `ClientLinkState.EndedNet` holds the message
-        /// whole. What is missing is a consumer: the end-of-match screen reads
-        /// the render pair today, and pointing it at the link's summary is not
-        /// this task's.
+        /// THE NUMBERS ARRIVE ON THEIR OWN MESSAGES, AND THEY HAVE A CONSUMER
+        /// NOW (amended by bd `app-qw01`; this paragraph used to end with "what
+        /// is missing is a consumer", which stopped being true in Ф7 and is
+        /// corrected here rather than left to read as a standing gap).
+        /// `MatchEndedNet` carries the tally when the MATCH ends and
+        /// `RaidEndedNet` when THIS collector's raid does — the second exists
+        /// precisely because the first can be minutes away for a collector who
+        /// already finished. `TryGetFinalStats` below is the consumer, and
+        /// `FinalStats.TryTally` decides which of the two answers.
+        ///
+        /// NONE OF THAT CHANGES THIS MEMBER'S ANSWER, which is about the
+        /// PER-FRAME picture and stays permanently false: a lifecycle message
+        /// is not a frame, and `Curr.Stats`/`Curr.WorldStats` are still cleared
+        /// by `BeginSlot` on every decode.
         public bool HasMatchStats => false;
 
         /// Events this CLIENT lost, which is a different number from the
@@ -590,6 +648,164 @@ namespace Ring.Presentation.Net
         }
 
         public bool SpectateRequestInFlight => _spectateRequestWindow > 0f;
+
+        /// Asks the server for one loot operation (Stage 3 Т28, spec §3.8);
+        /// true when a request actually went out. A REFUSAL IS A VALUE — the
+        /// transport is not a place to throw from — and there are three of
+        /// them: no link yet, a `slot` no byte can name, and a request already
+        /// outstanding (the tracker's own rule).
+        ///
+        /// THE ANSWER IS NOT "THE OPERATION HAPPENED", and unlike the spectate
+        /// request this wire does eventually say: `true` means only that the
+        /// bytes left this process, and `LootRequestInFlight` stays up until
+        /// `LootResultNet` comes back with the verdict. NOTHING IS PREDICTED
+        /// IN BETWEEN (CR 3) — the caller dims the slot and waits.
+        ///
+        /// NOT ON `ISimBackend`, DELIBERATELY (coordinator R-229). The
+        /// interface carries what the facade reads, and the surface that
+        /// reads loot — the inventory window — is Т32's; a member
+        /// `LocalSimBackend` would have to stub `false` for with no caller
+        /// anywhere is a feature for its own sake (AGENT.md rule 3). Т32
+        /// raises these three into the interface together with the window
+        /// that consumes them, the same way Т32 also teaches the client to
+        /// decode the five blocks Т25/Т27 already put on the wire.
+        public bool TryRequestLoot(LootOp op, int containerId, int slot)
+        {
+            if (_link == null) return false;
+            // Both refusals that are RULES live in the tracker (review Т28,
+            // I-2): one request at a time, and a slot a byte can name. What
+            // is left here is wiring.
+            if (!_lootRequests.TryOpen(op, containerId, slot)) return false;
+
+            // THE GHOST IS TAKEN BACK IF THE BYTES NEVER LEFT (review Т28,
+            // I-1). `RequestLoot` answers FishNet's own `ClientManager.
+            // Started`, which refuses to send while the transport is down —
+            // silently, with a warning line and no packet. Without this
+            // rollback that request would wait for a reply nobody will ever
+            // send, and, because the tracker admits one wait at a time, every
+            // later loot request this session would be refused too. `Reset`
+            // is exact here rather than heavy-handed: `TryOpen` succeeded one
+            // line ago, so this wait is the only thing there is to forget.
+            if (_link.RequestLoot(op, containerId, (byte)slot)) return true;
+
+            _lootRequests.Reset();
+            return false;
+        }
+
+        /// Whether a loot request is still waiting for its answer — the
+        /// interval §3.11 dims the addressed slot for. `LootRequestContainerId`
+        /// and `LootRequestSlot` name WHICH slot, and they stay readable after
+        /// the answer because that is where `LastLootRefusal` has to be shown.
+        public bool LootRequestInFlight => _lootRequests.InFlight;
+
+        /// The container half of the address the ghost — or the last refusal —
+        /// belongs to.
+        public int LootRequestContainerId => _lootRequests.ContainerId;
+
+        /// The slot half of that address: a container slot for `Take`, a
+        /// backpack index for `Drop`/`Use`.
+        public int LootRequestSlot => _lootRequests.Slot;
+
+        /// The server's verdict on the last answered request; `None` both
+        /// before the first answer and after an accepted one.
+        public LootRefusal LastLootRefusal => _lootRequests.LastCode;
+
+        /// `EntityStaleTracker.FadeProgress` for the mob, and nothing else
+        /// (Stage 3 Т32б, bd `app-dut`) — the mob-shaped twin of
+        /// `PlayerFadeProgress` below, and it exists for the difference the
+        /// owner would otherwise see on the milestone: players at the edge of
+        /// sight froze and dimmed while mobs vanished with a pop, so the
+        /// picture was INCONSISTENT rather than merely abrupt.
+        public float MobFadeProgress(int id) => FadeProgressOf(VisibilityClass.Mobs, id);
+
+        /// True while the mob's view still has something to show — the twin of
+        /// `ShouldKeepPlayerDoll`, and what stops `ViewRegistry` retiring a
+        /// view the frame stopped mentioning but the eye is still tracking.
+        public bool ShouldKeepMobView(int id) => ShouldKeepView(VisibilityClass.Mobs, id);
+
+        /// The cell's and the box's halves of the same question (Stage 3 Т33d,
+        /// bd `app-tut2`). Kept as four named members rather than one pair
+        /// taking a `VisibilityClass`, because `ISimBackend` is what
+        /// `Presentation` sees and `Presentation` must not learn the wire's own
+        /// vocabulary (Р180): the class enum lives on the networking side of
+        /// that line, and a view asking "how far gone is this cell" should not
+        /// have to name a wire concept to ask it.
+        public float PickupFadeProgress(int id) => FadeProgressOf(VisibilityClass.Pickups, id);
+
+        public bool ShouldKeepPickupView(int id) => ShouldKeepView(VisibilityClass.Pickups, id);
+
+        public float ContainerFadeProgress(int id) => FadeProgressOf(VisibilityClass.Containers, id);
+
+        public bool ShouldKeepContainerView(int id)
+            => ShouldKeepView(VisibilityClass.Containers, id);
+
+        /// The raid's public scoreboard, formatted once per read out of the
+        /// message the link is holding (Stage 3 Т34).
+        ///
+        /// FORMATTED ON READ RATHER THAN CACHED, and the contract that makes
+        /// that safe is `HasMatchResults` beside it: the CHEAP question is a
+        /// separate member, so the screen polls the bool every frame and asks
+        /// for the text once, when it has something to draw. A cache here
+        /// would need its own invalidation on an epoch change — a second thing
+        /// to keep in step — and reading this per frame instead would format
+        /// the whole board per frame on a layer whose own rule is that it does
+        /// not allocate per frame.
+        public string MatchResultsBoard
+            => HasMatchResults
+                ? Net.MatchResultsBoard.Format(_link.State.ResultsNet, LocalPlayerIndex)
+                : null;
+
+        public bool HasMatchResults => _link != null && _link.State.HasResults;
+
+        /// The counters the end-of-match message brought, converted at the one
+        /// crossing this assembly exists to make (fix round Ф7, review A-2).
+        ///
+        /// GATED ON THE PHASE, NOT ON `HasResults`: the personal message and
+        /// the public board are two sends, and it is the PERSONAL one that
+        /// carries these numbers — a client whose board was lost still has its
+        /// own counters, and one whose personal message was lost has no
+        /// business printing another player's.
+        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world,
+            out int survivedSeconds)
+        {
+            // bd `app-qw01`: TWO MESSAGES CAN ANSWER THIS NOW, and which one
+            // does is `FinalStats.TryTally`'s decision rather than a condition
+            // spelled out here — the same discipline this method's own numbers
+            // already follow, and the only shape an EditMode test can reach
+            // (`FinalStats`' own doc: nothing can stand this class up).
+            // THE GATE IS NO LONGER THE PHASE ALONE: a collector whose raid
+            // ended while the match runs on holds a tally and no phase change.
+            if (_link == null
+                || !FinalStats.TryTally(
+                        _link.State.Phase == ClientLinkState.LinkPhase.MatchEnded,
+                        _link.State.EndedNet,
+                        _link.State.HasRaidEnded, _link.State.RaidEnded,
+                        out MatchEndedNet ended))
+            {
+                stats = default;
+                world = default;
+                survivedSeconds = 0;
+                return false;
+            }
+
+            stats = FinalStats.PersonalFrom(in ended);
+            world = FinalStats.WorldFrom(in ended);
+            // Read rather than re-derived (bd `app-oypt`): the server answered
+            // this once, out of three clocks the client cannot see — the tick
+            // this collector stepped out is MatchServer's own memory and stamps
+            // nothing in the world at all.
+            survivedSeconds = ended.SurvivedSeconds;
+            return true;
+        }
+
+        /// Both readers answer the pre-`Configure` frames the same way every
+        /// other member here does — nothing is remembered yet, so nothing is
+        /// fading and nothing is worth keeping.
+        float FadeProgressOf(VisibilityClass cls, int id)
+            => _entityStale != null ? _entityStale.For(cls).FadeProgress(id) : 0f;
+
+        bool ShouldKeepView(VisibilityClass cls, int id)
+            => _entityStale != null && _entityStale.For(cls).ShouldKeep(id);
 
         /// `StalePolicy.FadeProgress` for the player slot, and nothing else
         /// (Stage 2 Task 47c, bd `app-wcy`). The decision is the policy's — how
@@ -1032,6 +1248,7 @@ namespace Ring.Presentation.Net
             BlendOwnPlayer();
 
             _stale.Advance(renderTick);
+            _entityStale.AdvanceAll(renderTick);
 
             // Р67: ghosts age against the PREDICTED tick, never the render
             // tick — they are the client's own rounds, born in the prediction
@@ -1090,6 +1307,18 @@ namespace Ring.Presentation.Net
                 + $"queue={d.SnapshotQueueCount}/{d.SnapshotQueueDepth} "
                 + $"dropped={d.DroppedSnapshots} stale={d.StaleSnapshots} dup={d.DuplicateSnapshots} "
                 + $"corrections={d.CorrectionCount} medianM={d.CorrectionMedianMeters:F3} "
+                // Т37 (Ф8, milestone В2): the ONE number the phase gate keys
+                // on that this line did not carry. Т37 step 4 says a dropped-
+                // entity count over 1% of frames becomes a delta-snapshot task
+                // (Р280) — and `FramesMissingEntities` is exactly the
+                // client-side reading of it (its own doc names the server's
+                // `NetStats.DroppedEntities` as its neighbor). It reached the
+                // on-screen panel and nothing else, so on a HEADLESS stand —
+                // which is the only stand that exists before three humans sit
+                // down — the gate had no evidence for its own threshold. Same
+                // seam as every other field here (`TryGetNetDiagnostics`), so
+                // panel and log still cannot disagree.
+                + $"framesMissing={d.FramesMissingEntities} "
                 + $"bytesDownPerSec={d.BytesDownPerSecond} "
                 + $"latSim={(d.LatencySimActive ? $"{d.LatencySimRttMs}ms/{d.LatencySimLossPercent:F1}%" : "off")}");
 #endif
@@ -1234,7 +1463,7 @@ namespace Ring.Presentation.Net
                 SlewFraction = _net.SlewFraction,
             };
 
-            _snapshots = new SnapshotQueue(in cfg.Arena, in _timings);
+            _snapshots = new SnapshotQueue(in cfg, in _timings);
             _clock = new RenderClock();
             _dedup = new EventDedup(in cfg);
             _events = new ClientEventQueue(in _timings, _net.SnapshotEventBudget);
@@ -1263,21 +1492,32 @@ namespace Ring.Presentation.Net
             // from — `MaxProjectiles` bounds what can be in flight at once,
             // and a client sees a subset of it (`SightRadius`, Р32).
             _tracers = new TracerProjectiles(cfg.Arena.MaxProjectiles);
+            // Sized by the same cap and fed the same two numbers as the player
+            // policy above: what counts as stale and how long a fade lasts are
+            // properties of the CONNECTION, not of what is fading.
+            _entityStale = new EntityStaleTrackers(in cfg.Arena,
+                _net.InterpMaxStaleTicks, _net.EntityFadeTicks);
             _reset = new ClientMatchReset(_dedup, _snapshots, _clock, _ghosts, _stale, _events,
-                _tracers);
+                _tracers, _entityStale);
             // Sized from the same cap as `_mobScratch` below, which is what
             // makes "a frame can never carry more records than one generation
             // holds" true rather than hoped for.
             _mobTypes = new MobTypeMemory(cfg.Arena.MaxMobs);
 
-            _prev = new RenderSnapshot(in cfg.Arena);
-            _curr = new RenderSnapshot(in cfg.Arena);
+            _prev = new RenderSnapshot(in cfg);
+            _curr = new RenderSnapshot(in cfg);
             _alpha = 0f;
             _lastRenderTick = 0;
 
             _playerScratch = new SnapshotBlocks.PlayerRecord[math.max(1, cfg.Arena.MaxPlayers)];
             _mobScratch = new SnapshotBlocks.MobRecord[math.max(1, cfg.Arena.MaxMobs)];
             _eventScratch = new SnapshotBlocks.EventRecord[math.max(1, _net.SnapshotEventBudget)];
+            _selfScratch = new byte[math.max(1, cfg.Hero.MaxInventoryItems)];
+            _pickupScratch = new SnapshotBlocks.PickupRecord[math.max(1, cfg.Arena.MaxPickups)];
+            _containerScratch =
+                new SnapshotBlocks.ContainerRecord[math.max(1, cfg.Arena.MaxContainers)];
+            _slotsScratch =
+                new SnapshotBlocks.ContainerSlotsRecord[math.max(1, cfg.Arena.MaxContainers)];
 
             _frameEvents = new SimEvent[_events.Capacity];
 
@@ -1300,6 +1540,15 @@ namespace Ring.Presentation.Net
             // un-restarted instance holds no subscription, and both are right
             // only while this stays the single place.
             _nm.ClientManager.RegisterBroadcast<SnapshotBroadcast>(OnSnapshotBroadcast);
+            // Stage 3 Т28: the loot channel's RECEIVING half, registered here
+            // and dropped by `Unregister` under the same `_registered` flag as
+            // the two subscriptions above — one flag rather than three is what
+            // keeps that promise checkable. It belongs to this class and not to
+            // `ClientMatchLink` (which owns the SENDING half, `RequestLoot`)
+            // because what an answer changes is the inventory window's own
+            // ghost, kept here beside the epoch it is scoped to — not the
+            // identity of the match, which is all that class holds.
+            _nm.ClientManager.RegisterBroadcast<LootResultNet>(OnLootResult);
             _nm.TimeManager.OnPreTick += TimeManager_OnPreTick;
             _registered = true;
 
@@ -1400,6 +1649,7 @@ namespace Ring.Presentation.Net
             if (_registered)
             {
                 _nm.ClientManager.UnregisterBroadcast<SnapshotBroadcast>(OnSnapshotBroadcast);
+                _nm.ClientManager.UnregisterBroadcast<LootResultNet>(OnLootResult);
                 _nm.TimeManager.OnPreTick -= TimeManager_OnPreTick;
                 _registered = false;
             }
@@ -1425,6 +1675,31 @@ namespace Ring.Presentation.Net
 
             ReadFrame(new System.ReadOnlySpan<byte>(msg.Payload.Array, msg.Payload.Offset,
                 msg.Payload.Count));
+        }
+
+        /// The server's answer to one loot request (Stage 3 Т28, spec §3.8).
+        /// Like the frame handler above, everything it can be refused for is a
+        /// VALUE and never an exception: this runs inside FishNet's own
+        /// batched parsing loop, where a throw abandons every message batched
+        /// behind it in the same datagram.
+        ///
+        /// IT DECIDES NOTHING ITSELF. The epoch is `LootNet.IsCurrentEpoch`'s
+        /// call — the same predicate the server used on the way in, spec
+        /// §3.8's "a request OR a reply" read as one rule with one home — and
+        /// whether this answer is the one being waited on is
+        /// `LootRequestTracker`'s. Both are testable; this method is not
+        /// (`LootProtocolTests`'s class doc has the mechanism).
+        ///
+        /// `SyncMatchEpoch` FIRST, exactly as the frame handler does it: the
+        /// link may already have moved to a new match, and the epoch this
+        /// answer is measured against has to be the current one rather than
+        /// the one this class last happened to observe.
+        void OnLootResult(LootResultNet msg, Channel channel)
+        {
+            SyncMatchEpoch();
+            if (!LootNet.IsCurrentEpoch(msg.MatchEpoch, _matchEpoch)) return;
+
+            _lootRequests.TryClose(in msg);
         }
 
         /// The frame, from its first byte to its last.
@@ -1574,6 +1849,25 @@ namespace Ring.Presentation.Net
                     case SnapshotBlockKind.Events:
                         ReadEvents(epoch, tick, payload);
                         break;
+                    // Stage 3 Т32б. Same shape as the five above: the reader
+                    // answers false only when the BLOCK was refused, and a
+                    // refused block makes the whole frame incomplete rather
+                    // than a frame with one section missing.
+                    case SnapshotBlockKind.Match:
+                        stateDecoded &= ReadMatch(slot, payload);
+                        break;
+                    case SnapshotBlockKind.Self:
+                        stateDecoded &= ReadSelf(slot, payload);
+                        break;
+                    case SnapshotBlockKind.Pickups:
+                        stateDecoded &= ReadPickups(slot, payload);
+                        break;
+                    case SnapshotBlockKind.Containers:
+                        stateDecoded &= ReadContainers(slot, payload);
+                        break;
+                    case SnapshotBlockKind.ContainerSlots:
+                        stateDecoded &= ReadContainerSlots(slot, payload);
+                        break;
                 }
             }
 
@@ -1610,7 +1904,10 @@ namespace Ring.Presentation.Net
             if (missingEntities) _framesMissingEntities++;
 
             if (applyState)
+            {
                 _stale.OnFrameApplied(tick, missingEntities);
+                _entityStale.OnFrameAppliedAll(tick, missingEntities);
+            }
         }
 
         /// Clears the reserved slot before a byte of this frame is decoded into
@@ -1645,9 +1942,46 @@ namespace Ring.Presentation.Net
                 slot.PlayerStats[i] = default;
                 slot.PlayerKnown[i] = false;
                 slot.PlayerAliveInMatch[i] = false;
+                // Playtest В1 round two (bd `app-1kei`): the third per-slot
+                // flag, cleared for exactly the reason its two siblings are.
+                // A leftover `true` here is worse than a leftover elsewhere —
+                // it says "this seat walked out" of a recycled slot, and the
+                // view layer answers that by drawing nothing at all.
+                slot.PlayerExtractedInMatch[i] = false;
             }
             slot.MobCount = 0;
             slot.ProjectileCount = 0;
+            // Stage 3 Т6: the two fields `RenderSnapshot` grew with the
+            // extraction economy. Nothing decodes them yet — the pickups
+            // block and the match phase reach the wire in Т25 — and they are
+            // cleared here anyway, for the reason this method exists: the
+            // ring hands back a RECYCLED frame, so the moment a decoder does
+            // start writing them, a tick that carried pickups would otherwise
+            // leave them standing in the next tick that carries none. Adding
+            // the clear together with the fields costs one line; discovering
+            // it missing costs a ghost crate on the floor.
+            slot.PickupCount = 0;
+            // Stage 3 Т32б. `ContainerCount` was NOT cleared here between Т14
+            // and this task, and that was a gap rather than a decision: this
+            // method's own argument for clearing the Т6 fields — "a tick that
+            // carried pickups would otherwise leave them standing in the next
+            // tick that carries none… discovering it missing costs a ghost
+            // crate on the floor" — is about containers word for word, and the
+            // line was simply not written beside them. Harmless while nothing
+            // decoded the block; this is the task that starts.
+            slot.ContainerCount = 0;
+            slot.Match = default;
+            // The five blocks' own fields, cleared for the reason above and in
+            // the order they are declared on the frame. The countdown resets to
+            // its SENTINEL rather than to zero: a recycled frame that says
+            // "zero seconds left" before its Match block is decoded would show
+            // a raid ending every time one arrived late.
+            slot.MatchSecondsRemaining = MatchCountdown.None;
+            slot.DirectorAlive = false;
+            slot.InventorySlotPoints = 0;
+            slot.InventoryItemCount = 0;
+            slot.ContainerInteriorCount = 0;
+            slot.ContainerInteriorItemCount = 0;
             slot.Wave = default;
             slot.WorldStats = default;
         }
@@ -1768,27 +2102,24 @@ namespace Ring.Presentation.Net
         /// ToSyntheticState` draws for the player record's own flag byte — so
         /// the spread happens here and everything above reads plain booleans.
         ///
-        /// EIGHT SEATS IS THE MASK'S OWN CEILING, and the loop below refuses to
-        /// invent the bits it does not have: one byte carries eight, the sender
-        /// truncates its own scan the same way, and this match's roster is
-        /// capped at three (`ArenaConfig.MaxPlayers`). A roster grown past eight
-        /// would need a wider mask on the wire before it could be read here, and
-        /// leaving the extra seats at `false` — rather than guessing — is what
-        /// makes that a visible gap instead of a silent lie about who is alive.
+        /// BOTH MASKS LAND SINCE THE В1 PLAYTEST'S SECOND ROUND (bd `app-1kei`).
+        /// The second one — who WALKED OUT, spec Р257 — was read and dropped
+        /// here for two tasks, under a doc explaining that nothing above the
+        /// border had a field to take it. That was true when it was written and
+        /// stopped being true the moment a collector who extracted had to be
+        /// drawn differently from a corpse: `ViewRegistry` made a body of every
+        /// slot whose `Alive` bit was clear, so walking out of the gate played
+        /// the death clip. `RenderSnapshot.PlayerExtractedInMatch` is the field
+        /// now, and the landing moved to `ClientFrameDecoder` with it — where a
+        /// test can reach both branches, which is the reason neither of them was
+        /// ever noticed here (lesson 406: a dash justified by yesterday's fact
+        /// stops being justified when the numbers start arriving another way).
         bool ReadLiveness(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
         {
-            if (!SnapshotBlocks.TryReadLivenessBlock(payload, out byte aliveMask,
-                    out SnapshotBlockError error))
-            {
-                LogBlockRefusal(SnapshotBlockKind.Liveness, error);
-                return false;
-            }
-
-            if (slot == null) return true;
-            int seats = math.min(slot.PlayerCount, LivenessMaskSeats);
-            for (int i = 0; i < seats; i++)
-                slot.PlayerAliveInMatch[i] = (aliveMask & (1 << i)) != 0;
-            return true;
+            if (ClientFrameDecoder.TryLandLiveness(payload, slot, out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.Liveness, error);
+            return false;
         }
 
         /// The mobs this client may see, as a DENSE list keyed by id — which is
@@ -1826,6 +2157,13 @@ namespace Ring.Presentation.Net
             _mobTypes.OnMobsDecoded(new System.ReadOnlySpan<SnapshotBlocks.MobRecord>(
                 _mobScratch, 0, count));
 
+            // AND THE SAME FRAMES FEED THE FADE, for the same reason: a frame
+            // the ring refused a slot to says nothing newer than what is
+            // already remembered, and `StalePolicy`'s numbers are monotonic
+            // maxima (the note on `ReadPlayers`' own OnEntitySeen call).
+            for (int i = 0; i < count; i++)
+                _entityStale.For(VisibilityClass.Mobs).OnSeen(_mobScratch[i].Id, (uint)slot.Tick);
+
             for (int i = 0; i < count; i++)
             {
                 SnapshotBlocks.MobRecord r = _mobScratch[i];
@@ -1842,10 +2180,21 @@ namespace Ring.Presentation.Net
             return true;
         }
 
-        /// The wave director's public face. `PendingChasers`/`PendingGunners`/
-        /// `PhaseTimer` are not on the wire — they are the director's own
-        /// bookkeeping and no client draws them — so they stay at zero rather
-        /// than being guessed from the counts that are.
+        /// The wave director's public face. What arrives is the SERVER'S
+        /// WORLD AGGREGATE of its three per-ring wave states
+        /// (SimulationWorld.WorldWave, bd app-ggvz Т3): phase = Active if any
+        /// ring is, waveIndex = the largest difficulty step across the rings,
+        /// aliveCount = their sum. The three `Pending*` debt fields and
+        /// `PhaseTicks` are not on the wire — they are the director's own
+        /// bookkeeping and no client draws them — so they stay at zero here
+        /// rather than being guessed from the counts that are.
+        ///
+        /// `aliveCount` SATURATES at 255 (the writer's own
+        /// `math.min(..., byte.MaxValue)`, SnapshotAssembler): the per-ring
+        /// ceilings can total more than a byte holds. Nothing reads the field
+        /// today, so the saturation costs nothing; widening it is a
+        /// side-quest for the next protocol bump, not a reason to cap the
+        /// rings.
         bool ReadWave(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
         {
             if (!SnapshotBlocks.TryReadWaveBlock(payload, out WavePhase phase, out ushort waveIndex,
@@ -1863,6 +2212,75 @@ namespace Ring.Presentation.Net
                 AliveCount = aliveCount,
             };
             return true;
+        }
+
+        /// The five Stage 3 blocks, each a thin wire around
+        /// `ClientFrameDecoder` (Т32б): the landing itself is a pure function
+        /// and lives in `Ring.Networking.Client` so that it can be tested —
+        /// this class takes a live `NetworkManager` and no EditMode fixture
+        /// can build it (`app-xkir`). What stays here is what needs the
+        /// runtime: the logger, and the one-line-per-block rule that keeps the
+        /// receive path free of garbage.
+        bool ReadMatch(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandMatch(payload, slot, out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.Match, error);
+            return false;
+        }
+
+        bool ReadSelf(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandSelf(payload, in _cfg,
+                    new System.Span<byte>(_selfScratch), slot, out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.Self, error);
+            return false;
+        }
+
+        bool ReadPickups(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandPickups(payload, in _cfg,
+                    new System.Span<SnapshotBlocks.PickupRecord>(_pickupScratch), slot,
+                    out SnapshotBlockError error))
+            {
+                // FED FROM THE LANDED FRAME, not the scratch, and only on a
+                // block that landed — the mob path's own rule (`ReadMobs`),
+                // with the one difference that the decoder here lands as it
+                // reads, so the frame IS the decoded set by this line.
+                EntityStaleTracker cells = _entityStale.For(VisibilityClass.Pickups);
+                for (int i = 0; i < slot.PickupCount; i++)
+                    cells.OnSeen(slot.Pickups[i].Id, (uint)slot.Tick);
+                return true;
+            }
+            LogBlockRefusal(SnapshotBlockKind.Pickups, error);
+            return false;
+        }
+
+        bool ReadContainers(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandContainers(payload, in _cfg,
+                    new System.Span<SnapshotBlocks.ContainerRecord>(_containerScratch), slot,
+                    out SnapshotBlockError error))
+            {
+                // The boxes' half of the same stamp — see `ReadPickups` above.
+                EntityStaleTracker boxes = _entityStale.For(VisibilityClass.Containers);
+                for (int i = 0; i < slot.ContainerCount; i++)
+                    boxes.OnSeen(slot.Containers[i].Id, (uint)slot.Tick);
+                return true;
+            }
+            LogBlockRefusal(SnapshotBlockKind.Containers, error);
+            return false;
+        }
+
+        bool ReadContainerSlots(RenderSnapshot slot, System.ReadOnlySpan<byte> payload)
+        {
+            if (ClientFrameDecoder.TryLandContainerSlots(payload, in _cfg,
+                    new System.Span<SnapshotBlocks.ContainerSlotsRecord>(_slotsScratch), slot,
+                    out SnapshotBlockError error))
+                return true;
+            LogBlockRefusal(SnapshotBlockKind.ContainerSlots, error);
+            return false;
         }
 
         /// This frame's events, each asked about exactly once.
@@ -2209,6 +2627,12 @@ namespace Ring.Presentation.Net
             // request cannot outlive the match it named a slot of.
             _hasOwnSample = false;
             _spectateRequestWindow = 0f;
+            // Stage 3 Т28: and a loot request cannot outlive the match it
+            // named a container of either. This is the ONE case the reliable
+            // wire never answers — a request that reached no live match gets
+            // no reply by construction (`MatchServer.OnLootRequest`'s own
+            // doc) — so the ghost has to be dropped here or it never goes out.
+            _lootRequests.Reset();
             // The third thing that cannot survive a match: a new one mints its
             // entity ids from 1 again, so a remembered id would answer with
             // the archetype of a mob from the match before (fix-round 1, G-2).

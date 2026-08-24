@@ -205,7 +205,7 @@ namespace Ring.Simulation.Movement
                     // still be open (spec: denied no more than once per charge).
                     p.DashBufferTimer = 0f;
                     result.DashDenied = true;
-                    p.Vel = RegularMoveVel(p.Vel, input.MoveDir, input.AimHeld, hero, dt);
+                    p.Vel = RegularMoveVel(p.Vel, in input, hero, dt);
                 }
             }
             else if (p.SlideTimer > 0f) // slide tick — link of the SAME chain (QC11)
@@ -285,7 +285,7 @@ namespace Ring.Simulation.Movement
                     // SlideBufferWindow (~5 ticks at TickDt) every tick the
                     // buffer keeps retrying/decaying (C11 below), not just
                     // the request's own tick.
-                    p.Vel = RegularMoveVel(p.Vel, input.MoveDir, input.AimHeld, hero, dt);
+                    p.Vel = RegularMoveVel(p.Vel, in input, hero, dt);
                     // Stage 2 Task 10: the GATED request, not input.SlideRequested
                     // — a request the rate limit dropped must emit no
                     // StaminaDenied at all (it never reached the movement system
@@ -305,7 +305,7 @@ namespace Ring.Simulation.Movement
             }
             else
             {
-                p.Vel = RegularMoveVel(p.Vel, input.MoveDir, input.AimHeld, hero, dt);
+                p.Vel = RegularMoveVel(p.Vel, in input, hero, dt);
             }
 
             // Stamina regen (Tasks 9/10): only once the post-dash delay has
@@ -361,14 +361,34 @@ namespace Ring.Simulation.Movement
             return result;
         }
 
-        /// Task 14: `aimHeld` caps the target speed at MaxSpeed * AimMoveSpeedFrac
-        /// (the dash branches never call this — dash speed is untouched by the
-        /// aim cap by construction, not by a guard here).
-        static float2 RegularMoveVel(float2 vel, float2 moveDir, bool aimHeld, in HeroSimConfig hero, float dt)
+        /// Stage 3 Task 20 (coordinator D-1): ONE home for "should this
+        /// tick's regular movement be capped" — aiming down sights and
+        /// having the loot window open both pay the identical price
+        /// (Hero.AimMoveSpeedFrac, no second number, spec Р239), and
+        /// restating `input.AimHeld || input.InventoryOpen` at each of
+        /// RegularMoveVel's three call sites would be the exact duplication
+        /// rule 2 forbids.
+        static bool SlowsMovement(in SimInput input) => input.AimHeld || input.InventoryOpen;
+
+        /// Stage 2 Task 14 / Stage 3 Task 20: caps the target speed at
+        /// MaxSpeed * AimMoveSpeedFrac whenever SlowsMovement (above) says
+        /// so. The dash branches never call this — dash speed is untouched
+        /// by either cap, by construction, not by a guard here. Parameter
+        /// widened from `bool aimHeld` to `in SimInput input` (D-2) —
+        /// `aimHeld` stopped being an honest name the moment a second
+        /// condition started reading it; no test names the parameter
+        /// (verified by grep — every reference to RegularMoveVel outside
+        /// this file is a comment, never a call). The separate `moveDir`
+        /// parameter went the same way in the Ф4 phase review (B-6): all
+        /// three call sites passed `input.MoveDir` NEXT TO `in input`, the
+        /// same datum twice, so the heading is read off the input here for
+        /// exactly the reason AimHeld already was.
+        static float2 RegularMoveVel(float2 vel, in SimInput input, in HeroSimConfig hero, float dt)
         {
+            float2 moveDir = input.MoveDir;
             if (math.lengthsq(moveDir) <= 1e-6f)
                 return MoveTowards(vel, float2.zero, hero.Friction * dt);
-            float maxSpeed = aimHeld ? hero.MaxSpeed * hero.AimMoveSpeedFrac : hero.MaxSpeed;
+            float maxSpeed = SlowsMovement(in input) ? hero.MaxSpeed * hero.AimMoveSpeedFrac : hero.MaxSpeed;
             return MoveTowards(vel, moveDir * maxSpeed, hero.Accel * dt);
         }
 

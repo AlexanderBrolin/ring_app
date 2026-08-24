@@ -9,6 +9,32 @@ namespace Ring.Simulation.Core
         public float RecoilOffset,
             Hp, Stamina, StaminaRegenDelayTimer,
             DashTimer, DashCooldown, IframeTimer, DashBufferTimer, FireCooldown;
+
+        /// Stage 3 Task 2 (spec Р261/Р225): energy-cell-backed shot counter, in
+        /// SHOTS, not cells — WeaponSimConfig.ShotsPerCell is the conversion
+        /// factor a picked-up cell applies through SimulationWorld.AddAmmo, the
+        /// world's one refill seam (Т3 gave it its production caller,
+        /// Loot.PickupSystem.Collect). WeaponSystem.Advance spends exactly one
+        /// per shot fired while Ammo > 0 — inside the ONE shared body both
+        /// Update (server) and AdvanceNoSpawn (prediction) call, so a predicting
+        /// client depletes its magazine in lockstep with the server (Р225:
+        /// otherwise the client could render a muzzle flash for a shot the
+        /// server never fired at Ammo == 0). The MATCH TALLY of that same spend
+        /// (MatchStats.AmmoSpent) is server-side only, for the reason its own
+        /// doc gives.
+        /// At Ammo == 0 the weapon keeps firing on WeaponSimConfig.
+        /// EmergencyFireInterval (the emergency synthesis) and spends nothing —
+        /// WeaponSystem.IntervalFor is the single reader that picks the interval,
+        /// always off Ammo's value from BEFORE that shot's own spend (Р261: the
+        /// last round still leaves on the normal interval, only the NEXT shot,
+        /// with Ammo already at 0, is emergency). Clamped down to
+        /// WeaponSimConfig.AmmoMax by SimulationWorld.ApplyConfig, same
+        /// hot-tweak-ceiling contract as every other PlayerState magnitude
+        /// (HotTweakTests.ApplyConfig_ReflectiveClampPass...). Part of
+        /// StateHash since Т6 (the sanctioned re-pin #1), folded in right
+        /// after FireCooldown, the cooldown it shares a weapon with.
+        public int Ammo;
+
         /// Task 12: the dash's current speed — set to Hero.DashSpeed on dash
         /// start, then multiplied by Hero.RicochetRetention each time the dash
         /// mirrors off a wall/obstacle (PlayerMovementSystem), so consecutive
@@ -18,7 +44,23 @@ namespace Ring.Simulation.Core
         /// (Stage 2 Task 8) — because a stale nonzero speed with no active
         /// dash reads as inconsistent).
         public float DashSpeedCur;
-        public bool Alive;
+        /// Stage 3 Task 1 (spec Ф1, errata E-1): whether this player exited
+        /// the match through a portal or the gate. Declared next to Alive
+        /// (Interfaces) — the two share one invariant, `!(Alive &&
+        /// Extracted)`, though nothing in this task enforces it: no system
+        /// sets Extracted true until the extraction behavior itself lands
+        /// (Т23/Т24). Part of StateHash since Т6 (the sanctioned re-pin #1,
+        /// errata E-1's "structural rebuild"), hashed right after Alive.
+        public bool Alive, Extracted;
+
+        /// Which route Extracted was earned through (Stage 3 Task 1, errata
+        /// E-1 item 1, A-I12): 0 = not extracted, 1 = the early portal
+        /// (ExtractedEarly), 2 = the gate (ExtractedCore) — Т24 needs the two
+        /// outcomes distinguishable for credits/summary. Meaningless while
+        /// Extracted is false; inert until Т23/Т24 give it a writer.
+        /// Part of StateHash since Т6, hashed right after the Extracted it
+        /// qualifies.
+        public byte ExtractKind;
 
         /// Aim-down-sights settle timer (Task 14): grows towards
         /// Hero.AimSettleSeconds while input.AimHeld, decays at 2x that
@@ -56,9 +98,44 @@ namespace Ring.Simulation.Core
         /// movement timers (SimulationWorld.KillPlayer) and clamped into
         /// [0, EdgeRequestMinTicks] by ApplyConfig, like every timer above.
         public int DashRequestCooldownTicks, SlideRequestCooldownTicks;
+
+        /// Stage 3 Task 1 (spec Ф1, errata E-1): channel timers for the run's
+        /// three hold-to-act interactions — looting a container (Т17),
+        /// repairing gear (Т19) and extracting through a portal/gate (Т23).
+        /// Declared here, inert, so every hashable field the phase needs
+        /// enters StateHash together at the sanctioned re-pin rather than
+        /// dribbling in across Ф3-Ф5 and shifting the golden digest more
+        /// than once (errata E-1's whole point). Behavior (start/tick/abort)
+        /// is each named task's own job. Part of StateHash since Т6 — that
+        /// re-pin is where "enters together" was made good on.
+        public float LootTimer, RepairTimer, ExtractTimer;
+
+        /// Which container/slot LootTimer is currently channeling against
+        /// (Stage 3 Task 1; behavior in Т17). LootTargetContainerId is a
+        /// Container entity id, 0 meaning "no loot channel in progress"
+        /// (entity ids start at 1 — SimulationWorld._nextEntityId). Part of
+        /// StateHash since Т6, beside the timer the pair belongs to.
+        public int LootTargetContainerId;
+        public byte LootTargetSlot;
     }
 
-    public enum MobType : byte { Chaser = 0, Gunner = 1 }
+    /// Stage 3 Task 10 (spec Р213/Р251): Elite and Director are the third
+    /// and fourth archetype — a wire-domain growth that ripples through
+    /// FOURTEEN two-way branches across Simulation/Networking/Presentation
+    /// (spec's own table, Р251), not just this declaration. `SimConfig`
+    /// gains matching `Elite`/`Director` MobSimConfig sections
+    /// (Core/SimConfig.cs), `SimulationWorld.MobConfigFor`/`SpawnMob`'s own
+    /// Hp branch/`Combat/ProjectileSystem`'s candidate radius/
+    /// `AI/MobAiSystem`'s FSM dispatch/`Protocol/SnapshotBlocks.MaxHpFor`+
+    /// `MaxMobTypeValue` all stop being two-way. The domain move is also a
+    /// `ProtocolVersion` bump (see its own HISTORY). Elite reuses the
+    /// EXISTING `MobAiState` six-value FSM below wholesale — no new state,
+    /// see that enum's own doc — and Director never leaves the arena core
+    /// (Р248, enforced in Т22, not here). Neither archetype gets a stored
+    /// "is retinue"/"is boss" flag: Director-ness and retinue-ness are both
+    /// derived from `Type` alone (rule 2 — a derived value does not enter
+    /// state or hash a second time).
+    public enum MobType : byte { Chaser = 0, Gunner = 1, Elite = 2, Director = 3 }
 
     /// Vertical hit-zone a shot landed in (Task 6). Lives in Core next to MobType
     /// because it crosses every layer: Simulation classifies it, SimEvent carries
@@ -78,6 +155,46 @@ namespace Ring.Simulation.Core
         public float Hp, StateTimer, FireCooldown;
         public MobAiState Ai;
         public int StrafeSign;
+
+        /// The ring this mob was PUT INTO by whoever spawned it -- wave
+        /// bookkeeping only. NOT a retinue mark: who counts as the
+        /// Director's retinue is decided positionally by
+        /// MatchFlowSystem.LiveRetinueCount (Р215), and a core-wave elite is
+        /// indistinguishable from a retinue elite by this field.
+        /// NOT a "current zone" either -- the mob walks away from where it
+        /// was born, which is exactly why the value cannot be derived and
+        /// has to be stored.
+        /// On a CLIENT this stays default: there MobState is assembled from
+        /// MobRecord, which does not carry it -- Presentation must not read
+        /// this field.
+        /// A dev-key spawn is filed under Zone.Outer wherever it lands.
+        public Zone SpawnZone;
+    }
+
+    /// Stage 3 Т24: the values PlayerState.ExtractKind carries, named ONCE
+    /// (rule 2). Two readers need them — Objectives.ExtractionSystem, which
+    /// writes the byte, and Ring.Networking.Server.MatchEndPolicy.OutcomeFor,
+    /// which turns it into ExtractedEarly/ExtractedCore — and a bare literal
+    /// in each would be one number living in two places.
+    ///
+    /// DELIBERATELY NOT ArenaSimConfig's OWN ExitKind, whose Portal is 0: a
+    /// zero here has to mean "never extracted", so the two enumerations are
+    /// offset on purpose and mapped explicitly at the one place that writes
+    /// this field.
+    ///
+    /// A STATIC CLASS RATHER THAN CONSTANTS ON PlayerState ITSELF, and that
+    /// was measured, not assumed: the state structs of this file are swept
+    /// reflectively by six fixtures (the hash-completeness sweep, hot-tweak,
+    /// prediction parity, the config-hash field lists), and a const on the
+    /// struct is a static field those sweeps then try to write —
+    /// WorldLifecycleTests.EveryPlayerAndStatsFieldAffectsHash failed with
+    /// exactly that FieldAccessException before this moved out. ProjectileIds
+    /// below is the same shape for the same kind of value.
+    public static class ExtractKinds
+    {
+        public const byte NotExtracted = 0;
+        public const byte EarlyPortal = 1;
+        public const byte Gate = 2;
     }
 
     public enum ProjectileOwner : byte { Player = 0, Mob = 1 }
@@ -109,20 +226,191 @@ namespace Ring.Simulation.Core
         public float2 Pos, PrevPos, Vel;
         public float Damage, Radius, Ttl;
 
-        /// Vertical position/velocity (metres above ground, Task 4): Height
+        /// Vertical position/velocity (meters above ground, Task 4): Height
         /// advances by VelZ each tick alongside the horizontal Pos update;
         /// PrevHeight mirrors PrevPos's role for interpolation.
         public float Height, PrevHeight, VelZ;
+
+        /// Stage 3 Task 5 (spec Р252): the shooting ENTITY's own id — a live
+        /// mob's MobState.Id for a Mob-owned round (MobAiSystem.UpdateGunner
+        /// passes `m.Id`), 0 ("nobody") for a Player-owned one
+        /// (WeaponSystem.SpawnShot's own literal — a player owns no mob
+        /// entity id, and SimulationWorld._nextEntityId starts at 1, so no
+        /// live mob can ever collide with the literal). Distinct from
+        /// OwnerIndex above: that field names a PLAYER slot and drives credit,
+        /// this one names a MOB entity and drives ProjectileSystem's
+        /// friendly-fire exclusion — a gunner's own round must never gather
+        /// its own shooter as a HitMob candidate. Declared inert in Task 5
+        /// (errata E-1's "structural rebuild" discipline) and part of
+        /// StateHash since Т6, hashed right after the two owner fields it
+        /// completes.
+        public int OwnerEntityId;
+    }
+
+    /// Stage 3 Task 3 (spec §3.6): the one kind of pickup that exists today —
+    /// declared as an enum, not a bare bool/const, because a second kind
+    /// (Data — recovered memory-core fragments, the next epic's own
+    /// currency) is already spec'd to follow, and adding it later would
+    /// otherwise force PickupState onto the wire a second time.
+    public enum PickupKind : byte { EnergyCell = 0 }
+
+    /// Live state of one ground pickup (spec §3.6) — same array/id/
+    /// swap-remove shape as MobState/ProjectileState above (rule 4: reuse
+    /// the established entity pattern rather than inventing a bespoke one).
+    /// `Amount` is `int`, not `ushort` (Р258, spec §3.6, finding D-9): the
+    /// reflective hash sweep (WorldLifecycleTests.Bump) only knows
+    /// float/int/bool/byte/float2/enum and would throw
+    /// NotSupportedException on an unhandled ushort — which is no longer a
+    /// forecast but a live constraint, since Т6 gave this struct its own
+    /// sweep pass; `Amount` rides the wire separately, quantized, so the
+    /// extra two bytes of in-memory size buy nothing on that path either.
+    /// Part of StateHash/WorldSave/CaptureSnapshot since Т6 (the sanctioned
+    /// re-pin #1), at the canonical position right after the projectiles.
+    public struct PickupState
+    {
+        public int Id;
+        public float2 Pos;
+        public PickupKind Kind;
+        public int Amount;
+        public float Ttl;
+    }
+
+    /// Stage 3 Task 14 (spec §3.7, С16/Р229): the container's SKIN and spawn
+    /// table only — behavior never branches on it (spec, translated: "it does
+    /// not affect behavior… three mechanisms instead of one would have given
+    /// three state machines and three sets of races"). Coordinator R-100:
+    /// `Kind` is read exactly once
+    /// in the SIMULATION, by `Loot.ContainerStore.InitialTtlFor` — a future
+    /// task that needs a second branch on BEHAVIOR here is reopening that
+    /// spec decision, not extending a precedent.
+    ///
+    /// PRESENTATION READS IT TOO SINCE STAGE 3 TASK 31 (R-250), and that is
+    /// the sentence above being honored rather than bent: `ViewRegistry`
+    /// picks a POOL and a PREFAB from it and `ContainerView` records it to
+    /// find its pool again, which is the SKIN this doc opens by calling it.
+    /// No timer, no slot, no outcome branches on `Kind` anywhere — the one
+    /// state machine spec §3.7 asked for is still one.
+    public enum ContainerKind : byte { Ground = 0, Crate = 1, Cache = 2, MobCorpse = 3, PlayerCorpse = 4 }
+
+    /// Live state of one container (spec §3.7) — the ONE entity type for
+    /// every ground drop/crate/cache/corpse (С16). Same array/id/
+    /// swap-remove shape as PickupState above, PLUS a fixed-width block of
+    /// `SimulationWorld._containerSlots` this struct's own array position
+    /// pairs with — Р229: content is addressed by the container's POSITION
+    /// in the array, never by `Id` (an id survives a swap-remove, a
+    /// position does not), which is why `RemoveContainerAt`'s swap-remove
+    /// must carry the slot block along with the struct — see that method's
+    /// own doc.
+    ///
+    /// `SlotCount` is this container's own usable width inside the fixed
+    /// `MaxContainerSlots` block — set once at `SpawnContainer` time from
+    /// the caller's `items` span length; slots at or past it are never
+    /// read (same "walk only what's counted" contract `Loot.Inventory`'s
+    /// own Count already follows, HashInventory's own doc).
+    ///
+    /// `Ttl` — spec's own field list (§3.7) omits it; the plan's Interfaces
+    /// add it with "0 = не истекает", and `LootSimConfig.ContainerTtlSeconds`
+    /// (shipped Т13) would otherwise have no reader at all — amendment to
+    /// spec §3.7 recorded in this task's own report. 0 means "never
+    /// expires" (ящик/тайник/труп сборщика); every other kind seeds from
+    /// `Loot.ContainerTtlSeconds` via `ContainerStore.InitialTtlFor`.
+    /// Part of StateHash/WorldSave/CaptureSnapshot from this task on, at
+    /// the canonical position right after the pickups (spec Р294 —
+    /// SimulationWorld.StateHash's own doc reserved the step in Т6).
+    public struct ContainerState
+    {
+        public int Id;
+        public float2 Pos;
+        public ContainerKind Kind;
+        public byte SlotCount;
+        public float Ttl;
     }
 
     public enum WavePhase : byte { Waiting = 0, Active = 1 }
 
-    /// Live state of the wave-spawning director.
+    /// Live state of the wave-spawning director IN ONE RING.
+    ///
+    /// Wave-cadence-per-zone (bd app-ggvz Т3, spec §3.2): SimulationWorld
+    /// holds THREE of these, one per Zone, reached through
+    /// SimulationWorld.WaveRef(Zone). This is not a growth of the state, it
+    /// is its re-shelving: Т11 of Stage 3 spread one director's debt across a
+    /// 3x3 matrix of NINE named `Pending{Zone}{Archetype}` fields because one
+    /// wave budget had to be split three ways; now each ring runs its own
+    /// wave, so the zone leaves the field NAMES and becomes the index of the
+    /// instance, and the matrix is three plain fields again. The ONE place
+    /// that maps an archetype onto one of them is WaveSystem.PendingRef
+    /// (coordinator R-51) -- nothing else, including this struct's own
+    /// callers, is allowed to grow a second mapping.
+    ///
+    /// The declared archetype order (MobType's own Chaser=0/Gunner=1/
+    /// Elite=2) is the SAME order HashWave walks, and SimulationWorld.
+    /// StateHash folds the three instances in Zone's own declared order
+    /// (Outer -> Middle -> Core) -- see that method's own canonical-order
+    /// doc.
+    ///
+    /// The FRAME does not carry three of these: RenderSnapshot.Wave is a
+    /// single aggregate of the world, computed by SimulationWorld.WorldWave
+    /// (spec §3.9 Р338), so nothing downstream of the simulation has to know
+    /// the ring count.
     public struct WaveState
     {
         public WavePhase Phase;
-        public int WaveIndex, PendingChasers, PendingGunners, AliveCount;
-        public float PhaseTimer;
+        /// Difficulty step of the wave running here.
+        public int WaveIndex;
+        /// WHOLE TICKS, never seconds — SimulationWorld.TicksFromSeconds'
+        /// own doc carries the rule and the two measurements that paid for it.
+        public int PhaseTicks, AliveCount;
+        public int PendingChaser, PendingGunner, PendingElite;
+
+        /// This RING's outstanding wave-spawn debt across the three
+        /// archetypes (coordinator R-52, spec Р206/Р219a): a DERIVED
+        /// quantity, computed wherever it is needed rather than stored --
+        /// deliberately NOT an auto-property. An auto-property's
+        /// compiler-generated backing field would be an EIGHTH struct field
+        /// invisible to both HashWave (which lists the three Pending fields
+        /// by name) and the reflective hash-completeness sweep
+        /// (WorldLifecycleTests, which only walks
+        /// `typeof(WaveState).GetFields()` -- a private backing field never
+        /// shows up there), i.e. exactly the "hidden field bypasses both
+        /// guards" failure mode R-52 exists to rule out. WaveSystem.Update's
+        /// "is the wave cleared" check and WaveTests both read this instead
+        /// of summing fields by hand at each call site (one home, lesson
+        /// 279).
+        ///
+        /// It is ONE RING's debt, not the world's: a caller asking "does the
+        /// world still owe mobs" sums this over Zones.Count instances
+        /// (WaveSystem.Update's own clear check does exactly that), and
+        /// RenderSnapshot.Wave.PendingTotal reads the aggregate's summed
+        /// fields.
+        public int PendingTotal => PendingChaser + PendingGunner + PendingElite;
+    }
+
+    /// Match-flow phase (Stage 3 Task 1 Interfaces, spec Ф1/§3.10): Farm (only
+    /// wave combat, no Director/gate yet) -> DirectorActive (the boss has
+    /// been triggered) -> GateOpen (the boss died, the extraction window is
+    /// live) -> Ended. Declared inert by Т1; the state machine that advances
+    /// through these phases arrived with Т21 (Objectives.MatchFlowSystem),
+    /// and Ended stays outside its reach — that one is written by whoever
+    /// holds MatchEndPolicy's verdict, i.e. Т24 (coordinator R-172).
+    public enum MatchPhase : byte { Farm = 0, DirectorActive = 1, GateOpen = 2, Ended = 3 }
+
+    /// Match-wide flow state (Stage 3 Task 1 Interfaces) — one per match, not
+    /// per player, same "single struct field" shape as WaveState/WorldStats.
+    /// DirectorDeathTick is 0 while the Director is alive or has not yet been
+    /// activated; MatchFlowSystem (Т21) stamps it with the world tick its
+    /// liveness scan first found him gone, which is what the GateDelaySeconds
+    /// countdown (SimConfig.Flow) counts from. Zero can never collide with a
+    /// real death tick: TickAll bumps the counter before any system runs, so
+    /// the earliest tick that scan can observe is 1.
+    /// Part of StateHash/WorldSave/CaptureSnapshot since Т6 (the sanctioned
+    /// re-pin #1), at the canonical position right after the wave — and, from
+    /// the same task, covered by a reflective hash-sweep pass of its own
+    /// (WorldLifecycleTests), which is what keeps the NEXT field added here
+    /// from joining the struct without joining the hash.
+    public struct MatchState
+    {
+        public MatchPhase Phase;
+        public int DirectorDeathTick;
     }
 
     /// Per-player match counters surfaced to DevOverlay/telemetry (Stage 2 Task 5:
@@ -139,6 +427,32 @@ namespace Ring.Simulation.Core
             DashesUsed, SlidesUsed, DeathTick;
         public float DamageTaken;
         // caps are observed separately (spec §3.15): what got clamped is visible in DevOverlay
+
+        /// Stage 3 Task 1 (errata E-1 + R-13): ammo consumed and cells picked
+        /// up this match — the two MatchStats fields Ф1's economy actually
+        /// owns. SurvivedSeconds is deliberately NOT here — despite errata
+        /// E-1 item 1 listing it beside these two, that is the errata's own
+        /// imprecision (owner decision R-13): SurvivedSeconds belongs to
+        /// MatchSummary (Т24, computed in BuildSummary from ticks), not to a
+        /// per-tick counter hashed every frame. Part of StateHash since Т6,
+        /// after DamageTaken.
+        ///
+        /// WRITERS (Ф1 fix-round, review C1 / B-I-1, owner decision R-24 —
+        /// declared in Т1, hashed in Т6, and given their behavior in the same
+        /// phase so the digest moved ONCE, which is what errata E-1's
+        /// "structural rebuild" asked for). AmmoSpent: WeaponSystem.Advance,
+        /// inside the `Ammo > 0` spend branch, so the emergency synthesis
+        /// (Р226 — it spends nothing) never inflates it. CellsPicked:
+        /// Loot.PickupSystem.Collect, in CELLS (PickupState.Amount's own
+        /// unit), not in the shots those cells bought and not in piles walked
+        /// over. Both are personal counters credited to the acting player's
+        /// own slot, exactly like Kills/ShotsFired above, and both are
+        /// SERVER-side only for the same reason ShotsFired is: a predicting
+        /// client owns no MatchStats (CR 3, PlayerPrediction's own doc).
+        /// Т24's BuildSummary READS them (errata E-3), it does not compute
+        /// them — AmmoMax clamping makes AmmoSpent unrecoverable after the
+        /// fact from AmmoStart, refills and the surviving Ammo.
+        public int AmmoSpent, CellsPicked;
     }
 
     /// World-scoped match counters (Stage 2 Task 5) — counted once for the whole
@@ -148,5 +462,18 @@ namespace Ring.Simulation.Core
     public struct WorldStats
     {
         public int WavesCleared, MobSpawnsSkipped, ProjectileSpawnsSkipped;
+
+        /// Stage 3 Task 1 (errata E-1): shared arena-resource skip counters
+        /// for the extraction economy's own spawn caps (pickups, containers)
+        /// — same "world-scoped, not per-player" reasoning as the three
+        /// fields above. PickupSpawnsSkipped gets its writer in Stage 3 Task
+        /// 3 (SimulationWorld.SpawnPickup's CAP-overflow branch only — a
+        /// zero-amount drop is refused silently and does not count as a
+        /// skip, see SpawnPickup's own doc, Р260); ContainerSpawnsSkipped
+        /// got its own writers in Т15/Т16 — SimulationWorld.SpawnContainer's
+        /// cap-overflow branch and ContainerStore's placement give-up.
+        /// Part of StateHash since Т6,
+        /// after the three counters above.
+        public int PickupSpawnsSkipped, ContainerSpawnsSkipped;
     }
 }

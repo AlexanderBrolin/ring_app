@@ -159,6 +159,18 @@ namespace Ring.Networking.Client
                 case SnapshotEventKind.StaminaDenied:
                 case SnapshotEventKind.WaveStarted:
                 case SnapshotEventKind.WaveCleared:
+                // Stage 3 Т32 (bd app-gggs): the raid's own five. They have
+                // ridden the wire since Т29 and this predicate did not know
+                // them, so every one of them was walked past as a Р29 forward
+                // -compatibility skip — a client that had been told the
+                // Director woke up, that a raider walked out, or that the box
+                // it is standing over is now empty, and did nothing with any
+                // of it.
+                case SnapshotEventKind.DirectorActivated:
+                case SnapshotEventKind.DirectorDied:
+                case SnapshotEventKind.PlayerExtracted:
+                case SnapshotEventKind.PickupTaken:
+                case SnapshotEventKind.ContainerEmptied:
                     return true;
                 default:
                     return false;
@@ -349,6 +361,51 @@ namespace Ring.Networking.Client
                 case SnapshotEventKind.WaveCleared:
                     e.Kind = SimEventKind.WaveCleared;
                     e.EntityId = p.WaveIndex;
+                    break;
+
+                // Stage 3 Т32 (bd app-gggs). Field conventions are the
+                // SENDER's, taken from `SimEventKind`'s own per-kind PAYLOAD
+                // paragraphs — not invented here.
+                case SnapshotEventKind.DirectorActivated:
+                    // Nothing but the kind: this one rides the All channel,
+                    // which carries no position (Р28), and the moment IS the
+                    // message.
+                    e.Kind = SimEventKind.DirectorActivated;
+                    break;
+
+                case SnapshotEventKind.DirectorDied:
+                    e.Kind = SimEventKind.DirectorDied;
+                    break;
+
+                case SnapshotEventKind.PlayerExtracted:
+                    e.Kind = SimEventKind.PlayerExtracted;
+                    // VICTIM in both fields — the third kind to take that
+                    // convention (`SimEvent.PlayerIndex`'s master list), which
+                    // is what lets `EventRelevance.VisibleSubjectId` resolve
+                    // all three through one `ForPlayer(ev.PlayerIndex)`.
+                    e.EntityId = p.PlayerIndex;
+                    e.PlayerIndex = p.PlayerIndex;
+                    break;
+
+                case SnapshotEventKind.PickupTaken:
+                    e.Kind = SimEventKind.PickupTaken;
+                    e.EntityId = p.Id;
+                    // THE COLLECTOR IS WHOEVER RECEIVED THIS, and the wire
+                    // deliberately does not repeat it: the kind rides the
+                    // Owner channel, so the server sent this record to exactly
+                    // one connection — the collector's. Same inference
+                    // `StaminaDenied` above already makes, and the same reason.
+                    e.PlayerIndex = localPlayerIndex;
+                    break;
+
+                case SnapshotEventKind.ContainerEmptied:
+                    e.Kind = SimEventKind.ContainerEmptied;
+                    e.EntityId = p.Id;
+                    // No player slot: this one is delivered by VISIBILITY
+                    // (R-236 — the assembler decides it against
+                    // `ContainersCurrent`), so the receiver is a witness, not
+                    // a subject, and filling their slot in would be a fiction
+                    // a consumer could act on.
                     break;
 
                 default:

@@ -105,15 +105,51 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void NoFireWhileWindowOpen()
+        {
+            // Stage 3 Task 20 (spec §3.8 check 2's mirror on the weapon side,
+            // Р239): CanFire's fifth term. No config toggle exists for this
+            // one — unlike CanFireWhileDash/CanFireWhileSlide above, the loot
+            // window's price is unconditional (spec: "стрельба ... недоступны",
+            // no exception offered).
+            var w = new SimulationWorld(1, TestConfigs.Open());
+            SimInput input = Fire; input.InventoryOpen = true;
+            w.Tick(input);
+            Assert.AreEqual(0, w.Stats.ShotsFired);
+        }
+
+        [Test]
         public void ProjectileCap_SkipsDeterministically()
         {
             var cfg = TestConfigs.Open();
             cfg.Weapon.ProjectileLifetime = 60f; // projectiles never expire
             cfg.Weapon.FireInterval = 0.001f;    // flood the cap instantly
-            static ulong Run(SimConfig c2)
+            // Stage 3 Task 12: the flood has to outlast the cap, and since
+            // Т2 it is the MAGAZINE that decides how long it lasts. At
+            // FireInterval 0.001 against TickDt the while loop fires 33 rounds
+            // a tick, so the fixture's 400 rounds are gone by tick 12 and the
+            // emergency interval (1.25 s) adds barely two more over the
+            // remaining 48 — about 402 rounds against a cap that went 384 ->
+            // 1024 (spec Р216). The cap was simply never reached and
+            // ProjectileSpawnsSkipped stayed 0. Tying the magazine to the cap
+            // makes the flood outlast it by construction, whatever either
+            // number becomes later: 1124 rounds at 33 a tick fill 1024 slots
+            // by tick 31, inside this run's own 60.
+            cfg.Weapon.AmmoStart = cfg.Arena.MaxProjectiles + 100;
+            cfg.Weapon.AmmoMax = cfg.Weapon.AmmoStart;
+            // bd app-3cph: the RUN LENGTH has to be derived too, for the very
+            // reason Т12 derived the magazine one line above. At 33 rounds a
+            // tick the fixture's fixed 60 ticks filled 384 and then 1024
+            // slots, but not the 4096 the doubled mob density brought with it
+            // (ArenaConfig.MaxProjectiles' own doc) — the cap was simply never
+            // reached again and ProjectileSpawnsSkipped went back to 0.
+            // Ticks = cap/33 rounded up, doubled for slack, so the flood
+            // outlasts the cap whatever either number becomes later.
+            int ticks = 2 * (cfg.Arena.MaxProjectiles / 33 + 1);
+            ulong Run(SimConfig c2)
             {
                 var w2 = new SimulationWorld(1, c2);
-                for (int i = 0; i < 60; i++) w2.Tick(Fire);
+                for (int i = 0; i < ticks; i++) w2.Tick(Fire);
                 Assert.Greater(w2.WorldStats.ProjectileSpawnsSkipped, 0);
                 return w2.StateHash();
             }
@@ -145,7 +181,7 @@ namespace Ring.Simulation.Tests
             // that scenario can't actually catch a regression back to the hardcoded
             // value. A 45-degree aim gives a non-zero expected angle the old code would
             // fail, making this a genuinely discriminating regression test.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Weapon.SpreadRad = 0f;
             cfg.Weapon.RecoilPerShotRad = 0f;
             var w = new SimulationWorld(1, cfg);
@@ -252,7 +288,7 @@ namespace Ring.Simulation.Tests
             // Aim that has only just gone up is not yet a laser: on the first
             // aimed tick the settle fraction is a single tick of AimSettleSeconds,
             // so almost the whole base cone still applies.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             float settle = SimulationWorld.TickDt / cfg.Hero.AimSettleSeconds;
             // recoil is still zero on a fresh world's first tick, so the base
             // cone's leftover is the entire effective cone
@@ -268,7 +304,7 @@ namespace Ring.Simulation.Tests
             // Fully settled aim never becomes a laser while the weapon is
             // spraying: the base cone is gone by then, but accumulated recoil IS
             // a cone of its own — and, settled, it is the ONLY term left.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             // the shot's own tick decays recoil once before drawing from it
             float cone = cfg.Weapon.RecoilMaxRad
                 - cfg.Weapon.RecoilRecoveryRadPerSec * SimulationWorld.TickDt;

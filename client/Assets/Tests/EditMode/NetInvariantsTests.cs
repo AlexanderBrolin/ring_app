@@ -83,6 +83,28 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void RaidCannotOutlastItsOwnEndgame_IsReported()
+        {
+            // Spec §3.5 Р255/Р300, the ONE cross-check that decision left
+            // standing after it deleted the second duration number — and the
+            // one nothing implemented (Ф5 gate, review A-2). Its home is here
+            // because Р72 says only the nodes holding BOTH configs may state
+            // it, and this validator is exactly that node.
+            //
+            // A raid whose gate delay plus extraction channel do not FIT
+            // inside its own duration cannot be won by anybody: the Director
+            // could die on tick one and the gate would still open too late to
+            // walk through. That is a configuration bug, not a player's late
+            // gamble (which Р300 deliberately refuses to validate).
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            sim.Flow.GateDelaySeconds = net.MatchMaxDurationSeconds;
+
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "Flow.GateDelaySeconds");
+        }
+
+        [Test]
         public void SnapshotEventBudgetZero_IsReported()
         {
             NetConfig net = DefaultNet();

@@ -4,6 +4,7 @@ using System.Text;
 using FishNet;
 using FishNet.Connection;
 using FishNet.Managing;
+using FishNet.Object;
 using FishNet.Transporting;
 using Ring.Data;
 using Ring.Networking;
@@ -41,7 +42,7 @@ namespace Ring.Server
     /// `Ring.Networking` precisely so this assembly cannot make that mistake by
     /// accident.
     ///
-    /// The seven `SimConfigBuilder.Build` assets are the same seven
+    /// The ten `SimConfigBuilder.Build` assets are the same ten
     /// `SimulationRunner` carries, in the same order, under the same field
     /// names — one balance source for the client and the server both (Critical
     /// Rule 6). `NetConfig` is separate on purpose (Р52): it never enters
@@ -156,6 +157,21 @@ namespace Ring.Server
         [SerializeField] WaveConfig _wave;
         [SerializeField] ArenaConfig _arena;
         [SerializeField] VisibilityConfig _visibility;
+        // Stage 3 Task 12 (errata E-6 I5, owner decision R-73): the two new
+        // mob archetypes and the match-flow pacing block. These are the
+        // AUTHORITATIVE server's copy — waves have spawned Elites since Т11,
+        // so leaving them unwired would put a zero-HP Elite into every real
+        // match while every EditMode test stayed green (the tests build
+        // SimConfig from TestConfigs, not from this scene). Checked in
+        // TryBuildSimConfig below like every other reference here.
+        [SerializeField] MobConfig _elite;
+        [SerializeField] MobConfig _director;
+        [SerializeField] MatchFlowConfig _flow;
+        // Stage 3 Task 13 (spec §3.7/§3.8): the item catalog and loot
+        // balance sheet — same "authoritative server's own copy" reasoning
+        // as _elite/_director/_flow above.
+        [SerializeField] ItemCatalog _items;
+        [SerializeField] LootConfig _loot;
 
         /// Network tuning, deliberately NOT a `SimConfigBuilder.Build`
         /// parameter — see the class doc.
@@ -256,6 +272,17 @@ namespace Ring.Server
         double _matchStartedSeconds;
         double _matchEndedSeconds;
         int _pendingExitCode;
+
+        /// bd `app-qrew`: matches this process has finished. Incremented where
+        /// the outcome is first read, so `PollLinger` asks `MatchRerunPolicy`
+        /// about a number that already counts the match just ended.
+        int _matchesPlayed;
+
+        /// The player objects of the match currently running — kept because a
+        /// rerun has to DESPAWN them before spawning fresh ones, and
+        /// `MatchServer` never owned them (it is handed controllers, it does
+        /// not make them).
+        GameObject[] _spawnedPlayerObjects = Array.Empty<GameObject>();
 
         void Awake()
         {
@@ -412,7 +439,7 @@ namespace Ring.Server
                 int spectateCooldownTicks = (int)Math.Ceiling(
                     (decimal)_net.SpectatorSwitchCooldownSeconds * _net.TickRate);
                 _matchServer = new MatchServer(_nm, _net,
-                    new MatchEndPolicy(_net.MatchMaxDurationSeconds * _net.TickRate),
+                    new MatchEndPolicy(_net.MatchMaxDurationTicks),
                     new SpectatePolicy(spectateCooldownTicks));
             }
             catch (Exception ex)
@@ -503,6 +530,11 @@ namespace Ring.Server
             AppendIfMissing(missing, _wave, nameof(_wave));
             AppendIfMissing(missing, _arena, nameof(_arena));
             AppendIfMissing(missing, _visibility, nameof(_visibility));
+            AppendIfMissing(missing, _elite, nameof(_elite));
+            AppendIfMissing(missing, _director, nameof(_director));
+            AppendIfMissing(missing, _flow, nameof(_flow));
+            AppendIfMissing(missing, _items, nameof(_items));
+            AppendIfMissing(missing, _loot, nameof(_loot));
             AppendIfMissing(missing, _net, nameof(_net));
             AppendIfMissing(missing, _playerPrefab, nameof(_playerPrefab));
             if (missing.Length > 0)
@@ -515,7 +547,7 @@ namespace Ring.Server
             try
             {
                 simConfig = SimConfigBuilder.Build(_hero, _weapon, _chaser, _gunner, _wave,
-                    _arena, _visibility);
+                    _arena, _visibility, _elite, _director, _flow, _items, _loot);
             }
             catch (Exception ex)
             {
@@ -811,11 +843,21 @@ namespace Ring.Server
         /// shadowing is a property of `MatchServer`'s current end policy, not
         /// of this class: a policy that ever stops ending matches on an empty
         /// arena must not silently leave the process running forever.
-        void PollAbandonWatchdog(double now)
+        /// Roster slots that still hold an active connection. Extracted for bd
+        /// `app-a8r5` (rule 2): the abandon watchdog below and the rerun gate
+        /// in `PollLinger` ask the very same question, and two hand-rolled
+        /// loops would be two places for "is anybody still here" to drift.
+        int LiveConnectionCount()
         {
             int live = 0;
             for (int i = 0; i < _slotCount; i++)
                 if (_slotConnections[i].IsActive) live++;
+            return live;
+        }
+
+        void PollAbandonWatchdog(double now)
+        {
+            int live = LiveConnectionCount();
 
             if (live > 0)
             {
@@ -863,75 +905,8 @@ namespace Ring.Server
                 return;
             }
 
-            var connections = new NetworkConnection[playerCount];
-            Array.Copy(_slotConnections, connections, playerCount);
-
-            var controllers = new PlayerNetworkController[playerCount];
-            // Ф8 gate W-9: the whole spawn loop is inside this try, not just
-            // the two explicit refusals below. The window is theoretical
-            // today — the shipped player prefab always carries
-            // `PlayerNetworkController` (`StageTwoSceneBootstrap.
-            // GetOrCreatePlayerPrefab` builds it that way, and never
-            // overwrites an existing one) — but `Instantiate`/`ServerManager.
-            // Spawn` are still calls into engine/package code this class does
-            // not own, and a thrown NRE out of either would previously have
-            // propagated straight past `Boot()`'s caller with no `Fail`/`Exit`
-            // ever running: cheaper to close the window than to keep
-            // explaining why it is theoretical.
-            try
-            {
-                for (int i = 0; i < playerCount; i++)
-                {
-                    // OWNERSHIP IS NOT OPTIONAL. `IsOwner` is what decides both
-                    // that a client builds a local prediction replica for this
-                    // object and which branch `PlayerNetworkController`'s
-                    // replicate takes; an unowned spawn would produce a body
-                    // nobody drives. `Configure` is deliberately NOT called here
-                    // — `StartMatch` does it for every controller it is handed.
-                    GameObject instance = Instantiate(_playerPrefab);
-                    _nm.ServerManager.Spawn(instance, connections[i]);
-
-                    if (!instance.TryGetComponent(out PlayerNetworkController controller))
-                    {
-                        Fail(ExitBadConfig, "the player prefab has no PlayerNetworkController on its " +
-                            "root — the spawned object cannot be driven by the match.");
-                        return;
-                    }
-                    if (!controller.IsSpawned)
-                    {
-                        // `ServerManager.Spawn` reports a refusal as a warning and
-                        // returns; without this check the match would start with a
-                        // controller that is not on the network at all.
-                        Fail(ExitBadConfig, $"slot {i}'s player object failed to spawn over the " +
-                            "network (see the warning above).");
-                        return;
-                    }
-                    controllers[i] = controller;
-
-                    // Stage 2 Task 55: tell the voice seat which slot it is.
-                    // This is the only place in the project where that is a
-                    // fact rather than a guess — `i` is the same index that
-                    // picked the owning connection one line above — and it is
-                    // done AFTER `Spawn` because a SyncType is not initialized
-                    // before its object exists on the network.
-                    //
-                    // Absence is not a failure: the seat is optional scenery as
-                    // far as the match is concerned, and a prefab built before
-                    // Task 55 must still start a match rather than refuse one.
-                    if (instance.TryGetComponent(out VoiceAdapter voice))
-                        voice.ServerAssignSlot(i);
-                }
-            }
-            catch (Exception ex)
-            {
-                // Ф8 gate, re-review M-5: this is the one catch in the boot
-                // path wrapping ENGINE and package code rather than our own, so
-                // `ex.Message` alone would read "Object reference not set…" and
-                // name nothing diagnosable. The full exception goes out first.
-                Debug.LogException(ex);
-                Fail(ExitBadConfig, "player spawn failed — " + ex.Message);
-                return;
-            }
+            NetworkConnection[] connections = ConnectionPrefix(playerCount);
+            if (!TrySpawnControllers(connections, out PlayerNetworkController[] controllers)) return;
 
             try
             {
@@ -960,6 +935,106 @@ namespace Ring.Server
                 _config.MatchId, _config.Seed, _epoch, playerCount, _config.StartMode, now));
         }
 
+        /// The prefix copy `MatchServer` is owed, NOT the raw `_slotConnections`
+        /// field: that field is sized `MaxPlayers`, and a match that started
+        /// with fewer players — one client of three, the ordinary dev case —
+        /// leaves a `null` tail that `ValidateRoster` rejects on the length
+        /// check. Extracted for `app-qrew`, because a rerun needs the very same
+        /// copy and a second hand-rolled `Array.Copy` would be a second place
+        /// to get that subtlety wrong.
+        NetworkConnection[] ConnectionPrefix(int playerCount)
+        {
+            var connections = new NetworkConnection[playerCount];
+            Array.Copy(_slotConnections, connections, playerCount);
+            return connections;
+        }
+
+        /// Spawns one owned player object per slot and hands back their
+        /// controllers, recording the objects so a rerun can despawn them.
+        /// Answers `false` having already called `Fail` — every refusal in here
+        /// is fatal to the match, and the caller's only job is to stop.
+        ///
+        /// EXTRACTED FOR `app-qrew` (rule 2): the rerun needs byte-for-byte
+        /// this loop, ownership and voice-seat assignment included, and a
+        /// second copy of it would be a second thing to keep in step with the
+        /// prefab.
+        bool TrySpawnControllers(NetworkConnection[] connections,
+            out PlayerNetworkController[] controllers)
+        {
+            int playerCount = connections.Length;
+            controllers = new PlayerNetworkController[playerCount];
+            var objects = new GameObject[playerCount];
+            // Ф8 gate W-9: the whole spawn loop is inside this try, not just
+            // the two explicit refusals below. The window is theoretical
+            // today — the shipped player prefab always carries
+            // `PlayerNetworkController` (`StageTwoSceneBootstrap.
+            // GetOrCreatePlayerPrefab` builds it that way, and never
+            // overwrites an existing one) — but `Instantiate`/`ServerManager.
+            // Spawn` are still calls into engine/package code this class does
+            // not own, and a thrown NRE out of either would previously have
+            // propagated straight past `Boot()`'s caller with no `Fail`/`Exit`
+            // ever running: cheaper to close the window than to keep
+            // explaining why it is theoretical.
+            try
+            {
+                for (int i = 0; i < playerCount; i++)
+                {
+                    // OWNERSHIP IS NOT OPTIONAL. `IsOwner` is what decides both
+                    // that a client builds a local prediction replica for this
+                    // object and which branch `PlayerNetworkController`'s
+                    // replicate takes; an unowned spawn would produce a body
+                    // nobody drives. `Configure` is deliberately NOT called here
+                    // — `StartMatch` does it for every controller it is handed.
+                    GameObject instance = Instantiate(_playerPrefab);
+                    _nm.ServerManager.Spawn(instance, connections[i]);
+
+                    if (!instance.TryGetComponent(out PlayerNetworkController controller))
+                    {
+                        Fail(ExitBadConfig, "the player prefab has no PlayerNetworkController on its " +
+                            "root — the spawned object cannot be driven by the match.");
+                        return false;
+                    }
+                    if (!controller.IsSpawned)
+                    {
+                        // `ServerManager.Spawn` reports a refusal as a warning and
+                        // returns; without this check the match would start with a
+                        // controller that is not on the network at all.
+                        Fail(ExitBadConfig, $"slot {i}'s player object failed to spawn over the " +
+                            "network (see the warning above).");
+                        return false;
+                    }
+                    controllers[i] = controller;
+                    objects[i] = instance;
+
+                    // Stage 2 Task 55: tell the voice seat which slot it is.
+                    // This is the only place in the project where that is a
+                    // fact rather than a guess — `i` is the same index that
+                    // picked the owning connection one line above — and it is
+                    // done AFTER `Spawn` because a SyncType is not initialized
+                    // before its object exists on the network.
+                    //
+                    // Absence is not a failure: the seat is optional scenery as
+                    // far as the match is concerned, and a prefab built before
+                    // Task 55 must still start a match rather than refuse one.
+                    if (instance.TryGetComponent(out VoiceAdapter voice))
+                        voice.ServerAssignSlot(i);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Ф8 gate, re-review M-5: this is the one catch in the boot
+                // path wrapping ENGINE and package code rather than our own, so
+                // `ex.Message` alone would read "Object reference not set…" and
+                // name nothing diagnosable. The full exception goes out first.
+                Debug.LogException(ex);
+                Fail(ExitBadConfig, "player spawn failed — " + ex.Message);
+                return false;
+            }
+
+            _spawnedPlayerObjects = objects;
+            return true;
+        }
+
         void PollRunningMatch(double now)
         {
             MatchEndReason outcome = _matchServer.Outcome;
@@ -975,6 +1050,7 @@ namespace Ring.Server
             _pendingExitCode = MatchEndPolicy.ExitCodeFor(outcome);
             _matchEndedSeconds = now;
             _phase = Phase.Ending;
+            _matchesPlayed++;   // bd `app-qrew`: counted where the outcome is first read
 
             LogMatchSummary(now);
         }
@@ -988,7 +1064,87 @@ namespace Ring.Server
         void PollLinger(double now)
         {
             if (now - _matchEndedSeconds < _net.MatchEndLingerSeconds) return;
+
+            // bd `app-qrew`: the handle `MatchServer.RestartMatch` has been
+            // waiting for since Stage 2 Task 40. Until now nothing in the
+            // project called it, so `MatchRestartedNet` was never sent, the
+            // client's `WorldRestarted` path was unreachable over the network,
+            // and the whole Р291 reset list was proven only by unit tests and
+            // the solo path. The DECISION is `MatchRerunPolicy`'s — it is a
+            // plain function of two ints and has witnesses; what is left here
+            // is wiring, which has none by construction.
+            //
+            // AFTER THE LINGER, NOT INSTEAD OF IT: the linger absorbs the race
+            // between the `Reliable` `MatchEndedNet` and the `Unreliable` final
+            // snapshot it belongs to, and a rerun that skipped it would put a
+            // fresh match's first frame in front of clients still assembling
+            // the last one's ending.
+            if (MatchRerunPolicy.ShouldRerun(_config.MatchesToPlay, _matchesPlayed,
+                    LiveConnectionCount()))
+            {
+                RerunMatch(now);
+                return;
+            }
             Exit(_pendingExitCode);
+        }
+
+        /// The four steps this class's own doc (top of file) determined a rerun
+        /// would have to take, now taken. Nothing here is new policy — every
+        /// one of them is quoted from that doc, and the only thing this method
+        /// adds is doing them in one callback rather than across frames.
+        void RerunMatch(double now)
+        {
+            // (2) DESPAWN FIRST, AND DESTROY RATHER THAN POOL.
+            // `PlayerPredictionCore` has no reset and `NotifyOwnDeath` is a
+            // one-way latch, so a pooled object would come back carrying the
+            // last match's death. `DespawnType.Destroy` says that explicitly
+            // instead of trusting the prefab's default.
+            for (int i = 0; i < _spawnedPlayerObjects.Length; i++)
+            {
+                if (_spawnedPlayerObjects[i] != null)
+                    _nm.ServerManager.Despawn(_spawnedPlayerObjects[i], DespawnType.Destroy);
+            }
+            _spawnedPlayerObjects = Array.Empty<GameObject>();
+
+            // (1) MINT AGAIN — the second mint of the process, and the first
+            // time `MatchRoster`/`MatchHandshake` are NOT rebuilt with it: the
+            // roster already started and the same people are playing again.
+            _epoch = _epochCounter.Mint();
+
+            // (3) THE SAME PREFIX COPY `StartMatch` was given, of length
+            // `MatchRoster.PlayerCount` — never the raw `_slotConnections`
+            // field (ConnectionPrefix's own doc carries why).
+            NetworkConnection[] connections = ConnectionPrefix(_roster.PlayerCount);
+            if (!TrySpawnControllers(connections, out PlayerNetworkController[] controllers))
+                return;   // TrySpawnControllers has already called Fail
+
+            try
+            {
+                // (4) THE SEED IS REUSED, UNCHANGED — a rerun is a rerun of the
+                // match this process was given, not a new session (owner's
+                // decision, Р164). `MatchConfig` is read once, in `Boot`.
+                _matchServer.RestartMatch(_config.Seed, in _simConfig, _epoch, connections,
+                    controllers);
+            }
+            catch (Exception ex)
+            {
+                // CAUGHT, NOT WAITED OUT THROUGH `Outcome` — the same hole
+                // `StartMatch` has and for the same reason: `RestartMatch`
+                // stops the old match before it builds the new world, so a
+                // throw past that point leaves neither a match nor an outcome.
+                Fail(ExitBadConfig, "match failed to restart — " + ex.Message);
+                return;
+            }
+
+            _matchStartedSeconds = now;
+            _pendingExitCode = 0;
+            _phase = Phase.Running;
+
+            Debug.Log(string.Format(CultureInfo.InvariantCulture,
+                "ServerBootstrap: match-rerun matchId={0} seed={1} epoch={2} playerCount={3} " +
+                "matchesPlayed={4} matchesToPlay={5} atSeconds={6:F3}",
+                _config.MatchId, _config.Seed, _epoch, connections.Length,
+                _matchesPlayed, _config.MatchesToPlay, now));
         }
 
         /// Spec §3.11's structured per-match line, built from ONE
@@ -1007,23 +1163,37 @@ namespace Ring.Server
             MatchSummary summary = _matchServer.LastSummary;
             TickTimeAccumulator tickTime = _matchServer.TickTime;
 
+            // bd `app-ggvz` Т8: `pickupSpawnsSkipped` and
+            // `containerSpawnsSkipped` join the two skip counters that were
+            // already here. They are WRITTEN (SimulationWorld.SpawnPickup,
+            // ContainerStore) and were read by NOBODY outside the Editor
+            // harness, which made them the same genre of instrument this file
+            // refuses elsewhere: a counter that cannot be read says nothing,
+            // and the spec of `app-ggvz` names these two as the MEASUREMENT
+            // for its risk Р-В (a pickup is born on every death, so the rate
+            // of the loot follows the rate of the kills one for one, and the
+            // per-ring ceilings raised that rate by a factor the arena has
+            // never run at). A stand measurement that cannot report them is
+            // a measurement of something else.
             var sb = new StringBuilder(512);
             sb.AppendFormat(CultureInfo.InvariantCulture,
                 "ServerBootstrap: match-end matchId={0} seed={1} epoch={2} playerCount={3} " +
                 "reason={4} exitCode={5} finalTick={6} durationSeconds={7:F3} " +
                 "wavesCleared={8} mobSpawnsSkipped={9} projectileSpawnsSkipped={10} " +
-                "worldDroppedEvents={11} tickSamples={12} tickAvgMs={13:F3} tickMaxMs={14:F3} " +
-                "lingerSeconds={15}",
+                "pickupSpawnsSkipped={11} containerSpawnsSkipped={12} " +
+                "worldDroppedEvents={13} tickSamples={14} tickAvgMs={15:F3} tickMaxMs={16:F3} " +
+                "lingerSeconds={17}",
                 _config.MatchId, _config.Seed, summary.Epoch, summary.PlayerStats.Length,
                 summary.Reason, _pendingExitCode, summary.FinalTick, now - _matchStartedSeconds,
                 summary.World.WavesCleared, summary.World.MobSpawnsSkipped,
-                summary.World.ProjectileSpawnsSkipped, summary.DroppedEvents,
+                summary.World.ProjectileSpawnsSkipped,
+                summary.World.PickupSpawnsSkipped, summary.World.ContainerSpawnsSkipped,
+                summary.DroppedEvents,
                 tickTime.Count, tickTime.AverageMs, tickTime.MaxMs,
                 _net.MatchEndLingerSeconds);
 
             for (int i = 0; i < summary.PlayerStats.Length; i++)
             {
-                MatchStats p = summary.PlayerStats[i];
                 // Ф8 gate W-3: `playerId`, not just the slot number — the
                 // meta reads this container's OWN logs (§3.11) and has no
                 // other way to map "player[N]" back to WHICH configured
@@ -1033,11 +1203,14 @@ namespace Ring.Server
                 // `PlayerCount`/`PlayerIdAt`'s range at exactly
                 // `summary.PlayerStats.Length` by the time a match can have
                 // ended at all.
-                sb.AppendFormat(CultureInfo.InvariantCulture,
-                    "\n  player[{0}] playerId={1} kills={2} headshotKills={3} shotsFired={4} " +
-                    "shotsHit={5} dashesUsed={6} slidesUsed={7} deathTick={8} damageTaken={9:F1}",
-                    i, _roster.PlayerIdAt(i), p.Kills, p.HeadshotKills, p.ShotsFired, p.ShotsHit,
-                    p.DashesUsed, p.SlidesUsed, p.DeathTick, p.DamageTaken);
+                //
+                // Stage 3 Т24: the row itself is built by `MatchSummaryLog`,
+                // which a test can reach; what stays here is the two things
+                // only this class holds — the roster and the shape of the
+                // whole event.
+                sb.Append("\n  ").Append(MatchSummaryLog.PlayerLine(i, _roster.PlayerIdAt(i),
+                    summary.Outcome[i], in summary.PlayerStats[i], summary.SurvivedSeconds[i],
+                    summary.CreditsTotal[i], summary.Loot[i], _simConfig.Items));
             }
 
             // The snapshot's own losses (spec §3.11's "dropped entities and
@@ -1099,6 +1272,67 @@ namespace Ring.Server
             Debug.Log(string.Format(CultureInfo.InvariantCulture,
                 "ServerBootstrap: exiting with code {0} at {1:F3}s.", exitCode, NowSeconds()));
             Application.Quit(exitCode);
+        }
+    }
+
+    /// The per-player half of spec §3.11's structured match line (Stage 3
+    /// Т24), lifted out of `ServerBootstrap.LogMatchSummary` into a pure
+    /// function — the same move, for the same reason, that
+    /// `Ring.Networking.Server.HandshakeLog.RefusalLine` already stands on:
+    /// the line is a CONTRACT with somebody outside this codebase (an
+    /// operator's grep, and the control panel app-7ss will parse it), and a
+    /// contract no test can reach is one a silent rename can break.
+    ///
+    /// THE FRAGMENT, NOT THE WHOLE LINE. `LogMatchSummary` still assembles
+    /// ONE log event per match out of what only it owns — `matchId`, the
+    /// seed, its own wall clock, the exit code — and appends one of these per
+    /// player. A per-match line arriving in N interleaved pieces is not a line
+    /// a log collector can key on, and that has not changed.
+    ///
+    /// WHAT SPEC §3.10 PROMISES IS WHAT THIS ROW CARRIES, because this row IS
+    /// the future `match_players` record: playerId, result, loot,
+    /// creditsTotal, kills, headshotKills, shotsFired, shotsHit, damageTaken,
+    /// ammoSpent, cellsPicked, survivedSeconds. Stage 5 does not invent a
+    /// format, it starts POSTing this one.
+    public static class MatchSummaryLog
+    {
+        /// The OUTCOME PRINTS ITS OWN ENUM MEMBER, never a hand-written
+        /// spelling of it (the spec's prose says `extracted_early`; that is
+        /// prose, and a second table mapping members to strings is a table
+        /// that drifts). `HandshakeLog`'s own tests make the same argument
+        /// about `HandshakeRefusal`, and `ResultsTests` derives its
+        /// expectation from the member for exactly that reason.
+        ///
+        /// `loot` RESOLVES THROUGH THE CATALOG HERE rather than traveling
+        /// pre-resolved: the record wants item, tier and price, the summary
+        /// carries the ids, and `ItemCatalogLookup` is the one home that turns
+        /// one into the other (R-89). An empty hold prints `[]` — a MEASURED
+        /// emptiness, which is a different claim from the dash this project
+        /// reserves for a number nobody measured (app-mi4's `bytesUp`).
+        public static string PlayerLine(int slot, string playerId, MatchOutcome outcome,
+            in MatchStats stats, int survivedSeconds, int creditsTotal, byte[] loot,
+            ItemDef[] catalog)
+        {
+            var sb = new StringBuilder(256);
+            sb.AppendFormat(CultureInfo.InvariantCulture,
+                "player[{0}] playerId={1} result={2} kills={3} headshotKills={4} shotsFired={5} " +
+                "shotsHit={6} dashesUsed={7} slidesUsed={8} deathTick={9} damageTaken={10:F1} " +
+                "ammoSpent={11} cellsPicked={12} survivedSeconds={13} creditsTotal={14} loot=[",
+                slot, playerId, outcome, stats.Kills, stats.HeadshotKills, stats.ShotsFired,
+                stats.ShotsHit, stats.DashesUsed, stats.SlidesUsed, stats.DeathTick,
+                stats.DamageTaken, stats.AmmoSpent, stats.CellsPicked, survivedSeconds,
+                creditsTotal);
+
+            for (int i = 0; loot != null && i < loot.Length; i++)
+            {
+                if (i > 0) sb.Append('|');
+                ItemDef def = ItemCatalogLookup.Find(loot[i], catalog);
+                sb.AppendFormat(CultureInfo.InvariantCulture, "{0}:{1}:{2}",
+                    def.Id, def.Tier, def.CreditValue);
+            }
+
+            sb.Append(']');
+            return sb.ToString();
         }
     }
 }

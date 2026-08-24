@@ -200,6 +200,7 @@ namespace Ring.Server
             bool portPresent = lo.port == hi.port;
             bool startModePresent = lo.startMode == hi.startMode;
             bool countdownSecondsPresent = lo.countdownSeconds == hi.countdownSeconds;
+            bool matchesToPlayPresent = lo.matchesToPlay == hi.matchesToPlay;
 
             // Required fields, checked in a fixed order — the FIRST violation
             // wins (brief §2.5: one message, not a batch like SimConfigBuilder's
@@ -290,8 +291,23 @@ namespace Ring.Server
             if (startMode == MatchStartMode.WaitForAll && players.Length == 0)
                 return Refuse("startMode \"waitForAll\" requires a non-empty players[] roster.");
 
+            // bd `app-qrew`: OPTIONAL, and 1 when absent. Optional is the
+            // contract rather than a convenience — all three `match*.json`
+            // already deployed to the host predate this field, and a required
+            // one would refuse every one of them on the next image. A
+            // PRESENT value is validated the way `countdownSeconds` above is:
+            // an operator asking for zero matches is asking for something
+            // impossible, and this loader refuses rather than reinterprets.
+            int matchesToPlay = MatchRerunPolicy.DefaultMatchesToPlay;
+            if (matchesToPlayPresent)
+            {
+                matchesToPlay = lo.matchesToPlay;
+                if (matchesToPlay < 1)
+                    return Refuse($"matchesToPlay must be >= 1 (got {matchesToPlay}).");
+            }
+
             return Accept(new MatchConfig(lo.matchId, lo.seed, lo.maxPlayers, lo.port,
-                players, startMode, countdownSeconds));
+                players, startMode, countdownSeconds, matchesToPlay));
         }
 
         /// Constants of the code (spec §0), never numbers pulled from a
@@ -319,6 +335,7 @@ namespace Ring.Server
             players = null,
             startMode = StringSentinelLo,
             countdownSeconds = int.MinValue,
+            matchesToPlay = int.MinValue,
         };
 
         static MatchConfigJson NewSentinelHi() => new MatchConfigJson
@@ -330,6 +347,7 @@ namespace Ring.Server
             players = null,
             startMode = StringSentinelHi,
             countdownSeconds = int.MaxValue,
+            matchesToPlay = int.MaxValue,
         };
 
         /// Wraps `File.ReadAllText` for the production `Load(int)` overload.
@@ -366,6 +384,7 @@ namespace Ring.Server
             public MatchPlayerEntryJson[] players;
             public string startMode;
             public int countdownSeconds;
+            public int matchesToPlay;
         }
 
         [Serializable]

@@ -1,4 +1,5 @@
 using Ring.Simulation.Core;
+using Ring.Simulation.Loot;
 using Unity.Mathematics;
 
 namespace Ring.Presentation
@@ -135,6 +136,50 @@ namespace Ring.Presentation
         /// Never: nothing was ever sent, so nothing is waiting to be answered.
         public bool SpectateRequestInFlight => false;
 
+        /// The world's own verdict on the last loot request, and the address it
+        /// was made at (Stage 3 Т32б).
+        int _lootContainerId;
+        int _lootSlot;
+        LootRefusal _lootRefusal;
+
+        /// Straight into the world, which answers on the spot.
+        ///
+        /// NOT A STUB, AND THAT IS WHY THE MEMBER COULD BE RAISED AT ALL.
+        /// `SimulationWorld.TryBeginLoot` is public, runs `LootOps.Validate`'s
+        /// twelve checks and, when they pass, `LootOps.Begin` — the same one
+        /// production entry the server takes when a `LootRequestNet` arrives.
+        /// So a solo player loots for real, and the refusal he sees on the slot
+        /// is the same code a networked one would have been sent.
+        ///
+        /// `false` BEFORE THE FIRST `Restart`, matching the networked twin's
+        /// answer when it has no link: there is no world to ask, and a refusal
+        /// is a value rather than a throw.
+        public bool TryRequestLoot(LootOp op, int containerId, int slot)
+        {
+            if (_world == null) return false;
+
+            // The address is remembered whatever the verdict, because the
+            // refusal is shown ON the slot that was pressed — see
+            // `ISimBackend.LootRequestContainerId`.
+            _lootContainerId = containerId;
+            _lootSlot = slot;
+            _lootRefusal = _world.TryBeginLoot(_curr.LocalPlayerIndex, op, containerId, slot);
+            return true;
+        }
+
+        /// Never, and this is a FACT about this backend rather than a
+        /// placeholder: `TryRequestLoot` above has the world's verdict before
+        /// it returns, so there is no interval in which an answer is
+        /// outstanding. The networked twin is the one with a round trip to
+        /// wait out.
+        public bool LootRequestInFlight => false;
+
+        public int LootRequestContainerId => _lootContainerId;
+
+        public int LootRequestSlot => _lootSlot;
+
+        public LootRefusal LastLootRefusal => _lootRefusal;
+
         /// Zero for every slot, always (Stage 2 Task 47c): this backend owns no
         /// stale policy and there is no fog between a world in memory and the
         /// frame it captures itself into, so no slot's records ever stop
@@ -155,6 +200,52 @@ namespace Ring.Presentation
         /// this backend. The answer above is what it would be if that ever
         /// changed — the conservative one, not a placeholder.
         public bool ShouldKeepPlayerDoll(int slot) => false;
+
+        /// Zero and false, for the reason `PlayerFadeProgress` above gives and
+        /// with the same force: there is no fog between a world in memory and
+        /// the frame it captures itself into, so no mob's records ever stop
+        /// arriving while it is still there. A mob absent from a local frame is
+        /// a mob that is DEAD, and a corpse is not a thing to fade out — it is
+        /// a thing `CorpseView` puts down.
+        public float MobFadeProgress(int id) => 0f;
+
+        public bool ShouldKeepMobView(int id) => false;
+
+        /// Zero and false for cells and boxes too, and by the SAME fact rather
+        /// than by symmetry (Stage 3 Т33d): a local frame is captured from the
+        /// world itself, so a cell missing from it has been picked up and a box
+        /// missing from it has been emptied away. Neither is a thing that
+        /// faded out of sight, and fading one would draw a departure that never
+        /// happened.
+        public float PickupFadeProgress(int id) => 0f;
+
+        public bool ShouldKeepPickupView(int id) => false;
+
+        public float ContainerFadeProgress(int id) => 0f;
+
+        public bool ShouldKeepContainerView(int id) => false;
+
+        /// `null`, and by a fact rather than by omission (Stage 3 Т34): the
+        /// board is a BROADCAST, built by `MatchServer` out of the summary it
+        /// assembles when a networked match ends. Solo has no `MatchServer` at
+        /// all — a local world is stepped in this process and ends by
+        /// restarting — so there is no raid whose members could be listed.
+        public string MatchResultsBoard => null;
+
+        public bool HasMatchResults => false;
+
+        /// False, and by the same fact `HasMatchResults` gives: solo has no
+        /// `MatchServer` and therefore no end-of-match message. It needs none —
+        /// `HasMatchStats` is TRUE here, so the screen reads the live frame's
+        /// own counters, which on a local world are the real ones.
+        public bool TryGetFinalStats(out MatchStats stats, out WorldStats world,
+            out int survivedSeconds)
+        {
+            stats = default;
+            world = default;
+            survivedSeconds = 0;
+            return false;
+        }
 
         /// False, and permanently: solo has no wire, no round trip, no
         /// snapshot ring and no reconciliation, so every field of
@@ -186,6 +277,7 @@ namespace Ring.Presentation
                 _world.Tick(SimInputFrame.ForTick(frame, i));
                 (_prev, _curr) = (_curr, _prev);
                 _world.CaptureSnapshot(_curr);
+                _world.CaptureOwnerView(_curr, _curr.LocalPlayerIndex);
                 // Guarded — see `ISimBackend.Advance`'s doc: `StateHash()` is
                 // only ever computed when something is actually subscribed.
                 if (onTick != null) onTick(_world.CurrentTick, _world.StateHash());
@@ -209,11 +301,22 @@ namespace Ring.Presentation
         public bool Restart(long seed, in SimConfig cfg)
         {
             _world = new SimulationWorld(seed, cfg);
-            _prev = new RenderSnapshot(cfg.Arena);
-            _curr = new RenderSnapshot(cfg.Arena);
+            _prev = new RenderSnapshot(cfg);
+            _curr = new RenderSnapshot(cfg);
             _world.CaptureSnapshot(_prev);
             _world.CaptureSnapshot(_curr);
+            // The owner half of the frame, which `CaptureSnapshot` above does
+            // not fill because the world is not asked who is watching — this
+            // backend is the one that knows (Stage 3 Т32б).
+            _world.CaptureOwnerView(_prev, _prev.LocalPlayerIndex);
+            _world.CaptureOwnerView(_curr, _curr.LocalPlayerIndex);
             _acc.Reset();
+            // Stage 3 Т32б: a fresh match's ids start from 1 again, so a
+            // remembered address would name a box from the match before —
+            // a wrong answer rather than a missing one.
+            _lootContainerId = 0;
+            _lootSlot = 0;
+            _lootRefusal = LootRefusal.None;
             // AFTER the reset, never before it (Stage 2 Task 48, bd
             // `app-c3m`): `Reset` clears a pending excuse along with everything
             // else it clears, so the order is the whole of this line's

@@ -160,7 +160,8 @@ namespace Ring.Presentation
         /// Frames that arrived with entities missing (Stage 2 Task 48): either
         /// the sender set the header's `Truncated` bit because it dropped
         /// entities to fit the datagram, or the frame turned up without all
-        /// five blocks it is required to carry. This is the CLIENT-SIDE
+        /// the blocks this build requires (five of the ten the sender writes
+        /// since Stage 3 Т27 — NetworkSimBackend.RequiredBlockKinds' own doc). This is the CLIENT-SIDE
         /// neighbor of the server's `NetStats.DroppedEntities`, which this
         /// process never sees; the consequence is the same and the receiver
         /// already computes the test for `StalePolicy`.

@@ -27,7 +27,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SlideAlongFlatWall_DoesNotAccelerate()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // Long horizontal wall (axis along +x) above the player's spawn.
             // Touch boundary from below (fixture expr): wall centreline 2,
@@ -76,7 +76,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SlideHeadOnIntoWall_IsDamped()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // Vertical wall dead ahead — a head-on hit against the flat side,
             // dot(-normal, SlideDir) == 1 > SlideWallStopDot, same shape as
@@ -124,7 +124,7 @@ namespace Ring.Simulation.Tests
         /// exactly), against a flat wall instead of a circular obstacle.
         static SimConfig DiagonalWallFixture()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Hero.DashSpeed = 30f;
             cfg.Hero.DashDuration = 0.09f;
             cfg.Hero.RicochetRetention = 0.8f;
@@ -212,9 +212,10 @@ namespace Ring.Simulation.Tests
             Assert.Less(w.Player.Pos.y, 1.5f,
                 "test setup: must still be constrained by the wall's flat side at this checkpoint");
 
-            // Capped well short of the arena's own outer ring (radius 65,
-            // TestConfigs.Open()'s default — reached only well past this
-            // test's own 100-tick budget) — this test's job is the CORRIDOR
+            // Capped well short of the arena's own outer ring (radius 113,
+            // TestConfigs.Open()'s default since Stage 3 Task 12; 65 before it
+            // — reached only well past this test's own 100-tick budget either
+            // way, and the margin only grew) — this test's job is the CORRIDOR
             // wall's own seam (crossed by ~tick 24), not an incidental second
             // collision against unrelated ring geometry.
             const int ticks = 100;
@@ -253,7 +254,7 @@ namespace Ring.Simulation.Tests
             // swept check: a naive "does the TARGET point overlap anything"
             // test would see the dash already clear on the far side and
             // report no collision at all.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Hero.DashSpeed = 90f;
             cfg.Hero.DashDuration = 0.09f;
             cfg.Arena.WallCount = 1;
@@ -296,7 +297,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SlideAlongWallCap_DoesNotStick()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.WallCount = 1;
             // The wall's endpoint B sits exactly where SlideTests.
             // SlideAlongWall_Continues's own circular obstacle sat — (5, 1.3),
@@ -335,7 +336,7 @@ namespace Ring.Simulation.Tests
 
             // Evidence the cap actually engaged (Урок 64): the player's
             // straight-ahead SlideDir (1,0) runs along y=0, exactly 1.3 m
-            // below the cap centre (5,1.3) — inside its 1.45 m touch radius
+            // below the cap center (5,1.3) — inside its 1.45 m touch radius
             // (WallHalfWidth 1 + Hero.Radius 0.45) — so an unobstructed run
             // would have stayed at y=0 the entire time; the cap's push-out
             // must have nudged the player to negative y (away from it).

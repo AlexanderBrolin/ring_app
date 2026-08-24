@@ -1,6 +1,7 @@
 using System.Linq;
 using Ring.Data;
 using Ring.Presentation;
+using Ring.Simulation.Core;
 using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -292,6 +293,11 @@ namespace Ring.Editor
         const string StaminaBarObjectName = "StaminaBar"; // Task 22
         const string WaveTextObjectName = "WaveText";
         const string SpectateLabelObjectName = "SpectateLabel"; // Task 47b
+        const string AmmoBarObjectName = "AmmoBar";           // Stage 3 Т33
+        const string AmmoTextObjectName = "AmmoText";         // Stage 3 Т33
+        const string EmergencyLabelObjectName = "EmergencyLabel"; // Stage 3 Т33
+        const string PhaseTextObjectName = "PhaseText";       // Stage 3 Т33
+        const string ExtractRingObjectName = "ExtractRing";   // Stage 3 Т33
         const string SpectateButtonObjectName = "SpectateButton"; // Task 47b
         const string BackgroundObjectName = "Background";
         const string FillObjectName = "Fill";
@@ -320,6 +326,43 @@ namespace Ring.Editor
         const string DeathOverlayObjectName = "DeathOverlay";
         const string PausePanelObjectName = "PausePanel";
         const string PauseControllerObjectName = "PauseMenu";
+        // Stage 3 Т32б: the loot window. Two columns at the screen edges and
+        // NOTHING between them — see `InventoryWindowController`'s own doc for
+        // why the middle is left alone.
+        const string InventoryPanelObjectName = "InventoryPanel";
+        const string InventoryControllerObjectName = "InventoryWindow";
+        const string InventorySourceColumnName = "SourceColumn";
+        const string InventoryBackpackColumnName = "BackpackColumn";
+        /// Column geometry, in the HUD canvas's own units. Three numbers rather
+        /// than a layout group: the slot count is fixed by the config caps, so
+        /// the rows can be placed by arithmetic and the scene carries no
+        /// component whose behavior a bootstrap would have to re-derive.
+        const float InventoryColumnWidth = 360f;
+
+        /// bd `app-pih0`: HOW FAR BELOW THE TOP OF THE SCREEN THE LOOT WINDOW
+        /// STARTS, so it does not share a single pixel with the HUD readouts.
+        ///
+        /// It shipped at zero — the columns were full height, pinned to both
+        /// screen edges — and the HUD lives in those very corners. The result
+        /// was the owner's В1 report: the ammo bar and its caption lying across
+        /// the loot list, and HP and Буст vanishing under the column's own
+        /// opaque backing the moment the window opened. The scene's child order
+        /// is what decides which of the two wins, and the bootstrap cannot
+        /// reorder it — `GetOrCreate*` returns an existing object untouched by
+        /// design — so the fix is to stop the two from overlapping at all.
+        ///
+        /// THE NUMBER IS THE HUD'S OWN, NOT A GUESS. The lowest left-corner
+        /// readout is `AmmoText` at y = -104 with a height of 26, i.e. its
+        /// bottom edge sits at -130; the right corner ends higher (`WaveText`,
+        /// -24 less 40 = -64). 144 clears the lower of the two by 14 px and is
+        /// applied to BOTH columns, so the two halves of a transfer window stay
+        /// level with each other.
+        ///
+        /// It costs no reachable row: at this inset the backpack's sixteenth
+        /// and last row ends at -1008 of the canvas's own 1080.
+        const float InventoryTopInset = 144f;
+        const float InventoryRowHeight = 44f;
+        const float InventoryRowGap = 6f;
 
         // Task 25.
         const string GameFeelDirectorObjectName = "GameFeelDirector";
@@ -337,6 +380,7 @@ namespace Ring.Editor
         const string BlockSparkPrefabPath = PrefabsDir + "/BlockSpark.prefab";
         const string DeathBurstPrefabPath = PrefabsDir + "/DeathBurst.prefab";
         const string SlideDustPrefabPath = PrefabsDir + "/SlideDust.prefab"; // Task 22
+        const string PickupPopPrefabPath = PrefabsDir + "/PickupPop.prefab"; // Stage 3 Task 31
         const string PersistentPropsObjectName = "PersistentProps";
         const string TagManagerPath = "ProjectSettings/TagManager.asset";
         const string CasingsLayerName = "Casings";
@@ -376,13 +420,48 @@ namespace Ring.Editor
         // this is the SOLE place the pair is chosen.
         const string ChaserModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/George.fbx";
         const string GunnerModelPath = ThirdPartyAssetPostprocessor.MechRoot + "Models/Leela.fbx";
+        // Stage 3 Task 31 (spec §3.11/Р251, owner decision R-192): the other
+        // two archetypes, out of the OTHER pack — ASSETS-001 §2.2 reserves the
+        // Sci-Fi Essentials robots for Elite and the Director's escort
+        // precisely so they cannot be mistaken for wave meat, and §2.3 gives
+        // the Director the kit's biggest robot at a scale of its own.
+        //
+        // WHY THESE TWO OF THE KIT'S THREE, measured against the generated
+        // controllers rather than chosen by name: `Enemy_EyeDrone` carries
+        // neither Walk nor Run nor any death take (it is a hovering drone),
+        // so it cannot drive `MobVisual`'s locomotion at all and stays a
+        // reserve. `Enemy_Trilobite` and `Enemy_QuadShell` both carry
+        // Idle/Walk/Run/Attack/TurnOff, and the owner already looked at both
+        // on the preview stage — Trilobite as the big elite (halved, asset
+        // milestone 3), QuadShell as the Director's stub in `DirectorSkin`.
+        // Same "SOLE place the pair is chosen" rule as the mech pair above.
+        const string EliteModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Enemy_Trilobite.fbx";
+        const string DirectorModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Enemy_QuadShell.fbx";
         // Stage 2 Task 45a (spec §3.12): the collector doll is a pooled prefab
         // now, one instance per player slot, rented by `ViewRegistry` — the
         // scene's own `Player` object is retired in `Apply`.
         const string PlayerDollPrefabPath = PrefabsDir + "/PlayerDollView.prefab";
         const string MobChaserPrefabPath = PrefabsDir + "/MobChaserView.prefab";
         const string MobGunnerPrefabPath = PrefabsDir + "/MobGunnerView.prefab";
+        const string MobElitePrefabPath = PrefabsDir + "/MobEliteView.prefab";
+        const string MobDirectorPrefabPath = PrefabsDir + "/MobDirectorView.prefab";
         const string CorpseMechPrefabPath = PrefabsDir + "/CorpseMechView.prefab";
+        // Stage 3 Task 31 (spec §3.11): the raid's furniture. Four container
+        // prefabs rather than five — the two corpse kinds share the marker,
+        // because their body is drawn by somebody else already
+        // (`ContainerView`'s own doc).
+        const string PickupPrefabPath = PrefabsDir + "/PickupView.prefab";
+        const string CrateContainerPrefabPath = PrefabsDir + "/ContainerCrateView.prefab";
+        const string CacheContainerPrefabPath = PrefabsDir + "/ContainerCacheView.prefab";
+        const string GroundContainerPrefabPath = PrefabsDir + "/ContainerGroundView.prefab";
+        const string CorpseMarkerPrefabPath = PrefabsDir + "/ContainerCorpseMarkerView.prefab";
+        // Models from the same Sci-Fi Essentials kit the Elite and the Director
+        // come out of (ASSETS-001 §2.2 reserves that kit's crates for loot on
+        // purpose), so the loot reads as belonging to the same world as the
+        // robots guarding it.
+        const string CrateModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Prop_Crate.fbx";
+        const string CacheModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Prop_Chest.fbx";
+        const string GroundModelPath = ThirdPartyAssetPostprocessor.SciFiRoot + "Models/Prop_Ammo.fbx";
 
         [MenuItem("Ring/Bootstrap/Stage 1 Scene")]
         public static void Apply()
@@ -411,8 +490,77 @@ namespace Ring.Editor
                 .ReadAllText($"{DataDir}/MobGunnerConfig.asset")
                 .Contains("SwingLeadMaxMeters");
 
+            // Stage 3 Task 12 (spec §3.13, errata E-6 I5): the Elite and the
+            // Director are new ASSETS of the existing MobConfig class, not a
+            // new class — so they are seeded exactly the way the gunner is
+            // (ApplyGunnerDefaults' own first-creation contract): a brand-new
+            // asset gets the archetype numbers once, and an owner hand-tune at
+            // milestone В1 survives every later re-run.
+            MobConfig elite = GetOrCreate<MobConfig>("MobEliteConfig", out bool eliteCreated);
+            MobConfig director = GetOrCreate<MobConfig>("MobDirectorConfig", out bool directorCreated);
+            if (eliteCreated && ApplyEliteDefaults(elite)) EditorUtility.SetDirty(elite);
+            if (directorCreated && ApplyDirectorDefaults(director)) EditorUtility.SetDirty(director);
+
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
+
+            // Task Т6 (app-ggvz, rule 413): snapshot the ZoneWeights key
+            // BEFORE any EnsureAssetHasKey/SetDirty/SaveAssets call below can
+            // touch WaveConfig.asset — same "read before mutate" drill as
+            // gunnerMarkerPresent above and stageTwoPending/stageThreePending
+            // below. "ZoneWeights:" is the field bd app-ggvz Т4 deleted from
+            // WaveConfig.cs (owner decision К3, spec Р319) along with the
+            // shared zone budget it weighted — it cannot come back, so once
+            // this run's own SaveAssets re-serializes the asset and drops the
+            // key, it is gone from this clone for good, exactly the
+            // "cannot reappear" property a one-time gate needs.
+            //
+            // A value-keyed gate like eliteScalePending's/
+            // playtestOneArenaPending's own was ruled out: it would have to
+            // read a substring like "BaseCount: 4", and that substring also
+            // matches a future "BaseCount: 40" (or 41, 42, ...) — the very
+            // first owner retune of this same field would silently refire
+            // the gate and stomp the new number back down to 16.
+            //
+            // ONE READ FOR BOTH GATES (fix-round, rule 2): app-jmb2's own gate
+            // below keys on the same file, and the whole point of a
+            // read-before-mutate snapshot is that every gate reading this
+            // asset sees the SAME bytes -- two separate ReadAllText calls
+            // would be a second source of truth for one file.
+            string waveAssetText = System.IO.File.ReadAllText($"{DataDir}/WaveConfig.asset");
+            bool waveCadencePending = waveAssetText.Contains("ZoneWeights:");
+
+            // Task app-jmb2 (owner decision Р347, rule 413): the gunner-share
+            // retune, snapshotted in the same "read before mutate" window as
+            // waveCadencePending directly above and for the same reason.
+            //
+            // KEYED ON THE VALUE BEING REPLACED, like eliteScalePending's and
+            // playtestOneArenaPending's gates below: GunnerShareGrowth has
+            // existed on disk since Stage 2 Task 16, so no key's ARRIVAL can
+            // date this delivery -- only the departure of the old number can.
+            //
+            // THE TRAILING NEWLINE IS LOAD-BEARING. "GunnerShareGrowth: 0.05"
+            // without it is also a prefix of "GunnerShareGrowth: 0.055", so a
+            // later owner hand-tune into the 0.05x range would re-fire this
+            // gate and stomp the new number back down -- the exact failure
+            // waveCadencePending's own doc rejects a "BaseCount: 4" key for.
+            // With the newline the match is the whole serialized line, and
+            // Unity writes this file LF-terminated (verified on the committed
+            // asset, one occurrence, no other 0.05 anywhere in it).
+            //
+            // AND IT LEAVES THE OWNER'S TUNING ALONE: the share curve is a
+            // named milestone-В4 tuning target, so a gate reading "not yet
+            // 0.0135" would wipe every later hand-tune on the next Apply.
+            // Reading "still 0.05" fires once, and fires again only if the
+            // owner deliberately types 0.05 back -- the one case where
+            // re-delivering is the right answer, since 0.05 is the number the
+            // saturation arithmetic calls wrong.
+            bool gunnerShareRetunePending = waveAssetText.Contains("GunnerShareGrowth: 0.05\n");
+
+            // Stage 3 Task 12 (errata E-2): match-flow pacing — a brand-new SO
+            // CLASS, so its C# field initializers ARE the shipped numbers and
+            // no seeding method is needed (VisibilityConfig's own precedent).
+            MatchFlowConfig flow = GetOrCreate<MatchFlowConfig>("MatchFlowConfig");
             // Stage 2 Task 22: seventh SimConfigBuilder.Build() parameter — a
             // brand-new asset, so its C# defaults ARE the shipped numbers
             // (VisibilityConfig.cs's own doc: they mirror
@@ -420,6 +568,12 @@ namespace Ring.Editor
             // ApplyGunnerDefaults/ApplyStageTwoBalance below, which backfill an
             // OLDER asset that predates a field.
             VisibilityConfig visibility = GetOrCreate<VisibilityConfig>("VisibilityConfig");
+            // Stage 3 Task 13 (spec §3.7/§3.8): the item catalog and the
+            // loot balance sheet — both brand-new SO CLASSES, same
+            // "C# defaults ARE the shipped numbers" precedent as
+            // MatchFlowConfig above.
+            ItemCatalog items = GetOrCreate<ItemCatalog>("ItemCatalog");
+            LootConfig loot = GetOrCreate<LootConfig>("LootConfig");
             // Stage 2 Task 23 (spec §3.8/§3.15, Р52): NetConfig is NOT a
             // SimConfigBuilder.Build() parameter (see its own class doc for
             // why) and carries no scene reference below — until Task 33
@@ -525,9 +679,120 @@ namespace Ring.Editor
                 waveChanged |= waveDelta;
                 feelChanged |= feelDelta;
             }
+
+            // Stage 3 Task 12 (spec §3.13, plan Т12): the Stage 2 gate above is
+            // CLOSED FOR GOOD (Р120) — it reads "Walls:", a key Task 16
+            // committed — so the sanctioned Stage 3 edits of EXISTING values
+            // need a gate of their own, measured the same way: on the
+            // ArenaConfig.asset TEXT, snapshotted BEFORE the EnsureAssetHasKey
+            // /SaveAssets block below can change it, and keyed on a field that
+            // cannot appear in the file until this very task writes it.
+            // "ZoneRadius:" is that field (Т8 declared it, deliberately empty,
+            // and an empty array still serializes the key — so this reads true
+            // exactly once, on the delivery run, and false in every clone
+            // afterwards).
+            //
+            // NEW keys are NOT this block's business, then or now: they arrive
+            // through the EnsureAssetHasKey marker mechanism (ArenaConfig's
+            // marker is MaxContainerSlots, WaveConfig's EliteShareOuterCap —
+            // both already moved by the tasks that appended those fields,
+            // errata E-7/owner decision R-4), which is why this method touches
+            // only values that already exist on disk.
+            bool stageThreePending = !System.IO.File
+                .ReadAllText($"{DataDir}/ArenaConfig.asset")
+                .Contains("ZoneRadius:");
+
+            bool netChanged = false;
+            if (stageThreePending)
+            {
+                arenaChanged |= ApplyStageThreeBalance(arena, wave, net,
+                    out bool waveThreeDelta, out bool netDelta);
+                waveChanged |= waveThreeDelta;
+                netChanged |= netDelta;
+            }
+
+            // Playtest В1, round two (bd `app-oxyo`): the elite's visual scale,
+            // re-gated deliberately — which is exactly what the Stage 2 gate's
+            // own doc says a future sanctioned edit of an EXISTING value has to
+            // do, since neither of the two gates above can ever fire again.
+            //
+            // KEYED ON THE VALUE BEING REPLACED, not on a key. The marker
+            // mechanism above answers "does this field EXIST", and this field
+            // has existed since Т31 — so there is no key whose arrival could
+            // date the delivery. The old NUMBER can: "EliteVisualScale: 0.75"
+            // is in the file until this runs and never afterwards, so this
+            // reads true exactly once, on the delivery run, and false in every
+            // clone after it.
+            //
+            // AND IT DOES NOT FIGHT THE OWNER'S OWN TUNING, which is the whole
+            // reason it is keyed on the OLD value rather than on the new one.
+            // This field is live in PlayMode and meant to be tuned there; a
+            // gate reading "not yet 1.5" would reset every later hand-tuned
+            // number on the next Apply. Reading "still 0.75" leaves anything
+            // the owner puts there alone — including a deliberate return to
+            // 0.75, the one case where this fires again, and the one case where
+            // firing again is the right answer: 0.75 is the number the
+            // measurement calls wrong.
+            bool eliteScalePending = System.IO.File
+                .ReadAllText($"{DataDir}/GameFeelConfig.asset")
+                .Contains("EliteVisualScale: 0.75");
+            if (eliteScalePending)
+                feelChanged |= ApplyPlaytestOneVisuals(gameFeel);
+
+            // Playtest В1, round two (bd `app-3cph`): the arena's two RINGS
+            // triple in area around an unchanged core, and the mob density
+            // doubles. A third deliberately re-gated delivery of EXISTING
+            // values, for the same reason `app-oxyo` needed the second one —
+            // both gates above are permanently closed (the Stage 2 one reads
+            // a key Task 16 committed, the Stage 3 one a key Т12 committed).
+            //
+            // KEYED ON THE VALUE BEING REPLACED (lesson 413), like
+            // `app-oxyo`'s gate and unlike the two marker gates: every field
+            // this delivers has existed on disk since Т12, so no key's
+            // ARRIVAL can date the delivery. `"Radius: 113"` can — it is the
+            // rim's own line in the committed YAML, it appears exactly once
+            // in the file (the twelve obstacle radii are indented two spaces
+            // deeper and none of them is 113), and it is gone the moment this
+            // runs.
+            //
+            // AND IT LEAVES THE OWNER'S TUNING ALONE, which is the whole
+            // point of keying on the old value: the arena layout is the
+            // named tuning target of milestones В1/В2 (spec §3.15), so a
+            // gate reading "not yet 173" would wipe every hand-tuned radius
+            // on the next R-APPLY. Reading "still 113" fires once — and
+            // fires again only if the owner deliberately types 113 back,
+            // which is the one case where re-delivering is the right answer.
+            bool playtestOneArenaPending = System.IO.File
+                .ReadAllText($"{DataDir}/ArenaConfig.asset")
+                .Contains("Radius: 113");
+            bool lootChanged = false;
+            if (playtestOneArenaPending)
+            {
+                arenaChanged |= ApplyPlaytestOneArena(arena, loot, out bool lootDelta);
+                lootChanged |= lootDelta;
+            }
+
+            // Task Т6 (app-ggvz, owner decisions К5/Р311): the wave-cadence
+            // delivery, gated by waveCadencePending (snapshotted above,
+            // before this run's own EnsureAssetHasKey/SetDirty/SaveAssets
+            // calls could touch WaveConfig.asset). Single `waveChanged |=`,
+            // same precedent as every gated call above.
+            if (waveCadencePending) waveChanged |= ApplyWaveCadence(wave);
+
+            // Task app-jmb2 (owner decision Р347): the gunner-share retune,
+            // gated by gunnerShareRetunePending (snapshotted above, in the
+            // same read-before-mutate window as waveCadencePending). A
+            // SEPARATE gate rather than a second field on ApplyWaveCadence:
+            // that one's key is permanently spent -- "ZoneWeights:" left the
+            // asset when Т6 ran and cannot come back -- so a field added
+            // there would never be delivered at all.
+            if (gunnerShareRetunePending) waveChanged |= ApplyGunnerShareRetune(wave);
+
+            if (lootChanged) EditorUtility.SetDirty(loot);
             if (arenaChanged) EditorUtility.SetDirty(arena);
             if (waveChanged) EditorUtility.SetDirty(wave);
             if (feelChanged) EditorUtility.SetDirty(gameFeel);
+            if (netChanged) EditorUtility.SetDirty(net);
 
             // Task 27 review fix-round (extended by the milestone-4 DoD
             // iteration, generalized to five assets by Task 17): an already-
@@ -546,44 +811,113 @@ namespace Ring.Editor
             // here: detects a MISSING key instead of a stale one) so this is
             // a one-time sync per field addition, not an unconditional touch
             // every run. Each marker key is that class's MOST RECENTLY added
-            // field (GameFeelConfig: `RemotePlayerEmission` as of Stage 2 Task
-            // 45a — was `HeadHoverPulseAmp` (В3 fix-wave 2) before that,
+            // field (GameFeelConfig: `ContainerVisualScale` as of Stage 3 Task
+            // 31 — the two archetype scales and the two furniture scales are
+            // that class's new last fields and the committed asset predates
+            // all four — was `MeshSagMeters`
+            // (Stage 3 Task 30, the arc-segmentation tolerance shipped
+            // alongside the three zone floor tints) before that,
+            // `GunEjectLocalEuler` (Stage 2 Task 45b)
+            // before that, `RemotePlayerEmission` (Stage 2 Task
+            // 45a) before THAT — was `HeadHoverPulseAmp` (В3 fix-wave 2) before that,
             // `AimRayHeadAlphaBoost` (В3 fix-wave 1) before THAT,
             // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
             // field's own doc for the fuller history; HeroConfig's marker is
-            // `EdgeRequestMinTicks` as of Stage 2 Task 8/9 (edge-request rate
-            // limiting) — was `LinkRefund` (В1 fix-wave 3, owner economy
-            // rework) before that, `AimSettleSeconds` (Task 17) before THAT;
-            // WeaponConfig/MobConfig's marker fields are unchanged since Task
-            // 17, so any asset committed before that task predates them and
-            // self-heals on this Apply; ArenaConfig's marker is `BarrierTop`
-            // as of Stage 2 Task 46 (the interior barriers' modelled height,
-            // the class's new last field) — was `PlayerSpawnRingFrac` (Stage 2
+            // `MaxInventoryItems` as of Stage 3 Task 4 (the backpack's two
+            // capacity numbers, the class's new last field) — was
+            // `PickupRadius` (Stage 3 Task 3, auto-pickup collection radius)
+            // before that, `EdgeRequestMinTicks` (Stage 2 Task 8/9,
+            // edge-request rate limiting) before THAT, `LinkRefund` (В1
+            // fix-wave 3, owner economy rework) before THAT,
+            // `AimSettleSeconds` (Task 17) before THAT;
+            // WeaponConfig's marker moves to `EmergencyFireInterval` as of
+            // Stage 3 Task 2 (spec Р261's ammo economy — the class's new last
+            // field) — was `RunSpreadSpeedFrac` (Task 17) before that. Owner
+            // decision R-4: the plan body assigned this relocation to Т12, but
+            // the marker is always the class's LAST declared field, so it has
+            // to move in the SAME task that appends the field or new fields
+            // silently fail to reach a committed `.asset` even with every
+            // test green (the errata E-7 precedent for Т3/Т4/Т8's own marker
+            // moves) — Т12 stays a values-only delivery task. MobConfig's
+            // marker field is unchanged since Task 17, so any asset committed
+            // before that task predates it and self-heals on this Apply;
+            // ArenaConfig's marker is `MaxContainerSlots` as of Stage 3 Task 8
+            // (per-match container-slot cap, the class's new last field) —
+            // was `MaxPickups` (Stage 3 Task 3, per-match pickup cap) before
+            // that, `BarrierTop` (Stage 2 Task 46, the interior barriers'
+            // modelled height) before THAT, `PlayerSpawnRingFrac` (Stage 2
             // Task 4) from Stage 2 Task 9, when ArenaConfig joined the
-            // mechanism for the first time, and the committed asset carries
-            // that key already, so leaving the marker there would have left
-            // `BarrierTop` unable to reach the file at all).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "EdgeRequestMinTicks"); // Stage 2 Task 9
-            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RunSpreadSpeedFrac");
+            // mechanism for the first time, before THAT — and the committed
+            // asset carries each superseded key already, so leaving the
+            // marker on any of them would have left the newer field unable
+            // to reach the file at all).
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "MaxInventoryItems"); // Stage 3 Task 4 (was PickupRadius, Stage 3 Task 3)
+            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "EmergencyFireInterval"); // Stage 3 Task 2 (was RunSpreadSpeedFrac, Task 17)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "GunEjectLocalEuler"); // Stage 2 Task 45b
-            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "BarrierTop"); // Stage 2 Task 46
-            // WaveConfig joins the marker mechanism for the first time in Stage 2
-            // Task 16, with PerPlayerCountFrac (the class's newest field) as its
-            // marker — the per-extra-player wave scale is a NEW key, and new keys
-            // are exactly what this mechanism is for (ApplyStageTwoBalance above
-            // only rewrites values that already exist on disk).
-            EditorBootstrapUtils.EnsureAssetHasKey(wave, $"{DataDir}/WaveConfig.asset", "PerPlayerCountFrac"); // Stage 2 Task 16
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)
+            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
+            // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
+            // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
+            // R-58) moved it to EliteShareOuterCap — the class's newest
+            // field at the time (zone budget + elite composition, spec
+            // §3.3) — same migration pattern as ArenaConfig/HeroConfig/
+            // WeaponConfig's own comments above. bd app-ggvz Т2 (spec §3.8)
+            // appends DifficultyStepSeconds as the class's new LAST field
+            // (the sync-marker convention, WaveConfig.cs's own doc) and
+            // moves the marker again — the committed asset already carries
+            // EliteShareOuterCap, so leaving the marker there would leave
+            // the four Т2 keys unable to reach the file at all.
+            EditorBootstrapUtils.EnsureAssetHasKey(wave, $"{DataDir}/WaveConfig.asset", "DifficultyStepSeconds"); // app-ggvz Т6 (was EliteShareOuterCap, Stage 3 Task 11)
             // VisibilityConfig joins the marker mechanism for the first time
             // here, in Stage 2 Task 22, with HearPositionGridMeters (the
             // class's own newest/last field) as its marker — the asset is
             // brand new on this run, so this call is a one-time onboarding
             // exactly like ArenaConfig/WaveConfig's own first-join comments
             // above, not a migration of an older asset.
+            // Stage 3 Task 13 (owner decision R-88): the marker moves off
+            // HearPositionGridMeters onto ContainerRadiusForVisibility —
+            // this class's own new LAST field — same "append, don't
+            // reshuffle" migration lesson 40 has already cost this
+            // codebase four times (VisibilityConfig.cs's own doc has the
+            // fuller account).
             EditorBootstrapUtils.EnsureAssetHasKey(visibility, $"{DataDir}/VisibilityConfig.asset",
-                "HearPositionGridMeters"); // Stage 2 Task 22
+                "ContainerRadiusForVisibility"); // Stage 3 Task 13 (was HearPositionGridMeters, Stage 2 Task 22)
+            // Stage 3 Task 12: the two new MobConfig assets join the same
+            // mechanism their two older siblings use, with MobConfig's own
+            // marker field — brand-new assets on this run, so these are
+            // one-time onboardings, not migrations. MatchFlowConfig joins for
+            // the first time with DirectorReserveSlots, its class's own last
+            // field.
+            EditorBootstrapUtils.EnsureAssetHasKey(elite, $"{DataDir}/MobEliteConfig.asset",
+                "SwingLeadMaxMeters"); // Stage 3 Task 12
+            EditorBootstrapUtils.EnsureAssetHasKey(director, $"{DataDir}/MobDirectorConfig.asset",
+                "SwingLeadMaxMeters"); // Stage 3 Task 12
+            EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
+                "DirectorReserveSlots"); // Stage 3 Task 12
+            // Stage 3 Task 13: the item catalog and loot balance sheet join
+            // for the first time — brand-new assets, one-time onboardings
+            // like MatchFlowConfig above. ItemCatalog's marker is its own
+            // sole field (Items); LootConfig's is LootRadius, its class's
+            // own last field.
+            EditorBootstrapUtils.EnsureAssetHasKey(items, $"{DataDir}/ItemCatalog.asset",
+                "Items"); // Stage 3 Task 13
+            EditorBootstrapUtils.EnsureAssetHasKey(loot, $"{DataDir}/LootConfig.asset",
+                "LootRadius"); // Stage 3 Task 13
+            // Coordinator fix-round (Ф3 review C1): a VALUE rewrite, not a
+            // missing key — EnsureAssetHasKey's own marker mechanism (just
+            // above) only backfills a field the .asset text lacks entirely,
+            // and every one of these five records was already on disk with
+            // the wrong number. Same "text-read gate, one-time apply" shape
+            // as ApplyStageThreeBalance's own `stageThreePending` (R-112),
+            // sized to this ONE asset instead of three: the marker string
+            // is "Id: 0" (YAML for the FIRST record's own field), present
+            // only on a catalog this fix-round has not touched yet.
+            bool itemIdsPending = System.IO.File
+                .ReadAllText($"{DataDir}/ItemCatalog.asset")
+                .Contains("Id: 0");
+            if (itemIdsPending && ApplyItemCatalogIdShift(items)) EditorUtility.SetDirty(items);
             // NetConfig joins the marker mechanism for the first time here,
             // in Stage 2 Task 23, with MatchMaxDurationSeconds (the class's
             // own newest/last field) as its marker — brand-new asset on
@@ -691,6 +1025,14 @@ namespace Ring.Editor
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_wave", wave);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_arena", arena);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_visibility", visibility);
+            // Stage 3 Task 12 (owner decision R-73): without these three the
+            // PlayMode scene would build SimConfig with Elite/Director/Flow at
+            // zero — and waves have spawned Elites since Т11.
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_elite", elite);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_director", director);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_flow", flow);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_items", items);
+            refsChanged |= EditorBootstrapUtils.SetRef(so, "_loot", loot);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_gameFeel", gameFeel);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_camera", camera);
             refsChanged |= EditorBootstrapUtils.SetRef(so, "_actionsAsset", actionsAsset);
@@ -980,6 +1322,20 @@ namespace Ring.Editor
             Material floorMat = LoadMaterial("Floor");
             Material wallMat = LoadMaterial("Wall");
             Material obstacleMat = LoadMaterial("Obstacle");
+            // Stage 3 Task 30 (spec §3.11, plan errata I13): the two painted
+            // floor rings `GreyboxBuilder` draws around extraction points.
+            // Unlit like every other emissive accent this bootstrap generates
+            // (TracerTrail/MuzzleFlash/DashGlow) — a marker painted on the
+            // ground must read the same under any scene light, and a Lit
+            // material on a 6 cm slab would mostly read as its own shadow.
+            // CYAN FOR THE EARLY PORTAL, AMBER FOR THE GATE, on the palette
+            // this project already speaks (GameFeelConfig's own color docs):
+            // cyan is the player's own signature — an early portal is the way
+            // out you brought with you — while the gate belongs to the
+            // Director's half of the arena and takes the warm end. Neither
+            // sits at the red the headshot cue owns.
+            Material portalRingMat = GetOrCreateUnlitMaterial("PortalRing", new Color(0f, 2.2f, 2.8f));
+            Material gateRingMat = GetOrCreateUnlitMaterial("GateRing", new Color(3f, 1.4f, 0.2f));
 
             GameObject arenaGo = EditorBootstrapUtils.FindRootObject(scene, ArenaObjectName);
             if (arenaGo == null)
@@ -997,9 +1353,15 @@ namespace Ring.Editor
             bool greyboxRefsChanged = false;
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_runner", runner);
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_arena", arena);
+            // Stage 3 Task 30: the builder reads GameFeelConfig for the three
+            // zone tints and for `MeshSagMeters`, the tolerance its derived
+            // segment counts come out of (spec Р273).
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_gameFeel", gameFeel);
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_floor", floorMat);
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_wall", wallMat);
             greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_obstacle", obstacleMat);
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_portalRing", portalRingMat);
+            greyboxRefsChanged |= EditorBootstrapUtils.SetRef(greyboxSo, "_gateRing", gateRingMat);
             if (greyboxRefsChanged)
             {
                 greyboxSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1119,6 +1481,45 @@ namespace Ring.Editor
             // whose one job is the Fill every caller wires to.
             Transform staminaBar = hudGo.transform.Find(StaminaBarObjectName);
 
+            // Stage 3 Т33 (spec §3.11): the magazine, the phase line and the
+            // extraction ring. The magazine takes the third slot down the left
+            // edge, under HP and Буст, because those three are what a collector
+            // checks in the same glance; the phase belongs to the raid rather
+            // than to him and goes top-center under the spectate line; the ring
+            // has no slot at all — it rides his own figure.
+            Image ammoFill = GetOrCreateBar(hudGo.transform, AmmoBarObjectName,
+                anchoredPos: new Vector2(24f, -84f), size: new Vector2(320f, 14f),
+                backgroundColor: new Color(0.05f, 0.05f, 0.05f, 0.85f),
+                fillColor: new Color(0.95f, 0.75f, 0.25f), ref sceneDirty);
+            Transform ammoBar = hudGo.transform.Find(AmmoBarObjectName);
+            TMP_Text ammoText = GetOrCreateHudLabel(hudGo.transform, AmmoTextObjectName,
+                "БОЕЗАПАС", anchor: new Vector2(0f, 1f), anchoredPos: new Vector2(24f, -104f),
+                size: new Vector2(320f, 26f), fontSize: 18f,
+                alignment: TextAlignmentOptions.TopLeft, ref sceneDirty);
+            // The emergency mark is parented to the AMMO BAR rather than to the
+            // canvas, so hiding the magazine while spectating takes the mark
+            // with it — one object to switch off instead of two that can
+            // disagree.
+            TMP_Text emergencyLabel = ammoBar == null
+                ? null
+                : GetOrCreateHudLabel(ammoBar, EmergencyLabelObjectName,
+                    "АВАРИЙНЫЙ СИНТЕЗ", anchor: new Vector2(0f, 1f),
+                    anchoredPos: new Vector2(0f, -46f), size: new Vector2(320f, 26f),
+                    fontSize: 18f, alignment: TextAlignmentOptions.TopLeft, ref sceneDirty);
+            // AND IT SHIPS DISABLED, for the reason the spectate label does: a
+            // committed scene is what a build starts from, and a raid does not
+            // open in an emergency.
+            if (emergencyLabel != null && emergencyLabel.gameObject.activeSelf)
+            {
+                emergencyLabel.gameObject.SetActive(false);
+                sceneDirty = true;
+            }
+            TMP_Text phaseText = GetOrCreateHudLabel(hudGo.transform, PhaseTextObjectName,
+                "ФАРМ", anchor: new Vector2(0.5f, 1f), anchoredPos: new Vector2(0f, -64f),
+                size: new Vector2(640f, 34f), fontSize: 22f,
+                alignment: TextAlignmentOptions.Top, ref sceneDirty);
+            Image extractRing = GetOrCreateExtractRing(hudGo.transform, ref sceneDirty);
+
             HudController hud = hudGo.GetComponent<HudController>();
             if (hud == null)
             {
@@ -1135,6 +1536,17 @@ namespace Ring.Editor
             hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_spectateLabel", spectateLabel);
             if (staminaBar != null)
                 hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_staminaBar", staminaBar.gameObject);
+            // Stage 3 Т33.
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_ammoFill", ammoFill);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_ammoText", ammoText);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_phaseText", phaseText);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_extractRing", extractRing);
+            hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_camera", mainCamera);
+            if (ammoBar != null)
+                hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_ammoBar", ammoBar.gameObject);
+            if (emergencyLabel != null)
+                hudRefsChanged |= EditorBootstrapUtils.SetRef(hudSo, "_emergencyLabel",
+                    emergencyLabel.gameObject);
             if (hudRefsChanged)
             {
                 hudSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1155,7 +1567,13 @@ namespace Ring.Editor
             // Both panels start hidden; DeathOverlayController/PauseController's
             // own Awake also enforces this defensively every play session.
             GameObject deathPanelGo = GetOrCreateOverlayPanel(hudGo.transform, DeathPanelObjectName, ref sceneDirty);
-            GetOrCreateOverlayText(deathPanelGo.transform, "Title", "Носитель потерян",
+            // bd `app-qz30`: the headline's SHIP-TIME text comes from the
+            // controller's own rule rather than from a literal here, so the
+            // scene and the screen cannot drift into two different words for
+            // the same outcome (R-200). `false` is the panel's resting state:
+            // a scene opens on a raid nobody has left yet.
+            TMP_Text deathTitle = GetOrCreateOverlayText(deathPanelGo.transform, "Title",
+                DeathOverlayController.TitleFor(walkedOut: false),
                 new Vector2(0f, 160f), new Vector2(700f, 70f), 42f, ref sceneDirty);
             TMP_Text deathMetrics = GetOrCreateOverlayText(deathPanelGo.transform, "Metrics", "",
                 new Vector2(0f, -10f), new Vector2(700f, 260f), 24f, ref sceneDirty);
@@ -1171,6 +1589,18 @@ namespace Ring.Editor
             Button deathSpectateButton = GetOrCreateOverlayButton(deathPanelGo.transform,
                 SpectateButtonObjectName, "Наблюдать",
                 new Vector2(0f, -230f), new Vector2(220f, 50f), ref sceneDirty);
+            // Stage 3 Т34 (spec §3.10/§3.11): the raid's public board, between
+            // this collector's own numbers and the buttons. It ships DISABLED
+            // like the spectate label and the emergency mark — a build opens on
+            // a raid that has not ended — and `DeathOverlayController.ShowBoard`
+            // is what turns it on for the panels that HAVE one.
+            TMP_Text deathResults = GetOrCreateOverlayText(deathPanelGo.transform, "Results", "",
+                new Vector2(0f, -130f), new Vector2(700f, 90f), 20f, ref sceneDirty);
+            if (deathResults != null && deathResults.gameObject.activeSelf)
+            {
+                deathResults.gameObject.SetActive(false);
+                sceneDirty = true;
+            }
 
             GameObject deathOverlayGo = EditorBootstrapUtils.FindRootObject(scene, DeathOverlayObjectName);
             if (deathOverlayGo == null)
@@ -1189,14 +1619,96 @@ namespace Ring.Editor
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_runner", runner);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_gameFeelDirector", gameFeelDirector);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_panel", deathPanelGo);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_titleText", deathTitle);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_metricsText", deathMetrics);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_restartButton", deathRestartButton);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_hintText", deathHint);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_spectateButton",
                 deathSpectateButton);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_resultsText",
+                deathResults);
             if (deathOverlayRefsChanged)
             {
                 deathOverlaySo.ApplyModifiedPropertiesWithoutUndo();
+                sceneDirty = true;
+            }
+
+            // Stage 3 Т32б (spec §3.11 С23): the loot window — the source box
+            // on the left, the backpack on the right, the world in between.
+            // Built here rather than in `StageTwoSceneBootstrap` for the reason
+            // every other view in this file is: `StageTwo` builds a headless
+            // scene and has no HUD canvas to hang a panel on.
+            GameObject inventoryPanelGo = GetOrCreateInventoryPanel(hudGo.transform, ref sceneDirty);
+            Transform sourceColumn = GetOrCreateInventoryColumn(inventoryPanelGo.transform,
+                InventorySourceColumnName, -1f, ref sceneDirty);
+            Transform backpackColumn = GetOrCreateInventoryColumn(inventoryPanelGo.transform,
+                InventoryBackpackColumnName, 1f, ref sceneDirty);
+            TMP_Text sourceTitle = GetOrCreateOverlayText(sourceColumn, "Title", "Источник",
+                new Vector2(0f, -28f), new Vector2(InventoryColumnWidth - 20f, 34f), 22f,
+                ref sceneDirty);
+            TMP_Text backpackTitle = GetOrCreateOverlayText(backpackColumn, "Title", "Рюкзак",
+                new Vector2(0f, -28f), new Vector2(InventoryColumnWidth - 20f, 34f), 22f,
+                ref sceneDirty);
+
+            // THE ROW COUNTS ARE THE CONFIG'S CAPS, read from the same assets
+            // `SimConfigBuilder` reads: a panel with fewer rows than a box has
+            // slots would hide loot that is really there, and the caps are the
+            // only numbers that cannot disagree with the simulation.
+            int sourceRows = arena.MaxContainerSlots;
+            int backpackRows = hero.MaxInventoryItems;
+            var sourceButtons = new Button[sourceRows];
+            var sourceLabels = new TMP_Text[sourceRows];
+            var sourceProgress = new Image[sourceRows];
+            for (int i = 0; i < sourceRows; i++)
+                GetOrCreateInventoryRow(sourceColumn, i, true, out sourceButtons[i],
+                    out sourceLabels[i], out sourceProgress[i], ref sceneDirty);
+            var backpackButtons = new Button[backpackRows];
+            var backpackLabels = new TMP_Text[backpackRows];
+            for (int i = 0; i < backpackRows; i++)
+                GetOrCreateInventoryRow(backpackColumn, i, false, out backpackButtons[i],
+                    out backpackLabels[i], out Image _, ref sceneDirty);
+
+            GameObject inventoryGo = EditorBootstrapUtils.FindRootObject(scene,
+                InventoryControllerObjectName);
+            if (inventoryGo == null)
+            {
+                inventoryGo = new GameObject(InventoryControllerObjectName);
+                sceneDirty = true;
+            }
+            InventoryWindowController inventory =
+                inventoryGo.GetComponent<InventoryWindowController>();
+            if (inventory == null)
+            {
+                inventory = inventoryGo.AddComponent<InventoryWindowController>();
+                sceneDirty = true;
+            }
+            AudioSource inventoryAudio = inventoryGo.GetComponent<AudioSource>();
+            if (inventoryAudio == null)
+            {
+                inventoryAudio = inventoryGo.AddComponent<AudioSource>();
+                inventoryAudio.playOnAwake = false;
+                sceneDirty = true;
+            }
+            var inventorySo = new SerializedObject(inventory);
+            bool inventoryRefsChanged = false;
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_runner", runner);
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_panel", inventoryPanelGo);
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_sourceTitle", sourceTitle);
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_backpackTitle", backpackTitle);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_sourceSlots", sourceButtons);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_sourceLabels", sourceLabels);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_sourceProgress", sourceProgress);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_backpackSlots", backpackButtons);
+            inventoryRefsChanged |= SetRefArray(inventorySo, "_backpackLabels", backpackLabels);
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_audio", inventoryAudio);
+            // The refusal reuses `denied.wav` — the sound this project already
+            // means "no" with (Task 22's stamina refusal). A second clip for one
+            // meaning would be a second vocabulary.
+            inventoryRefsChanged |= EditorBootstrapUtils.SetRef(inventorySo, "_refusalClip",
+                LoadAudioClip("denied.wav"));
+            if (inventoryRefsChanged)
+            {
+                inventorySo.ApplyModifiedPropertiesWithoutUndo();
                 sceneDirty = true;
             }
 
@@ -1265,8 +1777,43 @@ namespace Ring.Editor
                 MobGunnerPrefabPath, GunnerModelPath, gameFeel.GunnerVisualScale,
                 gunner.LegsTop, gunner.BodyTop, gunner.HeadTop, gunner.Radius,
                 gameFeel.AimProxyHeadRadiusFrac);
+            // Stage 3 Task 31: the two archetypes that used to be rented out of
+            // the Gunner's pool. Their belts come from their OWN MobConfigs, so
+            // the Director's aim proxies are the Director's size — a boss you
+            // could only headshot at a Gunner's head height would be worse than
+            // no proxy at all.
+            Material directorSkin = AssetPreviewSceneBootstrap.GetOrCreateDirectorSkin();
+            MobView elitePrefab = GetOrCreateMobArchetypePrefab(
+                MobElitePrefabPath, EliteModelPath, gameFeel.EliteVisualScale,
+                elite.LegsTop, elite.BodyTop, elite.HeadTop, elite.Radius,
+                gameFeel.AimProxyHeadRadiusFrac, AnimIds.MobClipFamily.SciFiEnemy);
+            MobView directorPrefab = GetOrCreateMobArchetypePrefab(
+                MobDirectorPrefabPath, DirectorModelPath, gameFeel.DirectorVisualScale,
+                director.LegsTop, director.BodyTop, director.HeadTop, director.Radius,
+                gameFeel.AimProxyHeadRadiusFrac, AnimIds.MobClipFamily.SciFiEnemy,
+                directorSkin);
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
+            // Stage 3 Task 31 (spec §3.11): the cell and the four container
+            // variants. CYAN for the cell — energy the collector is here to
+            // carry, on the same signature color the player's own dash glow and
+            // emissive already speak; a warmer AMBER for the corpse marker, so
+            // "something to loot on a body" never reads as "a cell lying here".
+            Material pickupMat = GetOrCreateUnlitMaterial("PickupCell", new Color(0.2f, 2.6f, 3.2f));
+            Material lootMarkerMat = GetOrCreateUnlitMaterial("LootMarker", new Color(2.8f, 1.9f, 0.4f));
+            PickupView pickupPrefab =
+                GetOrCreatePickupPrefab(pickupMat, gameFeel.PickupVisualDiameter);
+            ContainerView cratePrefab = GetOrCreateContainerPrefab(CrateContainerPrefabPath,
+                CrateModelPath, null, gameFeel.ContainerVisualScale);
+            ContainerView cachePrefab = GetOrCreateContainerPrefab(CacheContainerPrefabPath,
+                CacheModelPath, null, gameFeel.ContainerVisualScale);
+            ContainerView groundPrefab = GetOrCreateContainerPrefab(GroundContainerPrefabPath,
+                GroundModelPath, null, gameFeel.ContainerVisualScale);
+            // The marker is sized in its own right rather than at the container
+            // scale: it is a tell on the ground, not a prop, and half a meter
+            // is the same read the cell gets.
+            ContainerView corpseMarkerPrefab = GetOrCreateContainerPrefab(CorpseMarkerPrefabPath,
+                null, lootMarkerMat, gameFeel.PickupVisualDiameter);
             // Stage 2 Task 45a: the collector doll, same factory shape as the
             // two mech archetypes above — it is a POOLED prefab now, one
             // instance per player slot, and no longer a scene object.
@@ -1302,7 +1849,14 @@ namespace Ring.Editor
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_playerPrefab", playerDollPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_chaserPrefab", chaserPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_gunnerPrefab", gunnerPrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_elitePrefab", elitePrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_directorPrefab", directorPrefab);
             viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_projectilePrefab", projectilePrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_pickupPrefab", pickupPrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_crateContainerPrefab", cratePrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_cacheContainerPrefab", cachePrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_groundContainerPrefab", groundPrefab);
+            viewsRefsChanged |= EditorBootstrapUtils.SetRef(viewsSo, "_corpseMarkerPrefab", corpseMarkerPrefab);
             if (viewsRefsChanged)
             {
                 viewsSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1480,7 +2034,10 @@ namespace Ring.Editor
             GetOrCreateCorpsePrefab(corpseMat);
             CorpseView corpseMechPrefab = GetOrCreateCorpseMechPrefab(
                 CorpseMechPrefabPath, ChaserModelPath, GunnerModelPath,
-                gameFeel.ChaserVisualScale, gameFeel.GunnerVisualScale);
+                EliteModelPath, DirectorModelPath,
+                gameFeel.ChaserVisualScale, gameFeel.GunnerVisualScale,
+                gameFeel.EliteVisualScale, gameFeel.DirectorVisualScale,
+                directorSkin);
             DashGlowView dashGlowPrefab = GetOrCreateDashGlowPrefab(dashGlowMat);
             GibView gibPrefab = GetOrCreateGibPrefab();
 
@@ -1534,6 +2091,19 @@ namespace Ring.Editor
             ParticleSystem slideDustPrefab = GetOrCreateSparkPrefab(SlideDustPrefabPath, "SlideDust", slideDustMat,
                 lifetime: gameFeel.SlideDustLifetime, speed: gameFeel.SlideDustSpeed, size: gameFeel.SlideDustSize,
                 burstCount: gameFeel.SlideDustBurstCount, coneAngle: 60f);
+            // Stage 3 Task 31 (the FLASH half of what spec §3.11 asks a pickup
+            // for): the cell's own pop, on the cell's own cyan.
+            //
+            // LITERALS RATHER THAN FOUR NEW `GameFeelConfig` FIELDS, and the
+            // precedent is this file's own history: the hit/block/death spark
+            // numbers were literals here too until Task 27, and they moved into
+            // the SO at the exact moment the OWNER asked to retune them on a
+            // playtest. A brand-new effect nobody has seen yet has nothing to
+            // retune against; if the В1 playtest wants it bigger or longer,
+            // these four take the same road the sparks did. Short and small on
+            // purpose — a cell is a small thing being picked up, not a kill.
+            ParticleSystem pickupPopPrefab = GetOrCreateSparkPrefab(PickupPopPrefabPath, "PickupPop",
+                pickupMat, lifetime: 0.25f, speed: 2f, size: 0.07f, burstCount: 12, coneAngle: 90f);
 
             GameObject persistentPropsGo = EditorBootstrapUtils.FindRootObject(scene, PersistentPropsObjectName);
             if (persistentPropsGo == null)
@@ -1569,6 +2139,7 @@ namespace Ring.Editor
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_blockSparkPrefab", blockSparkPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_deathBurstPrefab", deathBurstPrefab);
             persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_slideDustPrefab", slideDustPrefab); // Task 22
+            persistentPropsRefsChanged |= EditorBootstrapUtils.SetRef(persistentPropsSo, "_pickupPopPrefab", pickupPopPrefab); // Stage 3 Task 31
             if (persistentPropsRefsChanged)
             {
                 persistentPropsSo.ApplyModifiedPropertiesWithoutUndo();
@@ -1788,6 +2359,343 @@ namespace Ring.Editor
             }
         }
 
+        /// Stage 3 Task 12 (spec §3.13/§3.15): the ONE-TIME delivery of Stage
+        /// 3's sanctioned edits of EXISTING values into the already-committed
+        /// `.asset`s — the exact role ApplyStageTwoBalance played for Stage 2,
+        /// behind a gate of its own (see the call site for why the Stage 2
+        /// gate could not be reused, spec Р120).
+        ///
+        /// The VALUES are not restated here either: a pristine
+        /// `CreateInstance` of each class supplies them (spec §0 — the C#
+        /// field initializer is the starting-balance source of truth), and
+        /// this method only decides WHICH fields are sanctioned to move.
+        /// The sanctioned list, spec §3.13's own table plus the layout of
+        /// §3.15: ArenaConfig's Radius (65 -> 113), MaxMobs (96 -> 288),
+        /// MaxProjectiles (384 -> 1024), MaxEventsPerFrame (512 -> 1024),
+        /// PlayerSpawnRingFrac (0.8 -> 0.92) and the two layout arrays that
+        /// grow with the arena (Obstacles 8 -> 20, Walls 6 -> 14);
+        /// WaveConfig's MaxMobsPerWave (36 -> 72); NetConfig's
+        /// MatchMaxDurationSeconds (1800 -> 900, spec Р255). NOTHING else on
+        /// those three assets moves — SpawnClearance, MaxPlayers, BarrierTop,
+        /// wave pacing and every network number the owner tuned across Stage
+        /// 2 are deliberately left alone.
+        ///
+        /// The zone walls, doors, portals and container caps are absent on
+        /// purpose: they are NEW keys, and new keys travel by the
+        /// EnsureAssetHasKey marker mechanism, which this method never
+        /// duplicates (ApplyStageTwoBalance's own PerPlayerCountFrac note).
+        ///
+        /// Two `out` flags for the same reason ApplyStageTwoBalance has them
+        /// (fix-round 1, I-2): MaxMobsPerWave lives on WaveConfig and
+        /// MatchMaxDurationSeconds on NetConfig, so one dirty flag on `arena`
+        /// would silently drop both.
+        /// The one number the В1 playtest's second round sent back into the data
+        /// (bd `app-oxyo`): `EliteVisualScale`, 0.75 → 1.5. Same shape as
+        /// `ApplyStageThreeBalance` below — a local defaults instance,
+        /// `SetIfDifferent`, destroyed in a `finally` — so the number lives in
+        /// the C# field initializer and this only delivers it to an asset that
+        /// predates the change. The reason for the number is on the field
+        /// itself; the reason for the gate is at its call site.
+        ///
+        /// THE PREFAB FOLLOWS ON ITS OWN: `GetOrCreateMobArchetypePrefab`'s
+        /// early-return path calls `SelfHealVisualScaleOnPrefab`, which exists
+        /// for precisely this (В1 fix-wave 1 added it when `GunnerVisualScale`
+        /// 0.4 → 0.76 failed to reach an already-committed prefab). Nothing here
+        /// touches `MobEliteView.prefab` directly.
+        static bool ApplyPlaytestOneVisuals(GameFeelConfig gameFeel)
+        {
+            var feelDefaults = ScriptableObject.CreateInstance<GameFeelConfig>();
+            try
+            {
+                return SetIfDifferent(ref gameFeel.EliteVisualScale,
+                    feelDefaults.EliteVisualScale);
+            }
+            finally
+            {
+                Object.DestroyImmediate(feelDefaults);
+            }
+        }
+
+        /// The layout the В1 playtest sent back into the data (bd
+        /// `app-3cph`): the two rings tripled in area around an unchanged
+        /// core, and the per-match caps that the doubled mob density feeds.
+        /// Same shape as `ApplyStageThreeBalance` below — local defaults
+        /// instances, `SetIfDifferent` per field, destroyed in a `finally` —
+        /// so the numbers live in the C# field initializers (spec §0's
+        /// two-sources discipline) and this only decides WHICH fields are
+        /// sanctioned to move. The reasons for the numbers are on the fields
+        /// themselves; the reason for the gate is at its call site.
+        ///
+        /// THE SANCTIONED LIST is the arena's geometry plus every cap the new
+        /// population feeds, and nothing else: Radius (113 -> 173), the
+        /// Obstacles and Walls arrays (twelve circles and eight stadiums move
+        /// outward with their own rings), ZoneRadius/ZoneWallRadius
+        /// (92 -> 130, the inner 65 untouched), ExtractPos (all three portals
+        /// re-radiused against the new arcs), MaxMobs (288 -> 1350),
+        /// MaxProjectiles/MaxEventsPerFrame (1024 -> 4096), MaxPickups
+        /// (256 -> 1200), MaxContainers (64 -> 300); and on LootConfig, the
+        /// two RING container counts (CrateCount 8 -> 24, CacheCountMiddle
+        /// 5 -> 15) that keep loot density where it was.
+        ///
+        /// DELIBERATELY ABSENT: `CacheCountCore` and `PlayerSpawnRingFrac`.
+        /// The core did not move, so its cache count must not; and 0.92 of a
+        /// bigger rim is already the bigger ring (159.16 m), which is the
+        /// whole reason that field is a FRACTION. Wave pacing, SpawnClearance,
+        /// MaxPlayers, BarrierTop and every network number stay untouched for
+        /// the same reason the two gates above leave them alone.
+        ///
+        /// One `out` flag, for the reason both older gates have theirs
+        /// (fix-round 1, I-2): the two container counts live on LootConfig,
+        /// so a single dirty flag on `arena` would silently drop them.
+        static bool ApplyPlaytestOneArena(ArenaConfig arena, LootConfig loot, out bool lootChanged)
+        {
+            var arenaDefaults = ScriptableObject.CreateInstance<ArenaConfig>();
+            var lootDefaults = ScriptableObject.CreateInstance<LootConfig>();
+            try
+            {
+                bool arenaChanged = false;
+                arenaChanged |= SetIfDifferent(ref arena.Radius, arenaDefaults.Radius);
+                arenaChanged |= SetIfDifferent(ref arena.Obstacles, arenaDefaults.Obstacles);
+                arenaChanged |= SetIfDifferent(ref arena.Walls, arenaDefaults.Walls);
+                arenaChanged |= SetIfDifferent(ref arena.ZoneRadius, arenaDefaults.ZoneRadius);
+                arenaChanged |= SetIfDifferent(ref arena.ZoneWallRadius,
+                    arenaDefaults.ZoneWallRadius);
+                arenaChanged |= SetIfDifferent(ref arena.ExtractPos, arenaDefaults.ExtractPos);
+                arenaChanged |= SetIfDifferent(ref arena.MaxMobs, arenaDefaults.MaxMobs);
+                arenaChanged |= SetIfDifferent(ref arena.MaxProjectiles,
+                    arenaDefaults.MaxProjectiles);
+                arenaChanged |= SetIfDifferent(ref arena.MaxEventsPerFrame,
+                    arenaDefaults.MaxEventsPerFrame);
+                arenaChanged |= SetIfDifferent(ref arena.MaxPickups, arenaDefaults.MaxPickups);
+                arenaChanged |= SetIfDifferent(ref arena.MaxContainers,
+                    arenaDefaults.MaxContainers);
+
+                lootChanged = false;
+                lootChanged |= SetIfDifferent(ref loot.CrateCount, lootDefaults.CrateCount);
+                lootChanged |= SetIfDifferent(ref loot.CacheCountMiddle,
+                    lootDefaults.CacheCountMiddle);
+
+                return arenaChanged;
+            }
+            finally
+            {
+                Object.DestroyImmediate(arenaDefaults);
+                Object.DestroyImmediate(lootDefaults);
+            }
+        }
+
+        static bool ApplyStageThreeBalance(ArenaConfig arena, WaveConfig wave, NetConfig net,
+            out bool waveChanged, out bool netChanged)
+        {
+            var arenaDefaults = ScriptableObject.CreateInstance<ArenaConfig>();
+            var waveDefaults = ScriptableObject.CreateInstance<WaveConfig>();
+            var netDefaults = ScriptableObject.CreateInstance<NetConfig>();
+            try
+            {
+                bool arenaChanged = false;
+                arenaChanged |= SetIfDifferent(ref arena.Radius, arenaDefaults.Radius);
+                arenaChanged |= SetIfDifferent(ref arena.MaxMobs, arenaDefaults.MaxMobs);
+                arenaChanged |= SetIfDifferent(ref arena.MaxProjectiles, arenaDefaults.MaxProjectiles);
+                arenaChanged |= SetIfDifferent(ref arena.MaxEventsPerFrame,
+                    arenaDefaults.MaxEventsPerFrame);
+                arenaChanged |= SetIfDifferent(ref arena.PlayerSpawnRingFrac,
+                    arenaDefaults.PlayerSpawnRingFrac);
+                arenaChanged |= SetIfDifferent(ref arena.Obstacles, arenaDefaults.Obstacles);
+                arenaChanged |= SetIfDifferent(ref arena.Walls, arenaDefaults.Walls);
+
+                waveChanged = SetIfDifferent(ref wave.MaxMobsPerWave, waveDefaults.MaxMobsPerWave);
+                netChanged = SetIfDifferent(ref net.MatchMaxDurationSeconds,
+                    netDefaults.MatchMaxDurationSeconds);
+
+                return arenaChanged;
+            }
+            finally
+            {
+                Object.DestroyImmediate(arenaDefaults);
+                Object.DestroyImmediate(waveDefaults);
+                Object.DestroyImmediate(netDefaults);
+            }
+        }
+
+        /// Task Т6 (app-ggvz, owner decisions К5/Р311): the wave-cadence
+        /// delivery — same shape as ApplyStageThreeBalance above (a local
+        /// defaults instance, SetIfDifferent per field, destroyed in a
+        /// finally) so the shipped numbers live in WaveConfig.cs's own field
+        /// initializers (spec §0's two-sources discipline) and this method
+        /// only decides WHICH fields are sanctioned to move. The reasons for
+        /// the numbers themselves are on WaveConfig.cs's own BaseCount/
+        /// EliteShareOuterGrowth doc comments; the reason for the gate
+        /// (waveCadencePending, keyed on "ZoneWeights:") is at this method's
+        /// call site.
+        ///
+        /// THE SANCTIONED LIST is exactly two fields, both owner-decided
+        /// retunes of an EXISTING value, not a new field the marker
+        /// mechanism (EnsureAssetHasKey, above) would deliver on its own:
+        /// BaseCount (4 -> 16, decision К5) and EliteShareOuterGrowth
+        /// (0.02 -> 0.007, decision Р311). Nothing else on WaveConfig moves
+        /// here — WavePauseByZone/MaxAliveByZone/DifficultyStepSeconds are
+        /// Т2's own delivery with their own gate, and MaxMobsPerWave is
+        /// ApplyStageThreeBalance's; both stay untouched for the same
+        /// reason ApplyPlaytestOneArena's own doc gives for its DELIBERATELY
+        /// ABSENT fields.
+        static bool ApplyWaveCadence(WaveConfig wave)
+        {
+            var waveDefaults = ScriptableObject.CreateInstance<WaveConfig>();
+            try
+            {
+                bool changed = false;
+                changed |= SetIfDifferent(ref wave.BaseCount, waveDefaults.BaseCount);
+                changed |= SetIfDifferent(ref wave.EliteShareOuterGrowth,
+                    waveDefaults.EliteShareOuterGrowth);
+                return changed;
+            }
+            finally
+            {
+                Object.DestroyImmediate(waveDefaults);
+            }
+        }
+
+        /// Task app-jmb2 (owner decision Р347): the gunner-share retune --
+        /// same shape as ApplyWaveCadence directly above (a local defaults
+        /// instance, SetIfDifferent, destroyed in a finally), so the shipped
+        /// number lives in WaveConfig.cs's own field initializer and this
+        /// method only decides WHICH field is sanctioned to move.
+        ///
+        /// THE SANCTIONED LIST IS EXACTLY ONE FIELD. GunnerShareBase is
+        /// DELIBERATELY ABSENT: the decision retunes how fast the share
+        /// grows, not where it starts, and 0.2 is what both number sources
+        /// still agree on (ConfigTests.AssertWaveEqual pins it with plain
+        /// equality). The reason for the number itself is on WaveConfig.cs's
+        /// own GunnerShareGrowth doc; the reason for the gate is at this
+        /// method's call site.
+        static bool ApplyGunnerShareRetune(WaveConfig wave)
+        {
+            var waveDefaults = ScriptableObject.CreateInstance<WaveConfig>();
+            try
+            {
+                return SetIfDifferent(ref wave.GunnerShareGrowth,
+                    waveDefaults.GunnerShareGrowth);
+            }
+            finally
+            {
+                Object.DestroyImmediate(waveDefaults);
+            }
+        }
+
+        /// Coordinator fix-round (Ф3 review C1): rewrites all five
+        /// ItemCatalog.asset records to the corrected Id numbering (1..5,
+        /// not 0..4) — 0 is reserved as the container slot's own "empty"
+        /// sentinel (SimulationWorld.TryTakeFromContainer), so the Tier-1
+        /// record's own Id 0 made it permanently unreachable through the
+        /// one take shim in the codebase. Same "own local defaults instance,
+        /// SetIfDifferent, destroy in a finally" shape as
+        /// ApplyStageThreeBalance above, but for a SINGLE struct array
+        /// field: SetIfDifferent's own generic `T[]` overload already does
+        /// element-wise comparison (EqualityComparer&lt;T&gt;.Default,
+        /// ItemDef has no custom IEquatable, so this falls back to
+        /// reflection-based value equality — fine for a five-record,
+        /// once-per-editor-session call), so replacing the whole array in
+        /// one call is simpler and no less precise than five separate
+        /// per-field pokes.
+        static bool ApplyItemCatalogIdShift(ItemCatalog items)
+        {
+            var corrected = new[]
+            {
+                new ItemDef { Id = 1, Tier = 1, SlotCost = 1, CreditValue = 15, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 2, Tier = 2, SlotCost = 2, CreditValue = 60, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 3, Tier = 3, SlotCost = 3, CreditValue = 200, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 4, Tier = 4, SlotCost = 4, CreditValue = 1000, Kind = ItemKind.Trophy },
+                new ItemDef { Id = 5, Tier = 0, SlotCost = 1, CreditValue = 0, Kind = ItemKind.RepairKit },
+            };
+            return SetIfDifferent(ref items.Items, corrected);
+        }
+
+        /// Stage 3 Task 12 (spec §3.13/§3.3 Р214): the Elite archetype's own
+        /// numbers, seeded into a brand-new MobEliteConfig.asset. Same
+        /// first-creation-only contract as ApplyGunnerDefaults above, and the
+        /// same reason: this is a balance sheet the owner tunes at milestone
+        /// В1, not something the bootstrap keeps overwriting.
+        ///
+        /// Source of every number, since a reader will ask (owner decision
+        /// R-75): MaxSpeed/Radius/MaxHp/ContactDamage are spec §3.13 verbatim;
+        /// the hit-zone belts, the multipliers, the muzzle and the whole
+        /// ranged block are the Gunner's ("по образцу ганнера", §3.13
+        /// verbatim); Accel, the melee timings, separation and swing lead are
+        /// the Chaser's (Р214 — "усиленный чейзер"). Two numbers are DERIVED
+        /// rather than copied, and both because MobAiSystem measures
+        /// center-to-center: AttackRange 1.4 keeps the Chaser's own 0.6 m of
+        /// reach past its hull (1.1 - 0.5, now 0.8 + 0.6), and PreferredRange
+        /// 2.5 puts the ranged hold band just OUTSIDE melee — at the Gunner's
+        /// own 9 the distance dispatch (MobAiSystem: chaser inside
+        /// AttackRange, gunner outside) would park the Elite at 9 m and it
+        /// would never close, which is a Gunner with more HP rather than
+        /// Р214's enhanced chaser.
+        internal static bool ApplyEliteDefaults(MobConfig m)
+        {
+            bool changed = false;
+            changed |= SetIfDifferent(ref m.MaxSpeed, 4.2f);
+            changed |= SetIfDifferent(ref m.Accel, 30f);
+            changed |= SetIfDifferent(ref m.Radius, 0.8f);
+            changed |= SetIfDifferent(ref m.MaxHp, 120f);
+            changed |= SetIfDifferent(ref m.ContactDamage, 25f);
+            changed |= SetIfDifferent(ref m.AttackRange, 1.4f);
+            changed |= SetIfDifferent(ref m.TelegraphSeconds, 0.35f);
+            changed |= SetIfDifferent(ref m.AttackCooldown, 0.9f);
+            changed |= SetIfDifferent(ref m.PreferredRange, 2.5f);
+            changed |= SetIfDifferent(ref m.RangeTolerance, 1.5f);
+            changed |= SetIfDifferent(ref m.StrafeSpeed, 3f);
+            changed |= SetIfDifferent(ref m.FireInterval, 1.6f);
+            changed |= SetIfDifferent(ref m.ProjectileSpeed, 14f);
+            changed |= SetIfDifferent(ref m.ProjectileRadius, 0.15f);
+            changed |= SetIfDifferent(ref m.ProjectileLifetime, 3f);
+            changed |= SetIfDifferent(ref m.ProjectileDamage, 8f);
+            changed |= SetIfDifferent(ref m.LeadFactor, 0.8f);
+            changed |= SetIfDifferent(ref m.SeparationRadius, 1.2f);
+            changed |= SetIfDifferent(ref m.SeparationStrength, 6f);
+            changed |= SetIfDifferent(ref m.AvoidLookahead, 3f);
+            changed |= SetIfDifferent(ref m.AvoidMargin, 1f);
+            changed |= SetIfDifferent(ref m.LegsTop, 1.10f);
+            changed |= SetIfDifferent(ref m.BodyTop, 2.70f);
+            changed |= SetIfDifferent(ref m.HeadTop, 3.50f);
+            changed |= SetIfDifferent(ref m.LegsDamageMult, 0.75f);
+            changed |= SetIfDifferent(ref m.BodyDamageMult, 1.0f);
+            changed |= SetIfDifferent(ref m.HeadDamageMult, 1.7f);
+            changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
+            changed |= SetIfDifferent(ref m.SwingLeadFactor, 1.0f);
+            changed |= SetIfDifferent(ref m.SwingLeadMaxMeters, 2.0f);
+            return changed;
+        }
+
+        /// Stage 3 Task 12 (spec §3.13/§3.4): the Director's numbers. Spec
+        /// §3.4 states the archetype outright — "Elite-профиль с числами
+        /// Директора" — so this IS ApplyEliteDefaults with the five numbers
+        /// §3.13 names overridden (MaxHp 2500, Radius 2.2, ContactDamage 45,
+        /// MaxSpeed 3.0, TelegraphSeconds 1.1), plus the same two derived
+        /// ones: AttackRange 2.8 (2.2 + the Chaser's 0.6 m of reach past its
+        /// hull) and PreferredRange back at the Gunner's 9, because §3.4 gives
+        /// the Director the ranged stance in as many words ("дистанционный
+        /// залп на Reposition/Fire") and Р248 keeps it inside the core anyway.
+        /// Calling ApplyEliteDefaults first is the point (rule 2): the shared
+        /// profile has ONE home, and only the differences are written here.
+        ///
+        /// HeadTop stays at the Gunner's 3.50 deliberately, tall as this
+        /// archetype is: Hero.MaxAimHeight is 3.8, so a taller silhouette
+        /// would put the Director's head above anything a collector can aim
+        /// at. Model scale (ASSETS-001 §2.3, x1.5-2) is Presentation's own
+        /// number and does not touch this one.
+        internal static bool ApplyDirectorDefaults(MobConfig m)
+        {
+            bool changed = ApplyEliteDefaults(m);
+            changed |= SetIfDifferent(ref m.MaxSpeed, 3.0f);
+            changed |= SetIfDifferent(ref m.Radius, 2.2f);
+            changed |= SetIfDifferent(ref m.MaxHp, 2500f);
+            changed |= SetIfDifferent(ref m.ContactDamage, 45f);
+            changed |= SetIfDifferent(ref m.TelegraphSeconds, 1.1f);
+            changed |= SetIfDifferent(ref m.AttackRange, 2.8f);
+            changed |= SetIfDifferent(ref m.PreferredRange, 9f);
+            return changed;
+        }
+
         static bool SetIfDifferent(ref float field, float value)
         {
             if (field == value) return false;
@@ -1886,9 +2794,23 @@ namespace Ring.Editor
         /// whose visuals already match (`SelfHealAimProxyOnPrefab`, UNDER the
         /// `PrefabVisualsMatch` early return, PC2) and a freshly-built one
         /// (inline in the `build()` closure below).
+        /// Stage 3 Task 31 adds `clipFamily` and `skin`. The FAMILY is which
+        /// pack's take names this model's controller carries — `MobVisual`
+        /// reads it instead of the six loose mech constants it used to
+        /// (`AnimIds.MobClipSet`), because the Sci-Fi kit calls its takes
+        /// Attack/TurnOff where the mech pack says Punch/Shoot/Death. The SKIN
+        /// is an optional material override for every renderer under `Visual`:
+        /// the Director is the same `Enemy_QuadShell` mesh Elite's own kit
+        /// ships, and what tells him apart at a glance — besides being three
+        /// and a half times the size — is `DirectorSkin.mat`, the darkened,
+        /// red-emissive clone of the pack material the owner accepted at asset
+        /// milestone 3. `null` leaves the model's own materials alone, which is
+        /// what all three of the other archetypes pass.
         static MobView GetOrCreateMobArchetypePrefab(string prefabPath, string modelPath,
             float visualScale, float legsTop, float bodyTop, float headTop,
-            float bodyRadius, float headRadiusFrac)
+            float bodyRadius, float headRadiusFrac,
+            AnimIds.MobClipFamily clipFamily = AnimIds.MobClipFamily.Mech,
+            Material skin = null)
         {
             if (AssetDatabase.LoadAssetAtPath<MobView>(prefabPath) != null)
             {
@@ -1908,11 +2830,13 @@ namespace Ring.Editor
                 GameObject visual = EditorBootstrapUtils.EnsureVisual(go, modelPath,
                     ThirdPartyAnimatorBootstrap.ControllerPathFor(modelPath),
                     visualScale, ref changed);
+                if (skin != null) ApplySkin(visual, skin);
                 go.AddComponent<MobView>();
                 MobVisual mobVisual = go.AddComponent<MobVisual>();
                 var so = new SerializedObject(mobVisual);
                 EditorBootstrapUtils.SetRef(so, "_animator", visual.GetComponent<Animator>());
                 EditorBootstrapUtils.SetRef(so, "_visual", visual.transform);
+                so.FindProperty("_clipFamily").enumValueIndex = (int)clipFamily;
                 so.ApplyModifiedPropertiesWithoutUndo();
                 // Task 19: AimProxy_Legs/Body/Head siblings of Visual, at
                 // prefab-root local space (EnsureAimProxyChildren's own doc).
@@ -2175,12 +3099,15 @@ namespace Ring.Editor
         /// prefab too.
         static CorpseView GetOrCreateCorpseMechPrefab(string prefabPath,
             string chaserModelPath, string gunnerModelPath,
-            float chaserScale, float gunnerScale)
+            string eliteModelPath, string directorModelPath,
+            float chaserScale, float gunnerScale, float eliteScale, float directorScale,
+            Material directorSkin)
         {
             if (AssetDatabase.LoadAssetAtPath<CorpseView>(prefabPath) != null)
             {
                 if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath,
-                        ("VisualChaser", chaserModelPath), ("VisualGunner", gunnerModelPath)))
+                        ("VisualChaser", chaserModelPath), ("VisualGunner", gunnerModelPath),
+                        ("VisualElite", eliteModelPath), ("VisualDirector", directorModelPath)))
                     return AssetDatabase.LoadAssetAtPath<CorpseView>(prefabPath);
                 AssetDatabase.DeleteAsset(prefabPath);
             }
@@ -2194,16 +3121,52 @@ namespace Ring.Editor
                 GameObject gunnerVisual = EditorBootstrapUtils.EnsureVisual(go,
                     gunnerModelPath, ThirdPartyAnimatorBootstrap.ControllerPathFor(gunnerModelPath),
                     gunnerScale, ref changed, "VisualGunner");
+                GameObject eliteVisual = EditorBootstrapUtils.EnsureVisual(go,
+                    eliteModelPath, ThirdPartyAnimatorBootstrap.ControllerPathFor(eliteModelPath),
+                    eliteScale, ref changed, "VisualElite");
+                GameObject directorVisual = EditorBootstrapUtils.EnsureVisual(go,
+                    directorModelPath, ThirdPartyAnimatorBootstrap.ControllerPathFor(directorModelPath),
+                    directorScale, ref changed, "VisualDirector");
+                // The corpse wears the same skin the live Director does — a boss
+                // that changed color on death would read as a different body.
+                if (directorSkin != null) ApplySkin(directorVisual, directorSkin);
                 gunnerVisual.SetActive(false); // Spawn() flips per MobType
+                eliteVisual.SetActive(false);
+                directorVisual.SetActive(false);
                 CorpseView view = go.AddComponent<CorpseView>();
                 var so = new SerializedObject(view);
                 EditorBootstrapUtils.SetRef(so, "_chaserVisual", chaserVisual);
                 EditorBootstrapUtils.SetRef(so, "_gunnerVisual", gunnerVisual);
+                EditorBootstrapUtils.SetRef(so, "_eliteVisual", eliteVisual);
+                EditorBootstrapUtils.SetRef(so, "_directorVisual", directorVisual);
                 EditorBootstrapUtils.SetRef(so, "_chaserAnimator", chaserVisual.GetComponent<Animator>());
                 EditorBootstrapUtils.SetRef(so, "_gunnerAnimator", gunnerVisual.GetComponent<Animator>());
+                EditorBootstrapUtils.SetRef(so, "_eliteAnimator", eliteVisual.GetComponent<Animator>());
+                EditorBootstrapUtils.SetRef(so, "_directorAnimator", directorVisual.GetComponent<Animator>());
+                so.FindProperty("_chaserClips").enumValueIndex = (int)AnimIds.MobClipFamily.Mech;
+                so.FindProperty("_gunnerClips").enumValueIndex = (int)AnimIds.MobClipFamily.Mech;
+                so.FindProperty("_eliteClips").enumValueIndex = (int)AnimIds.MobClipFamily.SciFiEnemy;
+                so.FindProperty("_directorClips").enumValueIndex = (int)AnimIds.MobClipFamily.SciFiEnemy;
                 so.ApplyModifiedPropertiesWithoutUndo();
                 return go;
             });
+        }
+
+        /// Overwrites every material slot under a built `Visual` with one
+        /// shared material (Stage 3 Task 31) — the Director's own skin. Mirrors
+        /// what `AssetPreviewSceneBootstrap` does to its Director stub, which
+        /// is where the owner accepted the look; `sharedMaterials` is rewritten
+        /// slot for slot rather than assigned once, since a pack model may
+        /// carry more than one slot even when every slot holds the same
+        /// material.
+        static void ApplySkin(GameObject visual, Material skin)
+        {
+            foreach (Renderer renderer in visual.GetComponentsInChildren<Renderer>(true))
+            {
+                var slots = new Material[renderer.sharedMaterials.Length];
+                for (int i = 0; i < slots.Length; i++) slots[i] = skin;
+                renderer.sharedMaterials = slots;
+            }
         }
 
         /// Task 17: the shared `ProjectileView` prefab — a small emissive sphere
@@ -2253,6 +3216,79 @@ namespace Ring.Editor
         /// `DecalRendererFeature`'s own `[DisallowMultipleRendererFeature]` —
         /// so a second `Apply()` run is a no-op, same contract as everything
         /// else in this file. Returns whether it actually added the feature.
+        /// Stage 3 Task 31 (spec §3.11): the cell on the floor — an emissive
+        /// sphere, built the same way `GetOrCreateProjectilePrefab` builds its
+        /// own ball, with the model on a `Visual` child so `PickupView.Bind`
+        /// can scale the picture without touching the pooled root's own
+        /// transform (the root is what `ViewRegistry` positions).
+        static PickupView GetOrCreatePickupPrefab(Material cellMat, float diameter)
+        {
+            return EditorBootstrapUtils.BuildPrefab<PickupView>(PickupPrefabPath, () =>
+            {
+                var go = new GameObject("PickupView");
+                GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                sphere.name = "Visual";
+                EditorBootstrapUtils.RemoveCollider(sphere);
+                sphere.transform.SetParent(go.transform, false);
+                sphere.transform.localScale = Vector3.one * diameter;
+                sphere.GetComponent<MeshRenderer>().sharedMaterial = cellMat;
+
+                PickupView view = go.AddComponent<PickupView>();
+                var so = new SerializedObject(view);
+                EditorBootstrapUtils.SetRef(so, "_visual", sphere.transform);
+                so.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
+
+        /// One container prefab: a pack prop (or, for the corpse marker, a
+        /// primitive) on a `Visual` child, `ContainerView` on the root. Same
+        /// `PrefabVisualsMatch` guard the mob archetypes use, so swapping a
+        /// model above rebuilds the prefab rather than leaving a stale one.
+        /// `modelPath` null builds the MARKER variant: an emissive sphere, the
+        /// "there is something on this body worth taking" tell spec §3.11 asks
+        /// for over a corpse that is already on the floor.
+        static ContainerView GetOrCreateContainerPrefab(string prefabPath, string modelPath,
+            Material markerMat, float scale)
+        {
+            if (AssetDatabase.LoadAssetAtPath<ContainerView>(prefabPath) != null)
+            {
+                if (modelPath == null
+                    || EditorBootstrapUtils.PrefabVisualsMatch(prefabPath, ("Visual", modelPath)))
+                    return AssetDatabase.LoadAssetAtPath<ContainerView>(prefabPath);
+                AssetDatabase.DeleteAsset(prefabPath);
+            }
+            return EditorBootstrapUtils.BuildPrefab<ContainerView>(prefabPath, () =>
+            {
+                var go = new GameObject(System.IO.Path.GetFileNameWithoutExtension(prefabPath));
+                GameObject visual;
+                if (modelPath == null)
+                {
+                    visual = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    visual.name = "Visual";
+                    EditorBootstrapUtils.RemoveCollider(visual);
+                    visual.transform.SetParent(go.transform, false);
+                    visual.GetComponent<MeshRenderer>().sharedMaterial = markerMat;
+                    visual.transform.localScale = Vector3.one * scale;
+                }
+                else
+                {
+                    bool changed = false;
+                    // No controller: these props carry no takes at all (they are
+                    // static furniture), and `DefaultControllerFor` answers null
+                    // for exactly that case.
+                    visual = EditorBootstrapUtils.EnsureVisual(go, modelPath,
+                        EditorBootstrapUtils.DefaultControllerFor(modelPath), scale, ref changed);
+                }
+
+                ContainerView view = go.AddComponent<ContainerView>();
+                var so = new SerializedObject(view);
+                EditorBootstrapUtils.SetRef(so, "_visual", visual.transform);
+                so.ApplyModifiedPropertiesWithoutUndo();
+                return go;
+            });
+        }
+
         static bool AddDecalRendererFeatureIfMissing(string rendererDataPath)
         {
             var data = AssetDatabase.LoadAssetAtPath<ScriptableRendererData>(rendererDataPath);
@@ -2573,7 +3609,7 @@ namespace Ring.Editor
         /// Spawn` now swaps in the actual part mesh/material every call
         /// instead of picking a primitive shape (that class's doc has the
         /// full story). The ROOT still carries the actual physics — a
-        /// `SphereCollider` (`GibView.Spawn` resizes/recentres it from the
+        /// `SphereCollider` (`GibView.Spawn` resizes/recenters it from the
         /// swapped-in mesh's own `bounds` every call — no `MeshCollider`,
         /// task brief) + `Rigidbody` — on `PersistentPropsDirector.
         /// CasingsLayer` (Task 27 review fix-round, self-collision already
@@ -2889,6 +3925,26 @@ namespace Ring.Editor
         /// existence-guard return now self-heals an already-committed scene
         /// (checked unconditionally, same shape as this file's muzzle-particle
         /// material check) instead of trusting a stale `Fill` object as-is.
+        /// bd `app-d0no`: A HUD READOUT IS NOT A BUTTON, AND MUST NOT EAT A
+        /// CLICK. Unity's UI gives every `Image` and every `TMP_Text`
+        /// `raycastTarget = true` by default, and every bar and label on this
+        /// canvas shipped that way — so the ammo bar and its caption, which the
+        /// committed scene draws OVER the loot window, silently swallowed every
+        /// click that landed on the two container rows they cross. That is the
+        /// whole of "not all items can be taken": the simulation refused
+        /// nothing, the click never arrived.
+        ///
+        /// APPLIED TO EXISTING OBJECTS TOO, not only at creation — the committed
+        /// scene already holds all of them, and a bootstrap that only fixed new
+        /// objects would leave the shipped scene exactly as broken as it was.
+        /// Idempotent by inspection: already-false raises no flag.
+        static void MakeNonInteractive(Graphic graphic, ref bool sceneDirty)
+        {
+            if (graphic == null || !graphic.raycastTarget) return;
+            graphic.raycastTarget = false;
+            sceneDirty = true;
+        }
+
         static Image GetOrCreateBar(Transform parent, string name, Vector2 anchoredPos, Vector2 size,
             Color backgroundColor, Color fillColor, ref bool sceneDirty)
         {
@@ -2915,6 +3971,10 @@ namespace Ring.Editor
                     existingFill.sprite = fillSprite;
                     sceneDirty = true;
                 }
+                // bd `app-d0no`: both halves of an already-committed bar.
+                MakeNonInteractive(existingFill, ref sceneDirty);
+                MakeNonInteractive(existing.Find(BackgroundObjectName).GetComponent<Image>(),
+                    ref sceneDirty);
                 return existingFill;
             }
 
@@ -2930,7 +3990,9 @@ namespace Ring.Editor
             var bgGo = new GameObject(BackgroundObjectName, typeof(RectTransform), typeof(Image));
             bgGo.transform.SetParent(barGo.transform, false);
             StretchToFillParent((RectTransform)bgGo.transform);
-            bgGo.GetComponent<Image>().color = backgroundColor;
+            Image bgImage = bgGo.GetComponent<Image>();
+            bgImage.color = backgroundColor;
+            MakeNonInteractive(bgImage, ref sceneDirty);   // bd `app-d0no`
 
             var fillGo = new GameObject(FillObjectName, typeof(RectTransform), typeof(Image));
             fillGo.transform.SetParent(barGo.transform, false);
@@ -2942,6 +4004,7 @@ namespace Ring.Editor
             fillImage.fillMethod = Image.FillMethod.Horizontal;
             fillImage.fillOrigin = (int)Image.OriginHorizontal.Left;
             fillImage.fillAmount = 1f;
+            MakeNonInteractive(fillImage, ref sceneDirty);   // bd `app-d0no`
 
             sceneDirty = true;
             return fillImage;
@@ -2964,6 +4027,11 @@ namespace Ring.Editor
                     existingText.text = "ВОЛНА 0";
                     sceneDirty = true;
                 }
+                // bd `app-d0no`: this early return never reaches
+                // GetOrCreateHudLabel below, so the readout rule has to be
+                // applied here too — the committed scene's wave counter is
+                // exactly such an object.
+                MakeNonInteractive(existingText, ref sceneDirty);
                 return existingText;
             }
 
@@ -2990,12 +4058,62 @@ namespace Ring.Editor
         /// class doc), so a plain `AddComponent<TextMeshProUGUI>()` resolves
         /// `TMP_Settings.defaultFontAsset` on its own — no explicit font wiring
         /// needed here. Existence-guarded like everything else in this file.
+        /// Stage 3 Т33 (spec §3.11): the extraction channel's ring, a radial
+        /// `Image` `HudController` moves onto the collector's own screen point
+        /// while the channel runs.
+        ///
+        /// `fillSprite` AND `Filled` TOGETHER, OR NEITHER WORKS (bd `app-yi9`,
+        /// the same defect `GetOrCreateBar` documents): `Image.OnPopulateMesh`
+        /// tests for a sprite BEFORE it looks at `type`, so a sprite-less
+        /// `Filled` image silently draws a full quad and `fillAmount` does
+        /// nothing at all. The ring would have been permanently complete.
+        ///
+        /// IT SHIPS DISABLED, like the spectate label and the emergency mark:
+        /// nobody is extracting on the frame a build opens.
+        static Image GetOrCreateExtractRing(Transform parent, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(ExtractRingObjectName);
+            if (existing != null) return existing.GetComponent<Image>();
+
+            var go = new GameObject(ExtractRingObjectName, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            // Centered on its own point rather than corner-anchored: the point
+            // it is given is the collector's, and it has to sit AROUND him.
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.sizeDelta = new Vector2(96f, 96f);
+
+            var image = go.AddComponent<Image>();
+            image.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+            image.type = Image.Type.Filled;
+            image.fillMethod = Image.FillMethod.Radial360;
+            image.fillOrigin = (int)Image.Origin360.Top;
+            image.fillClockwise = true;
+            image.fillAmount = 0f;
+            image.color = new Color(0.35f, 0.95f, 0.6f, 0.9f);
+            // Nothing may click through the HUD onto the world, and a ring that
+            // ate the cursor would eat aiming with it.
+            image.raycastTarget = false;
+            go.SetActive(false);
+
+            sceneDirty = true;
+            return image;
+        }
+
         static TMP_Text GetOrCreateHudLabel(Transform parent, string name, string defaultText,
             Vector2 anchor, Vector2 anchoredPos, Vector2 size, float fontSize,
             TextAlignmentOptions alignment, ref bool sceneDirty)
         {
             Transform existing = parent.Find(name);
-            if (existing != null) return existing.GetComponent<TMP_Text>();
+            if (existing != null)
+            {
+                // bd `app-d0no`: a caption is a readout, not a target.
+                TMP_Text existingText = existing.GetComponent<TMP_Text>();
+                MakeNonInteractive(existingText, ref sceneDirty);
+                return existingText;
+            }
 
             var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
@@ -3011,6 +4129,7 @@ namespace Ring.Editor
             tmp.fontSize = fontSize;
             tmp.alignment = alignment;
             tmp.color = Color.white;
+            MakeNonInteractive(tmp, ref sceneDirty);   // bd `app-d0no`
 
             sceneDirty = true;
             return tmp;
@@ -3050,6 +4169,179 @@ namespace Ring.Editor
         /// parent Canvas, starting hidden. Existence-guarded like everything
         /// else in this file: an owner's in-Editor tweak (e.g. background tint)
         /// survives a re-run.
+        /// The loot window's ROOT — stretched over the canvas and PAINTING
+        /// NOTHING (Stage 3 Т32б).
+        ///
+        /// DELIBERATELY NOT `GetOrCreateOverlayPanel`, whose 75%-opaque black
+        /// is exactly right for a modal and exactly wrong here: this window
+        /// stays open while the match runs, and dimming the middle of the
+        /// screen would take away the one thing the design is trading for the
+        /// slowed step — being able to see what is coming.
+        static GameObject GetOrCreateInventoryPanel(Transform parent, ref bool sceneDirty)
+        {
+            Transform existing = parent.Find(InventoryPanelObjectName);
+            if (existing != null) return existing.gameObject;
+
+            var go = new GameObject(InventoryPanelObjectName, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            StretchToFillParent((RectTransform)go.transform);
+            go.SetActive(false);
+
+            sceneDirty = true;
+            return go;
+        }
+
+        /// One column of the window, pinned to a screen edge: `side` is -1 for
+        /// the left and +1 for the right. Fixed width, and full height BELOW
+        /// `InventoryTopInset`, so the gap between them is the whole middle of
+        /// the screen at any resolution and neither of them reaches the corner
+        /// the HUD occupies (bd `app-pih0`).
+        ///
+        /// THE ROWS NEED NO ARITHMETIC OF THEIR OWN: they are placed relative
+        /// to the column's top edge, so moving the column moves the whole
+        /// window — backing plate, titles and all — in one place.
+        ///
+        /// WITH `pivot.y = 1` AND STRETCHED Y ANCHORS, an inset of `T` is
+        /// `anchoredPosition.y = -T` together with `sizeDelta.y = -T`: Unity
+        /// derives `offsetMax.y = anchoredPosition.y` and `offsetMin.y =
+        /// anchoredPosition.y - sizeDelta.y`, which puts the top edge `T` down
+        /// from the parent's top and leaves the bottom edge exactly on it.
+        static Transform GetOrCreateInventoryColumn(Transform parent, string name, float side,
+            ref bool sceneDirty)
+        {
+            var inset = new Vector2(0f, -InventoryTopInset);
+            var extent = new Vector2(InventoryColumnWidth, -InventoryTopInset);
+
+            Transform existing = parent.Find(name);
+            if (existing != null)
+            {
+                // bd `app-pih0`: self-heals an already-committed column, the
+                // same unconditional way `GetOrCreateBar` heals a stale bar
+                // position — the shipped scene carries the full-height version,
+                // and a fix that only reached NEW columns would reach nothing
+                // at all. Idempotent by inspection: matching values raise no
+                // flag.
+                var existingRect = (RectTransform)existing;
+                if (existingRect.anchoredPosition != inset || existingRect.sizeDelta != extent)
+                {
+                    existingRect.anchoredPosition = inset;
+                    existingRect.sizeDelta = extent;
+                    sceneDirty = true;
+                }
+                return existing;
+            }
+
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            float anchorX = side < 0f ? 0f : 1f;
+            rect.anchorMin = new Vector2(anchorX, 0f);
+            rect.anchorMax = new Vector2(anchorX, 1f);
+            rect.pivot = new Vector2(anchorX, 1f);
+            rect.anchoredPosition = inset;
+            rect.sizeDelta = extent;
+            go.GetComponent<Image>().color = new Color(0.05f, 0.06f, 0.08f, 0.82f);
+
+            sceneDirty = true;
+            return go.transform;
+        }
+
+        /// One clickable slot row: a `Button` with a label, and — for the
+        /// source column only — a fill `Image` behind the label that the
+        /// transfer bar drives.
+        ///
+        /// PLACED BY ARITHMETIC, NOT BY A LAYOUT GROUP. The row count is a
+        /// config cap and never changes at runtime, so a layout component would
+        /// be a second thing deciding where a row sits, and a bootstrap that
+        /// has to re-derive a component's output cannot be idempotent by
+        /// inspection.
+        static void GetOrCreateInventoryRow(Transform column, int index, bool withProgress,
+            out Button button, out TMP_Text label, out Image progress, ref bool sceneDirty)
+        {
+            string name = $"Slot{index:00}";
+            float y = -70f - index * (InventoryRowHeight + InventoryRowGap);
+            float width = InventoryColumnWidth - 24f;
+
+            Transform existing = column.Find(name);
+            if (existing != null)
+            {
+                button = existing.GetComponent<Button>();
+                label = existing.Find("Label").GetComponent<TMP_Text>();
+                Transform fill = existing.Find("Progress");
+                progress = fill != null ? fill.GetComponent<Image>() : null;
+                return;
+            }
+
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+            go.transform.SetParent(column, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0.5f, 1f);
+            rect.anchorMax = new Vector2(0.5f, 1f);
+            rect.pivot = new Vector2(0.5f, 1f);
+            rect.anchoredPosition = new Vector2(0f, y);
+            rect.sizeDelta = new Vector2(width, InventoryRowHeight);
+            go.GetComponent<Image>().color = new Color(0.16f, 0.17f, 0.20f, 0.92f);
+
+            progress = null;
+            if (withProgress)
+            {
+                var fillGo = new GameObject("Progress", typeof(RectTransform), typeof(Image));
+                fillGo.transform.SetParent(go.transform, false);
+                StretchToFillParent((RectTransform)fillGo.transform);
+                progress = fillGo.GetComponent<Image>();
+                progress.sprite =
+                    AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+                progress.type = Image.Type.Filled;
+                progress.fillMethod = Image.FillMethod.Horizontal;
+                progress.fillAmount = 0f;
+                progress.color = new Color(0.35f, 0.72f, 0.85f, 0.55f);
+                progress.raycastTarget = false;
+            }
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(go.transform, false);
+            StretchToFillParent((RectTransform)labelGo.transform);
+            var tmp = labelGo.AddComponent<TextMeshProUGUI>();
+            tmp.text = "—";
+            tmp.fontSize = 18f;
+            tmp.alignment = TextAlignmentOptions.Center;
+            tmp.color = Color.white;
+            tmp.raycastTarget = false;
+            label = tmp;
+
+            button = go.GetComponent<Button>();
+            sceneDirty = true;
+        }
+
+        /// Writes a whole object-reference ARRAY field, element for element, and
+        /// answers whether anything moved — the array-shaped twin of
+        /// `EditorBootstrapUtils.SetRef`, whose contract ("returns true only on
+        /// a real change") is what keeps this bootstrap idempotent.
+        ///
+        /// THE LENGTH IS PART OF THE COMPARISON. A field that already holds the
+        /// right references but the wrong COUNT is a field that changed, and
+        /// resizing without saying so would leave `sceneDirty` false over a
+        /// scene that really did move.
+        static bool SetRefArray(SerializedObject so, string fieldName, Object[] values)
+        {
+            SerializedProperty prop = so.FindProperty(fieldName);
+            if (prop == null)
+                throw new System.InvalidOperationException(
+                    $"{so.targetObject.GetType().Name} has no serialized field '{fieldName}'.");
+
+            bool changed = prop.arraySize != values.Length;
+            prop.arraySize = values.Length;
+            for (int i = 0; i < values.Length; i++)
+            {
+                SerializedProperty element = prop.GetArrayElementAtIndex(i);
+                if (element.objectReferenceValue == values[i]) continue;
+                element.objectReferenceValue = values[i];
+                changed = true;
+            }
+
+            return changed;
+        }
+
         static GameObject GetOrCreateOverlayPanel(Transform parent, string name, ref bool sceneDirty)
         {
             Transform existing = parent.Find(name);

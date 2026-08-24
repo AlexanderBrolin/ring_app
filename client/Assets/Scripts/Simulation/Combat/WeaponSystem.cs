@@ -82,10 +82,19 @@ namespace Ring.Simulation.Combat
                 return;
             }
 
-            // Safety net against an infinite loop if FireInterval is misconfigured to 0.
-            float interval = math.max(weapon.FireInterval, 1e-3f);
             while (p.FireCooldown <= 0f)
             {
+                // Stage 3 Task 2 (spec Р261): which interval THIS shot leaves on
+                // is decided by Ammo as it stands BEFORE the spend a few lines
+                // down — the last round still goes out on the normal interval,
+                // and only the shot AFTER it (Ammo already at 0) reads the
+                // emergency one. Recomputed every iteration rather than hoisted
+                // above the loop (a constant would have been wrong the moment
+                // Ammo could change mid-loop): FireInterval can be shorter than
+                // TickDt, so a single tick's while loop can walk Ammo from
+                // positive to zero and must pick a different interval for the
+                // shot that does.
+                float interval = IntervalFor(in p, in weapon);
                 if (worldOrNull != null)
                 {
                     // The overshoot is read off FireCooldown as it stands NOW —
@@ -93,6 +102,35 @@ namespace Ring.Simulation.Combat
                     // it must be computed here, at the call, and not hoisted.
                     SpawnShot(worldOrNull, in p, in input, in cfg, ownerIndex,
                         math.min(-p.FireCooldown, dt));
+                }
+                // Stage 3 Task 2 (spec Р225): spent in this ONE shared body —
+                // Update (server) and AdvanceNoSpawn (prediction) both run it, so
+                // a predicting client's magazine empties in lockstep with the
+                // server's. Guarded on Ammo > 0 rather than gated separately, so
+                // an emergency shot (Ammo already 0) spends nothing by construction.
+                if (p.Ammo > 0)
+                {
+                    p.Ammo--;
+                    // Ф1 fix-round (review C1 / B-I-1, owner decision R-24):
+                    // the match tally of that same spend. It sits INSIDE this
+                    // branch, not beside SpawnShot's own ShotsFired++, so the
+                    // rule "did this shot cost a round" keeps exactly one home
+                    // (rule 2): an emergency shot never reaches this line, and
+                    // Р226's "synthesis spends nothing" therefore needs no
+                    // second reading of Ammo to stay true of the counter as
+                    // well as of the magazine. SpawnShot could not host it
+                    // without that second reading — it runs BEFORE the spend
+                    // and takes `p` by `in` on purpose.
+                    //
+                    // The null-sink gate is the same one ShotsFired lives
+                    // behind, for the same reason: MatchStats is a STAT, and
+                    // stats are one of the three things a predicting client
+                    // must never own (CR 3; PlayerPrediction's own doc names
+                    // them). AdvanceNoSpawn has no world to credit and no
+                    // MatchStats of its own, so "identical on both paths"
+                    // resolves here to what it already means for ShotsFired —
+                    // one body, one rule, one authoritative sink.
+                    if (worldOrNull != null) worldOrNull.StatsRef(ownerIndex).AmmoSpent++;
                 }
                 p.RecoilOffset = math.min(weapon.RecoilMaxRad, p.RecoilOffset + weapon.RecoilPerShotRad);
                 p.FireCooldown += interval;
@@ -122,19 +160,20 @@ namespace Ring.Simulation.Combat
         internal static void AdvanceNoSpawn(ref PlayerState p, in SimInput input, in SimConfig cfg)
             => Advance(ref p, in input, in cfg, null, ProjectileIds.NoOwner);
 
-        /// Single home of the FOUR eligibility terms (FireHeld, Alive, dash,
-        /// slide) — consumed by Advance above directly, and by every
-        /// client-side consumer that must agree with them exactly, either
-        /// directly or (fix-round 1) through `WouldFireThisTick` below:
-        /// ghost projectiles (Stage 2 Task 35) read it via that composition;
-        /// so does the Presentation-side prediction
-        /// (`SimulationRunner.WouldFireThisFrame`) since Stage 2 Task 43
-        /// replaced its hand-written restatement of these four terms with a
-        /// call to `WouldFireThisTick` (see that method's own doc for what
-        /// the lift changed about when the prediction arms).
+        /// Single home of the FIVE eligibility terms (FireHeld, Alive, dash,
+        /// slide, window — Stage 3 Task 20 adds the last) — consumed by
+        /// Advance above directly, and by every client-side consumer that
+        /// must agree with them exactly, either directly or (fix-round 1)
+        /// through `WouldFireThisTick` below: ghost projectiles (Stage 2
+        /// Task 35) read it via that composition; so does the
+        /// Presentation-side prediction (`SimulationRunner.
+        /// WouldFireThisFrame`) since Stage 2 Task 43 replaced its
+        /// hand-written restatement of these terms with a call to
+        /// `WouldFireThisTick` (see that method's own doc for what the lift
+        /// changed about when the prediction arms).
         /// Deliberately does NOT decide "fires THIS tick" by itself — see
-        /// `WouldFireThisTick`'s own doc for why that needs a fifth term this
-        /// method does not own.
+        /// `WouldFireThisTick`'s own doc for why that needs a SIXTH term
+        /// this method does not own.
         ///
         /// p.Alive is redundant for today's authoritative call site —
         /// SimulationWorld.TickAll (Task 23) only reaches Update from its Alive
@@ -148,7 +187,12 @@ namespace Ring.Simulation.Combat
         public static bool CanFire(in PlayerState p, in SimInput input, in WeaponSimConfig weapon)
             => input.FireHeld && p.Alive
                && (weapon.CanFireWhileDash || p.DashTimer <= 0f)
-               && (weapon.CanFireWhileSlide || p.SlideTimer <= 0f);
+               && (weapon.CanFireWhileSlide || p.SlideTimer <= 0f)
+               // Stage 3 Task 20 (spec §3.8 check 2's mirror, Р239):
+               // unconditional — no CanFireWhileWindowOpen exists because the
+               // spec never offers that exception (unlike the dash/slide
+               // terms above).
+               && !input.InventoryOpen;
 
         /// Whether the authoritative loop in `Advance` above would spawn AT
         /// LEAST ONE round on the tick that consumes `p`/`input` — the
@@ -199,6 +243,45 @@ namespace Ring.Simulation.Combat
             in WeaponSimConfig weapon)
             => CanFire(in p, in input, in weapon)
                && (p.FireCooldown - SimulationWorld.TickDt) <= 0f;
+
+        /// Which cooldown interval the weapon fires on (spec Р261): the normal
+        /// WeaponSimConfig.FireInterval while a magazine remains (`p.Ammo > 0`),
+        /// the slower EmergencyFireInterval once it reaches 0 — the "emergency
+        /// synthesis" that keeps the weapon firing instead of going silent.
+        /// `Advance` is this method's only caller, and it reads `p.Ammo` BEFORE
+        /// that shot's own spend (Р261: the last round leaves on the normal
+        /// interval, the NEXT one is already emergency).
+        ///
+        /// The `1e-3f` floor (errata E-6/C-I12) is the SOLE safety net against
+        /// either interval being misconfigured to (near) zero and spinning
+        /// `Advance`'s `while` loop forever — it used to guard `FireInterval`
+        /// alone, inline in `Advance`; moved here so there is exactly one copy of
+        /// the rule for BOTH intervals, not one that silently stopped covering
+        /// the new one.
+        internal static float IntervalFor(in PlayerState p, in WeaponSimConfig weapon)
+            => math.max(p.Ammo > 0 ? weapon.FireInterval : weapon.EmergencyFireInterval, 1e-3f);
+
+        /// Cell-pickup ammo refill (spec Р261's clamp half, Stage 3 Task 2): adds
+        /// `shots` to `p.Ammo`, capped at `weapon.AmmoMax` (the same ceiling
+        /// SimulationWorld.ApplyConfig clamps against on a hot-tweak) — and, when
+        /// that addition takes Ammo from 0 to positive, clamps FireCooldown down
+        /// to FireInterval. Without that second clamp a refill picked up mid-
+        /// emergency-interval would leave the next shot waiting out the LONGER
+        /// interval it was scheduled under while the magazine was still empty,
+        /// even though ammo is available again right now.
+        ///
+        /// The real cell-pickup behavior routes through this same method
+        /// rather than reimplementing the clamp (CR 2): it landed in Т3, and
+        /// SimulationWorld.AddAmmo — the world-level seam that supplies the
+        /// player slot and the weapon config — is its only entry point, for
+        /// Loot.PickupSystem.Collect and for tests alike.
+        internal static void AddAmmo(ref PlayerState p, in WeaponSimConfig weapon, int shots)
+        {
+            bool wasEmpty = p.Ammo <= 0;
+            p.Ammo = math.min(p.Ammo + shots, weapon.AmmoMax);
+            if (wasEmpty && p.Ammo > 0)
+                p.FireCooldown = math.min(p.FireCooldown, weapon.FireInterval);
+        }
 
         /// The shot itself: everything the authoritative sink owns and a
         /// predicting client must not (CR 3) — the round, the spread draw that
@@ -265,7 +348,11 @@ namespace Ring.Simulation.Combat
             float height = muzzleH + overshoot * vel3.z;
             // ownerIndex (Stage 2 Task 7): this firing player's own index —
             // drives per-shooter ShotsHit/Kills credit (SimulationWorld.DamageMob).
-            w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, spawnPos, vel3.xy, height, vel3.z,
+            // ownerEntityId (Stage 3 Task 5): a player owns no MOB entity id —
+            // the literal 0, which no live mob can ever match
+            // (SimulationWorld._nextEntityId starts at 1), so ProjectileSystem's
+            // friendly-fire exclusion is a no-op for a player's own shot.
+            w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, 0, spawnPos, vel3.xy, height, vel3.z,
                 weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime);
             w.StatsRef(ownerIndex).ShotsFired++;
         }

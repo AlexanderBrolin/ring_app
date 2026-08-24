@@ -28,10 +28,10 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void NewSnapshot_SizesBothFlagArraysToTheWholeRoster()
+        public void NewSnapshot_SizesEveryFlagArrayToTheWholeRoster()
         {
             SimConfig cfg = TestConfigs.Open();
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
 
             // The array index IS the player's slot, so a backend scattering
             // records by their own index must be able to write the last seat of
@@ -40,13 +40,44 @@ namespace Ring.Simulation.Tests
                 "PlayerKnown must be indexable by any seat of the roster");
             Assert.AreEqual(cfg.Arena.MaxPlayers, snap.PlayerAliveInMatch.Length,
                 "PlayerAliveInMatch must be indexable by any seat of the roster");
+            Assert.AreEqual(cfg.Arena.MaxPlayers, snap.PlayerExtractedInMatch.Length,
+                "PlayerExtractedInMatch must be indexable by any seat of the roster");
+        }
+
+        /// Ф7 gate fix-round, review finding B-2 (Important).
+        ///
+        /// THE LOCAL FRAME MUST ANSWER "IS THE DIRECTOR ALIVE" TOO. The bit is
+        /// carried on the wire (the Match block's `DirectorAlive` flag) and
+        /// decoded by `ClientFrameDecoder`, but nothing filled it on the LOCAL
+        /// path — so in solo, which is the mode the owner tunes in, the phase
+        /// line read "the Director has fallen" for the whole of
+        /// `DirectorActive`, over a boss that was alive and attacking. The bit
+        /// exists precisely because the phase covers both halves (R-257), and
+        /// a frame that always says one of them is the same lie the whole
+        /// phase was spent removing.
+        [Test]
+        public void CaptureSnapshot_ReportsWhetherTheDirectorIsAlive()
+        {
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var snap = new RenderSnapshot(cfg);
+
+            w.CaptureSnapshot(snap);
+            Assert.IsFalse(snap.DirectorAlive,
+                "premise: no Director has been spawned into this world yet");
+
+            w.SpawnMobForTest(MobType.Director, new float2(5f, 0f));
+            w.CaptureSnapshot(snap);
+            Assert.IsTrue(snap.DirectorAlive,
+                "a world holding a live Director must say so on its own frames, "
+                + "the same way it already fills ContainerIsEmpty");
         }
 
         [Test]
         public void CaptureSnapshot_KnowsEverySlotOfTheRoster()
         {
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             Assert.AreEqual(3, snap.PlayerCount);
@@ -62,7 +93,7 @@ namespace Ring.Simulation.Tests
         {
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
             w.KillPlayerForTest(); // seat 0 only — the seam's own victim
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             // Asserted per seat rather than as "somebody died": a constant
@@ -73,12 +104,43 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(snap.PlayerAliveInMatch[2], "seat 2 never took a blow");
         }
 
+        /// Playtest В1, round two (bd `app-1kei`).
+        ///
+        /// A COLLECTOR WHO WALKED OUT IS NOT A CORPSE, and the frame is where
+        /// that stops being sayable if this array is not filled. The local path
+        /// is the one the owner tunes in, and there `Players[i].Extracted`
+        /// happens to carry the truth as well — which is exactly the trap:
+        /// a picture written against that field alone works in solo and draws a
+        /// body for every teammate who made it out, because a stranger's record
+        /// off the wire has no bit for it. One fact, one home, both backends.
+        [Test]
+        public void CaptureSnapshot_ExtractedInMatchMirrorsTheWorldsOwnRoster()
+        {
+            SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
+            PlayerState gone = w.PlayerAt(1);
+            gone.Alive = false;
+            gone.Extracted = true;
+            w.SetPlayerForTest(1, in gone);
+
+            var snap = new RenderSnapshot(cfg);
+            w.CaptureSnapshot(snap);
+
+            // Per seat, for the reason the roster test above states: a constant
+            // answer satisfies one line and only the pattern refuses both.
+            Assert.IsFalse(snap.PlayerExtractedInMatch[0], "seat 0 is still in the raid");
+            Assert.IsTrue(snap.PlayerExtractedInMatch[1], "seat 1 walked out");
+            Assert.IsFalse(snap.PlayerExtractedInMatch[2], "seat 2 is still in the raid");
+            Assert.IsFalse(snap.PlayerAliveInMatch[1],
+                "…and walking out ends a seat's life in the arena, which is precisely why "
+                + "the two flags cannot be derived from one another");
+        }
+
         [Test]
         public void CaptureSnapshot_ADeadSeatStaysKnown_WhichIsWhatMakesItACorpse()
         {
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
             w.KillPlayerForTest();
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             // The whole point of the pair: this is the reading that means
@@ -95,7 +157,7 @@ namespace Ring.Simulation.Tests
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
             float2 standing = w.PlayerAt(0).Pos;
             w.KillPlayerForTest();
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             // Where it fell, there it lies (owner, 2026-08-10): the frame is
@@ -129,7 +191,7 @@ namespace Ring.Simulation.Tests
 
             float2 fellAt = w.PlayerAt(0).Pos;
             w.KillPlayerForTest();
-            var snap = new RenderSnapshot(cfg.Arena);
+            var snap = new RenderSnapshot(cfg);
             w.CaptureSnapshot(snap);
 
             Assert.IsFalse(snap.Players[0].Alive, "test setup: seat 0 must actually be down");
@@ -153,8 +215,8 @@ namespace Ring.Simulation.Tests
         public void CopyFrom_CarriesTheKnownFlagOfEverySlot()
         {
             SimConfig cfg = TestConfigs.Open();
-            var from = new RenderSnapshot(cfg.Arena);
-            var into = new RenderSnapshot(cfg.Arena);
+            var from = new RenderSnapshot(cfg);
+            var into = new RenderSnapshot(cfg);
             from.PlayerCount = 3;
             from.PlayerKnown[0] = true;
             from.PlayerKnown[1] = false;
@@ -177,8 +239,8 @@ namespace Ring.Simulation.Tests
         public void CopyFrom_CarriesTheRosterLivenessOfEverySlot()
         {
             SimConfig cfg = TestConfigs.Open();
-            var from = new RenderSnapshot(cfg.Arena);
-            var into = new RenderSnapshot(cfg.Arena);
+            var from = new RenderSnapshot(cfg);
+            var into = new RenderSnapshot(cfg);
             from.PlayerCount = 3;
             from.PlayerAliveInMatch[0] = false;
             from.PlayerAliveInMatch[1] = true;
@@ -204,8 +266,8 @@ namespace Ring.Simulation.Tests
             // would blink out of existence on the very hit that killed it.
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
             w.KillPlayerForTest();
-            var live = new RenderSnapshot(cfg.Arena);
-            var frozen = new RenderSnapshot(cfg.Arena);
+            var live = new RenderSnapshot(cfg);
+            var frozen = new RenderSnapshot(cfg);
             w.CaptureSnapshot(live);
 
             frozen.CopyFrom(live);

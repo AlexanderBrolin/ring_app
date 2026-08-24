@@ -30,6 +30,31 @@ namespace Ring.Simulation.Core
             // AimHeld (the consumer that gates on AimHeld arrives in Task 15).
             if (!math.isfinite(s.AimHeight)) s.AimHeight = cfg.Hero.MuzzleHeight;
             s.AimHeight = math.clamp(s.AimHeight, 0f, cfg.Hero.MaxAimHeight);
+
+            // Stage 3 Task 20 (spec §3.8/§3.11, coordinator D-3): the loot
+            // window closes the instant the player is dead, extracted,
+            // dashing or sliding — regardless of what a client claims. Gated
+            // HERE, not only in LootOps.Validate's own checks (1 and the
+            // Use-only dash/slide gate), because WeaponSystem.CanFire and
+            // PlayerMovementSystem's movement slowdown both read
+            // SimInput.InventoryOpen directly and never go through Validate
+            // at all — a modified client could otherwise keep claiming the
+            // window open to those two consumers even while a real
+            // Take/Drop/Use would be refused. `reference` is the player's
+            // state as of the END of the PREVIOUS tick (same one-tick lag
+            // every other line of this method already reads under, e.g. the
+            // AimPoint fallback) — a dash/slide that STARTS this very tick
+            // has not yet raised DashTimer/SlideTimer when this runs, so the
+            // very first tick of a fresh dash/slide is not covered here;
+            // that gap is closed by LootOps.Validate's own tick-exact checks
+            // for the loot operations themselves (movement/CanFire are
+            // unaffected on that one tick because the active dash/slide
+            // branches bypass RegularMoveVel and CanFireWhileDash/Slide
+            // already gate the shot independently).
+            bool windowMustClose = !reference.Alive || reference.Extracted
+                || reference.DashTimer > 0f || reference.SlideTimer > 0f;
+            if (windowMustClose) s.InventoryOpen = false;
+
             return s;
         }
     }

@@ -18,7 +18,20 @@ namespace Ring.Simulation.Tests
         /// a byte-identical private copy of this one-line helper — the
         /// project's "existing test helpers are reused" rule applies to test
         /// helpers duplicated across files, not only to production code.
-        public static int Capacity(in SimConfig cfg) => cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
+        /// Stage 3 Task 26 (plan errata E-6 C-I3): the formula itself moved to
+        /// `VisibilitySet.CapacityFor`, the ONE home it now shares with
+        /// SnapshotAssembler.Connection — which spelled the same sum out
+        /// separately until this task. This overload stays because DOZENS of
+        /// call sites in this suite ask for the MOB capacity by that name.
+        /// ⚠ The count deliberately is NOT spelled out here any more: Т26's
+        /// review had it counted exactly (71 then), Т29 added five call sites
+        /// four days later and the number went stale inside its own phase
+        /// (gate Ф6, review m2 — lesson 366: a figure derived from someone
+        /// else's state lives until that state next moves). What matters is
+        /// the fact, not the census. It states which class it means and
+        /// delegates.
+        public static int Capacity(in SimConfig cfg)
+            => Visibility.VisibilitySet.CapacityFor(in cfg.Arena, Visibility.VisibilityClass.Mobs);
 
         /// A world with every mob slot filled (via the SpawnMobForTest seam,
         /// half Chaser/half Gunner so both fire/movement/AI paths are live) and
@@ -27,6 +40,13 @@ namespace Ring.Simulation.Tests
         /// a caller starts measuring it (allocations, a "busy" golden tick,
         /// ...). Returns the config used so callers can read Arena caps etc.
         /// without reconstructing it.
+        ///
+        /// STILL AT CAP ON RETURN (Stage 3 Task 5 fix-round 2): the warm-up
+        /// can now thin the crowd (friendly fire — see this method's own
+        /// body), so a second SpawnMobsToCap call tops the population back up
+        /// to Arena.MaxMobs AFTER the 100 ticks, before returning — the name
+        /// "Saturated" is a promise about what the caller receives, not just
+        /// about what got built on tick 0.
         public static SimulationWorld Saturated(out SimConfig config)
         {
             config = TestConfigs.Default();
@@ -34,8 +54,43 @@ namespace Ring.Simulation.Tests
 
             SpawnMobsToCap(world);
 
-            var holdFire = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f) };
+            // Stage 3 Task 12: the shooter is moved off the arena center, 7 m
+            // inside the innermost zone wall — the SAME huddle radius (58)
+            // TrioSaturated uses, and for the same reason, now that the crowd
+            // is three times denser (MaxMobs 96 -> 288). At the center the
+            // player stands INSIDE the spiral: 12 chasers reach it by tick 17
+            // (the ring at radius 4 closes 2.9 m at 5.2 m/s) instead of the 4
+            // that used to, the mobs then pile onto it at AttackRange, and
+            // every round is absorbed in its own muzzle — the fixture's own
+            // "sustained fire" premise (ProjectileCount > 0 on return) died
+            // silently, which is what AllocationTests.Tick_DoesNotAllocateGC
+            // reported. From 58 the arithmetic is provable rather than lucky:
+            // the nearest mob is 26.4 m away and needs 5.1 s (152 ticks) to
+            // close it, so nothing touches the shooter inside a 100-tick
+            // warm-up; a round covers that gap in 22 ticks against a 45-tick
+            // lifetime, so rounds are always both in flight AND reaching the
+            // crowd (the HitMob branch every caller of this fixture measures).
+            float shooterRadius = config.Arena.ZoneWallRadius[0] - 7f;
+            RelocatePlayerForTest(world, 0, new float2(0f, shooterRadius));
+            var holdFire = new SimInput { FireHeld = true, AimPoint = float2.zero };
             for (int i = 0; i < 100; i++) world.Tick(holdFire);
+
+            // Stage 3 Task 5 fix-round 2 (spec Р252, coordinator finding): the
+            // crowd above is no longer guaranteed to still BE at cap after 100
+            // ticks under sustained fire — friendly fire means a Gunner among
+            // it can now connect with a neighboring mob instead of always
+            // sailing past it, so some of the 96 die during warm-up (their
+            // slots get replaced by the wave director too, but not
+            // necessarily all of them within this window). "Saturated" is a
+            // promise about the RETURNED world, not just the moment it was
+            // built, so top up here, with the SAME seam that built the crowd
+            // in the first place: SpawnMobsToCap's own SpawnMob cap-guard
+            // makes a second call an EXACT top-up, not an over-fill — it
+            // keeps spawning until _mobCount reaches MaxMobs again (however
+            // many that takes), then silently no-ops for the remainder of
+            // its own loop. This keeps the helper's name true for every
+            // caller, not just the one that happens to check.
+            SpawnMobsToCap(world);
 
             return world;
         }
@@ -53,7 +108,11 @@ namespace Ring.Simulation.Tests
             const float goldenAngleRad = 2.399963f; // even angular spread, no periodicity
             for (int i = 0; i < cap; i++)
             {
-                float radius = 4f + (i % 24) * 1.2f; // well inside Arena.Radius (65 since Stage 2 Task 16)
+                // Radii 4…31.6 regardless of `cap` — the modulo keeps the
+                // spiral inside the CORE zone whatever MaxMobs is (96 through
+                // Stage 2, 288 since Stage 3 Task 12's own arena), which is
+                // what every caller's geometry doc below leans on.
+                float radius = 4f + (i % 24) * 1.2f;
                 float angle = i * goldenAngleRad;
                 float2 pos = radius * new float2(math.cos(angle), math.sin(angle));
                 world.SpawnMobForTest((i & 1) == 0 ? MobType.Chaser : MobType.Gunner, pos);
@@ -69,14 +128,30 @@ namespace Ring.Simulation.Tests
         /// PvpDamageTests' own trio fixture use) and all three players fire
         /// continuously — but the three are relocated off the natural spawn
         /// ring (Geometry.SpawnPosFor, radius Arena.Radius *
-        /// PlayerSpawnRingFrac = 52) via the shared RelocatePlayerForTest seam
-        /// below, out to a small huddle at radius (Arena.Radius *
-        /// PlayerSpawnRingFrac + 6) — 58 on TestConfigs.Default() — clear of
+        /// PlayerSpawnRingFrac = 103.96 since Stage 3 Task 12) via the shared
+        /// RelocatePlayerForTest seam below, out to a small huddle 7 m inside
+        /// the innermost zone wall — 58 on TestConfigs.Default() — clear of
         /// both the mob crowd (SpawnMobsToCap's own doc: radii roughly 4…31)
         /// and every DefaultArena() obstacle/wall (all inside radius ~44) with
-        /// room to spare. Two reasons: firing along the NATURAL ring's own
+        /// room to spare.
+        ///
+        /// Stage 3 Task 12 re-derived that radius, and the reason is the whole
+        /// point of the fixture rather than tidying. It used to read
+        /// `Radius * PlayerSpawnRingFrac + 6`, which was 58 on the Stage 2
+        /// arena and becomes 109.96 on the three-zone one — out in the OUTER
+        /// zone, with two arc barriers between the huddle and the crowd. Every
+        /// premise stated below would have quietly died there: player 2's long
+        /// shot toward the center would be stopped by the outer ring at 92
+        /// (spec §3.15 offsets the two rings' doors precisely so that no
+        /// straight ray from the outer zone reaches the core), so it would
+        /// neither still be in flight at the end of warm-up nor ever reach a
+        /// mob — the HitMob branch of the candidate scratch would stop being
+        /// exercised at all, with every assertion in this file still green.
+        /// 58 is the same number as before and keeps every sentence below
+        /// true; it is now tied to the zone wall that has to stay out of the
+        /// firing line rather than to the spawn ring that moved. Two reasons: firing along the NATURAL ring's own
         /// player-to-player chord passes within Arena.Radius *
-        /// PlayerSpawnRingFrac * cos(60 deg) = 26 m of the centre — squarely
+        /// PlayerSpawnRingFrac * cos(60 deg) = 26 m of the center — squarely
         /// inside the mob crowd — so whether a round ever clears it to reach
         /// another player would depend on the crowd's exact layout rather than
         /// being a fixture guarantee; and moving clear of the crowd also means
@@ -88,7 +163,7 @@ namespace Ring.Simulation.Tests
         /// aiming at the other's own static position — hip fire's per-shot
         /// direction, WeaponSystem.Update's normalize(AimPoint - p.Pos), is
         /// therefore exact and unchanging shot after shot). Player 2 fires
-        /// the long way instead, back toward the arena centre and into the
+        /// the long way instead, back toward the arena center and into the
         /// mob crowd — the same "long sustained shot" role Saturated's own
         /// holdFire plays, so a live projectile is guaranteed at the end of
         /// warm-up regardless of the duel's own volley timing (the shot needs
@@ -128,6 +203,16 @@ namespace Ring.Simulation.Tests
         public static SimulationWorld TrioSaturated(out SimConfig config, int measuredTicks)
         {
             config = TestConfigs.Default();
+            // Stage 3 Т22 (rule of fixtures R-173/351): ZONELESS. Every body in
+            // this fixture — the mob crowd at radii 4…31 and the huddle at 58 —
+            // stands inside the CORE zone of TestConfigs.Default(), and a live
+            // collector standing there is what activates the Director from Т22
+            // on. This fixture is about ALLOCATIONS, not about zones, and an
+            // arena with no zones has no core to walk into. Nothing it measures
+            // moves: the huddle's own radius is derived from ZoneWallRadius (the
+            // zone WALLS, which stay), so the geometry every premise below
+            // leans on is unchanged to the meter.
+            config.Arena.ZoneRadius = System.Array.Empty<float>();
             var world = new SimulationWorld(1, config, playerCount: 3);
 
             SpawnMobsToCap(world);
@@ -139,7 +224,13 @@ namespace Ring.Simulation.Tests
             // bare literal (Task 18 fix-round 1, M-3), so a future
             // arena-layout tuning pass that moves the ring moves this huddle
             // right along with it instead of leaving it silently stranded.
-            float huddleRadius = config.Arena.Radius * config.Arena.PlayerSpawnRingFrac + 6f;
+            // Stage 3 Task 12: 7 m inside the innermost zone wall (58 on
+            // TestConfigs.Default()) — see this method's own doc for why the
+            // pre-Stage-3 expression, tied to the player spawn ring, silently
+            // stopped meaning what it said. Still config-derived, not a bare
+            // literal (Task 18 fix-round 1, M-3): an owner retune of the core
+            // boundary moves this huddle with it.
+            float huddleRadius = config.Arena.ZoneWallRadius[0] - 7f;
             var p0 = new float2(-1.5f, huddleRadius);
             var p1 = new float2(1.5f, huddleRadius);
             var p2 = new float2(0f, huddleRadius + 1.5f);
@@ -188,7 +279,7 @@ namespace Ring.Simulation.Tests
         /// Moves a player to an exact spot through the SetPlayerForTest seam —
         /// a multiplayer world otherwise spawns its players on the ring
         /// (Geometry.SpawnPosFor), which is no use to a fixture that has to
-        /// state a firing line down to the metre. Stage 2 Task 17
+        /// state a firing line down to the meter. Stage 2 Task 17
         /// (PvpDamageTests) established this exact move under the name
         /// `PlaceAt`; Task 18 fix-round 1 (M-1) lifted it here — its only home
         /// now — so the two test files stop carrying byte-identical copies of
@@ -207,10 +298,22 @@ namespace Ring.Simulation.Tests
             world.SetPlayerForTest(index, p);
         }
 
+        /// Stage 3 Т22: N input-free ticks through the FULL TickAll (not
+        /// Tick), so systems that only exist on the all-players path — the
+        /// phase machine among them — actually run. Lifted here from
+        /// MatchFlowTests' own private Idle the moment a second test class
+        /// needed it (rule 2); that file now delegates to this one.
+        public static void IdleTicks(SimulationWorld world, int ticks = 1)
+        {
+            var inputs = new SimInput[world.PlayerCount];
+            for (int i = 0; i < ticks; i++) world.TickAll(inputs);
+        }
+
         /// Places a batch of mobs in one call (Task 6) — the tuple form keeps a
         /// multi-mob fixture readable as a single statement instead of a column
         /// of SpawnMobForTest calls. Slot order equals argument order, which the
-        /// candidate tie-break tests depend on.
+        /// candidate tie-break tests depend on. (Ф5 gate, review B-2: this doc
+        /// had drifted onto IdleTicks above when Т22 inserted that helper.)
         public static void SpawnMobsAt(SimulationWorld world,
             params (MobType type, float2 pos)[] mobs)
         {
@@ -290,6 +393,69 @@ namespace Ring.Simulation.Tests
                     world.DamageMob(0, 1e9f, world.Mobs[0].Pos, HitZone.Body, default, ownerIndex: 0);
             }
             return ticks;
+        }
+
+        /// Stage 3 Т24: the arena's own exit layout, resolved from the config
+        /// instead of restated. Lifted here out of ExtractionTests the moment
+        /// a second class (ResultsTests) needed the same four helpers — the
+        /// same "test helpers duplicated across files" rule Capacity above
+        /// records, applied before the copy was made rather than after.
+        /// An owner retune of the layout moves every caller with it.
+        /// A point comfortably inside the core zone — half its radius out
+        /// along +X (Ф5 gate, review B-6). Lifted here after the phase grew
+        /// TWO byte-identical private copies of it (MatchFlowTests,
+        /// EliteAndDirectorTests) and eight more raw transcriptions of the
+        /// same expression across six files. Stated from the config, so a
+        /// retune of the zone radii moves every caller with it.
+        ///
+        /// STANDING A LIVE COLLECTOR HERE WAKES THE DIRECTOR AND HIS RETINUE
+        /// (R-173's fixture rule) — which is the point at every call site that
+        /// uses it, and the reason a fixture that does NOT want that belongs
+        /// on a zoneless arena instead.
+        public static float2 InsideCore(in SimConfig cfg)
+            => new float2(cfg.Arena.ZoneRadius[0] * 0.5f, 0f);
+
+        public static int IndexOfExit(in SimConfig cfg, ExitKind kind)
+        {
+            for (int i = 0; i < cfg.Arena.ExtractPos.Length; i++)
+                if ((ExitKind)cfg.Arena.ExtractKind[i] == kind) return i;
+            return -1;
+        }
+
+        public static float2 EarlyPortalPos(in SimConfig cfg)
+            => cfg.Arena.ExtractPos[IndexOfExit(in cfg, ExitKind.Portal)];
+
+        public static float2 GatePos(in SimConfig cfg)
+            => cfg.Arena.ExtractPos[IndexOfExit(in cfg, ExitKind.Gate)];
+
+        /// TestConfigs.Open() (which ships the real exit layout) with an
+        /// extraction channel short enough to hold inside a test, stated in
+        /// TICKS and converted through the same arithmetic production
+        /// performs. Open() itself is NOT touched — its zones are owner
+        /// decision R-76 and two other fixtures stand on them.
+        public static SimConfig ExitFixture(int channelTicks = 6)
+        {
+            SimConfig c = TestConfigs.Open();
+            c.Flow.ExtractChannelSeconds = channelTicks * SimulationWorld.TickDt;
+            return c;
+        }
+
+        /// Walks the raid to GateOpen: someone enters the core, the Director
+        /// spawns (Т22) and is put down, and the sharing window elapses. The
+        /// caller states GateDelaySeconds = 0 on its own fixture when it wants
+        /// that window to be instant.
+        public static void OpenTheGate(SimulationWorld world, in SimConfig cfg)
+        {
+            RelocatePlayerForTest(world, 2, InsideCore(in cfg));
+            IdleTicks(world);
+            for (int i = 0; i < world.MobCount; i++)
+            {
+                if (world.Mobs[i].Type != MobType.Director) continue;
+                world.DamageMob(i, 1e9f, world.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+                break;
+            }
+            IdleTicks(world, 2);
+            Assert.AreEqual(MatchPhase.GateOpen, world.Match.Phase, "premise: the gate is open");
         }
     }
 }

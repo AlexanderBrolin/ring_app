@@ -6,7 +6,8 @@ using UnityEngine;
 
 namespace Ring.Presentation
 {
-    /// Sole owner of `PlayerView`/`MobView`/`ProjectileView` lifecycle (П-1):
+    /// Sole owner of `PlayerView`/`MobView`/`ProjectileView` lifecycle — and,
+    /// since Stage 3 Task 31, of `PickupView`/`ContainerView` too (П-1):
     /// maps the runner's live snapshot to pools of views — players by SLOT,
     /// mobs and projectiles by entity Id (spec §3.7/§3.12). Two
     /// independent responsibilities:
@@ -108,9 +109,61 @@ namespace Ring.Presentation
     /// the same body in the same place, playing the same clip — which is the
     /// property that matters, since packet loss can put a networked client into
     /// the local backend's order for one death and back for the next.
+    /// What a frame says to DRAW for one player slot (playtest В1 round two, bd
+    /// `app-1kei`) — three answers, because "not alive" is three situations and
+    /// the code that read it as one drew a body for all of them.
+    ///
+    /// The same remedy `AimCast` is (Т33c) and for the same defect class
+    /// (lesson 399/401): two facts collapsed into one condition break on a
+    /// playtest, not in the tests.
+    public enum PlayerSlotPicture : byte
+    {
+        /// A live collector — rent a doll and sync it.
+        Doll,
+
+        /// A body. The slot is known, not alive, and did not walk out.
+        Body,
+
+        /// Nothing to draw here: the collector left through a portal or the
+        /// gate. The spec is explicit that this is NOT a death — the body is
+        /// TAKEN AWAY, and unlike a death it leaves no corpse and nothing to
+        /// loot (§3.5) — and the simulation has always obeyed it; only the
+        /// picture did not.
+        Gone,
+    }
+
     [DefaultExecutionOrder(-10)]
     public sealed class ViewRegistry : MonoBehaviour
     {
+        /// WHAT TO DRAW FOR A SLOT, as a pure function of the three facts a
+        /// frame states about it — so the rule can be tested at all. A
+        /// `MonoBehaviour`'s per-frame loop is unreachable from EditMode, and
+        /// this rule broke in exactly the way an untested rule breaks: the
+        /// loop asked `!Alive` and drew a corpse, and a collector who had just
+        /// won the raid played the death clip (owner's В1 playtest, round two).
+        /// Same precedent as `InventoryWindowController.WindowMustClose`
+        /// (Т33a) and `Core.ExitRules.IsOpen` (Т33).
+        ///
+        /// `known` COMES FIRST because it is a fact about the FRAME and the
+        /// other two are facts about the player: a slot this frame says nothing
+        /// about may be reading `default(PlayerState)`, so neither of the other
+        /// arguments means anything until it is true.
+        ///
+        /// `extracted` BEATS `alive` IF THEY EVER DISAGREE, though the pair
+        /// carries the invariant `!(Alive && Extracted)` (SimulationWorld's own
+        /// hash doc, pinned by `ResultsTests`): the masks arrive as two
+        /// independent bytes off the wire and a hostile or out-of-sync sender
+        /// can set both bits, and of the two readings "he walked out" is the
+        /// one that draws nothing — a decoder that never throws (Р82) must not
+        /// be given a way to make this layer rent a doll for a seat that is out
+        /// of the raid.
+        public static PlayerSlotPicture PictureFor(bool known, bool alive, bool extracted)
+        {
+            if (!known) return PlayerSlotPicture.Gone;
+            if (extracted) return PlayerSlotPicture.Gone;
+            return alive ? PlayerSlotPicture.Doll : PlayerSlotPicture.Body;
+        }
+
         // Mech pivots sit at the feet (Task 10, assets phase B) — the old
         // capsule fallback's pivot was its center, hence the +1m lift; a real
         // model needs none.
@@ -123,15 +176,40 @@ namespace Ring.Presentation
         [SerializeField] PlayerView _playerPrefab;
         [SerializeField] MobView _chaserPrefab;
         [SerializeField] MobView _gunnerPrefab;
+        // Stage 3 Task 31 (spec Р251/§3.11, owner decision R-192 — the
+        // acceptance condition of milestone В1): Elite and the Director stop
+        // borrowing the Gunner's prefab. Until this task every branch below
+        // was a two-way ternary, so the arena's boss rendered as a rank-and-
+        // file Gunner at a rank-and-file Gunner's size.
+        [SerializeField] MobView _elitePrefab;
+        [SerializeField] MobView _directorPrefab;
         [SerializeField] ProjectileView _projectilePrefab;
+        // Stage 3 Task 31 (spec §3.11): the raid's own furniture. One prefab
+        // per DRAWN container kind — `MobCorpse`/`PlayerCorpse` share the
+        // marker, because their body is already on the floor (`ContainerView`'s
+        // own doc).
+        [SerializeField] PickupView _pickupPrefab;
+        [SerializeField] ContainerView _crateContainerPrefab;
+        [SerializeField] ContainerView _cacheContainerPrefab;
+        [SerializeField] ContainerView _groundContainerPrefab;
+        [SerializeField] ContainerView _corpseMarkerPrefab;
 
         Dictionary<int, PlayerView> _activePlayers;
         Dictionary<int, MobView> _activeMobs;
         Dictionary<int, ProjectileView> _activeProjectiles;
+        Dictionary<int, PickupView> _activePickups;
+        Dictionary<int, ContainerView> _activeContainers;
         Stack<PlayerView> _playerPool;
         Stack<MobView> _chaserPool;
         Stack<MobView> _gunnerPool;
+        Stack<MobView> _elitePool;
+        Stack<MobView> _directorPool;
         Stack<ProjectileView> _projectilePool;
+        Stack<PickupView> _pickupPool;
+        Stack<ContainerView> _cratePool;
+        Stack<ContainerView> _cachePool;
+        Stack<ContainerView> _groundPool;
+        Stack<ContainerView> _corpseMarkerPool;
 
         // Stage 2 Task 45a fix-round 1: the detached dolls (class doc). Not a
         // pool — `Clear` hands them back to `_playerPool` and nothing else
@@ -172,6 +250,8 @@ namespace Ring.Presentation
         HashSet<int> _seenPlayerSlots;
         HashSet<int> _seenMobIds;
         HashSet<int> _seenProjectileIds;
+        HashSet<int> _seenPickupIds;
+        HashSet<int> _seenContainerIds;
         List<int> _staleIdsScratch;
 
         void Awake()
@@ -194,15 +274,43 @@ namespace Ring.Presentation
             _fadingPlayerSlots = new HashSet<int>(playerCap);
             _activeMobs = new Dictionary<int, MobView>(mobCap);
             _activeProjectiles = new Dictionary<int, ProjectileView>(projCap);
-            // Both pools capped at mobCap (Б6 — not split by archetype ratio):
-            // a match's Chaser/Gunner mix can vary, so each pool is sized as if
-            // the whole cap were one archetype rather than guessing a split.
+            // Every pool capped at mobCap (Б6 — not split by archetype ratio):
+            // a match's archetype mix can vary, so each pool is sized as if the
+            // whole cap were one archetype rather than guessing a split. Task 31
+            // adds two more pools on the same rule rather than inventing a
+            // smaller number for Elite and the Director — a `Stack` of that
+            // capacity is one array of references, and guessing a split is the
+            // thing Б6 refused.
             _chaserPool = new Stack<MobView>(mobCap);
             _gunnerPool = new Stack<MobView>(mobCap);
+            _elitePool = new Stack<MobView>(mobCap);
+            _directorPool = new Stack<MobView>(mobCap);
             _projectilePool = new Stack<ProjectileView>(projCap);
             _seenMobIds = new HashSet<int>(mobCap);
             _seenProjectileIds = new HashSet<int>(projCap);
-            _staleIdsScratch = new List<int>(math.max(mobCap, projCap));
+
+            // Stage 3 Task 31. Pickups are capped per match by
+            // `Arena.MaxPickups` and containers by `Arena.MaxContainers`, the
+            // same "size the pool from the simulation's own ceiling" rule the
+            // three pools above already follow. The four CONTAINER pools are
+            // each sized at the whole container cap rather than at a guessed
+            // share of it — Б6's rule, and the kind mix genuinely varies:
+            // crates and caches are placed once at match start, ground drops
+            // and corpses accumulate as the raid goes.
+            int pickupCap = _arena.MaxPickups;
+            int containerCap = _arena.MaxContainers;
+            _activePickups = new Dictionary<int, PickupView>(pickupCap);
+            _activeContainers = new Dictionary<int, ContainerView>(containerCap);
+            _pickupPool = new Stack<PickupView>(pickupCap);
+            _cratePool = new Stack<ContainerView>(containerCap);
+            _cachePool = new Stack<ContainerView>(containerCap);
+            _groundPool = new Stack<ContainerView>(containerCap);
+            _corpseMarkerPool = new Stack<ContainerView>(containerCap);
+            _seenPickupIds = new HashSet<int>(pickupCap);
+            _seenContainerIds = new HashSet<int>(containerCap);
+
+            _staleIdsScratch = new List<int>(
+                math.max(math.max(mobCap, projCap), math.max(pickupCap, containerCap)));
         }
 
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
@@ -255,8 +363,7 @@ namespace Ring.Presentation
                 // Type is set by Bind before a view ever reaches _activeMobs
                 // (the only path in — see RentMob/SyncMobs), so it's always
                 // valid here (Б6).
-                Stack<MobView> pool = kv.Value.Type == MobType.Chaser ? _chaserPool : _gunnerPool;
-                pool.Push(kv.Value);
+                PoolFor(kv.Value.Type).Push(kv.Value);
             }
             _activeMobs.Clear();
 
@@ -266,6 +373,27 @@ namespace Ring.Presentation
                 _projectilePool.Push(kv.Value);
             }
             _activeProjectiles.Clear();
+
+            // Stage 3 Task 31 (spec Р291, and Т35's reset list names this
+            // explicitly): the pickups and containers go back too. A restart
+            // hands out entity ids from 1 again, so a cell or a crate left
+            // active here would both leak and collide with a fresh id.
+            foreach (KeyValuePair<int, PickupView> kv in _activePickups)
+            {
+                kv.Value.gameObject.SetActive(false);
+                _pickupPool.Push(kv.Value);
+            }
+            _activePickups.Clear();
+
+            foreach (KeyValuePair<int, ContainerView> kv in _activeContainers)
+            {
+                kv.Value.gameObject.SetActive(false);
+                // Kind is set by Bind before a view ever reaches
+                // _activeContainers (the only path in — see RentContainer/
+                // SyncContainers), so it is always valid here.
+                ContainerPoolFor(kv.Value.Kind).Push(kv.Value);
+            }
+            _activeContainers.Clear();
         }
 
         void LateUpdate()
@@ -278,6 +406,8 @@ namespace Ring.Presentation
             SyncPlayers();
             SyncMobs();
             SyncProjectiles();
+            SyncPickups();
+            SyncContainers();
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer
@@ -753,21 +883,34 @@ namespace Ring.Presentation
                 // dimming, until the fade behind `HoldFadingDoll` has run out —
                 // and the retirement pass below is still what takes it away
                 // when it has.
-                if (!curr.PlayerKnown[i])
+                // Playtest В1 round two (bd `app-1kei`): THREE answers, not two.
+                // This loop used to ask `!state.Alive` and make a corpse of
+                // whatever said yes, which drew a death for a collector who had
+                // just walked out of the gate. `PictureFor` is where the three
+                // cases are named and where they are tested.
+                PlayerSlotPicture picture = PictureFor(
+                    curr.PlayerKnown[i], state.Alive, curr.PlayerExtractedInMatch[i]);
+                if (picture == PlayerSlotPicture.Gone)
                 {
+                    // Two ways to be gone, and only one of them holds a doll.
                     // Stage 2 Task 47c: a doll the frame has gone quiet about
                     // survives this frame's retirement pass while it is still
                     // fading out — being in `_seenPlayerSlots` is exactly what
-                    // "do not retire me" means to the pass below.
-                    if (HoldFadingDoll(i, local)) _seenPlayerSlots.Add(i);
+                    // "do not retire me" means to the pass below. A collector
+                    // who EXTRACTED is not that case: the frame is not quiet
+                    // about him, it says outright that he left, so there is
+                    // nothing to hold and the retirement pass below pools his
+                    // doll on this very frame — which is what the spec's
+                    // "the body is taken away" (§3.5) looks like from here.
+                    if (!curr.PlayerKnown[i] && HoldFadingDoll(i, local)) _seenPlayerSlots.Add(i);
                     continue;
                 }
-                // Known and not alive is a BODY, and it is the frame that says
-                // so — see `EnsureCorpse`. The slot is deliberately left out of
-                // `_seenPlayerSlots`: a corpse is not a live doll, and the pass
-                // below must not find one to retire, which `EnsureCorpse` has
-                // already seen to by taking it out of `_activePlayers`.
-                if (!state.Alive)
+                // A BODY, and it is the frame that says so — see `EnsureCorpse`.
+                // The slot is deliberately left out of `_seenPlayerSlots`: a
+                // corpse is not a live doll, and the pass below must not find
+                // one to retire, which `EnsureCorpse` has already seen to by
+                // taking it out of `_activePlayers`.
+                if (picture == PlayerSlotPicture.Body)
                 {
                     EnsureCorpse(i, in state, local);
                     continue;
@@ -1008,7 +1151,21 @@ namespace Ring.Presentation
             // (hot-tweak, spec §3.9) is reflected in the telegraph pulse immediately —
             // the backend is `Ready` here, LateUpdate's own guard above already
             // returned early otherwise.
-            float telegraphSeconds = _runner.Config.Chaser.TelegraphSeconds;
+            //
+            // PER ARCHETYPE SINCE TASK 31 (fix-round, Ф7 review B-I2), and the
+            // defect it closes is the same one this task exists for, wearing a
+            // scalar instead of a branch: the windup pulse normalizes
+            // `StateTimer` against this number, and one number for every mob
+            // meant the CHASER'S windup. The Director's is 1.1 s against the
+            // Chaser's 0.35 (`MobDirectorConfig`/`MobChaserConfig`), so his
+            // telegraph saturated at 32 % of the real windup and then sat at
+            // "the blow lands NOW" for three quarters of a second while nothing
+            // landed — a boss whose tell lies is worse than a boss with no
+            // tell. The Elite escaped only by carrying the Chaser's own 0.35.
+            // The whole config is copied once here (it is a large struct behind
+            // a by-value property) and the archetype's field is picked per mob
+            // inside the loop.
+            SimConfig config = _runner.Config;
             // В1/В2 fix-wave 2 (app-n6g item 3b): read once per frame, same
             // shape as telegraphSeconds above — MobView.Sync takes plain
             // values, never a GameFeelConfig/AimProvider reference of its own.
@@ -1067,12 +1224,12 @@ namespace Ring.Presentation
                     // the projectile branch below for why this order matters at all.
                     view.transform.position = SimSpace.ToWorld(m.Pos) + MobOffset;
                     view.Bind(in m);
-                    view.Visual?.Bind(in m, m.Type == MobType.Chaser
-                        ? _gameFeel.ChaserVisualScale : _gameFeel.GunnerVisualScale);
+                    view.Visual?.Bind(in m, _gameFeel.VisualScaleFor(m.Type));
                     // Sync right away (Task 21 Bind/Sync contract) so a mob that's
                     // already mid-Telegraph the instant it becomes visible reads
                     // correctly this same frame, not one frame late.
-                    view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverAccent, hoverGlowBoost);
+                    view.Sync(in m, TelegraphSecondsFor(m.Type, in config), view == hoveredMob,
+                        hoverAccent, hoverGlowBoost);
                     view.Visual?.Sync(in m, in visualParams);
                     _activeMobs.Add(m.Id, view);
                     continue;
@@ -1091,7 +1248,8 @@ namespace Ring.Presentation
                     Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
                     view.transform.position = world + MobOffset;
                 }
-                view.Sync(in m, telegraphSeconds, view == hoveredMob, hoverAccent, hoverGlowBoost);
+                view.Sync(in m, TelegraphSecondsFor(m.Type, in config), view == hoveredMob,
+                    hoverAccent, hoverGlowBoost);
                 // After the position write above (Б7): when frozen, position
                 // wasn't written this frame, so MobVisual's own prev/curr delta
                 // reads zero and it settles on Idle — no separate "frozen" branch
@@ -1100,9 +1258,33 @@ namespace Ring.Presentation
             }
 
             _staleIdsScratch.Clear();
+            // Stage 3 Т32б (bd `app-dut`): a mob the frame stopped mentioning is
+            // not retired on the spot any more — it FADES, the way a player
+            // doll has since Task 47c, and for the reason the issue records:
+            // players froze and dimmed at the edge of sight while mobs
+            // vanished instantly, so the picture was inconsistent and read as
+            // a bug in the mobs rather than as the limit of the fog it is.
+            //
+            // THE ANSWER IS THE BACKEND'S, NOT THIS CLASS'S. How long a mob may
+            // go unheard before it freezes, whether the fade may start at all,
+            // and whether the whole connection is merely quiet are
+            // `StalePolicy`'s decisions (`ShouldKeepMobView` is the wire out of
+            // them). A local backend answers false to every id, so nothing here
+            // changes for solo: a mob absent from a local frame is a mob that
+            // is dead.
             foreach (KeyValuePair<int, MobView> kv in _activeMobs)
             {
-                if (!_seenMobIds.Contains(kv.Key)) _staleIdsScratch.Add(kv.Key);
+                if (_seenMobIds.Contains(kv.Key)) continue;
+                if (_runner.ShouldKeepMobView(kv.Key))
+                {
+                    // No `Sync`: there is no `MobState` this tick, so the last
+                    // pose is what stays on screen and only the brightness
+                    // moves (`MobView.FadeEmission`'s own doc).
+                    kv.Value.FadeEmission(1f - _runner.MobFadeProgress(kv.Key));
+                    continue;
+                }
+
+                _staleIdsScratch.Add(kv.Key);
             }
             for (int i = 0; i < _staleIdsScratch.Count; i++) RetireMob(_staleIdsScratch[i]);
         }
@@ -1180,6 +1362,120 @@ namespace Ring.Presentation
             for (int i = 0; i < _staleIdsScratch.Count; i++) RetireProjectile(_staleIdsScratch[i]);
         }
 
+        /// The cells on the floor (spec §3.11, Stage 3 Task 31). Deliberately
+        /// the simplest sync in this class: a pickup does not move, so there is
+        /// no `prev`/`alpha` interpolation to do — it is spawned where the
+        /// simulation says and it stays there until somebody takes it.
+        ///
+        /// THIS RUNS OFF `Curr`, NOT `RenderCurr`, and the difference is not an
+        /// oversight: the render pair exists so a hitstop can freeze MOVING
+        /// things mid-flight (Т25, П-7), and a stationary object has nothing to
+        /// freeze. Reading the live snapshot instead means a cell appears and
+        /// disappears on the tick the server says, with no render-buffer lag on
+        /// top of the network's own.
+        ///
+        /// IT WAS EMPTY OVER THE WIRE UNTIL Т32б, and is not any more (fix
+        /// round, Ф7 review B-5 — this paragraph still said "does not decode
+        /// the `Pickups` block yet" a whole task after it did). The client
+        /// decodes all ten blocks now (`ClientFrameDecoder`), so cells draw on
+        /// both backends; on the local one `RenderSnapshot.Pickups` is the
+        /// world's own array, as it always was.
+        void SyncPickups()
+        {
+            RenderSnapshot curr = _runner.Curr;
+
+            _seenPickupIds.Clear();
+            for (int i = 0; i < curr.PickupCount; i++)
+            {
+                PickupState pickup = curr.Pickups[i];
+                _seenPickupIds.Add(pickup.Id);
+
+                if (!_activePickups.TryGetValue(pickup.Id, out PickupView view))
+                {
+                    view = RentPickup();
+                    view.Bind(_gameFeel.PickupVisualDiameter);
+                    _activePickups.Add(pickup.Id, view);
+                }
+                // Written every frame rather than only on rent: the owner can
+                // move a cell by hot-tweaking nothing at all, but a RESTART
+                // reuses ids, and a pooled view that kept last match's position
+                // for one frame would visibly jump.
+                view.transform.position = SimSpace.ToWorld(pickup.Pos);
+            }
+
+            _staleIdsScratch.Clear();
+            // Stage 3 Т33d (bd `app-tut2`): a cell the frame stopped mentioning
+            // FADES, exactly as a mob has since Т32б and a player doll since
+            // Task 47c. Until this task it popped, and it popped BESIDE a mob
+            // that faded — one picture speaking two languages about the same
+            // edge of the same fog. The backend answers false to every id on a
+            // local backend, so solo is unchanged: a cell absent from a local
+            // frame has been picked up.
+            foreach (KeyValuePair<int, PickupView> kv in _activePickups)
+            {
+                if (_seenPickupIds.Contains(kv.Key)) continue;
+                if (_runner.ShouldKeepPickupView(kv.Key))
+                {
+                    kv.Value.FadeEmission(1f - _runner.PickupFadeProgress(kv.Key));
+                    continue;
+                }
+
+                _staleIdsScratch.Add(kv.Key);
+            }
+            for (int i = 0; i < _staleIdsScratch.Count; i++) RetirePickup(_staleIdsScratch[i]);
+        }
+
+        /// The crates, caches, dropped bundles and corpse markers (spec
+        /// §3.7/§3.11, Stage 3 Task 31). Same shape as `SyncPickups` above and
+        /// for the same reasons — a container never moves either — with one
+        /// addition: the KIND picks the prefab, so a view whose container
+        /// somehow changed kind under the same id has to be re-rented rather
+        /// than re-pointed. That cannot happen today (`SpawnContainer` gives
+        /// every container a fresh id and `ContainerState.Kind` is never
+        /// written again), and the guard is one comparison — the cheap side of
+        /// a trade whose expensive side is a crate silently drawn as a corpse
+        /// marker.
+        void SyncContainers()
+        {
+            RenderSnapshot curr = _runner.Curr;
+
+            _seenContainerIds.Clear();
+            for (int i = 0; i < curr.ContainerCount; i++)
+            {
+                ContainerState container = curr.Containers[i];
+                _seenContainerIds.Add(container.Id);
+
+                if (_activeContainers.TryGetValue(container.Id, out ContainerView view)
+                    && view.Kind != container.Kind)
+                {
+                    RetireContainer(container.Id);
+                    view = null;
+                }
+                if (view == null)
+                {
+                    view = RentContainer(container.Kind);
+                    view.Bind(container.Kind, ContainerScaleFor(container.Kind));
+                    _activeContainers.Add(container.Id, view);
+                }
+                view.transform.position = SimSpace.ToWorld(container.Pos);
+            }
+
+            _staleIdsScratch.Clear();
+            // The boxes' half of the same fade — see `SyncPickups` above.
+            foreach (KeyValuePair<int, ContainerView> kv in _activeContainers)
+            {
+                if (_seenContainerIds.Contains(kv.Key)) continue;
+                if (_runner.ShouldKeepContainerView(kv.Key))
+                {
+                    kv.Value.FadeEmission(1f - _runner.ContainerFadeProgress(kv.Key));
+                    continue;
+                }
+
+                _staleIdsScratch.Add(kv.Key);
+            }
+            for (int i = 0; i < _staleIdsScratch.Count; i++) RetireContainer(_staleIdsScratch[i]);
+        }
+
         static float2 FindMobPrevPos(RenderSnapshot prev, int id, float2 fallback)
         {
             for (int i = 0; i < prev.MobCount; i++)
@@ -1217,17 +1513,58 @@ namespace Ring.Presentation
             _playerPool.Push(view);
         }
 
+        /// The pool an archetype's views live in. One of the three homes Task 31
+        /// puts the archetype dispatch in (pool, prefab, visual scale), each a
+        /// `switch` that THROWS on an unrecognized value rather than falling
+        /// back to the Gunner — the fallback is precisely how Elite and the
+        /// Director came to be drawn as Gunners for two whole stages, silently,
+        /// with no error and no red test (lesson 385, R-237: a catalog home
+        /// throws even while it is exhaustive today). `SimulationWorld.
+        /// MobConfigFor` and `SnapshotBlocks.MaxHpFor` are the same shape on
+        /// the simulation's side of the same enum.
+        Stack<MobView> PoolFor(MobType type) => type switch
+        {
+            MobType.Chaser => _chaserPool,
+            MobType.Gunner => _gunnerPool,
+            MobType.Elite => _elitePool,
+            MobType.Director => _directorPool,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        MobView PrefabFor(MobType type) => type switch
+        {
+            MobType.Chaser => _chaserPrefab,
+            MobType.Gunner => _gunnerPrefab,
+            MobType.Elite => _elitePrefab,
+            MobType.Director => _directorPrefab,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        /// The archetype's own windup length, for `MobView`'s telegraph ramp.
+        /// Same throwing shape as the pool/prefab homes above; see the read
+        /// site in `SyncMobs` for what one shared number cost.
+        static float TelegraphSecondsFor(MobType type, in SimConfig config) => type switch
+        {
+            MobType.Chaser => config.Chaser.TelegraphSeconds,
+            MobType.Gunner => config.Gunner.TelegraphSeconds,
+            MobType.Elite => config.Elite.TelegraphSeconds,
+            MobType.Director => config.Director.TelegraphSeconds,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
         MobView RentMob(MobType type)
         {
-            Stack<MobView> pool = type == MobType.Chaser ? _chaserPool : _gunnerPool;
+            Stack<MobView> pool = PoolFor(type);
             if (pool.Count > 0)
             {
                 MobView v = pool.Pop();
                 v.gameObject.SetActive(true);
                 return v;
             }
-            MobView prefab = type == MobType.Chaser ? _chaserPrefab : _gunnerPrefab;
-            return Instantiate(prefab, transform);
+            return Instantiate(PrefabFor(type), transform);
         }
 
         ProjectileView RentProjectile()
@@ -1249,8 +1586,7 @@ namespace Ring.Presentation
             // Type is set by Bind before a view ever reaches _activeMobs (the
             // only path in — see RentMob/SyncMobs), so it's always valid here
             // (Б6).
-            Stack<MobView> pool = view.Type == MobType.Chaser ? _chaserPool : _gunnerPool;
-            pool.Push(view);
+            PoolFor(view.Type).Push(view);
         }
 
         void RetireProjectile(int id)
@@ -1259,6 +1595,91 @@ namespace Ring.Presentation
             _activeProjectiles.Remove(id);
             view.gameObject.SetActive(false);
             _projectilePool.Push(view);
+        }
+
+        /// The container homes (Stage 3 Task 31), same throwing shape as
+        /// `PoolFor`/`PrefabFor` above. `MobCorpse` and `PlayerCorpse` answer
+        /// with the SAME pool and the same prefab on purpose: both are a marker
+        /// laid over a body somebody else already drew, and splitting them
+        /// would be two pools holding identical objects.
+        Stack<ContainerView> ContainerPoolFor(ContainerKind kind) => kind switch
+        {
+            ContainerKind.Crate => _cratePool,
+            ContainerKind.Cache => _cachePool,
+            ContainerKind.Ground => _groundPool,
+            ContainerKind.MobCorpse => _corpseMarkerPool,
+            ContainerKind.PlayerCorpse => _corpseMarkerPool,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(kind), kind,
+                "unknown container kind"),
+        };
+
+        /// How big a container is drawn. The corpse kinds are NOT props and do
+        /// not take the prop scale (fix-round, Ф7 review B-I1): their view is
+        /// the little emissive marker, and it is sized with the CELL so the two
+        /// "something to pick up" tells read alike. Before this fix the prefab
+        /// was built at the cell's size and then every `Bind` overwrote it with
+        /// the container scale, so the marker came out at 1 m instead of 0.5
+        /// and the bootstrap's own sizing line was dead code with a comment
+        /// that said otherwise.
+        float ContainerScaleFor(ContainerKind kind) => kind switch
+        {
+            ContainerKind.Crate => _gameFeel.ContainerVisualScale,
+            ContainerKind.Cache => _gameFeel.ContainerVisualScale,
+            ContainerKind.Ground => _gameFeel.ContainerVisualScale,
+            ContainerKind.MobCorpse => _gameFeel.PickupVisualDiameter,
+            ContainerKind.PlayerCorpse => _gameFeel.PickupVisualDiameter,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(kind), kind,
+                "unknown container kind"),
+        };
+
+        ContainerView ContainerPrefabFor(ContainerKind kind) => kind switch
+        {
+            ContainerKind.Crate => _crateContainerPrefab,
+            ContainerKind.Cache => _cacheContainerPrefab,
+            ContainerKind.Ground => _groundContainerPrefab,
+            ContainerKind.MobCorpse => _corpseMarkerPrefab,
+            ContainerKind.PlayerCorpse => _corpseMarkerPrefab,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(kind), kind,
+                "unknown container kind"),
+        };
+
+        PickupView RentPickup()
+        {
+            if (_pickupPool.Count > 0)
+            {
+                PickupView v = _pickupPool.Pop();
+                v.gameObject.SetActive(true);
+                return v;
+            }
+            return Instantiate(_pickupPrefab, transform);
+        }
+
+        ContainerView RentContainer(ContainerKind kind)
+        {
+            Stack<ContainerView> pool = ContainerPoolFor(kind);
+            if (pool.Count > 0)
+            {
+                ContainerView v = pool.Pop();
+                v.gameObject.SetActive(true);
+                return v;
+            }
+            return Instantiate(ContainerPrefabFor(kind), transform);
+        }
+
+        void RetirePickup(int id)
+        {
+            if (!_activePickups.TryGetValue(id, out PickupView view)) return;
+            _activePickups.Remove(id);
+            view.gameObject.SetActive(false);
+            _pickupPool.Push(view);
+        }
+
+        void RetireContainer(int id)
+        {
+            if (!_activeContainers.TryGetValue(id, out ContainerView view)) return;
+            _activeContainers.Remove(id);
+            view.gameObject.SetActive(false);
+            ContainerPoolFor(view.Kind).Push(view);
         }
     }
 }

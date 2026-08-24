@@ -88,9 +88,15 @@ namespace Ring.Presentation
     /// В3 fix-wave 1 (app-n6g item 2, owner playtest feedback: headshots need
     /// an unmistakable payoff, not a coin-flip) changed the variant-selection
     /// rule in `HandleMobDied` to this:
-    /// — `e.Zone == HitZone.Head`: ALWAYS `SpawnFullExplodeGibs` — no corpse
-    /// ever spawns for a headshot kill, and the `GibFullExplodeChance` roll
-    /// below is skipped entirely for this event. Within the explode, the
+    /// — `e.Zone == HitZone.Head`: `SpawnFullExplodeGibs` — no corpse spawns
+    /// for a headshot kill, and the `GibFullExplodeChance` roll below is
+    /// skipped entirely for this event. STAGE 3 TASK 31 QUALIFIES THE
+    /// "ALWAYS" THIS SENTENCE USED TO CARRY: both triggers now sit behind
+    /// `HasGibParts`, because the Sci-Fi models Elite and the Director are
+    /// drawn from were never cut into parts, so those two archetypes leave a
+    /// corpse on every kill including a headshot. The alternative was
+    /// scattering a GUNNER's parts out of a Director, which is the defect
+    /// Task 31 exists to remove wearing a different hat. Within the explode, the
     /// HEAD part specifically launches along the killing blow's own `HitDir`
     /// (`GameFeelConfig.GibHeadImpulseSpeed`) instead of the random
     /// upward-biased scatter every other part gets — directional feedback
@@ -104,10 +110,11 @@ namespace Ring.Presentation
     /// precedent): FULL EXPLODE (every part random-scatters, no directional
     /// treatment — a non-head kill has no "which way did the head fly"
     /// story to tell) or a whole corpse (`CorpseView.Spawn`, no head gib —
-    /// that side branch only ever applied to headshots, which no longer
-    /// reach the corpse branch at all).
+    /// that side branch only ever applied to headshots, which reach the
+    /// corpse branch only for an archetype with no gib parts).
     /// Every gib part's `transform.localScale` mirrors the SAME
-    /// `visualScale` (`ChaserVisualScale`/`GunnerVisualScale`) the corpse
+    /// `visualScale` (`GameFeelConfig.VisualScaleFor`, one number per
+    /// archetype) the corpse
     /// itself gets, below — a part cut from the same mesh has to agree with
     /// the archetype's own live/corpse scale or it visibly mismatches.
     /// `GibMetal.mat` (Task 24's flat gunmetal material) is no longer the
@@ -216,6 +223,10 @@ namespace Ring.Presentation
         // rarer than gunfire, same "rare trigger → small pool" reasoning the
         // class doc already gives for DeathBurstPoolCapacity above.
         const int SlideDustPoolCapacity = 16;
+        /// Stage 3 Task 31: pickups are collected one at a time by a body
+        /// walking over them, so the burst never stacks the way hit sparks do
+        /// — the same 16 the two pools above settled on is generous here.
+        const int PickupPopPoolCapacity = 16;
 
         // Stage 2 Task 45b fix-round 1 (G-1): shots recorded by the event
         // fan-out and turned into brass in `LateUpdate`, once `ViewRegistry`
@@ -259,6 +270,14 @@ namespace Ring.Presentation
         [SerializeField] ParticleSystem _blockSparkPrefab;
         [SerializeField] ParticleSystem _deathBurstPrefab;
         [SerializeField] ParticleSystem _slideDustPrefab; // Task 22
+        // Stage 3 Task 31 fix-round (Ф7 review A-M2): the pop a cell makes when
+        // it is taken. Spec §3.11 asks a pickup for a flash AND a sound on
+        // `PickupTaken`;
+        // the SOUND waits on a placeholder clip that does not exist yet
+        // (`Assets/Audio/Placeholders` has eight, none of them a pickup — bd
+        // app-9qqp), but the FLASH needs no binary asset, so it ships here
+        // rather than riding along with the half that is genuinely blocked.
+        [SerializeField] ParticleSystem _pickupPopPrefab;
 
         readonly int[] _pendingCasingSlots = new int[PendingCasingCapacity];
         int _pendingCasingCount;
@@ -291,6 +310,7 @@ namespace Ring.Presentation
         ObjectPool<ParticleSystem> _blockSparkPool;
         ObjectPool<ParticleSystem> _deathBurstPool;
         ObjectPool<ParticleSystem> _slideDustPool; // Task 22
+        ObjectPool<ParticleSystem> _pickupPopPool; // Task 31
 
         void Awake()
         {
@@ -311,10 +331,12 @@ namespace Ring.Presentation
             _blockSparkPool = CreateParticlePool(_blockSparkPrefab, BlockSparkPoolCapacity);
             _deathBurstPool = CreateParticlePool(_deathBurstPrefab, DeathBurstPoolCapacity);
             _slideDustPool = CreateParticlePool(_slideDustPrefab, SlideDustPoolCapacity); // Task 22
+            _pickupPopPool = CreateParticlePool(_pickupPopPrefab, PickupPopPoolCapacity); // Task 31
             PrewarmParticlePool(_hitSparkPool, HitSparkPoolCapacity);
             PrewarmParticlePool(_blockSparkPool, BlockSparkPoolCapacity);
             PrewarmParticlePool(_deathBurstPool, DeathBurstPoolCapacity);
             PrewarmParticlePool(_slideDustPool, SlideDustPoolCapacity); // Task 22
+            PrewarmParticlePool(_pickupPopPool, PickupPopPoolCapacity); // Task 31
         }
 
         // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
@@ -378,6 +400,16 @@ namespace Ring.Presentation
                     // same Quaternion.identity convention HitSpark/DeathBurst
                     // above already use for their own non-directional bursts.
                     PlayParticle(_slideDustPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
+                    break;
+                case SimEventKind.PickupTaken:
+                    // Task 31: at the CELL's position, which is where the
+                    // player's eye is — `PickupSystem` emits this event with
+                    // `pickup.Pos` (that emitter's own call), not with the
+                    // collector's, and the two differ by up to the pickup
+                    // radius. Omnidirectional, hence `Quaternion.identity`,
+                    // the same convention every other non-directional burst
+                    // here already uses.
+                    PlayParticle(_pickupPopPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
                     break;
                 case SimEventKind.DashRicocheted:
                     HandleRicocheted(in e);
@@ -583,8 +615,7 @@ namespace Ring.Presentation
         /// a headshot, body height for a body shot, etc.
         void SpawnHitSpark(in SimEvent e)
         {
-            MobSimConfig archetype = e.MobType == MobType.Chaser
-                ? _runner.Config.Chaser : _runner.Config.Gunner;
+            MobSimConfig archetype = ArchetypeConfigFor(e.MobType);
             float height = ZoneHeight(e.Zone, archetype.LegsTop, archetype.BodyTop, archetype.HeadTop);
             PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * height, Quaternion.identity);
         }
@@ -645,6 +676,38 @@ namespace Ring.Presentation
             PlayParticle(_blockSparkPool, contactWorld, Quaternion.LookRotation(normal, upHint));
         }
 
+        /// The archetype homes this class shares with `ViewRegistry` (Stage 3
+        /// Task 31, spec Р251). Each throws on an unknown archetype instead of
+        /// answering with the Gunner's numbers — the fallback that had the
+        /// Director dying at a Gunner's height and a Gunner's size.
+        MobSimConfig ArchetypeConfigFor(MobType type) => type switch
+        {
+            MobType.Chaser => _runner.Config.Chaser,
+            MobType.Gunner => _runner.Config.Gunner,
+            MobType.Elite => _runner.Config.Elite,
+            MobType.Director => _runner.Config.Director,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        /// The dying archetype's own cut-up meshes and the one remap material
+        /// they share — EMPTY for the two archetypes whose models were never
+        /// cut up (see `HandleMobDied`). Returning empty rather than throwing
+        /// is deliberate here and only here: "this archetype has no parts" is a
+        /// fact about the ASSET, answered honestly, while an unknown archetype
+        /// is still a bug and still throws.
+        (Mesh[] parts, Material material) GibPartsFor(MobType type) => type switch
+        {
+            MobType.Chaser => (_chaserParts, _chaserPartMaterial),
+            MobType.Gunner => (_gunnerParts, _gunnerPartMaterial),
+            MobType.Elite => (System.Array.Empty<Mesh>(), null),
+            MobType.Director => (System.Array.Empty<Mesh>(), null),
+            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                "unknown archetype"),
+        };
+
+        bool HasGibParts(MobType type) => GibPartsFor(type).parts.Length > 0;
+
         void HandleMobDied(in SimEvent e)
         {
             // В1/В2 fix-wave 2 (app-n6g item 2, BUG fix): same archetype-scale
@@ -652,8 +715,7 @@ namespace Ring.Presentation
             // call — `MobDied`'s own `MobType` is enough, no new SO field
             // (CorpseView.Spawn's own doc). T24-2: also the scale every
             // spawned gib part's transform.localScale mirrors (class doc).
-            float visualScale = e.MobType == MobType.Chaser
-                ? _gameFeel.ChaserVisualScale : _gameFeel.GunnerVisualScale;
+            float visualScale = _gameFeel.VisualScaleFor(e.MobType);
 
             PlayParticle(_deathBurstPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
 
@@ -662,19 +724,28 @@ namespace Ring.Presentation
             // corpse, and the roll below never runs for this event (class
             // doc has the full rule). `SpawnFullExplodeGibs` itself checks
             // `e.Zone` to give the HEAD part its own directional impulse.
-            if (e.Zone == HitZone.Head)
+            // Stage 3 Task 31: BOTH gib triggers below are gated on the dying
+            // archetype having parts at all. `_chaserParts`/`_gunnerParts` are
+            // meshes cut from the mech FBXs in Blender (T24-2, owner-approved
+            // split); the Sci-Fi models Elite and the Director are drawn from
+            // ship whole, so there is nothing to scatter. The honest answer is
+            // a corpse — the alternative would have been to explode the
+            // Director into a GUNNER'S parts, which is the very defect this
+            // task exists to remove, one layer deeper.
+            if (HasGibParts(e.MobType))
             {
-                SpawnFullExplodeGibs(in e, visualScale);
-                return;
-            }
+                // В3 fix-wave 1: headshots ALWAYS get the full-explode variant.
+                if (e.Zone == HitZone.Head)
+                {
+                    SpawnFullExplodeGibs(in e, visualScale);
+                    return;
+                }
 
-            // T24-2 (app-nco vision): otherwise, a rolled fraction of kills
-            // explode into every part instead of leaving a whole corpse —
-            // class doc has the full variant split.
-            if (Random.value < GibFullExplodeChance)
-            {
-                SpawnFullExplodeGibs(in e, visualScale);
-                return;
+                if (Random.value < GibFullExplodeChance)
+                {
+                    SpawnFullExplodeGibs(in e, visualScale);
+                    return;
+                }
             }
 
             Vector3 pos = SimSpace.ToWorld(e.Pos) + Vector3.up * CorpseLift;
@@ -709,10 +780,8 @@ namespace Ring.Presentation
         /// of an intact corpse).
         void SpawnFullExplodeGibs(in SimEvent e, float visualScale)
         {
-            (Mesh[] parts, Material material) = e.MobType == MobType.Chaser
-                ? (_chaserParts, _chaserPartMaterial) : (_gunnerParts, _gunnerPartMaterial);
-            MobSimConfig archetype = e.MobType == MobType.Chaser
-                ? _runner.Config.Chaser : _runner.Config.Gunner;
+            (Mesh[] parts, Material material) = GibPartsFor(e.MobType);
+            MobSimConfig archetype = ArchetypeConfigFor(e.MobType);
             Vector3 worldPos = SimSpace.ToWorld(e.Pos);
             float settleSeconds = _gameFeel.GibPhysicsSeconds;
             bool headshot = e.Zone == HitZone.Head;

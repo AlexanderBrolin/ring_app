@@ -61,10 +61,65 @@ namespace Ring.Simulation.Tests
         /// Fixed world seed (42, same as the other tests in this file) driven by
         /// scripted input from an independently-seeded rng — isolates
         /// input-driven determinism from world-seed-driven determinism.
+        /// The scripted SOLO scenario's own start point (Stage 3 Ф5-0, owner
+        /// decision R-173) — stated here instead of inherited from wherever
+        /// the spawn formula happens to put player 0.
+        ///
+        /// WHY IT IS STATED AT ALL. Until Ф5-0 a solo world spawned at the
+        /// arena center, in the middle of this fixture's inner cluster of
+        /// circles, and the scenario ricocheted dashes off them without ever
+        /// saying so (GoldenScenario_ExercisesAllMechanics_Coverage is what
+        /// noticed). Ф5-0 moved the solo spawn onto the one-player ring point,
+        /// an empty stretch of rim where the nearest circle is ~69 m away
+        /// along the arc: the run still slid and dashed, but its ricochet
+        /// count fell to zero — a silent loss of coverage in the very scenario
+        /// the golden digest pins. Anchoring the run beside a circle restores
+        /// it and, unlike the old arrangement, says out loud what the scenario
+        /// needs from the arena.
+        ///
+        /// WHY THIS PARTICULAR SPOT. The anchor is the OUTERMOST circle the
+        /// fixture ships (found by arithmetic, not by index — the layout is
+        /// data and may be retuned), and the player stands half a dash clear
+        /// of its surface, so a dash in its direction reaches it and a dash
+        /// away from it does not. Two constraints it must satisfy, both
+        /// checked by ScenarioStart_IsClearOfTheCoreAndInsideTheArena below:
+        /// the run must stay well outside the CORE, because a live collector
+        /// standing there is what activates the Director from Т21 on (Р299)
+        /// and this digest must not depend on that; and it must sit inside the
+        /// arena rim with room to move.
+        static float2 ScenarioStart(in SimConfig cfg)
+        {
+            int anchor = 0;
+            for (int i = 1; i < cfg.Arena.ObstacleCount; i++)
+            {
+                if (math.lengthsq(cfg.Arena.ObstaclePos[i]) >
+                    math.lengthsq(cfg.Arena.ObstaclePos[anchor]))
+                {
+                    anchor = i;
+                }
+            }
+            // bd app-3cph: the clearance is ONE HERO RADIUS now, not half a
+            // dash. Half a dash bought a symmetric choice — "a dash toward it
+            // reaches it, a dash away does not" — and that was enough while the
+            // anchor sat in a tight pocket: at rim 113 the outermost circle
+            // stood 101 m out with the rim 12 m past it and the zone arc 9 m
+            // short of it. The В1 playtest tripled both rings, the same pocket
+            // is now 43 m wide, and the scripted walk simply leaves and never
+            // comes back — GoldenScenario_ExercisesAllMechanics_Coverage read
+            // zero ricochets, which is the coverage loss Ф5-0 introduced this
+            // helper to prevent in the first place. Standing against the
+            // surface makes the FIRST inward dash a contact instead of a
+            // lottery ticket, and it does so at any arena size.
+            float2 obstacle = cfg.Arena.ObstaclePos[anchor];
+            float gap = cfg.Arena.ObstacleRadius[anchor] + cfg.Hero.Radius * 2f;
+            return obstacle + math.normalize(obstacle) * gap;
+        }
+
         static ulong RunScripted(uint inputSeed, int ticks)
         {
             SimConfig cfg = TestConfigs.Default();
             var world = new SimulationWorld(42, cfg);
+            TestWorlds.RelocatePlayerForTest(world, 0, ScenarioStart(in cfg));
             var rng = new Random(inputSeed);
             bool aimHeld = false; // LOCAL — RunScripted runs 3x/session, no static leak (QA5/QB5/QD5)
             for (int i = 0; i < ticks; i++)
@@ -97,10 +152,432 @@ namespace Ring.Simulation.Tests
             return world.StateHash();
         }
 
+        // ------------------------------------------------------------------
+        // Stage 3 Т36 (plan Т36, spec §4 Р295): THE THIRD GOLDEN — the
+        // extraction LOOP, end to end. The two constants above pin a thousand
+        // ticks of farming; nothing in this file has ever pinned what the raid
+        // is actually about: a collector walks into the core, the Director
+        // wakes, dies, the gate opens ninety seconds later and somebody walks
+        // out through it. Every one of those transitions is a branch the
+        // farming scenarios never reach.
+        //
+        // IT IS A NEW CONSTANT, NOT A RE-PIN, and spends no sanction (errata
+        // §4 says so in as many words). A new scenario cannot move a digest
+        // that never covered it.
+        // ------------------------------------------------------------------
+
+        /// 18 000 ticks = 600 s at the 30 Hz tick (plan Т36). The window has to
+        /// hold the whole chain and it is stated as the sum of its parts, not
+        /// as a round number: 120 s before the walk-in (below), then the
+        /// Director's fight, then GateDelaySeconds (90 s in the shipped Flow),
+        /// then ExtractChannelSeconds (20 s) — with room to spare on either
+        /// side, and still well inside NetConfig's own 900 s match cap.
+        const int ExtractionTicks = 18_000;
+
+        /// Р295: the walk-in starts at the 120th second, late enough that the
+        /// scenario farms like a normal raid first (waves, loot, the outer
+        /// ring) and the endgame is not simply the whole run.
+        const int CoreEntryTick = 3_600;
+
+        /// The SECOND player walks in (lesson 227). Index 0 is the one every
+        /// solo path already exercises, so driving it here would leave the
+        /// "somebody else triggered the endgame" half of the phase machine
+        /// unpinned — MatchFlowSystem reads a live collector's zone, not
+        /// player 0's.
+        const int CoreWalker = 1;
+
+        /// The walk-in input for that player, every tick from CoreEntryTick on.
+        /// It never stops steering, and that is deliberate — the gate opens AT
+        /// (0, 0) (ArenaConfig's own ExtractPos), so the same walk that wakes
+        /// the Director is the walk that stands on the gate when it finally
+        /// opens, and the run pins the channel as well as the activation.
+        ///
+        /// IT STEERS THROUGH THE DOORS, NOT AT THE CENTER, and that is not a
+        /// refinement — it is the difference between this scenario existing and
+        /// not. A straight line inward is what the first draft did, and
+        /// ExtractionScenario_ReachesTheWholeLoop failed on it: player 1 of
+        /// three spawns at 120 deg, the outer ring's doors are at 30/150/270,
+        /// so the collector spent 480 s pressed against a solid arc while the
+        /// digest sat perfectly stable on a raid where nothing ever happened.
+        /// That is lesson 412 in its purest form, and the reason that guard was
+        /// written before this helper was trusted.
+        ///
+        /// TWO PHASES PER RING, the way a person walks it: first go AROUND at
+        /// the current radius until lined up with a doorway, then go IN through
+        /// it. "Lined up" is measured in METERS of lateral offset rather than
+        /// in radians, because a doorway is a fixed 6 m wide at any radius —
+        /// a quarter of its width is the aim tolerance, which leaves the whole
+        /// remaining half-width as margin against the shoving of a crowd.
+        ///
+        /// UNIT LENGTH throughout, because SimInputSanitizer caps MoveDir at
+        /// one and a longer vector would merely be clamped — stating the cap
+        /// here keeps the scripted stream honest about what the world will
+        /// actually see.
+        static float2 WalkInToCore(float2 pos, in SimConfig cfg)
+        {
+            float r = math.length(pos);
+            if (r <= 1e-6f) return float2.zero;
+            float2 inward = -pos / r;
+
+            // The outermost boundary still standing between this body and the
+            // core. Walls are authored outermost-last, so the scan runs down.
+            for (int w = cfg.Arena.ZoneWallCount - 1; w >= 0; w--)
+            {
+                float ring = cfg.Arena.ZoneWallRadius[w];
+                if (r <= ring) continue;
+
+                float here = math.atan2(pos.y, pos.x);
+                int first = cfg.Arena.ZoneWallDoorStart[w];
+                int count = cfg.Arena.ZoneWallDoorCount[w];
+                int best = first;
+                float bestGap = float.MaxValue;
+                for (int d = first; d < first + count; d++)
+                {
+                    float gap = math.abs(WrapPi(cfg.Arena.DoorCenterRad[d] - here));
+                    // Strictly-less keeps the SMALLER INDEX on an exact tie,
+                    // which a three-door ring produces whenever a body sits
+                    // halfway between two of them — and this run does sit there
+                    // (150 deg is 60 deg from both 90 and 210).
+                    if (gap < bestGap) { bestGap = gap; best = d; }
+                }
+
+                float offset = WrapPi(cfg.Arena.DoorCenterRad[best] - here);
+                if (math.abs(offset) * r > cfg.Arena.DoorFreeWidth[best] * 0.25f)
+                {
+                    // Around: the tangent, turned toward the doorway.
+                    float2 tangent = new float2(-pos.y, pos.x) / r;
+                    return offset >= 0f ? tangent : -tangent;
+                }
+                return inward;
+            }
+            return inward;
+        }
+
+        /// Signed angle difference folded into (-pi, pi] — the plain idiom, kept
+        /// local to this file because it exists here for one scripted walk and
+        /// Simulation has no need of it.
+        static float WrapPi(float a)
+        {
+            while (a > math.PI) a -= 2f * math.PI;
+            while (a < -math.PI) a += 2f * math.PI;
+            return a;
+        }
+
+        /// The third golden's generator. Same shape as RunMultiScripted above —
+        /// same fixed world seed, same per-player scripted streams drawn in
+        /// increasing player order — with two differences, both of them the
+        /// point of the scenario: the fixture is TestConfigs.Extraction() (the
+        /// shipped arena, containers and drop chances), and one player's
+        /// MoveDir is OVERRIDDEN from CoreEntryTick on.
+        ///
+        /// THE OVERRIDE HAPPENS AFTER THE DRAW, NEVER INSTEAD OF IT. Scripted()
+        /// is called for every player on every tick regardless, so the rng draw
+        /// order is exactly the one RunMultiScripted uses and the walk-in
+        /// changes what the world receives without changing what the stream
+        /// produces. Skipping the draw for the walking player would make every
+        /// OTHER player's input depend on the walk-in, which is not a scenario
+        /// anyone could reason about.
+        /// bd app-ggvz (wave cadence per ring): AN HP BUDGET FOR THE WHOLE
+        /// SCRIPTED RUN, handed to EVERY collector. Same seam and same
+        /// derivation TestWorlds.TrioSaturated already uses — not a second
+        /// invention, and not a number picked by eye.
+        ///
+        /// (1) WHY A FIXTURE MAY DO THIS AT ALL. These scenarios measure
+        /// DETERMINISM, never survivability — the reason every number in
+        /// TestConfigs is deliberately modest (Р325). A digest cannot tell a
+        /// run that walked the whole loop from one that died in its first
+        /// minute, which is precisely why ExtractionScenario_ReachesTheWholeLoop
+        /// stands beside it; a scenario whose collectors are corpses is the
+        /// same defect that guard already caught once from the other side (a
+        /// walker who spent 480 s against a wall).
+        ///
+        /// (2) WHY IT WAS NOT NEEDED BEFORE AND IS NEEDED NOW. Until the
+        /// per-ring cadence the arena held ONE wave of ten mobs for a whole
+        /// raid and a scripted random walk outlived it by default. With every
+        /// ring running its own cadence the farm phase is genuinely lethal.
+        /// MEASURED on this very generator, seed and tick count: the walker
+        /// died on tick 666 and all three collectors by tick 1247, while the
+        /// walk-in does not begin until CoreEntryTick (3600) — so nobody
+        /// reached the core at all, the guard went red, and the digest was
+        /// pinning a run of corpses. Ring ceilings do not fix it and were
+        /// measured not to: the walker's death tick is 666 with them and 666
+        /// without them, because the mobs that kill him are the ones that
+        /// arrive, not the ones that pile up behind.
+        ///
+        /// (3) WHY THE NUMBER IS SAFE RATHER THAN TIGHT. It is TrioSaturated's
+        /// own bound, term for term: the whole window at a deliberately
+        /// over-stated combined damage rate — the worst-case zone multiplier on
+        /// the weapon's own DPS, plus every single one of Arena.MaxMobs landing
+        /// Chaser.ContactDamage every Chaser.AttackCooldown at once. That
+        /// second term is impossible on its own terms, which is exactly the
+        /// point: the bound only has to hold, never to be tight, and a
+        /// safe-but-huge Hp costs these fixtures nothing (SetPlayerForTest
+        /// bypasses Hero.MaxHp's clamp, and neither scenario calls ApplyConfig).
+        ///
+        /// It hands out Hp and moves NOBODY: each collector's own current
+        /// position is read back and written unchanged.
+        static void BudgetHpForTheWholeRun(SimulationWorld world, in SimConfig cfg, int ticks)
+        {
+            float totalSeconds = ticks * SimulationWorld.TickDt;
+            float shotDps = cfg.Hero.HeadDamageMult * cfg.Weapon.Damage / cfg.Weapon.FireInterval;
+            float mobDps = cfg.Arena.MaxMobs * cfg.Chaser.ContactDamage / cfg.Chaser.AttackCooldown;
+            float hpBudget = totalSeconds * (shotDps + mobDps);
+            for (int p = 0; p < world.PlayerCount; p++)
+                TestWorlds.RelocatePlayerForTest(world, p, world.PlayerAt(p).Pos, hp: hpBudget);
+        }
+
+        static ulong RunExtractionScripted(uint inputSeed, int ticks, int playerCount)
+        {
+            SimConfig cfg = TestConfigs.Extraction();
+            var world = new SimulationWorld(42, cfg, playerCount);
+            BudgetHpForTheWholeRun(world, in cfg, ticks);
+            var rng = new Random(inputSeed);
+            var aimHeld = new bool[playerCount];
+            var inputs = new SimInput[playerCount];
+            for (int i = 0; i < ticks; i++)
+            {
+                for (int p = 0; p < playerCount; p++)
+                {
+                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight);
+                    if (p == CoreWalker && i >= CoreEntryTick)
+                        inputs[p].MoveDir = WalkInToCore(world.PlayerAt(p).Pos, in cfg);
+                }
+                world.TickAll(inputs);
+            }
+            return world.StateHash();
+        }
+
+        [Test]
+        public void ExtractionGoldenHash_ScriptedScenario()
+        {
+            // FIRST PIN of a THIRD constant (plan Т36; errata §4 states in as
+            // many words that Т36 introduces a third constant and that doing so
+            // spends no sanction). Same first-run
+            // procedure the two constants above document: with the constant at
+            // 0 this assert fails and NUnit prints the actual hash.
+            //
+            // WHAT IT COVERS THAT THE OTHER TWO CANNOT. Both farming scenarios
+            // live and die inside MatchPhase.Farm — their own docs say so, and
+            // the elite leash of `app-d2ki` relies on it. This one crosses
+            // every remaining transition: a collector enters the core, Т21's
+            // phase machine latches, Т22 spawns the Director and his retinue,
+            // he dies, DirectorDeathTick is stamped, GateDelaySeconds counts
+            // down, the gate opens and the channel runs. It also runs the only
+            // fully-populated arena in the file — 41 starting containers and
+            // live drop chances — so container placement, item rolls and
+            // corpse containers all enter the digest.
+            //
+            // PINNED AFTER `app-3cph`, ON PURPOSE and by the owner's own
+            // instruction: the arena's rings tripled and the mob density
+            // doubled in this same phase, so pinning this constant first would
+            // have meant re-pinning it immediately. Т36 was moved behind that
+            // work for exactly this reason, and this constant held its first
+            // value until `app-ggvz` — see RE-PIN #4 below, which is the only
+            // time it has ever moved.
+            //
+            // ⚠ WHAT IT DOES NOT COVER, measured and named rather than left to
+            // be assumed from the paragraph above: THE DIRECTOR'S DEATH, the
+            // GateDelaySeconds countdown and the extraction channel. Plan Т36
+            // asks for all three; the code says no, and the code wins over the
+            // plan (the plan's own errata says as much about itself). Two
+            // probes over this exact scenario: the Director finished on 2500 HP
+            // of 2500, and 2431 when every surviving collector was additionally
+            // aimed straight at him for the whole 480 s — the three of them are
+            // dead well before that, and the walker's entire magazine is 499
+            // rounds. Killing a 2500 HP boss is PLAY. Recorded as bd
+            // `app-7vkd` for the owner to decide what, if anything, should pin
+            // the far half of the loop.
+            //
+            // ExtractionScenario_ReachesTheWholeLoop below is what keeps this
+            // whole account honest rather than merely claimed — a digest is
+            // stable whether or not the scenario it pins does anything, and
+            // that guard is what caught the first draft of the walk-in walking
+            // into a solid wall for 480 s.
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #4 (bd `app-ggvz`, "wave cadence per ring"), THE FIRST AND
+            // ONLY MOVEMENT OF THIS CONSTANT. The solo golden carries the full
+            // account — the owner's sanction К9, the six causes, and the
+            // attribution, including the value this constant held after Т1
+            // alone (16270681601866834963). All six act here as they do there.
+            //
+            // ⚠ THIS SCENARIO HAS A SEVENTH CAUSE THE OTHER TWO DO NOT HAVE,
+            // and it is named because the spec's list of six was written before
+            // the cause existed (ruling Т5-2, session 47), not because it is
+            // small. `BudgetHpForTheWholeRun` now grants the scripted collectors
+            // an HP budget for the length of the run, through the same seam and
+            // the same term-for-term formula `TestWorlds.TrioSaturated` uses.
+            //
+            // WHY IT WAS UNAVOIDABLE, measured rather than argued. With the
+            // cadence in and no budget, this run's collectors died at tick 666
+            // of 18 000 — waves now arrive every 60/90/90 ticks instead of once
+            // per raid — and the walk into the core does not even begin until
+            // tick 3600. The guard below went red (`Expected: True But was:
+            // False`), i.e. the digest would have been pinned on a world that
+            // stood still for 17 000 of its 18 000 ticks: "stable because
+            // nothing happens" is exactly what that guard exists to refuse. The
+            // alternative measured and REJECTED was lowering the fixture's
+            // ceilings until the collectors survived: it takes {2,1,1} to get
+            // there, a peak of 7 live mobs — BELOW the ten this arena held
+            // before the task — which would have hollowed out the only fully
+            // populated arena in the file. The principle is the file's own
+            // (Р325): this scenario measures DETERMINISM, not balance.
+            //
+            // The budget is not free of consequence and the consequence is
+            // recorded rather than left to be noticed later. The suite's run
+            // time rose from 141 s before the task to about 245 s after it,
+            // against a finding threshold of 306 s. That rise belongs to the
+            // task as a whole — the arena carries tens of live mobs where it
+            // carried ten — and the budget is a NAMED part of it, not the whole
+            // of it: with the collectors alive, the six 18 000-tick runs of
+            // this file now execute for all 600 s instead of freezing at around
+            // tick 1250. Measured, not estimated.
+            const ulong ExtractionGoldenHash = 0xA94975DFEDB976E9UL; // = 12198410670336210665
+            Assert.AreEqual(ExtractionGoldenHash,
+                RunExtractionScripted(123, ExtractionTicks, 3));
+        }
+
+        [Test]
+        public void ExtractionScriptedRun_SameSeed_SameHash()
+        {
+            // Companion to the constant above, exactly as the two farming
+            // goldens have: a pinned digest means nothing unless the run is
+            // reproducible in the first place, and unless a different input
+            // seed actually reaches a different world. The scenario costs
+            // about 2.8 s per run, which is what makes a three-run companion
+            // affordable here at all.
+            Assert.AreEqual(RunExtractionScripted(123, ExtractionTicks, 3),
+                RunExtractionScripted(123, ExtractionTicks, 3));
+            Assert.AreNotEqual(RunExtractionScripted(123, ExtractionTicks, 3),
+                RunExtractionScripted(43, ExtractionTicks, 3));
+        }
+
+        [Test]
+        public void ExtractionScenario_ReachesTheWholeLoop()
+        {
+            // The coverage guard for the third golden, and the reason it exists
+            // is lesson 412: a property with no witness is a surface checked
+            // blind. The constant above CLAIMS this scenario walks the whole
+            // loop; a digest cannot tell the difference between a run that
+            // opens the gate and one that spends 600 s farming the periphery,
+            // because both are perfectly stable. This is what tells them apart,
+            // and it is deliberately written over the SAME generator, seed and
+            // tick count, so it can never drift away from what the golden pins.
+            SimConfig cfg = TestConfigs.Extraction();
+            var world = new SimulationWorld(42, cfg, 3);
+            // The SAME budget the generator above hands out, through the same
+            // one home: this loop is a deliberate copy of that generator, and a
+            // copy that skipped the budget would measure a different run than
+            // the digest it exists to describe.
+            BudgetHpForTheWholeRun(world, in cfg, ExtractionTicks);
+            var rng = new Random(123);
+            var aimHeld = new bool[3];
+            var inputs = new SimInput[3];
+
+            bool sawDirector = false, sawWalkerInCore = false;
+            MatchPhase deepestPhase = MatchPhase.Farm;
+            int containersAtStart = world.ContainerCount;
+
+            for (int i = 0; i < ExtractionTicks; i++)
+            {
+                for (int p = 0; p < 3; p++)
+                {
+                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight);
+                    if (p == CoreWalker && i >= CoreEntryTick)
+                        inputs[p].MoveDir = WalkInToCore(world.PlayerAt(p).Pos, in cfg);
+                }
+                world.TickAll(inputs);
+
+                if (world.Match.Phase > deepestPhase) deepestPhase = world.Match.Phase;
+                if (Geometry.ZoneOf(world.PlayerAt(CoreWalker).Pos, in cfg.Arena) == Zone.Core)
+                    sawWalkerInCore = true;
+                for (int m = 0; m < world.MobCount; m++)
+                    if (world.Mobs[m].Type == MobType.Director) { sawDirector = true; break; }
+            }
+
+            Assert.Greater(containersAtStart, 0,
+                "premise: this is the fully populated arena, not a bare one — the loop it pins "
+                + "includes looting, and a fixture with no containers cannot pin that");
+            Assert.IsTrue(sawWalkerInCore,
+                "the scripted walk-in must actually reach the core — Р295's whole point is that "
+                + "the endgame is triggered from inside the run, not assumed");
+            Assert.IsTrue(sawDirector,
+                "…and the Director must actually have been spawned by it (Т22)");
+            // THE CEILING IS ASSERTED, NOT THE WISH — and it is a MEASURED
+            // ceiling (bd `app-7vkd`). Plan Т36 asks for the Director's death
+            // and the gate's opening to fall inside this window too. They do
+            // not, and no amount of window would change it: a probe over this
+            // very scenario left the Director on 2500 HP of 2500, and a second
+            // probe that additionally aimed every survivor straight at him for
+            // all 480 s took him to 2431 — because the collectors are dead long
+            // before that and the walker's whole magazine is 499 rounds. Killing
+            // a 2500 HP boss is PLAY, not a scripted random walk.
+            //
+            // So this pins the depth the scenario actually reaches, by equality
+            // rather than by "at least": the day the loop becomes reachable in
+            // a scripted run, THIS is the assertion that says so out loud and
+            // asks to be updated, instead of quietly passing while the golden
+            // covers less than its own doc claims.
+            Assert.AreEqual(MatchPhase.DirectorActive, deepestPhase,
+                "the scenario reaches the Director's activation and stops there — his death and "
+                + "the gate's opening are NOT covered by this digest (bd app-7vkd), and the "
+                + "golden's own doc says so rather than implying otherwise");
+        }
+
         [Test]
         public void SameSeed_SameHash_After1000Ticks()
         {
             Assert.AreEqual(HashAfterTicks(42, Ticks), HashAfterTicks(42, Ticks));
+        }
+
+        /// Stage 3 Task 15 (spec §4 Р296, coordinator §4): the cheap
+        /// "two worlds on one seed give an equal hash" smoke test, extended
+        /// to a fixture that actually exercises the loot-placement systems
+        /// this task adds — SameSeed_SameHash_After1000Ticks above (and
+        /// ScriptedRun_SameSeed_SameHash/MultiPlayerScriptedRun_SameSeed_
+        /// SameHash below) all run TestConfigs.Default(), whose Loot counts
+        /// stay at their golden-safety zeros (Т13), so none of them has ever
+        /// placed a single container. Non-empty PREMISE required first
+        /// (lessons 267/302, coordinator §4's own explicit warning): without
+        /// it this collapses into the already-existing zero-container smoke
+        /// test above and proves nothing new.
+        /// Fixture editors: Т16 (non-zero drop chances put ITEMS inside
+        /// these containers), Т36 (the third golden, a completely separate
+        /// scenario — TestConfigs.Populated() is not that fixture).
+        /// Coordinator fix-round (Т16, R-110 debt closure): a THIRD premise
+        /// below (a placed container actually carries a non-empty slot)
+        /// closes the debt this class doc's own "Fixture editors" line
+        /// named — ContainerCount > 0 alone cannot tell "containers carry
+        /// items" apart from "containers are placed empty", the exact
+        /// vacuous-premise defect Р296 exists to rule out.
+        [Test]
+        public void SameSeed_SameHash_WithContainers()
+        {
+            SimConfig cfg = TestConfigs.Populated();
+            Assert.Greater(cfg.Loot.CrateCount + cfg.Loot.CacheCountMiddle + cfg.Loot.CacheCountCore, 0,
+                "premise: the fixture itself must actually request non-zero container counts");
+
+            var w1 = new SimulationWorld(42, cfg);
+            var w2 = new SimulationWorld(42, cfg);
+            Assert.Greater(w1.ContainerCount, 0,
+                "premise: the world must have actually PLACED containers, not merely been asked to");
+            bool anyContainerHasContent = false;
+            for (int i = 0; i < w1.ContainerCount; i++)
+            {
+                if (w1.Containers[i].SlotCount > 0) { anyContainerHasContent = true; break; }
+            }
+            Assert.IsTrue(anyContainerHasContent,
+                "premise: at least one placed container must carry a non-empty slot — Т16's own " +
+                "drop chances/repair-kit share must actually put items inside these containers, " +
+                "not merely place them empty");
+
+            for (int i = 0; i < Ticks; i++)
+            {
+                w1.Tick(default);
+                w2.Tick(default);
+            }
+
+            Assert.AreEqual(w1.StateHash(), w2.StateHash());
         }
 
         [Test]
@@ -325,7 +802,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void GoldenHash_ScriptedScenario()
         {
-            // Pin against a silent simulation-behaviour change (spec §3.13 item 14):
+            // Pin against a silent simulation-behavior change (spec §3.13 item 14):
             // world seed 42, scripted input from Random(123), 1000 ticks. First
             // run: the constant below is 0, this assert fails and NUnit prints
             // the actual hash — paste that value in and rerun for a green PASS.
@@ -369,7 +846,7 @@ namespace Ring.Simulation.Tests
             // alone; on top of that, Scripted()'s DashRequested (5% per tick)
             // has always been able to send a dash into one of the scripted
             // scenario's five obstacles, and a dash that does now mirrors
-            // instead of stopping dead — a further, real behaviour change.
+            // instead of stopping dead — a further, real behavior change.
             // Re-pinned by Task 13 (predictive telegraph entry): the Chaser's
             // Chase->Telegraph entry check now compares against
             // Targeting.PredictPos(player.Pos, player.Vel, ...) instead of the
@@ -500,7 +977,348 @@ namespace Ring.Simulation.Tests
             // already discharged there), no state field entered or left
             // PlayerState/MobState/ProjectileState/MatchStats, and no system's
             // per-tick order changed.
-            const ulong GoldenHash = 0x5BD8AC0DE1D0C454UL; // = 6618228828044051540
+            //
+            // Re-pinned by Stage 3 Т6 (repin #15, the FIRST of exactly TWO
+            // sanctioned golden shifts of the whole of stage 3 — spec С28/§4.
+            // The second is Т12, "the arena and its inhabitants". There is no
+            // third: any other movement of this constant is a stop-and-ask-
+            // the-owner event, not a re-pin).
+            //
+            // THE CAUSE IS NOT BEHAVIOR, IT IS THE COMPOSITION OF STATE. The
+            // extraction economy's fields were declared inert across Ф1
+            // (errata E-1's "structural rebuild": declare every hashable
+            // field in one phase so the digest moves ONCE instead of once per
+            // task), and all of them entered the canonical hash order (spec
+            // Р294) in this single task. Twelve positions, in that order:
+            //  (1) lootRng — a THIRD RNG stream (Р230), folded from the same
+            //      seed with its own constant, hashed right after waveRng;
+            //      its consumer (container layout) arrives in Т15, but a
+            //      stream outside the hash/save would diverge a replay at its
+            //      first draw;
+            //  (2) pickupCount + PickupState{Id, Pos, Kind, Amount, Ttl};
+            //  (3) containerCount — a ZERO count holding the containers'
+            //      position until Т14 declares the type. An FNV chain moves
+            //      when a step is ADDED, even at a zero value, so claiming
+            //      the slot now is exactly what keeps Т14 from needing a
+            //      third sanction that does not exist;
+            //  (4) MatchState{Phase, DirectorDeathTick};
+            //  (5) PlayerState.Ammo;
+            //  (6) PlayerState.Extracted and ExtractKind;
+            //  (7) PlayerState.LootTimer, RepairTimer, ExtractTimer;
+            //  (8) PlayerState.LootTargetContainerId and LootTargetSlot;
+            //  (9) MatchStats.AmmoSpent and CellsPicked;
+            // (10) WorldStats.PickupSpawnsSkipped and ContainerSpawnsSkipped;
+            // (11) ProjectileState.OwnerEntityId (Stage 3 Task 5's field,
+            //      declared inert there and admitted here);
+            // (12) inventories[0..n) — each backpack's item count and the
+            //      items it actually carries, LAST in the order, after the
+            //      statistics (spec Р294/Р231).
+            // Only (5) carries a LIVE value in this run: Scripted() holds the
+            // trigger and the run spends ~250-277 rounds over 1000 ticks.
+            // Every other position sits at its default here and the digest
+            // still moves, because each one adds a step to the FNV-1a chain
+            // whether or not the value behind it is zero.
+            //
+            // WHY THIS CONSTANT MOVES AT ALL, HAVING STOOD THROUGH Т1-Т5.
+            // Stage 3 Task 5 (mob friendly fire, Р252) moved only the
+            // multiplayer golden below, because a mob never hits another mob
+            // in the SOLO scenario — proven, not assumed, by that task's own
+            // mutation #3, which crashed on every mob-on-mob hit and left
+            // this test green. A change of state COMPOSITION is the opposite
+            // kind of cause: it is scenario-independent, so both constants
+            // move here. "The golden did not move" is a fact about a
+            // scenario, never about a change.
+            //
+            // ATTRIBUTION, so the shift is proven rather than asserted:
+            // Stage 3 Task 5's mutation #2 turned friendly fire off outright
+            // and BOTH goldens returned to their pre-Ф1 values BIT FOR BIT.
+            // Nothing else in Ф1 had leaked into the digest — not
+            // OwnerEntityId, not the signature changes that carried it — so
+            // this re-pin owns the list above and nothing besides it.
+            //
+            // MOVED A SECOND TIME INSIDE THE SAME SANCTION — Ф1 FIX-ROUND, NOT
+            // A THIRD RE-PIN (owner decision R-24). The two independent
+            // reviewers of Ф1 named the same defect first: positions (9) and
+            // (10) of the list above — MatchStats.AmmoSpent and CellsPicked —
+            // had entered the digest with NO WRITER anywhere in Scripts/. That
+            // is the very failure errata E-1 exists to prevent, merely
+            // deferred: a hashed field whose behavior arrives later moves this
+            // constant later, i.e. outside a sanction, since Т12 spends the
+            // only remaining one on the arena. The fix-round gave both fields
+            // their writers — AmmoSpent in WeaponSystem.Advance's own spend
+            // branch (so the emergency synthesis, which spends nothing, tallies
+            // nothing — spec Р226), CellsPicked in Loot.PickupSystem.Collect,
+            // in cells — and this constant absorbed the result. The SANCTION IS
+            // ONE LOGICAL EVENT, "the composition of state entered the hash at
+            // the end of Ф1", not one commit: two commits touch the number,
+            // one budget entry is spent, and Т12 is still the second and last.
+            //
+            // ATTRIBUTION OF THE SECOND MOVEMENT, by the same method as the
+            // first: mutation M-A removed the AmmoSpent increment and NOTHING
+            // else, and both goldens came back to their pre-fix-round values
+            // BIT FOR BIT (this constant to 0x425A1D080761AECA, the
+            // multiplayer one to 0x8F176E2D733A14EE — observed green against
+            // those still-pinned constants, 1038 tests, one red, the AmmoSpent
+            // test alone). So the whole of this second movement belongs to a
+            // single line. The same run proved two negatives worth recording:
+            // the CellsPicked writer is digest-inert in BOTH scenarios (owner
+            // decision R-18 zeroes the drop in TestConfigs, so no pickup is
+            // ever born and Collect never runs), and PickupSystem.AdvanceTtl's
+            // switch to the in-place `ref` idiom is digest-inert too (the hash
+            // walks `i < _pickupCount`, so the debris past the count that the
+            // switch leaves behind is read by nobody).
+            // T12 (Stage 3 re-pin #2, sanctioned): arena radius 113, three zones
+            // with arcs and doors, spawn ring 0.92, world caps, zonal wave
+            // budget, elite and director archetypes.
+            //
+            // RE-PIN #2 — THE SECOND AND LAST SANCTION OF STAGE 3 (spec
+            // С28/§4), "the arena and its inhabitants". WHAT MOVED, by name:
+            // Arena.Radius 65 -> 113; three zones {65, 92} carrying two arc
+            // walls, six doors and their jambs; PlayerSpawnRingFrac 0.8 -> 0.92
+            // (the multiplayer ring from 52 m out to 103.96); the caps MaxMobs
+            // 96 -> 288, MaxProjectiles 384 -> 1024, MaxEventsPerFrame 512 ->
+            // 1024; the zonal wave budget, live for the first time because
+            // ZoneRadius stopped being empty (the budget of ONE wave split
+            // across the rings by WaveConfig.ZoneWeights {0.45, 0.45, 0.10} —
+            // ⚠ THAT FIELD NO LONGER EXISTS: `app-ggvz` deleted it together
+            // with the split itself and gave every ring a wave of its own, see
+            // RE-PIN #4 below. The sentence stays because it is true of Т12,
+            // and the tombstone stays because a live-sounding reference to a
+            // deleted field is how the next reader is misled);
+            // and the Elite/Director sections of TestConfigs.Default() — with
+            // the Elite now genuinely SPAWNING in both scenarios, since the
+            // middle zone took 45% of every wave (again: that share is Т12's
+            // history, not today's rule) at EliteShareMiddle 0.35.
+            //
+            // WHAT IS *NOT* IN THIS MOVEMENT, recorded because it was measured
+            // and not assumed: the wave-index-dependent half of the wave
+            // composition. Both scenarios live at WaveIndex = 1 for their whole
+            // 1000 ticks — FirstWaveDelay is 75 ticks and a gunner needs ~405
+            // more to reach its firing distance, so the first wave never closes
+            // — and every elite-share term carries the factor (WaveIndex - 1),
+            // identically zero there. Т11 established it by mutation rather
+            // than by arithmetic alone: M4 and M12 each doubled the elite
+            // growth rate and moved NEITHER golden.
+            //
+            // WHY Т11's OWN SHIFT IS NOT MIXED IN: it was STRUCTURAL, not
+            // numeric — seven extra StateHash64.Add calls in HashWave for the
+            // 3x3 debt matrix. The mirror evidence on this side is just as
+            // direct: the thirteen fixture repairs this task made, the two
+            // consts that became the ExitKind enum, and all eight mutations
+            // M1-M8 are digest-inert — three consecutive full runs returned
+            // this pair bit for bit.
+            //
+            // THE TWO PLANNED SANCTIONS ARE SPENT (С28). Re-pin #1 (Т6, "the
+            // economy of the raid") and re-pin #2 (Т12, "the arena and its
+            // inhabitants") are both used. The third constant — Т36's
+            // extraction-loop golden over 18 000 ticks — is a NEW pin and
+            // spends no sanction.
+            //
+            // RE-PIN #3 — SANCTIONED BY THE OWNER OUT OF BUDGET (Stage 3 Ф5-0,
+            // decision R-173), "the solo lobby leaves the arena center". This
+            // is the one movement С28 did not foresee, and it was granted
+            // knowingly, with the alternative measured: Ф5 could not begin
+            // otherwise. WHAT MOVED, and nothing else did:
+            //
+            //   1. THE SPAWN. Geometry.SpawnPosFor lost its solo special case,
+            //      so this scenario's player no longer starts at (0,0) — the
+            //      Director's own ground since Т12, and the trigger of his
+            //      activation since Р299. Measured, not assumed: a probe over
+            //      this very scenario found the player inside the CORE on
+            //      1000 ticks out of 1000, while the multiplayer scenario
+            //      never left the OUTER ring (closest approach 93.45 m against
+            //      a 92 m boundary). Left alone, Т21's phase machine would
+            //      have moved this digest on its first tick and Т22 would have
+            //      spawned the Director into every solo fixture in the suite.
+            //   2. THE SCENARIO'S OWN START, now stated rather than inherited
+            //      (ScenarioStart above). The spawn alone would have left the
+            //      run in an empty stretch of rim where it never ricochets a
+            //      dash — GoldenScenario_ExercisesAllMechanics_Coverage caught
+            //      exactly that, and a coverage assertion is not something to
+            //      weaken to keep a digest quiet.
+            //
+            // ATTRIBUTION, so the movement is proven rather than asserted, and
+            // by the same method the two earlier re-pins used. The two causes
+            // were measured SEPARATELY, in two full runs: the spawn change
+            // alone took this constant to 0xFFFEE5C6C159FA89, and anchoring the
+            // scenario took it from there to the value below. THE CONTROL is
+            // the multiplayer golden, which sat at 0x03FD1C06FC2921DD through
+            // both runs and still does — nothing structural leaked into the
+            // hash, or it would have moved that constant too. The 76 fixture
+            // repairs of the same commit are digest-inert by construction:
+            // every one of them touches TestConfigs.OpenField(), a fixture this
+            // scenario does not use.
+            //
+            // Any further movement of any of the three constants is a stop and
+            // a question for the owner.
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #3 (Ф8, bd `app-3cph` + `app-d2ki`) — AND IT IS NOT A
+            // SANCTION SPENT, IT IS A SANCTION GRANTED. The budget of two
+            // (errata §4) was spent by Т6 and Т12; this movement is the
+            // OWNER's, decided twice in writing after he played milestone В1
+            // (bd notes on both issues, 2026-08-22 and 2026-08-23) and asked
+            // for one re-pin covering both edits of the difficulty curve,
+            // committed on its own (R-23). The stop-and-ask rule above did
+            // exactly what it exists for: it stopped, and the answer came back
+            // "do it, and do it before Т36 so the third golden is pinned on the
+            // new numbers and never has to move at all".
+            //
+            // THREE CAUSES, and the arena is only two of them:
+            //   1. THE ARENA'S TWO RINGS TRIPLE IN AREA around an unchanged
+            //      core (`app-3cph`): rim 113 -> 173, middle/outer boundary
+            //      92 -> 130, the twelve non-core circles and eight non-core
+            //      stadiums riding outward with their own rings, the three
+            //      portals re-radiused. Every one of those numbers is inside
+            //      TestConfigs.DefaultArena(), which is the struct BOTH
+            //      scenarios run off — see ArenaConfig's own fields for the
+            //      derivation of each.
+            //   2. THE MOB DENSITY DOUBLES (`app-3cph`): MaxMobs 288 -> 1350,
+            //      so every wave's zonal budget lands differently and the
+            //      WaveRng is consumed on a different search.
+            //   3. THE MIDDLE RING'S ELITE IS LEASHED TO IT (`app-d2ki`,
+            //      MobAiSystem.LeashRingFor) — a rule that acts during Farm,
+            //      which is the only phase either scenario ever reaches.
+            //
+            // ATTRIBUTION, by the same separated-runs method the earlier
+            // re-pins used, and this time the control cuts the other way:
+            //   - `app-d2ki` ALONE, measured on the unchanged arena, moved the
+            //     MULTIPLAYER constant to 6391024973742485840 and left THIS one
+            //     untouched. The reason is geometric, not lucky: the leash only
+            //     bites when an elite in the middle ring has someone to chase
+            //     in the outer one, and only the three-player scenario puts a
+            //     collector out there. Mutation M1 of that task's own batch
+            //     (remove the rule, everything else kept) put the multiplayer
+            //     constant back to 0x03FD1C06FC2921DD exactly — which proves
+            //     the whole `bool` -> `float` rewrite around it is behaviorally
+            //     inert, since nothing else in that commit could return the
+            //     digest to its old value.
+            //   - THE ARENA then moved BOTH, this one included.
+            // The eight fixture repairs in the same commit are digest-inert by
+            // construction: `HostileFrame`, the two GC byte caps, the two
+            // Snapshot spacings, the tie-break placement, the gunner's approach
+            // and the corpse zone points are all outside TestConfigs.Default()
+            // and none of them is read by either scenario.
+            //
+            // ONE OF THE EIGHT IS NOT INERT AND IS NAMED HERE ON PURPOSE:
+            // ScenarioStart's clearance, half a dash -> two hero radii. That
+            // is a fourth cause of THIS constant (and of this one only — the
+            // multiplayer generator does not call it), and it is not a
+            // convenience: at the new arena size the old anchor left the run
+            // ricochet-free, and GoldenScenario_ExercisesAllMechanics_Coverage
+            // failed rather than the digest — the same coverage guard that
+            // caught the same class of loss at Ф5-0. Its own doc carries the
+            // arithmetic.
+            //
+            // The stop-and-ask rule stands, unchanged and unweakened: any
+            // further movement of any of the three constants is a stop and a
+            // question for the owner.
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #4 (bd `app-ggvz`, "wave cadence per ring") — SANCTIONED IN
+            // ADVANCE BY THE OWNER, decision К9 of the task's brainstorm, and
+            // spent here in a commit of its own (R-23). The rule above did what
+            // it exists for: the task stopped and asked BEFORE the work began,
+            // and the answer was granted for this one movement of all three
+            // constants. NOTHING IS LEFT: any further movement of any of them is
+            // a stop and a question for the owner again.
+            //
+            // WHY A SHIFT WAS UNAVOIDABLE, AND WHY IT IS NOT A NUMBER. The
+            // defect this task repairs was structural: the next wave could be
+            // queued by exactly ONE path — a full wipe of the WHOLE arena
+            // (`PendingTotal == 0 && w.MobCount == 0`) — and the pause only
+            // started ticking there. A collector runs 7.5 m/s against the mobs'
+            // 4-5.2, so he outran the first wave and a second never came; once
+            // the Director woke, `MobCount == 0` stopped being reachable at all
+            // (he and his retinue live in the core). The owner's own raid of
+            // 252 s with three players closed with wavesCleared = 0. Replacing
+            // that with an independent cycle per ring changes what the world IS
+            // on every tick of every scenario, not how quickly it gets there.
+            //
+            // SIX CAUSES, written out one by one because spec §4 / risk Р-З
+            // requires each named rather than summarized:
+            //
+            //  1. THE SHAPE OF `WaveState`, AND THREE OF THEM IN THE HASH. The
+            //     nine-field debt matrix `Pending{Zone}{Archetype}` (Т11 of
+            //     stage 3, introduced for the split this task removes) collapsed
+            //     back into three fields, and the world now holds one
+            //     `WaveState` per ring. `HashWave` therefore runs THREE times,
+            //     in the canonical order Outer -> Middle -> Core, at the same
+            //     position of the sequence where it ran once. An FNV chain moves
+            //     when steps are ADDED even if every value behind them is equal.
+            //  2. THE PHASE TIMER IS WHOLE TICKS. `float PhaseTimer` in seconds
+            //     became `int PhaseTicks` (Р316). This is the project's own rule
+            //     — whole ticks are the only unit in which a deterministic
+            //     comparison may be made (`SimulationWorld.TicksFromSeconds`,
+            //     R-178/R-190) — and it moves the rounding boundary of every
+            //     wave start and every clear.
+            //  3. THE DIFFICULTY STEP COMES FROM THE RAID CLOCK. `WaveIndex`
+            //     stopped being a per-ring counter of waves started and now
+            //     carries `WaveSystem.DifficultyStepFor(tick, in cfg)` (Р315),
+            //     assigned rather than incremented. Wave size and elite share
+            //     read that step, so the INPUTS of both formulas differ even
+            //     where the count of waves would have agreed.
+            //  4. THE INFLOW IS BOUNDED, AND IN TWO WAYS AT ONCE. A wave no
+            //     longer lands inside one tick: a ring spawns at most
+            //     `MaxSpawnsPerZonePerTick` (2) per tick (Р317) and stops
+            //     entirely at `MaxAliveByZone`, keeping its debt (Р306).
+            //     ⚠ The spec names this cause "the smoothing of the inflow"
+            //     alone. The CEILING belongs to the same cause and is named here
+            //     because it is the half that actually holds the fixtures down:
+            //     measured in session 47, the extraction fixture ran 719 live
+            //     mobs without it against 48 with it, and the suite left its own
+            //     time gate. Omitting it would make this list look complete
+            //     while the largest term of the shift went unnamed.
+            //  5. `MobState.SpawnZone`. A new hashed field, folded immediately
+            //     after `Type`, the field it qualifies: the ring the SPAWNER put
+            //     the mob into, which is what "this ring is cleared" is counted
+            //     by (К7). It cannot be derived — every mob walks away from
+            //     where it was born, which is exactly why it has to be stored,
+            //     and stored means hashed.
+            //  6. `ZoneWeights` AND `WavePause` LEFT THE CONFIG. This cause does
+            //     NOT move the three constants, and that is why it is the one
+            //     easiest to forget: `SimConfigHash` is not part of
+            //     `StateHash64` and `SimulationWorld` never computes it. It is
+            //     named sixth rather than dropped because it belongs to the same
+            //     sanctioned event and because it has a consequence nothing else
+            //     has — `simConfigHash` CHANGED, so the clients already built at
+            //     `builds-f8` cannot join the new server, and BOTH sides are
+            //     rebuilt for milestone В4.
+            //
+            // ATTRIBUTION, so the movement is proven rather than asserted. The
+            // earlier re-pins separated their causes into separate runs; here
+            // the TASK ORDER did the separating, and the intermediate values
+            // were observed and recorded as they appeared:
+            //   - CAUSE 5 ALONE (Т1 — `SpawnZone` entered `HashMob`, nothing
+            //     else of the task existed yet): this constant went to
+            //     14591900056746272100, the multiplayer one to
+            //     15401656763043580689, the extraction one to
+            //     16270681601866834963. Т2 then added four config fields that no
+            //     code read yet and moved nothing, which is the control for that
+            //     step.
+            //   - CAUSES 1-4 TOGETHER (Т3, then the merged Т4+Т5): the values
+            //     pinned below and at the two other constants. They are NOT
+            //     separable further, and the reason is recorded rather than
+            //     hidden: Т3 was written to be behavior-neutral on purpose, and
+            //     the cadence could not be committed without its bounds — the
+            //     measurement in cause 4 is what forced Т4 and Т5 into one task
+            //     (owner decision, session 47).
+            //   - TWO MEASURED NEGATIVES, each from a full run, and they are
+            //     what make the list above exhaustive rather than merely long.
+            //     Т6 moved the SHIPPED numbers (`BaseCount` 4 -> 16 and
+            //     `EliteShareOuterGrowth` 0.02 -> 0.007, in the `.asset` and in
+            //     the C# defaults together) and all three constants came back
+            //     BIT FOR BIT: the goldens read `TestConfigs`, never the assets,
+            //     which is precisely what Р325 separated the two sources for.
+            //     Т7 added the HUD's wave-announce flash and they came back bit
+            //     for bit again: `RenderSnapshot` is not in `StateHash64`.
+            //
+            // WHAT IS NOT IN THIS MOVEMENT: `RenderSnapshot.Wave` became the
+            // WORLD AGGREGATE of the three rings (max step, min timer among the
+            // unfrozen, sums of the rest), and the wire block stayed at four
+            // bytes with `ProtocolVersion` at 3. None of that is hashed, and the
+            // Т7 negative above is the evidence, not the argument.
+            const ulong GoldenHash = 0xDAA519A7FF4C889DUL; // = 15755027080758986909
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
@@ -572,7 +1390,111 @@ namespace Ring.Simulation.Tests
             // is stated — §3.7 is the networking section and says nothing about
             // the hash at all), and no state field entered or left
             // PlayerState/MobState/ProjectileState/MatchStats.
-            const ulong MultiGoldenHash = 0x136FA6114112E44FUL; // = 1400520602171925583
+            //
+            // Re-pinned by Stage 3 Т6 (the THIRD re-pin of this constant, and
+            // the FIRST of exactly TWO sanctioned golden shifts of stage 3 —
+            // spec С28/§4; the second is Т12, and there is no third).
+            //
+            // THE PARAGRAPH ABOVE CALLED TASK 17 THE "SECOND AND LAST" RE-PIN,
+            // AND THAT WAS TRUE AS SCOPED: it spent the last of STAGE 2's own
+            // sanctions (spec §6e, owner decision Р113). Stage 3 opens a new,
+            // separately budgeted pair of its own (spec С28) — this is the
+            // first of those two, not an overrun of the exhausted stage-2
+            // budget. Stated here because the two claims read as a
+            // contradiction otherwise, and a reader who resolves that
+            // contradiction by assuming the newer text wins would also assume
+            // the budget is open-ended. It is not: after Т12 there are none
+            // left, and a third movement is a stop-and-ask-the-owner event.
+            //
+            // Cause: the TWELVE canonical-order positions listed on the solo
+            // golden above, which apply here in full — and apply three times
+            // over for the per-player halves, since players[0..n),
+            // stats[0..n) and inventories[0..n) each walk a three-player
+            // roster instead of one. Unlike Task 16 (wave scale) and Task 17
+            // (the damage matrix), this task has NO cause exclusive to the
+            // multiplayer run: a change of state COMPOSITION cannot be
+            // scenario-specific, which is exactly why the solo golden — which
+            // stood through Stage 3 Task 5 — moves alongside this one.
+            //
+            // THIS CONSTANT WAS ALREADY RED BEFORE THIS TASK, at
+            // 0x3158C0E72DE3AA4C: Stage 3 Task 5's own legitimate shift (mob
+            // friendly fire, Р252), left deliberately unpinned because the
+            // plan reserves every golden movement of Ф1 for this one task
+            // (errata E-6 D-I20: the phase's stop-condition reads "a shift
+            // outside Т5 and Т6"). That value is NOT what is pinned below —
+            // it predates the twelve positions. Both causes are folded into
+            // the single number here, and Task 5's mutation #2 (friendly fire
+            // off -> both goldens return to their pre-Ф1 values bit for bit)
+            // is what proves the pair is the whole of it.
+            //
+            // MOVED A SECOND TIME INSIDE THE SAME SANCTION — Ф1 fix-round,
+            // owner decision R-24, exactly as the solo golden above describes
+            // in full: positions (9) and (10) of its list, MatchStats.
+            // AmmoSpent and CellsPicked, were hashed in Т6 without writers,
+            // and the fix-round supplied both rather than leaving the movement
+            // to a phase with no sanction left. Still the FIRST of stage 3's
+            // two shifts; Т12 is the second and last.
+            //
+            // The multiplayer run has no cause of its own here either — the
+            // writer is per-player, so all three MatchStats slots carry a live
+            // AmmoSpent instead of one, but that is the same cause counted
+            // three times, not a second one. Attribution: mutation M-A (the
+            // AmmoSpent increment removed, nothing else) returned this
+            // constant to 0x8F176E2D733A14EE bit for bit alongside the solo
+            // one — see the solo golden's own ATTRIBUTION paragraph for the
+            // two negatives that run also settled.
+            // RE-PIN #2 (Т12, the second and last sanction — the solo golden
+            // above carries the full account: what moved, what provably did
+            // not, and why the budget is now spent). This scenario has no cause
+            // of its own. It runs the same arena, the same zonal budget and the
+            // same two new archetypes with three players instead of one, so
+            // every term is the solo cause counted three times over.
+            //
+            // One thing is worth recording separately: the multiplayer wave is
+            // the larger one (CountForTest gives 10 at index 1 against the
+            // solo's 4), so it is the run where an index-dependent elite term
+            // would have shown up first — round(14 * 0.04) = 1 against
+            // round(14 * 0.02) = 0 at wave index 2. It does not, and Т11's M12
+            // mutation covered this scenario as well and moved neither
+            // constant: the composition really is inert at WaveIndex = 1.
+            //
+            // RE-PIN #3 (Ф8, bd `app-3cph` + `app-d2ki`) — the solo golden
+            // above carries the full account: whose sanction this is, the
+            // three causes, and the attribution runs. Two things belong here
+            // rather than there, because they are true of THIS scenario only:
+            //
+            //   - IT IS THE ONE THE LEASH CAN REACH. `app-d2ki` holds a middle-
+            //     ring elite out of the outer ring, which requires somebody to
+            //     be chased into the outer ring — and only a three-player run
+            //     puts a collector there. Measured, not argued: the rule alone,
+            //     on the unchanged arena, moved this constant to
+            //     6391024973742485840 and left the solo one exactly where it
+            //     was.
+            //   - IT DOES NOT USE ScenarioStart. The fourth cause listed on the
+            //     solo constant (its anchor clearance) cannot touch this
+            //     digest, and did not.
+            //
+            // RE-PIN #4 (bd `app-ggvz`, "wave cadence per ring") — the solo
+            // golden above carries the full account: whose sanction this is
+            // (owner decision К9, spent in a commit of its own), the six causes,
+            // and the attribution runs including the value this constant held
+            // after Т1 alone (15401656763043580689). This scenario has no cause
+            // of its own: it runs the same three independent rings with three
+            // collectors instead of one, so every term is the solo cause counted
+            // three times over.
+            //
+            // ONE THING IS TRUE OF THIS SCENARIO ONLY, and it is the half of
+            // cause 4 the spec did not name — THE PER-RING CEILING BITES HERE
+            // FROM THE VERY FIRST WAVE, and in the solo run it does not. The
+            // arithmetic is the fixture's own, recomputed rather than recalled:
+            // `CountForTest` gives round((4 + 2*0) * (1 + 2*0.7)) = 10 per ring
+            // for three players against round(4 * 1) = 4 for one, and
+            // TestConfigs.Default() caps the core at MaxAliveByZone[Core] = 8.
+            // So the first core wave of this run is held at the ceiling with a
+            // debt left over, while the solo run's first core wave (4) fits
+            // underneath it untouched. The rings' own ceilings, 24 and 16, are
+            // reached later in both runs as the clock raises the step.
+            const ulong MultiGoldenHash = 0x06FA4F44F3722466UL; // = 502801465965945958
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
@@ -608,16 +1530,30 @@ namespace Ring.Simulation.Tests
             // instead of reading the accumulated buffer once at the end.
             SimConfig cfg = TestConfigs.Default();
             var world = new SimulationWorld(42, cfg);
+            // Same start RunScripted states (Ф5-0) — this test only means
+            // anything if it runs the very scenario the golden pins.
+            TestWorlds.RelocatePlayerForTest(world, 0, ScenarioStart(in cfg));
             var rng = new Random(123);
             bool aimHeld = false; // LOCAL, same no-static-leak reasoning as RunScripted's own
 
             int dashRicochetCount = 0;
             int headshotProjectileHits = 0;
             bool anyAimedProjectileFired = false; // VelZ != 0 -> the AimHeld branch actually spawned a shot
+            // Ф5-0: the scenario's own proof that it never sets foot in the
+            // core. ScenarioStart checks the START; this checks all 1000 ticks
+            // of wandering that follow it, which is the half a start position
+            // cannot promise. From Т21 on a live collector inside the core
+            // activates the Director (Р299) — that would move the digest this
+            // file pins, and both re-pin sanctions are spent (see the golden's
+            // own account), so the day the run drifts in, THIS is the test
+            // that says so.
+            Zone deepestZone = Zone.Outer;
 
             for (int i = 0; i < Ticks; i++)
             {
                 world.Tick(Scripted(ref rng, ref aimHeld, cfg.Hero.MaxAimHeight));
+                Zone here = Geometry.ZoneOf(world.Player.Pos, in cfg.Arena);
+                if (here > deepestZone) deepestZone = here;
 
                 for (int e = 0; e < world.EventCount; e++)
                 {
@@ -634,6 +1570,8 @@ namespace Ring.Simulation.Tests
                 }
             }
 
+            Assert.AreNotEqual(Zone.Core, deepestZone,
+                "the scripted scenario must never enter the core — the Director's own ground (Р299)");
             Assert.Greater(world.Stats.SlidesUsed, 0,
                 "the golden scenario must actually exercise sliding, not leave it dormant");
             Assert.Greater(world.Stats.DashesUsed, 0,
@@ -643,6 +1581,24 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(headshotProjectileHits >= 1 || anyAimedProjectileFired,
                 "the golden scenario must either land a Head-zone hit, or at minimum fire at " +
                 "least one aimed (VelZ != 0) shot, proving the AimHeld branch actually fired");
+        }
+
+        /// Ф5-0: the two premises ScenarioStart leans on, checked rather than
+        /// asserted in prose. Both are about the ARENA, so a retune of the
+        /// circle layout or of the zone radii fails HERE, with a message
+        /// naming what broke, instead of silently moving a golden digest.
+        [Test]
+        public void ScenarioStart_IsClearOfTheCoreAndInsideTheArena()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            float2 start = ScenarioStart(in cfg);
+            float dist = math.length(start);
+
+            Assert.AreEqual(Zone.Outer, Geometry.ZoneOf(start, in cfg.Arena),
+                "the scripted scenario must start in the OUTER ring — a live collector in the core " +
+                "activates the Director (Р299), and this digest must not depend on that");
+            Assert.Less(dist + cfg.Hero.Radius, cfg.Arena.Radius,
+                "the start must be inside the arena rim, body included");
         }
 
         [Test]

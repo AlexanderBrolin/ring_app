@@ -19,7 +19,7 @@ namespace Ring.Simulation.Tests
         /// the sweep entry away from the geometry above.
         static SimulationWorld SpawnPair(float chaserX, float gunnerX, out SimConfig cfg)
         {
-            cfg = TestConfigs.Open();
+            cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
             cfg.Gunner.MaxSpeed = 0f;
             cfg.Gunner.StrafeSpeed = 0f;
@@ -33,7 +33,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Projectile_WithVelZ_AdvancesHeightPerTick()
         {
-            var w = new SimulationWorld(1, TestConfigs.Open());
+            var w = new SimulationWorld(1, TestConfigs.OpenField());
             w.SpawnProjectileForTest(ProjectileOwner.Player,
                 new float2(0f, 0f), new float2(10f, 0f),
                 height: 1f, velZ: -3f, damage: 1f, radius: 0.1f, ttl: 5f);
@@ -60,8 +60,18 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(1, w.MobCount);
             Assert.AreEqual(MobType.Chaser, w.Mobs[0].Type);
-            // the Chaser was passed over, not merely survived
-            Assert.AreEqual(cfg.Chaser.MaxHp, w.Mobs[0].Hp, 1e-4f);
+            // Stage 3 Task 5 (spec Р252, coordinator R-21 — legitimate consequence
+            // of friendly fire, reproduced arithmetically before touching this
+            // number): the Gunner sits at distance 9 m from the player, squarely
+            // inside its own PreferredRange +- RangeTolerance ([7.5, 10.5]), with
+            // clear LoS (Open() — no obstacles) and FireCooldown starting at 0 —
+            // it fires its own round back at the player BEFORE the player's
+            // headshot kills it, and that round's straight line back to the
+            // player passes through the very Chaser screening it (6.5 m out, same
+            // y = 0 line). Friendly fire lets THAT round connect, for the
+            // Gunner's own ProjectileDamage (8) — MaxHp 30 - 8 = 22, not the old
+            // "passed over, never touched" 30.
+            Assert.AreEqual(cfg.Chaser.MaxHp - cfg.Gunner.ProjectileDamage, w.Mobs[0].Hp, 1e-4f);
         }
 
         [Test]
@@ -75,15 +85,25 @@ namespace Ring.Simulation.Tests
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.AreEqual(2, w.MobCount); // nobody died
-            Assert.AreEqual(cfg.Chaser.MaxHp - cfg.Weapon.Damage * cfg.Chaser.BodyDamageMult,
-                w.Mobs[0].Hp, 1e-4f);       // the Chaser took the body hit
+            // Stage 3 Task 5 (spec Р252, coordinator R-21 — same mechanism as
+            // GunnerHeadOverCrowd_HitFromFarChaser above, reproduced
+            // arithmetically): the Chaser screens the player's own round (body
+            // hit, MaxHp - Weapon.Damage * BodyDamageMult) exactly as before —
+            // but the Gunner it shielded SURVIVES that screening (never hit by
+            // the player at all) and is itself in range (9 m) with clear LoS, so
+            // it fires its own round back at the player. That round's straight
+            // line passes through the SAME screening Chaser (2 m out, same
+            // y = 0 line) a second time, landing the Gunner's own
+            // ProjectileDamage (8) on top of the player's body hit.
+            Assert.AreEqual(cfg.Chaser.MaxHp - cfg.Weapon.Damage * cfg.Chaser.BodyDamageMult
+                - cfg.Gunner.ProjectileDamage, w.Mobs[0].Hp, 1e-4f);
             Assert.AreEqual(cfg.Gunner.MaxHp, w.Mobs[1].Hp, 1e-4f); // the Gunner is untouched
         }
 
         [Test]
         public void Graze_AtHeadTopPlusRadius_HitsAsHead()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
             float column = cfg.Chaser.HeadTop + cfg.Weapon.ProjectileRadius;
 
@@ -115,7 +135,7 @@ namespace Ring.Simulation.Tests
             // round a projectile-radius short of that — well before the Chaser
             // parked at x = 6 m — so the mob behind the contact point is
             // untouched (Task 7 self-review: floor-vs-mob ordering).
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
@@ -142,7 +162,7 @@ namespace Ring.Simulation.Tests
             // path from the floor one) straight out to the ring wall: the
             // contact height stays pinned at muzzle height, and HitDir carries
             // the real SweepArena normal instead of the pre-Task 7 zero placeholder.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             // Stage 2 Task 16: the ring has to stay INSIDE one round's reach
             // (ProjectileSpeed x ProjectileLifetime) or the shot simply expires
             // in flight and never reports a wall block at all — at Arena.Radius
@@ -177,7 +197,7 @@ namespace Ring.Simulation.Tests
             // short of the aimed point along the line. The fixture shrinks
             // ProjectileRadius so that offset stays well inside the tolerance and
             // this assert measures aim accuracy, not sphere size.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Weapon.ProjectileRadius = 0.01f;
             var w = new SimulationWorld(1, cfg);
             var p = w.Player;
@@ -206,7 +226,7 @@ namespace Ring.Simulation.Tests
             // Hip fire keeps the flat Phase-1 geometry: the round leaves the
             // standing muzzle horizontally whatever height the (unheld) aim
             // carries — AimHeight is the aimed branch's input alone.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             w.Tick(new SimInput { AimPoint = new float2(10f, 0f),
                                   AimHeight = cfg.Hero.MaxAimHeight, FireHeld = true });
@@ -224,7 +244,7 @@ namespace Ring.Simulation.Tests
         {
             // Mid-slide the hero is low to the ground, so the shot leaves the
             // slide muzzle height instead of the standing one.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             Assert.IsTrue(cfg.Weapon.CanFireWhileSlide,
                 "fixture: this weapon must be allowed to fire mid-slide");
             var w = new SimulationWorld(1, cfg);
@@ -242,7 +262,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EqualT_TieBreaksLowerIndex()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
             var w = new SimulationWorld(1, cfg);
             // mirrored across the firing line (so both circles are entered at a

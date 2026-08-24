@@ -73,9 +73,9 @@ namespace Ring.Simulation.Tests
 
         static SnapshotQueue NewQueue(out NetTimings timings, int interpBufferTicks = 3)
         {
-            var arena = TestConfigs.DefaultArena();
+            var cfg = TestConfigs.Default();
             timings = Timings(interpBufferTicks);
-            return new SnapshotQueue(in arena, in timings);
+            return new SnapshotQueue(in cfg, in timings);
         }
 
         /// Minimal `EventRecord` fixture. `EventDedup.TryAcceptEvent` only
@@ -138,9 +138,9 @@ namespace Ring.Simulation.Tests
         [Test]
         public void RingDepth_IsInterpBufferTicksPlusTwo()
         {
-            var arena = TestConfigs.DefaultArena();
+            var cfg = TestConfigs.Default();
             var timings = Timings(interpBufferTicks: 3);
-            var queue = new SnapshotQueue(in arena, in timings);
+            var queue = new SnapshotQueue(in cfg, in timings);
 
             Assert.AreEqual(timings.InterpBufferTicks + 2, queue.Depth,
                 "Р37: the ring holds InterpBufferTicks + 2 ticks of history — 5 at the shipped "
@@ -812,6 +812,27 @@ namespace Ring.Simulation.Tests
             // exactly like Players/PlayerStats above.
             { nameof(RenderSnapshot.PlayerKnown), nameof(RenderSnapshot.PlayerCount) },
             { nameof(RenderSnapshot.PlayerAliveInMatch), nameof(RenderSnapshot.PlayerCount) },
+            // Playtest В1 round two (bd `app-1kei`): who walked out is the
+            // third per-slot flag, bounded by the same roster as the two above.
+            { nameof(RenderSnapshot.PlayerExtractedInMatch), nameof(RenderSnapshot.PlayerCount) },
+            // Stage 3 Т6: ground pickups, bounded by their own count exactly
+            // like Mobs/Projectiles above.
+            { nameof(RenderSnapshot.Pickups), nameof(RenderSnapshot.PickupCount) },
+            // Stage 3 Т14: containers, same bounded-by-their-own-count shape.
+            { nameof(RenderSnapshot.Containers), nameof(RenderSnapshot.ContainerCount) },
+            { nameof(RenderSnapshot.ContainerIsEmpty), nameof(RenderSnapshot.ContainerCount) },
+            // Stage 3 Т32б: the three arrays the five decoded blocks landed in.
+            // The owner's pack and the interiors are each bounded by their own
+            // count exactly like the entity arrays above; the interiors' ITEM
+            // POOL is bounded by its own count too, and deliberately not by the
+            // records that address it — a record's ItemOffset points INTO this
+            // pool, so bounding the pool by the records would be a derivation
+            // where a count already exists.
+            { nameof(RenderSnapshot.InventoryItems), nameof(RenderSnapshot.InventoryItemCount) },
+            { nameof(RenderSnapshot.ContainerInteriors),
+                nameof(RenderSnapshot.ContainerInteriorCount) },
+            { nameof(RenderSnapshot.ContainerInteriorItems),
+                nameof(RenderSnapshot.ContainerInteriorItemCount) },
         };
 
         /// Fills every field of `s` with a distinct, non-default value so a
@@ -839,6 +860,7 @@ namespace Ring.Simulation.Tests
             {
                 s.PlayerKnown[i] = true;
                 s.PlayerAliveInMatch[i] = true;
+                s.PlayerExtractedInMatch[i] = true;
             }
             s.LocalPlayerIndex = s.PlayerCount > 1 ? 1 : 0;
             s.MobCount = math.min(2, arena.MaxMobs);
@@ -860,14 +882,57 @@ namespace Ring.Simulation.Tests
                     Pos = new float2(3f + i, 4f + i),
                     Damage = 9f + i,
                 };
+            // Stage 3 Т6: the pickup array and the match's flow state, the two
+            // fields RenderSnapshot grew with the extraction economy. Both are
+            // filled with values no constructor could have left behind
+            // (nonzero id/amount, a phase past Farm) so the guard below can
+            // tell "copied" from "never written".
+            s.PickupCount = math.min(2, arena.MaxPickups);
+            for (int i = 0; i < s.PickupCount; i++)
+                s.Pickups[i] = new PickupState
+                {
+                    Id = 300 + i,
+                    Pos = new float2(5f + i, 6f + i),
+                    Kind = PickupKind.EnergyCell,
+                    Amount = 7 + i,
+                    Ttl = 42.5f + i,
+                };
+            // Stage 3 Т14: the container array RenderSnapshot grew for the
+            // container economy — same "distinct nonzero values, never a
+            // constructor default" discipline as Pickups above.
+            s.ContainerCount = math.min(2, arena.MaxContainers);
+            for (int i = 0; i < s.ContainerCount; i++)
+                s.Containers[i] = new ContainerState
+                {
+                    Id = 400 + i,
+                    Pos = new float2(8f + i, 9f + i),
+                    Kind = ContainerKind.Crate,
+                    SlotCount = (byte)(1 + i),
+                    Ttl = 12.5f + i,
+                };
+            // Stage 3 Т32б: `true` for every described box, for the reason the
+            // PlayerKnown/PlayerAliveInMatch filler above states — `false` IS
+            // this type's default and would leave the guard unable to tell
+            // "copied" from "never written".
+            for (int i = 0; i < s.ContainerCount; i++) s.ContainerIsEmpty[i] = true;
+            s.Match = new MatchState { Phase = MatchPhase.GateOpen, DirectorDeathTick = 77 };
+            // Stage 3 Task 11 (errata A-I6) / bd app-ggvz Т3: the debt grew
+            // from two named fields to nine (zone x archetype) and then, when
+            // the zone moved out of the field names into the index of a
+            // per-zone WaveState instance, back to three -- and the frame
+            // carries the world AGGREGATE of the three, one plain WaveState.
+            // Every field gets a distinct nonzero value here, same "no field
+            // left at its constructor default" discipline the rest of this
+            // filler follows.
             s.Wave = new WaveState
             {
                 Phase = WavePhase.Active,
                 WaveIndex = 3,
-                PendingChasers = 2,
-                PendingGunners = 1,
+                PendingChaser = 2,
+                PendingGunner = 1,
+                PendingElite = 4,
                 AliveCount = 5,
-                PhaseTimer = 1.25f,
+                PhaseTicks = 6,
             };
             for (int i = 0; i < s.PlayerCount; i++)
                 s.PlayerStats[i] = new MatchStats
@@ -882,15 +947,55 @@ namespace Ring.Simulation.Tests
                     DamageTaken = 33.5f,
                 };
             s.WorldStats = new WorldStats { WavesCleared = 2, MobSpawnsSkipped = 1, ProjectileSpawnsSkipped = 4 };
+            // Stage 3 Т32б: the five blocks' own fields. Same discipline as
+            // everything above — nothing left at a value a constructor could
+            // have produced.
+            //
+            // `MatchSecondsRemaining` is filled with a PLAUSIBLE COUNTDOWN and
+            // not with `MatchCountdown.None`: the sentinel is what an untouched
+            // frame reads, so a `CopyFrom` that skipped the field would agree
+            // with the source by accident. (The constructor writes the sentinel
+            // and `AssertEveryFieldIsNonDefault` only rejects `default(int)`,
+            // which the sentinel is not — hence stating this here rather than
+            // relying on the guard to notice.)
+            s.MatchSecondsRemaining = 421;
+            s.DirectorAlive = true;
+            s.InventorySlotPoints = 5;
+            s.InventoryItemCount = math.min(2, s.InventoryItems.Length);
+            for (int i = 0; i < s.InventoryItemCount; i++)
+                s.InventoryItems[i] = (byte)(11 + i);
+            s.ContainerInteriorCount = math.min(2, s.ContainerInteriors.Length);
+            s.ContainerInteriorItemCount = 0;
+            for (int i = 0; i < s.ContainerInteriorCount; i++)
+            {
+                // Two occupied slots apiece, so the pool carries something for
+                // every record and the offsets differ between them.
+                s.ContainerInteriors[i] = new ContainerInterior
+                {
+                    Id = 500 + i,
+                    OccupancyMask = (byte)0b0000_0011,
+                    ItemOffset = s.ContainerInteriorItemCount,
+                    ItemCount = 2,
+                };
+                s.ContainerInteriorItems[s.ContainerInteriorItemCount++] = (byte)(21 + i);
+                s.ContainerInteriorItems[s.ContainerInteriorItemCount++] = (byte)(31 + i);
+            }
         }
 
         /// `value == default(T)` for a boxed value of any VALUE type the
         /// fixture might produce (int/uint/float/bool/byte, enums, `float2`,
         /// and the plain structs `PlayerState`/`MobState`/`ProjectileState`/
-        /// `WaveState`/`MatchStats`/`WorldStats` — none of them nest a
-        /// reference type, confirmed by inspection of `Simulation/Core/
-        /// SimStates.cs`, so comparing against a freshly-activated instance of
-        /// the same type is exact). A REFERENCE type this helper was never
+        /// `PickupState`/`ContainerState`/`WaveState`/`MatchState`/
+        /// `MatchStats`/`WorldStats`, and `ContainerInterior` since Т32б —
+        /// none of them nest a reference type, confirmed by inspection of
+        /// `Simulation/Core/SimStates.cs` and `RenderSnapshot.cs`, so comparing
+        /// against a freshly-activated instance of the same type is exact. The
+        /// backpack OBJECT (`Loot.Inventory`) is still the one piece of world
+        /// state that is a reference type and it still never reaches a render
+        /// frame — see `SimulationWorld.CaptureSnapshot`'s own note. What Т32б
+        /// put in the frame is its CONTENTS, as a `byte[]` of item ids, which
+        /// this helper meets one element at a time like any other mapped array.
+        /// A REFERENCE type this helper was never
         /// taught to compare fails LOUDLY (fix-round 1, IMPORTANT #3:
         /// "unknown type = loud Fail demanding the filler be taught") rather
         /// than silently reporting a wrong answer.
@@ -947,9 +1052,10 @@ namespace Ring.Simulation.Tests
         [Test]
         public void CopyFrom_CopiesEveryPublicField_ByReflection()
         {
-            var arena = TestConfigs.DefaultArena();
-            var source = new RenderSnapshot(in arena);
-            var dest = new RenderSnapshot(in arena);
+            var cfg = TestConfigs.Default();
+            ArenaSimConfig arena = cfg.Arena;
+            var source = new RenderSnapshot(in cfg);
+            var dest = new RenderSnapshot(in cfg);
             FillDistinctValues(source, in arena);
             AssertEveryFieldIsNonDefault(source); // fix-round 1 IMPORTANT #3 guard
 

@@ -179,7 +179,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void MobDied_DeliveredInHysteresisBand()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
@@ -245,7 +245,7 @@ namespace Ring.Simulation.Tests
             // test kills a real mob through the DamageMob seam (internal,
             // visible to tests via InternalsVisibleTo) to make that trap
             // observable.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             int mobId = w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f)); // clearly visible
 
@@ -306,7 +306,7 @@ namespace Ring.Simulation.Tests
             // over-generalization of 4b — would have broken every MobSpawned
             // delivery, always, with the whole suite green. Both arms are
             // asserted here for the same reason 4b asserts both of its own.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
 
             // Tick N: the world has no mobs at all yet.
@@ -653,6 +653,20 @@ namespace Ring.Simulation.Tests
                 [SimEventKind.PlayerDied] = DeliveryChannel.Visible,
                 [SimEventKind.WaveStarted] = DeliveryChannel.All,
                 [SimEventKind.WaveCleared] = DeliveryChannel.All,
+                // Stage 3 Т21: the raid's own two turning points, same channel
+                // as the wave pair above and for the same reason (spec §3.4).
+                [SimEventKind.DirectorActivated] = DeliveryChannel.All,
+                [SimEventKind.DirectorDied] = DeliveryChannel.All,
+                [SimEventKind.PlayerExtracted] = DeliveryChannel.Visible,
+                // Stage 3 Т29: a collected cell is the COLLECTOR's own
+                // business (Owner addresses by ev.PlayerIndex), an emptied box
+                // is news for whoever can SEE it — never All, which would tell
+                // a player across the arena that somebody is standing there.
+                [SimEventKind.PickupTaken] = DeliveryChannel.Owner,
+                // R-236: delivered BY visibility, but not decidable in this
+                // table — the container id space is not the one ShouldDeliver
+                // is handed. See ContainerEmptied_IsDecidedByTheAssembler_*.
+                [SimEventKind.ContainerEmptied] = DeliveryChannel.None,
                 [SimEventKind.ProjectileFired] = DeliveryChannel.None,
                 [SimEventKind.ProjectileHit] = DeliveryChannel.None,
                 [SimEventKind.ProjectileBlocked] = DeliveryChannel.None,
@@ -667,6 +681,129 @@ namespace Ring.Simulation.Tests
                     "(and to ChannelFor's switch), not left to fall through to a silent default");
                 Assert.AreEqual(expected[kind], EventRelevance.ChannelFor(kind), $"{kind} must route to its Р28 channel");
             }
+        }
+
+        // --- 10a-c: Stage 3 Т29, the raid's own kinds ---
+
+        /// Plan Т29 routes DirectorActivated/DirectorDied to `All` and
+        /// carries no position with them. BOTH halves are asserted, because they fail independently: an
+        /// implementation routing them correctly while leaking `ev.Pos` would
+        /// tell every client where the collector who woke the Director was
+        /// standing, which is exactly what Р299 refused to put on the wire.
+        [Test]
+        public void DirectorEvents_ReachEveryoneWithoutAPosition()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, 2);
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
+
+            foreach (SimEventKind kind in new[] { SimEventKind.DirectorActivated, SimEventKind.DirectorDied })
+            {
+                Assert.AreEqual(DeliveryChannel.All, EventRelevance.ChannelFor(kind), $"{kind} is announced to the raid");
+
+                // A position that is emphatically NOT the origin, so "no
+                // position" cannot be confused with "the emitter passed zero".
+                var ev = new SimEvent { Kind = kind, Pos = new float2(37f, -19f) };
+                // The observer is slot 1 — not the emitter, not slot 0
+                // (lesson 227): a rule keyed on "self" would pass on slot 0.
+                Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, 1, w, observerSet, cfg.Visibility,
+                    out float2 delivered), $"{kind} reaches a player who can see nothing at all");
+                Assert.AreEqual(float2.zero, delivered,
+                    $"{kind} must arrive WITHOUT its position — Р28's All channel carries none, and the "
+                    + "position it would carry is the spot a collector stood on");
+            }
+        }
+
+        /// Plan Т29: "PickupTaken — Owner". The collector learns; nobody else
+        /// does, because the other two already see the cell leave the Pickups
+        /// block and telling them WHO took it says somebody was standing
+        /// there (CR 4).
+        [Test]
+        public void PickupTaken_ReachesOnlyTheCollector()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, 2);
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
+
+            Assert.AreEqual(DeliveryChannel.Owner, EventRelevance.ChannelFor(SimEventKind.PickupTaken));
+
+            // The collector is slot 1, the bystander slot 0 — the subject is
+            // the SECOND element (lesson 227).
+            var ev = new SimEvent
+            {
+                Kind = SimEventKind.PickupTaken,
+                Pos = new float2(4f, 2f),
+                EntityId = 77,
+                PlayerIndex = 1,
+            };
+
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 1, 1, w, observerSet, cfg.Visibility,
+                out float2 toOwner), "the collector is told what they picked up");
+            Assert.AreEqual(ev.Pos, toOwner, "…with the cell's own position");
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, 0, w, observerSet, cfg.Visibility, out _),
+                "and nobody else is — the Owner channel is addressed by ev.PlayerIndex");
+        }
+
+        /// Plan Т29 asks for "ContainerEmptied — Visible", and it IS
+        /// delivered by visibility — but NOT by this table (R-236). Since Т26
+        /// there are three visibility sets, `ShouldDeliver` is handed only the
+        /// MOBS one, and a container id resolved against it would match
+        /// whichever mob happened to share the number. `None` is this file's
+        /// own word for "decided elsewhere", exactly as it is for the
+        /// projectile kinds, and the decision lives in `SnapshotAssembler`
+        /// against `ContainersCurrent`.
+        ///
+        /// THE THROW IS THE CONTRACT, not an accident: a `None` kind reaching
+        /// the seam is a caller that forgot to decide, and a silent `false`
+        /// there would be indistinguishable from an honest "nobody nearby".
+        [Test]
+        public void ContainerEmptied_IsDecidedByTheAssembler_NotByThisTable()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
+
+            Assert.AreEqual(DeliveryChannel.None,
+                EventRelevance.ChannelFor(SimEventKind.ContainerEmptied));
+
+            var ev = new SimEvent { Kind = SimEventKind.ContainerEmptied, Pos = new float2(3f, 0f), EntityId = 7 };
+            Assert.Throws<System.ArgumentException>(() =>
+                    EventRelevance.ShouldDeliver(ev, 0, 0, w, observerSet, cfg.Visibility, out _),
+                "a None kind must THROW here rather than answer quietly — the assembler owns this one");
+        }
+
+        /// A collector walking out routes to Visible (owner decision R-230,
+        /// against the plan's `All`: an extraction is an event about a body at
+        /// a place, not an announcement to the raid) — and, since Т29 gave the
+        /// kind a wire entry, `ShouldDeliver` really is reached with it now.
+        /// Before that it never was, and `VisibleSubjectId` had no case for
+        /// it: the first frame a raid ended in would have thrown inside a
+        /// server tick.
+        [Test]
+        public void PlayerExtracted_IsDeliveredByTheExtractedPlayersOwnVisibility()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, 3);
+            var observerSet = new VisibilitySet(TestWorlds.Capacity(cfg));
+            // Slot 1 walked out; slot 2 can see them, slot 0 cannot — the
+            // subject is the SECOND element (lesson 227).
+            observerSet.Add(VisibilityIds.ForPlayer(1));
+
+            var ev = new SimEvent
+            {
+                Kind = SimEventKind.PlayerExtracted,
+                Pos = new float2(9f, 4f),
+                PlayerIndex = 1,
+            };
+
+            Assert.AreEqual(DeliveryChannel.Visible, EventRelevance.ChannelFor(SimEventKind.PlayerExtracted));
+            Assert.IsTrue(EventRelevance.ShouldDeliver(ev, 2, 2, w, observerSet, cfg.Visibility, out float2 pos),
+                "an observer who can see the collector is told they walked out");
+            Assert.AreEqual(ev.Pos, pos, "…at the portal they left from");
+
+            var blindSet = new VisibilitySet(TestWorlds.Capacity(cfg));
+            Assert.IsFalse(EventRelevance.ShouldDeliver(ev, 0, 0, w, blindSet, cfg.Visibility, out _),
+                "and one who cannot see them is not");
         }
 
         // --- 11: DeadObserver_ResolvesOwnPositionForAudibility ---

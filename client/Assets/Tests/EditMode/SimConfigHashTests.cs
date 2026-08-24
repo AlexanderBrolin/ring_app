@@ -10,43 +10,135 @@ namespace Ring.Simulation.Tests
 {
     public class SimConfigHashTests
     {
+        // Stage 3 Task 13 (coordinator R-93): SPLIT by section — was one
+        // monolithic EveryConfigNumberAffectsHash (spec §3.8/§3.15, Р52 —
+        // flagman). A single reflection sweep over all twelve sections
+        // stops at the FIRST mismatch (Assert.AreNotEqual throws), which is
+        // a genuine COVERAGE gap, not a rerun inconvenience — the exact
+        // class of finding R-41 (Т8, ZoneOf_OnExactBoundary) and F1 (Т11,
+        // SpawnRing_OfZone) already cost this project twice: a monolith
+        // hides every OTHER gap behind whichever one happens to sort first,
+        // and it collapses "remove one Add call" mutations across five
+        // different sections into a single shared victim, where R-25's own
+        // exact-set-equality criterion needs FIVE independent ones. Same
+        // reflection-sweep SHAPE as WorldLifecycleTests.
+        // EveryPlayerAndStatsFieldAffectsHash (:44-169) in every method
+        // below — bump one field of a freshly-built fixture, recompute,
+        // assert the hash moved, name the exact path on failure. Each
+        // section's own call also asserts WHICH array-typed fields it
+        // skipped: the sweep cannot bump an array in place, so it hands
+        // them to the element-wise helpers alongside it — a new array field
+        // added to a section later would otherwise be skipped SILENTLY by
+        // both, hashed by nothing and caught by nothing (fix-round finding
+        // of the coordinator; the field-count guard below only watches the
+        // top level).
         [Test]
-        public void EveryConfigNumberAffectsHash() // spec §3.8/§3.15, Р52 — flagman
-        {
-            // Same reflection-sweep SHAPE as WorldLifecycleTests.
-            // EveryPlayerAndStatsFieldAffectsHash (:44-169) — bump one field
-            // of a freshly-built fixture, recompute, assert the hash moved,
-            // name the exact path on failure. SimConfig nests one level
-            // deeper (section -> field, and for Arena, section -> array
-            // field -> element), so the sweep runs once per SECTION rather
-            // than over one flat type.
-            // Each call also asserts WHICH array-typed fields it skipped:
-            // the sweep cannot bump an array in place, so it hands them to
-            // the element-wise helpers below — and a sixth array field
-            // added to a section later would otherwise be skipped SILENTLY
-            // by both, hashed by nothing and caught by nothing (fix-round
-            // finding of the coordinator; the seven-section guard below
-            // only watches the top level).
-            AssertSectionAffectsHash("Hero");
-            AssertSectionAffectsHash("Weapon");
-            AssertSectionAffectsHash("Chaser");
-            AssertSectionAffectsHash("Gunner");
-            AssertSectionAffectsHash("Wave");
-            AssertSectionAffectsHash("Arena", // scalar fields only — arrays below
-                "ObstaclePos", "ObstacleRadius", "WallA", "WallB", "WallHalfWidth");
-            AssertSectionAffectsHash("Visibility");
+        public void EveryConfigNumberAffectsHash_Hero() => AssertSectionAffectsHash("Hero");
 
-            // Arena's five array fields: every element (both float2
-            // components where relevant) AND the length itself (appending
-            // an element) — coordinator decision, task-23-brief §2.3:
-            // hashing "up to the count" would leave a genuinely longer
-            // array's tail invisible.
+        [Test]
+        public void EveryConfigNumberAffectsHash_Weapon() => AssertSectionAffectsHash("Weapon");
+
+        [Test]
+        public void EveryConfigNumberAffectsHash_Chaser() => AssertSectionAffectsHash("Chaser");
+
+        [Test]
+        public void EveryConfigNumberAffectsHash_Gunner() => AssertSectionAffectsHash("Gunner");
+
+        [Test]
+        public void EveryConfigNumberAffectsHash_Wave()
+        {
+            // Task Т2 (app-ggvz, spec §3.8): WavePauseByZone/MaxAliveByZone
+            // are skipped-by-the-sweep array fields, each covered by its own
+            // dedicated element-wise helper below. MaxSpawnsPerZonePerTick/
+            // DifficultyStepSeconds are plain scalars —
+            // AssertSectionAffectsHash's own reflection sweep already reaches
+            // them with no test-code change needed, the same way it already
+            // reaches BaseCount/GunnerShareBase/etc.
+            //
+            // ⚠ Т4: ZoneWeights was the third array here and is gone with the
+            // shared wave budget (owner decision К3). Its name had to leave
+            // BOTH lines — the skip-set is checked by NAME against the
+            // section's real fields, so a stale entry is itself a failure.
+            AssertSectionAffectsHash("Wave", "WavePauseByZone", "MaxAliveByZone");
+            AssertFloatArrayFieldAffectsHash("Wave", "WavePauseByZone");
+            AssertInt32ArrayFieldAffectsHash("Wave", "MaxAliveByZone");
+        }
+
+        [Test]
+        public void EveryConfigNumberAffectsHash_Arena()
+        {
+            AssertSectionAffectsHash("Arena", // scalar fields only — arrays below
+                "ObstaclePos", "ObstacleRadius", "WallA", "WallB", "WallHalfWidth",
+                "ZoneRadius", "ZoneWallRadius", "ZoneWallHalfWidth",
+                "ZoneWallDoorStart", "ZoneWallDoorCount",
+                "DoorCenterRad", "DoorFreeWidth",
+                "ExtractPos", "ExtractZone", "ExtractKind");
+
+            // Every element (both float2 components where relevant) AND the
+            // length itself (appending an element) — coordinator decision,
+            // task-23-brief §2.3: hashing "up to the count" would leave a
+            // genuinely longer array's tail invisible.
             AssertFloat2ArrayFieldAffectsHash("Arena", "ObstaclePos");
             AssertFloatArrayFieldAffectsHash("Arena", "ObstacleRadius");
             AssertFloat2ArrayFieldAffectsHash("Arena", "WallA");
             AssertFloat2ArrayFieldAffectsHash("Arena", "WallB");
             AssertFloatArrayFieldAffectsHash("Arena", "WallHalfWidth");
+
+            // Stage 3 Task 13 (owner decision R-17/R-90): the eleven arrays
+            // that rode the "pending" stretch test since Т8/Т11 — TestConfigs.
+            // Default() carries real, non-empty zone/door/portal data since
+            // Т12 (DefaultArena's own layout), so no hand-built fixture is
+            // needed here the way the removed stretch test's
+            // MakeConfigWithZones() once was.
+            AssertFloatArrayFieldAffectsHash("Arena", "ZoneRadius");
+            AssertFloatArrayFieldAffectsHash("Arena", "ZoneWallRadius");
+            AssertFloatArrayFieldAffectsHash("Arena", "ZoneWallHalfWidth");
+            AssertInt32ArrayFieldAffectsHash("Arena", "ZoneWallDoorStart");
+            AssertInt32ArrayFieldAffectsHash("Arena", "ZoneWallDoorCount");
+            AssertFloatArrayFieldAffectsHash("Arena", "DoorCenterRad");
+            AssertFloatArrayFieldAffectsHash("Arena", "DoorFreeWidth");
+            AssertFloat2ArrayFieldAffectsHash("Arena", "ExtractPos");
+            AssertByteArrayFieldAffectsHash("Arena", "ExtractZone");
+            AssertByteArrayFieldAffectsHash("Arena", "ExtractKind");
         }
+
+        [Test]
+        public void EveryConfigNumberAffectsHash_Visibility() => AssertSectionAffectsHash("Visibility");
+
+        [Test]
+        public void EveryConfigNumberAffectsHash_Flow() => AssertSectionAffectsHash("Flow");
+
+        // Stage 3 Task 13 (owner decision R-17): Elite/Director wire into
+        // the hash alongside everything else this task lifts in one move.
+        // MobSimConfig's field NAMES are shared 1:1 with Chaser/Gunner's own
+        // already-hashed section, but that is harmless here —
+        // AssertSectionAffectsHash mutates ONE named section's own copy of
+        // TestConfigs.Default() per call, never Chaser's/Gunner's.
+        [Test]
+        public void EveryConfigNumberAffectsHash_Elite() => AssertSectionAffectsHash("Elite");
+
+        [Test]
+        public void EveryConfigNumberAffectsHash_Director() => AssertSectionAffectsHash("Director");
+
+        [Test]
+        public void EveryConfigNumberAffectsHash_Loot()
+        {
+            // Three array fields (DropChance, CellsPerMob, TransferSeconds)
+            // join the same "skip the scalar sweep, cover with a dedicated
+            // element-wise helper" convention as every other section's
+            // arrays.
+            AssertSectionAffectsHash("Loot", "DropChance", "CellsPerMob", "TransferSeconds");
+            AssertFloatArrayFieldAffectsHash("Loot", "DropChance");
+            AssertInt32ArrayFieldAffectsHash("Loot", "CellsPerMob");
+            AssertFloatArrayFieldAffectsHash("Loot", "TransferSeconds");
+        }
+
+        // Stage 3 Task 13: SimConfig.Items is a TOP-LEVEL array (not nested
+        // under a section struct), so it cannot go through
+        // AssertSectionAffectsHash/Section() the way every array above
+        // does — its own dedicated element-wise check.
+        [Test]
+        public void EveryConfigNumberAffectsHash_Items() => AssertItemsArrayAffectsHash();
 
         [Test]
         public void SameConfig_SameHash()
@@ -116,18 +208,30 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void SimConfig_CarriesExactlySevenSections() // Р52 guard
+        public void SimConfig_CarriesExactlyTwelveFields() // Р52 guard
         {
-            // A network config (or any 8th section) landing inside
-            // SimConfig would enter SimConfigHash automatically, and a
-            // change like NetConfig's own LatencySimRttMs would then break
-            // a match on a balance-hash mismatch for a purely dev/deploy
-            // knob — that must be an OWNER decision (Р52), never a silent
-            // side effect of adding a field. This is a characterization
-            // guard: it pins the current field set by name, so an eighth
-            // section fails loudly and asks for that decision instead of
-            // shipping quietly.
-            string[] expected = { "Hero", "Weapon", "Chaser", "Gunner", "Wave", "Arena", "Visibility" };
+            // A network config (or any further section) landing inside
+            // SimConfig would enter SimConfigHash automatically if Compute()
+            // ever grew reflective, and a change like NetConfig's own
+            // LatencySimRttMs would then break a match on a balance-hash
+            // mismatch for a purely dev/deploy knob — that must be an OWNER
+            // decision (Р52), never a silent side effect of adding a field.
+            // This is a characterization guard: it pins the current field
+            // set by name, so a THIRTEENTH field fails loudly and asks for
+            // that decision instead of shipping quietly.
+            //
+            // RENAMED (Stage 3 Task 13, coordinator "name the guard so the
+            // body and the name agree" requirement): eleven of the twelve
+            // fields below ARE sections (a struct nested one level), but
+            // `Items` is a bare top-level array — "TwelveSections" would
+            // have kept lying about the shape the moment `Items` joined.
+            // "TwelveFields" is true regardless of what shape any one of
+            // them takes.
+            string[] expected =
+            {
+                "Hero", "Weapon", "Chaser", "Gunner", "Wave", "Arena", "Visibility", "Flow",
+                "Elite", "Director", "Loot", "Items",
+            };
             FieldInfo[] fields = typeof(SimConfig).GetFields();
             string[] actual = new string[fields.Length];
             for (int i = 0; i < fields.Length; i++) actual[i] = fields[i].Name;
@@ -167,6 +271,14 @@ namespace Ring.Simulation.Tests
 
         // ---- reflection sweep helpers (WorldLifecycleTests-style — see flagman doc) ----
 
+        /// Stage 3 Task 13 (owner decision R-17/R-90): the flat, name-only
+        /// PENDING skip-set this helper used to consult
+        /// (`SimConfigHashTests.PendingHashFields`) is GONE — every scalar
+        /// this method reaches is, as of this task, either genuinely wired
+        /// into SimConfigHash.Compute (assert AreNotEqual) or the caller
+        /// listed it in `expectedArrayFields` (an array, handled by a
+        /// dedicated element-wise helper below, never a positive/negative
+        /// branch here). There is no third case left.
         static void AssertSectionAffectsHash(string sectionName, params string[] expectedArrayFields)
         {
             var baselineCfg = TestConfigs.Default();
@@ -175,11 +287,18 @@ namespace Ring.Simulation.Tests
             var skippedArrayFields = new List<string>();
             foreach (FieldInfo field in sectionField.FieldType.GetFields())
             {
-                if (field.FieldType == typeof(float2[]) || field.FieldType == typeof(float[]))
+                // int[]/byte[] joined float2[]/float[] here (Arena's
+                // ZoneWallDoorStart/DoorCount are int[], ExtractZone/
+                // ExtractKind are byte[]; Loot's CellsPerMob is int[]) —
+                // Bump(object) below throws NotSupportedException the
+                // moment the sweep reaches one of them (its switch only
+                // handles boxed float/int/bool, not an array instance of
+                // any element type). Recorded in skippedArrayFields exactly
+                // like float2[]/float[] — the CollectionAssert below still
+                // catches an unlisted array field by name.
+                if (field.FieldType == typeof(float2[]) || field.FieldType == typeof(float[])
+                    || field.FieldType == typeof(int[]) || field.FieldType == typeof(byte[]))
                 {
-                    // Handed to AssertFloat*ArrayFieldAffectsHash — and
-                    // recorded, so the caller's expected list proves it was
-                    // handed over rather than lost.
                     skippedArrayFields.Add(field.Name);
                     continue;
                 }
@@ -286,6 +405,118 @@ namespace Ring.Simulation.Tests
             var mutatedLen = (SimConfig)lenCfg;
             Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutatedLen),
                 $"{sectionName}.{fieldName}.Length is not in the hash");
+        }
+
+        /// Stage 3 Task 13 (coordinator fix-round Ф3 review m3 — rewritten
+        /// for clarity, content unchanged): same shape as
+        /// AssertFloatArrayFieldAffectsHash right above — see that method's
+        /// own doc for the full per-element/length reasoning — for int[]
+        /// fields.
+        static void AssertInt32ArrayFieldAffectsHash(string sectionName, string fieldName)
+        {
+            var baselineCfg = TestConfigs.Default();
+            ulong baseline = SimConfigHash.Compute(in baselineCfg);
+            FieldInfo sectionField = Section(sectionName);
+            FieldInfo arrayField = sectionField.FieldType.GetField(fieldName);
+
+            object probeCfg = TestConfigs.Default();
+            int length = ((int[])arrayField.GetValue(sectionField.GetValue(probeCfg))).Length;
+
+            for (int i = 0; i < length; i++)
+            {
+                object cfg = TestConfigs.Default();
+                object section = sectionField.GetValue(cfg);
+                var clone = (int[])((int[])arrayField.GetValue(section)).Clone();
+                clone[i] += 1;
+                arrayField.SetValue(section, clone);
+                sectionField.SetValue(cfg, section);
+                var mutated = (SimConfig)cfg;
+                Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
+                    $"{sectionName}.{fieldName}[{i}] is not in the hash");
+            }
+
+            object lenCfg = TestConfigs.Default();
+            object lenSection = sectionField.GetValue(lenCfg);
+            var original = (int[])arrayField.GetValue(lenSection);
+            var extended = new int[original.Length + 1];
+            Array.Copy(original, extended, original.Length);
+            extended[original.Length] = 1234;
+            arrayField.SetValue(lenSection, extended);
+            sectionField.SetValue(lenCfg, lenSection);
+            var mutatedLen = (SimConfig)lenCfg;
+            Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutatedLen),
+                $"{sectionName}.{fieldName}.Length is not in the hash");
+        }
+
+        /// Stage 3 Task 13 (coordinator fix-round Ф3 review m3 — rewritten
+        /// for clarity, content unchanged): same shape as
+        /// AssertFloatArrayFieldAffectsHash above — see that method's own
+        /// doc for the full per-element/length reasoning — for byte[]
+        /// fields.
+        static void AssertByteArrayFieldAffectsHash(string sectionName, string fieldName)
+        {
+            var baselineCfg = TestConfigs.Default();
+            ulong baseline = SimConfigHash.Compute(in baselineCfg);
+            FieldInfo sectionField = Section(sectionName);
+            FieldInfo arrayField = sectionField.FieldType.GetField(fieldName);
+
+            object probeCfg = TestConfigs.Default();
+            int length = ((byte[])arrayField.GetValue(sectionField.GetValue(probeCfg))).Length;
+
+            for (int i = 0; i < length; i++)
+            {
+                object cfg = TestConfigs.Default();
+                object section = sectionField.GetValue(cfg);
+                var clone = (byte[])((byte[])arrayField.GetValue(section)).Clone();
+                clone[i] += 1;
+                arrayField.SetValue(section, clone);
+                sectionField.SetValue(cfg, section);
+                var mutated = (SimConfig)cfg;
+                Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
+                    $"{sectionName}.{fieldName}[{i}] is not in the hash");
+            }
+
+            object lenCfg = TestConfigs.Default();
+            object lenSection = sectionField.GetValue(lenCfg);
+            var original = (byte[])arrayField.GetValue(lenSection);
+            var extended = new byte[original.Length + 1];
+            Array.Copy(original, extended, original.Length);
+            extended[original.Length] = 234;
+            arrayField.SetValue(lenSection, extended);
+            sectionField.SetValue(lenCfg, lenSection);
+            var mutatedLen = (SimConfig)lenCfg;
+            Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutatedLen),
+                $"{sectionName}.{fieldName}.Length is not in the hash");
+        }
+
+        /// Stage 3 Task 13: SimConfig.Items is a TOP-LEVEL ItemDef[] field,
+        /// not nested under a section struct — every helper above resolves
+        /// a section field first and then an array field inside it, which
+        /// Items has no first half of. Same "element bump + length append"
+        /// shape as the others, addressed directly against SimConfig
+        /// instead of through Section()/a FieldInfo pair.
+        static void AssertItemsArrayAffectsHash()
+        {
+            var baselineCfg = TestConfigs.Default();
+            ulong baseline = SimConfigHash.Compute(in baselineCfg);
+            Assert.GreaterOrEqual(baselineCfg.Items.Length, 2,
+                "premise: TestConfigs.Default().Items must carry at least two records " +
+                "for the second-element convention (lesson 227) to have anywhere to mutate");
+
+            var cfg = TestConfigs.Default();
+            var clone = (ItemDef[])cfg.Items.Clone();
+            clone[1].SlotCost += 1;
+            cfg.Items = clone;
+            Assert.AreNotEqual(baseline, SimConfigHash.Compute(in cfg), "Items[1].SlotCost is not in the hash");
+
+            var lenCfg = TestConfigs.Default();
+            var original = lenCfg.Items;
+            var extended = new ItemDef[original.Length + 1];
+            Array.Copy(original, extended, original.Length);
+            extended[original.Length] = new ItemDef
+                { Id = 250, Tier = 1, SlotCost = 1, CreditValue = 1, Kind = ItemKind.Trophy };
+            lenCfg.Items = extended;
+            Assert.AreNotEqual(baseline, SimConfigHash.Compute(in lenCfg), "Items.Length is not in the hash");
         }
 
         static object Bump(object v) => v switch

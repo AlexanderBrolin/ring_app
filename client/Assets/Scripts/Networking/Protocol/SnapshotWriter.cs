@@ -49,9 +49,18 @@ namespace Ring.Networking.Protocol
     /// is the one right below, not the 1052 B this paragraph used to end on.
     /// The spec line goes to the Task 57 amendments.
     ///
-    /// WORST-CASE FRAME SIZE — 1180 B TO A LIVING RECIPIENT, RECOMPUTED BY
-    /// TASK 28 FROM THE REAL EVENT CATALOG (phase gate fix wave; this
-    /// paragraph's own earlier figures 1043, 1052 and 1116 each predated
+    /// WORST-CASE FRAME SIZE — 1181 B TO A LIVING RECIPIENT AT THE STAGE 2
+    /// CAPS, RECOMPUTED BY TASK 28 FROM THE REAL EVENT CATALOG and again by
+    /// Stage 3 Task 25, which added a byte to the liveness term (spec Р257 —
+    /// every figure below moved by exactly that one byte, and the five blocks
+    /// this table sums are still the five of Task 27: the five that Task 25
+    /// ADDED are not written into a frame until Task 27 of Stage 3, which is
+    /// the task that recomputes this table with them). NOTE that `MaxMobs` is
+    /// 288 in the shipped Stage 3 asset, not the 96 this table's mob term
+    /// still uses — SnapshotCodecTests.WorstCaseFrame_RecomputedFromThe
+    /// Calculators_WithTheRealCatalog is the live arithmetic, and it reads the
+    /// cap from the config rather than from any comment (phase gate fix wave;
+    /// this paragraph's own earlier figures 1043, 1052 and 1116 each predated
     /// something — the format overhead, the event record, the actual payload
     /// widths — and each was corrected by the first task that owned the
     /// missing piece; the running history lives in spec §6i Р146). At the
@@ -61,14 +70,14 @@ namespace Ring.Networking.Protocol
     ///
     ///   HeaderBytes                                    8
     ///   PlayersBlockBytes(2)                          19
-    ///   LivenessBlockBytes()                           4
+    ///   LivenessBlockBytes()                           5
     ///   MobsBlockBytes(96)                           867
     ///   WaveBlockBytes()                               7
     ///   EventsBlockBytes(16, 16*8)                   275
     ///   -----------------------------------------------
-    ///   total                                       1180
+    ///   total                                       1181
     ///
-    /// AND 1188 B TO A DEAD ONE — the next link of that same history, added by
+    /// AND 1189 B TO A DEAD ONE — the next link of that same history, added by
     /// Stage 2 Task 47b (the owner's decision 2a) and NOT a correction of the
     /// figure above, which stays true of the frame it describes. A frame used
     /// to carry at most `MaxPlayers - 1` player records, because a connection
@@ -80,19 +89,47 @@ namespace Ring.Networking.Protocol
     ///
     ///                            live recipient   dead recipient
     ///   PlayersBlockBytes         19 (2 records)   27 (3 records)
-    ///   total                           1180             1188
-    ///   fixed part, five tags             44               52
-    ///   record room at cap 1000          956              948
+    ///   total                           1181             1189
+    ///   fixed part, five tags             45               53
+    ///   record room at cap 1000          955              947
     ///
-    /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 180 or 188 B over
-    /// the cap ON PAPER. What actually gives at the defaults is the EVENT
-    /// budget, never the entity list, and that survives the wider case: the
-    /// assembler spends the fixed part and the mobs first, and 864 B of mob
-    /// RECORDS still fit in the 948 B of room a dead recipient's fixed part
-    /// leaves (84 B to spare, where a living one leaves 92). Entity truncation
-    /// is therefore NOT reachable at the shipped numbers for either recipient
-    /// — events are squeezed instead and carry over (Р61), and the truncation
-    /// branch is exercised by tests through a fixture cap (spec §6i Р147).
+    /// AND THE FIXED PART GREW AGAIN IN STAGE 3 TASK 27, which is the task
+    /// that first WRITES the five blocks Task 25 built a codec for (spec
+    /// §3.12). Five more tags ride every frame — Self, Match, ContainerSlots,
+    /// Containers, Pickups — and two of them carry a fixed payload: Match is
+    /// 4 B, Self is 2 B plus one byte per item in THIS recipient's backpack,
+    /// so its widest is 2 + Hero.MaxInventoryItems (16 at the shipped caps).
+    /// The other three ride empty when there is nothing to say and cost their
+    /// 3-byte header regardless — a receiver cannot tell an absent block from
+    /// an empty one, so none of them may be conditional:
+    ///
+    ///                            live recipient   dead recipient
+    ///   fixed part, TEN tags              82               90
+    ///   record room at cap 1000          918              910
+    ///   mobs that fit (9 B each)         102              101
+    ///
+    /// The live figures are pinned by SnapshotCodecTests.
+    /// WorstCaseFrame_RecomputedWithNewBlocks and the dead one is
+    /// SnapshotAssembler's own constructor ceiling, which since Task 27 asks
+    /// for the whole roster AND the fullest backpack.
+    ///
+    /// against `SnapshotMaxBytes` 1000 (Р101, NetConfig) — 181 or 189 B over
+    /// the cap ON PAPER at the five-block frame, and 218 or 226 at the ten-
+    /// block one (Stage 3 Task 27 review, Minor-5: this paragraph kept the
+    /// five-block arithmetic while the table above it had already been
+    /// recomputed).
+    ///
+    /// WHAT GIVES AT THE CAP — AND THE ANSWER FLIPPED IN STAGE 3. At the
+    /// Stage 2 numbers it was the EVENT budget, never the entity list: 96
+    /// mobs need 864 B of RECORDS and the room left after the fixed part was
+    /// 955/947 B, so every mob fitted and truncation was unreachable outside
+    /// a fixture cap (spec §6i Р147). Stage 3 Task 12 raised `MaxMobs` to 288
+    /// and turned that over — 2592 B of mob records against 918/910 B of
+    /// room, i.e. about 102 mobs ride and the rest are cut — which is spec
+    /// Р217's own prediction arriving, and which
+    /// SnapshotCodecTests.WorstCase_ByCaps_TriggersTruncation now asserts at
+    /// the SHIPPED cap rather than only at a fixture one. Task 27's five new
+    /// blocks cost 37 B of that room on top, four mob records' worth.
     /// Pinned by SnapshotCodecTests.WorstCaseFrame_RecomputedFromTheCalculators_
     /// WithTheRealCatalog, whose numbers are the LIVE column throughout
     /// (`int others = shipped.Arena.MaxPlayers - 1;`) and are right for it; the
@@ -271,15 +308,25 @@ namespace Ring.Networking.Protocol
             _pos += BlockHeaderBytes + payloadBytes;
         }
 
-        /// Appends the Liveness block — exactly one mask byte, bit `i` =
-        /// "player `i` is alive" (task-27-brief §2.2, §2.4, Р70).
-        public void WriteLivenessBlock(byte aliveMask)
+        /// Appends the Liveness block — TWO mask bytes since Stage 3 Task 25
+        /// (spec Р257): bit `i` of the first is "player `i` is alive", bit `i`
+        /// of the second is "player `i` walked out" (task-27-brief §2.2,
+        /// §2.4, Р70). The two never share a bit — a player is never both —
+        /// but this writer does not enforce that: the invariant belongs to
+        /// the simulation that produces the pair (SimulationWorld), and a
+        /// codec that re-derived it would be a second authority on it.
+        public void WriteLivenessBlock(byte aliveMask, byte extractedMask)
         {
             Reserve(BlockHeaderBytes + SnapshotBlocks.LivenessBlockPayloadBytes);
 
             _dst[_pos] = (byte)SnapshotBlockKind.Liveness;
             WriteU16(_pos + 1, SnapshotBlocks.LivenessBlockPayloadBytes);
             _dst[_pos + BlockHeaderBytes] = aliveMask;
+            // Alive first, extracted second — the order is the format (Stage
+            // 3 Task 25, spec Р257), and a writer that swapped them would
+            // round-trip perfectly against a reader that swapped them too,
+            // which is why the test pins both bytes literally.
+            _dst[_pos + BlockHeaderBytes + 1] = extractedMask;
             _pos += BlockHeaderBytes + SnapshotBlocks.LivenessBlockPayloadBytes;
         }
 
@@ -406,6 +453,216 @@ namespace Ring.Networking.Protocol
             }
             _pos += BlockHeaderBytes + payloadBytes;
         }
+
+        // ---- Stage 3 Task 25: the five new blocks (spec §3.12) ----------
+        //
+        // Same discipline as Task 27's five: validate the arguments, reserve
+        // the room, then write — so a refused call leaves the buffer
+        // bit-for-bit as it was. Positions quantize through Quantize with
+        // `cfg` as a parameter; no formula lives twice.
+
+        /// Appends the Match block — phase, the raid's remaining seconds and
+        /// the flags byte (MatchWireFlags), 4 bytes fixed.
+        public void WriteMatchBlock(MatchPhase phase, ushort secondsRemaining, byte flags)
+        {
+            if ((byte)phase > SnapshotBlocks.MaxMatchPhaseValue)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteMatchBlock: phase {(byte)phase} is outside the declared domain "
+                    + $"(<= {SnapshotBlocks.MaxMatchPhaseValue}); the read side refuses such a byte, so "
+                    + "writing one would build a frame no peer can decode.",
+                    nameof(phase));
+
+            Reserve(BlockHeaderBytes + SnapshotBlocks.MatchBlockPayloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Match;
+            WriteU16(_pos + 1, SnapshotBlocks.MatchBlockPayloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            _dst[cursor] = (byte)phase;
+            WriteU16(cursor + 1, secondsRemaining);
+            _dst[cursor + 3] = flags;
+            _pos += BlockHeaderBytes + SnapshotBlocks.MatchBlockPayloadBytes;
+        }
+
+        /// Appends the Self block — the owner's own backpack: its slot-point
+        /// total and the ids it carries (spec §3.12 Р276).
+        public void WriteSelfBlock(byte slotPoints, System.ReadOnlySpan<byte> itemIds)
+        {
+            // The count rides as ONE byte, so a backpack of more than 255
+            // items could not describe itself. Unreachable at the shipped
+            // Hero.MaxInventoryItems (16) and checked anyway: this is the
+            // write side, where an argument the format cannot carry is a
+            // caller bug rather than hostile input.
+            if (itemIds.Length > byte.MaxValue)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteSelfBlock: {itemIds.Length} items exceed the 255 its own count "
+                    + "byte can describe.", nameof(itemIds));
+
+            int payloadBytes = SnapshotBlocks.SelfBlockHeaderBytes + itemIds.Length;
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Self;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            _dst[cursor] = slotPoints;
+            _dst[cursor + 1] = (byte)itemIds.Length;
+            itemIds.CopyTo(_dst.Slice(cursor + SnapshotBlocks.SelfBlockHeaderBytes, itemIds.Length));
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// Appends a Pickups block (spec §3.12 layout: id, posX, posY, kind
+        /// — 7 bytes per record).
+        public void WritePickupsBlock(
+            System.ReadOnlySpan<SnapshotBlocks.PickupRecord> records, in SimConfig cfg)
+        {
+            int payloadBytes = records.Length * SnapshotBlocks.PickupRecordBytes;
+            if (payloadBytes > MaxBlockPayloadBytes)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WritePickupsBlock: {records.Length} records ({payloadBytes} bytes) "
+                    + $"exceed MaxBlockPayloadBytes ({MaxBlockPayloadBytes}); the length field is u16.",
+                    nameof(records));
+            for (int i = 0; i < records.Length; i++)
+                if ((byte)records[i].Kind > SnapshotBlocks.MaxPickupKindValue)
+                    throw new System.ArgumentException(
+                        $"SnapshotWriter.WritePickupsBlock: record {i} carries Kind={(byte)records[i].Kind}, "
+                        + $"outside the declared domain (<= {SnapshotBlocks.MaxPickupKindValue}).",
+                        nameof(records));
+
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Pickups;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.PickupRecord r = records[i];
+                WriteEntityRecord(cursor, r.Id, r.Pos, (byte)r.Kind, in cfg);
+                cursor += SnapshotBlocks.PickupRecordBytes;
+            }
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// Appends a Containers block (spec §3.12 layout: id, posX, posY,
+        /// kind and "empty" packed one nibble each — 7 bytes per record).
+        public void WriteContainersBlock(
+            System.ReadOnlySpan<SnapshotBlocks.ContainerRecord> records, in SimConfig cfg)
+        {
+            int payloadBytes = records.Length * SnapshotBlocks.ContainerRecordBytes;
+            if (payloadBytes > MaxBlockPayloadBytes)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteContainersBlock: {records.Length} records ({payloadBytes} bytes) "
+                    + $"exceed MaxBlockPayloadBytes ({MaxBlockPayloadBytes}); the length field is u16.",
+                    nameof(records));
+            for (int i = 0; i < records.Length; i++)
+                if ((byte)records[i].Kind > SnapshotBlocks.MaxContainerKindValue)
+                    throw new System.ArgumentException(
+                        $"SnapshotWriter.WriteContainersBlock: record {i} carries "
+                        + $"Kind={(byte)records[i].Kind}, outside the declared domain "
+                        + $"(<= {SnapshotBlocks.MaxContainerKindValue}); the packed byte has one nibble "
+                        + "for it and cannot carry more.", nameof(records));
+
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.Containers;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.ContainerRecord r = records[i];
+                byte packed = (byte)((((byte)r.Kind & 0x0F) << 4) | (r.IsEmpty ? 1 : 0));
+                WriteEntityRecord(cursor, r.Id, r.Pos, packed, in cfg);
+                cursor += SnapshotBlocks.ContainerRecordBytes;
+            }
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// Appends a ContainerSlots block — one variable-length record per
+        /// container whose interior is being sent (spec §3.12 Р277).
+        /// `itemPool` backs every record's item ids, the same
+        /// offset-into-a-caller-pool shape WriteEventsBlock uses; how MANY
+        /// ids a record takes from it is the popcount of its own mask, never
+        /// a separate field.
+        public void WriteContainerSlotsBlock(
+            System.ReadOnlySpan<SnapshotBlocks.ContainerSlotsRecord> records,
+            System.ReadOnlySpan<byte> itemPool)
+        {
+            // Validate BEFORE touching the destination, exactly as
+            // WriteEventsBlock does with its own pool.
+            int payloadBytes = 0;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.ContainerSlotsRecord r = records[i];
+                int occupied = SnapshotBlocks.OccupiedSlotCount(r.OccupancyMask);
+                if (r.ItemOffset + occupied > itemPool.Length)
+                    throw new System.ArgumentException(
+                        $"SnapshotWriter.WriteContainerSlotsBlock: record {i}'s items "
+                        + $"[{r.ItemOffset}, {r.ItemOffset + occupied}) run past itemPool.Length "
+                        + $"({itemPool.Length}) — a caller bug; the mask says how many there are.",
+                        nameof(records));
+                payloadBytes += SnapshotBlocks.ContainerSlotsRecordHeaderBytes + occupied;
+            }
+            if (payloadBytes > MaxBlockPayloadBytes)
+                throw new System.ArgumentException(
+                    $"SnapshotWriter.WriteContainerSlotsBlock: {records.Length} records ({payloadBytes} "
+                    + $"bytes) exceed MaxBlockPayloadBytes ({MaxBlockPayloadBytes}); the length field is u16.",
+                    nameof(records));
+
+            Reserve(BlockHeaderBytes + payloadBytes);
+
+            _dst[_pos] = (byte)SnapshotBlockKind.ContainerSlots;
+            WriteU16(_pos + 1, (ushort)payloadBytes);
+            int cursor = _pos + BlockHeaderBytes;
+            for (int i = 0; i < records.Length; i++)
+            {
+                SnapshotBlocks.ContainerSlotsRecord r = records[i];
+                int occupied = SnapshotBlocks.OccupiedSlotCount(r.OccupancyMask);
+                WriteU16(cursor, (ushort)(r.Id & 0xFFFF));
+                _dst[cursor + 2] = r.OccupancyMask;
+                itemPool.Slice(r.ItemOffset, occupied)
+                    .CopyTo(_dst.Slice(cursor + SnapshotBlocks.ContainerSlotsRecordHeaderBytes, occupied));
+                cursor += SnapshotBlocks.ContainerSlotsRecordHeaderBytes + occupied;
+            }
+            _pos += BlockHeaderBytes + payloadBytes;
+        }
+
+        /// The head shared by the Pickups and Containers records — id (u16,
+        /// truncated exactly as MobRecord's is), a quantized position, then
+        /// one tail byte whose MEANING belongs to the caller (plan errata
+        /// E-6 C-I5: one home for the ground entities' wire record). The
+        /// mirror of SnapshotBlocks.ReadEntityRecord.
+        void WriteEntityRecord(int cursor, int id, Unity.Mathematics.float2 pos, byte tail,
+            in SimConfig cfg)
+        {
+            WriteU16(cursor, (ushort)(id & 0xFFFF));
+            WriteU16(cursor + 2, Quantize.Pos(pos.x, cfg.Arena.Radius));
+            WriteU16(cursor + 4, Quantize.Pos(pos.y, cfg.Arena.Radius));
+            _dst[cursor + 6] = tail;
+        }
+
+        /// Bytes the Match block occupies, header included — fixed size.
+        public static int MatchBlockBytes()
+            => BlockHeaderBytes + SnapshotBlocks.MatchBlockPayloadBytes;
+
+        /// Bytes a Self block carrying `itemCount` ids would occupy, header
+        /// included.
+        public static int SelfBlockBytes(int itemCount)
+            => BlockHeaderBytes + SnapshotBlocks.SelfBlockHeaderBytes + itemCount;
+
+        /// Bytes a Pickups block of `pickupCount` records would occupy,
+        /// header included.
+        public static int PickupsBlockBytes(int pickupCount)
+            => BlockHeaderBytes + pickupCount * SnapshotBlocks.PickupRecordBytes;
+
+        /// Bytes a Containers block of `containerCount` records would occupy,
+        /// header included.
+        public static int ContainersBlockBytes(int containerCount)
+            => BlockHeaderBytes + containerCount * SnapshotBlocks.ContainerRecordBytes;
+
+        /// Bytes a ContainerSlots block of `recordCount` records carrying
+        /// `totalOccupiedSlots` item ids between them would occupy, header
+        /// included.
+        public static int ContainerSlotsBlockBytes(int recordCount, int totalOccupiedSlots)
+            => BlockHeaderBytes + recordCount * SnapshotBlocks.ContainerSlotsRecordHeaderBytes
+               + totalOccupiedSlots;
 
         /// Bytes a Players block of `playerCount` records would occupy,
         /// including its own 3-byte block header — the number Task 28's

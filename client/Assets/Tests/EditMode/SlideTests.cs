@@ -20,7 +20,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Slide_RequiresRunUpOrPostDash()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
 
             // No run-up at all: the very first tick's request must not slide.
             var cold = new SimulationWorld(1, cfg);
@@ -58,7 +58,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void RunUp_DecaysBelowThreshold()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             for (int i = 0; i < 60; i++) w.Tick(Move(1f, 0f)); // capped at RunUpSeconds, at MaxSpeed
             Assert.AreEqual(cfg.Hero.RunUpSeconds, w.Player.RunUpTimer, 1e-3f);
@@ -89,7 +89,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Slide_InsufficientStamina_Denied()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             RunUp(w, cfg);
             const float missing = 1f;
@@ -114,7 +114,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Slide_ResetsRunUp_NoChain()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             RunUp(w, cfg);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide #1
@@ -138,7 +138,7 @@ namespace Ring.Simulation.Tests
         /// happens to match it.
         static SimConfig MutualExclusionFixture()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Hero.DashDuration = 0.15f;
             return cfg;
         }
@@ -193,7 +193,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Slide_SteerRateIsClamped()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             RunUp(w, cfg);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // SlideDir = (1,0)
@@ -210,7 +210,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Slide_ExitKeepsMomentum()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             RunUp(w, cfg);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true });
@@ -223,9 +223,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(cfg.Hero.SlideSpeed, math.length(w.Player.Vel), 0.05f);
 
             // Short hold, not 60 ticks: the run-up + slide + this decay leg
-            // together approach the Open() arena's wall (radius 65) closely
-            // enough that a long hold here would hit it and slam Vel to 0,
-            // masking the thing this test actually checks. (SlideSpeed -
+            // together used to approach the Open() arena's wall (radius 65)
+            // closely enough that a long hold here would hit it and slam Vel
+            // to 0, masking the thing this test actually checks. Stage 3 Task
+            // 12 moved that wall to 113, so the hazard is gone — the short
+            // hold stays because it is also sufficient, not because it is
+            // still forced. (SlideSpeed -
             // MaxSpeed) / Accel is ~4.9 ticks to converge — 20 is ample margin.
             for (int i = 0; i < 20; i++) w.Tick(Move(1f, 0f)); // decays towards regular max speed
             Assert.AreEqual(cfg.Hero.MaxSpeed, math.length(w.Player.Vel), 0.05f);
@@ -234,7 +237,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Death_ClearsSlideState()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             RunUp(w, cfg);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true });
@@ -281,7 +284,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SlideStarted_EventCarriesPosAndDir()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             RunUp(w, cfg);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true });
@@ -293,7 +296,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void WallStop_KillsSlide_NoLinkWindow()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Arena.ObstacleCount = 1;
             cfg.Arena.ObstaclePos = new[] { new float2(5f, 0f) }; // dead ahead — head-on hit
             cfg.Arena.ObstacleRadius = new[] { 1f };
@@ -334,7 +337,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void AimHeld_SlowsSlide_SameTick()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             RunUp(w, cfg);
             w.Tick(new SimInput { MoveDir = new float2(1f, 0f), SlideRequested = true }); // slide starts
@@ -351,7 +354,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void RunUp_ReachableUnderAimCap()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             // AimMoveSpeedFrac (0.8) is validated strictly above SlideMinSpeedFrac
             // (0.75, D15 in SimConfigBuilder) — running capped under aim must
             // still clear the slide threshold, so RunUpTimer accrues to its
@@ -374,7 +377,7 @@ namespace Ring.Simulation.Tests
         /// one).
         static SimConfig CooldownOutlastsWindowsFixture()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Hero.DashCooldown = 3f;
             return cfg;
         }
@@ -430,7 +433,7 @@ namespace Ring.Simulation.Tests
         /// running-balance comments) instead of stopping short.
         static SimConfig LinkRefund20Fixture()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             cfg.Hero.LinkRefund = 20f;
             return cfg;
         }
@@ -438,7 +441,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void Chain_BaseLinkRefund_EndsAtExactRemainder_FourthMoveDenied()
         {
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             var move = new SimInput { MoveDir = new float2(1f, 0f) };
 
@@ -551,7 +554,7 @@ namespace Ring.Simulation.Tests
             // TickDt, reachable as the 4th move of the owner's signature
             // 100/40/30/refund-10 chain). This pins Vel actually tracking
             // input during that window instead.
-            var cfg = TestConfigs.Open();
+            var cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(1, cfg);
             RunUp(w, cfg); // primes RunUpTimer to the slide gate, Vel -> MaxSpeed on +X
 

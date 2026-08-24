@@ -56,6 +56,12 @@ namespace Ring.Simulation.Tests
                 else if (f.FieldType == typeof(float2)) f.SetValue(box, new float2(n, n + 0.5f));
                 else if (f.FieldType == typeof(bool)) f.SetValue(box, true);
                 else if (f.FieldType == typeof(int)) f.SetValue(box, (int)n);
+                // Stage 3 Task 1: PlayerState's first byte fields
+                // (ExtractKind, LootTargetSlot). `n` never exceeds the
+                // struct's own field count (in the thirties), well inside
+                // byte's range, so no wraparound risk here the way a longer
+                // run might have.
+                else if (f.FieldType == typeof(byte)) f.SetValue(box, (byte)n);
                 else
                     Assert.Fail($"PlayerState.{f.Name} has type {f.FieldType.Name}, which this "
                         + "filler cannot build a distinct value for — teach it that type together "
@@ -106,7 +112,10 @@ namespace Ring.Simulation.Tests
                     AssertFloatBitEqual(e2.x, a2.x, what + " (.x)");
                     AssertFloatBitEqual(e2.y, a2.y, what + " (.y)");
                 }
-                else if (e is bool || e is int) Assert.AreEqual(e, a, $"{what}: {e} vs {a}");
+                // Stage 3 Task 1: byte joins bool/int on the exact-equality
+                // branch — no NaN/-0f ambiguity for an integral type, so
+                // there is nothing bitwise about it to get wrong.
+                else if (e is bool || e is int || e is byte) Assert.AreEqual(e, a, $"{what}: {e} vs {a}");
                 else
                     Assert.Fail($"{what}: field type {f.FieldType.Name} is one this comparer "
                         + "cannot compare bitwise — teach it that type. A silently skipped field "
@@ -135,6 +144,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(expected.DashRequested, actual.DashRequested, $"{where}: DashRequested");
             Assert.AreEqual(expected.AimHeld, actual.AimHeld, $"{where}: AimHeld");
             Assert.AreEqual(expected.SlideRequested, actual.SlideRequested, $"{where}: SlideRequested");
+            // Stage 3 Task 17, CARRIED SINCE Т20: compared like every field
+            // above, and no longer vacuously — the wire really does carry the
+            // bit now (InputCodec.InventoryOpenBit, byte 7 bit 4), and the
+            // second SampleInputs frame raises it, so this line watches a
+            // value that actually changes across the set.
+            Assert.AreEqual(expected.InventoryOpen, actual.InventoryOpen, $"{where}: InventoryOpen");
         }
 
         /// The field list `AssertSimInputEqual` above checks by hand. A field a
@@ -147,12 +162,17 @@ namespace Ring.Simulation.Tests
             nameof(SimInput.MoveDir), nameof(SimInput.AimPoint), nameof(SimInput.AimHeight),
             nameof(SimInput.FireHeld), nameof(SimInput.DashRequested),
             nameof(SimInput.AimHeld), nameof(SimInput.SlideRequested),
+            // Stage 3 Task 17 — see AssertSimInputEqual's own line for it.
+            nameof(SimInput.InventoryOpen),
         };
 
         /// Three frames whose wire bytes are all different from one another:
         /// distinct heading, distinct deflection, distinct aim point, distinct
-        /// aim height and BOTH polarities of all four flags across the set — so
+        /// aim height and BOTH polarities of all five flags across the set — so
         /// a transposed byte or a swapped flag bit has somewhere to show.
+        /// InventoryOpen (Т20's bit 4) rides the SECOND frame, the same
+        /// "the specimen is the second element" convention the mutation
+        /// discipline uses.
         static SimInput[] SampleInputs(in SimConfig cfg)
         {
             float r = cfg.Arena.Radius;
@@ -173,6 +193,7 @@ namespace Ring.Simulation.Tests
                     AimHeight = cfg.Hero.MaxAimHeight * 0.81f,
                     FireHeld = false, DashRequested = true,
                     AimHeld = false, SlideRequested = true,
+                    InventoryOpen = true,
                 },
                 new SimInput
                 {
@@ -246,7 +267,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ReconcileData_SurvivesTheFishNetWireRoundTrip()
         {
-            EnsureGeneratedSerializersAreRegistered();
+            TestSerializers.EnsureRegistered();
 
             PlayerState source = FilledPlayerState();
             AssertEveryFieldIsNonDefault(in source);
@@ -264,32 +285,6 @@ namespace Ring.Simulation.Tests
             ReconcileData back = reader.Read<ReconcileData>();
 
             AssertPlayerStateBitEqual(source, back.State, "ReconcileData through Writer/Reader");
-        }
-
-        /// The generated serializer table is filled from a
-        /// `[RuntimeInitializeOnLoadMethod]` (FishNet's own
-        /// `WriterProcessor.CreateGeneratedWritersClass`, which calls
-        /// `CreateRuntimeInitializeOnLoadMethodAttribute` with no load type, so
-        /// the default `AfterSceneLoad`). EditMode tests never enter play mode
-        /// and therefore never trigger it, so the test drives the very same
-        /// entry point by hand. Reflection is required because the generated
-        /// classes are internal to `Ring.Networking`.
-        static void EnsureGeneratedSerializersAreRegistered()
-        {
-            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedWriters___Internal");
-            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedReaders___Internal");
-        }
-
-        static void InvokeInitializeOnce(string typeName)
-        {
-            System.Type t = typeof(InputCodec).Assembly.GetType(typeName);
-            Assert.IsNotNull(t, $"{typeName} must exist in Ring.Networking — FishNet's IL "
-                + "post-processor creates it for every assembly it processes, and its absence "
-                + "means codegen did not run over this assembly at all");
-            MethodInfo init = t.GetMethod("InitializeOnce",
-                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-            Assert.IsNotNull(init, $"{typeName}.InitializeOnce must exist");
-            init.Invoke(null, null);
         }
 
         // -------------------------------------------- 2. replicate payload size
@@ -659,7 +654,7 @@ namespace Ring.Simulation.Tests
             // nowhere). Without this test the hand-written comparer could be
             // registered under a type nobody asks about and every other
             // assertion in this file would still pass.
-            InvokeInitializeOnce("FishNet.Serializing.Generated.GeneratedComparers___Internal");
+            TestSerializers.EnsureComparersRegistered();
 
             Assert.IsNotNull(PublicPropertyComparer<ReplicateData>.IsDefault,
                 "codegen must have registered an IsDefault for ReplicateData — Replicate_"

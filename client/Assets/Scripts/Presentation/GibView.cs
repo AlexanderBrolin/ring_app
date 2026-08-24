@@ -98,11 +98,18 @@ namespace Ring.Presentation
         /// material — every mech in this pack uses exactly one material
         /// slot, verified against the source FBX, so no per-part material
         /// array is needed); `scale` mirrors the dying mob's own
-        /// `ChaserVisualScale`/`GunnerVisualScale` (same number
+        /// `GameFeelConfig.VisualScaleFor` answer (same number
         /// `CorpseView.Spawn`'s own `visualScale` parameter already applies
         /// to the whole corpse — a gib chunk cut from the same mesh has to
         /// agree with it or a Gunner's parts would visibly mismatch its own
-        /// corpse/live-mob size). The `SphereCollider` is resized/recentred
+        /// corpse/live-mob size).
+        ///
+        /// ONLY TWO OF THE FOUR ARCHETYPES EVER GET HERE (Stage 3 Task 31).
+        /// The parts arrays hold meshes cut from the MECH pack's FBXs in
+        /// Blender; Elite and the Director are drawn from the Sci-Fi kit,
+        /// which was never cut up, so `PersistentPropsDirector.HasGibParts`
+        /// keeps their deaths on the corpse path entirely — see that class's
+        /// own doc for why a corpse is the honest answer there. The `SphereCollider` is resized/recentered
         /// from `mesh.bounds` in the mesh's own LOCAL (unscaled) space — the
         /// `transform.localScale` write below is what the physics engine
         /// then applies on top (Unity scales a collider's local
