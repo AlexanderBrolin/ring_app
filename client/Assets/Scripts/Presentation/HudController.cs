@@ -459,6 +459,7 @@ namespace Ring.Presentation
             // flash color for that whole window, with no frame running to
             // repaint it. Same reason this method already blanks _phaseText
             // and _ammoText below rather than trusting the next frame.
+            _waveText.color = _waveTextBaseColor;
             // Т35 (spec Р291, the restart reset list): the three surfaces Т33
             // added are taken down with it. THE RING IS THE ONE THAT MATTERS —
             // it is the only one that stays ON by itself: a collector who was
