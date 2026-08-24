@@ -69,6 +69,11 @@ namespace Ring.Presentation
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelDirector _gameFeelDirector;
         [SerializeField] GameObject _panel;
+        /// The panel's headline (bd `app-qz30`) — see TitleFor. Wired by
+        /// StageOneSceneBootstrap like every other reference here; NULL-GUARDED
+        /// at its use site the same way _hintText/_spectateButton/_resultsText
+        /// are, because a scene saved before this field existed carries none.
+        [SerializeField] TMP_Text _titleText;
         [SerializeField] TMP_Text _metricsText;
         [SerializeField] Button _restartButton;
         /// The line that advertises `R`/`Shift+R`. It goes wherever the restart
@@ -200,6 +205,11 @@ namespace Ring.Presentation
             // true — restarting after walking out is exactly what the panel is
             // for.
             bool walkedOut = _runner.Ready && LocalCollectorWalkedOut(_runner.RenderCurr);
+            // bd `app-qz30`: the headline, set on EVERY Show rather than once
+            // — the panel reopens within a raid (a board arriving, an
+            // extraction) and a headline written once would keep whichever
+            // outcome happened to open it first.
+            if (_titleText != null) _titleText.text = TitleFor(walkedOut);
             _restartButton.gameObject.SetActive(canRestart && !raidOver);
             if (_hintText != null) _hintText.gameObject.SetActive(canRestart && !raidOver);
             if (_spectateButton != null)
@@ -366,6 +376,31 @@ namespace Ring.Presentation
         public static float RaidSecondsFor(bool hasFinalStats, int finalSurvivedSeconds,
             int frameTick)
             => hasFinalStats ? finalSurvivedSeconds : frameTick * SimulationWorld.TickDt;
+
+        /// THE ONE HOME OF THE PANEL'S HEADLINE (bd `app-qz30`).
+        ///
+        /// A raid ends for one collector in exactly two ways — he dies, or he
+        /// walks out — and this screen is the only place that reports which.
+        /// Until this task the headline was a literal the scene bootstrap wrote
+        /// ONCE and nothing ever changed: the controller had no field for it,
+        /// so a collector who killed the Director and left through the gate was
+        /// told his carrier was lost. That is the UNFINISHED HALF of bd
+        /// `app-1kei`, which stopped the body dying on extraction and taught
+        /// this class `LocalCollectorWalkedOut` — but never spent the answer on
+        /// the text.
+        ///
+        /// THE BOOTSTRAP CALLS THIS TOO, for the panel's ship-time text, so the
+        /// scene and the screen cannot drift into two different words for the
+        /// same outcome (R-200: a derived definition is defended by code, not
+        /// by two literals agreeing).
+        ///
+        /// ⚠ ONE BIT, DELIBERATELY. The simulation distinguishes an early
+        /// portal from the gate (`ExtractKinds`), but `RenderSnapshot` carries
+        /// only `PlayerExtractedInMatch`, a bool — the kind never reaches this
+        /// client. Splitting the headline three ways is a WIRE change, not a
+        /// text change, and it is not what the defect is about.
+        public static string TitleFor(bool walkedOut)
+            => walkedOut ? "Носитель сохранён" : "Носитель потерян";
 
         string BuildMetricsText()
         {

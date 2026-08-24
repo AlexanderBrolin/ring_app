@@ -6223,6 +6223,7 @@ MonoBehaviour:
   _runner: {fileID: 1959383180}
   _gameFeelDirector: {fileID: 1913287730}
   _panel: {fileID: 1340170336}
+  _titleText: {fileID: 1253108512}
   _metricsText: {fileID: 1733237976}
   _restartButton: {fileID: 417576688}
   _hintText: {fileID: 1560061853}

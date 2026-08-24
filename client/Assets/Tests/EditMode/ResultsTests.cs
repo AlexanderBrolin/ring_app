@@ -775,6 +775,47 @@ namespace Ring.Simulation.Tests
             return frame;
         }
 
+        // ---- the headline the panel wears (bd `app-qz30`) ----
+        //
+        // The owner killed the Director, walked out through the gate with 430
+        // credits, and the screen told him "Носитель потерян". The headline was
+        // a literal the scene bootstrap wrote once and nothing ever changed:
+        // DeathOverlayController had no field for it at all, so the one screen
+        // that reports the outcome of a raid could report exactly one outcome.
+
+        [Test]
+        public void Title_TellsWalkingOutApartFromDying()
+        {
+            string died = DeathOverlayController.TitleFor(walkedOut: false);
+            string walkedOut = DeathOverlayController.TitleFor(walkedOut: true);
+
+            // The structural half first, for the reason MiddleZone_MixSumsToOne
+            // gives about its own sum: an empty string is "different" from the
+            // death headline and would satisfy the claim below while shipping a
+            // panel with no headline on it.
+            Assert.IsFalse(string.IsNullOrWhiteSpace(died),
+                "the headline for a lost carrier must say something");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(walkedOut),
+                "the headline for a collector who walked out must say something");
+            Assert.AreNotEqual(died, walkedOut,
+                "the two ways a raid ends for one collector must not wear the same "
+                + "headline — that is the whole defect: a collector who extracted was "
+                + "told his carrier was lost");
+            // ⚠ AND THE PAIRING, not just the difference. "Different and both
+            // non-empty" is satisfied by the two headlines SWAPPED, which would
+            // congratulate the dead and bury the survivor — a boundary wider
+            // than both outcomes is not a witness (lesson 441). Only the DEATH
+            // headline is pinned to its exact words, and deliberately so: it is
+            // the string the scene has shipped since Task 24 and the one this
+            // defect never touched. The extraction headline stays free of a
+            // literal here, because its wording is the owner's own taste call
+            // and a test must not freeze it.
+            Assert.AreEqual("Носитель потерян", died,
+                "the losing headline must stay on the losing outcome — if this pair "
+                + "is ever swapped, the collector who walked out is the one being told "
+                + "he lost his carrier, which is the defect wearing the other face");
+        }
+
         [Test]
         public void WalkedOut_IsFalse_WhileTheCollectorIsStillInTheRaid()
         {

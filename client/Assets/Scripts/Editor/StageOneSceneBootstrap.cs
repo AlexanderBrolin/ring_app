@@ -1567,7 +1567,13 @@ namespace Ring.Editor
             // Both panels start hidden; DeathOverlayController/PauseController's
             // own Awake also enforces this defensively every play session.
             GameObject deathPanelGo = GetOrCreateOverlayPanel(hudGo.transform, DeathPanelObjectName, ref sceneDirty);
-            GetOrCreateOverlayText(deathPanelGo.transform, "Title", "Носитель потерян",
+            // bd `app-qz30`: the headline's SHIP-TIME text comes from the
+            // controller's own rule rather than from a literal here, so the
+            // scene and the screen cannot drift into two different words for
+            // the same outcome (R-200). `false` is the panel's resting state:
+            // a scene opens on a raid nobody has left yet.
+            TMP_Text deathTitle = GetOrCreateOverlayText(deathPanelGo.transform, "Title",
+                DeathOverlayController.TitleFor(walkedOut: false),
                 new Vector2(0f, 160f), new Vector2(700f, 70f), 42f, ref sceneDirty);
             TMP_Text deathMetrics = GetOrCreateOverlayText(deathPanelGo.transform, "Metrics", "",
                 new Vector2(0f, -10f), new Vector2(700f, 260f), 24f, ref sceneDirty);
@@ -1613,6 +1619,7 @@ namespace Ring.Editor
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_runner", runner);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_gameFeelDirector", gameFeelDirector);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_panel", deathPanelGo);
+            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_titleText", deathTitle);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_metricsText", deathMetrics);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_restartButton", deathRestartButton);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_hintText", deathHint);
