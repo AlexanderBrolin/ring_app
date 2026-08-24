@@ -371,8 +371,9 @@ namespace Ring.Simulation.Tests
             // instruction: the arena's rings tripled and the mob density
             // doubled in this same phase, so pinning this constant first would
             // have meant re-pinning it immediately. Т36 was moved behind that
-            // work for exactly this reason, and this constant has therefore
-            // never held another value.
+            // work for exactly this reason, and this constant held its first
+            // value until `app-ggvz` — see RE-PIN #4 below, which is the only
+            // time it has ever moved.
             //
             // ⚠ WHAT IT DOES NOT COVER, measured and named rather than left to
             // be assumed from the paragraph above: THE DIRECTOR'S DEATH, the
@@ -392,7 +393,46 @@ namespace Ring.Simulation.Tests
             // stable whether or not the scenario it pins does anything, and
             // that guard is what caught the first draft of the walk-in walking
             // into a solid wall for 480 s.
-            const ulong ExtractionGoldenHash = 0xC43B54B02689DC8FUL; // = 14139988570597350543
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #4 (bd `app-ggvz`, "wave cadence per ring"), THE FIRST AND
+            // ONLY MOVEMENT OF THIS CONSTANT. The solo golden carries the full
+            // account — the owner's sanction К9, the six causes, and the
+            // attribution, including the value this constant held after Т1
+            // alone (16270681601866834963). All six act here as they do there.
+            //
+            // ⚠ THIS SCENARIO HAS A SEVENTH CAUSE THE OTHER TWO DO NOT HAVE,
+            // and it is named because the spec's list of six was written before
+            // the cause existed (ruling Т5-2, session 47), not because it is
+            // small. `BudgetHpForTheWholeRun` now grants the scripted collectors
+            // an HP budget for the length of the run, through the same seam and
+            // the same term-for-term formula `TestWorlds.TrioSaturated` uses.
+            //
+            // WHY IT WAS UNAVOIDABLE, measured rather than argued. With the
+            // cadence in and no budget, this run's collectors died at tick 666
+            // of 18 000 — waves now arrive every 60/90/90 ticks instead of once
+            // per raid — and the walk into the core does not even begin until
+            // tick 3600. The guard below went red (`Expected: True But was:
+            // False`), i.e. the digest would have been pinned on a world that
+            // stood still for 17 000 of its 18 000 ticks: "stable because
+            // nothing happens" is exactly what that guard exists to refuse. The
+            // alternative measured and REJECTED was lowering the fixture's
+            // ceilings until the collectors survived: it takes {2,1,1} to get
+            // there, a peak of 7 live mobs — BELOW the ten this arena held
+            // before the task — which would have hollowed out the only fully
+            // populated arena in the file. The principle is the file's own
+            // (Р325): this scenario measures DETERMINISM, not balance.
+            //
+            // The budget is not free of consequence and the consequence is
+            // recorded rather than left to be noticed later. The suite's run
+            // time rose from 141 s before the task to about 245 s after it,
+            // against a finding threshold of 306 s. That rise belongs to the
+            // task as a whole — the arena carries tens of live mobs where it
+            // carried ten — and the budget is a NAMED part of it, not the whole
+            // of it: with the collectors alive, the six 18 000-tick runs of
+            // this file now execute for all 600 s instead of freezing at around
+            // tick 1250. Measured, not estimated.
+            const ulong ExtractionGoldenHash = 0xA94975DFEDB976E9UL; // = 12198410670336210665
             Assert.AreEqual(ExtractionGoldenHash,
                 RunExtractionScripted(123, ExtractionTicks, 3));
         }
@@ -1038,10 +1078,17 @@ namespace Ring.Simulation.Tests
             // (the multiplayer ring from 52 m out to 103.96); the caps MaxMobs
             // 96 -> 288, MaxProjectiles 384 -> 1024, MaxEventsPerFrame 512 ->
             // 1024; the zonal wave budget, live for the first time because
-            // ZoneRadius stopped being empty (ZoneWeights {0.45, 0.45, 0.10});
+            // ZoneRadius stopped being empty (the budget of ONE wave split
+            // across the rings by WaveConfig.ZoneWeights {0.45, 0.45, 0.10} —
+            // ⚠ THAT FIELD NO LONGER EXISTS: `app-ggvz` deleted it together
+            // with the split itself and gave every ring a wave of its own, see
+            // RE-PIN #4 below. The sentence stays because it is true of Т12,
+            // and the tombstone stays because a live-sounding reference to a
+            // deleted field is how the next reader is misled);
             // and the Elite/Director sections of TestConfigs.Default() — with
             // the Elite now genuinely SPAWNING in both scenarios, since the
-            // middle zone takes 45% of every wave at EliteShareMiddle 0.35.
+            // middle zone took 45% of every wave (again: that share is Т12's
+            // history, not today's rule) at EliteShareMiddle 0.35.
             //
             // WHAT IS *NOT* IN THIS MOVEMENT, recorded because it was measured
             // and not assumed: the wave-index-dependent half of the wave
@@ -1166,7 +1213,112 @@ namespace Ring.Simulation.Tests
             // The stop-and-ask rule stands, unchanged and unweakened: any
             // further movement of any of the three constants is a stop and a
             // question for the owner.
-            const ulong GoldenHash = 0xC19F5FDDF6A8F148UL; // = 13951975577547764040
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #4 (bd `app-ggvz`, "wave cadence per ring") — SANCTIONED IN
+            // ADVANCE BY THE OWNER, decision К9 of the task's brainstorm, and
+            // spent here in a commit of its own (R-23). The rule above did what
+            // it exists for: the task stopped and asked BEFORE the work began,
+            // and the answer was granted for this one movement of all three
+            // constants. NOTHING IS LEFT: any further movement of any of them is
+            // a stop and a question for the owner again.
+            //
+            // WHY A SHIFT WAS UNAVOIDABLE, AND WHY IT IS NOT A NUMBER. The
+            // defect this task repairs was structural: the next wave could be
+            // queued by exactly ONE path — a full wipe of the WHOLE arena
+            // (`PendingTotal == 0 && w.MobCount == 0`) — and the pause only
+            // started ticking there. A collector runs 7.5 m/s against the mobs'
+            // 4-5.2, so he outran the first wave and a second never came; once
+            // the Director woke, `MobCount == 0` stopped being reachable at all
+            // (he and his retinue live in the core). The owner's own raid of
+            // 252 s with three players closed with wavesCleared = 0. Replacing
+            // that with an independent cycle per ring changes what the world IS
+            // on every tick of every scenario, not how quickly it gets there.
+            //
+            // SIX CAUSES, written out one by one because spec §4 / risk Р-З
+            // requires each named rather than summarized:
+            //
+            //  1. THE SHAPE OF `WaveState`, AND THREE OF THEM IN THE HASH. The
+            //     nine-field debt matrix `Pending{Zone}{Archetype}` (Т11 of
+            //     stage 3, introduced for the split this task removes) collapsed
+            //     back into three fields, and the world now holds one
+            //     `WaveState` per ring. `HashWave` therefore runs THREE times,
+            //     in the canonical order Outer -> Middle -> Core, at the same
+            //     position of the sequence where it ran once. An FNV chain moves
+            //     when steps are ADDED even if every value behind them is equal.
+            //  2. THE PHASE TIMER IS WHOLE TICKS. `float PhaseTimer` in seconds
+            //     became `int PhaseTicks` (Р316). This is the project's own rule
+            //     — whole ticks are the only unit in which a deterministic
+            //     comparison may be made (`SimulationWorld.TicksFromSeconds`,
+            //     R-178/R-190) — and it moves the rounding boundary of every
+            //     wave start and every clear.
+            //  3. THE DIFFICULTY STEP COMES FROM THE RAID CLOCK. `WaveIndex`
+            //     stopped being a per-ring counter of waves started and now
+            //     carries `WaveSystem.DifficultyStepFor(tick, in cfg)` (Р315),
+            //     assigned rather than incremented. Wave size and elite share
+            //     read that step, so the INPUTS of both formulas differ even
+            //     where the count of waves would have agreed.
+            //  4. THE INFLOW IS BOUNDED, AND IN TWO WAYS AT ONCE. A wave no
+            //     longer lands inside one tick: a ring spawns at most
+            //     `MaxSpawnsPerZonePerTick` (2) per tick (Р317) and stops
+            //     entirely at `MaxAliveByZone`, keeping its debt (Р306).
+            //     ⚠ The spec names this cause "the smoothing of the inflow"
+            //     alone. The CEILING belongs to the same cause and is named here
+            //     because it is the half that actually holds the fixtures down:
+            //     measured in session 47, the extraction fixture ran 719 live
+            //     mobs without it against 48 with it, and the suite left its own
+            //     time gate. Omitting it would make this list look complete
+            //     while the largest term of the shift went unnamed.
+            //  5. `MobState.SpawnZone`. A new hashed field, folded immediately
+            //     after `Type`, the field it qualifies: the ring the SPAWNER put
+            //     the mob into, which is what "this ring is cleared" is counted
+            //     by (К7). It cannot be derived — every mob walks away from
+            //     where it was born, which is exactly why it has to be stored,
+            //     and stored means hashed.
+            //  6. `ZoneWeights` AND `WavePause` LEFT THE CONFIG. This cause does
+            //     NOT move the three constants, and that is why it is the one
+            //     easiest to forget: `SimConfigHash` is not part of
+            //     `StateHash64` and `SimulationWorld` never computes it. It is
+            //     named sixth rather than dropped because it belongs to the same
+            //     sanctioned event and because it has a consequence nothing else
+            //     has — `simConfigHash` CHANGED, so the clients already built at
+            //     `builds-f8` cannot join the new server, and BOTH sides are
+            //     rebuilt for milestone В4.
+            //
+            // ATTRIBUTION, so the movement is proven rather than asserted. The
+            // earlier re-pins separated their causes into separate runs; here
+            // the TASK ORDER did the separating, and the intermediate values
+            // were observed and recorded as they appeared:
+            //   - CAUSE 5 ALONE (Т1 — `SpawnZone` entered `HashMob`, nothing
+            //     else of the task existed yet): this constant went to
+            //     14591900056746272100, the multiplayer one to
+            //     15401656763043580689, the extraction one to
+            //     16270681601866834963. Т2 then added four config fields that no
+            //     code read yet and moved nothing, which is the control for that
+            //     step.
+            //   - CAUSES 1-4 TOGETHER (Т3, then the merged Т4+Т5): the values
+            //     pinned below and at the two other constants. They are NOT
+            //     separable further, and the reason is recorded rather than
+            //     hidden: Т3 was written to be behavior-neutral on purpose, and
+            //     the cadence could not be committed without its bounds — the
+            //     measurement in cause 4 is what forced Т4 and Т5 into one task
+            //     (owner decision, session 47).
+            //   - TWO MEASURED NEGATIVES, each from a full run, and they are
+            //     what make the list above exhaustive rather than merely long.
+            //     Т6 moved the SHIPPED numbers (`BaseCount` 4 -> 16 and
+            //     `EliteShareOuterGrowth` 0.02 -> 0.007, in the `.asset` and in
+            //     the C# defaults together) and all three constants came back
+            //     BIT FOR BIT: the goldens read `TestConfigs`, never the assets,
+            //     which is precisely what Р325 separated the two sources for.
+            //     Т7 added the HUD's wave-announce flash and they came back bit
+            //     for bit again: `RenderSnapshot` is not in `StateHash64`.
+            //
+            // WHAT IS NOT IN THIS MOVEMENT: `RenderSnapshot.Wave` became the
+            // WORLD AGGREGATE of the three rings (max step, min timer among the
+            // unfrozen, sums of the rest), and the wire block stayed at four
+            // bytes with `ProtocolVersion` at 3. None of that is hashed, and the
+            // Т7 negative above is the evidence, not the argument.
+            const ulong GoldenHash = 0xDAA519A7FF4C889DUL; // = 15755027080758986909
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
@@ -1321,7 +1473,28 @@ namespace Ring.Simulation.Tests
             //   - IT DOES NOT USE ScenarioStart. The fourth cause listed on the
             //     solo constant (its anchor clearance) cannot touch this
             //     digest, and did not.
-            const ulong MultiGoldenHash = 0x259DC0AFF155D907UL; // = 2710534412647651591
+            //
+            // RE-PIN #4 (bd `app-ggvz`, "wave cadence per ring") — the solo
+            // golden above carries the full account: whose sanction this is
+            // (owner decision К9, spent in a commit of its own), the six causes,
+            // and the attribution runs including the value this constant held
+            // after Т1 alone (15401656763043580689). This scenario has no cause
+            // of its own: it runs the same three independent rings with three
+            // collectors instead of one, so every term is the solo cause counted
+            // three times over.
+            //
+            // ONE THING IS TRUE OF THIS SCENARIO ONLY, and it is the half of
+            // cause 4 the spec did not name — THE PER-RING CEILING BITES HERE
+            // FROM THE VERY FIRST WAVE, and in the solo run it does not. The
+            // arithmetic is the fixture's own, recomputed rather than recalled:
+            // `CountForTest` gives round((4 + 2*0) * (1 + 2*0.7)) = 10 per ring
+            // for three players against round(4 * 1) = 4 for one, and
+            // TestConfigs.Default() caps the core at MaxAliveByZone[Core] = 8.
+            // So the first core wave of this run is held at the ceiling with a
+            // debt left over, while the solo run's first core wave (4) fits
+            // underneath it untouched. The rings' own ceilings, 24 and 16, are
+            // reached later in both runs as the clock raises the step.
+            const ulong MultiGoldenHash = 0x06FA4F44F3722466UL; // = 502801465965945958
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
