@@ -896,7 +896,14 @@ namespace Ring.Simulation.Core
             HitZone zone = HitZone.None, float2 hitDir = default,
             byte playerIndex = ProjectileIds.NoOwner,
             int secondaryEntityId = 0,
-            float height = 0f)
+            float height = 0f,
+            // app-88jb Т8: two more tail parameters with defaults, exactly the
+            // way Т3 added `height` — every existing caller keeps compiling and
+            // keeps meaning what it meant. `attackerIndex` defaults to NoOwner
+            // and NOT to 0: zero is a real seat, so a byte default would have
+            // every event of every kind quietly claim collector 0 fired it.
+            float impactSpeed = 0f,
+            byte attackerIndex = ProjectileIds.NoOwner)
         {
             if (_eventCount < _events.Length)
             {
@@ -905,7 +912,8 @@ namespace Ring.Simulation.Core
                     Kind = kind, Tick = _tick, Pos = pos,
                     EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner,
                     Zone = zone, HitDir = hitDir, PlayerIndex = playerIndex,
-                    SecondaryEntityId = secondaryEntityId, Height = height
+                    SecondaryEntityId = secondaryEntityId, Height = height,
+                    ImpactSpeed = impactSpeed, AttackerIndex = attackerIndex
                 };
             }
             else
@@ -1925,8 +1933,15 @@ namespace Ring.Simulation.Core
             // VICTIM's index, spec §3.2 — the attacker is deliberately NOT what
             // these two report (SimEvent has one player slot, and for a
             // PlayerDamaged/PlayerDied pair the victim is the convention).
+            // app-88jb Т8: the SHOOTER rides beside them in a field of its own,
+            // together with the speed the round landed at. Both are already
+            // parameters of this method, so nothing is re-derived here. A mob's
+            // fist arrives with speed 0 and attacker NoOwner, and that is the
+            // truth about a contact strike rather than a gap: it carries no
+            // impulse and no player credit.
             Emit(SimEventKind.PlayerDamaged, pos, victimIndex, default, dmg, zone: zone, hitDir: dir,
-                playerIndex: (byte)victimIndex, height: hitHeight);
+                playerIndex: (byte)victimIndex, height: hitHeight,
+                impactSpeed: projectileSpeed3D, attackerIndex: attackerIndex);
 
             if (p.Hp <= 0f)
             {

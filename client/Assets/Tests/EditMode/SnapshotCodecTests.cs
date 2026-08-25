@@ -2252,8 +2252,13 @@ namespace Ring.Simulation.Tests
         const int EvtRoundId = 4919;        // 0x1337 -> 0x37, 0x13
         const int EvtMobId = 51001;         // 0xC739 -> 0x39, 0xC7
         const byte EvtSlot = 7;             // a real slot: below SnapMaxPlayers (11)
+        // app-88jb Т8: a SECOND real slot, and it must differ from EvtSlot --
+        // PlayerDamaged carries the victim in byte 0 and the shooter in byte 6,
+        // so one shared value would let a swap of the two pass every assertion.
+        const byte EvtAttackerSlot = 9;     // a real slot too, and not EvtSlot
         const float EvtHorizSpeedPlayer = 39f;   // /61  -> 163
         const float EvtHorizSpeedMob = 7.25f;    // /17  -> 109
+        const float EvtImpactSpeed = 43f;        // /61  -> 180 (the SHOOTER's scale)
         const float EvtVelZ = -2.75f;            // /61  -> 31290 (0x3A,0x7A); /17 -> 27467 (0x4B,0x6B)
         const float EvtHeightHigh = 2.75f;       // /6.5 -> 108
         const float EvtHeightLow = 1.25f;        // /6.5 -> 49
@@ -2448,7 +2453,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ShotHeard));
             Assert.AreEqual(3, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.MobSpawned));
             Assert.AreEqual(4, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.MobDied));
-            Assert.AreEqual(4, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDamaged));
+            Assert.AreEqual(7, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDamaged));
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDied));
             Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDashed));
             Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerSlideStarted));
@@ -2623,11 +2628,22 @@ namespace Ring.Simulation.Tests
         {
             byte[] damaged = WritePayload(SnapshotEventKind.PlayerDamaged,
                 b => SnapshotEvents.WritePlayerDamaged(new System.Span<byte>(b), EvtSlot, HitZone.Legs,
-                    EvtDamage, EvtDirA, EvtCfg));
+                    EvtDamage, EvtDirA, EvtImpactSpeed, EvtHeightLow, EvtAttackerSlot, EvtCfg));
             Assert.AreEqual(EvtSlot, damaged[0], "byte 0: victim slot");
             Assert.AreEqual((byte)HitZone.Legs, damaged[1], "byte 1: zone");
             Assert.AreEqual((byte)197, damaged[2], "byte 2: amount 91/118 -> code 197");
             Assert.AreEqual((byte)204, damaged[3], "byte 3: hitDir -> code 204");
+            // app-88jb Т8: the three bytes this task added, spelled out
+            // INDEPENDENTLY of the decoder for the reason this file's own
+            // header gives -- a round-trip is blind to any mutation applied
+            // symmetrically to writer and reader, so byte order and the scale
+            // each byte rides are pinned here or nowhere. The speed rides the
+            // SHOOTER's own scale (a player's 61, never the gunner's 17),
+            // which is why byte 6 is the one a reader has to take first.
+            Assert.AreEqual((byte)180, damaged[4], "byte 4: impact speed 43/61 -> code 180");
+            Assert.AreEqual((byte)49, damaged[5], "byte 5: contact height 1.25/6.5 -> code 49");
+            Assert.AreEqual(EvtAttackerSlot, damaged[6],
+                "byte 6: the SHOOTER's slot — byte 0 is the victim, and the two are different seats");
             SnapshotEventPayload dd = Decoded(damaged, SnapshotEventKind.PlayerDamaged);
             Assert.AreEqual(EvtSlot, dd.PlayerIndex);
             Assert.AreEqual(HitZone.Legs, dd.Zone);
@@ -2672,6 +2688,60 @@ namespace Ring.Simulation.Tests
                 b => SnapshotEvents.WriteShotHeard(new System.Span<byte>(b), ProjectileIds.NoOwner, EvtCfg));
             Assert.AreEqual(ProjectileIds.NoOwner, heardMob[0], "255 marks a shot no player fired");
             Assert.AreEqual(ProjectileIds.NoOwner, Decoded(heardMob, SnapshotEventKind.ShotHeard).PlayerIndex);
+        }
+
+        // ---- Т8. PlayerDamaged carries the blow's speed, height and shooter ----
+
+        [Test]
+        public void PlayerDamaged_RoundTripsSpeedHeightAndAttacker()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            System.Span<byte> buf = stackalloc byte[SnapshotEvents.MaxPayloadBytes];
+            int n = SnapshotEvents.WritePlayerDamaged(buf, victimIndex: 1, HitZone.Body,
+                amount: 12f, hitDir: new float2(1f, 0f), impactSpeed: 20f, height: 1.1f,
+                attackerIndex: 0, in cfg);
+            Assert.AreEqual(7, n, "ширина PlayerDamaged не семь байт");
+
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerDamaged,
+                buf.Slice(0, n), in cfg, out SnapshotEventPayload v, out SnapshotBlockError err));
+            Assert.AreEqual(SnapshotBlockError.None, err);
+            Assert.AreEqual(1, v.PlayerIndex, "жертва не доехала");
+            Assert.AreEqual(0, v.AttackerIndex, "стрелок не доехал");
+            Assert.AreEqual(20f, v.ImpactSpeed, cfg.Weapon.ProjectileSpeed / 255f,
+                "скорость удара декодирована не по шкале ВЛАДЕЛЬЦА");
+            Assert.AreEqual(1.1f, v.Height, cfg.Hero.MaxAimHeight / 255f, "высота не доехала");
+        }
+
+        [Test]
+        public void PlayerDamaged_MobShot_UsesTheGunnerSpeedScale()
+        {
+            // ⭐ THE FINDING'S OWN WITNESS: without the shooter's byte both
+            // sides would have to GUESS the scale, and a mob's round (cap 14)
+            // would decode on the collector's scale (35 in this fixture) --
+            // an error of 2.5x.
+            SimConfig cfg = TestConfigs.Default();
+            System.Span<byte> buf = stackalloc byte[SnapshotEvents.MaxPayloadBytes];
+            int n = SnapshotEvents.WritePlayerDamaged(buf, victimIndex: 0, HitZone.Body,
+                amount: 8f, hitDir: new float2(1f, 0f), impactSpeed: 13f, height: 1.1f,
+                attackerIndex: ProjectileIds.NoOwner, in cfg);
+
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerDamaged,
+                buf.Slice(0, n), in cfg, out SnapshotEventPayload v, out _));
+            Assert.AreEqual(13f, v.ImpactSpeed, cfg.Gunner.ProjectileSpeed / 255f,
+                "мобий выстрел декодирован по шкале сборщика");
+            Assert.AreEqual(ProjectileIds.NoOwner, v.AttackerIndex,
+                "стрелок не доехал: NoOwner отличает мобий выстрел от выстрела сборщика 0");
+        }
+
+        [Test]
+        public void PlayerDamaged_MalformedLength_IsRefused()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            System.Span<byte> six = stackalloc byte[6];
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerDamaged, six,
+                in cfg, out _, out SnapshotBlockError err),
+                "декодер принял укороченный PlayerDamaged");
+            Assert.AreEqual(SnapshotBlockError.MalformedLength, err);
         }
 
         // ---- Т29. The raid's own five kinds, through their own codec ----
@@ -2807,6 +2877,30 @@ namespace Ring.Simulation.Tests
                 out _, out SnapshotBlockError heardBad));
             Assert.AreEqual(SnapshotBlockError.MalformedContent, heardBad,
                 "but an index that is neither a slot nor the sentinel is still hostile");
+
+            // app-88jb Т8: PlayerDamaged carries TWO slot bytes now, and the
+            // difference between them is what deviation 2 rests on. Byte 0 is
+            // the VICTIM and follows PlayerDied's half above — NoOwner is
+            // hostile there, because a blow always lands on a real collector.
+            // Byte 6 is the SHOOTER and follows ShotHeard's half instead: a
+            // mob's round names no player, which is ordinary traffic, while a
+            // seat this match does not have stays hostile — Task 32 indexes
+            // per-slot pools by it, and Т9 keys "my own hit" off exactly it.
+            var damagedPayload = new byte[SnapshotEvents.PayloadBytesFor(SnapshotEventKind.PlayerDamaged)];
+            damagedPayload[0] = legal;
+            damagedPayload[1] = (byte)HitZone.Body;
+            damagedPayload[6] = ProjectileIds.NoOwner;
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerDamaged, damagedPayload,
+                    EvtCfg, out _, out SnapshotBlockError mobShot),
+                "a mob's round names no shooter, and NoOwner is legal in the SHOOTER's byte");
+            Assert.AreEqual(SnapshotBlockError.None, mobShot);
+
+            damagedPayload[6] = hostile;
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(SnapshotEventKind.PlayerDamaged, damagedPayload,
+                    EvtCfg, out _, out SnapshotBlockError shooterBad),
+                "a shooter this match does not have must be refused too — since Т8 the victim's byte "
+                + "is no longer the only slot on this payload");
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, shooterBad);
 
             // Stage 3 Т29 (review I-1): the kind added to this validation
             // group in that task needs its own pair here, or the label could

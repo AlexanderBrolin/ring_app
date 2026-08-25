@@ -322,6 +322,17 @@ namespace Ring.Networking.Client
                     e.Zone = p.Zone;
                     e.Amount = p.Amount;
                     e.HitDir = p.Dir;
+                    // app-88jb Т8. COPIED, not left to the struct's defaults,
+                    // and for the same reason the two fields above are both
+                    // filled: `default(byte)` is 0 and slot 0 is a real seat,
+                    // so an unset `AttackerIndex` would tell every client that
+                    // the collector in seat 0 fired the blow. The speed and the
+                    // height have no such trap, but they have the same source
+                    // and belong in the same place — the client cannot derive
+                    // either one, which is why deviation 2 put them on the wire.
+                    e.AttackerIndex = p.AttackerIndex;
+                    e.ImpactSpeed = p.ImpactSpeed;
+                    e.Height = p.Height;
                     break;
 
                 case SnapshotEventKind.PlayerDied:

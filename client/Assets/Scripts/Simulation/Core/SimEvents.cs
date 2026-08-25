@@ -209,13 +209,27 @@ namespace Ring.Simulation.Core
         /// delivers to nobody at all.
         /// VICTIM — PlayerDamaged/PlayerDied and, since Stage 3 Т23/Т29,
         /// PlayerExtracted (mirrors EntityId's convention for those three
-        /// kinds, spec §3.2); the attacker is deliberately not
-        /// reported, there is only one player slot on the struct and for a
-        /// damage/death pair the victim is the one Presentation places the
-        /// feedback on. An extraction is the same SHAPE of subject rather
-        /// than a blow — the collector the news is about — which is why
-        /// EventRelevance.VisibleSubjectId resolves all three through the
-        /// same ForPlayer(ev.PlayerIndex).
+        /// kinds, spec §3.2): the collector the event is ABOUT, which is the
+        /// one Presentation places a blow's feedback on. An extraction is the
+        /// same SHAPE of subject rather than a blow — the collector the news is
+        /// about — which is why EventRelevance.VisibleSubjectId resolves all
+        /// three through the same ForPlayer(ev.PlayerIndex).
+        /// ⚠ THE SHOOTER IS REPORTED NOW, AND IT IS NOT THIS FIELD. Until
+        /// app-88jb Т8 this paragraph said the attacker was deliberately not
+        /// reported and that the struct had only one player slot; both stopped
+        /// being true with plan deviation 2, which gave PlayerDamaged a SECOND
+        /// slot of its own — `AttackerIndex` below — because a client sizing
+        /// the blow's impulse needs the round's own speed scale, and that scale
+        /// belongs to whoever fired it. `PlayerIndex` did NOT change meaning
+        /// for any kind: it is still the victim here. PlayerDied and
+        /// PlayerExtracted name nobody but their subject at all.
+        /// ⚠ AND THAT IS A DIFFERENT ARRANGEMENT FROM THE ATTACKER CONVENTION
+        /// BELOW — three roles over two fields, and collapsing them into
+        /// "PlayerIndex is whoever the event is about" is how the wrong
+        /// collector ends up shoved. For the VICTIM kinds this field is the
+        /// victim and `AttackerIndex` carries the shooter; for the ATTACKER
+        /// kinds THIS field is the shooter and the victim rides
+        /// EntityId/MobType instead, with `AttackerIndex` unused.
         /// ATTACKER — ProjectileHit/MobDied, added by Stage 2 Task 17
         /// (carryover-t17.md item 2), and ProjectileHitPlayer, added by Stage 2
         /// Task 44a: the SHOOTER behind the blow, i.e. the
@@ -260,5 +274,39 @@ namespace Ring.Simulation.Core
         /// fields stop meaning different things for different kinds.
         /// Zero for every kind with no contact behind it.
         public float Height;
+        /// The round's speed AT THE MOMENT IT LANDED, in m/s (app-88jb Т8, spec
+        /// §3.7 / plan deviation 2). Filled for PlayerDamaged; zero for every
+        /// kind with no blow behind it, and zero for a mob's contact strike,
+        /// which gives no knockback at all by decision (plan Т7).
+        ///
+        /// ⚠ THE ROUND'S OWN SPEED, NOT THE CONFIG'S, and that is the whole
+        /// reason it rides at all: a receiver cannot re-derive it from
+        /// `Weapon.ProjectileSpeed`, because a ricocheted round keeps only a
+        /// fraction of its muzzle speed (Т19's retention factor) and a mob's
+        /// round was never on the player's scale to begin with. Assuming the
+        /// config number would size every impulse by up to the ratio between
+        /// the two scales.
+        /// Not part of StateHash — events are excluded from the hash entirely.
+        public float ImpactSpeed;
+        /// WHO FIRED THE ROUND (app-88jb Т8, plan deviation 2) — a player slot,
+        /// or ProjectileIds.NoOwner for a mob's.
+        ///
+        /// ⚠ `PlayerIndex` AND `EntityId` ARE THE VICTIM FOR THIS KIND; THIS
+        /// FIELD IS THE SHOOTER, AND CONFUSING THEM MEANS SHOVING THE WRONG
+        /// COLLECTOR. One player slot could not carry both, so deviation 2
+        /// added a second one rather than re-reading the first. The wire needs
+        /// it twice over: it picks the speed scale `ImpactSpeed` decodes
+        /// against, and it is what separates "that was MY round" from "that was
+        /// a Gunner's" on the receiving side.
+        /// ⚠ FILLED FOR `PlayerDamaged` ONLY. `PlayerDied` and
+        /// `PlayerExtracted` share `PlayerIndex`'s victim convention but name
+        /// no shooter, and the ATTACKER kinds (`ProjectileHit`/`MobDied`/
+        /// `ProjectileHitPlayer`) carry theirs in `PlayerIndex` itself — see
+        /// that field's own two warnings, which spell the whole arrangement
+        /// out from the other side.
+        /// Unused (ProjectileIds.NoOwner) for every other kind, same "unused
+        /// for every other kind" contract as `Amount`/`Owner`/`Zone` above.
+        /// Not part of StateHash — events are excluded from the hash entirely.
+        public byte AttackerIndex;
     }
 }

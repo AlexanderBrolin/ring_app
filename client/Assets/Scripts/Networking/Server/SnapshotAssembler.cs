@@ -698,8 +698,13 @@ namespace Ring.Networking.Server
                     case SimEventKind.PlayerDamaged:
                     {
                         int slot = Add(ref seq, i, in ev, SnapshotEventKind.PlayerDamaged);
+                        // app-88jb Т8: `ev.PlayerIndex` is the VICTIM for this
+                        // kind and `ev.AttackerIndex` is the shooter — two
+                        // different slots, and passing either one twice would
+                        // put the wrong collector on the wire.
                         SnapshotEvents.WritePlayerDamaged(PayloadSpan(slot), ev.PlayerIndex, ev.Zone,
-                            ev.Amount, ev.HitDir, in _cfg);
+                            ev.Amount, ev.HitDir, ev.ImpactSpeed, ev.Height, ev.AttackerIndex,
+                            in _cfg);
                         break;
                     }
 

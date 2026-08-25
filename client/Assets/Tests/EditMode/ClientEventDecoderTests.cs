@@ -387,8 +387,14 @@ namespace Ring.Simulation.Tests
             // sentinel — and slot 0 is a real seat.
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.PlayerDamaged);
+            // app-88jb Т8: every one of the three new arguments is NON-ZERO and
+            // different from the others, and the shooter is LocalSlot while the
+            // victim is OtherSlot. A zero would make the shooter assertion
+            // below true on the struct's own default, which is the exact defect
+            // this test exists to catch on the two older fields.
             SnapshotEvents.WritePlayerDamaged(bytes, OtherSlot, HitZone.Legs, amount: 25f,
-                new float2(0f, 1f), in cfg);
+                new float2(0f, 1f), impactSpeed: 28f, height: 2.35f,
+                attackerIndex: LocalSlot, in cfg);
 
             SimEvent e = Decode(SnapshotEventKind.PlayerDamaged, bytes, in cfg);
 
@@ -396,14 +402,23 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(OtherSlot, e.EntityId,
                 "SimEvent.EntityId must be the VICTIM's slot for this kind");
             Assert.AreEqual(OtherSlot, e.PlayerIndex,
-                "SimEvent.PlayerIndex must be the VICTIM's slot too — the attacker is deliberately "
-                + "not reported for a damage/death pair");
+                "SimEvent.PlayerIndex must be the VICTIM's slot too — since Т8 the shooter has a "
+                + "field of its own (asserted below), and this pair must not drift into carrying it");
             Assert.AreEqual(HitZone.Legs, e.Zone, "SimEvent.Zone");
             Assert.AreEqual(25f, e.Amount, UnitTolerance(cfg.Hero.MaxHp),
                 "SimEvent.Amount must be the damage dealt, quantized against MaxHp");
             Assert.AreEqual(math.PI / 2f, math.atan2(e.HitDir.y, e.HitDir.x), 1e-3f,
                 "SimEvent.HitDir must be the blow's own direction — directional feedback reads it "
                 + "and has nothing else to place a spray by");
+            Assert.AreEqual(LocalSlot, e.AttackerIndex,
+                "SimEvent.AttackerIndex must be the SHOOTER's slot — the victim rides the two "
+                + "fields above, and leaving this one unset would name collector 0 on every blow");
+            Assert.AreEqual(28f, e.ImpactSpeed, UnitTolerance(cfg.Weapon.ProjectileSpeed),
+                "SimEvent.ImpactSpeed must be the round's landing speed, quantized against the "
+                + "SHOOTER's own scale");
+            Assert.AreEqual(2.35f, e.Height, UnitTolerance(cfg.Hero.MaxAimHeight),
+                "SimEvent.Height must be the blow's contact height — the impulse Т7 applies is "
+                + "placed by it");
         }
 
         [Test]

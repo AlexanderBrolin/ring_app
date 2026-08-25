@@ -152,6 +152,11 @@ namespace Ring.Networking.Protocol
         /// round), the killer for `MobDied`, the victim for
         /// `PlayerDamaged`/`PlayerDied`, the actor for
         /// `PlayerDashed`/`PlayerSlideStarted`/`DashRicocheted`.
+        ///
+        /// ⚠ `PlayerDamaged` HAS A SECOND SLOT BYTE SINCE app-88jb Т8, and it
+        /// is NOT this one: this field stays the VICTIM, `AttackerIndex` below
+        /// is the shooter. Reading one for the other means shoving the wrong
+        /// collector, which is why they are two fields and not one.
         public byte PlayerIndex;
 
         /// Decoded unit heading: the round's horizontal direction for
@@ -170,8 +175,27 @@ namespace Ring.Networking.Protocol
         public float VelZ;
 
         /// Meters above ground: the muzzle height for `ProjectileSpawned`, the
-        /// contact height for a `Blocked` `ProjectileEnded` (0 otherwise).
+        /// contact height for a `Blocked` `ProjectileEnded` and, since app-88jb
+        /// Т8, the contact height of the blow for `PlayerDamaged` (0 otherwise).
         public float Height;
+
+        /// Speed of the round that landed, in m/s (app-88jb Т8). Quantized against
+        /// SpeedCapFor(attackerIndex) -- the OWNER's own scale, the precedent
+        /// ProjectileSpawned already sets ("THE SPEED SCALE DEPENDS ON THE OWNER").
+        public float ImpactSpeed;
+
+        /// Who fired the round (app-88jb Т8) -- a player slot, or ProjectileIds.NoOwner
+        /// for a mob's.
+        ///
+        /// ⚠ A SECOND FIELD, NOT PlayerIndex, and round 3 is why (finding A-C3):
+        /// PlayerIndex is the VICTIM here. Its own doc says so ("the killer for
+        /// MobDied, the VICTIM for PlayerDamaged"), ClientEventDecoder fills it as the
+        /// victim, and T9's decoder filter keys "my own hit" off exactly that. Plan v2
+        /// declared only ImpactSpeed and then asserted PlayerIndex == the attacker --
+        /// two readings of one slot that cannot both hold: either the test is red on a
+        /// correct implementation, or the victim is lost and the client shoves the
+        /// wrong collector.
+        public byte AttackerIndex;
 
         /// `PlayerDamaged`: the damage actually dealt. `StaminaDenied`: the
         /// stamina that was missing.
@@ -226,7 +250,8 @@ namespace Ring.Networking.Protocol
     ///   ShotHeard          1 B  ownerIndex u8
     ///   MobSpawned         3 B  id u16 | mobType u8
     ///   MobDied            4 B  id u16 | attackerIndex u8 | zone u8
-    ///   PlayerDamaged      4 B  victimIndex u8 | zone u8 | amount u8 | hitDir u8
+    ///   PlayerDamaged      7 B  victimIndex u8 | zone u8 | amount u8 | hitDir u8
+    ///                           | impactSpeed u8 | height u8 | attackerIndex u8
     ///   PlayerDied         2 B  victimIndex u8 | zone u8
     ///   PlayerDashed       1 B  actorIndex u8
     ///   PlayerSlideStarted 1 B  actorIndex u8
@@ -242,6 +267,13 @@ namespace Ring.Networking.Protocol
     /// scale would report it roughly twice as fast as it flies. Exactly the
     /// precedent Task 27 set for a mob's HP, which is quantized against its own
     /// archetype's `MaxHp` (task-27-brief §2.7).
+    ///
+    /// ⚠ TWO KINDS OBEY THAT RULE NOW, AND THE BYTE IS NOT IN THE SAME PLACE:
+    /// `ProjectileSpawned` carries its owner in byte 2, while `PlayerDamaged`
+    /// (app-88jb Т8) carries its SHOOTER in byte 6 — the LAST byte of its
+    /// payload, which a reader must therefore take before byte 4. The two
+    /// share one home for the rule itself, `SpeedCapFor`, so the branch is
+    /// written once no matter where the byte sits.
     ///
     /// `velZ` GOES THROUGH `Quantize.Pos`, NOT `Unit`, and against the SPEED
     /// CAP rather than a new constant: a round's vertical velocity is one
@@ -384,8 +416,12 @@ namespace Ring.Networking.Protocol
             {
                 case SnapshotEventKind.ProjectileSpawned: return 8;
                 case SnapshotEventKind.ProjectileEnded: return 5;
-                case SnapshotEventKind.MobDied:
-                case SnapshotEventKind.PlayerDamaged: return 4;
+                case SnapshotEventKind.MobDied: return 4;
+
+                // app-88jb Т8: three bytes wider than the case it used to
+                // share with MobDied -- impactSpeed, height and the shooter's
+                // own slot ride along now (plan deviation 2).
+                case SnapshotEventKind.PlayerDamaged: return 7;
                 case SnapshotEventKind.MobSpawned: return 3;
                 case SnapshotEventKind.PlayerDied:
                 case SnapshotEventKind.DashRicocheted:
@@ -498,15 +534,29 @@ namespace Ring.Networking.Protocol
         }
 
         public static int WritePlayerDamaged(System.Span<byte> dst, byte victimIndex, HitZone zone,
-            float amount, float2 hitDir, in SimConfig cfg)
+            float amount, float2 hitDir, float impactSpeed, float height, byte attackerIndex,
+            in SimConfig cfg)
         {
             Reserve(dst, SnapshotEventKind.PlayerDamaged);
             RequirePlayerSlot(victimIndex, in cfg, nameof(victimIndex));
+            // app-88jb Т8: the two slot bytes take DIFFERENT guards, and the
+            // asymmetry is the point rather than an oversight -- a blow always
+            // lands on a real seat, while the round that dealt it may be a
+            // mob's and then belongs to nobody. Same pair MobDied carries.
+            RequirePlayerSlotOrNoOwner(attackerIndex, in cfg, nameof(attackerIndex));
             RequireZone(zone);
             dst[0] = victimIndex;
             dst[1] = (byte)zone;
             dst[2] = Quantize.Unit(amount, cfg.Hero.MaxHp);
             dst[3] = Quantize.Dir(hitDir);
+            // The speed rides the SHOOTER's own scale, through the one home
+            // both sides share (`SpeedCapFor`, see the class doc); the height
+            // rides `cfg.Hero.MaxAimHeight`, the scale WriteProjectileEnded
+            // already quantizes a contact height against. No second home for
+            // either rule.
+            dst[4] = Quantize.Unit(impactSpeed, SpeedCapFor(attackerIndex, in cfg));
+            dst[5] = Quantize.Unit(height, cfg.Hero.MaxAimHeight);
+            dst[6] = attackerIndex;
             return PayloadBytesFor(SnapshotEventKind.PlayerDamaged);
         }
 
@@ -681,6 +731,20 @@ namespace Ring.Networking.Protocol
                     break;
                 }
                 case SnapshotEventKind.PlayerDamaged:
+                {
+                    // app-88jb Т8 split this off PlayerDied: since deviation 2
+                    // the payload carries TWO slot bytes, and the halves are
+                    // deliberately unequal. payload[0] is the VICTIM and must
+                    // be a seat this match has -- a blow lands on a real
+                    // collector or the bytes are not ours. payload[6] is the
+                    // SHOOTER and may also be NoOwner, because a mob's round
+                    // has no player behind it. Exactly the pair MobDied uses
+                    // four lines up, for the same two reasons.
+                    if (!IsPlayerSlot(payload[0], in cfg) || payload[1] > MaxHitZoneValue
+                        || !IsPlayerSlotOrNoOwner(payload[6], in cfg))
+                    { error = SnapshotBlockError.MalformedContent; return false; }
+                    break;
+                }
                 case SnapshotEventKind.PlayerDied:
                 {
                     if (!IsPlayerSlot(payload[0], in cfg) || payload[1] > MaxHitZoneValue)
@@ -753,11 +817,22 @@ namespace Ring.Networking.Protocol
                     break;
 
                 case SnapshotEventKind.PlayerDamaged:
+                {
+                    // app-88jb Т8: attackerIndex FIRST -- it selects the speed
+                    // scale the line below decodes against, the same ordering
+                    // rule ProjectileSpawned's ownerIndex follows above. Read
+                    // it after the speed and a mob's round would come back on
+                    // the collector's scale.
+                    byte attacker = payload[6];
                     value.PlayerIndex = payload[0];
+                    value.AttackerIndex = attacker;
                     value.Zone = (HitZone)payload[1];
                     value.Amount = Quantize.UnitBack(payload[2], cfg.Hero.MaxHp);
                     value.Dir = Quantize.DirBack(payload[3]);
+                    value.ImpactSpeed = Quantize.UnitBack(payload[4], SpeedCapFor(attacker, in cfg));
+                    value.Height = Quantize.UnitBack(payload[5], cfg.Hero.MaxAimHeight);
                     break;
+                }
 
                 case SnapshotEventKind.PlayerDied:
                     value.PlayerIndex = payload[0];
