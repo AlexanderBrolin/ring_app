@@ -848,7 +848,8 @@ namespace Ring.Simulation.Tests
             float hpBeforeBlow = w.PlayerAt(0).Hp;
             float blow = cfg.Hero.MaxHp * 0.1f; // a fixture expression, not a balance literal
             w.DamagePlayer(0, ProjectileIds.NoOwner, blow, w.PlayerAt(0).Pos,
-                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
 
             Assert.AreEqual(hpBeforeBlow - blow, w.PlayerAt(0).Hp, 1e-4f,
                 "premise: the blow must actually have landed, or this test proves nothing");
@@ -1187,7 +1188,8 @@ namespace Ring.Simulation.Tests
             float blow = cfg.Hero.MaxHp * 0.1f; // a fixture expression, not a balance literal
 
             w.DamagePlayer(0, ProjectileIds.NoOwner, blow, w.PlayerAt(0).Pos, HitZone.Body,
-                new float2(1f, 0f), hitHeight: 0f);
+                new float2(1f, 0f), hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
 
             Assert.AreEqual(hpBeforeBlow - blow, w.PlayerAt(0).Hp, 1e-4f,
                 "premise: the blow must actually have landed, or this test proves nothing");
@@ -1230,7 +1232,8 @@ namespace Ring.Simulation.Tests
             float hpBeforeBlow = w.PlayerAt(0).Hp;
 
             w.DamagePlayer(0, ProjectileIds.NoOwner, cfg.Hero.MaxHp * 0.1f, w.PlayerAt(0).Pos,
-                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
 
             Assert.AreEqual(hpBeforeBlow, w.PlayerAt(0).Hp, 1e-4f, "premise: i-frames absorbed the blow");
             Assert.AreEqual(timerBeforeBlow, w.PlayerAt(0).RepairTimer, 0f,

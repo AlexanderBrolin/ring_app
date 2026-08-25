@@ -117,6 +117,37 @@ namespace Ring.Simulation.Core
         /// StateHash since Т6, beside the timer the pair belongs to.
         public int LootTargetContainerId;
         public byte LootTargetSlot;
+
+        /// The collector's own body tilt and its angular velocity (app-88jb
+        /// Т7, spec §3.2, owner decision Р377). RADIANS and radians per
+        /// second — the same units, the same spring (Impact.SpringStep) and
+        /// the same signed arm as MobState.Tilt below: a hit above the center
+        /// of mass tips the body ALONG the shot, one below UNDERCUTS it, and
+        /// the sign falls out of `hitHeight - CenterOfMassHeight` with no
+        /// branch anywhere.
+        ///
+        /// THE COLLECTOR HAS NO KNOCKDOWN THRESHOLD, and that is the one
+        /// place this pair parts company with the mob's (Р377).
+        /// MobSimConfig.TiltFallAngle tips a mob into MobAiState.Downed;
+        /// HeroSimConfig carries no such angle and is not to be given one —
+        /// taking control away from a player because a round landed
+        /// contradicts ADR-001 §9, where evasion is the skill being asked
+        /// for. The tilt is read, never obeyed: the body leans and comes
+        /// back.
+        ///
+        /// TWO WRITERS ON PURPOSE, which is what makes these fields Mixed
+        /// rather than Predicted in PredictionParityTests.RoleByField:
+        /// SimulationWorld.DamagePlayer adds the angular impulse on the
+        /// server, and PlayerPrediction.Step adds the client's own copy of
+        /// the same impulse out of ImpactPulse.TiltImpulse. The spring itself
+        /// (TiltSystem.Apply) steps on both sides identically.
+        ///
+        /// ⚠ DECLARED AHEAD OF ALL OF THAT, on this task's RED step: today
+        /// nothing writes either field and nothing folds them into
+        /// StateHash. DamagePlayer's impulse, the prediction's own, the
+        /// collector pass of TiltSystem and the HashPlayer fold are the rest
+        /// of Т7 — this paragraph goes away with the last of them.
+        public float Tilt, TiltVel;
     }
 
     /// Stage 3 Task 10 (spec Р213/Р251): Elite and Director are the third

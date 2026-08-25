@@ -4,15 +4,20 @@ using Unity.Mathematics;
 namespace Ring.Simulation.Combat
 {
     /// The tick-side half of body tilt (app-88jb Т5, spec §3.2, owner
-    /// correction Н10): every live body walks its tilt spring one step per
-    /// tick. The impulse half lives where the blow is resolved -- DamageMob
-    /// adds Impact.AngularImpulse into MobState.TiltVel -- and this system
-    /// only ever integrates what that left behind.
+    /// correction Н10): every body walks its tilt spring one step per tick.
+    /// TWO PASSES SINCE Т7 -- the mobs, then the collectors -- and neither
+    /// owns an impulse: those live where their blow is resolved (DamageMob
+    /// adds Impact.AngularImpulse into MobState.TiltVel, DamagePlayer into
+    /// PlayerState.TiltVel), and this system only ever integrates what they
+    /// left behind.
     ///
-    /// SINCE Т6 IT ALSO OWNS ONE DECISION, not just the integration: a body
-    /// whose |Tilt| passes MobSimConfig.TiltFallAngle enters MobAiState.Downed
-    /// (spec §3.2). That decision lives here rather than in the AI because
-    /// this is the one place that owns the angle it is made from; its
+    /// SINCE Т6 IT ALSO OWNS ONE DECISION, not just the integration, AND THAT
+    /// DECISION IS THE MOBS' ALONE: a mob whose |Tilt| passes
+    /// MobSimConfig.TiltFallAngle enters MobAiState.Downed (spec §3.2), while
+    /// a collector has no such threshold and never will (Р377 -- see the
+    /// collector pass's own note). That decision lives here rather than in
+    /// the AI because this is the one place that owns the angle it is made
+    /// from; its
     /// counterpart, the exit back to Idle after DownedSeconds, lives in
     /// MobAiSystem.Update ahead of the dispatch by MobType, because Downed is
     /// precisely the state that cancels an archetype's FSM (coordinator
@@ -96,6 +101,55 @@ namespace Ring.Simulation.Combat
                 // standing up stick.
                 Impact.SpringStep(ref m.Tilt, ref m.TiltVel,
                     cfg.TiltDampingRatio, cfg.TiltSettleSeconds, dt);
+            }
+
+            // THE COLLECTOR PASS (app-88jb Т7, spec §3.2, owner decision Р377)
+            // -- the same spring, the same epsilon snap, one line, through the
+            // same public Impact.SpringStep the loop above uses. The impulse
+            // half lives where that blow is resolved too (SimulationWorld.
+            // DamagePlayer adds Impact.AngularImpulse into PlayerState.TiltVel),
+            // so this pass, like the mob's, only ever integrates what somebody
+            // else left behind.
+            //
+            // NO THRESHOLD, NO Downed, NOTHING TO COMPARE (Р377). A mob past
+            // MobSimConfig.TiltFallAngle stops acting for DownedSeconds;
+            // HeroSimConfig carries no such angle and is not to be given one,
+            // because taking control away from a player because a round landed
+            // contradicts ADR-001 §9, where evasion is the skill the fight is
+            // asking for. That is why this pass is a step and not a decision:
+            // it has no branch whose ordering could be got wrong, unlike the
+            // mob's, where the comparison has to happen BEFORE the step
+            // (round-3 finding D-C1, see the loop above).
+            //
+            // EVERY PLAYER, CORPSES INCLUDED, and that mirrors two rules this
+            // project already keeps rather than inventing a third. Ruling 21:
+            // the mob spring steps for downed bodies too, because a body that
+            // stopped integrating keeps the tilt that felled it forever.
+            // PlayerMovementSystem.UpdateDead: "the corpse still decelerates
+            // under friction and resolves collisions like a live body" -- Vel
+            // is not frozen and not zeroed on death, it is allowed to settle,
+            // and Tilt is the same kind of quantity. That is also why
+            // SimulationWorld.ClearCombatTimers does NOT clear this pair: it
+            // clears TIMERS a body leaving the fight must drop, and explicitly
+            // leaves physical state alone (its own note on DashDir, "a heading,
+            // not a timer"). A corpse's tilt is hashed and must therefore reach
+            // a definite value -- which it does, exactly, through
+            // Impact.SpringStep's own RestEpsilon snap.
+            //
+            // The config is read ONCE, outside the loop: every collector shares
+            // one HeroSimConfig, unlike the mobs above, whose numbers are
+            // per-archetype (SimulationWorld.Config returns a copy of the whole
+            // struct, so a per-player read would copy it PlayerCount times).
+            HeroSimConfig hero = w.Config.Hero;
+            for (int i = 0; i < w.PlayerCount; i++)
+            {
+                // Through PlayerRef, the systems' seam into live player
+                // storage, never SetPlayerForTest: a battle path calling a
+                // method named "ForTest" is the exact defect
+                // Loot.PickupSystem.AdvanceTtl's own doc records being fixed.
+                ref PlayerState p = ref w.PlayerRef(i);
+                Impact.SpringStep(ref p.Tilt, ref p.TiltVel,
+                    hero.TiltDampingRatio, hero.TiltSettleSeconds, dt);
             }
         }
     }

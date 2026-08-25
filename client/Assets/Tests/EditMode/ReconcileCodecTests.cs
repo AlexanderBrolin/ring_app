@@ -428,7 +428,12 @@ namespace Ring.Simulation.Tests
             core.Predict(in decoded, in cfg);
 
             PlayerState expected = start;
-            PlayerPrediction.Step(ref expected, in decoded, in cfg);
+            // app-88jb Т7: the same empty pulse PlayerPredictionCore.Predict
+            // passes today — the comparison below is about the INPUT reaching
+            // the step as the wire's own decoded value, and an impulse either
+            // side carried alone would answer a different question.
+            PlayerPrediction.Step(ref expected, in decoded, in cfg,
+                in Ring.Simulation.Combat.ImpactPulse.None);
             AssertPlayerStateBitEqual(expected, core.Predicted,
                 "the core's own step must be PlayerPrediction.Step over the decoded input");
 

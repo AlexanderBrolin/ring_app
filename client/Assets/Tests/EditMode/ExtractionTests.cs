@@ -42,7 +42,8 @@ namespace Ring.Simulation.Tests
         /// then the channel cancel).
         static void Hit(SimulationWorld w, int index, float dmg)
             => w.DamagePlayer(index, ProjectileIds.NoOwner, dmg, w.PlayerAt(index).Pos,
-                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
 
         [Test]
         public void ChannelGrows_OnlyInsideRadiusOfAnOpenPortal()

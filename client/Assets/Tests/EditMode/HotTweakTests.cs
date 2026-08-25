@@ -158,8 +158,11 @@ namespace Ring.Simulation.Tests
         /// WeaponSystem against RecoilMaxRad instead of by ApplyConfig).
         /// Populated by Task 9 (Stamina, StaminaRegenDelayTimer). Extended by
         /// Task 10 (SlideTimer et al.), Task 11 (LinkWindowTimer), Task 12
-        /// (DashSpeedCur), Task 14 (AimSettleTimer) — add a line here as part
-        /// of that task's GREEN step, not as an afterthought.
+        /// (DashSpeedCur), Task 14 (AimSettleTimer) and app-88jb Т7
+        /// (Tilt/TiltVel, both deliberately unclamped — see their own entry
+        /// for why the collector's spring has no ceiling to migrate to) — add
+        /// a line here as part of that task's GREEN step, not as an
+        /// afterthought.
         ///
         /// Stage 2 Task 10 widened the pass from float-only to float AND int
         /// fields. Until then an int PlayerState field was skipped silently by
@@ -271,6 +274,44 @@ namespace Ring.Simulation.Tests
                 // LootTargetContainerId: an entity id, not a magnitude —
                 // nothing for ApplyConfig to ever clamp it against.
                 ["LootTargetContainerId"] = float.PositiveInfinity,
+                // app-88jb Т7: the collector's tilt spring. BOTH are the
+                // RecoilOffset case, which is the case this map's own doc
+                // spells out as a documented "not clamped" rather than an
+                // oversight — "re-clamped every tick by WeaponSystem against
+                // RecoilMaxRad instead of by ApplyConfig". Here the every-tick
+                // bound is TiltSystem's collector pass, which walks
+                // Impact.SpringStep and drags any magnitude back through the
+                // RestEpsilon snap to exactly zero in a finite number of
+                // ticks.
+                //
+                // AND, UNLIKE THE MOB'S TILT, THERE IS NOTHING TO CLAMP THEM
+                // AGAINST. Т6 gave ApplyConfig a mob pass precisely because
+                // MobSimConfig.TiltFallAngle is a config value that MOVES on
+                // a hot tweak, and a body left past a lowered threshold would
+                // hang past an end it can never reach. HeroSimConfig carries
+                // no such angle and is never to be given one (Р377, ADR-001
+                // §9: a round may not take control away from a player), so a
+                // collector's tilt has no ceiling for a migration to clamp it
+                // down TO. Hot-tweaking TiltGain, TiltDampingRatio or
+                // TiltSettleSeconds does not invalidate a tilt already in
+                // flight either — the spring simply settles it on the new
+                // numbers.
+                //
+                // ⚠ WHY NOT A LITERAL PI CEILING (implementer's call, plan
+                // Т7's own suggestion, and it is recorded here rather than
+                // silently dropped). Mapping Tilt to math.PI would require a
+                // matching clamp in ApplyConfig's PLAYER loop, and that clamp
+                // would be a branch NO TEST COULD EVER KILL: nothing the game
+                // can do produces |Tilt| > PI (the arsenal's largest impulse
+                // peaks near 0.6 rad), so its only witness would be this
+                // pass's own injected 1e6 — a mutation with no victim, which
+                // is exactly the shape Т6's fix-round called out. It would
+                // also put a bare geometric constant into production balance
+                // code, against CRITICAL RULE 6. If a real ceiling is ever
+                // wanted, it belongs in HeroSimConfig with a [Range] and the
+                // four marker things, not in a literal here.
+                ["Tilt"] = float.PositiveInfinity,
+                ["TiltVel"] = float.PositiveInfinity,
             };
 
             var w = new SimulationWorld(5, cfg);

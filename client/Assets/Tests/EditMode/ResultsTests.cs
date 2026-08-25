@@ -189,7 +189,8 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestWorlds.ExitFixture();
             SimulationWorld w = World(in cfg);
             w.DamagePlayer(Subject, ProjectileIds.NoOwner, cfg.Hero.MaxHp + 1f,
-                w.PlayerAt(Subject).Pos, HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
+                w.PlayerAt(Subject).Pos, HitZone.Body, new float2(1f, 0f), hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
             PlayerState p = w.PlayerAt(Subject);
             Assert.IsFalse(p.Alive, "premise: he is a corpse");
             Assert.IsFalse(p.Extracted, "premise: dying is not extracting");

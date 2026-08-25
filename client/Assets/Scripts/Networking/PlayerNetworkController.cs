@@ -5,6 +5,7 @@ using FishNet.Transporting;
 using FishNet.Utility.Template;
 using Ring.Networking.Client;
 using Ring.Networking.Protocol;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -544,10 +545,18 @@ namespace Ring.Networking
         /// not `PlayerPrediction.Step`'s: the world advances a corpse through a
         /// different path entirely (`PlayerMovementSystem.UpdateDead`), and
         /// `Step`'s own doc names the caller as the one who must enforce it.
+        ///
+        /// `ImpactPulse.None` UNTIL Т9, AND SAYING SO IS THE POINT (app-88jb
+        /// Т7): the shove of a hit reaches the client on the PlayerDamaged
+        /// event, which Т9 turns into a real pulse for the tick it belongs
+        /// to. Until then this path predicts no knockback at all and the
+        /// reconcile corrects it, which is exactly what a missing pulse is
+        /// supposed to look like — a value stated here, not a parameter
+        /// quietly defaulted at the callee.
         internal void Predict(in SimInput decodedInput, in SimConfig cfg)
         {
             if (!IsPredicting) return;
-            PlayerPrediction.Step(ref _predicted, in decodedInput, in cfg);
+            PlayerPrediction.Step(ref _predicted, in decodedInput, in cfg, in ImpactPulse.None);
         }
 
         /// Server side: publish the input the world must consume, and the tick

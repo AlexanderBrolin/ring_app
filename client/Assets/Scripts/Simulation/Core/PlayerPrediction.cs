@@ -54,12 +54,53 @@ namespace Ring.Simulation.Core
         /// PlayerMovementSystem.UpdateDead instead, and prediction is required to
         /// STOP at death (Р41/Р59) — enforcing that is the caller's job in Stage
         /// 2 Task 34, so this method neither checks Alive nor pretends to.
-        public static void Step(ref PlayerState p, in SimInput rawInput, in SimConfig cfg)
+        ///
+        /// `pulse` IS THE ONE THING ABOUT A HIT A CLIENT MAY APPLY (app-88jb
+        /// Т7, spec §3.8): the shove the server already resolved, handed back
+        /// so the predicted copy ends the tick where the world ended it. The
+        /// hit itself, the damage and the death stay server business (CR 3) —
+        /// this parameter carries no decision, only its consequence.
+        ///
+        /// NO DEFAULT VALUE, DELIBERATELY. All three call sites are patched
+        /// in the task that adds it, exactly as `DamageMob.ownerIndex` was:
+        /// a defaulted `ImpactPulse.None` would silently mean "nothing hit
+        /// this collector" on a live combat path, and the one caller that
+        /// forgot to pass a real pulse would look identical to the callers
+        /// that legitimately have none.
+        ///
+        /// ⚠ Т22 grows this signature by one more parameter
+        /// (`ReadOnlySpan&lt;PushableBody&gt; visibleBodies`, finding Н20), so
+        /// the same three call sites get the same treatment a second time.
+        public static void Step(ref PlayerState p, in SimInput rawInput, in SimConfig cfg,
+            in ImpactPulse pulse)
         {
             SimInput input = SimInputSanitizer.Sanitize(rawInput, p, cfg);
             p.AimPoint = input.AimPoint;
             PlayerMovementSystem.Update(ref p, in input, in cfg);
             WeaponSystem.AdvanceNoSpawn(ref p, in input, in cfg);
+            // LAST, AFTER THE WEAPON, and the position in this line-up is the
+            // whole contract (app-88jb Т7, finding A2-C5). The server resolves
+            // a hit in ProjectileSystem, which runs AFTER both the movement
+            // and the weapon phases of the same tick, so an impulse it grants
+            // on tick T sits in Vel at the END of T and moves the body from
+            // T+1. Applying it here reproduces that exactly; applying it
+            // before the movement would give the client one tick of travel the
+            // world never had, and no reconcile can argue that back.
+            //
+            // AN ADDITION, NEVER AN ASSIGNMENT, for the reason ImpactPulse
+            // itself is summable: the pulse is already the SUM of every blow
+            // the server resolved against this collector on this tick, and it
+            // adds into the same Vel the movement above just wrote rather than
+            // replacing it.
+            //
+            // THE SPRING IS NOT STEPPED HERE, and that is deliberate rather
+            // than forgotten: TiltSystem.Apply owns the integration on both
+            // sides, PredictedKnockback_MatchesTheServer_TickForTick pins this
+            // method to the impulse alone, and PlayerState.Tilt is classified
+            // Server in PredictionParityTests.RoleByField precisely because
+            // this method never writes it.
+            p.Vel += pulse.Delta;
+            p.TiltVel += pulse.TiltImpulse;
         }
     }
 }

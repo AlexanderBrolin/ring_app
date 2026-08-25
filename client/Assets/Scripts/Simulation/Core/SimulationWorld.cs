@@ -1812,8 +1812,23 @@ namespace Ring.Simulation.Core
         /// PlayerDamaged event (coordinator Ruling 15 — the doc-list on
         /// SimEvent.Height names PlayerDamaged precisely because it is
         /// emitted from here, not from ProjectileSystem's switch).
+        /// `projectileMass`/`projectileSpeed3D` (app-88jb Т7, spec §3.2) are the
+        /// two halves of the impact the shove below is computed from — the same
+        /// pair, for the same reason and with the same "no default" rule as
+        /// DamageMob's own (see its doc above): this method never sees a
+        /// projectile and must not start to, it is called where no round exists
+        /// at all (KillPlayerForTest and six test fixtures clear bodies through
+        /// this same seam), and a defaulted 0 would read as "a blow with no
+        /// impact behind it" — which is exactly what those service call sites
+        /// MEAN and the one thing a real hit must never silently fall back to.
+        /// `projectileSpeed3D` is the FULL 3D speed, length(float3(Vel, VelZ)),
+        /// on the same grounds Impact.VelocityDelta's own doc gives.
+        /// ⚠ A FIST PASSES 0f, 0f AND THAT IS A DECISION (spec §3.2, plan Т7):
+        /// MobAiSystem's contact strike gives no knockback at all. It is stated
+        /// at that call site, not defaulted here.
         internal void DamagePlayer(int victimIndex, byte attackerIndex, float dmg,
-            float2 pos, HitZone zone, float2 dir, float hitHeight)
+            float2 pos, HitZone zone, float2 dir, float hitHeight,
+            float projectileMass, float projectileSpeed3D)
         {
             ref PlayerState p = ref _players[victimIndex];
             if (!p.Alive) return;
@@ -1828,6 +1843,59 @@ namespace Ring.Simulation.Core
             AbortChannels(ref p);
 
             p.Hp -= dmg;
+            // Impact against a COLLECTOR (app-88jb Т7, spec §3.2, owner
+            // decision Н14/Р393). Same arithmetic and the same one home as
+            // DamageMob's shove above -- Impact.VelocityDelta, never inline
+            // (coordinator Ruling 1, round-3 finding C-I1) -- with the one
+            // difference that IS this body: `damping` is Hero.CocoonDamping
+            // where a mob passes 1f. The cocoon is what makes a round read as
+            // a stagger rather than as a launch, and the ceiling is applied
+            // BEFORE that division, so the collector's effective cap is
+            // ImpactSpeedCap / CocoonDamping (VelocityDelta's own doc).
+            //
+            // INSIDE DamagePlayer, AFTER BOTH GUARDS, and that placement is
+            // load-bearing rather than tidy (finding D2-I13). The method
+            // returns above on `!Alive` and on `IframeTimer > 0` WITHOUT
+            // emitting PlayerDamaged -- so an impulse applied over either
+            // guard would be a shove the server delivered and the client
+            // never heard about, i.e. a guaranteed divergence rather than a
+            // balance question. A dash is immune to the blow AND to the
+            // shove, together, because the two are decided in one place.
+            //
+            // THE SHOVE LANDS IN Vel, NEVER IN Pos, exactly as the mob's
+            // does: a body that is shoved keeps traveling for the ticks that
+            // follow, a body whose Pos is written jumps once and stops.
+            // ProjectileSystem runs AFTER this tick's player movement
+            // (TickAll's canonical order), so the impulse resolved on tick T
+            // sits in Vel at the END of T and moves the body from T+1 -- the
+            // semantics PlayerPrediction.Step mirrors on the client by
+            // applying its own ImpactPulse at the end of ITS step for T
+            // (finding A2-C5).
+            float dv = Impact.VelocityDelta(projectileMass, projectileSpeed3D,
+                _config.Hero.Mass, _config.Hero.ImpactSpeedCap, _config.Hero.CocoonDamping);
+            p.Vel += dir * dv;
+            // The ANGULAR half of the same blow, through the same single home
+            // (Impact.AngularImpulse) for the same reason DamageMob uses it.
+            // The arm is signed -- a hit above the center of mass tips the
+            // body along the shot, one below undercuts it -- and there is no
+            // branch here, nor may one appear: the sign falls out of the
+            // subtraction.
+            //
+            // NO KNOCKDOWN THRESHOLD FOLLOWS (Р377). A mob past
+            // MobSimConfig.TiltFallAngle enters Downed; HeroSimConfig carries
+            // no such angle and is not to be given one, because taking control
+            // away from a player because a round landed contradicts ADR-001 §9.
+            // TiltSystem's collector pass therefore only integrates.
+            //
+            // BEFORE the death check below, on the mob's own reasoning, and
+            // nothing is stranded by that: TiltSystem's collector pass steps
+            // EVERY player's spring, corpse included, so a body felled by this
+            // very blow settles back to zero exactly the way
+            // PlayerMovementSystem.UpdateDead already lets its Vel decay.
+            // Branching on "is he still standing" would cost more than the
+            // addition it saves.
+            p.TiltVel += Impact.AngularImpulse(hitHeight, _config.Hero.CenterOfMassHeight,
+                dv, _config.Hero.TiltGain);
             // Credit sits AFTER both guards on purpose: an absorbed or
             // posthumous round dealt no damage, moved no Hp and emitted no
             // PlayerDamaged, so counting it as a landed hit would inflate the
@@ -2182,7 +2250,8 @@ namespace Ring.Simulation.Core
         /// here would invent a killer none of this seam's callers asked for.
         internal void KillPlayerForTest()
             => DamagePlayer(0, ProjectileIds.NoOwner, _config.Hero.MaxHp + 1f, _players[0].Pos,
-                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
 
         /// Test-only seam (Task 8 Interfaces): exposes the private Sanitize step
         /// so tests can assert the AimHeight NaN-map/clamp behavior directly,
@@ -2814,6 +2883,19 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.ExtractTimer);
             h = StateHash64.Add(h, p.LootTargetContainerId);
             h = StateHash64.Add(h, (int)p.LootTargetSlot);
+            // app-88jb Т7 (spec §3.2): body tilt and its angular velocity,
+            // LAST -- the end of the struct is the end of the fold, the same
+            // placement HashMob gave the mob's own pair in Т5. Both are live
+            // per-tick state that survives across ticks (TiltSystem's collector
+            // pass integrates them, DamagePlayer adds into TiltVel), so a
+            // replay or a rollback that dropped either would diverge the moment
+            // a round lands; and WorldLifecycleTests'
+            // EveryPlayerAndStatsFieldAffectsHash is what refuses to let a new
+            // field of this struct join the state without joining the digest.
+            // ⚠ THIS IS WHAT MOVES THE THREE GOLDEN DIGESTS a fourth time in
+            // this epic -- sanctioned, and re-pinned once at Т34, never here.
+            h = StateHash64.Add(h, p.Tilt);
+            h = StateHash64.Add(h, p.TiltVel);
             return h;
         }
 

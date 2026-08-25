@@ -335,8 +335,22 @@ namespace Ring.Simulation.Combat
                         // (ProjectileIds.NoOwner for a mob's round, which credits
                         // nobody — see DamagePlayer's own doc). hitHeight
                         // (app-88jb Т3) is AcceptCandidate's own contact height.
+                        // projectileMass/projectileSpeed3D (app-88jb Т7, spec
+                        // §3.2): the impact behind this blow, which only the
+                        // caller can know -- DamagePlayer never sees a round
+                        // (its own doc), exactly as DamageMob does not. The
+                        // owner -> mass fork goes through
+                        // Impact.ProjectileMassFor and NOWHERE else
+                        // (coordinator Ruling 1, round-3 finding C-I2): a mob's
+                        // round is heavier than a collector's, and that rule has
+                        // one home. The speed is the FULL 3D magnitude, not
+                        // length(proj.Vel) -- ProjectileSpeed is itself a 3D
+                        // length in this project, so the flat one would
+                        // under-shove every angled shot.
                         w.DamagePlayer(hitTargetIndex, proj.OwnerIndex, dmg,
-                            contact, hitZone, hitDir, hitHeight);
+                            contact, hitZone, hitDir, hitHeight,
+                            Impact.ProjectileMassFor(proj.OwnerIndex, in config),
+                            math.length(new float3(proj.Vel, proj.VelZ)));
                         w.RemoveProjectileAt(i);
                         break;
                     }

@@ -277,10 +277,23 @@ namespace Ring.Simulation.AI
                             // right source is the VICTIM's own body, and every
                             // collector shares one HeroSimConfig regardless of
                             // which one this FSM picked.
+                            // projectileMass/projectileSpeed3D (app-88jb Т7):
+                            // ZERO, AND THAT IS A DECISION RATHER THAN A
+                            // DEFAULT (spec §3.2). A contact strike gives no
+                            // knockback: there is no round behind it, and the
+                            // only mass this FSM could offer -- the puncher's
+                            // own body -- would make a chaser's fist shove
+                            // harder than a rifle round. Impact.VelocityDelta
+                            // returns exactly 0 for a zero mass, so the shove
+                            // and the moment both vanish arithmetically
+                            // instead of through a branch. Stated here, at the
+                            // call site, because DamagePlayer takes both
+                            // REQUIRED for precisely this reason.
                             w.DamagePlayer(targetIndex, ProjectileIds.NoOwner, cfg.ContactDamage,
                                 m.Pos, HitZone.Body,
                                 math.normalizesafe(player.Pos - m.Pos, new float2(1f, 0f)),
-                                hitHeight: w.Config.Hero.CenterOfMassHeight);
+                                hitHeight: w.Config.Hero.CenterOfMassHeight,
+                                projectileMass: 0f, projectileSpeed3D: 0f);
                         }
                         m.Ai = MobAiState.Recover;
                         m.StateTimer = 0f;

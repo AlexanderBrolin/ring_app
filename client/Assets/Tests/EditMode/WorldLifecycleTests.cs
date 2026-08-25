@@ -147,12 +147,12 @@ namespace Ring.Simulation.Tests
             // typeof(X).GetFields() reading of each struct, never incremented
             // from the previous number):
             //
-            //   PlayerState 32 x 2 players = 64
+            //   PlayerState 34 x 2 players = 68
             //   MatchStats 10 x 2 players  = 20
             //   WaveState 7 x 3 zones      = 21
             //   WorldStats 5, MobState 12, ProjectileState 13, PickupState 5,
             //   MatchState 2, ContainerState 5 = 42
-            //   -> 147 bumps swept, ALL asserted NOT to equal baseline.
+            //   -> 151 bumps swept, ALL asserted NOT to equal baseline.
             //
             // Stage 3 Task 11 (coordinator R-50/R-51): WaveState grew from
             // 6 fields to 13 (two named Pending counters -> nine, one per
@@ -195,6 +195,23 @@ namespace Ring.Simulation.Tests
             // fixture -- the pass below bumps w.Mobs[0] and nothing else,
             // where those two are wrapped in a per-index loop (see their own
             // "x 2 players" lines above).
+            //
+            // app-88jb Т7: PlayerState grew from 32 fields to 34 -- Tilt and
+            // TiltVel again, this time the COLLECTOR's own spring (spec §3.2,
+            // SimStates.cs' own field doc), folded into HashPlayer at the end
+            // of the struct exactly as Т5 folded the mob's. The tally is
+            // re-derived from fresh typeof(X).GetFields() readings of all nine
+            // structs one more time rather than adjusted from 147; every other
+            // count came back unchanged, so only the player line and the two
+            // sums move -- and the player line moves by FOUR, not two, because
+            // it carries the "x 2 players" multiplier the mob line does not:
+            // 147 -> 151.
+            // ⚠ THE RECEIPT IS NOT WHAT MAKES THIS TEST PASS OR FAIL, and Т7
+            // is where that was measured rather than assumed (coordinator
+            // errata 12): the two new fields turned this test red through the
+            // reflective sweep above, and only the HashPlayer fold turned it
+            // green again. Editing these numbers changes nothing executable --
+            // they are for the reader, as the closing line below already says.
             //
             // ZERO asserted TO equal it: the thirteen PENDING names are gone
             // with the skip-list (see this file's header), which is the whole

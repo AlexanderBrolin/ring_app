@@ -88,7 +88,8 @@ namespace Ring.Simulation.Tests
             // is hardcoded to player 0, see its own doc), overkill damage so
             // KillPlayer's death bookkeeping runs unconditionally.
             w.DamagePlayer(1, ProjectileIds.NoOwner, cfg.Hero.MaxHp + 1f, w.PlayerAt(1).Pos,
-                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
 
             PlayerState dead = w.PlayerAt(1);
             Assert.IsFalse(dead.Alive, "premise: the overkill damage must actually have killed the player");
@@ -271,7 +272,8 @@ namespace Ring.Simulation.Tests
             var cfg = FlowFixture();
             var w = FlowWorld(in cfg);
             w.DamagePlayer(1, ProjectileIds.NoOwner, cfg.Hero.MaxHp + 1f, w.PlayerAt(1).Pos,
-                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
             Assert.IsFalse(w.PlayerAt(1).Alive, "premise: the overkill damage must have killed the collector");
 
             TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));

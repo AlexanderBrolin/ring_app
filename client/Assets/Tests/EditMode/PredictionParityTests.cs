@@ -115,7 +115,13 @@ namespace Ring.Simulation.Tests
                 }
 
                 world.Tick(sent);
-                PlayerPrediction.Step(ref predicted, in sent, in cfg);
+                // app-88jb Т7: no impulse in any scenario here — every one of
+                // them is a solo world in which nothing can hit the collector
+                // (this class's own fixture note), so the honest pulse is the
+                // empty one. The knockback path has its own witness,
+                // PredictedKnockback_MatchesTheServer_TickForTick below.
+                PlayerPrediction.Step(ref predicted, in sent, in cfg,
+                    in Ring.Simulation.Combat.ImpactPulse.None);
 
                 AssertPlayerStateBitEqual(world.PlayerAt(0), predicted, in atStart, scenario, tick);
                 observe?.Invoke(tick, world);
@@ -134,7 +140,8 @@ namespace Ring.Simulation.Tests
         /// TWO CLAIMS, NOT ONE (bd app-fi3f, owner decision R-209, form
         /// R-210). This sweep used to demand bit equality of all 32 fields
         /// against the world, which is a claim `PlayerPrediction.Step` cannot
-        /// satisfy for the nine the SERVER owns: Step does not write them and
+        /// satisfy for the TEN the SERVER owns (nine until app-88jb Т7 added
+        /// `Tilt`): Step does not write them and
         /// the world does, so the two are equal only while nothing has moved
         /// them — i.e. only in a vacuum. Every scenario in this file happened
         /// to be one, so the false claim never failed; the first non-vacuum
@@ -146,9 +153,9 @@ namespace Ring.Simulation.Tests
         ///     honest statement about them is "Step left this alone" (CRITICAL
         ///     RULE 3), and unlike the old one it stays checkable however far
         ///     the world moves on.
-        /// The sweep still visits all 32; nothing is skipped (there is no
-        /// skip-list anywhere in this suite, and this is not the place to
-        /// start one).
+        /// The sweep still visits all 34 (32 until app-88jb Т7 declared
+        /// `Tilt`/`TiltVel`); nothing is skipped (there is no skip-list
+        /// anywhere in this suite, and this is not the place to start one).
         ///
         /// Bitwise, not `==`. `==` on float calls NaN equal to nothing (two
         /// identically-NaN fields would read as a MISMATCH) and calls `-0f`
@@ -289,7 +296,10 @@ namespace Ring.Simulation.Tests
                 // `mutated` then reads as "prediction moved it", and a
                 // Predicted one as "the two paths disagree" — both are the
                 // failure this guard demands, so the guard keeps covering all
-                // 32 fields across both claims (bd app-fi3f).
+                // all fields across both claims (bd app-fi3f) -- stated
+                // without a count on purpose, because the loop reads the
+                // struct and a number here would go stale the way the ones
+                // app-88jb Т7 had to correct did.
                 Assert.Throws<AssertionException>(
                     () => AssertPlayerStateBitEqual(baseline, mutated, in baseline,
                         "comparer guard", 0),
@@ -730,6 +740,56 @@ namespace Ring.Simulation.Tests
                 "otherwise this test cannot tell 'both paths agree' from 'both paths do nothing'");
         }
 
+        [Test]
+        public void PredictedKnockback_MatchesTheServer_TickForTick()
+        {
+            // app-88jb Т7 (spec §3.8/§3.9, finding A2-C5): the ONE scenario in
+            // this file where prediction is handed something the input alone
+            // cannot produce. The server resolves a hit in ProjectileSystem,
+            // AFTER movement and the weapon, so the impulse it grants on tick
+            // T lands in Vel at the END of T and moves the body from T+1; the
+            // client must apply its own copy at the END of its Step for that
+            // same T. A semantics that slips by a single tick leaves the two
+            // copies in different places and no reconcile can argue them back
+            // together.
+            //
+            // NOT THROUGH RunParity, and that is the point rather than a
+            // shortcut: the driver above compares a WORLD against a
+            // prediction, and the world cannot be made to deliver a chosen
+            // impulse on a chosen tick without a round in flight, a victim
+            // and the hit geometry to go with it — a fixture that would then
+            // be testing ProjectileSystem's aim. What is under test here is
+            // narrower and exact: the two fields Step is allowed to move out
+            // of an ImpactPulse, and the values it must move them by.
+            //
+            // OpenField() for the reason its two siblings in
+            // ImpactKnockbackTests take it (coordinator Ruling 14): this
+            // fixture puts a collector at (6, 0), i.e. inside Open()'s core,
+            // and a zoneless arena is what keeps the Director structurally
+            // unreachable there. This particular test never ticks the world,
+            // so nothing could wake him TODAY — the fixture is chosen so that
+            // the first person to add a tick here does not have to rediscover
+            // that, and so that all three collector-knockback witnesses in
+            // this epic state their geometry the same way.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+            PlayerState predicted = w.PlayerAt(1);
+
+            // Two magnitudes that are neither equal to each other nor equal
+            // to anything the idle input below could produce, so a Step that
+            // crossed the two fields, or moved one of them for its own
+            // reasons, has nowhere to hide.
+            var pulse = new Ring.Simulation.Combat.ImpactPulse(new float2(0.3f, 0f), 0.2f);
+            PlayerPrediction.Step(ref predicted, default, in cfg, in pulse);
+
+            // The input is `default` — no movement, no trigger — so an idle
+            // tick leaves Vel and TiltVel at zero and everything read below
+            // came from the pulse and from nothing else.
+            Assert.AreEqual(0.3f, predicted.Vel.x, 1e-4f, "предсказанный толчок не лёг в Vel");
+            Assert.AreEqual(0.2f, predicted.TiltVel, 1e-4f, "предсказанный момент не лёг в TiltVel");
+        }
+
         // -------------------------------------------- the classification sweep
 
         /// What PlayerPrediction.Step is allowed to do to one field of
@@ -783,9 +843,9 @@ namespace Ring.Simulation.Tests
         /// WorldLifecycleTests' own header records that its PendingHashFields
         /// were TEMPORARY, carried a named addressee, and were removed by
         /// Т10/Т13. A skip-list here would be the first one in the project and
-        /// would say "we do not look at these nine fields" — while the honest
+        /// would say "we do not look at these ten fields" — while the honest
         /// statement about them is stronger and just as cheap: prediction must
-        /// not have touched them. So the sweep still visits all 32.
+        /// not have touched them. So the sweep still visits all 34.
         ///
         /// THE SHAPE IS HotTweakTests'. That file already sweeps these same
         /// fields with a per-field expectation map and a hard failure for any
@@ -797,7 +857,6 @@ namespace Ring.Simulation.Tests
             {
                 // --- written by PlayerMovementSystem.Update, which Step calls ---
                 ["Pos"] = PredictionRole.Predicted,          // through MoveWithCollisions(ref p.Pos, ...)
-                ["Vel"] = PredictionRole.Predicted,
                 ["DashDir"] = PredictionRole.Predicted,
                 ["DashSpeedCur"] = PredictionRole.Predicted,
                 ["DashTimer"] = PredictionRole.Predicted,
@@ -839,6 +898,41 @@ namespace Ring.Simulation.Tests
                 // interval, and prediction knows nothing about it. Same
                 // second writer, same premise, same class.
                 ["FireCooldown"] = PredictionRole.Mixed,
+                // AND SO IS Vel SINCE app-88jb Т7, WHICH DEMOTED IT OUT OF
+                // Predicted (measured against the bodies, rule 17, and
+                // re-verified on the GREEN step rather than taken from the
+                // plan). Its shared writer is still PlayerMovementSystem.
+                // Update, which both paths run; the NEW second writer is
+                // SimulationWorld.DamagePlayer (`p.Vel += dir * dv`), the
+                // impact shove of a round that lands. That writer passes the
+                // question this enum's own doc asks -- CAN IT FIRE WHILE THE
+                // PLAYER IS ALIVE AND BEING PREDICTED? -- more plainly than
+                // any other entry here: being shot is the ordinary case of a
+                // live raid, not an edge. Bitwise equality therefore holds
+                // exactly while no blow has landed, which is a STRUCTURAL
+                // property of every scenario in this file rather than a
+                // numeric accident: each is a solo world on Quiet()'s
+                // out-of-reach waves, and ProjectileSystem skips a
+                // player-owned round against its own OwnerIndex, so nothing
+                // in them can hit the collector at all (this class's own
+                // fixture note). Nothing observable changes from the demotion
+                // -- Predicted and Mixed are compared identically, world
+                // against prediction, bit for bit -- which is precisely why
+                // it is safe to state the truth here instead of leaving a
+                // classification that has quietly stopped being one.
+                ["Vel"] = PredictionRole.Mixed,
+                // app-88jb Т7: the collector's angular velocity. Step writes
+                // it (`p.TiltVel += pulse.TiltImpulse`, the client's own copy
+                // of the moment the server already resolved), and TWO
+                // server-only paths also write it while the player is alive
+                // and predicting -- DamagePlayer's Impact.AngularImpulse and
+                // TiltSystem's collector pass, which steps the spring every
+                // single tick. That second one is an IDENTITY at rest
+                // (Impact.SpringStep on a zero pair adds zero and then snaps
+                // both to +0f), which is why the same "no blow has landed"
+                // premise that holds Vel above holds this too, and holds it
+                // for the same structural reason.
+                ["TiltVel"] = PredictionRole.Mixed,
 
                 // --- the server's alone (CRITICAL RULE 3) ---
                 // Hp: SimulationWorld.DamagePlayer and LootOps' repair-kit heal.
@@ -857,15 +951,39 @@ namespace Ring.Simulation.Tests
                 ["LootTargetSlot"] = PredictionRole.Server,
                 ["RepairTimer"] = PredictionRole.Server,
                 ["ExtractTimer"] = PredictionRole.Server,
+                // Tilt: TiltSystem's collector pass, and NOBODY ELSE -- read
+                // off the bodies, and it is the one place this task departs
+                // from its own plan (which asked for Mixed here). Step does
+                // not write this field: it adds the moment into TiltVel and
+                // stops, because Impact.SpringStep is the world's integration
+                // and PredictedKnockback_MatchesTheServer_TickForTick pins
+                // that boundary by asserting the raw impulse, undamped. So
+                // "Step writes it" -- the first clause of Mixed AND of
+                // Predicted -- is simply false, while the Server claim
+                // ("prediction did not move it") is true and stays true.
+                // ⚠ AND THE DIFFERENCE IS NOT COSMETIC. Mixed would demand
+                // bit equality between world and prediction for a field the
+                // world steps every tick and prediction never touches: green
+                // today only because no scenario here lands a blow, and the
+                // moment one does (Т38's lag rig being the obvious candidate)
+                // it would report a prediction bug that is not there. That is
+                // the exact defect bd app-fi3f/R-209 removed for the nine
+                // fields above, and this entry refuses to reintroduce it on a
+                // tenth. If a future task ever gives Step a spring step of
+                // its own, this line moves to Mixed and this comment is where
+                // that gets written down.
+                ["Tilt"] = PredictionRole.Server,
             };
 
         [Test]
         public void ServerOwnedFields_AreNotMovedByPrediction_AndTheRestStayBitEqual()
         {
             // bd app-fi3f. RunParity's blanket comparer demands bit equality
-            // of ALL 32 fields, which is a claim about nine of them that
+            // of ALL 34 fields, which is a claim about ten of them that
             // PlayerPrediction.Step could never satisfy — it does not write
-            // them, and the world does. Every scenario in this file is green
+            // them, and the world does. (Nine until app-88jb Т7, whose
+            // PlayerState.Tilt is the tenth: TiltSystem's collector pass steps
+            // it every tick and Step never touches it.) Every scenario in this file is green
             // on that claim for one reason only, and it is a fixture accident:
             // none of them ever stands anywhere the world would move a
             // server-owned field. The moment one does — Т38's own lag rig
@@ -933,7 +1051,7 @@ namespace Ring.Simulation.Tests
 
             // --- the three premises, without which the sweep above is theatre
 
-            // 1. The scenario really is non-vacuum. Without this the nine
+            // 1. The scenario really is non-vacuum. Without this the ten
             //    server-field assertions would be comparing zero to zero and
             //    would pass on a build where prediction DID move them.
             Assert.IsTrue(sawServerFieldMove,
