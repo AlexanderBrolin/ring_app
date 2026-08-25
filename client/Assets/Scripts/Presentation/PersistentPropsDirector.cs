@@ -168,8 +168,10 @@ namespace Ring.Presentation
     /// server-side (a swept-circle collision result) and carries it out on
     /// the event itself since Task 7 — `HitDir` is the real surface normal
     /// for a wall/obstacle hit, or exactly `float2.zero` (never an
-    /// approximation) for a floor hit, and `Amount` is the contact height in
-    /// both cases. `HandleBlocked` below only has to tell the two cases apart
+    /// approximation) for a floor hit, and `Height` is the contact height in
+    /// both cases (app-88jb Т3, finding D-C4: this used to be `Amount`, a
+    /// slot that means damage everywhere else on the struct — it moved to a
+    /// field of its own). `HandleBlocked` below only has to tell the two cases apart
     /// (`HitDir == 0` ⇒ floor, decal flat with an up-facing normal) and
     /// convert into `UnityEngine.Vector3`/`Quaternion` — no more re-deriving
     /// the normal analytically against `ArenaConfig.Obstacles`/the ring wall
@@ -603,39 +605,33 @@ namespace Ring.Presentation
         /// В3 fix-wave 1 (app-n6g item 3c, owner playtest feedback: hit
         /// sparks were unreadable — spawned at a fixed floor height
         /// (`SimSpace.ToWorld(e.Pos)`'s hardcoded Y=0) regardless of where
-        /// the shot actually landed on the mob). `ProjectileHit` genuinely
-        /// carries both `MobType` and `Zone` for every event of this kind —
-        /// `ProjectileSystem`'s `HitMob` case is the ONLY emitter (`HitPlayer`
-        /// routes through `DamagePlayer`/a different event kind entirely,
-        /// never `ProjectileHit`) — so both reads below are always
-        /// meaningful, never a defensive guess. `ZoneHeight` reads the SAME
-        /// `Config.Chaser`/`Gunner` belts `PartHeight`/`AimProxy_*`
-        /// already read (class doc), keyed off `HitZone` instead of
-        /// `GibPartKind` — the spark now visibly appears at head height for
-        /// a headshot, body height for a body shot, etc.
+        /// the shot actually landed on the mob). Originally fixed by
+        /// reconstructing an approximate contact height from `e.Zone`
+        /// against the struck archetype's own legs/body/head belts
+        /// (`ZoneHeight`, a band MIDPOINT, not the real contact point) —
+        /// removed as of app-88jb Т3 (finding B2-I10): it was a second,
+        /// worse copy of the exact zone geometry `ProjectileSystem` had
+        /// already resolved and thrown away, existing only because the
+        /// event itself carried no height. `SimEvent.Height` (Т3) is that
+        /// missing field — `ProjectileSystem`'s `HitMob` case now carries
+        /// the real contact height on the event, the same "one home, not
+        /// two" precedent `HandleBlocked`'s `HitDir`/height already follow
+        /// (class doc, PC4) — so this method reads it straight off the
+        /// event instead of re-deriving a band-midpoint approximation.
         void SpawnHitSpark(in SimEvent e)
         {
-            MobSimConfig archetype = ArchetypeConfigFor(e.MobType);
-            float height = ZoneHeight(e.Zone, archetype.LegsTop, archetype.BodyTop, archetype.HeadTop);
-            PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * height, Quaternion.identity);
+            PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * e.Height,
+                Quaternion.identity);
         }
 
         /// The same spark, off a collector instead of a mech (Stage 2 Task 45c,
         /// bd `app-aq9`, ADR-001 §10's per-hit checklist): `ProjectileHitPlayer`
         /// had no consumer anywhere in Presentation until this task, so a round
         /// landing on a player produced no particle at all while a round landing
-        /// on a mob produced one.
-        ///
-        /// The belts come from `Config.Hero` because the victim is a hero —
-        /// `SpawnHitSpark` above reads the STRUCK mob's own archetype for exactly
-        /// the same reason (it handles a hit, not a death; the dying-mob reader
-        /// is `HandleMobDied`), and `ZoneHeight` takes the three tops rather than a
-        /// `MobSimConfig` so the one band split serves both bodies (the hero's
-        /// and the mob's zone tables are different numbers, not different rules).
-        ///
-        /// `e.MobType` is deliberately not read: it is unused for this kind and
-        /// reads as its zero value, `Chaser`, which would have quietly put a hit
-        /// on a player at a mech's belt heights.
+        /// on a mob produced one. Reads `e.Height` straight off the event, same
+        /// as `SpawnHitSpark` above — see that method's own doc for why (the
+        /// zone-band reconstruction both sparks used to run through,
+        /// `ZoneHeight`, is gone as of app-88jb Т3).
         ///
         /// NO DECAL. A decal marks the SURFACE a round stopped against and lives
         /// to the end of the match (`HandleBlocked`); a body is not a surface,
@@ -644,9 +640,8 @@ namespace Ring.Presentation
         /// somebody fought.
         void SpawnPlayerHitSpark(in SimEvent e)
         {
-            HeroSimConfig hero = _runner.Config.Hero;
-            float height = ZoneHeight(e.Zone, hero.LegsTop, hero.BodyTop, hero.HeadTop);
-            PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * height, Quaternion.identity);
+            PlayParticle(_hitSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * e.Height,
+                Quaternion.identity);
         }
 
         void HandleBlocked(in SimEvent e)
@@ -656,11 +651,13 @@ namespace Ring.Presentation
             // epsilon check.
             bool isFloor = e.HitDir.x == 0f && e.HitDir.y == 0f;
             Vector3 normal = isFloor ? Vector3.up : new Vector3(e.HitDir.x, 0f, e.HitDir.y);
-            // Amount is the sim's own contact height for BOTH branches
+            // Height is the sim's own contact height for BOTH branches
             // (ProjectileSystem's HitBarrier/HitFloor cases share one
-            // formula) — the event is now the sole home for height, same as
-            // HitDir already is for the normal (class doc, PC4).
-            Vector3 contactWorld = SimSpace.ToWorld(e.Pos) + Vector3.up * e.Amount;
+            // formula) — its own field is the sole home for it (app-88jb Т3
+            // moved it out of Amount, which means damage everywhere else on
+            // this struct), same as HitDir already is for the normal (class
+            // doc, PC4).
+            Vector3 contactWorld = SimSpace.ToWorld(e.Pos) + Vector3.up * e.Height;
             // A floor's normal (world up) can't double as LookRotation's own
             // "up" hint — forward (-normal) and the hint would be
             // anti-parallel, a degenerate case. A horizontal hint sidesteps
@@ -825,36 +822,6 @@ namespace Ring.Presentation
                     return archetype.LegsTop * 0.5f;
                 default: // Torso, ArmL, ArmR
                     return (archetype.LegsTop + archetype.BodyTop) * 0.5f;
-            }
-        }
-
-        /// В3 fix-wave 1 (app-n6g item 3c): `SpawnHitSpark`'s own
-        /// `HitZone`-keyed belt mid-height — same band split `PartHeight`
-        /// above already draws for gib parts, just keyed off `HitZone`
-        /// (`ProjectileSystem`'s hit-zone classification, `SimEvent.Zone`)
-        /// instead of `GibPartKind`. `HitZone.None` is defensive only — a
-        /// live `ProjectileHit` carries a real zone (`SpawnHitSpark`'s
-        /// own doc) — and falls back to floor height (Y=0, the spark's
-        /// previous behavior) rather than guessing.
-        ///
-        /// Stage 2 Task 45c: takes the three belt tops instead of a
-        /// `MobSimConfig`, so the hero's own table can be handed to it for a
-        /// round that landed on a PLAYER (`SpawnPlayerHitSpark`). The two
-        /// bodies differ in their numbers, not in how a zone maps to a height,
-        /// and a second copy of this switch keyed off `HeroSimConfig` would be
-        /// the same rule written twice.
-        static float ZoneHeight(HitZone zone, float legsTop, float bodyTop, float headTop)
-        {
-            switch (zone)
-            {
-                case HitZone.Head:
-                    return (bodyTop + headTop) * 0.5f;
-                case HitZone.Body:
-                    return (legsTop + bodyTop) * 0.5f;
-                case HitZone.Legs:
-                    return legsTop * 0.5f;
-                default:
-                    return 0f;
             }
         }
 

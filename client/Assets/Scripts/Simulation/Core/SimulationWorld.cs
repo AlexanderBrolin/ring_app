@@ -830,11 +830,18 @@ namespace Ring.Simulation.Core
         /// spent on a victim, see SimEvent.SecondaryEntityId's own doc — and
         /// defaults to 0 ("none"),
         /// same trailing-optional shape as every parameter added before it.
+        /// `height` (app-88jb Т3, finding D-C4) is meaningful for
+        /// ProjectileHit, ProjectileHitPlayer, ProjectileBlocked and
+        /// PlayerDamaged — the kinds a real contact stands behind, see
+        /// SimEvent.Height's own doc for the exact "Filled for" list — and
+        /// defaults to 0f ("no contact behind this event"), same
+        /// trailing-optional shape as secondaryEntityId above.
         internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType, float amount,
             ProjectileOwner owner = ProjectileOwner.Player,
             HitZone zone = HitZone.None, float2 hitDir = default,
             byte playerIndex = ProjectileIds.NoOwner,
-            int secondaryEntityId = 0)
+            int secondaryEntityId = 0,
+            float height = 0f)
         {
             if (_eventCount < _events.Length)
             {
@@ -843,7 +850,7 @@ namespace Ring.Simulation.Core
                     Kind = kind, Tick = _tick, Pos = pos,
                     EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner,
                     Zone = zone, HitDir = hitDir, PlayerIndex = playerIndex,
-                    SecondaryEntityId = secondaryEntityId
+                    SecondaryEntityId = secondaryEntityId, Height = height
                 };
             }
             else
@@ -1521,7 +1528,19 @@ namespace Ring.Simulation.Core
         /// Stage 2 Task 17 (carryover-t17.md item 2): `ownerIndex` also rides out
         /// on the MobDied event as SimEvent.PlayerIndex — see that field's own
         /// doc for the actor/attacker/victim split it belongs to.
-        internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir, byte ownerIndex)
+        /// `hitHeight` (app-88jb Т3, finding D-C4) is REQUIRED, no default,
+        /// same reasoning as `ownerIndex` above: a default would silently
+        /// resurrect "the blow landed at ground level" the moment anything
+        /// here started reading it. Today nothing does — MobDied does not
+        /// carry a contact height (coordinator Ruling 15: no test requires
+        /// one, the spec does not name one, and adding it "for the company"
+        /// with ProjectileHit/ProjectileHitPlayer/PlayerDamaged would be a
+        /// feature for its own sake, AGENT.md §4.3). The parameter exists so
+        /// every call site already states a real number instead of a
+        /// coordinated zero, exactly like ProjectileSystem's HitMob branch
+        /// does, in case a future task gives MobDied a height of its own.
+        internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir, byte ownerIndex,
+            float hitHeight)
         {
             _mobs[index].Hp -= dmg;
             if (ownerIndex != ProjectileIds.NoOwner) IncrementShotsHit(ownerIndex);
@@ -1666,8 +1685,16 @@ namespace Ring.Simulation.Core
         /// Self-damage is impossible by construction — ProjectileSystem's gather
         /// skips a Player-owned round's own owner — so the two indices are never
         /// equal on the production path.
+        /// `hitHeight` (app-88jb Т3, finding D-C4) is REQUIRED, no default —
+        /// same reasoning as DamageMob's own `ownerIndex`/`hitHeight`: a
+        /// default would silently resurrect "the blow landed at ground
+        /// level", the exact defect this task removes. Unlike DamageMob's
+        /// copy, this one is actually consumed below: it rides out on the
+        /// PlayerDamaged event (coordinator Ruling 15 — the doc-list on
+        /// SimEvent.Height names PlayerDamaged precisely because it is
+        /// emitted from here, not from ProjectileSystem's switch).
         internal void DamagePlayer(int victimIndex, byte attackerIndex, float dmg,
-            float2 pos, HitZone zone, float2 dir)
+            float2 pos, HitZone zone, float2 dir, float hitHeight)
         {
             ref PlayerState p = ref _players[victimIndex];
             if (!p.Alive) return;
@@ -1712,7 +1739,7 @@ namespace Ring.Simulation.Core
             // these two report (SimEvent has one player slot, and for a
             // PlayerDamaged/PlayerDied pair the victim is the convention).
             Emit(SimEventKind.PlayerDamaged, pos, victimIndex, default, dmg, zone: zone, hitDir: dir,
-                playerIndex: (byte)victimIndex);
+                playerIndex: (byte)victimIndex, height: hitHeight);
 
             if (p.Hp <= 0f)
             {
@@ -2036,7 +2063,7 @@ namespace Ring.Simulation.Core
         /// here would invent a killer none of this seam's callers asked for.
         internal void KillPlayerForTest()
             => DamagePlayer(0, ProjectileIds.NoOwner, _config.Hero.MaxHp + 1f, _players[0].Pos,
-                HitZone.Body, new float2(1f, 0f));
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
 
         /// Test-only seam (Task 8 Interfaces): exposes the private Sanitize step
         /// so tests can assert the AimHeight NaN-map/clamp behavior directly,

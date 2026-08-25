@@ -204,5 +204,60 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.MobDied, out SimEvent died));
             Assert.AreEqual(1, died.PlayerIndex, "MobDied carries the killing round's shooter");
         }
+
+        [Test]
+        public void ProjectileHit_CarriesTheContactHeight_NotZero()
+        {
+            // Direct RED (app-88jb Т3, finding D-C4): today the entry height is
+            // computed inside AcceptCandidate (`hEnter`) and thrown away —
+            // SimEvent has no field to carry it.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 1f,
+                targetXY: new float2(6f, 0f), targetH: 1f);
+            TestWorlds.RunUntilProjectilesDie(w);
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),
+                "попадания не случилось — фикстура не о том");
+            Assert.Greater(e.Height, 0.5f, "высота контакта не доехала до события");
+            Assert.Less(e.Height, 1.5f, "высота контакта не похожа на выстрел с дула 1 м по горизонтали");
+        }
+
+        [Test]
+        public void ProjectileBlocked_CarriesHeightInItsOwnField_AndAmountIsFree()
+        {
+            // Second half of Т3: ProjectileBlocked's height MOVES out of Amount
+            // into its own field, and Amount is freed. Both asserts matter —
+            // without the second one, a mutant that writes the height into BOTH
+            // fields would still pass.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 1f,
+                targetXY: new float2(0f, 0f), targetH: 0f);   // straight down, into the floor
+            TestWorlds.RunUntilProjectilesDie(w);
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked, out SimEvent e),
+                "снаряд не встретил пол");
+            Assert.AreEqual(cfg.Weapon.ProjectileRadius, e.Height, 0.05f,
+                "высота контакта с полом не в своём поле");
+            Assert.AreEqual(0f, e.Amount, 1e-6f,
+                "Amount всё ещё занят высотой — поле не освободилось");
+        }
+
+        [Test]
+        public void PlayerDamaged_CarriesTheContactHeight()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 1f,
+                targetXY: new float2(6f, 0f), targetH: 1f);
+            TestWorlds.RunUntilProjectilesDie(w);
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent e),
+                "PvP-попадания не случилось — фикстура не о том");
+            Assert.Greater(e.Height, 0.5f, "высота контакта не доехала до PlayerDamaged");
+        }
     }
 }

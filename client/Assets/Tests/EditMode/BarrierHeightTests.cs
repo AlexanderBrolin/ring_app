@@ -113,7 +113,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked),
                 "with no modelled top the obstacle stops the round at any height");
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked, out SimEvent end));
-            Assert.AreEqual(flightHeight, end.Amount, 1e-4f,
+            Assert.AreEqual(flightHeight, end.Height, 1e-4f,
                 "the contact height the event reports is the round's own, unclamped");
             Assert.AreEqual(obstacleX - obstacleRadius - c.Weapon.ProjectileRadius, end.Pos.x, 1e-2f,
                 "and the contact sits on the obstacle's padded rim, not somewhere past it");
@@ -234,7 +234,7 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked));
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked, out SimEvent end));
-            Assert.AreEqual(flightHeight, end.Amount, 1e-4f);
+            Assert.AreEqual(flightHeight, end.Height, 1e-4f);
             Assert.AreEqual(obstacleX - obstacleRadius - c.Weapon.ProjectileRadius, end.Pos.x, 1e-2f);
         }
 
@@ -266,7 +266,7 @@ namespace Ring.Simulation.Tests
                 "the obstacle was cleared — the ending is past it, not on it");
             Assert.AreEqual(c.Arena.Radius - c.Weapon.ProjectileRadius, math.length(end.Pos), 1e-2f,
                 "the round died on the ring boundary's own padded rim");
-            Assert.AreEqual(flightHeight, end.Amount, 1e-4f,
+            Assert.AreEqual(flightHeight, end.Height, 1e-4f,
                 "at a height far above every interior barrier");
             Assert.AreEqual(-1f, end.HitDir.x, 1e-3f,
                 "and the event carries the ring's inward normal, exactly as before the split");
@@ -303,7 +303,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked),
                 "a round that ends the step inside the barrier's column is stopped by it");
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked, out SimEvent end));
-            Assert.AreEqual(entryHeight, end.Amount, 1e-4f,
+            Assert.AreEqual(entryHeight, end.Height, 1e-4f,
                 "and the ending is reported at the contact height, above the crown — which is "
                 + "exactly the shot the conservative bias of this gate is paid for");
         }
@@ -489,7 +489,7 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked, out SimEvent end));
             Assert.AreEqual(-1f, end.HitDir.x, 1e-3f,
                 "and the ending is the RING's, which is what proves the two are separate slots");
-            Assert.AreEqual(flightHeight, end.Amount, 1e-4f);
+            Assert.AreEqual(flightHeight, end.Height, 1e-4f);
         }
 
         [Test]

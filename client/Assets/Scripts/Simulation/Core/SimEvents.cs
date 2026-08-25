@@ -252,5 +252,13 @@ namespace Ring.Simulation.Core
         /// through the tick's event buffer instead, task-28-brief §2.4 item 4).
         /// Not part of StateHash — events are excluded from the hash entirely.
         public int SecondaryEntityId;
+        /// Contact height above ground, in meters (app-88jb Т3, spec §3.2 / finding
+        /// D-C4). Filled for ProjectileHit, ProjectileHitPlayer, PlayerDamaged and
+        /// the already existing ProjectileBlocked -- the last of which used to carry it in
+        /// `Amount`, a slot that belongs to damage everywhere else in this struct.
+        /// Freeing `Amount` is half the point: with a height of its own, the two
+        /// fields stop meaning different things for different kinds.
+        /// Zero for every kind with no contact behind it.
+        public float Height;
     }
 }

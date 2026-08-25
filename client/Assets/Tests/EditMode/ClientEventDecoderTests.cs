@@ -247,8 +247,8 @@ namespace Ring.Simulation.Tests
         public void ProjectileEnded_Blocked_IsTheRoundAndItsContactHeight()
         {
             // Sender: ProjectileBlocked -> (ev.EntityId, Blocked, HitZone.None,
-            // ev.Amount) — and for that sim kind `Amount` is the contact
-            // HEIGHT, which is the field the height must come back into.
+            // ev.Height) — and for that sim kind `Height` (app-88jb Т3) is the
+            // contact height, which is the field the height must come back into.
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileEnded);
             SnapshotEvents.WriteProjectileEnded(bytes, RoundId, ProjectileEndKind.Blocked,
@@ -262,8 +262,8 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(RoundId, e.EntityId,
                 "SimEvent.EntityId must be the ROUND for this ending — ProjectileBlocked has no "
                 + "victim, so the round keeps the primary field");
-            Assert.AreEqual(1.5f, e.Amount, UnitTolerance(cfg.Hero.MaxAimHeight),
-                "SimEvent.Amount must be the contact HEIGHT for this ending, which is what the "
+            Assert.AreEqual(1.5f, e.Height, UnitTolerance(cfg.Hero.MaxAimHeight),
+                "SimEvent.Height must be the contact HEIGHT for this ending, which is what the "
                 + "spark is placed at");
         }
 

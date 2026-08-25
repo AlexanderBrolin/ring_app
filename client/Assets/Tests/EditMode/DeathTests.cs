@@ -78,7 +78,7 @@ namespace Ring.Simulation.Tests
             // world has) killed by nobody in particular — ProjectileIds.NoOwner,
             // since this fixture is about the blow POSITION, not about credit.
             w.DamagePlayer(0, ProjectileIds.NoOwner, c.Hero.MaxHp + 1f, blowPos,
-                HitZone.Body, new float2(1f, 0f));
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent damaged));
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDied, out SimEvent died));

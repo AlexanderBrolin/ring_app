@@ -267,9 +267,11 @@ namespace Ring.Networking.Client
                         case ProjectileEndKind.Blocked:
                             e.Kind = SimEventKind.ProjectileBlocked;
                             e.EntityId = p.Id;
-                            // `Amount` carries the contact HEIGHT for this kind
-                            // — the same field the sending side read it out of.
-                            e.Amount = p.Height;
+                            // `Height` carries the contact height for this
+                            // kind (app-88jb Т3) — the same field the
+                            // sending side wrote it into (SnapshotAssembler's
+                            // own ProjectileBlocked branch).
+                            e.Height = p.Height;
                             break;
                         case ProjectileEndKind.Expired:
                             e.Kind = SimEventKind.ProjectileExpired;

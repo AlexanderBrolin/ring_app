@@ -663,10 +663,13 @@ namespace Ring.Networking.Server
                         break;
 
                     case SimEventKind.ProjectileBlocked:
-                        // Amount carries the contact HEIGHT for this kind
-                        // (ProjectileSystem's barrier/floor branches).
+                        // Height carries the contact height for this kind
+                        // (ProjectileSystem's barrier/floor branches) — its
+                        // own field since app-88jb Т3, not Amount (which is
+                        // 0f here: a blocked round deals no damage, and
+                        // Amount means damage everywhere else on the struct).
                         AddProjectileEnded(ref seq, i, in ev, ev.EntityId,
-                            ProjectileEndKind.Blocked, HitZone.None, ev.Amount);
+                            ProjectileEndKind.Blocked, HitZone.None, ev.Height);
                         break;
 
                     case SimEventKind.ProjectileExpired:

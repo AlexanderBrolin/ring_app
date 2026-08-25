@@ -152,7 +152,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0f, blocked.HitDir.y, 1e-6f);
             // contact height == Radius: that is exactly where the sphere's
             // underside reaches the ground plane (t_floor's defining equation)
-            Assert.AreEqual(cfg.Weapon.ProjectileRadius, blocked.Amount, 1e-4f);
+            Assert.AreEqual(cfg.Weapon.ProjectileRadius, blocked.Height, 1e-4f);
         }
 
         [Test]
@@ -181,7 +181,7 @@ namespace Ring.Simulation.Tests
             // wall normal points back toward the arena centre, i.e. -x here
             Assert.AreEqual(-1f, blocked.HitDir.x, 1e-4f);
             Assert.AreEqual(0f, blocked.HitDir.y, 1e-4f);
-            Assert.AreEqual(MuzzleH, blocked.Amount, 1e-4f);
+            Assert.AreEqual(MuzzleH, blocked.Height, 1e-4f);
         }
 
         [Test]
@@ -213,7 +213,7 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked,
                 out SimEvent blocked));
             // floor contact: centre height == Radius, no surface normal (Task 7)
-            Assert.AreEqual(cfg.Weapon.ProjectileRadius, blocked.Amount, 1e-4f);
+            Assert.AreEqual(cfg.Weapon.ProjectileRadius, blocked.Height, 1e-4f);
             Assert.AreEqual(0f, blocked.HitDir.x, 1e-6f);
             Assert.AreEqual(0f, blocked.HitDir.y, 1e-6f);
             Assert.AreEqual(floorPoint.x, blocked.Pos.x, 0.05f);

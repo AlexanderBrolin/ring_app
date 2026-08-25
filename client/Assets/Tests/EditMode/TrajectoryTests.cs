@@ -57,7 +57,7 @@ namespace Ring.Simulation.Tests
                 "fixture premise: a descending round ends on the floor, not on TTL");
             Assert.AreEqual(0f, math.length(end.HitDir), 1e-6f,
                 "fixture premise: HitDir is exactly zero only on ProjectileSystem's FLOOR branch");
-            Assert.AreEqual(c.Weapon.ProjectileRadius, end.Amount, 1e-4f,
+            Assert.AreEqual(c.Weapon.ProjectileRadius, end.Height, 1e-4f,
                 "the ground contact happens at the round's CENTER height, i.e. one radius up");
             return math.distance(origin, end.Pos) / distance;
         }

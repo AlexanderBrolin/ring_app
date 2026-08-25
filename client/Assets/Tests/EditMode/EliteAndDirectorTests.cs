@@ -406,7 +406,8 @@ namespace Ring.Simulation.Tests
         }
 
         static void Kill(SimulationWorld w, int mobIndex)
-            => w.DamageMob(mobIndex, 1e9f, w.Mobs[mobIndex].Pos, HitZone.Body, float2.zero, ownerIndex: 1);
+            => w.DamageMob(mobIndex, 1e9f, w.Mobs[mobIndex].Pos, HitZone.Body, float2.zero, ownerIndex: 1,
+                hitHeight: 0f);
 
         /// Distance from the arena center — the quantity the core leash is
         /// stated in, so a caller never restates the boundary itself.
@@ -803,7 +804,7 @@ namespace Ring.Simulation.Tests
             var pos = new float2(10f, 0f);
             w.SpawnMobForTest(MobType.Director, pos);
 
-            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f);
 
             Assert.AreEqual(4, w.ContainerCount, "the Director's death must produce all four containers");
             int memoryCoreContainers = 0, tierThreeContainers = 0;

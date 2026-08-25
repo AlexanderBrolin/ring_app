@@ -351,12 +351,23 @@ namespace Ring.Simulation.Tests
         /// is a stall guard, not an expectation: a fixture whose mobs shoot back
         /// legitimately runs to the cap, so callers assert on world state, never
         /// on the return value being below it.
+        /// Goes through `TickAll`, not the solo `Tick(in SimInput)` overload
+        /// (app-88jb Т3, Ruling 13): `Tick` throws `InvalidOperationException`
+        /// the moment `world.PlayerCount > 1` (its own doc, "the solo overload
+        /// — throws for a multiplayer world"), and this helper has no way to
+        /// know which kind of world it was handed — a caller building a
+        /// two-collector fixture would fail with a raised exception, not a RED
+        /// assertion, on ANY implementation. `TickAll` is safe for both: for a
+        /// solo world it is byte-for-byte what `Tick` already does internally
+        /// (stackalloc a one-element span and forward), so nothing observable
+        /// changes for any existing single-player caller.
         public static int RunUntilProjectilesDie(SimulationWorld world, int maxTicks = 120)
         {
             int ticks = 0;
+            var inputs = new SimInput[world.PlayerCount];
             while (ticks < maxTicks && world.ProjectileCount > 0)
             {
-                world.Tick(default);
+                world.TickAll(inputs);
                 ticks++;
             }
             return ticks;
@@ -390,7 +401,7 @@ namespace Ring.Simulation.Tests
             {
                 world.TickAll(inputs);
                 while (world.MobCount > 0)
-                    world.DamageMob(0, 1e9f, world.Mobs[0].Pos, HitZone.Body, default, ownerIndex: 0);
+                    world.DamageMob(0, 1e9f, world.Mobs[0].Pos, HitZone.Body, default, ownerIndex: 0, hitHeight: 0f);
             }
             return ticks;
         }
@@ -451,7 +462,7 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < world.MobCount; i++)
             {
                 if (world.Mobs[i].Type != MobType.Director) continue;
-                world.DamageMob(i, 1e9f, world.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+                world.DamageMob(i, 1e9f, world.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f);
                 break;
             }
             IdleTicks(world, 2);

@@ -195,9 +195,25 @@ namespace Ring.Simulation.AI
                             // overlap against — and the attacker is
                             // ProjectileIds.NoOwner, since a mob owns no player
                             // slot and no player earns credit for its kill.
+                            // hitHeight (app-88jb Т3): the TARGET's own center of
+                            // mass, not the attacker's — `cfg` here is
+                            // `w.MobConfigFor(m.Type)`, the config of the mob
+                            // THROWING the punch (its own ContactDamage is the
+                            // neighboring argument above), and its
+                            // CenterOfMassHeight belongs to a different struct
+                            // entirely (MobSimConfig, not HeroSimConfig). Reading
+                            // it here would substitute the chaser's own CoM
+                            // (1.17) for the victim collector's (0.95), turning a
+                            // level moment arm into +0.22 m and making a fist
+                            // knock the collector down along the swing — a defect
+                            // no test catches, only the source read does. The
+                            // right source is the VICTIM's own body, and every
+                            // collector shares one HeroSimConfig regardless of
+                            // which one this FSM picked.
                             w.DamagePlayer(targetIndex, ProjectileIds.NoOwner, cfg.ContactDamage,
                                 m.Pos, HitZone.Body,
-                                math.normalizesafe(player.Pos - m.Pos, new float2(1f, 0f)));
+                                math.normalizesafe(player.Pos - m.Pos, new float2(1f, 0f)),
+                                hitHeight: w.Config.Hero.CenterOfMassHeight);
                         }
                         m.Ai = MobAiState.Recover;
                         m.StateTimer = 0f;

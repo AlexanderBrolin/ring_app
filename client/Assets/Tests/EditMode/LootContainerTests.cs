@@ -668,12 +668,12 @@ namespace Ring.Simulation.Tests
             float middle = (cfg.Arena.ZoneRadius[0] + cfg.Arena.ZoneRadius[1]) * 0.5f;
             w.SpawnMobForTest(MobType.Chaser, new float2(outer, 0f)); // Outer — chance 0
 
-            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f);
 
             Assert.AreEqual(0, w.ContainerCount, "a zero-chance zone must not produce a corpse container");
 
             w.SpawnMobForTest(MobType.Chaser, new float2(middle, 0f)); // Middle — chance 1
-            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0);
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f);
 
             Assert.AreEqual(1, w.ContainerCount,
                 "the SAME archetype must produce a corpse container once the roll actually succeeds");

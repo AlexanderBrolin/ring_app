@@ -166,6 +166,10 @@ namespace Ring.Simulation.Combat
                 int hitTargetIndex = -1;
                 HitZone hitZone = HitZone.None;
                 float hitMult = 1f;
+                // Contact height (app-88jb Т3): AcceptCandidate's own new out
+                // parameter, same "never read on a HitNone/rejected verdict"
+                // contract as hitZone/hitMult above.
+                float hitHeight = 0f;
                 while (candCount > 0)
                 {
                     int bestSlot = -1;
@@ -192,7 +196,7 @@ namespace Ring.Simulation.Combat
                     hitTargetIndex = candidates[bestSlot].index;
 
                     if (AcceptCandidate(w, in config, in proj, startPos, target, bestT,
-                            hitKind, hitTargetIndex, out hitZone, out hitMult))
+                            hitKind, hitTargetIndex, out hitZone, out hitMult, out hitHeight))
                     {
                         break;
                     }
@@ -211,7 +215,6 @@ namespace Ring.Simulation.Combat
                     case HitRingWall:
                     {
                         float2 contact = math.lerp(startPos, target, bestT);
-                        float contactHeight = proj.Height + proj.VelZ * dt * bestT;
                         // Wall/obstacle: HitDir is the real SweepArena surface
                         // normal (Task 7 — D12/C5, no "≈0" heuristic). Stage 2
                         // Task 46: the ring boundary answers the same question
@@ -226,19 +229,28 @@ namespace Ring.Simulation.Combat
                         float2 blockedNormal = hitKind == HitRingWall
                             ? Geometry.RingWallNormal(contact)
                             : barrierNormal;
+                        // Amount (app-88jb Т3, finding D-C4): 0f — a blocked
+                        // round deals no damage, and Amount is spent on
+                        // damage everywhere else in this struct. The contact
+                        // height AcceptCandidate already computed for its own
+                        // gate travels in `height`, its own field, instead of
+                        // being re-derived here: the duplicate copy that used
+                        // to live right here is gone, and the one remaining
+                        // `contactHeight` lives inside AcceptCandidate.
                         w.Emit(SimEventKind.ProjectileBlocked, contact, proj.Id, default,
-                            contactHeight, hitDir: blockedNormal);
+                            0f, hitDir: blockedNormal, height: hitHeight);
                         w.RemoveProjectileAt(i);
                         break;
                     }
                     case HitFloor:
                     {
                         float2 contact = math.lerp(startPos, target, bestT);
-                        float contactHeight = proj.Height + proj.VelZ * dt * bestT;
                         // Floor: no modelled surface normal — HitDir is exactly
                         // zero, not an approximation (Task 7 — D12/C5).
+                        // Amount is 0f for the same reason the barrier/ring
+                        // branch above states it — see that comment.
                         w.Emit(SimEventKind.ProjectileBlocked, contact, proj.Id, default,
-                            contactHeight, hitDir: float2.zero);
+                            0f, hitDir: float2.zero, height: hitHeight);
                         w.RemoveProjectileAt(i);
                         break;
                     }
@@ -263,10 +275,13 @@ namespace Ring.Simulation.Combat
                         // (spec §3.8 ProjectileEndedNet, table Р28).
                         w.Emit(SimEventKind.ProjectileHit, contact, mob.Id, mob.Type, dmg,
                             zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex,
-                            secondaryEntityId: proj.Id);
+                            secondaryEntityId: proj.Id, height: hitHeight);
                         // ownerIndex (Stage 2 Task 7): the projectile carries its
-                        // own shooter forward into the credit routing.
-                        w.DamageMob(hitTargetIndex, dmg, contact, hitZone, hitDir, proj.OwnerIndex);
+                        // own shooter forward into the credit routing. hitHeight
+                        // (app-88jb Т3) is AcceptCandidate's own contact height —
+                        // see DamageMob's own doc for why it accepts one.
+                        w.DamageMob(hitTargetIndex, dmg, contact, hitZone, hitDir, proj.OwnerIndex,
+                            hitHeight);
                         w.RemoveProjectileAt(i);
                         break;
                     }
@@ -301,13 +316,14 @@ namespace Ring.Simulation.Combat
                         // exists to prevent.
                         w.Emit(SimEventKind.ProjectileHitPlayer, contact, hitTargetIndex, default, dmg,
                             zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex,
-                            secondaryEntityId: proj.Id);
+                            secondaryEntityId: proj.Id, height: hitHeight);
                         // Stage 2 Task 17: victim = the player this scan actually
                         // resolved onto, attacker = the round's own shooter
                         // (ProjectileIds.NoOwner for a mob's round, which credits
-                        // nobody — see DamagePlayer's own doc).
+                        // nobody — see DamagePlayer's own doc). hitHeight
+                        // (app-88jb Т3) is AcceptCandidate's own contact height.
                         w.DamagePlayer(hitTargetIndex, proj.OwnerIndex, dmg,
-                            contact, hitZone, hitDir);
+                            contact, hitZone, hitDir, hitHeight);
                         w.RemoveProjectileAt(i);
                         break;
                     }
@@ -370,7 +386,7 @@ namespace Ring.Simulation.Combat
         /// Height gate + zone resolution for the candidate the min-scan just
         /// picked (Task 6). Returns false when the shot passes clear over (or
         /// under) the target's column, which sends the scan back for the next
-        /// candidate; on true, `zone`/`mult` describe the blow.
+        /// candidate; on true, `zone`/`mult`/`hitHeight` describe the blow.
         ///
         /// The projectile's height is not a point: it moves by VelZ·dt across the
         /// step, so the test uses the height at BOTH ends of the chord through
@@ -386,11 +402,30 @@ namespace Ring.Simulation.Combat
         /// handed down from the min-scan rather than re-solved here: the
         /// interior-barrier gate needs the round's height AT the contact, and
         /// the scan already knows where that contact is.
+        ///
+        /// `hitHeight` (app-88jb Т3, finding D-C4) is the contact height this
+        /// candidate lands at — every branch below fills it with the height
+        /// arithmetic it already had to compute for its own gate (or, for
+        /// the ring wall and an un-topped barrier, the same formula a gated
+        /// branch would have used). Initialized up front so an early
+        /// `return false` (the body-height gate further down) still leaves
+        /// it definitely assigned, as C# requires — a rejected candidate's
+        /// height is never read by the caller, only its true/false verdict.
         static bool AcceptCandidate(SimulationWorld w, in SimConfig config, in ProjectileState proj,
-            float2 p0, float2 p1, float t, int kind, int targetIndex, out HitZone zone, out float mult)
+            float2 p0, float2 p1, float t, int kind, int targetIndex, out HitZone zone, out float mult,
+            out float hitHeight)
         {
             zone = HitZone.None;
             mult = 1f;
+            hitHeight = 0f;
+
+            // The round's height AT the contact the min-scan handed down (app-88jb
+            // Т3). One home, not four: every non-body branch below answers the
+            // contact height with exactly this expression, and the gated barrier
+            // branch needs it as its own gate input as well. Bodies do NOT use it
+            // -- their contact is the ENTRY into the target circle (hEnter, far
+            // below), which is a different point on the same step.
+            float contactHeight = proj.Height + proj.VelZ * SimulationWorld.TickDt * t;
 
             float2 targetPos;
             float targetRadius, legsTop, bodyTop, headTop, overlapTop, legsMult, bodyMult, headMult;
@@ -439,6 +474,10 @@ namespace Ring.Simulation.Combat
                 // barrier with no modelled top, because a round flying over it
                 // would leave the arena for good — there is nothing out there
                 // to reach, and nothing to come back down onto.
+                // Height (app-88jb Т3): same contact-height formula every
+                // other blocked branch below uses — there is no height gate
+                // here to reuse an intermediate from, so it is computed fresh.
+                hitHeight = contactHeight;
                 return true;
             }
             else if (kind == HitBarrier)
@@ -456,7 +495,14 @@ namespace Ring.Simulation.Combat
                 // which is what every barrier did before this task and what
                 // every hand-built fixture still gets by default.
                 float barrierTop = config.Arena.BarrierTop;
-                if (barrierTop <= 0f) return true;
+                if (barrierTop <= 0f)
+                {
+                    // Height (app-88jb Т3): no gate ran on this path, so
+                    // nothing below computed a contact height yet — same
+                    // formula the gated path just past this `if` uses.
+                    hitHeight = contactHeight;
+                    return true;
+                }
 
                 // THE WHOLE REMAINING STEP, NOT THE CONTACT POINT. A round
                 // descends inside a tick, so judging the contact alone would
@@ -490,9 +536,12 @@ namespace Ring.Simulation.Combat
                 // ends, so the shot that pays for this is one that visually
                 // grazed the crown and is stopped anyway — never one that
                 // passes through a wall.
-                float hContact = proj.Height + proj.VelZ * SimulationWorld.TickDt * t;
                 float hStepEnd = proj.Height + proj.VelZ * SimulationWorld.TickDt;
-                return HitZones.Overlaps(hContact, hStepEnd, proj.Radius, barrierTop);
+                // Height (app-88jb Т3): the contact height, regardless of
+                // which way Overlaps below resolves — a rejected candidate's
+                // height is never read by the caller, only the false verdict.
+                hitHeight = contactHeight;
+                return HitZones.Overlaps(contactHeight, hStepEnd, proj.Radius, barrierTop);
             }
             else // HitFloor
             {
@@ -501,6 +550,12 @@ namespace Ring.Simulation.Combat
                 // candidate is a genuine contact — nothing further to test.
                 // Not a damageable body: no zone (zone/mult already default to
                 // None/1 at the top of this function).
+                // Height (app-88jb Т3): same contact-height formula as every
+                // other branch above — for a genuine floor candidate this
+                // equals proj.Radius by construction (t_floor's own defining
+                // equation, gather phase above: the sphere's underside
+                // touching the ground plane).
+                hitHeight = contactHeight;
                 return true;
             }
 
@@ -520,6 +575,12 @@ namespace Ring.Simulation.Combat
             }
             float hEnter = math.lerp(hStart, hEnd, tEnter);
             float hExit = math.lerp(hStart, hEnd, tExit);
+            // Height (app-88jb Т3): the ENTRY height, the same point Zone
+            // classification below reads — "where the round first touches
+            // the body" (this method's own doc above). Assigned before the
+            // overlap gate: a rejected candidate's height is never read by
+            // the caller, same contract as every branch above.
+            hitHeight = hEnter;
 
             if (!HitZones.Overlaps(hEnter, hExit, proj.Radius, overlapTop)) return false;
             zone = HitZones.Classify(hEnter, legsTop, bodyTop, headTop);

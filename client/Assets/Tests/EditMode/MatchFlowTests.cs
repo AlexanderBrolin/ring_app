@@ -88,7 +88,7 @@ namespace Ring.Simulation.Tests
             // is hardcoded to player 0, see its own doc), overkill damage so
             // KillPlayer's death bookkeeping runs unconditionally.
             w.DamagePlayer(1, ProjectileIds.NoOwner, cfg.Hero.MaxHp + 1f, w.PlayerAt(1).Pos,
-                HitZone.Body, new float2(1f, 0f));
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
 
             PlayerState dead = w.PlayerAt(1);
             Assert.IsFalse(dead.Alive, "premise: the overkill damage must actually have killed the player");
@@ -198,7 +198,7 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < w.MobCount; i++)
             {
                 if (w.Mobs[i].Type != MobType.Director) continue;
-                w.DamageMob(i, 1e9f, w.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 1);
+                w.DamageMob(i, 1e9f, w.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 1, hitHeight: 0f);
                 return;
             }
             Assert.Fail("fixture premise: the activation must have produced a Director to kill");
@@ -270,7 +270,7 @@ namespace Ring.Simulation.Tests
             var cfg = FlowFixture();
             var w = FlowWorld(in cfg);
             w.DamagePlayer(1, ProjectileIds.NoOwner, cfg.Hero.MaxHp + 1f, w.PlayerAt(1).Pos,
-                HitZone.Body, new float2(1f, 0f));
+                HitZone.Body, new float2(1f, 0f), hitHeight: 0f);
             Assert.IsFalse(w.PlayerAt(1).Alive, "premise: the overkill damage must have killed the collector");
 
             TestWorlds.RelocatePlayerForTest(w, 1, InsideCore(in cfg));
