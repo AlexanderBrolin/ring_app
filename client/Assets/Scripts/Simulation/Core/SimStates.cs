@@ -169,6 +169,19 @@ namespace Ring.Simulation.Core
         /// this field.
         /// A dev-key spawn is filed under Zone.Outer wherever it lands.
         public Zone SpawnZone;
+
+        /// Body tilt and its angular velocity (app-88jb Т5, spec §3.2, owner
+        /// correction Н10). RADIANS and radians per second. A hit above the center
+        /// of mass tips the body ALONG the shot, one below UNDERCUTS it -- the sign
+        /// falls out of the arithmetic (`hitHeight - CenterOfMassHeight`), there is
+        /// no branch. The return is a spring parameterized through zeta and the
+        /// settle time (Impact.SpringFromSettle), UNDERDAMPED on purpose: the body
+        /// rocks and comes back, and that rock is what reads as a blow.
+        /// NOT ON THE WIRE (Р383): MobRecord is exactly 9 bytes and has no room;
+        /// the client rebuilds the tilt from the hit event, which is legal because
+        /// tilt decides no game outcome -- the hit parts do not rotate with it
+        /// (Р375).
+        public float Tilt, TiltVel;
     }
 
     /// Stage 3 Т24: the values PlayerState.ExtractKind carries, named ONCE

@@ -388,6 +388,13 @@ namespace Ring.Simulation.Core
             MobAiSystem.Update(this);
             SeparationSystem.Apply(this);
             ProjectileSystem.Update(this);
+            // app-88jb Т5 (spec §3.2): the tilt spring steps HERE -- after
+            // this tick's hits are resolved, so a body integrates from the
+            // angular impulse it was just given instead of one tick later.
+            // Unlike the Vel shove above, which inherits SeparationSystem's
+            // one-tick lag because MoveWithCollisions has already run, tilt
+            // has no such constraint: nothing earlier in the tick reads it.
+            TiltSystem.Apply(this);
             // Runs last (Task 22 Interfaces) so spawns land after this tick's
             // movement/combat has settled — a mob spawned here doesn't get an
             // extra, unbudgeted movement/combat sub-step on its own spawn tick.
@@ -1584,6 +1591,29 @@ namespace Ring.Simulation.Core
             float dv = Impact.VelocityDelta(projectileMass, projectileSpeed3D,
                 target.Mass, target.ImpactSpeedCap, damping: 1f);
             _mobs[index].Vel += dir * dv;
+            // The ANGULAR half of the same blow (app-88jb Т5, spec §3.2). The
+            // arm is signed, so a hit above the center of mass tips the body
+            // ALONG the shot and one below undercuts it -- there is no branch
+            // here and there must never be one: the sign falls out of the
+            // subtraction.
+            //
+            // Through Impact.AngularImpulse rather than written inline, and
+            // that is a rule rather than a preference (round-3 finding C-I1):
+            // FOUR places need this one signed subtraction and TWO of them are
+            // outside Ring.Simulation -- DamagePlayer (Т7), the client's
+            // ClientEventDecoder (Т9) and Presentation's MobVisual (Т31). Four
+            // hand-written copies of one signed arm is the shape round 2
+            // already removed for the spring step.
+            //
+            // `target` is the archetype config resolved for the shove above,
+            // deliberately reused: a second MobConfigFor call here would be a
+            // second answer to "which archetype's numbers" in one method.
+            //
+            // BEFORE the death check, on exactly the shove's own reasoning: a
+            // body that dies on this blow shows its tilt to nobody, and the
+            // slot it leaves behind is never walked by HashMob.
+            _mobs[index].TiltVel += Impact.AngularImpulse(hitHeight, target.CenterOfMassHeight,
+                dv, target.TiltGain);
             if (ownerIndex != ProjectileIds.NoOwner) IncrementShotsHit(ownerIndex);
             if (_mobs[index].Hp <= 0f)
             {
@@ -2752,6 +2782,29 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, m.Hp); h = StateHash64.Add(h, m.StateTimer);
             h = StateHash64.Add(h, m.FireCooldown); h = StateHash64.Add(h, (int)m.Ai);
             h = StateHash64.Add(h, m.StrafeSign);
+            // app-88jb Т5 (spec §3.2): the tilt pair CLOSES the fold, mirroring
+            // the end of the struct -- they qualify nothing but each other, so
+            // there is no field for them to sit beside the way SpawnZone sits
+            // beside Type.
+            //
+            // HASHED EVEN THOUGH TILT IS COSMETIC TODAY, and the reason is not
+            // "for the company". Three of them, in ascending order of force:
+            //   1. it is canonical state that SURVIVES A TICK and rides
+            //      SaveState/RestoreState, so a rollback that dropped it would
+            //      resume a body at a different attitude than the one it saved;
+            //   2. from Т6 the pair stops being cosmetic at all -- a tilt past
+            //      TiltFallAngle puts the mob in Downed, where it neither
+            //      shoots nor strikes, which is a game outcome by any reading;
+            //   3. errata E-1's rule, already stated for the Т6 timer group
+            //      above: a field that joins the digest LATER moves the digest
+            //      later, and the sanctioned re-pins are counted. Joining now
+            //      spends the re-pin this epic has already budgeted (Т34)
+            //      instead of asking for a second one.
+            // None of that contradicts Р375/Р383 -- tilt still decides no hit
+            // resolution and still never rides the wire; the digest is about
+            // what the SERVER must replay identically, not about what the
+            // client is told.
+            h = StateHash64.Add(h, m.Tilt); h = StateHash64.Add(h, m.TiltVel);
             return h;
         }
 

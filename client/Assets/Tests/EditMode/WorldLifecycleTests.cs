@@ -150,9 +150,9 @@ namespace Ring.Simulation.Tests
             //   PlayerState 32 x 2 players = 64
             //   MatchStats 10 x 2 players  = 20
             //   WaveState 7 x 3 zones      = 21
-            //   WorldStats 5, MobState 10, ProjectileState 13, PickupState 5,
-            //   MatchState 2, ContainerState 5 = 40
-            //   -> 145 bumps swept, ALL asserted NOT to equal baseline.
+            //   WorldStats 5, MobState 12, ProjectileState 13, PickupState 5,
+            //   MatchState 2, ContainerState 5 = 42
+            //   -> 147 bumps swept, ALL asserted NOT to equal baseline.
             //
             // Stage 3 Task 11 (coordinator R-50/R-51): WaveState grew from
             // 6 fields to 13 (two named Pending counters -> nine, one per
@@ -183,6 +183,18 @@ namespace Ring.Simulation.Tests
             // truncated to waves[0] passes a sweep that only ever bumps
             // waves[0], and that is precisely the mutation this file is here
             // to kill.
+            //
+            // app-88jb Т5: MobState grew from 10 fields to 12 -- Tilt and
+            // TiltVel, the body's tilt spring and its angular velocity (spec
+            // §3.2, SimStates.cs' own field doc) -- and the tally is re-derived
+            // once more from fresh typeof(X).GetFields() readings of ALL NINE
+            // structs rather than adjusted from 145. Every other count came
+            // back unchanged, so only the mob line and the two sums move:
+            // 145 -> 147. The mob is counted ONCE, unlike PlayerState and
+            // MatchStats, and the reason is in the loop rather than in the
+            // fixture -- the pass below bumps w.Mobs[0] and nothing else,
+            // where those two are wrapped in a per-index loop (see their own
+            // "x 2 players" lines above).
             //
             // ZERO asserted TO equal it: the thirteen PENDING names are gone
             // with the skip-list (see this file's header), which is the whole

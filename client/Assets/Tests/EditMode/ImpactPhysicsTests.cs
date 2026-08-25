@@ -9,6 +9,37 @@ namespace Ring.Simulation.Tests
     /// here are an EXPLICIT in-test fixture, not TestConfigs: the arithmetic
     /// is the subject, so it has to be readable in the same screen as the
     /// assertion (precedent DashRicochetTests.Fixture()).
+    ///
+    /// THE LAST THREE TESTS GO THROUGH THE WORLD, and they break that sentence
+    /// on purpose (Т5, spec §4.3 tests 6/7/9). What they witness is that the
+    /// moment reaches MobState.TiltVel and that TickAll steps the spring --
+    /// properties of the WIRING, which no pure function can show. They still
+    /// state no literal of their own: every number they need is READ OFF the
+    /// fixture (cfg.Chaser.CenterOfMassHeight, cfg.Weapon.ProjectileMass,
+    /// cfg.Weapon.ProjectileSpeed), so the two-sources-of-numbers rule holds
+    /// and no value from the shipped .asset appears here.
+    ///
+    /// `Ai = MobAiState.Idle` IN THOSE THREE IS A STATED STARTING STATE, NOT A
+    /// FREEZE (finding Н-5, caught by a run in Т4 and not by reading). It
+    /// freezes nothing twice over: SimulationWorld.SpawnMob already writes
+    /// that very value into every fresh MobState, and MobAiSystem's
+    /// UpdateChaser Idle branch overwrites it with Chase on its first line
+    /// (MobAiSystem.cs:113-116), because
+    /// Targeting.NearestAlivePlayer (Targeting.cs:122) has no aggro radius at
+    /// all and the collector standing on the spawn ring is a live target from
+    /// tick one.
+    ///
+    /// THE MOB THEREFORE WALKS, AND NOTHING HERE ZEROES ITS LOCOMOTION -- the
+    /// opposite of ImpactKnockbackTests, which measures Vel and therefore must
+    /// freeze it. The reason is about tilt, not about motion: TiltVel is
+    /// written in exactly two places, the impulse in DamageMob and the spring
+    /// step in TiltSystem, and a walking chaser earns neither (its own melee
+    /// leaves through DamagePlayer, which touches no mob). It also never
+    /// arrives: TestConfigs.Open() puts the collector 159.16 m out
+    /// (Arena.Radius 173 x PlayerSpawnRingFrac 0.92), the mob starts at 6 m,
+    /// and at MaxSpeed 5.2 the longest test here (300 ticks = 10 s) covers
+    /// ~52 m of that 153 m gap. Zeroing MaxSpeed/Accel would be an edit
+    /// without a cause (coordinator R-Т5-1).
     public class ImpactPhysicsTests
     {
         const float Eps = 1e-4f;
@@ -190,6 +221,86 @@ namespace Ring.Simulation.Tests
                     Impact.VelocityDelta(2.6f, 52.5f, 4000f, 6f, 1f), Gain), 0.55f, 0.9f, dt);
             Assert.Less(elite, 0.9f, "элиту валит сегодняшнее оружие");
             Assert.Less(director, 0.9f, "Директора валит сегодняшнее оружие");
+        }
+
+        [Test]
+        public void HitAboveCenterOfMass_TipsAlongTheShot_BelowUndercutsIt()
+        {
+            // Tests 6 and 7 under ONE witness -- the two signs are told apart
+            // BY THE NUMBER, and the fixture puts the center of mass STRICTLY
+            // BETWEEN the two contact heights (otherwise both heights would
+            // carry the same sign and the test would be true under any
+            // implementation at all).
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            var m = new MobState { Id = 1, Type = MobType.Chaser, Pos = new float2(6f, 0f),
+                Hp = 1e6f, Ai = MobAiState.Idle };
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            w.SetMobForTest(0, m);
+
+            float com = cfg.Chaser.CenterOfMassHeight;
+            w.DamageMob(0, 1f, new float2(6f, 0f), HitZone.Head, new float2(1f, 0f),
+                ownerIndex: 0, hitHeight: com + 0.5f,
+                projectileMass: cfg.Weapon.ProjectileMass,
+                projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
+            float high = w.Mobs[0].TiltVel;
+
+            var reset = w.Mobs[0]; reset.TiltVel = 0f; reset.Tilt = 0f;
+            w.SetMobForTest(0, reset);
+            w.DamageMob(0, 1f, new float2(6f, 0f), HitZone.Legs, new float2(1f, 0f),
+                ownerIndex: 0, hitHeight: com - 0.5f,
+                projectileMass: cfg.Weapon.ProjectileMass,
+                projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
+            float low = w.Mobs[0].TiltVel;
+
+            Assert.Greater(high, 0f, "попадание ВЫШЕ центра масс не валит тело по ходу");
+            Assert.Less(low, 0f, "попадание НИЖЕ центра масс не подсекает тело");
+            Assert.AreEqual(-high, low, 1e-4f,
+                "плечо считается не от центра масс: симметричные высоты дали несимметричный момент");
+        }
+
+        [Test]
+        public void Tilt_ReturnsToExactlyZero_InAFiniteNumberOfTicks()
+        {
+            // Test 9: an EXACT zero, not "approximately". Without the rest
+            // snap the exponential walks off into the denormal range and the
+            // digest becomes platform-dependent (FTZ/DAZ differ between the
+            // Linux server and the Windows client).
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            var m = w.Mobs[0];
+            m.Ai = MobAiState.Idle; m.Hp = 1e6f; m.Tilt = 0.3f; m.TiltVel = 0f;
+            w.SetMobForTest(0, m);
+
+            for (int i = 0; i < 300; i++) w.Tick(default);
+
+            Assert.AreEqual(0f, w.Mobs[0].Tilt, 0f, "крен не пришёл в ТОЧНЫЙ ноль за 10 секунд");
+            Assert.AreEqual(0f, w.Mobs[0].TiltVel, 0f, "угловая скорость не пришла в ТОЧНЫЙ ноль");
+        }
+
+        [Test]
+        public void Tilt_Oscillates_BeforeItSettles()
+        {
+            // A witness of the REGIME: at zeta 0.55 the system is underdamped,
+            // so the tilt is obliged to cross zero at least once. An aperiodic
+            // integrator (zeta >= 1) would not pass this -- and spec v1 called
+            // the regime exactly that, in the same sentence as the other one
+            // (finding A-M1).
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            var m = w.Mobs[0];
+            m.Ai = MobAiState.Idle; m.Hp = 1e6f; m.Tilt = 0.3f; m.TiltVel = 0f;
+            w.SetMobForTest(0, m);
+
+            bool crossed = false;
+            for (int i = 0; i < 90 && !crossed; i++)
+            {
+                w.Tick(default);
+                if (w.Mobs[0].Tilt < 0f) crossed = true;
+            }
+            Assert.IsTrue(crossed, "крен не качнулся через ноль — режим не колебательный");
         }
     }
 }
