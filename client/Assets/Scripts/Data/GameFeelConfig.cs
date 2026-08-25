@@ -3,18 +3,12 @@ using UnityEngine;
 
 namespace Ring.Data
 {
-    /// Presentation-only game-feel numbers (hitstop, screen shake, VFX/SFX pooling).
+    /// Presentation-only game-feel numbers (screen shake, VFX/SFX pooling).
     /// Never consumed by SimConfigBuilder / Ring.Simulation — purely client feel,
     /// hot-tweakable in PlayMode.
     [CreateAssetMenu(menuName = "Ring/Game Feel Config", fileName = "GameFeelConfig")]
     public sealed class GameFeelConfig : ScriptableObject
     {
-        public enum HitstopScopeMode { TargetOnly, FullFrame }
-
-        [Range(0f, 0.2f)] public float HitstopSeconds = 0.04f;
-        public HitstopScopeMode HitstopScope = HitstopScopeMode.FullFrame;
-        [Range(0f, 1f)] public float MaxHitstopRatio = 0.35f;
-        [Range(0f, 0.5f)] public float HitstopCatchUpSeconds = 0.05f;
         [Range(0f, 0.5f)] public float FlashDuration = 0.08f;
         [Range(0f, 1f)] public float TraumaHit = 0.2f;
         [Range(0f, 1f)] public float TraumaDeath = 0.35f;
@@ -196,12 +190,12 @@ namespace Ring.Data
         // Task 17 (combat-depth Г5, spec §3.5 as corrected — QC3/QC4/QD12):
         // game-feel numbers for the combat-depth Presentation work later in
         // this phase (tracer visuals, slide dust, stamina bar, headshot
-        // hitstop/pitch, gib pooling, aim-proxy ray). Consumers wired
+        // pitch, gib pooling, aim-proxy ray). Consumers wired
         // incrementally as Г5 progressed, not all at once: `AimProxyHeadRadiusFrac`
         // → `StageOneSceneBootstrap` (Task 19); `AimRayAlpha`/`AimRayWidth` →
         // `AimRayView` and `AimDotScale` → `CrosshairView` (both Task 20);
         // `TracerScale` → `ViewRegistry`/`ProjectileView` (Task 21). The rest
-        // (`SlideDustBurstCount`, `StaminaBar*`, `HeadHitstopScale`,
+        // (`SlideDustBurstCount`, `StaminaBar*`,
         // `ZoneHitPitchOffset`, `Gib*`) still await their own later Г5 tasks.
         // `RicochetSparkCount` and
         // `SlideWallSparkBurstCount` are deliberately NOT added here: ricochet
@@ -213,7 +207,6 @@ namespace Ring.Data
         public Color StaminaBarLowColor = new Color(1f, 0.25f, 0.15f);
         [Range(0f, 1f)] public float StaminaBarLowThreshold = 0.25f;
         [Range(0f, 1f)] public float StaminaDeniedPulseSeconds = 0.2f;
-        [Range(1f, 5f)] public float HeadHitstopScale = 1.4f;
         [Range(0f, 1f)] public float ZoneHitPitchOffset = 0.06f;
         [Range(0f, 20f)] public float GibHeadImpulseSpeed = 6f;
         [Range(0f, 20f)] public float GibExplosionSpeed = 4f;
@@ -608,7 +601,7 @@ namespace Ring.Data
         // rebuilds an unchanged SimConfig — harmless, not skipped, since telling
         // GameFeelConfig's OnValidate apart from the six balance SOs' would need
         // a second event/subscriber and buys nothing. The Presentation-only
-        // fields here (hitstop/shake/pooling/ImmediateMuzzleFeedback) are read
+        // fields here (shake/pooling/ImmediateMuzzleFeedback) are read
         // fresh every frame by their own consumers regardless (class doc above),
         // so they hot-tweak with no reaction to this event at all — EXCEPT the
         // handful of numbers GameFeelDirector/PersistentPropsDirector/

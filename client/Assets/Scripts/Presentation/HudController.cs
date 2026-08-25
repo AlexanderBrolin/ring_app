@@ -17,7 +17,10 @@ namespace Ring.Presentation
     /// shape as HP/dash (Background+Fill Image pair, no text label, QD7: bars are
     /// color+position coded, "Буст" stays a docs/settings term). Filled from
     /// `Curr.Player.Stamina`, NOT `RenderCurr` — same source as the HP bar
-    /// above, so the bar doesn't freeze during a hitstop (QC10).
+    /// above, deliberately chosen (QC10) so the bar would never stall behind
+    /// the on-hit render pin Task Т10 (app-88jb) has since removed whole;
+    /// `RenderCurr` is `Curr` on every frame now (`SimulationRunner`'s own
+    /// doc), so the two reads are equivalent either way today.
     ///
     /// В1 fix-wave 1 (owner playtest feedback, item 1 "две полоски"): the
     /// dash-cooldown bar is retired — two bars only (HP, Stamina). Dash
@@ -119,14 +122,14 @@ namespace Ring.Presentation
         // it joins the router rather than subscribing to TicksFlushed itself,
         // same rule every other Presentation class already follows), counted
         // down here in LateUpdate on Time.unscaledDeltaTime — same
-        // hitstop-independent timer contract GameFeelDirector's own short
-        // feel-timers (hitstop, vignette) use.
+        // unscaled-time-driven timer contract GameFeelDirector's own short
+        // feel-timers (trauma, shake, vignette) use.
         float _staminaDeniedTimer;
 
         /// The wave line's flash timer (Task Т7, bd `app-ggvz`, spec §3.10).
         /// Counted down by `WaveAnnounceTimerAfter` ITSELF, called from
         /// `LateUpdate` on `Time.unscaledDeltaTime` — same
-        /// hitstop-independent contract `_staminaDeniedTimer` above already
+        /// unscaled-time-driven contract `_staminaDeniedTimer` above already
         /// uses. The decay lives INSIDE the tested seam rather than in a
         /// decrement line of its own, so this class gains a third feel timer
         /// without gaining a third hand-written countdown to keep in step
@@ -166,10 +169,11 @@ namespace Ring.Presentation
             // which is this client's own player for the whole of solo and for
             // as long as that player is standing (`SimulationRunner.
             // ObservedIndex`). The index is resolved against the RENDER pair
-            // while the numbers still come off `Curr` — deliberately, and the
-            // two can only disagree inside a hitstop freeze, which moves a pose
-            // and never a seat's existence (QC10: the bar must not freeze with
-            // the picture).
+            // while the numbers still come off `Curr` — deliberately (QC10:
+            // the bar must not stall behind the render pair), though the two
+            // are the same pair on every frame now (Task Т10, app-88jb,
+            // removed the on-hit render pin that used to be able to move one
+            // without the other).
             int observed = _runner.ObservedIndex;
             bool spectating = _runner.IsSpectating;
 

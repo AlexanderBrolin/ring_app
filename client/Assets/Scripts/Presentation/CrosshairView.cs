@@ -22,8 +22,8 @@ namespace Ring.Presentation
     /// П-3 (Task 19's resolution): `AimProvider.CurrentAimSimPos` is the sole
     /// per-frame aim source both the marker and the cone's CENTER read — no tick
     /// quantization. The cone's RADIUS is the one place this class reads the
-    /// simulation snapshot at all (`RenderCurr.Player`, the hitstop-consistent
-    /// half of the render pair, the same snapshot `ViewRegistry`/`CameraRig`
+    /// simulation snapshot at all (`RenderCurr.Player`, the render-pair half
+    /// every interpolating view goes through, the same snapshot `ViewRegistry`/`CameraRig`
     /// already read), fed into `Spread.HipRadians` alongside the runner's
     /// `Config.Weapon`/`Config.Hero` (hot-tweakable via their SOs, never hardcoded
     /// here) — `settleFactor` is deliberately NOT applied (PD15 above): that

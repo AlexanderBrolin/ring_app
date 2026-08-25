@@ -371,8 +371,9 @@ namespace Ring.Simulation.Tests
             head.ClearEvents();
             TickIdle(head);
             Assert.AreEqual(HitZone.Head, SolePvpHit(head).Zone,
-                "a headshot must stay distinguishable — ADR-001 §10's per-hit feedback and the head "
-                + "hitstop scale both key off this");
+                "a headshot must stay distinguishable — ADR-001 §10's per-hit feedback keys off this: "
+                + "AudioDirector's zone-biased pitch and PersistentPropsDirector's headshot gib/impulse "
+                + "response both read it");
 
             // Positive witness on the same fixture, one band lower: the zone
             // genuinely varies with the shot rather than being a constant that

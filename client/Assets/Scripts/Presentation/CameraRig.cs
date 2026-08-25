@@ -16,8 +16,8 @@ namespace Ring.Presentation
     /// on top of the damped position every `LateUpdate`, read directly off a
     /// bootstrap-wired reference — never fed back into the `SmoothDamp` state, so
     /// shake reads as instantaneous jitter instead of being smoothed away, and never
-    /// gated by hitstop (`GameFeelDirector` decays/animates it on `Time.unscaledTime`
-    /// regardless of any freeze — see that class's own doc).
+    /// paused by anything (`GameFeelDirector` decays/animates it on
+    /// `Time.unscaledTime` unconditionally — see that class's own doc).
     public sealed class CameraRig : MonoBehaviour
     {
         [SerializeField] CameraConfig _config;
@@ -32,9 +32,8 @@ namespace Ring.Presentation
         void LateUpdate()
         {
             // Task 25 (Приложение П-7): the position comes from the runner's own
-            // render pair, so a `FullFrame` hitstop freeze holds the camera
-            // still along with everything else without this class knowing
-            // hitstop exists.
+            // render pair, so a paused frame holds the camera still along with
+            // everything else without this class needing to know why.
             //
             // Stage 2 Task 47b: the seat followed is the OBSERVED one, not this
             // client's own. They are the same seat for the whole of solo and for

@@ -210,8 +210,7 @@ namespace Ring.Presentation
         // after warmup" constraint). Sized off the player's own default fire
         // rate (`WeaponConfig.FireInterval = 0.12s` ⇒ ~8.3 shots/s) times a
         // generous burst-lifetime window, then padded well past the naive
-        // peak for safety margin (multiple mobs clustered, a hitstop-adjacent
-        // frame catching up several ticks at once, etc.) — NOT SO fields:
+        // peak for safety margin (multiple mobs clustered, etc.) — NOT SO fields:
         // this is a technical/performance sizing decision, not a "feel" knob
         // the owner would hot-tweak on a playtest (unlike the burst
         // lifetime/speed/size numbers in `GameFeelConfig`, which are).
@@ -493,11 +492,9 @@ namespace Ring.Presentation
         /// previous frame's answer (`ImmediatePredictionLatch.ShouldPredict`'s
         /// own doc). A dash cannot slip between two frames the way a shot can —
         /// the level lasts the whole 90 ms dash rather than one 33 ms tick — so
-        /// the edge is missed only by a frame longer than the dash itself, or
-        /// than whatever part of it a hitstop freeze leaves visible (the
-        /// paragraph on that order below). Missing it is the harmless direction
-        /// either way: the mark then comes with the event, as it did before this
-        /// task.
+        /// the edge is missed only by a frame longer than the dash itself.
+        /// Missing it is the harmless direction either way: the mark then
+        /// comes with the event, as it did before this task.
         ///
         /// RECONCILIATION HANDS OUT A SECOND RISING EDGE FOR ONE DASH, AND THE
         /// LATCH IS ALREADY WHY THAT IS HARMLESS. In a clean simulation
@@ -521,31 +518,27 @@ namespace Ring.Presentation
         /// it necessary). On the local backend the event is fanned out before
         /// any view runs at all, so solo NEVER draws from here: `SpawnDashGlow`
         /// has already put the mark down and taken out the credit that refuses
-        /// the edge — which may arrive in the same frame or, under a hitstop
-        /// freeze, several frames later, and the credit's own window is what
-        /// covers both. That is why the refusal is not a bit of this class's
-        /// own cleared when the gate falls: the freeze clears the gate in the
-        /// middle of the very dash the bit had to remember, and the fix-round
-        /// this paragraph comes from was opened on the second mark that
-        /// produced.
+        /// the edge — which arrives that same frame (Task Т10, app-88jb,
+        /// removed the on-hit render pin that used to be able to delay it by
+        /// several frames instead; the credit's own window covered both cases
+        /// while that mechanism existed). That is why the refusal is not a bit
+        /// of this class's own cleared when the gate falls: a level-based bit
+        /// would have had the same defect that render pin exposed elsewhere in
+        /// this same fix-round — cleared mid-dash, before a delayed edge it had
+        /// to remember ever arrived — and the fix-round this paragraph comes
+        /// from was opened on the second mark that produced.
         ///
         /// THE POINT IS `RenderCurr.Player.Pos` AND NOT `RenderPlayerWorldPos`,
         /// and on the networked backend — the only one this method ever draws
-        /// on, per the paragraph above — the two are ordinarily the same
-        /// number: `NetworkSimBackend.BlendOwnPlayer` writes one blended pose
-        /// into BOTH halves of the render pair, so that property's lerp is an
-        /// identity there. The mark therefore lands where the doll is drawn,
-        /// which is what a mark under a body has to do. They part in exactly one
-        /// window, named here rather than left to be found: the catch-up ramp
-        /// after a hitstop freeze, where `RenderPrev` stays on the frozen half
-        /// while `RenderAlpha` eases 0 → 1 over
-        /// `GameFeelConfig.HitstopCatchUpSeconds` 0.05 s, so the doll is still
-        /// sliding back into the picture while this point is already at the
-        /// predicted pose. The choice stands through that window on purpose:
-        /// this is the very state `DashingThisFrame` is read from, so the mark
-        /// cannot disagree with the gate that decided to draw it, and the ramp
-        /// is a smoothing of what the camera and the dolls do, not a statement
-        /// about where the dash began.
+        /// on, per the paragraph above — the two are the same number,
+        /// unconditionally: `NetworkSimBackend.BlendOwnPlayer` writes one
+        /// blended pose into BOTH halves of the render pair, so that
+        /// property's lerp is an identity there on every frame (Task Т10,
+        /// app-88jb, closed the one window — a catch-up ramp following an
+        /// on-hit render pin — where the two used to part company;
+        /// `BlendOwnPlayer`'s own doc records the same closure). The mark
+        /// therefore lands where the doll is drawn, which is what a mark
+        /// under a body has to do.
         ///
         /// WHAT THE POINT IS NOT is "the same number the authoritative event
         /// carries", and the earlier wording of this paragraph claimed exactly

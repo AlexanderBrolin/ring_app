@@ -21,7 +21,8 @@ namespace Ring.Presentation
     /// state of its own: `elapsed` is the caller's own up-counting timer
     /// (reset to 0 in the caller's `Spawn`, advanced every `Update` by
     /// `Time.unscaledDeltaTime` same as the rest of this namespace's
-    /// hitstop/slow-mo-immune cosmetics), `settleSeconds` is whatever
+    /// slow-mo-immune cosmetics — there is none, `Time.timeScale` is never
+    /// touched, see `SimulationRunner`), `settleSeconds` is whatever
     /// config-sourced value the caller's own archetype uses
     /// (`GameFeelConfig.CasingPhysicsSeconds`/`GibPhysicsSeconds`) — this is a
     /// pure predicate, not a timer of its own.

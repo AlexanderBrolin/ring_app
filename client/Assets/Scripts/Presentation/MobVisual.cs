@@ -5,8 +5,8 @@ namespace Ring.Presentation
 {
     /// Drives a mech's Animator from MobState (assets phase B spec §3.3):
     /// locomotion from the SCREEN-SPACE displacement of the root the registry
-    /// just positioned (hitstop freezes/pause read as Idle by construction,
-    /// Б7), one-shot Punch/Shoot on Ai transitions with a code-driven return
+    /// just positioned (a paused frame reads as Idle by construction, Б7),
+    /// one-shot Punch/Shoot on Ai transitions with a code-driven return
     /// (the Phase A robot controllers have no transitions), hysteresis + hold
     /// against threshold flicker (Б12). Pooled: Bind is the mandatory reset
     /// (SetActive(false) rewinds the state machine — the cache must follow,

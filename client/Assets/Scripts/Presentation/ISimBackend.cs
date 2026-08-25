@@ -520,14 +520,13 @@ namespace Ring.Presentation
         /// local backend seeds its RNG with and a networked one only records.
         ///
         /// THE ANSWER IS WHETHER A MATCH ACTUALLY BEGAN (Stage 2 Task 44d), and
-        /// the facade acts on it: everything it does around this call — the
-        /// frozen hitstop buffers it rebuilds from `cfg`, `Seed`,
-        /// `ConfigTweaked`, the pause gate, and `WorldRestarted` — describes a
-        /// restart that happened. A backend for which a match begins on the
-        /// SERVER's say-so refuses every call after the first, so returning
-        /// `false` is what keeps the facade from announcing a new match to nine
-        /// subscribers in the middle of one the server is still sending, and
-        /// from rebuilding buffers to a config the backend did not adopt.
+        /// the facade acts on it: everything it does around this call —
+        /// `Seed`, `ConfigTweaked`, the pause gate, and `WorldRestarted` —
+        /// describes a restart that happened. A backend for which a match
+        /// begins on the SERVER's say-so refuses every call after the first,
+        /// so returning `false` is what keeps the facade from announcing a
+        /// new match to nine subscribers in the middle of one the server is
+        /// still sending.
         /// A refusal is a VALUE and not an exception on purpose: the interface
         /// already spends `System.ArgumentException` on `ApplyConfig`'s
         /// topology case, where the facade's answer is to restart — the

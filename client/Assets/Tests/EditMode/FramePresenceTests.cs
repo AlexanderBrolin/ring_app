@@ -257,13 +257,15 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void CopyFrom_TheFrozenPairKeepsACorpseACorpse()
+        public void CopyFrom_TheInterpolationPairKeepsACorpseACorpse()
         {
-            // `SimulationRunner.FreezeRender` deep-copies the live pair through
-            // this one routine on every hitstop. A flag it forgot would read
-            // "this frame knows nothing about the slot" for the length of the
-            // freeze — which is the reading that retires a doll — so a body
-            // would blink out of existence on the very hit that killed it.
+            // `NetworkSimBackend.ResolveRenderPair` deep-copies the decoded
+            // ring buffer's pair through this one routine every render frame
+            // (`_prev`/`_curr`, `CopyFrom`'s own doc). A flag it forgot would
+            // read "this frame knows nothing about the slot" for whichever
+            // half copied stale — which is the reading that retires a doll —
+            // so a body would blink out of existence on the very hit that
+            // killed it.
             SimulationWorld w = ThreeSeatWorld(out SimConfig cfg);
             w.KillPlayerForTest();
             var live = new RenderSnapshot(cfg);

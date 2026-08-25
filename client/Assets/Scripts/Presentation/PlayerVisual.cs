@@ -5,8 +5,8 @@ namespace Ring.Presentation
 {
     /// Drives the collector doll (assets phase B spec §3.2): Speed from the
     /// SCREEN-SPACE displacement of the root `ViewRegistry` just positioned
-    /// (П-7 — pinned render pairs during hitstop/pause make the doll idle by
-    /// construction), body facing toward movement (slowly toward the aim point
+    /// (П-7 — a paused render pair makes the doll idle by construction), body
+    /// facing toward movement (slowly toward the aim point
     /// when idle), procedural Spine+Chest world-space yaw toward that aim point
     /// layered over the Aim pose, dash lean composed as an OFFSET over a
     /// separately-tracked facing (never accumulated into the transform — ПБ8),
@@ -185,8 +185,8 @@ namespace Ring.Presentation
         /// Per-frame pose pass, called once per render frame by
         /// `ViewRegistry.SyncPlayers` for every LIVE doll (new AND continuing),
         /// AFTER that method has written this frame's `transform.position` —
-        /// the displacement read below is what makes hitstop/pause read as idle
-        /// with no branch of its own (Б7), exactly as in `MobVisual.Sync`.
+        /// the displacement read below is what makes a paused frame read as
+        /// idle with no branch of its own (Б7), exactly as in `MobVisual.Sync`.
         /// A corpse gets `SyncCorpse` below instead; there is no "am I dead"
         /// branch in here, because which method the registry calls IS that fact.
         public void Sync(in PlayerState m, in PlayerVisualParams p)

@@ -28,8 +28,10 @@ namespace Ring.Presentation
     /// §3.2/§3.12). Stage 2 Task 43 split this class in two along the line
     /// between producing state and showing it: `ISimBackend` now owns the
     /// world, the fixed-step accumulator and the `Prev`/`Curr` pair, while this
-    /// class keeps the balance ScriptableObjects, input sampling, the hitstop
-    /// freeze layer, the pause gate and every event the views subscribe to. The
+    /// class keeps the balance ScriptableObjects, input sampling, the render
+    /// pair the views actually interpolate off (`RenderPrev`/`RenderCurr`/
+    /// `RenderAlpha` below), the pause gate and every event the views
+    /// subscribe to. The
     /// backend seam exists because the networked one (Task 44) has no world at
     /// all — see `ISimBackend`'s own doc; the split is deliberately invisible
     /// from outside, since sixteen classes hold a `SimulationRunner`
@@ -57,7 +59,7 @@ namespace Ring.Presentation
     /// keeps the tick advance and its event fan-out ahead of both phases
     /// either way.) Verified safe for every other `Update`-phase
     /// reader of this runner: `GameFeelDirector.Update` only decays its own
-    /// unscaledDeltaTime-driven timers (hitstop/trauma/shake/vignette), never
+    /// unscaledDeltaTime-driven timers (trauma/shake/vignette), never
     /// reads `_runner`'s per-frame state; `ViewRegistry`/`CameraRig`/
     /// `HudController`/`CrosshairView` all read via `LateUpdate` (already
     /// guaranteed to run after every `Update`, order or no); `DevOverlay`/
@@ -333,26 +335,22 @@ namespace Ring.Presentation
         public SimInput LastFrameInput { get; private set; }
 
         // Task 25 (Приложение П-7): the SOLE point every interpolating view
-        // (ViewRegistry, CameraRig) reads — `Prev`/`Curr`/`Alpha`
-        // above are the raw double-buffer this class itself owns and keeps
-        // advancing every tick no matter what (the simulation is never paused
-        // for hitstop, spec §3.2/§3.11); `RenderPrev`/`RenderCurr`/`RenderAlpha`
-        // are what actually reaches the screen, and `GameFeelDirector` is the
-        // only thing that ever calls `FreezeRender`/`UnfreezeRender` to make the
-        // two diverge. A `RenderSnapshot` is a mutable class this runner recycles
-        // every tick (`(Prev, Curr) = (Curr, Prev)` then `CaptureSnapshot(Curr)`
-        // overwrites whichever object that lands on) — so freezing "the render
-        // pair" can't just mean holding onto whatever `Curr` currently points at,
-        // that same object gets overwritten again within a couple of ticks.
-        // `_renderPrevFrozen`/`_renderCurrFrozen` are separate, permanently-owned
-        // buffers `FreezeRender` deep-copies the live pair into instead.
-        RenderSnapshot _renderPrevFrozen, _renderCurrFrozen;
-        bool _renderFrozen;
-        float _catchUpRemaining, _catchUpDuration;
-
-        public RenderSnapshot RenderPrev =>
-            _renderFrozen || _catchUpRemaining > 0f ? _renderPrevFrozen : Prev;
-        public RenderSnapshot RenderCurr => _renderFrozen ? _renderCurrFrozen : Curr;
+        // (ViewRegistry, CameraRig) reads — `Prev`/`Curr`/`Alpha` above are the
+        // raw double-buffer this class itself owns and keeps advancing every
+        // tick no matter what (the simulation is never paused, spec
+        // §3.2/§3.11). Task Т10 (app-88jb) removed the only mechanism that
+        // ever made `RenderPrev`/`RenderCurr`/`RenderAlpha` diverge from
+        // `Prev`/`Curr`/`Alpha` (a `GameFeelDirector`-triggered render pin,
+        // deep-copied into a separate frozen pair since a `RenderSnapshot` is
+        // a mutable class this runner recycles every tick and simply holding
+        // onto whatever `Curr` currently points at would get overwritten
+        // again within a couple of ticks) — these three properties are now
+        // plain pass-throughs, kept as their own properties (rather than
+        // having every reader switch to `Prev`/`Curr`/`Alpha` directly) so a
+        // future reason to make the render pair diverge from the live one
+        // again would not need every call site touched.
+        public RenderSnapshot RenderPrev => Prev;
+        public RenderSnapshot RenderCurr => Curr;
         public float RenderAlpha { get; private set; }
 
         /// Interpolated player ground position of the RENDER pair (П-7): the single
@@ -532,25 +530,13 @@ namespace Ring.Presentation
         ///    (pinned -50), before any view's `Update` or `LateUpdate` runs, so
         ///    a solo dash's mark and sound are still drawn and played by the
         ///    event exactly as they were before this property existed, and the
-        ///    edge that follows is refused. USUALLY IN THE SAME FRAME, BUT NOT
-        ///    ALWAYS: a hitstop freeze pins `RenderCurr` at a copy taken before
-        ///    the dash (`FreezeRender`, `GameFeelConfig.HitstopScope`
-        ///    `FullFrame` in the shipped asset) while the simulation keeps
-        ///    ticking under it, so this property reads false right through the
-        ///    freeze and rises only when the freeze ends — several frames after
-        ///    the event, and only if the dash is still running by then. A single
-        ///    freeze (`HitstopSeconds` 0.04 s, 0.056 s scaled by
-        ///    `HeadHitstopScale`) is shorter than the 0.09 s dash, so ordinarily
-        ///    it is; a chain of freezes that outlasts the dash simply yields no
-        ///    edge at all, which is the harmless direction — the mark and the
-        ///    sound have already been shown by the event;
+        ///    edge that follows — refused — arrives the SAME FRAME: `RenderCurr`
+        ///    tracks the live pair on every frame (Task Т10, app-88jb, removed
+        ///    the on-hit render pin that used to be able to hold it back);
         ///  - on a NETWORKED client the edge is first by an interpolation
         ///    buffer plus half a round trip — the ~170 ms the owner's В1
         ///    playtest measured against a 90 ms dash, which is the whole reason
-        ///    this property exists — unless a hitstop freeze is holding
-        ///    `RenderCurr` across the emitting tick, in which case the edge
-        ///    rises when the freeze ends and is still ahead of the event by
-        ///    most of that gap (0.056 s at the very most against ~170 ms).
+        ///    this property exists.
         /// So the readers hold that memory in their latches rather than in a
         /// bit of their own cleared when this property goes false:
         /// `ImmediatePredictionLatch.NoteShownFromEvent`, taken out exactly
@@ -558,8 +544,9 @@ namespace Ring.Presentation
         /// event, spent by the next rising edge whenever that edge turns up and
         /// forgotten by its own window when none ever does. A bit on the LEVEL
         /// was the first shape of this rule and was
-        /// wrong — the freeze in the first case above takes the level away in
-        /// the middle of the very dash the bit had to remember, so the bit
+        /// wrong — the on-hit render pin the first case above used to have
+        /// (removed by Task Т10, app-88jb) could take the level away in the
+        /// middle of the very dash the bit had to remember, so the bit
         /// cleared itself just in time for the edge to draw a second mark on
         /// the way out. The latch's other half cannot answer this question
         /// either: `TryConsume` records a prediction waiting for its event, and
@@ -624,7 +611,8 @@ namespace Ring.Presentation
         /// here and not in `RenderSnapshot`. A frame describes the world; where
         /// one client is looking from is a fact about that client, it changes
         /// between ticks rather than with them, and putting it in the snapshot
-        /// would make it one more thing the hitstop freeze had to deep-copy.
+        /// would make it one more field every `RenderSnapshot.CopyFrom` caller
+        /// had to carry along.
         ///
         /// TWO READERS, DELIBERATELY: `HudController` (whose bars belong to the
         /// player being watched) and `RenderObservedWorldPos` above, whose own
@@ -974,35 +962,14 @@ namespace Ring.Presentation
         /// This is the OTHER half of `Restart` below, not a smaller version of
         /// it: nothing here rebuilds a buffer or touches `Seed`, because a
         /// networked restart changes neither the arena caps the buffers are
-        /// sized from nor the seed this facade invented. What it does do is end
-        /// any hitstop in flight — a freeze is a deep copy of the PREVIOUS
-        /// match's render pair, and the views must not be handed it once the
-        /// registries behind `WorldRestarted` have been cleared.
+        /// sized from nor the seed this facade invented. It only re-fires
+        /// `WorldRestarted` — there is no separate frozen render pair to end
+        /// any more (Task Т10, app-88jb, removed the on-hit render pin whole,
+        /// along with the deep copy a stale one used to leave behind across a
+        /// restart).
         void OnBackendMatchRestarted()
         {
-            EndHitstop();
             WorldRestarted?.Invoke();
-        }
-
-        /// Ends a hitstop in BOTH of the states it has, which is the whole
-        /// reason this is a method and not two lines at each of its two call
-        /// sites (Stage 2 Task 44d fix-round 1). `UnfreezeRender(0f)` was the
-        /// obvious spelling and it is the wrong one: it returns early on
-        /// `!_renderFrozen` and never touches the catch-up window, while
-        /// `RenderPrev` above hands out `_renderPrevFrozen` — the PREVIOUS
-        /// match's deep copy — for as long as that window is open. A player
-        /// hit shortly before a restart lands exactly there: the freeze is
-        /// already over, the ease back is not, and `CameraRig` reads the render
-        /// pair with no `Ready` gate of its own.
-        ///
-        /// It is deliberately not `UnfreezeRender`'s own job: that method is
-        /// `GameFeelDirector`'s hook and its early return is correct there —
-        /// a director ending a freeze it never started must not cancel a
-        /// catch-up somebody else is running.
-        void EndHitstop()
-        {
-            _renderFrozen = false;
-            _catchUpRemaining = 0f;
         }
 
         void OnEnable()
@@ -1527,75 +1494,11 @@ namespace Ring.Presentation
         }
 
         /// Advances `RenderAlpha` every render frame (Task 25, Приложение П-7).
-        /// Three mutually exclusive states: pinned while `_renderFrozen`
-        /// (`FreezeRender` is active — `GameFeelDirector` hasn't unfrozen yet);
-        /// easing 0→1 over `_catchUpDuration` while `_catchUpRemaining > 0`
-        /// (`UnfreezeRender` just ran with a non-zero catch-up window); plain
-        /// pass-through to the live `Alpha` otherwise. See the `RenderPrev`/
-        /// `RenderCurr`/`RenderAlpha` doc block above for why a frozen picture
-        /// needs its own buffers instead of just holding `Alpha` still.
-        void UpdateRenderAlpha()
-        {
-            if (_renderFrozen) return;
-
-            if (_catchUpRemaining > 0f)
-            {
-                _catchUpRemaining -= Time.unscaledDeltaTime;
-                RenderAlpha = _catchUpDuration > 0f
-                    ? 1f - Mathf.Clamp01(_catchUpRemaining / _catchUpDuration)
-                    : 1f;
-                if (_catchUpRemaining <= 0f) _catchUpRemaining = 0f;
-                return;
-            }
-
-            RenderAlpha = Alpha;
-        }
-
-        /// `GameFeelDirector`'s hook for a `FullFrame`-scope hitstop trigger
-        /// (Приложение П-7) — deep-copies the CURRENT live pair into the frozen
-        /// buffers and pins `RenderAlpha` at today's live value, then flips
-        /// `RenderPrev`/`RenderCurr`/`RenderAlpha` over to that frozen state.
-        /// Safe to call again while already frozen (a follow-up hit resetting
-        /// the hitstop timer, spec Interfaces "переустанавливается, не
-        /// суммируется") — re-copying re-pins the frozen picture to the newest
-        /// moment instead of leaving it stuck on the FIRST hit in a chain.
-        public void FreezeRender()
-        {
-            _renderPrevFrozen.CopyFrom(Prev);
-            _renderCurrFrozen.CopyFrom(Curr);
-            RenderAlpha = Alpha;
-            _renderFrozen = true;
-            _catchUpRemaining = 0f; // a fresh freeze cancels any catch-up in flight
-        }
-
-        /// Ends a `FreezeRender` freeze. `catchUpSeconds <= 0` (`GameFeelDirector.
-        /// ForceEndHitstop`, e.g. on `PlayerDied`) snaps straight back to the live
-        /// pair; otherwise `RenderPrev` holds at the last frozen picture while
-        /// `RenderCurr` immediately starts tracking the live (still-advancing)
-        /// `Curr` again and `RenderAlpha` eases 0→1 over `catchUpSeconds` instead
-        /// of jumping to whatever `Alpha` reads that frame — several ticks can
-        /// have landed while the frame was pinned, so an instant snap would read
-        /// as every mob/projectile popping forward in a single frame.
-        public void UnfreezeRender(float catchUpSeconds)
-        {
-            if (!_renderFrozen) return;
-            _renderFrozen = false;
-            if (catchUpSeconds > 0f)
-            {
-                // The pose actually on screen the instant before unfreezing is
-                // `_renderCurrFrozen` (RenderCurr while frozen) — re-anchor
-                // `_renderPrevFrozen` (RenderPrev's frozen backing store) to it so
-                // the catch-up blends FROM there, not from the older `Prev` half
-                // of the pair that was frozen alongside it.
-                _renderPrevFrozen.CopyFrom(_renderCurrFrozen);
-                _catchUpDuration = catchUpSeconds;
-                _catchUpRemaining = catchUpSeconds;
-            }
-            else
-            {
-                _catchUpRemaining = 0f;
-            }
-        }
+        /// Task Т10 (app-88jb) removed the render pin that used to make this a
+        /// three-state machine (pinned / easing back in / plain pass-through)
+        /// — a plain pass-through to the live `Alpha` is the whole of it now,
+        /// same as `RenderPrev`/`RenderCurr` above.
+        void UpdateRenderAlpha() => RenderAlpha = Alpha;
 
         /// Starts a fresh match — IF THE BACKEND STARTS ONE (Stage 2 Task 44d
         /// widened this from an unconditional command to a request).
@@ -1607,13 +1510,7 @@ namespace Ring.Presentation
         /// the pause controller — and before the gate existed each of them
         /// raised `WorldRestarted` in the middle of a match the server was
         /// still sending, clearing nine Presentation registries under a picture
-        /// that kept arriving. The same gate settles a second disagreement the
-        /// backend cannot fix from its side: the networked backend keeps the
-        /// arena caps of the FIRST config for the life of the connection, so
-        /// rebuilding the frozen pair below from a second one would leave the
-        /// hitstop buffers a different size from the pair they deep-copy —
-        /// `RenderSnapshot.CopyFrom`'s own contract is that both sides come off
-        /// the same `ArenaSimConfig`.
+        /// that kept arriving.
         ///
         /// `Seed` MOVES ONLY WITH THE MATCH. It is what the dev overlay prints
         /// and what the death overlay's Shift+R reuses, so recording a seed the
@@ -1636,9 +1533,6 @@ namespace Ring.Presentation
             // call after the first, so this flag never stops a frame there.
             _restartedThisUpdate = true;
             Seed = seed;
-            _renderPrevFrozen = new RenderSnapshot(cfg);
-            _renderCurrFrozen = new RenderSnapshot(cfg);
-            EndHitstop();
             RenderAlpha = 0f;
             ConfigTweaked = false;
             _pendingApplyConfig = false;

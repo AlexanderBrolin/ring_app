@@ -206,9 +206,10 @@ namespace Ring.Networking.Client
     ///
     /// `DiscardBelow` NEVER MOVES BACKWARDS, AND WORKS NO MATTER WHAT ELSE IS
     /// GOING ON. The consumer calls it every render frame with `RenderTick - 1`
-    /// (spec §3.9: "the buffer keeps discharging during `FreezeRender`" —
-    /// otherwise a chain of hitstops fills the ring in a few hundred
-    /// milliseconds and starts dropping snapshots ALONG WITH their events).
+    /// — spec §3.9 justified the unconditional call against the on-hit render
+    /// pin Task Т10 (app-88jb) later removed whole: a chain of those pins used
+    /// to fill the ring in a few hundred milliseconds and start dropping
+    /// snapshots ALONG WITH their events if discharge ever skipped a frame.
     /// That caller-side obligation belongs to Phase Ф9's `SimulationRunner`,
     /// not to this class — what belongs here is that the method itself has no
     /// dependency on anything else being called first, in order, or at all,

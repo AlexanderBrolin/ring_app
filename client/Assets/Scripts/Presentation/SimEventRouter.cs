@@ -20,8 +20,8 @@ namespace Ring.Presentation
     ///   ViewRegistry (retire only) → DeathOverlayController → HudController.
     /// `AudioDirector`, `MuzzleFlashView` and `ViewRegistry` exist as of Task 17;
     /// `DeathOverlayController` (Task 24) slots in last; `GameFeelDirector`
-    /// (Task 25, Приложение П-1) slots in FIRST — hitstop/hit-flash/vignette must
-    /// react before anything else in the same pass gets a chance to read view
+    /// (Task 25, Приложение П-1) slots in FIRST — its hit-flash/shake/vignette
+    /// must react before anything else in the same pass gets a chance to read view
     /// state for this frame. `PersistentPropsDirector` (Task 27, Приложение П-1)
     /// slots in right after it — casings/decals/corpses/sparks spawn purely from
     /// each event's own position, independent of anything the later slots do.
@@ -67,7 +67,7 @@ namespace Ring.Presentation
             {
                 SimEvent e = _runner.GetEvent(i);
 
-                _gameFeelDirector.HandleEvent(in e); // hitstop/flash/vignette, first slot (Task 25, П-1)
+                _gameFeelDirector.HandleEvent(in e); // flash/shake/vignette, first slot (Task 25, П-1)
                 _persistentProps.HandleEvent(in e); // casings/decals/corpses/sparks/dash-glows (Task 27, П-1; app-9av)
                 _audioDirector.HandleEvent(in e);
                 _muzzleFlash.HandleEvent(in e); // shot feedback, same pass (П-2)

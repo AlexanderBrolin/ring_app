@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using Ring.Data;
 using Ring.Simulation.Core;
 using UnityEngine;
@@ -6,62 +5,26 @@ using UnityEngine.UI;
 
 namespace Ring.Presentation
 {
-    /// Hitstop + hit-flash + damage-vignette (spec §3.11, Task 25 Interfaces,
-    /// Приложение П-7). First slot in `SimEventRouter`'s fan-out (П-1) — this
-    /// class never subscribes to `TicksFlushed` itself, same rule as every other
-    /// class in Presentation.
+    /// Hit-flash + damage-vignette + trauma-driven camera shake (spec §3.11,
+    /// Task 25 Interfaces). First slot in `SimEventRouter`'s fan-out (П-1) —
+    /// this class never subscribes to `TicksFlushed` itself, same rule as
+    /// every other class in Presentation.
     ///
-    /// Architecture (П-7): `SimulationRunner.RenderPrev`/`RenderCurr`/
-    /// `RenderAlpha` are the SOLE point `ViewRegistry`/`CameraRig`
-    /// read for interpolation — none of them ever check `HitstopActive` or
-    /// branch on hitstop at all. This class is the only thing that ever calls
-    /// `SimulationRunner.FreezeRender`/`UnfreezeRender`, so "does hitstop affect
-    /// rendering" lives in exactly one place instead of three separate
-    /// `if (feel.HitstopActive)` checks. The simulation itself is never paused
-    /// for hitstop (spec §3.2/§3.11: `SimulationWorld.Tick` keeps advancing every
-    /// frame regardless) — only the VISUAL pair driving interpolation gets
-    /// pinned.
-    ///
-    /// Two independent freeze mechanisms, chosen by `GameFeelConfig.
-    /// HitstopScope`:
-    ///  - `FullFrame`: the whole scene's interpolation freezes via
-    ///    `SimulationRunner.FreezeRender()`.
-    ///  - `TargetOnly`: only the specific `MobView` that was hit stops updating
-    ///    its own transform (`MobView.FreezePosition`/`IsPositionFrozen`,
-    ///    checked by `ViewRegistry.SyncMobs` before writing `transform.
-    ///    position`) — every other mob, every projectile, the player and the
-    ///    camera keep interpolating normally off the live pair the whole time.
-    ///
-    /// Ending a `FullFrame` freeze doesn't snap straight back to the live pair:
-    /// `SimulationRunner.UnfreezeRender` eases `RenderAlpha` from 0→1 over
-    /// `GameFeelConfig.HitstopCatchUpSeconds` instead, because several ticks can
-    /// have landed "behind the scenes" while the frame was pinned (the sim never
-    /// stopped) — an instant snap would read as every mob/projectile popping
-    /// forward in a single frame. `ForceEndHitstop` (this class's own
-    /// `PlayerDied` handler below, and `DeathOverlayController.Show`'s explicit
-    /// hook into it) skips that ease — a hard cut back to live is the right call
-    /// the instant a death screen is about to cover the whole frame anyway.
-    ///
-    /// Budget (spec Interfaces): a trailing 1-second window tracks each
-    /// ACCEPTED trigger's own `(timestamp, seconds)` pair; a new hit — a
-    /// `ProjectileHit` on a mob, or (Stage 2 Task 45c, moved onto this kind by
-    /// its fix-round 1) a `PlayerDamaged` naming this client's own player — is
-    /// only granted hitstop if the window's
-    /// summed seconds plus this trigger's own duration stay under
-    /// `MaxHitstopRatio` (a
-    /// fraction of that 1s window — e.g. 0.35 == 350ms of hitstop per real
-    /// second) — otherwise the freeze/target-freeze step is skipped outright,
-    /// so hold-fire through a wave doesn't turn into a slideshow. The
-    /// hit-flash and trauma bump still fire on every hit regardless of
-    /// budget — only the freeze itself is rate-limited. Task 22 (spec Г6)
-    /// fix-round: each entry stores its OWN accepted duration rather than the
-    /// window's accepted-trigger COUNT times the CURRENT `HitstopSeconds`
-    /// value — that shortcut was only correct while every hit in a window
-    /// shared one flat duration; once `HandleProjectileHit` started passing a
-    /// zone-scaled duration (`HeadHitstopScale`), a window mixing head and
-    /// body hits under the old approximation mis-priced every entry as
-    /// whichever duration happened to be current at CHECK time, not the
-    /// duration each entry actually spent.
+    /// Task Т10 (app-88jb) removed this class's other half whole: the render
+    /// pin it used to trigger on every hit (`SimulationRunner`'s deep-copied
+    /// frozen pair, `MobView`'s own per-target position hold) never had a
+    /// home in `Simulation` — it was always a Presentation-only device, and
+    /// `SimulationWorld.Tick` never paused for it (spec §3.2/§3.11). Per-hit
+    /// readability now rests on the push/lean/fall response a landed hit
+    /// drives on the victim itself (Т4–Т7 of this same epic) instead of
+    /// pinning the world around it. What THIS class still carries is the
+    /// rest of ADR-001 §10's checklist: the hit-flash on the struck view
+    /// (`Flash`, below — mob or player, every hit, unconditionally), the
+    /// trauma-driven camera shake (`AddTrauma`/`ShakeOffset`) and the damage
+    /// vignette (`HandlePlayerDamaged`). Sparks, hit sound and the
+    /// crosshair's zone-tinted highlight (`AimZoneColors.Resolve`,
+    /// `CrosshairView`, `AimRayView`) live elsewhere and are untouched by
+    /// this class either way.
     ///
     /// `AddTrauma`: max-pulse + linear decay, the standard "trauma" shape
     /// (Squirrel Eiserloh's screen-shake talk) — every event that should drive
@@ -72,35 +35,17 @@ namespace Ring.Presentation
     /// reads directly off this component (a bootstrap-wired reference, not an
     /// event or `SimulationRunner`) and adds on top of its already-damped
     /// position every `LateUpdate`. Both the trauma decay and the shake noise
-    /// run on `Time.unscaledDeltaTime`/`Time.unscaledTime` — never gated by
-    /// hitstop or paused by anything — so a shake already in flight when a
-    /// hitstop freeze or the death overlay hits keeps reading live instead of
-    /// stalling with the rest of the frame.
+    /// run on `Time.unscaledDeltaTime`/`Time.unscaledTime` — never paused by
+    /// anything — so a shake already in flight when the death overlay hits
+    /// keeps reading live instead of stalling with the rest of the frame.
     public sealed class GameFeelDirector : MonoBehaviour
     {
-        const float BudgetWindowSeconds = 1f;
-        const int BudgetHistoryCapacity = 64; // generous — bounded by realistic fire rate
-
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
         [SerializeField] ViewRegistry _viewRegistry;
         [SerializeField] Image _vignette;
 
-        // Task 22 (spec Г6) fix-round: (timestamp, seconds) pairs — see the
-        // Budget doc paragraph above — instead of a bare timestamp queue.
-        readonly Queue<(float timestamp, float seconds)> _hitstopBudget =
-            new Queue<(float timestamp, float seconds)>(BudgetHistoryCapacity);
-
-        float _hitstopTimer;
-        // The scope captured at TriggerHitstop time, not re-read from `_gameFeel`
-        // at end time — a hot-tweak of `HitstopScope` mid-hitstop must not strand
-        // `SimulationRunner` frozen forever (EndHitstop would otherwise decide
-        // "this wasn't FullFrame" and skip the matching `UnfreezeRender` call).
-        GameFeelConfig.HitstopScopeMode _activeScope;
-        MobView _hitstopTargetView;
         float _vignetteAlpha;
-
-        public bool HitstopActive { get; private set; }
 
         public float Trauma { get; private set; }
 
@@ -134,12 +79,6 @@ namespace Ring.Presentation
 
         void Update()
         {
-            if (_hitstopTimer > 0f)
-            {
-                _hitstopTimer -= Time.unscaledDeltaTime;
-                if (_hitstopTimer <= 0f) EndHitstop(instant: false);
-            }
-
             if (Trauma > 0f)
                 Trauma = Mathf.Max(0f, Trauma - _gameFeel.TraumaDecayPerSec * Time.unscaledDeltaTime);
 
@@ -163,51 +102,15 @@ namespace Ring.Presentation
                 case SimEventKind.MobDied:
                     AddTrauma(_gameFeel.TraumaDeath);
                     break;
-                case SimEventKind.PlayerDied:
-                    ForceEndHitstop();
-                    break;
             }
-        }
-
-        /// `DeathOverlayController.Show` calls this directly (Task 24's brief
-        /// referenced this seam ahead of time), on top of this class's own
-        /// `PlayerDied` handler above — by the time `DeathOverlayController` sees
-        /// the same `PlayerDied` event (П-1 fan-out: `GameFeelDirector` runs
-        /// first), hitstop is already forced off, so this second call is
-        /// ordinarily a no-op; kept as an explicit, defensive hook rather than
-        /// relying solely on fan-out order. Idempotent either way.
-        public void ForceEndHitstop()
-        {
-            if (!HitstopActive) return;
-            EndHitstop(instant: true);
         }
 
         void HandleProjectileHit(in SimEvent e)
         {
             bool hasView = _viewRegistry.TryGetMobView(e.EntityId, out MobView targetView);
 
-            // Hit-flash reads on every hit regardless of budget — only the
-            // freeze itself is rate-limited (class doc, Budget).
+            // Hit-flash fires on every hit, unconditionally.
             if (hasView) targetView.Flash(_gameFeel.FlashDuration);
-
-            // Task 22 (spec brief): a headshot lands harder — HitstopSeconds scaled
-            // by HeadHitstopScale BEFORE the budget check/trigger below, so a
-            // head hit both costs more of the 1s hitstop budget and freezes
-            // longer, same "duration IS the everything" contract TriggerHitstop
-            // itself already follows for the flat case.
-            float hitstopSeconds = e.Zone == HitZone.Head
-                ? _gameFeel.HitstopSeconds * _gameFeel.HeadHitstopScale
-                : _gameFeel.HitstopSeconds;
-
-            if (TryConsumeHitstopBudget(hitstopSeconds))
-            {
-                TriggerHitstop(hitstopSeconds);
-                if (hasView && _activeScope == GameFeelConfig.HitstopScopeMode.TargetOnly)
-                {
-                    targetView.FreezePosition(hitstopSeconds);
-                    _hitstopTargetView = targetView;
-                }
-            }
 
             AddTrauma(_gameFeel.TraumaHit);
         }
@@ -215,7 +118,7 @@ namespace Ring.Presentation
         /// A BLOW LANDED ON A PLAYER — the whole victim half of ADR-001 §10's
         /// per-hit checklist (Stage 2 Task 45c fix-round 1, G-1). Until that
         /// round this handler was two lines that shook the camera and lit the
-        /// vignette for ANY victim, and the flash/hitstop hung off
+        /// vignette for ANY victim, and the flash hung off
         /// `ProjectileHitPlayer` instead.
         ///
         /// WHY THIS KIND AND NOT `ProjectileHitPlayer`, WHICH IS THE ONE THAT
@@ -242,37 +145,21 @@ namespace Ring.Presentation
         /// the same `DamagePlayer`), so melee finally gets the checklist it
         /// never had while this hung off a projectile kind.
         ///
-        /// FLASH FOR ANY VICTIM, FRAME-FREEZE/SHAKE/VIGNETTE ONLY WHEN IT IS ME.
-        /// A stranger being shot across the arena is something I watch; freezing
-        /// my frame, shaking my camera and reddening my screen for it would make
-        /// somebody else's fight jerk my aim. That filter is new in fix-round 1
-        /// and closes a defect older than this task: the two lines this method
-        /// replaced ran for every `PlayerDamaged` that reached this client,
-        /// whoever it named. Which of them reach me is the server's decision,
-        /// not this class's — `SnapshotAssembler` delivers this kind on the
-        /// Visible channel, keyed on the VICTIM's own visibility
-        /// (`EventRelevance.VisibleSubjectId`).
-        ///
-        /// NO `TargetOnly` FREEZE. That scope pins the struck `MobView`'s
-        /// transform; a player's doll has no such hook, and inventing one would
-        /// freeze a body the snapshot is still moving. `TriggerHitstop` reads
-        /// the scope itself, so under `TargetOnly` this hit costs budget and
-        /// freezes nothing, exactly like a mob hit whose view has already been
-        /// retired.
+        /// FLASH FOR ANY VICTIM, SHAKE/VIGNETTE ONLY WHEN IT IS ME. A stranger
+        /// being shot across the arena is something I watch; shaking my camera
+        /// and reddening my screen for it would make somebody else's fight
+        /// jerk my aim. That filter is new in fix-round 1 and closes a defect
+        /// older than this task: the two lines this method replaced ran for
+        /// every `PlayerDamaged` that reached this client, whoever it named.
+        /// Which of them reach me is the server's decision, not this class's —
+        /// `SnapshotAssembler` delivers this kind on the Visible channel, keyed
+        /// on the VICTIM's own visibility (`EventRelevance.VisibleSubjectId`).
         void HandlePlayerDamaged(in SimEvent e)
         {
             if (_viewRegistry.TryGetPlayerView(e.EntityId, out PlayerView victim))
                 victim.Flash(_gameFeel.FlashDuration);
 
             if (e.EntityId != _runner.RenderCurr.LocalPlayerIndex) return;
-
-            // Same head-scaling and the same 1-second budget a mob hit is
-            // priced against (`HandleProjectileHit` above) — one hitstop
-            // economy for the whole match, not a second one for the receiving end.
-            float hitstopSeconds = e.Zone == HitZone.Head
-                ? _gameFeel.HitstopSeconds * _gameFeel.HeadHitstopScale
-                : _gameFeel.HitstopSeconds;
-            if (TryConsumeHitstopBudget(hitstopSeconds)) TriggerHitstop(hitstopSeconds);
 
             // ONE trauma call for a blow taken, not two. `AddTrauma` is a `Max`,
             // so the 0.2 `TraumaHit` this method also used to add through the
@@ -287,53 +174,6 @@ namespace Ring.Presentation
             // report: the vignette piggybacks the same trauma numbers rather
             // than growing the SO for a second, near-identical pulse curve.
             _vignetteAlpha = Mathf.Max(_vignetteAlpha, _gameFeel.TraumaPlayerHit);
-        }
-
-        /// Resets (never sums, spec Interfaces: "таймер переустанавливается, не
-        /// суммируется") the hitstop timer and — for `FullFrame` scope — pins the
-        /// runner's render pair. Budget-gated by the caller (`HandleProjectileHit`),
-        /// not here, so this method always does exactly what it says once called.
-        void TriggerHitstop(float seconds)
-        {
-            _hitstopTimer = seconds;
-            _activeScope = _gameFeel.HitstopScope;
-            HitstopActive = true;
-            if (_activeScope == GameFeelConfig.HitstopScopeMode.FullFrame)
-                _runner.FreezeRender();
-        }
-
-        void EndHitstop(bool instant)
-        {
-            _hitstopTimer = 0f;
-            HitstopActive = false;
-            if (_activeScope == GameFeelConfig.HitstopScopeMode.FullFrame)
-                _runner.UnfreezeRender(instant ? 0f : _gameFeel.HitstopCatchUpSeconds);
-            if (_hitstopTargetView != null)
-            {
-                _hitstopTargetView.ClearPositionFreeze();
-                _hitstopTargetView = null;
-            }
-        }
-
-        bool TryConsumeHitstopBudget(float seconds)
-        {
-            float now = Time.unscaledTime;
-            float windowStart = now - BudgetWindowSeconds;
-            while (_hitstopBudget.Count > 0 && _hitstopBudget.Peek().timestamp < windowStart)
-                _hitstopBudget.Dequeue();
-
-            // Task 22 (spec Г6) fix-round: sum each entry's OWN accepted
-            // duration — a plain `foreach` over the concrete `Queue<T>` field
-            // (not the `IEnumerable<T>` interface) binds to `Queue<T>`'s own
-            // struct enumerator, so this allocates nothing despite the loop
-            // (same "zero allocation once warmed up" constraint every other
-            // per-event Presentation path already follows).
-            float used = 0f;
-            foreach (var entry in _hitstopBudget) used += entry.seconds;
-            if (used + seconds > _gameFeel.MaxHitstopRatio) return false;
-
-            _hitstopBudget.Enqueue((now, seconds));
-            return true;
         }
 
         void AddTrauma(float amount) => Trauma = Mathf.Clamp01(Mathf.Max(Trauma, amount));
@@ -368,12 +208,9 @@ namespace Ring.Presentation
 
         /// A match restart (Task 24 shape, direct `WorldRestarted` subscription
         /// — not a tick event, П-1 only restricts `TicksFlushed`) must not leave
-        /// a frozen frame, a stuck target-view freeze, decaying trauma or a
-        /// fading vignette bleeding into the fresh run.
+        /// decaying trauma or a fading vignette bleeding into the fresh run.
         void HandleWorldRestarted()
         {
-            ForceEndHitstop();
-            _hitstopBudget.Clear();
             Trauma = 0f;
             ShakeOffset = Vector3.zero;
             _vignetteAlpha = 0f;

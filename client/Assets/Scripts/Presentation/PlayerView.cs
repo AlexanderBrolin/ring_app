@@ -32,7 +32,9 @@ namespace Ring.Presentation
     /// for good. Three accents compose here:
     ///  - the Dash↔Slide combo-window pulse (В1 fix-wave 1, owner playtest item
     ///    3 "мерцание сборщика"): a sine at `GameFeelConfig.LinkWindowFlashHz`
-    ///    on unscaled time (hitstop/slow-mo never touch it) while
+    ///    on unscaled time (no time-manipulation feature ever touches it —
+    ///    `Time.timeScale` is never used by this project, see
+    ///    `SimulationRunner`) while
     ///    `PlayerState.PostDashSlideTimer`/`LinkWindowTimer` — either > 0f,
     ///    `PlayerMovementSystem`'s own doc — is open. `SimulationWorld.KillPlayer`
     ///    zeroes both, so a death mid-pulse lands back at black by itself on the
@@ -330,8 +332,8 @@ namespace Ring.Presentation
         }
 
         /// Only the flash timer runs here — everything else about this doll is
-        /// written by `ViewRegistry` from the snapshot. Unscaled, so the hitstop
-        /// the same hit may have triggered never freezes the flash it belongs to.
+        /// written by `ViewRegistry` from the snapshot. Unscaled, same as every
+        /// other feel timer in this namespace.
         void Update()
         {
             if (_flashTimer > 0f) _flashTimer -= Time.unscaledDeltaTime;

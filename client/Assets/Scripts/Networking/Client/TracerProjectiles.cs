@@ -32,8 +32,8 @@ namespace Ring.Networking.Client
     /// only record of where the round should be is the very number that drifted.
     /// Here the answer at tick T is `spawn + vel * dt * (T - spawnTick)` — it
     /// depends on nothing but the event and the clock, so a dropped frame, a
-    /// hitstop freeze, a catch-up flush and a clock snap all produce the right
-    /// picture on the next frame with no reconciliation of any kind. Straight
+    /// catch-up flush and a clock snap all produce the right picture on the
+    /// next frame with no reconciliation of any kind. Straight
     /// flight is what makes the closed form available at all.
     ///
     /// EVERYTHING IS IN THE RENDER CLOCK'S TIME, NOT ARRIVAL TIME. The events

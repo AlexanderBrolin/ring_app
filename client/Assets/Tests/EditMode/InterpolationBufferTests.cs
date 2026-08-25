@@ -16,8 +16,9 @@ namespace Ring.Simulation.Tests
 {
     /// Stage 2 Task 32 (spec §3.9 Р37/Р38/Р83, §6i Р150е): the ring buffer
     /// between the network and interpolation, and `RenderSnapshot.CopyFrom`,
-    /// the single deep-copy routine `SimulationRunner`'s frozen hitstop pair
-    /// now shares.
+    /// the single deep-copy routine `NetworkSimBackend`'s interpolation-buffer
+    /// pair (`_prev`/`_curr`, `ResolveRenderPair`) shares with every other
+    /// deep-copied `RenderSnapshot`.
     ///
     /// TWO SUBJECTS, ONE FILE, BECAUSE THE TASK BRIEF PUTS THEM IN ONE FILE.
     /// `SnapshotQueue`'s own admission logic and `RenderSnapshot.CopyFrom`
@@ -1086,8 +1087,9 @@ namespace Ring.Simulation.Tests
             }
 
             // Explicit insurance asserts (task brief §2.5, test 6) — the
-            // frozen hitstop pair's own most load-bearing fields, pinned by
-            // name rather than only through the generic loop above.
+            // fields `NetworkSimBackend`'s interpolation-buffer pair leans on
+            // hardest, pinned by name rather than only through the generic
+            // loop above.
             Assert.AreEqual(source.PlayerCount, dest.PlayerCount);
             Assert.AreEqual(source.LocalPlayerIndex, dest.LocalPlayerIndex);
             Assert.AreEqual(source.WorldStats, dest.WorldStats);
@@ -1095,17 +1097,17 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual(source.Players[i], dest.Players[i]);
         }
 
-        // T32.7 (plan Step 1 #7, hitstop regression) — deliberately NOT a
-        // separate test. `SimulationRunner.FreezeRender`/`UnfreezeRender` now
-        // call `CopyFrom` at the same three call sites the removed
-        // `CopySnapshot` occupied, with no logic of their own beyond the
-        // call — `CopyFrom_CopiesEveryPublicField_ByReflection` above already
-        // exercises the copy exhaustively, including the exact fields
-        // (`Players`/`PlayerCount`/`LocalPlayerIndex`/`WorldStats`) the task
-        // brief calls out as the frozen pair's insurance. A `SimulationRunner`
-        // test would need a `MonoBehaviour`/scene fixture this test assembly
-        // has no other precedent for, to re-prove a copy already proven at
-        // its source — see the task report for the full accounting.
+        // T32.7 (plan Step 1 #7) — deliberately NOT a separate test. Every
+        // production caller of `CopyFrom` — today, `NetworkSimBackend.
+        // ResolveRenderPair`'s two call sites — adds no logic of its own
+        // beyond the call, so `CopyFrom_CopiesEveryPublicField_ByReflection`
+        // above already exercises the copy exhaustively, including the exact
+        // fields (`Players`/`PlayerCount`/`LocalPlayerIndex`/`WorldStats`) the
+        // insurance asserts above call out. A caller-specific test would need
+        // a `MonoBehaviour`/scene fixture, or for `NetworkSimBackend` a live
+        // FishNet connection — this test assembly has no precedent for
+        // either, to re-prove a copy already proven at its source — see the
+        // task report for the full accounting.
 
         // ---------------------------------------------------------------------
         // T32.8 (coordinator #8, Р150е). FutureRejected does not poison NewestTick.

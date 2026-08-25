@@ -18,7 +18,8 @@ namespace Ring.Presentation
     /// called once per render frame from `ViewRegistry`'s existing `LateUpdate`
     /// diff (П-1: no new `TicksFlushed` subscriber). All timing here rides
     /// `Time.unscaledTime`/`unscaledDeltaTime` — `Time.timeScale` is never used by
-    /// this project (see `SimulationRunner`), so hitstop/slow-mo never touches it.
+    /// this project (see `SimulationRunner`), so slow-mo (there is none) would
+    /// never touch it either.
     /// Pulse/glint literal numbers below are a Presentation-only placeholder pass
     /// (game feel proper is Phase 8) — `GameFeelConfig` already carries the
     /// project's exact-value fields (П-4); moving these in is a T25 candidate, not
@@ -94,15 +95,6 @@ namespace Ring.Presentation
         float _flashTimer;
         float _flashDuration;
 
-        // Task 25 (Приложение П-7, `HitstopScope.TargetOnly`): while this timer
-        // is running, `ViewRegistry.SyncMobs` skips writing `transform.position`
-        // for this view — it holds exactly where it was instead of continuing to
-        // interpolate, while every other mob/projectile/the player/the camera
-        // keep moving normally off the live pair. Ticks unscaled, same as
-        // `_flashTimer`, so hitstop/slow-mo (there is none — `Time.timeScale` is
-        // never touched, see `SimulationRunner`) never affects the timer itself.
-        float _freezePositionTimer;
-
         /// Set first thing in `Bind`, from the bound entity's `MobState.Type`
         /// (T9 Interfaces — consumed by T10).
         public MobType Type { get; private set; }
@@ -111,8 +103,6 @@ namespace Ring.Presentation
         /// (no `MobVisual` sibling component) — T10 checks this before driving
         /// mech-specific animation.
         public MobVisual Visual { get; private set; }
-
-        public bool IsPositionFrozen => _freezePositionTimer > 0f;
 
         void Awake()
         {
@@ -132,7 +122,6 @@ namespace Ring.Presentation
             Type = m.Type;
             _baseEmission = Color.black;
             _flashTimer = 0f;
-            _freezePositionTimer = 0f; // pool-rebind hygiene, same as the flash timer above
             _composedEmission = _baseEmission;
             ApplyEmission(_baseEmission);
         }
@@ -218,7 +207,9 @@ namespace Ring.Presentation
 
         /// Full hit-flash implementation (spec Interfaces, Task 17): decays the
         /// emission from `FlashAccent` back to the archetype's base color over
-        /// `duration`, driven by unscaled time so hitstop/slow-mo never affects it.
+        /// `duration`, driven by unscaled time so no time-manipulation feature
+        /// (there is none — `Time.timeScale` is never touched, see
+        /// `SimulationRunner`) would ever affect it.
         /// Task 25 only has to wire the call to ProjectileHit events — the method
         /// itself already works end to end. `Update` here only counts the timer
         /// down; `Sync` (above) is what actually applies the resulting color, so a
@@ -230,21 +221,9 @@ namespace Ring.Presentation
             _flashTimer = _flashDuration;
         }
 
-        /// `GameFeelDirector`'s `HitstopScope.TargetOnly` hook (Task 25 Interfaces)
-        /// — see `_freezePositionTimer`'s doc above. Reentrant the same way
-        /// `Flash` is: a later call while already frozen simply restamps the
-        /// timer, it doesn't stack.
-        public void FreezePosition(float seconds) => _freezePositionTimer = Mathf.Max(seconds, 1e-4f);
-
-        /// `GameFeelDirector.ForceEndHitstop`'s early-out (e.g. `PlayerDied`) —
-        /// clears the freeze immediately instead of waiting for the timer to run
-        /// out on its own.
-        public void ClearPositionFreeze() => _freezePositionTimer = 0f;
-
         void Update()
         {
             if (_flashTimer > 0f) _flashTimer -= Time.unscaledDeltaTime;
-            if (_freezePositionTimer > 0f) _freezePositionTimer -= Time.unscaledDeltaTime;
         }
 
         void ApplyEmission(Color emission)

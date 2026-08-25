@@ -101,8 +101,9 @@ namespace Ring.Presentation.Net
     /// WHAT IS DELIBERATELY NOT HERE. `ObservedIndex` — which seat this client
     /// is LOOKING FROM — belongs to `SimulationRunner` and not to a backend: it
     /// is a property of this client rather than of the world, it changes
-    /// between ticks, and putting it in the frame would make it something the
-    /// hitstop freeze had to carry. What Task 47b did put here is the half a
+    /// between ticks, and putting it in the frame would make it something
+    /// every deep-copied `RenderSnapshot` had to carry. What Task 47b did put
+    /// here is the half a
     /// backend owns: the request that asks the server to move the viewpoint
     /// (`TryRequestSpectate`) and the window an answer to it may arrive in.
     /// Also not here: the player dolls and their pool (Task 45), the dev
@@ -507,14 +508,16 @@ namespace Ring.Presentation.Net
         /// clock's domain without a second phase on the seam. `BlendOwnPlayer`
         /// has the argument.
         ///
-        /// THE IDENTITY IS ABOUT THIS PAIR, NOT ABOUT EVERY PAIR A CONSUMER MAY
-        /// HOLD. Views read `SimulationRunner.RenderPrev`/`RenderCurr`, and
-        /// during the hitstop catch-up window that facade pairs a FROZEN buffer
-        /// with the live one and eases its own coefficient across them
-        /// (`SimulationRunner.cs:270-272`). The two halves it hands out are then
-        /// genuinely different, including for the local seat, and the identity
-        /// above says nothing about that window. It is the behavior hitstop
-        /// already had and this fix neither improves nor worsens it.
+        /// THE IDENTITY NOW COVERS EVERY PAIR A CONSUMER MAY HOLD, TOO. Views
+        /// read `SimulationRunner.RenderPrev`/`RenderCurr`, which used to pair a
+        /// separately-frozen buffer with the live one during an on-hit catch-up
+        /// window — the two halves it handed out were then genuinely different,
+        /// including for the local seat, and the identity above said nothing
+        /// about that window. Task Т10 (app-88jb) removed that mechanism whole:
+        /// `RenderPrev`/`RenderCurr` are `Prev`/`Curr` on every frame now
+        /// (`SimulationRunner`'s own doc), so the identity this property
+        /// establishes for its own pair holds for every pair a consumer may see
+        /// through the `Render*` facade as well.
         public float Alpha => _alpha;
 
         public int EventCount => _frameEventCount;
@@ -1122,15 +1125,16 @@ namespace Ring.Presentation.Net
         ///
         /// THE RING AND THE EVENT QUEUE DISCHARGE IN `Advance`, NOT IN
         /// `EndFrame` (Task 43 review, finding F-5). `SnapshotQueue`'s own doc
-        /// requires `DiscardBelow` every render frame "including during
-        /// `FreezeRender`", because a chain of hitstops otherwise fills the
-        /// ring in a few hundred milliseconds and starts dropping snapshots
-        /// along with their events. The facade calls `EndFrame` only on frames
-        /// that produced a tick, so a discharge living there would stall
-        /// exactly when it matters most. It calls `Advance` on every frame that
-        /// is not paused, and a hitstop is not a pause — `FreezeRender` moves
-        /// the render PAIR, `_paused` is a separate flag — so `Advance` is the
-        /// hook that covers the case completely, with no change to the facade.
+        /// requires `DiscardBelow` every render frame unconditionally — a rule
+        /// spec §3.9 originally justified against the on-hit render pin Task
+        /// Т10 (app-88jb) later removed whole (a chain of those pins otherwise
+        /// filled the ring in a few hundred milliseconds and started dropping
+        /// snapshots along with their events). The facade calls `EndFrame` only
+        /// on frames that produced a tick, so a discharge living there would
+        /// stall exactly when it matters most. It calls `Advance` on every
+        /// frame that is not paused — `_paused` is its own flag, unrelated to
+        /// any render-pair mechanism — so `Advance` is the hook that covers
+        /// the case completely, with no change to the facade.
         ///
         /// `onTick` IS NEVER INVOKED. Its subscriber is the dev tick-to-hash
         /// log, and this backend has no hash (`HasStateHash`); calling it with
@@ -1417,10 +1421,12 @@ namespace Ring.Presentation.Net
         /// its own `WorldRestarted` on every one of these calls, so the dev
         /// overlay's forced-seed restart and the death overlay's R cleared
         /// every Presentation-side registry mid-match while the server kept
-        /// sending the same match — and rebuilt the frozen hitstop pair from a
-        /// config this backend had refused, leaving those buffers a different
-        /// size from the pair they deep-copy. `false` is what stops both:
-        /// the facade now does nothing at all on a refused restart. Hiding the
+        /// sending the same match — and (until Task Т10, app-88jb, removed the
+        /// mechanism entirely) would have rebuilt a frozen render-pin pair from
+        /// a config this backend had refused, leaving those buffers a
+        /// different size from the pair they deep-copied. `false` is what
+        /// stops the registry-clearing defect: the facade now does nothing at
+        /// all on a refused restart. Hiding the
         /// dev controls themselves still belongs to whoever wires this backend
         /// into a scene.
         ///
@@ -2715,12 +2721,13 @@ namespace Ring.Presentation.Net
         /// halves. Such a pose moves at the frame rate — smoother than anything
         /// the consumers' blend ever gave it, not coarser — and the degeneracy
         /// is then the point rather than the price: with both halves equal, no
-        /// consumer of the local slot can be blending THIS pair by a coefficient
-        /// that does not belong to it — the hitstop catch-up window, where the
-        /// facade makes a pair of its own out of a frozen buffer and a live one,
-        /// is the exception `BlendOwnPlayer` spells out. The pair is still
-        /// sampled here, and still exactly one tick wide, because it is what
-        /// that per-frame blend interpolates between.
+        /// consumer of the local slot can be blending THIS pair by a
+        /// coefficient that does not belong to it. Task Т10 (app-88jb) closed
+        /// the one exception `BlendOwnPlayer` used to have to spell out — an
+        /// on-hit render pin that let a consumer hold two different halves of
+        /// its own making — so that guarantee is now unconditional. The pair
+        /// is still sampled here, and still exactly one tick wide, because it
+        /// is what that per-frame blend interpolates between.
         ///
         /// THE SAMPLE IS TAKEN AGAINST THE PREDICTION TICK, NOT THE RENDER
         /// FRAME, and that distinction is the whole of the method. Prediction
@@ -2894,11 +2901,10 @@ namespace Ring.Presentation.Net
         /// pair exactly as they always have: `ISimBackend`, `RenderSnapshot`,
         /// `SimulationRunner` and everything under `Presentation/` are untouched
         /// by it, and no reader can drift from another by having been missed —
-        /// as long as the pair it reads is THIS pair. The hitstop catch-up
-        /// window is the one place a consumer holds two different halves of its
-        /// own making (`SimulationRunner.cs:270-272`, and the `Alpha` doc above
-        /// says the same); that window is untouched here, for better and for
-        /// worse.
+        /// as long as the pair it reads is THIS pair, which (Task Т10,
+        /// app-88jb) is now every reader, every frame: the on-hit render pin
+        /// that used to let a consumer hold two different halves of its own
+        /// making is gone, and the `Alpha` doc above records the same closure.
         /// The alternative was a SECOND phase on the seam, for the local slot
         /// only, and the sweep of the two dozen places that read this pose
         /// priced it: the drawn aim ray would have moved with the doll while the

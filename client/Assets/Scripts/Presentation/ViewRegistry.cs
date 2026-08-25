@@ -699,9 +699,8 @@ namespace Ring.Presentation
 
         /// `GameFeelDirector`'s seam into per-mob view state (Task 25 Interfaces)
         /// — looks up the live view for a `ProjectileHit` event's `EntityId` so
-        /// the director can call `MobView.Flash`/`FreezePosition` on the actual
-        /// hit mob without this class needing to know anything about hitstop
-        /// itself (П-1: no hitstop-specific branching lives here).
+        /// the director can call `MobView.Flash` on the actual hit mob without
+        /// this class needing to know anything about the hit-flash itself.
         public bool TryGetMobView(int id, out MobView view) => _activeMobs.TryGetValue(id, out view);
 
         /// The same seam for a player SLOT (Stage 2 Task 45b) — how the muzzle
@@ -1141,8 +1140,10 @@ namespace Ring.Presentation
         {
             // Task 25 (Приложение П-7): reads ONLY `SimulationRunner.RenderPrev`/
             // `RenderCurr`/`RenderAlpha` — never `Prev`/`Curr`/`Alpha` directly.
-            // A `FullFrame` hitstop freeze is entirely `SimulationRunner`'s doing;
-            // this class has no `if (HitstopActive)` branch anywhere.
+            // Task Т10 (app-88jb) removed the on-hit frame pin that used to make
+            // the two pairs diverge, but this class still goes through the
+            // `Render*` facade rather than the live one, same as every other
+            // interpolating view.
             RenderSnapshot curr = _runner.RenderCurr;
             RenderSnapshot prev = _runner.RenderPrev;
             float alpha = _runner.RenderAlpha;
@@ -1235,25 +1236,16 @@ namespace Ring.Presentation
                     continue;
                 }
 
-                // Task 25 (Приложение П-7, `TargetOnly` hitstop scope): a mob
-                // `GameFeelDirector.HandleProjectileHit` just froze
-                // (`MobView.FreezePosition`) holds its transform exactly where it
-                // was instead of being overwritten here — everyone else keeps
-                // interpolating normally off the live pair. `Sync` (accent/flash
-                // color) still runs regardless: the hit-flash itself must never
-                // freeze, only the position does.
-                if (!view.IsPositionFrozen)
-                {
-                    float2 prevPos = FindMobPrevPos(prev, m.Id, m.Pos);
-                    Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
-                    view.transform.position = world + MobOffset;
-                }
+                // Task Т10 (app-88jb) removed the per-target position pin a
+                // struck mob's own view used to hold while the rest of the
+                // frame kept moving — every mob's transform is written here
+                // every frame now, the same live-pair interpolation every
+                // other mob/projectile/the player/the camera already used.
+                float2 prevPos = FindMobPrevPos(prev, m.Id, m.Pos);
+                Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
+                view.transform.position = world + MobOffset;
                 view.Sync(in m, TelegraphSecondsFor(m.Type, in config), view == hoveredMob,
                     hoverAccent, hoverGlowBoost);
-                // After the position write above (Б7): when frozen, position
-                // wasn't written this frame, so MobVisual's own prev/curr delta
-                // reads zero and it settles on Idle — no separate "frozen" branch
-                // needed here or in MobVisual.
                 view.Visual?.Sync(in m, in visualParams);
             }
 
@@ -1291,11 +1283,12 @@ namespace Ring.Presentation
 
         void SyncProjectiles()
         {
-            // Task 25 (Приложение П-7): same Render* switch as `SyncMobs` above —
-            // projectiles have no `TargetOnly` freeze of their own (only
-            // `MobView` does), so a `FullFrame` hitstop is the only way they
-            // ever hold still, and that already falls straight out of reading
-            // `RenderPrev`/`RenderCurr`/`RenderAlpha` here.
+            // Task 25 (Приложение П-7): same Render* switch as `SyncMobs` above.
+            // Nothing ever holds a projectile still any more (Task Т10,
+            // app-88jb, removed the on-hit frame pin that used to be the
+            // only way one could) — this always reads straight off the live
+            // pair through the `Render*` facade, same as every interpolating
+            // view.
             RenderSnapshot curr = _runner.RenderCurr;
             RenderSnapshot prev = _runner.RenderPrev;
             float alpha = _runner.RenderAlpha;
@@ -1367,12 +1360,17 @@ namespace Ring.Presentation
         /// no `prev`/`alpha` interpolation to do — it is spawned where the
         /// simulation says and it stays there until somebody takes it.
         ///
-        /// THIS RUNS OFF `Curr`, NOT `RenderCurr`, and the difference is not an
-        /// oversight: the render pair exists so a hitstop can freeze MOVING
-        /// things mid-flight (Т25, П-7), and a stationary object has nothing to
-        /// freeze. Reading the live snapshot instead means a cell appears and
-        /// disappears on the tick the server says, with no render-buffer lag on
-        /// top of the network's own.
+        /// THIS RUNS OFF `Curr`, NOT `RenderCurr` — a distinction Task Т10
+        /// (app-88jb) made purely historical: `RenderCurr` used to diverge from
+        /// `Curr` while an on-hit frame pin held it, and a stationary pickup
+        /// had nothing for that pin to hold, so this method never bothered
+        /// routing through the `Render*` facade at all. With that mechanism
+        /// gone, `RenderCurr` is `Curr` on every frame (`SimulationRunner`'s
+        /// own doc), so the two reads are equivalent either way now — this one
+        /// stays `Curr` because a cell appearing/disappearing on the tick the
+        /// server says, with no render-buffer lag on top of the network's own,
+        /// is still the simplest correct reading for something that never
+        /// interpolates.
         ///
         /// IT WAS EMPTY OVER THE WIRE UNTIL Т32б, and is not any more (fix
         /// round, Ф7 review B-5 — this paragraph still said "does not decode

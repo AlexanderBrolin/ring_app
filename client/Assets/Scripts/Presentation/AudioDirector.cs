@@ -120,8 +120,9 @@ namespace Ring.Presentation
         // predicted sound waiting for its event, and the credit an event that
         // was heard first leaves for the edge still to come. `MinSfxInterval`
         // is no substitute for the second of those — it drops a repeat within
-        // 0.03 s at the shipped balance, which a hitstop freeze outlasts, and
-        // it is a feel knob the owner may turn down to zero, which is no place
+        // 0.03 s at the shipped balance, which a networked client's own round
+        // trip alone can outlast, and it is a feel knob the owner may turn
+        // down to zero, which is no place
         // to hang "is this dash heard twice" on.
         readonly ImmediatePredictionLatch _dashLatch = new ImmediatePredictionLatch();
 
@@ -277,8 +278,8 @@ namespace Ring.Presentation
         /// IN SOLO THE SOUND STILL COMES FROM THE EVENT, and that is the point
         /// of the third fact rather than a shortcoming: the local backend hands
         /// `HandleEvent` this dash first, the voice starts there, and the credit
-        /// taken out there refuses the edge that follows — this frame's, or the
-        /// one a hitstop freeze delayed it into. The one solo case that DOES
+        /// taken out there refuses the edge that follows this same frame. The
+        /// one solo case that DOES
         /// reach `PlayClip` below is a dash whose event was dropped by the SFX
         /// gates, which leaves no credit on purpose (`HandleEvent`'s own
         /// comment): the attempt is then a sound arriving on time rather than a
@@ -367,8 +368,8 @@ namespace Ring.Presentation
 
             // bd app-g21: this client's own dash has now been HEARD from its
             // event, so the rising edge still to come for that same dash — this
-            // frame's, or the one a hitstop freeze delayed it into — has to be
-            // refused rather than double it (`ImmediatePredictionLatch.
+            // same frame's — has to be refused rather than double it
+            // (`ImmediatePredictionLatch.
             // NoteShownFromEvent`). Conditioned on `played` and not on the call:
             // a dash whose event was dropped by `MinSfxInterval`/`VoicesPerSfx`
             // has not been heard at all, so a predicted attempt later in the

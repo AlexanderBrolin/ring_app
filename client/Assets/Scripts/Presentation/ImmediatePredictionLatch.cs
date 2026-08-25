@@ -74,19 +74,20 @@ namespace Ring.Presentation
     /// AND THAT CREDIT LIVES BY A WINDOW, NOT BY THE GATE'S LEVEL, WHICH IS THE
     /// WHOLE POINT OF PUTTING IT HERE. The obvious shape — a bit in each reader,
     /// set by the event and cleared when the gate goes false — was written first
-    /// and was wrong: a hitstop freeze pins `SimulationRunner.RenderCurr` at a
-    /// COPY while the simulation keeps ticking underneath it
-    /// (`GameFeelDirector` at the shipped `HitstopScope` `FullFrame`), so a dash
-    /// that starts under a freeze emits its event while the gate still reads the
-    /// frozen `DashTimer` 0 — clearing the bit that had just been set — and then
-    /// raises its edge when the freeze ends, with the dash still running. A
-    /// second mark, a meter up the dash line, on about as ordinary a sequence
-    /// as this game has (hit something, dash away). A window does not care what
-    /// the freeze
-    /// did to the level, and the local backend's own number covers this by
+    /// and was wrong: an on-hit render pin `SimulationRunner` used to own (Task
+    /// Т10, app-88jb, removed it whole) pinned `RenderCurr` at a COPY while the
+    /// simulation kept ticking underneath it, so a dash that started under that
+    /// pin emitted its event while the gate still read the pinned `DashTimer`
+    /// 0 — clearing the bit that had just been set — and then raised its edge
+    /// when the pin let go, with the dash still running. A second mark, a
+    /// meter up the dash line, on about as ordinary a sequence as this game
+    /// has (hit something, dash away). A window does not care what a stalled
+    /// gate did to the level, and the local backend's own number covers this by
     /// construction: an edge can only rise while the dash is still running, a
     /// dash is `HeroConfig.DashDuration` 0.09 s, and `SameFrameWindowSeconds` is
-    /// 0.1 s. On the networked backend the credit is only ever taken out when a
+    /// 0.1 s — sized against that now-removed mechanism, and left unchanged
+    /// since a window-based credit costs nothing extra to keep once armed. On
+    /// the networked backend the credit is only ever taken out when a
     /// prediction did NOT happen (an arriving event that finds nothing armed),
     /// and `BufferedWindowSeconds` 0.5 s expires inside the shortest gap two
     /// dashes can have — 0.61 s, a 0.09 s dash into a 0.52 s `SlideDuration` on
@@ -147,9 +148,8 @@ namespace Ring.Presentation
     /// exactly as if the prediction had been refused. Nothing is shown twice;
     /// something is shown late. The two gates are very differently exposed to
     /// it: the fire window is one tick wide (~33 ms), while a dash holds its
-    /// gate up for 90 ms — or for whatever part of those 90 ms a hitstop freeze
-    /// leaves visible (`SimulationRunner.DashingThisFrame`'s own doc) — so only
-    /// a frame longer than that can step over the dash's.
+    /// gate up for 90 ms, so only a frame longer than that can step over the
+    /// dash's.
     ///
     /// A MATCH RESTART CLEARS NOTHING HERE. `AudioDirector` does subscribe to
     /// `WorldRestarted` (for `StopAll`) and so does `PersistentPropsDirector`
@@ -179,12 +179,15 @@ namespace Ring.Presentation
         ///
         /// IT ALSO HAS TO OUTLIVE A DASH, since bd `app-g21` (the third fact of
         /// the class doc). This is the backend on which a dash's event always
-        /// precedes its edge, and a hitstop freeze can put those two in
-        /// different frames; the credit has to survive from the one to the
-        /// other, and the widest that gap can be is the dash itself,
-        /// `HeroConfig.DashDuration` 0.09 s. Lowering this constant under that
-        /// number brings back a second floor mark and a second dash sound on
-        /// every dash begun under a freeze.
+        /// precedes its edge; an on-hit render pin `SimulationRunner` used to
+        /// own (Task Т10, app-88jb, removed it whole) could put those two in
+        /// different frames, and the credit had to survive from the one to the
+        /// other — the widest that gap could be was the dash itself,
+        /// `HeroConfig.DashDuration` 0.09 s, which is why this constant is
+        /// sized past it rather than past the honest one-tick-plus-a-frame
+        /// bound the doc above derives. Left unchanged since a window-based
+        /// credit costs nothing extra to keep once armed (class doc, "THE
+        /// WINDOW IS INSURANCE, NOT THE MATCH").
         public const float SameFrameWindowSeconds = 0.1f;
 
         /// For a backend whose confirmation crosses the wire: the client
@@ -277,8 +280,9 @@ namespace Ring.Presentation
         /// routinely does.
         ///
         /// `windowSeconds` IS A LIFETIME AND DELIBERATELY NOT "UNTIL THE GATE
-        /// GOES FALSE": the level is what a hitstop freeze takes away in the
-        /// middle of the dash it belongs to (class doc, in full). It is the same
+        /// GOES FALSE": the level is what the now-removed on-hit render pin
+        /// used to take away in the middle of the dash it belongs to (class
+        /// doc, in full). It is the same
         /// number `Arm` is given, from the same place, and it works out on both
         /// backends: the local one's window outlives a whole dash, and the
         /// networked one's expires well inside the shortest gap two dashes can
