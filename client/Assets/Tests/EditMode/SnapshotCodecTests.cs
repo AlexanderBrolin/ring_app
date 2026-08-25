@@ -2650,6 +2650,37 @@ namespace Ring.Simulation.Tests
             Assert.That(dd.Amount, Is.EqualTo(EvtDamage).Within(HalfStepUnit(SnapHeroMaxHp) + HpNoise));
             AssertDecodedHeading(dd.Dir, EvtDirA, "hit direction");
 
+            // ⭐ THE MOB RAIL — a second witness, not a copy of the half above
+            // (app-88jb Т8, fix round finding 2), and the precedent is
+            // `EventPayload_ProjectileSpawned_ByteLayout_OnBothOwnerRails`,
+            // which pins both rails for exactly this reason. Byte 4 rides
+            // `SpeedCapFor(attackerIndex)`, so the SHOOTER's byte picks the
+            // scale — and when that shooter is a collector, as above, the
+            // owner's scale and `cfg.Weapon.ProjectileSpeed` are the same
+            // number and agree by accident. Only a mob's round separates them:
+            // the same 7.25 m/s that codes to 109 on the Gunner's 17 codes to
+            // 30 on the collector's 61. Without this half, swapping
+            // `SpeedCapFor(...)` for `cfg.Weapon.ProjectileSpeed` in BOTH the
+            // writer and the reader leaves the entire suite green — measured
+            // as mutation M40d, not supposed.
+            byte[] mobDamaged = WritePayload(SnapshotEventKind.PlayerDamaged,
+                b => SnapshotEvents.WritePlayerDamaged(new System.Span<byte>(b), EvtSlot, HitZone.Head,
+                    EvtDamage, EvtDirB, EvtHorizSpeedMob, EvtHeightHigh, ProjectileIds.NoOwner, EvtCfg));
+            Assert.AreEqual(EvtSlot, mobDamaged[0], "byte 0: the victim is still a real seat");
+            Assert.AreEqual((byte)HitZone.Head, mobDamaged[1], "byte 1: zone");
+            Assert.AreEqual((byte)197, mobDamaged[2], "byte 2: amount 91/118 -> code 197");
+            Assert.AreEqual((byte)140, mobDamaged[3], "byte 3: hitDir -> code 140");
+            Assert.AreEqual((byte)109, mobDamaged[4],
+                "byte 4: impact speed 7.25/17 -> code 109 on the GUNNER's scale — the same speed "
+                + "on the collector's 61 would be code 30");
+            Assert.AreEqual((byte)108, mobDamaged[5], "byte 5: contact height 2.75/6.5 -> code 108");
+            Assert.AreEqual(ProjectileIds.NoOwner, mobDamaged[6],
+                "byte 6: 255 marks a blow no collector fired");
+            // The DECODED half of this claim is not restated here: it already
+            // has a witness of its own on the other fixture
+            // (`PlayerDamaged_MobShot_UsesTheGunnerSpeedScale`). What is pinned
+            // HERE is the byte, which no round-trip can see.
+
             byte[] died = WritePayload(SnapshotEventKind.PlayerDied,
                 b => SnapshotEvents.WritePlayerDied(new System.Span<byte>(b), EvtSlot, HitZone.Body, EvtCfg));
             Assert.AreEqual(EvtSlot, died[0]);

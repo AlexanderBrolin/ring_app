@@ -441,6 +441,38 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void KindsThatNameNoShooter_LeaveAttackerIndexAtNoOwner()
+        {
+            // app-88jb Т8 (fix round finding 1). `SimEvent.AttackerIndex`'s own
+            // doc promises `ProjectileIds.NoOwner` for every kind but
+            // PlayerDamaged — and on the CLIENT only this decoder's pre-fill
+            // can keep that promise, because the struct's own default is 0 and
+            // slot 0 is a real seat. Exactly why `PlayerIndex` is pre-filled
+            // one line above it.
+            // The two kinds below are the sharp pair: MobDied carries a REAL
+            // slot of its own (the killer, in PlayerIndex), so a decoder that
+            // mirrored that field into this one is caught here; PlayerDied is
+            // PlayerDamaged's twin, the branch a copy would most likely come
+            // from.
+            var cfg = TestConfigs.Open();
+
+            byte[] mobDied = Buffer(SnapshotEventKind.MobDied);
+            SnapshotEvents.WriteMobDied(mobDied, MobId, OtherSlot, HitZone.Head, in cfg);
+            SimEvent killed = Decode(SnapshotEventKind.MobDied, mobDied, in cfg);
+            Assert.AreEqual(OtherSlot, killed.PlayerIndex,
+                "fixture premise: MobDied really does carry a slot — the KILLER, in PlayerIndex");
+            Assert.AreEqual(ProjectileIds.NoOwner, killed.AttackerIndex,
+                "MobDied names no shooter in AttackerIndex, and an unset field would not be empty — "
+                + "it would name collector 0");
+
+            byte[] playerDied = Buffer(SnapshotEventKind.PlayerDied);
+            SnapshotEvents.WritePlayerDied(playerDied, OtherSlot, HitZone.Body, in cfg);
+            SimEvent died = Decode(SnapshotEventKind.PlayerDied, playerDied, in cfg);
+            Assert.AreEqual(ProjectileIds.NoOwner, died.AttackerIndex,
+                "and neither does PlayerDied — the twin of the one kind that does");
+        }
+
+        [Test]
         public void PlayerDashed_NamesTheActor()
         {
             var cfg = TestConfigs.Open();

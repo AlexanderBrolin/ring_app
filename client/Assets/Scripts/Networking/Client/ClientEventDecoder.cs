@@ -239,6 +239,13 @@ namespace Ring.Networking.Client
             e.Tick = (int)originTick;
             e.Pos = record.Pos;
             e.PlayerIndex = ProjectileIds.NoOwner;
+            // app-88jb Т8: the same pre-fill for the same reason as the line
+            // above it. `default(byte)` is 0 and slot 0 is a real seat, so a
+            // kind that names no shooter has to SAY so — `SimEvent`'s own doc
+            // promises `ProjectileIds.NoOwner` here for every kind but
+            // PlayerDamaged, and on this side nothing else can keep that
+            // promise. Only the PlayerDamaged branch overwrites it.
+            e.AttackerIndex = ProjectileIds.NoOwner;
 
             switch (kind)
             {

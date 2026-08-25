@@ -1931,8 +1931,10 @@ namespace Ring.Simulation.Core
             _matchStats[victimIndex].DamageTaken += dmg;
             // EntityId/playerIndex (Stage 2 Task 7 decision 5): both carry the
             // VICTIM's index, spec §3.2 — the attacker is deliberately NOT what
-            // these two report (SimEvent has one player slot, and for a
-            // PlayerDamaged/PlayerDied pair the victim is the convention).
+            // these TWO report (for a PlayerDamaged/PlayerDied pair the victim
+            // is the convention). Until app-88jb Т8 the reason given here was
+            // that SimEvent HAD a single player slot; it has two since, and the
+            // second one is filled three lines below.
             // app-88jb Т8: the SHOOTER rides beside them in a field of its own,
             // together with the speed the round landed at. Both are already
             // parameters of this method, so nothing is re-derived here. A mob's
