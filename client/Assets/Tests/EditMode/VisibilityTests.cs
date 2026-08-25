@@ -511,7 +511,8 @@ namespace Ring.Simulation.Tests
             // (`_mobs[index] = _mobs[--_mobCount]`) moves the LAST live mob
             // — mobC — into slot 1, the slot index that coincides with
             // mobA's id.
-            w.DamageMob(1, 1e9f, w.Mobs[1].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f);
+            w.DamageMob(1, 1e9f, w.Mobs[1].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
             Assert.AreEqual(2, w.MobCount, "test setup: mobB must have died and been swap-removed");
             Assert.AreEqual(mobCId, w.Mobs[1].Id, "test setup: mobC must now occupy the dead mob's slot");
 

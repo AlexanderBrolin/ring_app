@@ -23,7 +23,8 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
 
-            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f);
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
 
             Assert.AreEqual(1, w.PickupCount, "the mob's death must drop exactly one pickup");
             PickupState pickup = w.Pickups[0];
@@ -374,7 +375,8 @@ namespace Ring.Simulation.Tests
             var pos = new float2(70f, 0f); // inside {65, 92} — Middle band
             w.SpawnMobForTest(MobType.Elite, pos);
 
-            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f);
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
 
             Assert.AreEqual(1, w.ContainerCount, "premise: the elite's death must have produced a container");
             ContainerState c = w.Containers[0];
@@ -398,7 +400,8 @@ namespace Ring.Simulation.Tests
             var pos = new float2(30f, 0f); // inside {0, 65} — Core band
             w.SpawnMobForTest(MobType.Elite, pos);
 
-            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f);
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
 
             Assert.AreEqual(1, w.ContainerCount, "premise: the elite's death must have produced a container");
             ContainerState c = w.Containers[0];
@@ -424,7 +427,7 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
 
             Assert.DoesNotThrow(() => w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, float2.zero, ownerIndex: 0,
-                    hitHeight: 0f),
+                    hitHeight: 0f, projectileMass: 0f, projectileSpeed3D: 0f),
                 "R-120: the archetype's own DropChance row must be checked BEFORE Geometry.ZoneOf " +
                 "ever runs — ZoneOf's own unguarded ZoneRadius[0]/[1] reads would throw on a " +
                 "zoneless arena otherwise");

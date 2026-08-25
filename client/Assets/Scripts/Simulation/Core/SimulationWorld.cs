@@ -1539,10 +1539,51 @@ namespace Ring.Simulation.Core
         /// every call site already states a real number instead of a
         /// coordinated zero, exactly like ProjectileSystem's HitMob branch
         /// does, in case a future task gives MobDied a height of its own.
+        /// `projectileMass`/`projectileSpeed3D` (app-88jb Т4, spec §3.2) are the
+        /// two halves of the impact the shove below is computed from, and they
+        /// ARRIVE AS PARAMETERS rather than being read off the round: this
+        /// method never sees a projectile and must not start to. It is also
+        /// called where no round exists at all — TestWorlds.ClearFirstWave and
+        /// its neighbors clear bodies through this same seam, and a future
+        /// piercing round will call it more than once for a single projectile
+        /// — so the impact behind a blow is the CALLER's fact, not this
+        /// method's to reconstruct. Both are REQUIRED, no default, for the
+        /// third time in this signature and for the same reason `ownerIndex`
+        /// and `hitHeight` are: a default of 0 reads as "a blow with no impact
+        /// behind it", which is exactly what the sixteen service call sites
+        /// mean and the one thing a real hit must never silently fall back to.
+        /// `projectileSpeed3D` is the FULL 3D speed, length(float3(Vel, VelZ)):
+        /// WeaponSimConfig.ProjectileSpeed is itself the length of the 3D
+        /// vector in this project, so a horizontal-only magnitude would
+        /// under-shove every angled shot — Impact.VelocityDelta's own doc
+        /// carries the same warning for the same reason.
         internal void DamageMob(int index, float dmg, float2 pos, HitZone zone, float2 dir, byte ownerIndex,
-            float hitHeight)
+            float hitHeight, float projectileMass, float projectileSpeed3D)
         {
             _mobs[index].Hp -= dmg;
+            // Impact (app-88jb Т4, spec §3.2, owner decision Н14). The shove
+            // lands in the SAME Vel SeparationSystem.Apply already adds into
+            // (SeparationSystem.cs:65) — one more term in an existing sum, not
+            // a second movement path. It shows up as motion on the NEXT tick's
+            // MoveWithCollisions call, because ProjectileSystem runs AFTER
+            // SeparationSystem in TickAll (:388-390): the one-tick lag
+            // SeparationSystem's own doc already describes and accepts.
+            //
+            // BEFORE the death check below, and deliberately so: a mob that
+            // dies on this blow is swap-removed a few lines down, so the Vel it
+            // was just given is either overwritten by the tail mob or left in a
+            // slot past _mobCount when it IS the tail — unreachable either way,
+            // and never hashed (HashMob only walks live slots). Branching on
+            // "is it still standing" would cost more than the addition it saves.
+            //
+            // damping is 1: a mob has no cocoon. The collector's divisor is
+            // Hero.CocoonDamping and belongs to the blow that lands on HIM
+            // (Т7) — see Impact.VelocityDelta's own doc for why the ceiling is
+            // applied before that division rather than after.
+            MobSimConfig target = MobConfigFor(_mobs[index].Type);
+            float dv = Impact.VelocityDelta(projectileMass, projectileSpeed3D,
+                target.Mass, target.ImpactSpeedCap, damping: 1f);
+            _mobs[index].Vel += dir * dv;
             if (ownerIndex != ProjectileIds.NoOwner) IncrementShotsHit(ownerIndex);
             if (_mobs[index].Hp <= 0f)
             {

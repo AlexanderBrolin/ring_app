@@ -491,7 +491,8 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < w.MobCount; i++)
             {
                 if (w.Mobs[i].Type != MobType.Director) continue;
-                w.DamageMob(i, 1e9f, w.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 1, hitHeight: 0f);
+                w.DamageMob(i, 1e9f, w.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 1, hitHeight: 0f,
+                    projectileMass: 0f, projectileSpeed3D: 0f);
                 break;
             }
             TestWorlds.IdleTicks(w, 5);

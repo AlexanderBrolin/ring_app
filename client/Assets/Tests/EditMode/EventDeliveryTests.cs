@@ -255,7 +255,8 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(setBeforeDeath.Contains(mobId), "test setup: must start visible");
 
             // Kills the mob outright — Hp comfortably exceeded, one hit.
-            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, default, ownerIndex: 0, hitHeight: 0f);
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, default, ownerIndex: 0, hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
             Assert.AreEqual(0, w.MobCount, "test setup: the mob must actually be gone from the world");
 
             // Tick N+1's own "current" set — computed AFTER the corpse's
@@ -1239,7 +1240,8 @@ namespace Ring.Simulation.Tests
             int liveMob = w3.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
             var asm3 = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
             BuildOne(asm3, w3, cfg, 0, 0, 0);   // tick N: the mob is tracked
-            w3.DamageMob(0, 1e9f, new float2(5f, 0f), HitZone.Body, default, ownerIndex: 0, hitHeight: 0f);
+            w3.DamageMob(0, 1e9f, new float2(5f, 0f), HitZone.Body, default, ownerIndex: 0, hitHeight: 0f,
+                projectileMass: 0f, projectileSpeed3D: 0f);
             Assert.AreEqual(0, w3.MobCount, "test setup: the mob is really gone from the world");
             Assert.AreEqual(1, BuildOne(asm3, w3, cfg, 0, 0, 0).CountOf(SnapshotEventKind.MobDied),
                 "the visibility arm reads the PREVIOUS tick's set — the corpse is swap-removed the same "

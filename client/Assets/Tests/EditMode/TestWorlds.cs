@@ -401,7 +401,8 @@ namespace Ring.Simulation.Tests
             {
                 world.TickAll(inputs);
                 while (world.MobCount > 0)
-                    world.DamageMob(0, 1e9f, world.Mobs[0].Pos, HitZone.Body, default, ownerIndex: 0, hitHeight: 0f);
+                    world.DamageMob(0, 1e9f, world.Mobs[0].Pos, HitZone.Body, default, ownerIndex: 0, hitHeight: 0f,
+                        projectileMass: 0f, projectileSpeed3D: 0f);
             }
             return ticks;
         }
@@ -462,7 +463,8 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < world.MobCount; i++)
             {
                 if (world.Mobs[i].Type != MobType.Director) continue;
-                world.DamageMob(i, 1e9f, world.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f);
+                world.DamageMob(i, 1e9f, world.Mobs[i].Pos, HitZone.Body, float2.zero, ownerIndex: 0, hitHeight: 0f,
+                    projectileMass: 0f, projectileSpeed3D: 0f);
                 break;
             }
             IdleTicks(world, 2);

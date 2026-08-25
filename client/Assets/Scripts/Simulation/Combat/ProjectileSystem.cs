@@ -280,8 +280,21 @@ namespace Ring.Simulation.Combat
                         // own shooter forward into the credit routing. hitHeight
                         // (app-88jb Т3) is AcceptCandidate's own contact height —
                         // see DamageMob's own doc for why it accepts one.
+                        // projectileMass/projectileSpeed3D (app-88jb Т4, spec
+                        // §3.2): the impact behind this blow, which only the
+                        // caller can know — DamageMob never sees a round (its
+                        // own doc). The owner -> mass fork goes through
+                        // Impact.ProjectileMassFor and NOWHERE else (coordinator
+                        // Ruling 1, round-3 finding C-I2): a mob's round is
+                        // heavier than a collector's, and that rule has exactly
+                        // one home, the same way SnapshotEvents.SpeedCapFor is
+                        // the one home of its own fork. The speed is the FULL 3D
+                        // magnitude, not length(proj.Vel): ProjectileSpeed is
+                        // itself a 3D length in this project, so the flat one
+                        // would under-shove every angled shot.
                         w.DamageMob(hitTargetIndex, dmg, contact, hitZone, hitDir, proj.OwnerIndex,
-                            hitHeight);
+                            hitHeight, Impact.ProjectileMassFor(proj.OwnerIndex, in config),
+                            math.length(new float3(proj.Vel, proj.VelZ)));
                         w.RemoveProjectileAt(i);
                         break;
                     }
