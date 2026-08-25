@@ -1,3 +1,4 @@
+using Ring.Simulation.Core;
 using Unity.Mathematics;
 
 namespace Ring.Simulation.Combat
@@ -58,5 +59,101 @@ namespace Ring.Simulation.Combat
                 tiltVel = 0f;
             }
         }
+
+        /// The ONE home of the impact formula (spec §3.2, owner decision Н14):
+        ///
+        ///   dv = min( projectileMass * |Vel3| / targetMass , targetImpactSpeedCap ) / damping
+        ///
+        /// |Vel3| is the FULL 3D speed (length(float3(Vel, VelZ))), because
+        /// WeaponSimConfig.ProjectileSpeed is itself the length of the 3D vector in
+        /// this project (combat-depth spec §3.2) -- a horizontal-only magnitude here
+        /// would silently under-shove every angled shot.
+        ///
+        /// ORDER IS LOAD-BEARING: the CEILING is applied BEFORE the damping divides
+        /// (finding C-I9/A-I4, decision Р393). The collector's effective ceiling is
+        /// therefore ImpactSpeedCap / CocoonDamping -- 6 / 3 = 2 m/s at the shipped
+        /// numbers, not 6.
+        public static float VelocityDelta(float projectileMass, float projectileSpeed3D,
+            float targetMass, float targetImpactSpeedCap, float damping)
+        {
+            float raw = projectileMass * projectileSpeed3D / targetMass;
+            return math.min(raw, targetImpactSpeedCap) / damping;
+        }
+
+        /// Peak tilt of a single impulse -- computed by RUNNING THE ACTUAL INTEGRATOR,
+        /// never by a closed form (round-3 finding C-C1, and this is the whole point).
+        ///
+        /// TWO reasons, both measured, not argued:
+        ///   1. The closed form the spec and plan v2 carried DROPPED sin(phi). For an
+        ///      impulse response the peak is (w0/wn)*exp(-zeta*wn*phi/wd), because at
+        ///      the maximum sin(phi) == wd/wn EXACTLY; writing (w0/wd)*exp(...)
+        ///      overstates it by wn/wd = 1/sqrt(1-zeta^2) = 1.19737 at zeta 0.55.
+        ///   2. Even the CORRECTED closed form is not what the game does. The game
+        ///      integrates with semi-implicit Euler at dt = 1/30, where c*dt = 0.296
+        ///      adds discrete damping the continuous solution knows nothing about.
+        ///      At zeta 0.55 / T 0.9 s the chaser headshot impulse peaks at 0.586 rad
+        ///      through the integrator against 0.789 through the corrected closed form
+        ///      and 0.945 through the plan-v2 one. The threshold is 0.9: the milestone
+        ///      rule "a headshot puts the chaser down" was UNREACHABLE at TiltGain 6.5,
+        ///      and no test could see it because both witnesses sat on the formula.
+        ///
+        /// The regime is OSCILLATORY on purpose: the body rocks and comes back, and
+        /// that rock is what reads as a blow. (Spec v1 claimed both regimes in one
+        /// sentence -- finding A-M1.)
+        ///
+        /// `dt` is a PARAMETER, not SimulationWorld.TickDt read from here: Impact
+        /// stays a pure function of its arguments, and the caller that cares about
+        /// game feel is the one that owns the tick length.
+        public static float PeakTilt(float angularImpulse, float dampingRatio, float settleSeconds,
+            float dt)
+        {
+            float tilt = 0f, tiltVel = angularImpulse, peak = 0f;
+            // The window is three settle times -- ceil(3 * 0.9 / (1/30)) = 81 steps
+            // at the shipped numbers. It is a BOUND, not a tuned quantity, and the
+            // numbers behind that word are measured rather than promised (Ruling 10):
+            // a unit impulse PEAKS ON STEP 4 (t ~ 0.133 s), and SpringStep's
+            // RestEpsilon snap zeroes the walk on STEP 44, after which the remaining
+            // 37 steps of the 81 do nothing at all. The window is therefore an order
+            // of magnitude wider than the answer needs, and shrinking it to a handful
+            // of steps would not change what this function returns -- so it is NOT a
+            // number the answer stands on. What the bound does buy is the only thing
+            // asked of it: the loop is FINITE BY CONSTRUCTION, with no convergence
+            // test, no early return, and no tail that can run away.
+            int steps = (int)math.ceil(3f * settleSeconds / dt);
+            for (int i = 0; i < steps; i++)
+            {
+                SpringStep(ref tilt, ref tiltVel, dampingRatio, settleSeconds, dt);
+                peak = math.max(peak, math.abs(tilt));
+            }
+            return peak;
+        }
+
+        /// The ONE home of the moment a hit applies to a body (round-3 finding C-I1).
+        ///
+        ///   angularImpulse = (hitHeight - centerOfMassHeight) * dv * gain     [rad/s]
+        ///
+        /// PUBLIC and written once, because FOUR places need exactly this arithmetic
+        /// and two of them live outside Ring.Simulation: DamageMob (T5), DamagePlayer
+        /// (T7), the client's ClientEventDecoder building an ImpactPulse (T9) and
+        /// Presentation's MobVisual rebuilding a mob's tilt (T31). Four hand-written
+        /// copies of one signed subtraction is exactly the shape round 2 removed for
+        /// the spring step, and the sign of the arm is the half that silently flips.
+        public static float AngularImpulse(float hitHeight, float centerOfMassHeight,
+            float dv, float gain)
+            => (hitHeight - centerOfMassHeight) * dv * gain;
+
+        /// The ONE home of the "who fired it" fork over projectile mass: the player
+        /// weapon's for a player-owned round, the Gunner archetype's for a mob's
+        /// (round-3 finding C-I2). Written once because BOTH sides need it --
+        /// Ring.Simulation.Combat.ProjectileSystem on the server (T4) and the
+        /// client's ClientEventDecoder rebuilding an ImpactPulse (T9) -- and a fork
+        /// written out twice is a fork that drifts.
+        ///
+        /// Exact precedent, one namespace over: SnapshotEvents.SpeedCapFor, whose own
+        /// note reads "ONE home for the rule, called by both sides -- the same fix
+        /// Task 27 applied to SnapshotBlocks.MaxHpFor after that branch had been
+        /// written out twice". This is the same rule for the same pair of callers.
+        public static float ProjectileMassFor(byte ownerIndex, in SimConfig cfg)
+            => ownerIndex == ProjectileIds.NoOwner ? cfg.Gunner.ProjectileMass : cfg.Weapon.ProjectileMass;
     }
 }
