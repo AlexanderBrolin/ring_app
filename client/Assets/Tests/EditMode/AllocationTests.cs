@@ -211,8 +211,61 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < w.PlayerCount; i++)
                 Assert.IsTrue(w.PlayerAt(i).Alive,
                     $"player {i} must survive the FULL measured window, not just its first tick");
-            Assert.Greater(w.ProjectileCount, 0,
-                "a live projectile must still be in flight at the end of the measured window too");
+            // THIS PREMISE USED TO READ `Assert.Greater(w.ProjectileCount, 0)`, AND
+            // IT WAS NEVER MEASURING WHAT IT CLAIMED (app-88jb Т4, finding Н-6).
+            // ProjectileCount is an INSTANTANEOUS snapshot, and in this fixture it
+            // is zero on nearly half the window: an ablation over the same 1000
+            // ticks, changing one variable only (the Т4 impulse zeroed), counted
+            // 449 zero ticks WITH the impulse against 437 WITHOUT it — twelve
+            // ticks out of a thousand, which is noise. The premise had been a coin
+            // toss since long before this epic and passed only because tick 1000
+            // happened to land on a firing phase; Т4 moved the phase, it broke
+            // nothing.
+            //
+            // WHY THE ZEROS COME IN RUNS — a stretch of five in a row was observed
+            // in this window's tail. Once the crowd closes on the huddle the
+            // nearest bodies stand 0.3-0.6 m from a shooter, while a fresh round
+            // is born Weapon.MuzzleOffset (0.6 m) ahead of him with
+            // Weapon.ProjectileRadius 0.12 against a mob Radius 0.5 — a padded
+            // radius of 0.62. Its very first step therefore STARTS inside a mob's
+            // circle, which is Geometry.SegmentCircle's `start inside -> t = 0`
+            // branch (:26): the round is consumed on the same tick it was fired,
+            // before anything reads ProjectileCount at the end of that tick. A
+            // firing tick and a zero tick become indistinguishable, and the run of
+            // zeros lasts exactly as long as the crowd keeps standing that close —
+            // a length no code bounds, which is why "is a round in flight right
+            // now" cannot be a premise here in ANY window form, however wide.
+            //
+            // WHAT IS MEASURED INSTEAD: that the world is still FIRING at the end
+            // of the window. That is what claim (2) above actually leans on ("the
+            // loop keeps being fed"), and ShotsFired is MONOTONE — it cannot be
+            // unlucky about phase the way a snapshot can. One full fire interval
+            // of extra ticks either moves it or proves the weapon stopped. These
+            // ticks, and the array below, sit AFTER the measured lambda exactly
+            // like every assertion in this block, so they cost nothing against the
+            // allocation budget above.
+            //
+            // THE BUDGET IS ARITHMETIC, NOT A LITERAL. TicksFromSeconds(0.12) =
+            // round(0.12 / TickDt) = 4, and 4 is the TIGHT bound:
+            // WeaponSystem.Advance tops FireCooldown up by FireInterval after each
+            // shot and takes TickDt off it every tick, so the cooldown after a shot
+            // lies in (0.0867, 0.12] and reaches zero in three ticks or four. The
+            // +1 is one tick of honest slack on an otherwise exact bound.
+            // Ammunition cannot be what fails here: the fixture starts on
+            // Weapon.AmmoStart 400 and still held 117 rounds at the end of the
+            // window, so the handful of shots below never reaches the Ammo == 0
+            // branch and its EmergencyFireInterval (1.25 s = 37.5 ticks) is never
+            // the interval chosen.
+            int fireIntervalTicks = SimulationWorld.TicksFromSeconds(config.Weapon.FireInterval) + 1;
+            var shotsAtWindowEnd = new int[w.PlayerCount];
+            for (int i = 0; i < w.PlayerCount; i++) shotsAtWindowEnd[i] = w.StatsAt(i).ShotsFired;
+            for (int i = 0; i < fireIntervalTicks; i++) w.TickAll(inputs);
+            for (int i = 0; i < w.PlayerCount; i++)
+                Assert.Greater(w.StatsAt(i).ShotsFired, shotsAtWindowEnd[i],
+                    $"fixture premise: player {i} must still be firing at the end of the measured "
+                    + "window — all three hold FireHeld for the whole run, so a counter that stands "
+                    + "still across a full fire interval means the weapon stopped, not that the "
+                    + "snapshot was taken on an unlucky tick");
         }
 
         [Test]
