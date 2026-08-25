@@ -60,6 +60,24 @@ namespace Ring.Simulation.Core
         /// task, same move as PickupRadius/MaxPickups above.
         public int InventoryCapacity;
         public int MaxInventoryItems;
+
+        /// Impact physics (app-88jb Ф1, spec §3.2). Mass is in KILOGRAMS and is
+        /// meant to be plausible -- bodies work by their RATIO to one another.
+        /// ProjectileMass is NOT: it is a GAME quantity (Р371), calibrated
+        /// backwards from the desired delta-v, because an honest 50 g bullet at
+        /// 52.5 m/s moves a 90 kg chassis by 0.029 m/s -- six tenths of one
+        /// percent of its own speed, i.e. a shove nobody can see. Do not "fix"
+        /// it towards a physical bullet.
+        /// ImpactSpeedCap belongs to the body being SHOVED, not to the barrel
+        /// (finding C-I9): otherwise mob-fired rounds have no ceiling at all.
+        /// It is applied BEFORE CocoonDamping divides, so the collector's
+        /// effective ceiling is ImpactSpeedCap / CocoonDamping.
+        public float Mass, ImpactSpeedCap, CocoonDamping;
+        /// Tilt (spec §3.2, owner decision Н10/Н23). The spring is parameterized
+        /// through the damping RATIO and the settle TIME, never through raw k/c:
+        /// tuning stiffness and damping by eye is not possible, and the spec got
+        /// it wrong twice before this shape existed (finding C-I2).
+        public float CenterOfMassHeight, TiltDampingRatio, TiltSettleSeconds, TiltGain;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).
@@ -93,6 +111,7 @@ namespace Ring.Simulation.Core
         public int AmmoStart;
         public int AmmoMax;
         public float EmergencyFireInterval;
+        public float ProjectileMass;
     }
 
     /// Balance numbers shared by all mob archetypes (chaser/gunner use the same shape).
@@ -149,6 +168,12 @@ namespace Ring.Simulation.Core
         /// value, it just spends away the clearance guarantee itself — a
         /// config choice, not a validation bug.
         public float AvoidMargin;
+
+        public float Mass, ImpactSpeedCap, ProjectileMass;
+        public float CenterOfMassHeight, TiltDampingRatio, TiltSettleSeconds, TiltGain;
+        /// Knockdown (owner decision Н23, variant 3a): above this tilt the mob
+        /// goes down for DownedSeconds and neither shoots nor strikes. Radians.
+        public float TiltFallAngle, DownedSeconds;
     }
 
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).

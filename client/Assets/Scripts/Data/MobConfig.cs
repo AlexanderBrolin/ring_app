@@ -61,7 +61,26 @@ namespace Ring.Data
         // position a Chaser's swing aims (Task 15+); capped in meters so a fast-fleeing
         // target does not pull the swing absurdly far off its own body.
         [Range(0f, 2f)] public float SwingLeadFactor = 1.0f;
-        [Range(0f, 6f)] public float SwingLeadMaxMeters = 2.0f; // sync-marker key — keep LAST
+        [Range(0f, 6f)] public float SwingLeadMaxMeters = 2.0f; // Was the sync-marker key until app-88jb.
+
+        /// app-88jb Т1 (spec §3.2): impact physics — same shape as
+        /// HeroConfig's Mass/ImpactSpeedCap/tilt-spring block (no
+        /// CocoonDamping here, mobs carry no cocoon), plus knockdown.
+        /// Defaults below are the CHASER archetype (this class's shape, see
+        /// class doc) — the Gunner/Elite/Director .assets override
+        /// Mass/CenterOfMassHeight to their own numbers in Т11a (owner
+        /// decision Р432 — not Т16, which stays part geometry/MaxAimHeight).
+        [Range(1f, 10000f)] public float Mass = 90f;
+        [Range(0.1f, 50f)] public float ImpactSpeedCap = 6f;
+        [Range(0.01f, 100f)] public float ProjectileMass = 3.0f;
+        [Range(0f, 6f)] public float CenterOfMassHeight = 1.17f;
+        [Range(0.05f, 0.95f)] public float TiltDampingRatio = 0.55f;
+        [Range(0.15f, 5f)] public float TiltSettleSeconds = 0.9f;
+        [Range(0f, 50f)] public float TiltGain = 10.5f;
+        /// Knockdown (owner decision Н23, variant 3a): above TiltFallAngle
+        /// the mob goes down for DownedSeconds and neither shoots nor strikes.
+        [Range(0.1f, 3.14f)] public float TiltFallAngle = 0.9f;
+        [Range(0.1f, 10f)] public float DownedSeconds = 1.2f; // sync-marker key — keep LAST (was SwingLeadMaxMeters, app-88jb)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

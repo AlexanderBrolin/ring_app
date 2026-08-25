@@ -147,6 +147,20 @@ namespace Ring.Simulation.Tests
             target.MuzzleHeight = source.MuzzleHeight;
             target.SwingLeadFactor = source.SwingLeadFactor;
             target.SwingLeadMaxMeters = source.SwingLeadMaxMeters;
+            // app-88jb Т1 (owner Ruling 2): the nine new impact-physics
+            // fields. Without these, SeedMob's Elite/Director callers
+            // (MakeShippedArchetypes) would leave them at MobConfig's
+            // chaser-shaped C# default instead of the archetype's own
+            // numbers — silently.
+            target.Mass = source.Mass;
+            target.ImpactSpeedCap = source.ImpactSpeedCap;
+            target.ProjectileMass = source.ProjectileMass;
+            target.CenterOfMassHeight = source.CenterOfMassHeight;
+            target.TiltDampingRatio = source.TiltDampingRatio;
+            target.TiltSettleSeconds = source.TiltSettleSeconds;
+            target.TiltGain = source.TiltGain;
+            target.TiltFallAngle = source.TiltFallAngle;
+            target.DownedSeconds = source.DownedSeconds;
         }
 
         /// Builds a SimConfig from a caller-supplied hero and default everything else —
@@ -1528,6 +1542,16 @@ namespace Ring.Simulation.Tests
             // same coverage.
             Assert.AreEqual(e.InventoryCapacity, a.InventoryCapacity);
             Assert.AreEqual(e.MaxInventoryItems, a.MaxInventoryItems);
+            // app-88jb Т1: same documented-deviation category as
+            // PickupRadius/EdgeRequestMinTicks above — these flow SO ->
+            // builder -> SimConfig too.
+            Assert.AreEqual(e.Mass, a.Mass, Eps);
+            Assert.AreEqual(e.ImpactSpeedCap, a.ImpactSpeedCap, Eps);
+            Assert.AreEqual(e.CocoonDamping, a.CocoonDamping, Eps);
+            Assert.AreEqual(e.CenterOfMassHeight, a.CenterOfMassHeight, Eps);
+            Assert.AreEqual(e.TiltDampingRatio, a.TiltDampingRatio, Eps);
+            Assert.AreEqual(e.TiltSettleSeconds, a.TiltSettleSeconds, Eps);
+            Assert.AreEqual(e.TiltGain, a.TiltGain, Eps);
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)
@@ -1553,6 +1577,8 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.ShotsPerCell, a.ShotsPerCell);
             Assert.AreEqual(e.AmmoMax, a.AmmoMax);
             Assert.AreEqual(e.EmergencyFireInterval, a.EmergencyFireInterval, Eps);
+            // app-88jb Т1: impact physics.
+            Assert.AreEqual(e.ProjectileMass, a.ProjectileMass, Eps);
         }
 
         static void AssertMobEqual(MobSimConfig e, MobSimConfig a)
@@ -1587,6 +1613,16 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.MuzzleHeight, a.MuzzleHeight, Eps);
             Assert.AreEqual(e.SwingLeadFactor, a.SwingLeadFactor, Eps);
             Assert.AreEqual(e.SwingLeadMaxMeters, a.SwingLeadMaxMeters, Eps);
+            // app-88jb Т1: impact physics.
+            Assert.AreEqual(e.Mass, a.Mass, Eps);
+            Assert.AreEqual(e.ImpactSpeedCap, a.ImpactSpeedCap, Eps);
+            Assert.AreEqual(e.ProjectileMass, a.ProjectileMass, Eps);
+            Assert.AreEqual(e.CenterOfMassHeight, a.CenterOfMassHeight, Eps);
+            Assert.AreEqual(e.TiltDampingRatio, a.TiltDampingRatio, Eps);
+            Assert.AreEqual(e.TiltSettleSeconds, a.TiltSettleSeconds, Eps);
+            Assert.AreEqual(e.TiltGain, a.TiltGain, Eps);
+            Assert.AreEqual(e.TiltFallAngle, a.TiltFallAngle, Eps);
+            Assert.AreEqual(e.DownedSeconds, a.DownedSeconds, Eps);
         }
 
         static void AssertWaveEqual(WaveSimConfig e, WaveSimConfig a)

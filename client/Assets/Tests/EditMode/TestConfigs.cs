@@ -33,7 +33,12 @@ namespace Ring.Simulation.Tests
                     PickupRadius = 2f,
                     // Stage 3 Task 4: mirrors HeroConfig's C# defaults (two-sources-
                     // of-numbers discipline — test/code-default side).
-                    InventoryCapacity = 8, MaxInventoryItems = 16 },
+                    InventoryCapacity = 8, MaxInventoryItems = 16,
+                    // app-88jb Т1 (spec §3.2): mirrors HeroConfig's C# defaults
+                    // (two-sources-of-numbers discipline — test/code-default side).
+                    Mass = 120f, ImpactSpeedCap = 6f, CocoonDamping = 3f,
+                    CenterOfMassHeight = 0.95f, TiltDampingRatio = 0.55f,
+                    TiltSettleSeconds = 0.9f, TiltGain = 10.5f },
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
                     ProjectileRadius = 0.12f, ProjectileLifetime = 1.5f, Damage = 12f,
                     SpreadRad = 0.026f, RecoilPerShotRad = 0.006f,
@@ -58,7 +63,9 @@ namespace Ring.Simulation.Tests
                     // either sanctioned re-pin (Т6/Т12). 400 is comfortably
                     // above the 245-277 range.
                     ShotsPerCell = 10, AmmoStart = 400, AmmoMax = 400,
-                    EmergencyFireInterval = 1.25f },
+                    EmergencyFireInterval = 1.25f,
+                    // app-88jb Т1 (spec §3.2): mirrors WeaponConfig's C# default.
+                    ProjectileMass = 2.6f },
                 Chaser = new MobSimConfig { MaxSpeed = 5.2f, Accel = 30f, Radius = 0.5f,
                     MaxHp = 30f, ContactDamage = 15f, AttackRange = 1.1f,
                     TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,
@@ -66,7 +73,14 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 0.60f, BodyTop = 1.45f, HeadTop = 1.85f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
+                    // app-88jb Т1 (spec §3.2): impact physics — chaser numbers,
+                    // mirrors MobConfig's C# defaults (two-sources-of-numbers
+                    // discipline — test/code-default side).
+                    Mass = 90f, ImpactSpeedCap = 6f, ProjectileMass = 3.0f,
+                    CenterOfMassHeight = 1.17f, TiltDampingRatio = 0.55f,
+                    TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
+                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f },
                 // Gunner's LegsTop/BodyTop/HeadTop already carry the taller ranged-mech
                 // tower (Task 17 ships the same numbers into the real .asset via the
                 // marker mechanism, ahead of that this baseline is the source of truth,
@@ -80,7 +94,16 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
+                    // app-88jb Т1 (spec §3.2): impact physics — gunner numbers
+                    // (owner Ruling 3: differentiated per-archetype numbers
+                    // live here and reach the shipped .asset only via Т11a,
+                    // owner decision Р432 — not Т16, which stays part geometry
+                    // and MaxAimHeight).
+                    Mass = 70f, ImpactSpeedCap = 6f, ProjectileMass = 3.0f,
+                    CenterOfMassHeight = 1.78f, TiltDampingRatio = 0.55f,
+                    TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
+                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f,
                     // Task Т6 (app-ggvz, owner decision К5/spec Р325):
@@ -211,7 +234,14 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
+                    // app-88jb Т1 (spec §3.2): impact physics — Elite numbers
+                    // (owner Ruling 3: reach the shipped .asset only via
+                    // Т11a, owner decision Р432 — not Т16).
+                    Mass = 260f, ImpactSpeedCap = 6f, ProjectileMass = 3.0f,
+                    CenterOfMassHeight = 1.78f, TiltDampingRatio = 0.55f,
+                    TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
+                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f },
                 Director = new MobSimConfig { MaxSpeed = 3.0f, Accel = 30f, Radius = 2.2f,
                     MaxHp = 2500f, ContactDamage = 45f, AttackRange = 2.8f,
                     TelegraphSeconds = 1.1f, AttackCooldown = 0.9f,
@@ -222,7 +252,14 @@ namespace Ring.Simulation.Tests
                     AvoidMargin = 1f,
                     LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
-                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f },
+                    MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
+                    // app-88jb Т1 (spec §3.2): impact physics — Director
+                    // numbers (owner Ruling 3: reach the shipped .asset only
+                    // via Т11a, owner decision Р432 — not Т16).
+                    Mass = 4000f, ImpactSpeedCap = 6f, ProjectileMass = 3.0f,
+                    CenterOfMassHeight = 2.31f, TiltDampingRatio = 0.55f,
+                    TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
+                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f },
                 // Stage 3 Task 12 (errata E-2): mirrors MatchFlowConfig's C#
                 // defaults, same two-sources discipline as every section
                 // above. Inert in both golden scenarios — nothing reads Flow

@@ -35,7 +35,12 @@ namespace Ring.Data
         [Range(1, 100)] public int ShotsPerCell = 10;
         [Range(0, 2000)] public int AmmoStart = 120;
         [Range(1, 2000)] public int AmmoMax = 400;
-        [Range(0.01f, 10f)] public float EmergencyFireInterval = 1.25f; // sync-marker key — keep LAST
+        [Range(0.01f, 10f)] public float EmergencyFireInterval = 1.25f; // Was the sync-marker key until app-88jb.
+
+        /// app-88jb Т1 (spec §3.2): impact physics — a GAME quantity
+        /// calibrated backwards from the desired delta-v, NOT a physical
+        /// bullet mass (see SimConfig.HeroSimConfig's own doc for why).
+        [Range(0.01f, 100f)] public float ProjectileMass = 2.6f; // sync-marker key — keep LAST (was EmergencyFireInterval, app-88jb)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

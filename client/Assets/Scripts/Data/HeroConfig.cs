@@ -112,7 +112,23 @@ namespace Ring.Data
         /// precedent PickupRadius followed one task ago) — PickupRadius
         /// above was the marker until now.
         [Range(1, 32)] public int InventoryCapacity = 8;
-        [Range(1, 32)] public int MaxInventoryItems = 16; // sync-marker key — keep LAST
+        [Range(1, 32)] public int MaxInventoryItems = 16; // Was the sync-marker key until app-88jb.
+
+        /// app-88jb Т1 (spec §3.2): impact physics — mass (kilograms,
+        /// plausible by RATIO to other bodies) and the impact-speed ceiling
+        /// applied to the body being shoved, before CocoonDamping divides it
+        /// down for the collector (SimConfig.HeroSimConfig carries the full
+        /// rationale).
+        [Range(1f, 10000f)] public float Mass = 120f;
+        [Range(0.1f, 50f)] public float ImpactSpeedCap = 6f;
+        [Range(1f, 20f)] public float CocoonDamping = 3f;
+        /// Tilt spring (spec §3.2, owner decision Н10/Н23): parameterized
+        /// through the damping RATIO and the settle TIME, never raw k/c —
+        /// see Ring.Simulation.Combat.Impact.SpringFromSettle.
+        [Range(0f, 6f)] public float CenterOfMassHeight = 0.95f;
+        [Range(0.05f, 0.95f)] public float TiltDampingRatio = 0.55f;
+        [Range(0.15f, 5f)] public float TiltSettleSeconds = 0.9f;
+        [Range(0f, 50f)] public float TiltGain = 10.5f; // sync-marker key — keep LAST (was MaxInventoryItems, app-88jb)
 
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a

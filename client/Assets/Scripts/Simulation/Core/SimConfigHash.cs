@@ -85,6 +85,12 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.EdgeRequestMinTicks);
             h = StateHash64.Add(h, c.PickupRadius);
             h = StateHash64.Add(h, c.InventoryCapacity); h = StateHash64.Add(h, c.MaxInventoryItems);
+            // app-88jb Т1 (spec §3.2): impact physics — same field order as
+            // HeroSimConfig's own declaration.
+            h = StateHash64.Add(h, c.Mass); h = StateHash64.Add(h, c.ImpactSpeedCap);
+            h = StateHash64.Add(h, c.CocoonDamping);
+            h = StateHash64.Add(h, c.CenterOfMassHeight); h = StateHash64.Add(h, c.TiltDampingRatio);
+            h = StateHash64.Add(h, c.TiltSettleSeconds); h = StateHash64.Add(h, c.TiltGain);
             return h;
         }
 
@@ -101,6 +107,8 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.RunSpreadSpeedFrac);
             h = StateHash64.Add(h, c.ShotsPerCell); h = StateHash64.Add(h, c.AmmoStart);
             h = StateHash64.Add(h, c.AmmoMax); h = StateHash64.Add(h, c.EmergencyFireInterval);
+            // app-88jb Т1 (spec §3.2): impact physics.
+            h = StateHash64.Add(h, c.ProjectileMass);
             return h;
         }
 
@@ -125,6 +133,13 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.MuzzleHeight);
             h = StateHash64.Add(h, c.SwingLeadFactor); h = StateHash64.Add(h, c.SwingLeadMaxMeters);
             h = StateHash64.Add(h, c.AvoidMargin);
+            // app-88jb Т1 (spec §3.2): impact physics — same field order as
+            // MobSimConfig's own declaration.
+            h = StateHash64.Add(h, c.Mass); h = StateHash64.Add(h, c.ImpactSpeedCap);
+            h = StateHash64.Add(h, c.ProjectileMass);
+            h = StateHash64.Add(h, c.CenterOfMassHeight); h = StateHash64.Add(h, c.TiltDampingRatio);
+            h = StateHash64.Add(h, c.TiltSettleSeconds); h = StateHash64.Add(h, c.TiltGain);
+            h = StateHash64.Add(h, c.TiltFallAngle); h = StateHash64.Add(h, c.DownedSeconds);
             return h;
         }
 

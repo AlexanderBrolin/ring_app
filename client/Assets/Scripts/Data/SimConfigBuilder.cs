@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -104,7 +105,15 @@ namespace Ring.Data
                     PickupRadius = hero.PickupRadius,
                     // Stage 3 Task 4: the backpack's two capacity numbers.
                     InventoryCapacity = hero.InventoryCapacity,
-                    MaxInventoryItems = hero.MaxInventoryItems
+                    MaxInventoryItems = hero.MaxInventoryItems,
+                    // app-88jb Т1 (spec §3.2): impact physics mapping.
+                    Mass = hero.Mass,
+                    ImpactSpeedCap = hero.ImpactSpeedCap,
+                    CocoonDamping = hero.CocoonDamping,
+                    CenterOfMassHeight = hero.CenterOfMassHeight,
+                    TiltDampingRatio = hero.TiltDampingRatio,
+                    TiltSettleSeconds = hero.TiltSettleSeconds,
+                    TiltGain = hero.TiltGain
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -127,7 +136,9 @@ namespace Ring.Data
                     ShotsPerCell = weapon.ShotsPerCell,
                     AmmoStart = weapon.AmmoStart,
                     AmmoMax = weapon.AmmoMax,
-                    EmergencyFireInterval = weapon.EmergencyFireInterval
+                    EmergencyFireInterval = weapon.EmergencyFireInterval,
+                    // app-88jb Т1 (spec §3.2): impact physics mapping.
+                    ProjectileMass = weapon.ProjectileMass
                 },
                 Chaser = ToMobSimConfig(chaser),
                 Gunner = ToMobSimConfig(gunner),
@@ -288,7 +299,17 @@ namespace Ring.Data
             HeadDamageMult = m.HeadDamageMult,
             MuzzleHeight = m.MuzzleHeight,
             SwingLeadFactor = m.SwingLeadFactor,
-            SwingLeadMaxMeters = m.SwingLeadMaxMeters
+            SwingLeadMaxMeters = m.SwingLeadMaxMeters,
+            // app-88jb Т1 (spec §3.2): impact physics mapping.
+            Mass = m.Mass,
+            ImpactSpeedCap = m.ImpactSpeedCap,
+            ProjectileMass = m.ProjectileMass,
+            CenterOfMassHeight = m.CenterOfMassHeight,
+            TiltDampingRatio = m.TiltDampingRatio,
+            TiltSettleSeconds = m.TiltSettleSeconds,
+            TiltGain = m.TiltGain,
+            TiltFallAngle = m.TiltFallAngle,
+            DownedSeconds = m.DownedSeconds
         };
 
         static ArenaSimConfig ToArenaSimConfig(ArenaConfig a)
@@ -409,6 +430,10 @@ namespace Ring.Data
                     $"(got EmergencyFireInterval={cfg.Weapon.EmergencyFireInterval:F3}, " +
                     $"FireInterval={cfg.Weapon.FireInterval:F3}).");
             }
+            // app-88jb Т1 (spec §3.10 rule 1): a GAME quantity calibrated
+            // backwards from the desired delta-v, not a physical bullet mass
+            // — see SimConfig.HeroSimConfig's own doc.
+            ReqPositive(errors, "Weapon.ProjectileMass", cfg.Weapon.ProjectileMass);
 
             // Task 2 (spec stamina/slide/aim): stamina pool + action costs/regen.
             ReqPositive(errors, "Hero.StaminaMax", cfg.Hero.StaminaMax);
@@ -723,6 +748,28 @@ namespace Ring.Data
             // allocation (negative) instead of this clean, named error.
             ReqPositive(errors, "Hero.InventoryCapacity", cfg.Hero.InventoryCapacity);
             ReqPositive(errors, "Hero.MaxInventoryItems", cfg.Hero.MaxInventoryItems);
+
+            // app-88jb Т1 (spec §3.10 rules 1/6/7/8/11): impact physics —
+            // mass, cocoon damping, and the tilt spring. ImpactSpeedCap and
+            // TiltGain are declared but carry no validation rule of their
+            // own in this task.
+            ReqPositive(errors, "Hero.Mass", cfg.Hero.Mass);
+            // Rule 11: the cocoon can only ever DAMP an impact, never amplify
+            // it (lore A1) — >= 1, not > 1 (Validate_CocoonDampingExactlyOne_IsLegal
+            // is the witness for that boundary).
+            ReqAtLeast(errors, "Hero.CocoonDamping", cfg.Hero.CocoonDamping, 1f);
+            // Rule 6: the center of mass cannot sit above the body it belongs
+            // to (Т13 rewrites the upper bound to the tallest PART's own top
+            // once parts exist — see SimConfig.HeroSimConfig's own doc).
+            ReqInRange(errors, "Hero.CenterOfMassHeight", cfg.Hero.CenterOfMassHeight, 0f, cfg.Hero.HeadTop);
+            // Rule 7: the tilt spring's damping ratio is open on BOTH ends —
+            // zeta = 1 is critical damping, no overshoot at all, so it is
+            // rejected exactly like zeta = 0 would be.
+            ReqInRange(errors, "Hero.TiltDampingRatio", cfg.Hero.TiltDampingRatio, 0f, 1f,
+                minExclusive: true, maxExclusive: true);
+            ReqPositive(errors, "Hero.TiltSettleSeconds", cfg.Hero.TiltSettleSeconds);
+            // Rule 8 (ReqStableSpring's own doc carries the rationale).
+            ReqStableSpring(errors, "Hero", cfg.Hero.TiltDampingRatio, cfg.Hero.TiltSettleSeconds);
 
             // Stage 3 Task 8 (spec §3.13, errata E-6 D-I8's Т8 share):
             // ExtractRadius must exceed the body it extracts, and
@@ -1752,6 +1799,22 @@ namespace Ring.Data
             // out-of-range value reaching it programmatically too.
             ReqInRange(errors, $"{name}.SwingLeadFactor", m.SwingLeadFactor, 0f, 2f);
             ReqNonNegative(errors, $"{name}.SwingLeadMaxMeters", m.SwingLeadMaxMeters);
+
+            // app-88jb Т1 (spec §3.10 rules 1/6/7/8): impact physics — same
+            // shape as Hero's own block (SimConfigBuilder's Hero section),
+            // minus CocoonDamping (mobs carry no cocoon) plus knockdown.
+            // ImpactSpeedCap and TiltGain carry no validation rule of their
+            // own in this task, same as Hero's.
+            ReqPositive(errors, $"{name}.Mass", m.Mass);
+            ReqPositive(errors, $"{name}.ProjectileMass", m.ProjectileMass);
+            ReqInRange(errors, $"{name}.CenterOfMassHeight", m.CenterOfMassHeight, 0f, m.HeadTop);
+            ReqInRange(errors, $"{name}.TiltDampingRatio", m.TiltDampingRatio, 0f, 1f,
+                minExclusive: true, maxExclusive: true);
+            ReqPositive(errors, $"{name}.TiltSettleSeconds", m.TiltSettleSeconds);
+            ReqPositive(errors, $"{name}.TiltFallAngle", m.TiltFallAngle);
+            ReqPositive(errors, $"{name}.DownedSeconds", m.DownedSeconds);
+            // Rule 8 (ReqStableSpring's own doc carries the rationale).
+            ReqStableSpring(errors, name, m.TiltDampingRatio, m.TiltSettleSeconds);
         }
 
         static void ReqFinite(List<string> errors, string name, float value)
@@ -1821,10 +1884,14 @@ namespace Ring.Data
             }
         }
 
-        /// Task 2: bounded fractions/dot-products (min optionally exclusive, max always
-        /// inclusive — matches every (0,1]/[0,1]/[-1,1] shape this task's fields need).
+        /// Task 2 (extended app-88jb Т1, spec §3.10 rule 7, finding A-I7):
+        /// bounded fractions/dot-products — min optionally exclusive, max NOW
+        /// ALSO optionally exclusive. Needed for the tilt spring's damping
+        /// ratio, which is open on BOTH ends: critical damping at zeta = 1
+        /// removes the overshoot the spring exists to produce, so the old
+        /// always-inclusive upper bound would have let it through.
         static void ReqInRange(List<string> errors, string name, float value, float min, float max,
-            bool minExclusive = false)
+            bool minExclusive = false, bool maxExclusive = false)
         {
             bool finite = !(float.IsNaN(value) || float.IsInfinity(value));
             ReqFinite(errors, name, value);
@@ -1832,10 +1899,12 @@ namespace Ring.Data
                 return;
 
             bool minOk = minExclusive ? value > min : value >= min;
-            if (!minOk || value > max)
+            bool maxOk = maxExclusive ? value < max : value <= max;
+            if (!minOk || !maxOk)
             {
                 string minBrace = minExclusive ? "(" : "[";
-                errors.Add($"{name} must be in {minBrace}{min}, {max}] (got {value:F3}).");
+                string maxBrace = maxExclusive ? ")" : "]";
+                errors.Add($"{name} must be in {minBrace}{min}, {max}{maxBrace} (got {value:F3}).");
             }
         }
 
@@ -1846,6 +1915,32 @@ namespace Ring.Data
             ReqFinite(errors, name, value);
             if (value < min)
                 errors.Add($"{name} must be >= {min} (got {value:F3}).");
+        }
+
+        /// app-88jb Т1 (spec §3.10 rule 8): the tilt spring must stay inside the
+        /// EXPLICIT integrator's stability limits -- k < 4/dt^2 and 0 < c < 2/dt --
+        /// because Impact.SpringStep integrates with semi-implicit Euler at a fixed
+        /// dt. k grows as 1/T^2, so a settle time tuned too small blows past the
+        /// limit and would silently NaN the tilt in-match on a hot-tweak (CR 6),
+        /// which is a balance edit dropping the match (finding C-I2).
+        ///
+        /// ONE home, called by the Hero section and by ValidateMob: the same
+        /// arithmetic written twice is the shape round 3 removed from this epic
+        /// once already (four inline copies of the moment -> Impact.AngularImpulse).
+        static void ReqStableSpring(List<string> errors, string name,
+            float dampingRatio, float settleSeconds)
+        {
+            Impact.SpringFromSettle(dampingRatio, settleSeconds, out float k, out float c);
+            float tickDt = SimulationWorld.TickDt;
+            if (!(k < 4f / (tickDt * tickDt)) || !(c > 0f && c < 2f / tickDt))
+            {
+                errors.Add($"{name}.TiltSettleSeconds/{name}.TiltDampingRatio must keep the tilt spring " +
+                    "inside the explicit integrator's stability limits " +
+                    $"(got k={k:F3} (must be < {4f / (tickDt * tickDt):F3}), " +
+                    $"c={c:F3} (must be in (0, {2f / tickDt:F3})), " +
+                    $"TiltDampingRatio={dampingRatio:F3}, " +
+                    $"TiltSettleSeconds={settleSeconds:F3}).");
+            }
         }
 
         /// Task Т2 (app-ggvz, spec §3.8): the "array must have exactly

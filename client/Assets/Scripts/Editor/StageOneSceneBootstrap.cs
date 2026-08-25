@@ -2630,6 +2630,24 @@ namespace Ring.Editor
         /// AttackRange, gunner outside) would park the Elite at 9 m and it
         /// would never close, which is a Gunner with more HP rather than
         /// Р214's enhanced chaser.
+        ///
+        /// app-88jb Т1 (spec §3.2, Ruling 5, ConfigTests.
+        /// BootstrapArchetypeSeeds_MatchTheTestConfigsBaseline's own binding
+        /// contract): the nine impact-physics fields, sourced the same way as
+        /// everything above. Mass 260 kg (Elite) / 4000 kg (Director, below)
+        /// is NOT a physical estimate — it works by RATIO to the 120 kg
+        /// collector (finding Р371), the same convention HeroConfig.Mass
+        /// follows. CenterOfMassHeight 1.78 is derived BACKWARDS from spec
+        /// §3.2's own per-archetype tilt table (finding D2-I2 — against
+        /// today's HeadTop, not a future body part). TiltGain 10.5 is the
+        /// CIRCLE-3 recalibration, owner-approved (was 6.5): the v2 closed
+        /// form dropped a sin(phi) factor and never described the real
+        /// per-tick explicit-integrator step, so the milestone В1 rule ("a
+        /// headshot drops a Chaser") would not have been observable at all
+        /// under the old number (finding C-C1). ImpactSpeedCap 6,
+        /// TiltDampingRatio 0.55, TiltSettleSeconds 0.9, TiltFallAngle 0.9
+        /// and DownedSeconds 1.2 are the shared archetype numbers, identical
+        /// on every mob body in today's roster.
         internal static bool ApplyEliteDefaults(MobConfig m)
         {
             bool changed = false;
@@ -2663,6 +2681,15 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
             changed |= SetIfDifferent(ref m.SwingLeadFactor, 1.0f);
             changed |= SetIfDifferent(ref m.SwingLeadMaxMeters, 2.0f);
+            changed |= SetIfDifferent(ref m.Mass, 260f);
+            changed |= SetIfDifferent(ref m.ImpactSpeedCap, 6f);
+            changed |= SetIfDifferent(ref m.ProjectileMass, 3.0f);
+            changed |= SetIfDifferent(ref m.CenterOfMassHeight, 1.78f);
+            changed |= SetIfDifferent(ref m.TiltDampingRatio, 0.55f);
+            changed |= SetIfDifferent(ref m.TiltSettleSeconds, 0.9f);
+            changed |= SetIfDifferent(ref m.TiltGain, 10.5f);
+            changed |= SetIfDifferent(ref m.TiltFallAngle, 0.9f);
+            changed |= SetIfDifferent(ref m.DownedSeconds, 1.2f);
             return changed;
         }
 
@@ -2683,6 +2710,15 @@ namespace Ring.Editor
         /// would put the Director's head above anything a collector can aim
         /// at. Model scale (ASSETS-001 §2.3, x1.5-2) is Presentation's own
         /// number and does not touch this one.
+        ///
+        /// app-88jb Т1 (Ruling 5): two more overrides join the five above —
+        /// Mass 4000 kg (spec §3.2, by RATIO to the 120 kg collector, same
+        /// convention as the Elite's own 260) and CenterOfMassHeight 2.31
+        /// (spec §3.2's tilt table, same backwards derivation as the Elite's
+        /// 1.78). Every OTHER impact-physics field is identical to the
+        /// Elite's own (ApplyEliteDefaults' own doc above carries the full
+        /// sourcing) and is not repeated here — same "only the differences
+        /// are written here" rule.
         internal static bool ApplyDirectorDefaults(MobConfig m)
         {
             bool changed = ApplyEliteDefaults(m);
@@ -2693,6 +2729,8 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.TelegraphSeconds, 1.1f);
             changed |= SetIfDifferent(ref m.AttackRange, 2.8f);
             changed |= SetIfDifferent(ref m.PreferredRange, 9f);
+            changed |= SetIfDifferent(ref m.Mass, 4000f);
+            changed |= SetIfDifferent(ref m.CenterOfMassHeight, 2.31f);
             return changed;
         }
 
