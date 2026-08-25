@@ -165,14 +165,19 @@ namespace Ring.Simulation.Tests
             var writer = new SnapshotWriter(buffer);
             writer.WriteHeader(Epoch, Tick, Flags);
 
-            // Literal 3, not ProtocolVersion.Current: comparing the writer
+            // Literal 4, not ProtocolVersion.Current: comparing the writer
             // against the very constant it wrote would pass under a version
             // bump that silently broke every peer. The literal is therefore
             // MEANT to be edited by hand on a bump — it moved 1 → 2 with
             // Task 44a's ProjectileEndKind growth, then 2 → 3 with Stage 3
-            // Task 10's MobType growth, alongside the pin in
-            // ProtocolVersion_Current_IsPinnedToThree below.
-            Assert.AreEqual((byte)3, buffer[0], "byte 0: protocol version");
+            // Task 10's MobType growth, then 3 → 4 with app-88jb Т6's
+            // MobAiState growth (Downed), alongside the pin in
+            // ProtocolVersion_Current_IsPinnedToFour below.
+            // ⚠ THIS ASSERTION IS THE SECOND HALF OF THAT PIN and moves with
+            // it every time: it was named in neither the Т6 plan nor its
+            // errata, and a bump that edited only the other one would leave
+            // this test red for a reason nobody had written down.
+            Assert.AreEqual((byte)4, buffer[0], "byte 0: protocol version");
             Assert.AreEqual((byte)0x34, buffer[1], "byte 1: epoch low byte (little-endian)");
             Assert.AreEqual((byte)0x12, buffer[2], "byte 2: epoch high byte (little-endian)");
             Assert.AreEqual((byte)0xEF, buffer[3], "byte 3: tick byte 0 (little-endian)");
@@ -459,7 +464,7 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void ProtocolVersion_Current_IsPinnedToThree()
+        public void ProtocolVersion_Current_IsPinnedToFour()
         {
             // A silent bump would part client and server with no red test
             // anywhere: the version is compared in the handshake (Task 39)
@@ -469,16 +474,19 @@ namespace Ring.Simulation.Tests
             // …IsPinnedToTwo — the old name was already lying about which
             // literal it pinned the moment MobType grew Elite/Director; a
             // test named after a stale value is worse than an unnamed one.
-            Assert.AreEqual((byte)3, ProtocolVersion.Current,
-                "protocol version 3 is the wire contract from Stage 3 Task 10 on — changing it "
+            // app-88jb Т6 renames it again, 3 → 4, on that same rule.
+            Assert.AreEqual((byte)4, ProtocolVersion.Current,
+                "protocol version 4 is the wire contract from app-88jb Т6 on — changing it "
                 + "is a compatibility break that must be a deliberate, reviewed edit. It became "
-                + "3 when MobType grew Elite = 2 and Director = 3: a version-2 reader validates "
-                + "a Mobs record's type nibble against its own MaxMobTypeValue bound of 1 "
-                + "(Gunner) and throws the whole record out as MalformedContent, and "
-                + "SimConfigHash does not cover Elite's/Director's MobSimConfig sections yet "
-                + "(R-17, Т13 wires them), so nothing but this version byte separates the two "
-                + "builds. It became 2 in Task 44a, when ProjectileEndKind grew HitPlayer = 4 — "
-                + "see ProtocolVersion's own HISTORY doc for that entry.");
+                + "4 when MobAiState grew Downed = 6: a version-3 reader validates a Mobs "
+                + "record's ai nibble against its own MaxMobAiStateValue bound of 5 (Fire) and "
+                + "throws out the WHOLE MOBS BLOCK as MalformedContent — every mob in the arena "
+                + "vanishes for that peer the first time any one of them falls over — and "
+                + "SimConfigHash covers neither MobAiState nor the tilt numbers that decide a "
+                + "fall (Т11a ships those), so nothing but this version byte separates the two "
+                + "builds. It became 3 in Stage 3 Task 10, when MobType grew Elite = 2 and "
+                + "Director = 3, and 2 in Task 44a, when ProjectileEndKind grew HitPlayer = 4 — "
+                + "see ProtocolVersion's own HISTORY doc for both entries.");
         }
 
         // ---- 8. Failure is sticky ----
@@ -1632,17 +1640,30 @@ namespace Ring.Simulation.Tests
             // SnapshotBlocks.MaxMobTypeValue now reads
             // `(byte)MobType.Director`, alongside the ProtocolVersion bump
             // its own HISTORY entry records (ProtocolVersion_Current_
-            // IsPinnedToThree, this file, updates in the same commit — see
-            // that test's own doc). MobAiState/WavePhase are UNCHANGED
-            // (Р214: Elite/Director reuse the existing six-state FSM, no
-            // new state) — only the MobType pair below moved.
+            // IsPinnedToFour, this file, updates in the same commit — see
+            // that test's own doc). WavePhase is UNCHANGED.
+            //
+            // app-88jb Т6 CANCELS THE OTHER HALF OF THAT SENTENCE, which used
+            // to read "MobAiState/WavePhase are UNCHANGED (Р214: Elite/
+            // Director reuse the existing six-state FSM, no new state)". Р214
+            // still holds for Elite and Director — but Т6 adds Downed for a
+            // reason no archetype owns: a body past TiltFallAngle stops acting
+            // whatever it is. So the MobAiState pair below moves too, Fire → 6
+            // and 6 → 7, alongside ProtocolVersion 3 → 4 in the same commit.
+            // THIS IS THE TRIPWIRE FIRING ON SCHEDULE, exactly as the doc
+            // above promised — not a defect to silence.
             Assert.AreEqual((byte)3, SnapshotBlocks.MaxMobTypeValue, "MobType tops out at Director");
-            Assert.AreEqual((byte)5, SnapshotBlocks.MaxMobAiStateValue, "MobAiState tops out at Fire");
+            // ⚠ LITERAL 6, NOT (byte)MobAiState.Downed. MaxMobAiStateValue IS
+            // `(byte)MobAiState.Downed`, so naming the symbol here would make
+            // this `AreEqual(x, x)` — a tautology that survives any future
+            // renumbering of the enum and pins nothing at all. Both neighbors
+            // are literals for the same reason.
+            Assert.AreEqual((byte)6, SnapshotBlocks.MaxMobAiStateValue, "MobAiState tops out at Downed");
             Assert.AreEqual((byte)1, SnapshotBlocks.MaxWavePhaseValue, "WavePhase tops out at Active");
 
             Assert.AreEqual(4, System.Enum.GetValues(typeof(MobType)).Length,
                 "MobType gained or lost a member — the wire domain moved");
-            Assert.AreEqual(6, System.Enum.GetValues(typeof(MobAiState)).Length,
+            Assert.AreEqual(7, System.Enum.GetValues(typeof(MobAiState)).Length,
                 "MobAiState gained or lost a member — the wire domain moved");
             Assert.AreEqual(2, System.Enum.GetValues(typeof(WavePhase)).Length,
                 "WavePhase gained or lost a member — the wire domain moved");
@@ -1697,7 +1718,15 @@ namespace Ring.Simulation.Tests
             AssertPackedByteRefused((byte)((SnapshotBlocks.MaxMobTypeValue + 1) << 4),
                 "type nibble one past MaxMobTypeValue");
             AssertPackedByteRefused(0xF0, "type nibble 15");
-            AssertPackedByteRefused(0x06, "ai nibble 6, one past Fire");
+            // app-88jb Т6: built off MaxMobAiStateValue itself rather than a
+            // hardcoded byte, for exactly the reason the MobType line above
+            // already learned the hard way — this used to read
+            // `AssertPackedByteRefused(0x06, "ai nibble 6, one past Fire")`,
+            // and MobAiState growing Downed onto that very value turned a
+            // refusal fixture into a silent false negative. Writing 0x07 by
+            // hand would only move the same trap one value along.
+            AssertPackedByteRefused((byte)(SnapshotBlocks.MaxMobAiStateValue + 1),
+                "ai nibble one past MaxMobAiStateValue");
             AssertPackedByteRefused(0x0F, "ai nibble 15");
             AssertPackedByteRefused(0xF7, "both nibbles out of domain");
 
@@ -1708,11 +1737,11 @@ namespace Ring.Simulation.Tests
             legal[2] = (byte)((SnapshotBlocks.MaxMobTypeValue << 4) | SnapshotBlocks.MaxMobAiStateValue);
             var dest = new SnapshotBlocks.MobRecord[1];
             Assert.IsTrue(SnapshotBlocks.TryReadMobsBlock(legal, SnapCfg, dest, out int okCount, out SnapshotBlockError okErr),
-                "Director/Fire is the top of both domains and must be accepted");
+                "Director/Downed is the top of both domains and must be accepted");
             Assert.AreEqual(1, okCount);
             Assert.AreEqual(SnapshotBlockError.None, okErr);
             Assert.AreEqual(MobType.Director, dest[0].Type);
-            Assert.AreEqual(MobAiState.Fire, dest[0].Ai);
+            Assert.AreEqual(MobAiState.Downed, dest[0].Ai);
         }
 
         [Test]

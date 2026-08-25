@@ -129,8 +129,14 @@ namespace Ring.Simulation.Core
     /// `AI/MobAiSystem`'s FSM dispatch/`Protocol/SnapshotBlocks.MaxHpFor`+
     /// `MaxMobTypeValue` all stop being two-way. The domain move is also a
     /// `ProtocolVersion` bump (see its own HISTORY). Elite reuses the
-    /// EXISTING `MobAiState` six-value FSM below wholesale — no new state,
-    /// see that enum's own doc — and Director never leaves the arena core
+    /// `MobAiState` FSM below wholesale — it adds no state OF ITS OWN, see
+    /// that enum's own doc. ⚠ That clause used to read "six-value FSM … no
+    /// new state" full stop, and app-88jb Т6 CANCELED the second half of it:
+    /// `Downed` joined the enum, so the domain is seven values wide. Р214 is
+    /// untouched by that — Downed belongs to no archetype, it is what a body
+    /// past `MobSimConfig.TiltFallAngle` does whichever archetype it is — but
+    /// the COUNT here was stated as a fact and is one no longer.
+    /// Director never leaves the arena core
     /// (Р248, enforced in Т22, not here). Neither archetype gets a stored
     /// "is retinue"/"is boss" flag: Director-ness and retinue-ness are both
     /// derived from `Type` alone (rule 2 — a derived value does not enter
@@ -144,7 +150,18 @@ namespace Ring.Simulation.Core
     /// hit behind it; a melee strike reports Body (MobAiSystem), never None.
     public enum HitZone : byte { None = 0, Legs = 1, Body = 2, Head = 3 }
 
-    public enum MobAiState : byte { Idle, Chase, Telegraph, Recover, Reposition, Fire }
+    /// `Downed` (app-88jb Т6, spec §3.2) IS DECLARED LAST ON PURPOSE: the
+    /// domain grows UPWARD and no existing member's value moves, so a record
+    /// already on the wire keeps meaning what it meant. It is still a WIRE
+    /// DOMAIN CHANGE -- SnapshotBlocks.MaxMobAiStateValue is the ceiling every
+    /// decoder validates against, and a peer speaking the older
+    /// ProtocolVersion refuses the whole Mobs block rather than one record.
+    ///
+    /// It is also the ONE state that is not an archetype's business: a body
+    /// tipped past MobSimConfig.TiltFallAngle is down whatever it was doing,
+    /// so both the entry (TiltSystem) and the exit (MobAiSystem.Update, ahead
+    /// of the dispatch by MobType) live outside the per-archetype FSMs.
+    public enum MobAiState : byte { Idle, Chase, Telegraph, Recover, Reposition, Fire, Downed }
 
     /// Live state of a single mob instance.
     public struct MobState

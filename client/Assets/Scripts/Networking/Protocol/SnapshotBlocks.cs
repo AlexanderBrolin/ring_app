@@ -169,11 +169,24 @@ namespace Ring.Networking.Protocol
         ///
         /// Stage 3 Task 10 (spec Р213/Р251): `MobType` grew Elite/Director,
         /// so this moves from `Gunner` to `Director` — exactly the
-        /// ProtocolVersion-bump case the doc above already named. MobAiState/
-        /// WavePhase are unchanged (Р214: Elite/Director reuse the existing
-        /// six-state FSM, no new state).
+        /// ProtocolVersion-bump case the doc above already named. WavePhase is
+        /// unchanged.
+        ///
+        /// app-88jb Т6 CANCELS THE OTHER HALF OF THAT SENTENCE. It used to
+        /// read "MobAiState/WavePhase are unchanged (Р214: Elite/Director
+        /// reuse the existing six-state FSM, no new state)", and Р214 is still
+        /// true of Elite and Director — but Т6 adds `MobAiState.Downed` for a
+        /// reason that has nothing to do with an archetype: a body tipped past
+        /// MobSimConfig.TiltFallAngle stops acting, whichever archetype it is.
+        /// So MobAiState's ceiling moves from `Fire` to `Downed`, the domain is
+        /// seven values wide, and ProtocolVersion goes 3 → 4 in the same commit
+        /// (see its own HISTORY entry). ⚠ THIS CONSTANT MUST MOVE IN THE SAME
+        /// COMMIT AS THE ENUM: adding a member does NOT move it on its own
+        /// (it is written as `(byte)MobAiState.Fire`, and Fire's value never
+        /// changed), and until it moves SnapshotWriter throws on the first
+        /// downed mob it is asked to pack.
         public const byte MaxMobTypeValue = (byte)MobType.Director;
-        public const byte MaxMobAiStateValue = (byte)MobAiState.Fire;
+        public const byte MaxMobAiStateValue = (byte)MobAiState.Downed;
         public const byte MaxWavePhaseValue = (byte)WavePhase.Active;
 
         /// Stage 3 Task 25: the same tripwire, extended to the three enums

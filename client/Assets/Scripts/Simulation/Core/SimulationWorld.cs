@@ -545,6 +545,12 @@ namespace Ring.Simulation.Core
         /// Stage 2 Task 4: migrates every player in the match, not just player 0 — for
         /// a solo world (_players.Length == 1) this is byte-for-byte the same
         /// single migration as before.
+        /// app-88jb Т6: the migration is no longer players-only — a second
+        /// loop clamps every live MOB's Tilt into the new TiltFallAngle and a
+        /// DOWNED mob's StateTimer into the new DownedSeconds. What it
+        /// deliberately does NOT migrate is MobAiState itself: a fallen body
+        /// neither stands up when the threshold drops nor falls retroactively
+        /// when it rises (see the loop's own doc).
         public void ApplyConfig(in SimConfig next)
         {
             if (!ArenaTopologyMatches(in _config.Arena, in next.Arena, in _config.Hero, in next.Hero,
@@ -626,6 +632,48 @@ namespace Ring.Simulation.Core
                 // one repair-kit channel length, not a per-tier table).
                 p.RepairTimer = math.clamp(p.RepairTimer, 0f, next.Loot.RepairKitChannelSeconds);
                 _players[i] = p;
+            }
+
+            // app-88jb Т6 (spec §3.2, finding D-I5): THE MOB HALF OF THE HOT
+            // TWEAK. Before this task there was no mob pass here at all --
+            // every migration above is a player's -- and the two magnitudes
+            // Т5/Т6 gave a mob are the first ones a retune can leave standing
+            // outside their own new ceiling.
+            //
+            // MobConfigFor reads _config, which `_config = next;` above
+            // already replaced, so these ARE the new archetype's numbers; it
+            // is called rather than a second Type switch written out here,
+            // because "which archetype's numbers" has exactly one home
+            // (rule 2, the same reason SpawnMob resolves through it).
+            //
+            // TWO CLAMPS AND NO THIRD:
+            //   * Tilt into the new [-TiltFallAngle, TiltFallAngle]. Same
+            //     clamp-down-to-the-new-ceiling contract as every player
+            //     magnitude above, and it is signed, so the interval is
+            //     two-sided rather than [0, max].
+            //   * StateTimer of an ALREADY DOWNED body into the new
+            //     DownedSeconds -- otherwise a shortened window would leave a
+            //     mob lying past an end it can never reach. Only the downed
+            //     one: for every other state StateTimer is measured against
+            //     that state's own ceiling (TelegraphSeconds, AttackCooldown),
+            //     and clamping it to DownedSeconds would corrupt a windup.
+            //
+            // Ai IS NOT TOUCHED, and that is the rule, not an omission: a mob
+            // already down does NOT stand up when the threshold is lowered,
+            // and a mob standing does NOT fall retroactively when it is
+            // raised. A balance edit must not resurrect or fell bodies; the
+            // threshold decides falls at the moment of a blow, in TiltSystem,
+            // and nowhere else. ApplyConfig_LoweringTheFallAngle_
+            // DoesNotStandTheFallenUp is the witness, and mutation M6b is the
+            // form this would go wrong in.
+            for (int i = 0; i < _mobCount; i++)
+            {
+                MobState m = _mobs[i];
+                MobSimConfig mcfg = MobConfigFor(m.Type);
+                m.Tilt = math.clamp(m.Tilt, -mcfg.TiltFallAngle, mcfg.TiltFallAngle);
+                if (m.Ai == MobAiState.Downed)
+                    m.StateTimer = math.clamp(m.StateTimer, 0f, mcfg.DownedSeconds);
+                _mobs[i] = m;
             }
         }
 

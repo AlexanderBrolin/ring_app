@@ -10,8 +10,10 @@ namespace Ring.Simulation.Tests
     /// is the subject, so it has to be readable in the same screen as the
     /// assertion (precedent DashRicochetTests.Fixture()).
     ///
-    /// THE LAST THREE TESTS GO THROUGH THE WORLD, and they break that sentence
-    /// on purpose (Т5, spec §4.3 tests 6/7/9). What they witness is that the
+    /// FIVE TESTS GO THROUGH THE WORLD, and they break that sentence on
+    /// purpose: Т5's three (spec §4.3 tests 6/7/9, from
+    /// HitAboveCenterOfMass_TipsAlongTheShot_BelowUndercutsIt on) and Т6's two
+    /// tilt-threshold witnesses (spec tests 8/10). What they witness is that the
     /// moment reaches MobState.TiltVel and that TickAll steps the spring --
     /// properties of the WIRING, which no pure function can show. They still
     /// state no literal of their own: every number they need is READ OFF the
@@ -19,15 +21,25 @@ namespace Ring.Simulation.Tests
     /// cfg.Weapon.ProjectileSpeed), so the two-sources-of-numbers rule holds
     /// and no value from the shipped .asset appears here.
     ///
-    /// `Ai = MobAiState.Idle` IN THOSE THREE IS A STATED STARTING STATE, NOT A
-    /// FREEZE (finding Н-5, caught by a run in Т4 and not by reading). It
-    /// freezes nothing twice over: SimulationWorld.SpawnMob already writes
-    /// that very value into every fresh MobState, and MobAiSystem's
-    /// UpdateChaser Idle branch overwrites it with Chase on its first line
-    /// (MobAiSystem.cs:113-116), because
+    /// THE VERY LAST TEST, ProtocolVersion_IsPinnedToFour, GOES THROUGH NEITHER
+    /// (Т6). It is a wire-domain sentinel, not impact arithmetic: a new
+    /// MobAiState enlarges the Mobs block's nibble domain, and a peer speaking
+    /// the older version refuses the WHOLE block as MalformedContent
+    /// (SnapshotBlocks.cs:510). It lives here because Т6 is the task that grows
+    /// that domain, and a sentinel filed away from its own cause is a sentinel
+    /// nobody re-reads.
+    ///
+    /// `Ai = MobAiState.Idle` IN EVERY TEST HERE THAT SETS IT IS A STATED
+    /// STARTING STATE, NOT A FREEZE (finding Н-5, caught by a run in Т4 and not
+    /// by reading). It freezes nothing twice over: SimulationWorld.SpawnMob
+    /// already writes that very value into every fresh MobState, and
+    /// MobAiSystem's UpdateChaser Idle branch overwrites it with Chase on its
+    /// first line (MobAiSystem.cs:180-183), because
     /// Targeting.NearestAlivePlayer (Targeting.cs:122) has no aggro radius at
     /// all and the collector standing on the spawn ring is a live target from
-    /// tick one.
+    /// tick one. FOR A GUNNER IT IS WEAKER STILL: UpdateGunner never READS
+    /// m.Ai at all and rewrites it every tick from distance alone -- Reposition
+    /// (MobAiSystem.cs:338) or Fire (:349).
     ///
     /// THE MOB THEREFORE WALKS, AND NOTHING HERE ZEROES ITS LOCOMOTION -- the
     /// opposite of ImpactKnockbackTests, which measures Vel and therefore must
@@ -40,6 +52,13 @@ namespace Ring.Simulation.Tests
     /// and at MaxSpeed 5.2 the longest test here (300 ticks = 10 s) covers
     /// ~52 m of that 153 m gap. Zeroing MaxSpeed/Accel would be an edit
     /// without a cause (coordinator R-Т5-1).
+    ///
+    /// Т6's TiltAboveTheThreshold_PutsTheMobDown_AndItGetsUpOnItsOwn IS THE
+    /// DELIBERATE EXCEPTION TO BOTH SENTENCES ABOVE: it takes OpenField()
+    /// (collector at the origin, no spawn ring) and stands the gunner EXACTLY
+    /// at PreferredRange, so the mob engages and fires from tick one. That is
+    /// the whole point -- "a downed mob did not fire" is a witness only if a
+    /// standing one would have fired.
     public class ImpactPhysicsTests
     {
         const float Eps = 1e-4f;
@@ -301,6 +320,113 @@ namespace Ring.Simulation.Tests
                 if (w.Mobs[0].Tilt < 0f) crossed = true;
             }
             Assert.IsTrue(crossed, "крен не качнулся через ноль — режим не колебательный");
+        }
+
+        [Test]
+        public void TiltAboveTheThreshold_PutsTheMobDown_AndItGetsUpOnItsOwn()
+        {
+            // Spec tests 8 and 10. TWO witnesses of the exit, not one: "does
+            // not fire while it is down" and "fires again once it is up" --
+            // a "Downed forever" mutation would pass the first half alone.
+            // THREE round-3 corrections (findings Г-C3 / D-I5), without which
+            // both witnesses were EMPTY:
+            // (1) OpenField(), and the gunner EXACTLY at PreferredRange:
+            //     MobAiSystem.cs:336-347 sends the mob into Reposition and
+            //     returns whenever `dist` falls outside [PreferredRange -
+            //     RangeTolerance, PreferredRange + RangeTolerance] = [7.5,
+            //     10.5] m. Under Open() the collector stands on the spawn ring
+            //     159 m out and the gunner used to stand at 6 m -- it would not
+            //     have fired STANDING either, so "the downed mob did not fire"
+            //     was true under every implementation.
+            // (2) FireInterval pinned by an EXPLICIT fixture to 0.2 s (6 ticks)
+            //     against the 1.2 s (36 ticks) Downed window: at the stock
+            //     1.6 s a standing gunner would not fire ONCE inside that
+            //     window and the witness would be empty again. At 0.2 s a
+            //     standing one fires about six times -- a structural
+            //     difference, not a marginal one.
+            // (3) The count is taken over ProjectileFired EVENTS, not over
+            //     ProjectileCount: a gunner's round covers the 9 m in ~19 ticks
+            //     and disappears, so the live counter would move with no new
+            //     shot fired at all.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Gunner.FireInterval = 0.2f;                 // explicit fixture, see (2)
+            var w = new SimulationWorld(7, cfg);
+            var hero = w.Player; hero.Hp = 1e6f; w.SetPlayerForTest(hero);
+            w.SpawnMobForTest(MobType.Gunner, new float2(cfg.Gunner.PreferredRange, 0f));
+            var m = w.Mobs[0];
+            m.Hp = 1e6f; m.Ai = MobAiState.Fire; m.FireCooldown = 0f;
+            // THE TIMER IS DELIBERATELY LARGE (review finding D-I3): a mob
+            // entering Downed with a fresh StateTimer of about one dt would
+            // stand up just one tick early under the "do not reset the timer"
+            // mutation, and the checkpoint below cannot tell that apart. Five
+            // seconds make the difference structural: with no reset the mob
+            // stands up IMMEDIATELY.
+            m.StateTimer = 5f;
+            m.Tilt = cfg.Gunner.TiltFallAngle + 0.05f; m.TiltVel = 0f;
+            w.SetMobForTest(0, m);
+
+            w.Tick(default);
+            Assert.AreEqual(MobAiState.Downed, w.Mobs[0].Ai, "моб за порогом крена не упал");
+            // The mob got its shot off BEFORE the fall (the AI phase runs ahead
+            // of TiltSystem in the tick, SimulationWorld.cs:388-397) -- that is
+            // legal, so the count runs from this mark rather than from zero.
+            // TickAll never clears the event buffer (ClearEvents is called
+            // explicitly and nowhere else, SimulationWorld.cs:2154), so
+            // TestEvents.CountOf is a CUMULATIVE count across the ticks below.
+            int firedBeforeDown = TestEvents.CountOf(w, SimEventKind.ProjectileFired);
+
+            int downedTicks = SimulationWorld.TicksFromSeconds(cfg.Gunner.DownedSeconds);
+            for (int i = 0; i < downedTicks - 2; i++) w.Tick(default);
+            Assert.AreEqual(MobAiState.Downed, w.Mobs[0].Ai, "моб встал раньше DownedSeconds");
+            Assert.AreEqual(firedBeforeDown, TestEvents.CountOf(w, SimEventKind.ProjectileFired),
+                "лежачий моб стрелял");
+
+            int budget = SimulationWorld.TicksFromSeconds(4f * cfg.Gunner.FireInterval);
+            for (int i = 0; i < budget && w.Mobs[0].Ai == MobAiState.Downed; i++) w.Tick(default);
+            Assert.AreNotEqual(MobAiState.Downed, w.Mobs[0].Ai, "моб не встал после DownedSeconds");
+
+            // SECOND witness of the exit: back on its feet, the mob shoots again.
+            for (int i = 0; i < budget
+                 && TestEvents.CountOf(w, SimEventKind.ProjectileFired) == firedBeforeDown; i++)
+                w.Tick(default);
+            Assert.Greater(TestEvents.CountOf(w, SimEventKind.ProjectileFired), firedBeforeDown,
+                "встав, моб не возобновил огонь — второго свидетеля выхода нет");
+        }
+
+        [Test]
+        public void TiltExactlyAtTheThreshold_DoesNotKnockDown()
+        {
+            // The boundary is STRICT (`>`), and this is the witness for the
+            // `>` -> `>=` mutation.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            w.SpawnMobForTest(MobType.Gunner, new float2(6f, 0f));
+            var m = w.Mobs[0];
+            // `Ai = MobAiState.Idle` HERE IS A STATED STARTING STATE, NOT A
+            // FREEZE (finding Н-5, and see this class's own header): under
+            // Open() the collector stands 159.16 m out, far outside the
+            // gunner's [7.5, 10.5] m band, so UpdateGunner overwrites Idle
+            // with Reposition inside this very tick (MobAiSystem.cs:338). The
+            // assertion below is NEGATIVE, so that changes nothing about what
+            // it witnesses -- but the seam must not be read as a freeze.
+            m.Hp = 1e6f; m.Ai = MobAiState.Idle;
+            m.Tilt = cfg.Gunner.TiltFallAngle; m.TiltVel = 0f;   // EXACTLY the threshold
+            w.SetMobForTest(0, m);
+            w.Tick(default);
+            // THE WITNESS IS ALIVE ONLY UNDER THE "CHECK, THEN STEP" ORDER
+            // (round-3 correction D-C1): under the old "step, then check" a
+            // tilt of exactly 0.9 had already become 0.8347 by the time of the
+            // comparison, and `>` was indistinguishable from `>=` in principle.
+            Assert.AreNotEqual(MobAiState.Downed, w.Mobs[0].Ai, "порог опрокидывания замкнут");
+        }
+
+        [Test]
+        public void ProtocolVersion_IsPinnedToFour()
+        {
+            // Domain sentinel: a new AI state IS A CHANGE OF THE WIRE DOMAIN,
+            // and an older peer would refuse the whole Mobs block as
+            // MalformedContent.
+            Assert.AreEqual(4, Ring.Networking.Protocol.ProtocolVersion.Current);
         }
     }
 }

@@ -10,8 +10,15 @@ namespace Ring.Simulation.Tests
     /// branch table): the two new mob archetypes, Elite and Director, and
     /// the FIVE two-way branches this task owns (Simulation + Protocol —
     /// Presentation's own six are Т31's job, Ф7). Elite reuses the existing
-    /// six-value MobAiState FSM wholesale (Р214) — no new state, so
-    /// MaxMobAiStateValue never moves.
+    /// MobAiState FSM wholesale (Р214) — it adds no state of its own.
+    /// ⚠ This used to read "six-value … no new state, so MaxMobAiStateValue
+    /// never moves", and app-88jb Т6 canceled the tail: MobAiState grew
+    /// `Downed` (a body past TiltFallAngle stops acting, whichever archetype
+    /// it is), MaxMobAiStateValue moved to it and ProtocolVersion went 3 → 4.
+    /// Р214 survives intact — Downed is nobody's archetype state — but the
+    /// count and the "never moves" were stated as facts and are facts no
+    /// longer. The sweep below still witnesses SIX states, because the six
+    /// are the ones an Elite reaches by fighting; nothing here fells it.
     ///
     /// Fixture numbers throughout are DELIBERATELY NOT spec §3.13's real
     /// MobEliteConfig/MobDirectorConfig asset numbers (Elite MaxHp 120/
@@ -123,10 +130,20 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void EliteUsesAllSixAiStates_OverDistanceSweep()
+        public void EliteUsesTheSixFightingAiStates_OverDistanceSweep()
         {
-            // Spec Р214: no new MobAiState is added — Elite is documented
-            // to visit all six EXISTING values over the course of a fight.
+            // RENAMED by app-88jb Т6 (was EliteUsesAllSixAiStates_
+            // OverDistanceSweep): "all six" claimed the domain WAS six, and
+            // Т6 made MobAiState seven values wide by adding Downed. What
+            // this method actually witnesses is unchanged and is what the new
+            // name says — the six states an Elite reaches BY FIGHTING. Downed
+            // is not among them and cannot be: nothing here damages the mob,
+            // so its tilt never passes TiltFallAngle. Precedent for renaming
+            // rather than letting a name go stale: ProtocolVersion_Current_
+            // IsPinnedToTwo → …ToThree → …ToFour.
+            //
+            // Spec Р214: Elite adds no MobAiState of its own — it is
+            // documented to visit all six FIGHTING values over a fight.
             // Two fixed-distance sub-runs sweep the domain rather than one
             // continuously-moving mob (the exact distance thresholds the
             // eventual dispatch picks are a GREEN/Step-3 decision, not
@@ -136,7 +153,8 @@ namespace Ring.Simulation.Tests
             // already relies on) and a far spawn drives the gunner half
             // (Idle -> Reposition -> Fire, same setup
             // Gunner_KeepsPreferredRange_AndFiresOnlyWithLoS already relies
-            // on). Their UNION is the six-state domain.
+            // on). Their UNION is those six fighting states — which was the
+            // whole MobAiState domain until Т6 added Downed beside them.
             //
             // Mutation: whatever Step 3 dispatch MobAiSystem.Update grows
             // for Elite, reverting it back to today's two-way

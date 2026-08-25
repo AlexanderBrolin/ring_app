@@ -12,7 +12,7 @@ namespace Ring.Networking.Protocol
     /// BUMP THIS ONLY DELIBERATELY. Client and server read the same constant
     /// from the same build, so a bump is invisible in a single-build test run
     /// and only shows up as "every snapshot refused" against an older peer.
-    /// SnapshotCodecTests.ProtocolVersion_Current_IsPinnedToThree pins the
+    /// SnapshotCodecTests.ProtocolVersion_Current_IsPinnedToFour pins the
     /// literal for exactly that reason: the value cannot drift without a
     /// human editing a test that says, in words, that this is a
     /// compatibility break.
@@ -63,8 +63,36 @@ namespace Ring.Networking.Protocol
     ///   one-byte liveness block". Adding five new block KINDS in the same
     ///   task needed no bump at all (Р282, the rule's own exception); the
     ///   widening is what would have.
+    ///
+    ///   3 → 4 (app-88jb Т6, spec §3.2): the DOMAIN of `MobAiState` grew by
+    ///   `Downed` = 6 inside the existing Mobs block — a body tipped past
+    ///   MobSimConfig.TiltFallAngle stops steering, striking and firing until
+    ///   DownedSeconds is up, and that state rides the record's ai nibble like
+    ///   any other. Same rule as both entries above, not its exception: no new
+    ///   block kind was added, so an older reader does not skip and count
+    ///   anything — it validates the ai nibble against its own
+    ///   `SnapshotBlocks.MaxMobAiStateValue` (now `Downed`, was `Fire`) and
+    ///   rejects the WHOLE Mobs BLOCK, not one record
+    ///   (SnapshotBlocks.TryReadMobsBlock returns `MalformedContent` for the
+    ///   block). ⚠ THAT IS WHY THIS IS NOT A DEBT TO PAY LATER: to an old
+    ///   client every mob in the arena would simply vanish the first time any
+    ///   one of them fell over. The handshake could not catch it either — the
+    ///   tilt numbers reach SimConfigHash only with Т11a, and MobAiState is
+    ///   not hashed there at all, so an old client would pass the config check
+    ///   and then lose the Mobs block. The bump is what turns that into an
+    ///   honest `HandshakeRefusal.ProtocolVersionMismatch`.
+    ///
+    ///   3 → 4, SECOND REASON RESERVED (app-88jb Т16): the `MaxAimHeight`
+    ///   scale is retuned there, which changes the MEANING of the aim-height
+    ///   byte already on the wire — by the rule above that is a break of its
+    ///   own. It will ride THIS same 4 and needs no second bump, for the
+    ///   reason the 2 → 3 SECOND REASON entry states in full: both breaks land
+    ///   inside one unreleased epic, and there is no peer that ever spoke "4
+    ///   with the old MaxAimHeight scale". ⚠ When Т16 lands, it appends its
+    ///   sentence to THIS entry rather than bumping — that is the whole point
+    ///   of reserving the place here.
     public static class ProtocolVersion
     {
-        public const byte Current = 3;
+        public const byte Current = 4;
     }
 }

@@ -43,6 +43,66 @@ namespace Ring.Simulation.AI
                 // about a mob that is already outside would TELEPORT it in.
                 float leashRing = LeashRingFor(in m, in arena, phase);
 
+                // app-88jb Т6 (spec §3.2, coordinator Ruling 20): THE EXIT
+                // FROM Downed LIVES HERE, ahead of the dispatch by MobType
+                // below, and NOT in UpdateChaser's `switch (m.Ai)`. Three
+                // reasons, all read off this file:
+                //   * a Gunner never enters UpdateChaser at all, so a branch
+                //     there could not keep one from firing while it is down;
+                //   * UpdateGunner never READS m.Ai and rewrites it every
+                //     tick regardless (Reposition :338 / Fire :349, by
+                //     distance alone), so it would overwrite Downed on the
+                //     very next tick -- and UpdateChaser's own `default:` arm
+                //     (:304-308) would do the same to a downed Chaser, and to
+                //     a downed Elite inside AttackRange, resetting it to
+                //     Chase. All four archetypes, not one;
+                //   * the entry lives in TiltSystem, where the tilt is
+                //     integrated; splitting the exit into one archetype's arm
+                //     would give one state two unrelated homes.
+                // The SHAPE is the "nobody alive" guard's, a few lines below:
+                // a state that cancels the archetype FSM wholesale is settled
+                // before the dispatch picks one, and leaves through `continue`.
+                //
+                // WHAT THIS GUARD CANCELS IS THE ARCHETYPE FSM, NOT THE TICK
+                // (coordinator Ruling 22, lesson 512 -- a doc that promises
+                // more than it delivers is a defect at birth). A downed body
+                // neither steers, nor strikes, nor fires, and it never calls
+                // ApplyMotion, so it advances no Pos of its own. It is still
+                // acted upon: SeparationSystem runs right after this loop and
+                // can push it out of geometry through Geometry.Depenetrate,
+                // and TiltSystem keeps walking its spring. "Downed" is a
+                // canceled decision, not a frozen body.
+                //
+                // AHEAD OF THE "NOBODY ALIVE" GUARD ON PURPOSE. That guard
+                // writes m.Ai = Idle and m.StateTimer = 0f unconditionally,
+                // so behind it a downed mob would pop upright the moment the
+                // last collector died or extracted -- and, because the guard
+                // fires again every such tick, its timer would re-zero
+                // forever. Ordering here is by how much of the FSM the state
+                // leaves standing: Downed (nothing) before no-target
+                // (movement only) before the archetype FSM.
+                //
+                // Vel IS BLED OFF, NOT LEFT ALONE AND NOT SNAPPED TO ZERO
+                // (coordinator Ruling 23), with the same DecayVelocity line
+                // the guard below uses. Leaving it alone is not neutral:
+                // SeparationSystem adds into Vel with `+=` and no ceiling, so
+                // across a whole Downed window an untouched Vel is an
+                // accumulator with no drain, and the body would launch on its
+                // feet. At Accel * dt the drain is 0.83 m/s per tick against a
+                // MaxSpeed of 4, so any legal speed is gone within five ticks
+                // of the 36.
+                if (m.Ai == MobAiState.Downed)
+                {
+                    m.StateTimer += dt;
+                    if (m.StateTimer >= cfg.DownedSeconds)
+                    {
+                        m.Ai = MobAiState.Idle;
+                        m.StateTimer = 0f;
+                    }
+                    m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
+                    continue;
+                }
+
                 // Stage 2 Task 8: target selection now goes through
                 // NearestAlivePlayer (from THIS mob's own position) instead of
                 // the old solo-only w.Player — for a solo world (PlayerCount
@@ -88,9 +148,16 @@ namespace Ring.Simulation.AI
                     // Chaser (melee windup + strike, Chase/Telegraph/
                     // Recover); outside it holds/kites like a Gunner
                     // (Reposition to PreferredRange, Fire under LoS). Both
-                    // archetypes share this same six-value MobAiState the
-                    // other two already use (Р214) — MaxMobAiStateValue
-                    // does not move. Director never leaving the arena core
+                    // archetypes share the same MobAiState the other two
+                    // already use, adding no state of their own (Р214).
+                    // ⚠ This used to end "— six-value … MaxMobAiStateValue
+                    // does not move", and app-88jb Т6 canceled both halves:
+                    // Downed joined the enum and MaxMobAiStateValue moved to
+                    // it, with ProtocolVersion 3 → 4 in the same commit. Р214
+                    // still holds, because Downed is nobody's archetype state
+                    // — it is what any body past TiltFallAngle does, and the
+                    // gate at the top of Update is where it is served.
+                    // Director never leaving the arena core
                     // (Р248) is NOT decided here: since Т22 it is enforced
                     // in ApplyMotion below (LeashToRing), the one place
                     // every mob's motion lands. This switch only decides HOW

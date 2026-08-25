@@ -333,6 +333,56 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void ApplyConfig_LoweringTheFallAngle_DoesNotStandTheFallenUp()
+        {
+            // THE MOB PHASE of the hot tweak (app-88jb Т6, finding D-I5):
+            // today ApplyConfig has NO MOB PASS AT ALL -- its only loop runs
+            // over _players (SimulationWorld.cs:548-630), which is also why
+            // the reflective clamp pass above reflects over PlayerState and
+            // over nothing else. Two halves, one witness each:
+            //   * a mob already down does NOT get up retroactively when the
+            //     threshold is lowered -- otherwise a balance edit would
+            //     resurrect bodies;
+            //   * its tilt DOES clamp into the new maximum, the same
+            //     clamp-down-to-the-new-ceiling contract every player
+            //     magnitude in ApplyConfig already keeps;
+            //   * and so does the StateTimer of an already-downed body, into
+            //     the new DownedSeconds -- otherwise a shortened window would
+            //     leave a mob lying past an end it can never reach.
+            // THE THIRD ASSERT LIVES HERE RATHER THAN IN A TEST OF ITS OWN
+            // (implementer's call, coordinator's open question of Step 4):
+            // this method already builds the exact fixture that witness needs
+            // -- a mob IN Downed, with a live StateTimer, and a `tighter`
+            // config to migrate onto -- so a separate test would restate the
+            // whole setup for one assertion (rule 2). Without it the timer
+            // clamp would be a branch with no victim: deleting its line leaves
+            // every other assertion here green.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            w.SpawnMobForTest(MobType.Gunner, new float2(6f, 0f));
+            var m = w.Mobs[0];
+            m.Hp = 1e6f; m.Ai = MobAiState.Downed; m.StateTimer = 0.1f; m.Tilt = 1.2f;
+            w.SetMobForTest(0, m);
+
+            // SimConfig and MobSimConfig are both structs (SimConfig.cs:740,
+            // :118), so this is a copy by value and `cfg` keeps the old angle.
+            SimConfig tighter = cfg;
+            tighter.Gunner.TiltFallAngle = 0.4f;
+            // The window is shortened BELOW the timer the mob is carrying
+            // (0.1 s above), so the clamp has to bite -- a ceiling the value
+            // already fits under would witness nothing.
+            tighter.Gunner.DownedSeconds = 0.05f;
+            w.ApplyConfig(tighter);
+
+            Assert.AreEqual(MobAiState.Downed, w.Mobs[0].Ai, "хот-твик поднял упавшего");
+            Assert.LessOrEqual(math.abs(w.Mobs[0].Tilt), 0.4f, "крен не заклампен в новый максимум");
+            // Expectation stated as the fixture's own field, never as a
+            // repeated literal (two-sources-of-numbers rule).
+            Assert.LessOrEqual(w.Mobs[0].StateTimer, tighter.Gunner.DownedSeconds,
+                "таймер лежачего не заклампен в новое окно DownedSeconds");
+        }
+
+        [Test]
         public void HotTweak_WallChange_Throws()
         {
             // Stage 2 Task 14 (spec §3.3): ArenaTopologyMatches grows a wall
