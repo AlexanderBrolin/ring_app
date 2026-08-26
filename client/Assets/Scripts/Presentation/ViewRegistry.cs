@@ -502,9 +502,12 @@ namespace Ring.Presentation
         /// retirement pass where the doll's slot used to sit, rather than
         /// merging into it.
         ///
-        /// Only the two kinds the doll reacts to are routed, and the index each
-        /// one names is a per-KIND convention off `SimEvent.PlayerIndex`'s own
-        /// doc, not one rule:
+        /// THREE kinds are routed here as of bd `app-9m57`, which added the
+        /// third — this paragraph used to open "Only the two kinds the doll
+        /// reacts to are routed", and app-9m57 is what cancels that count,
+        /// not the rule underneath it: the index each kind names is still a
+        /// per-KIND convention off `SimEvent.PlayerIndex`'s own doc, not one
+        /// rule shared by all three:
         ///  - `PlayerDied` — VICTIM ("PlayerDamaged/PlayerDied (mirrors
         ///    EntityId's convention for those two kinds)"), i.e. the player who
         ///    died, which is the doll that must play Death01. Taking the
@@ -512,7 +515,13 @@ namespace Ring.Presentation
         ///  - `ProjectileFired` — ACTOR ("the five 'own-action' kinds
         ///    ProjectileFired, … / SpawnProjectile's ownerIndex"), i.e. the
         ///    shooter, which is the doll that must replay Pistol_Shoot. A mob's
-        ///    round carries `ProjectileIds.NoOwner` and names no doll at all.
+        ///    round carries `ProjectileIds.NoOwner` and names no doll at all;
+        ///  - `PlayerDamaged` — VICTIM, the SAME convention and the same
+        ///    quoted doc line as `PlayerDied` above, i.e. the player who took
+        ///    the blow: `PlayerVisual.SetHitDir` needs `e.HitDir` to give the
+        ///    body's tilt (`PlayerState.Tilt`, authoritative magnitude, no
+        ///    direction of its own) an axis to tip around. Taking the
+        ///    ATTACKER here would tilt the shooter instead of the one hit.
         /// An event naming a slot with no live doll is ignored, which on the
         /// networked backend is the ORDINARY `PlayerDied` and not every one of
         /// them (Stage 2 Task 47a fix-round 1 — this paragraph used to say
@@ -538,6 +547,11 @@ namespace Ring.Presentation
         /// networked backend therefore had no corpses at all (`app-2rf`) — and
         /// keeping this path is not redundancy: it is the only maker of a body
         /// on the frames where the picture never carried the death.
+        /// `PlayerDamaged` shares that same "no live doll, no-op" refusal for
+        /// a different reason than the two kinds above (bd `app-9m57`): it
+        /// makes no corpse and plays no one-shot, so a missed doll costs
+        /// nothing but the axis for a hit-tilt this same frame's absent
+        /// `Sync` was never going to draw anyway.
         public void HandlePlayerEvent(in SimEvent e)
         {
             switch (e.Kind)
@@ -546,6 +560,15 @@ namespace Ring.Presentation
                     DispatchToDoll(e.PlayerIndex, in e, death: true);
                     break;
                 case SimEventKind.ProjectileFired:
+                    DispatchToDoll(e.PlayerIndex, in e, death: false);
+                    break;
+                case SimEventKind.PlayerDamaged:
+                    // bd `app-9m57`: VICTIM convention (this method's own doc
+                    // above), same DispatchToDoll → PlayerVisual.HandleEvent
+                    // path the other two kinds already use — one dispatch
+                    // mechanism, not a second lookup grown next to it.
+                    // `death: false` — a hit is not a death, and `IntoCorpse`
+                    // must not run off this kind.
                     DispatchToDoll(e.PlayerIndex, in e, death: false);
                     break;
             }
