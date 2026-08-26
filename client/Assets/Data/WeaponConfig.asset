@@ -31,3 +31,4 @@ MonoBehaviour:
   AmmoStart: 120
   AmmoMax: 400
   EmergencyFireInterval: 1.25
+  ProjectileMass: 2.6

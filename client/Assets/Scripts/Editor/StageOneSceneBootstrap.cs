@@ -512,6 +512,71 @@ namespace Ring.Editor
             if (eliteCreated && ApplyEliteDefaults(elite)) EditorUtility.SetDirty(elite);
             if (directorCreated && ApplyDirectorDefaults(director)) EditorUtility.SetDirty(director);
 
+            // app-88jb Т11a (owner decision Р432): the six shipped balance
+            // sheets predate the impact-physics block Т1 appended to their
+            // C# classes. ApplyEliteDefaults/ApplyDirectorDefaults above
+            // only fire on first creation (`eliteCreated`/`directorCreated`),
+            // and both MobEliteConfig.asset/MobDirectorConfig.asset were
+            // committed on 2026-08-24 -- neither call has ever fired for
+            // them, so their impact fields still read MobConfig's chaser-
+            // shaped C# defaults (Mass 90, CenterOfMassHeight 1.17) at load
+            // time. Same story for HeroConfig/WeaponConfig/MobChaserConfig/
+            // MobGunnerConfig.asset: all six were committed before Т1's
+            // fields existed at all.
+            //
+            // Coordinator Ruling 55: the spec's own doc draft called this
+            // delivery UNCONDITIONAL, reasoning "SetIfDifferent keeps it
+            // silent" once the owner's numbers are in place -- but
+            // SetIfDifferent only stays silent on EQUALITY; a hand-tune away
+            // from these literals (e.g. Elite.Mass 260 -> 300 at milestone
+            // В1) would read back as "different" and get stomped right back
+            // to 260 on the very next Apply. ApplyGunnerDefaults paid for
+            // exactly this bug once already (its own doc, F-5 fix-round) --
+            // this gate is that fix, applied here before the same mistake
+            // ships a second time.
+            //
+            // Gate shape: one boolean, OR'd across all six assets' own
+            // committed text, mirroring gunnerMarkerPresent's "read the
+            // asset's TEXT before any EnsureAssetHasKey/SetDirty/SaveAssets
+            // call below can touch it" rule, and matching ApplyImpactNumbers'
+            // own one-call-for-six-assets shape (stageTwoPending's "one text
+            // on three assets" precedent sanctions either a shared or a
+            // per-asset gate here). OR is the only sound combinator: the
+            // gate must stay open as long as ANY of the six has not yet
+            // received the block, and re-running SetIfDifferent against an
+            // asset that already carries its number is already a no-op.
+            // "Mass:"/"ProjectileMass:" cannot appear in any of these six
+            // files before this task (verified against the committed
+            // assets: zero hits today) and is permanent once written, so the
+            // gate closes for good the run this delivers and never reopens.
+            //
+            // SetDirty runs on all six below whenever ApplyImpactNumbers
+            // reports a change ANYWHERE, not per-asset like
+            // gunnerChanged/arenaChanged above -- unlike that precedent's own
+            // bug (Fix-round 1, I-2: dirtying only `arena` silently dropped
+            // real edits already written to `wave`/`gameFeel`), over-dirtying
+            // here costs nothing: the marker-key block just below
+            // (EnsureAssetHasKey) independently SetDirty's every one of
+            // these six anyway on this very run, so a redundant SetDirty on
+            // an asset ApplyImpactNumbers left untouched only means Unity
+            // re-serializes identical bytes.
+            bool impactNumbersPending =
+                !System.IO.File.ReadAllText($"{DataDir}/HeroConfig.asset").Contains("Mass:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/WeaponConfig.asset").Contains("ProjectileMass:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobChaserConfig.asset").Contains("Mass:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobGunnerConfig.asset").Contains("Mass:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobEliteConfig.asset").Contains("Mass:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobDirectorConfig.asset").Contains("Mass:");
+            if (impactNumbersPending && ApplyImpactNumbers(hero, weapon, chaser, gunner, elite, director))
+            {
+                EditorUtility.SetDirty(hero);
+                EditorUtility.SetDirty(weapon);
+                EditorUtility.SetDirty(chaser);
+                EditorUtility.SetDirty(gunner);
+                EditorUtility.SetDirty(elite);
+                EditorUtility.SetDirty(director);
+            }
+
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
 
@@ -835,24 +900,33 @@ namespace Ring.Editor
             // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
             // field's own doc for the fuller history; HeroConfig's marker is
-            // `MaxInventoryItems` as of Stage 3 Task 4 (the backpack's two
-            // capacity numbers, the class's new last field) — was
-            // `PickupRadius` (Stage 3 Task 3, auto-pickup collection radius)
-            // before that, `EdgeRequestMinTicks` (Stage 2 Task 8/9,
+            // `TiltGain` as of app-88jb Т11a (owner decision Р432, the
+            // impact-physics block Т1 appended to the class — see
+            // TiltGain's own sync-marker comment) — was `MaxInventoryItems`
+            // (Stage 3 Task 4, the backpack's two capacity numbers) before
+            // that, `PickupRadius` (Stage 3 Task 3, auto-pickup collection
+            // radius) before THAT, `EdgeRequestMinTicks` (Stage 2 Task 8/9,
             // edge-request rate limiting) before THAT, `LinkRefund` (В1
             // fix-wave 3, owner economy rework) before THAT,
             // `AimSettleSeconds` (Task 17) before THAT;
-            // WeaponConfig's marker moves to `EmergencyFireInterval` as of
-            // Stage 3 Task 2 (spec Р261's ammo economy — the class's new last
-            // field) — was `RunSpreadSpeedFrac` (Task 17) before that. Owner
-            // decision R-4: the plan body assigned this relocation to Т12, but
-            // the marker is always the class's LAST declared field, so it has
-            // to move in the SAME task that appends the field or new fields
-            // silently fail to reach a committed `.asset` even with every
-            // test green (the errata E-7 precedent for Т3/Т4/Т8's own marker
-            // moves) — Т12 stays a values-only delivery task. MobConfig's
-            // marker field is unchanged since Task 17, so any asset committed
-            // before that task predates it and self-heals on this Apply;
+            // WeaponConfig's marker is `ProjectileMass` as of the SAME
+            // app-88jb Т11a (same impact-physics block, the class's new last
+            // field — see ProjectileMass's own sync-marker comment) — was
+            // `EmergencyFireInterval` (Stage 3 Task 2, spec Р261's ammo
+            // economy) before that, `RunSpreadSpeedFrac` (Task 17) before
+            // THAT. Owner decision R-4: the plan body assigned the
+            // EmergencyFireInterval relocation to Т12, but the marker is
+            // always the class's LAST declared field, so it has to move in
+            // the SAME task that appends the field or new fields silently
+            // fail to reach a committed `.asset` even with every test green
+            // (the errata E-7 precedent for Т3/Т4/Т8's own marker moves) —
+            // Т12 stayed a values-only delivery task, and Т11a follows the
+            // same rule for the impact-physics block below. MobConfig's
+            // marker is `DownedSeconds` as of the SAME app-88jb Т11a (its
+            // own class's new last field) — was unchanged since Task 17
+            // (`SwingLeadMaxMeters`) until Т1's nine impact-physics fields
+            // landed after it, so every MobConfig asset committed before
+            // Т11a predates the marker and self-heals on this Apply;
             // ArenaConfig's marker is `MaxContainerSlots` as of Stage 3 Task 8
             // (per-match container-slot cap, the class's new last field) —
             // was `MaxPickups` (Stage 3 Task 3, per-match pickup cap) before
@@ -863,10 +937,10 @@ namespace Ring.Editor
             // asset carries each superseded key already, so leaving the
             // marker on any of them would have left the newer field unable
             // to reach the file at all).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "MaxInventoryItems"); // Stage 3 Task 4 (was PickupRadius, Stage 3 Task 3)
-            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "EmergencyFireInterval"); // Stage 3 Task 2 (was RunSpreadSpeedFrac, Task 17)
-            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "SwingLeadMaxMeters");
-            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "SwingLeadMaxMeters");
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "TiltGain"); // app-88jb Т11a (was MaxInventoryItems, Stage 3 Task 4)
+            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "ProjectileMass"); // app-88jb Т11a (was EmergencyFireInterval, Stage 3 Task 2)
+            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Stage 3 Task 12)
+            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Stage 3 Task 12)
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
@@ -895,16 +969,25 @@ namespace Ring.Editor
             // fuller account).
             EditorBootstrapUtils.EnsureAssetHasKey(visibility, $"{DataDir}/VisibilityConfig.asset",
                 "ContainerRadiusForVisibility"); // Stage 3 Task 13 (was HearPositionGridMeters, Stage 2 Task 22)
-            // Stage 3 Task 12: the two new MobConfig assets join the same
-            // mechanism their two older siblings use, with MobConfig's own
-            // marker field — brand-new assets on this run, so these are
-            // one-time onboardings, not migrations. MatchFlowConfig joins for
-            // the first time with DirectorReserveSlots, its class's own last
-            // field.
+            // Stage 3 Task 12: MatchFlowConfig joins the marker mechanism
+            // for the first time here, with DirectorReserveSlots (its
+            // class's own last field) — a brand-new asset on this run, a
+            // one-time onboarding, not a migration.
+            //
+            // app-88jb Т11a: Elite/Director's own marker just below is now a
+            // MIGRATION, not the Task 12 onboarding this comment used to
+            // describe them as — both assets have been committed since
+            // 2026-08-24, and Т1 appended nine impact-physics fields after
+            // SwingLeadMaxMeters in MobConfig, so DownedSeconds (the class's
+            // new last field, same rename Chaser/Gunner's own calls above
+            // get) replaces it here too — same "append, don't reshuffle"
+            // migration lesson 40 has already cost this codebase four times
+            // (VisibilityConfig's own comment just above has the fuller
+            // account).
             EditorBootstrapUtils.EnsureAssetHasKey(elite, $"{DataDir}/MobEliteConfig.asset",
-                "SwingLeadMaxMeters"); // Stage 3 Task 12
+                "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Stage 3 Task 12)
             EditorBootstrapUtils.EnsureAssetHasKey(director, $"{DataDir}/MobDirectorConfig.asset",
-                "SwingLeadMaxMeters"); // Stage 3 Task 12
+                "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Stage 3 Task 12)
             EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
                 "DirectorReserveSlots"); // Stage 3 Task 12
             // Stage 3 Task 13: the item catalog and loot balance sheet join
@@ -2666,6 +2749,17 @@ namespace Ring.Editor
         /// TiltDampingRatio 0.55, TiltSettleSeconds 0.9, TiltFallAngle 0.9
         /// and DownedSeconds 1.2 are the shared archetype numbers, identical
         /// on every mob body in today's roster.
+        ///
+        /// app-88jb Т11a (coordinator Ruling 54): those nine fields no
+        /// longer sit here as nine literals -- they delegate to
+        /// ApplyMobImpactDefaults below, the ONE home for the impact block
+        /// Chaser/Gunner/Elite/Director all share. Restating the same nine
+        /// numbers a second time here (spec Т11a's own literal draft) would
+        /// have opened a second home for them, the exact THIRD-place-to-
+        /// keep-in-sync shape ApplyStageTwoBalance's own doc already warns
+        /// against. The two that vary by archetype (Mass, CenterOfMassHeight)
+        /// are still 260f/1.78f right below; the other seven are
+        /// ApplyMobImpactDefaults' own literals now, not restated here.
         internal static bool ApplyEliteDefaults(MobConfig m)
         {
             bool changed = false;
@@ -2699,15 +2793,7 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
             changed |= SetIfDifferent(ref m.SwingLeadFactor, 1.0f);
             changed |= SetIfDifferent(ref m.SwingLeadMaxMeters, 2.0f);
-            changed |= SetIfDifferent(ref m.Mass, 260f);
-            changed |= SetIfDifferent(ref m.ImpactSpeedCap, 6f);
-            changed |= SetIfDifferent(ref m.ProjectileMass, 3.0f);
-            changed |= SetIfDifferent(ref m.CenterOfMassHeight, 1.78f);
-            changed |= SetIfDifferent(ref m.TiltDampingRatio, 0.55f);
-            changed |= SetIfDifferent(ref m.TiltSettleSeconds, 0.9f);
-            changed |= SetIfDifferent(ref m.TiltGain, 10.5f);
-            changed |= SetIfDifferent(ref m.TiltFallAngle, 0.9f);
-            changed |= SetIfDifferent(ref m.DownedSeconds, 1.2f);
+            changed |= ApplyMobImpactDefaults(m, 260f, 1.78f);
             return changed;
         }
 
@@ -2737,6 +2823,15 @@ namespace Ring.Editor
         /// Elite's own (ApplyEliteDefaults' own doc above carries the full
         /// sourcing) and is not repeated here — same "only the differences
         /// are written here" rule.
+        ///
+        /// app-88jb Т11a (coordinator Ruling 54): the two overrides above
+        /// now go through ApplyMobImpactDefaults too, same helper
+        /// ApplyEliteDefaults calls one level up -- `(4000f, 2.31f)` here
+        /// against its own `(260f, 1.78f)` -- rather than two raw
+        /// SetIfDifferent calls. The other seven fields ApplyEliteDefaults(m)
+        /// already set via that same helper a moment ago are re-set here to
+        /// the identical literals, which SetIfDifferent finds unchanged and
+        /// no-ops; only Mass/CenterOfMassHeight actually move.
         internal static bool ApplyDirectorDefaults(MobConfig m)
         {
             bool changed = ApplyEliteDefaults(m);
@@ -2747,8 +2842,85 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.TelegraphSeconds, 1.1f);
             changed |= SetIfDifferent(ref m.AttackRange, 2.8f);
             changed |= SetIfDifferent(ref m.PreferredRange, 9f);
-            changed |= SetIfDifferent(ref m.Mass, 4000f);
-            changed |= SetIfDifferent(ref m.CenterOfMassHeight, 2.31f);
+            changed |= ApplyMobImpactDefaults(m, 4000f, 2.31f);
+            return changed;
+        }
+
+        /// app-88jb Т11a (owner decision Р432, coordinator Ruling 54): the
+        /// ONE home for the nine impact-physics fields shared by every mob
+        /// archetype -- only Mass and CenterOfMassHeight actually vary
+        /// per-archetype (spec §3.2's own table), so those two are
+        /// parameters and the other seven stay literals here, nowhere else.
+        /// Without this helper, ApplyImpactNumbers below would have had to
+        /// restate all nine numbers a second time for Chaser/Gunner on top
+        /// of ApplyEliteDefaults already carrying them for Elite -- a THIRD
+        /// place to keep them in sync (C# defaults, TestConfigs, and now
+        /// this), exactly the shape ApplyStageTwoBalance's own doc warns
+        /// against. ApplyEliteDefaults/ApplyDirectorDefaults above both
+        /// delegate here now instead of restating the block inline -- same
+        /// "the shared profile has ONE home" rule ApplyDirectorDefaults
+        /// already applies to ApplyEliteDefaults one level up (its own doc:
+        /// "Calling ApplyEliteDefaults first is the point").
+        static bool ApplyMobImpactDefaults(MobConfig m, float mass, float centerOfMassHeight)
+        {
+            bool changed = false;
+            changed |= SetIfDifferent(ref m.Mass, mass);
+            changed |= SetIfDifferent(ref m.ImpactSpeedCap, 6f);
+            changed |= SetIfDifferent(ref m.ProjectileMass, 3.0f);
+            changed |= SetIfDifferent(ref m.CenterOfMassHeight, centerOfMassHeight);
+            changed |= SetIfDifferent(ref m.TiltDampingRatio, 0.55f);
+            changed |= SetIfDifferent(ref m.TiltSettleSeconds, 0.9f);
+            changed |= SetIfDifferent(ref m.TiltGain, 10.5f);
+            changed |= SetIfDifferent(ref m.TiltFallAngle, 0.9f);
+            changed |= SetIfDifferent(ref m.DownedSeconds, 1.2f);
+            return changed;
+        }
+
+        /// app-88jb Т11a (owner decision Р432, spec §3.2): delivers the
+        /// impact-physics block to the six shipped balance sheets that
+        /// predate it, so milestone В1 is playtested on the numbers the
+        /// epic actually chose rather than on MobConfig's chaser-shaped
+        /// class defaults (task-11a brief's own finding: without this,
+        /// MobEliteConfig.asset/MobDirectorConfig.asset would load with
+        /// Mass 90/CenterOfMassHeight 1.17, and a Chaser-tier headshot would
+        /// drop the Director). Chaser/Gunner/Elite/Director all delegate to
+        /// ApplyMobImpactDefaults above -- the ONE home for the seven
+        /// numbers they share (Ruling 54). Hero and Weapon set their own
+        /// smaller blocks directly here: Hero carries CocoonDamping instead
+        /// of ProjectileMass (the collector's own projectile is the
+        /// WEAPON's, not the hero body's) and Weapon carries only
+        /// ProjectileMass (it has no tilt spring at all).
+        ///
+        /// NOT unconditional, despite an earlier spec draft's wording
+        /// (coordinator Ruling 55): SetIfDifferent silently REVERTS a
+        /// hand-tune that moved a field away from these literals, it does
+        /// not silently accept it -- so the call site above gates this
+        /// behind `impactNumbersPending`, a one-time backfill exactly like
+        /// ApplyGunnerZoneDefaults' own `gunnerMarkerPresent` gate. Once
+        /// every one of the six assets carries its own marker, this method
+        /// never runs again, and an owner hand-tune at milestone В1 is safe.
+        ///
+        /// Returns whether anything changed -- the caller owns SetDirty/
+        /// SaveAssets (precedent ApplyItemCatalogIdShift and every
+        /// Apply*Defaults in this file).
+        static bool ApplyImpactNumbers(HeroConfig hero, WeaponConfig weapon,
+            MobConfig chaser, MobConfig gunner, MobConfig elite, MobConfig director)
+        {
+            bool changed = false;
+            changed |= SetIfDifferent(ref hero.Mass, 120f);
+            changed |= SetIfDifferent(ref hero.ImpactSpeedCap, 6f);
+            changed |= SetIfDifferent(ref hero.CocoonDamping, 3f);
+            changed |= SetIfDifferent(ref hero.CenterOfMassHeight, 0.95f);
+            changed |= SetIfDifferent(ref hero.TiltDampingRatio, 0.55f);
+            changed |= SetIfDifferent(ref hero.TiltSettleSeconds, 0.9f);
+            changed |= SetIfDifferent(ref hero.TiltGain, 10.5f);
+
+            changed |= SetIfDifferent(ref weapon.ProjectileMass, 2.6f);
+
+            changed |= ApplyMobImpactDefaults(chaser, 90f, 1.17f);
+            changed |= ApplyMobImpactDefaults(gunner, 70f, 1.78f);
+            changed |= ApplyMobImpactDefaults(elite, 260f, 1.78f);
+            changed |= ApplyMobImpactDefaults(director, 4000f, 2.31f);
             return changed;
         }
 

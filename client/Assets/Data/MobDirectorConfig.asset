@@ -42,3 +42,12 @@ MonoBehaviour:
   MuzzleHeight: 0.95
   SwingLeadFactor: 1
   SwingLeadMaxMeters: 2
+  Mass: 4000
+  ImpactSpeedCap: 6
+  ProjectileMass: 3
+  CenterOfMassHeight: 2.31
+  TiltDampingRatio: 0.55
+  TiltSettleSeconds: 0.9
+  TiltGain: 10.5
+  TiltFallAngle: 0.9
+  DownedSeconds: 1.2

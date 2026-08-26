@@ -56,3 +56,10 @@ MonoBehaviour:
   PickupRadius: 2
   InventoryCapacity: 8
   MaxInventoryItems: 16
+  Mass: 120
+  ImpactSpeedCap: 6
+  CocoonDamping: 3
+  CenterOfMassHeight: 0.95
+  TiltDampingRatio: 0.55
+  TiltSettleSeconds: 0.9
+  TiltGain: 10.5
