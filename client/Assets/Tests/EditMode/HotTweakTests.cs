@@ -376,11 +376,14 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ApplyConfig_LoweringTheFallAngle_DoesNotStandTheFallenUp()
         {
-            // THE MOB PHASE of the hot tweak (app-88jb Т6, finding D-I5):
-            // today ApplyConfig has NO MOB PASS AT ALL -- its only loop runs
-            // over _players (SimulationWorld.cs:548-630), which is also why
-            // the reflective clamp pass above reflects over PlayerState and
-            // over nothing else. Two halves, one witness each:
+            // THE MOB PHASE of the hot tweak (app-88jb Т6, finding D-I5).
+            // WRITTEN AHEAD OF IT: before Т6, ApplyConfig had no mob pass at
+            // all -- its only loop ran over _players, which is also why the
+            // reflective clamp pass above reflects over PlayerState and over
+            // nothing else. Т6 ADDED that pass, and the asserts below are the
+            // witnesses of it; the line anchor is deliberately gone, because
+            // anchors rot and this file has paid for that before.
+            // Two halves, one witness each:
             //   * a mob already down does NOT get up retroactively when the
             //     threshold is lowered -- otherwise a balance edit would
             //     resurrect bodies;

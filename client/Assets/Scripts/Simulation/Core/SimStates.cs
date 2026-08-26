@@ -135,18 +135,21 @@ namespace Ring.Simulation.Core
         /// for. The tilt is read, never obeyed: the body leans and comes
         /// back.
         ///
-        /// TWO WRITERS ON PURPOSE, which is what makes these fields Mixed
-        /// rather than Predicted in PredictionParityTests.RoleByField:
-        /// SimulationWorld.DamagePlayer adds the angular impulse on the
-        /// server, and PlayerPrediction.Step adds the client's own copy of
-        /// the same impulse out of ImpactPulse.TiltImpulse. The spring itself
-        /// (TiltSystem.Apply) steps on both sides identically.
-        ///
-        /// ⚠ DECLARED AHEAD OF ALL OF THAT, on this task's RED step: today
-        /// nothing writes either field and nothing folds them into
-        /// StateHash. DamagePlayer's impulse, the prediction's own, the
-        /// collector pass of TiltSystem and the HashPlayer fold are the rest
-        /// of Т7 — this paragraph goes away with the last of them.
+        /// THE TWO FIELDS DO NOT SHARE A ROLE, and reading them as one pair
+        /// is the mistake this paragraph exists to stop
+        /// (PredictionParityTests.RoleByField is the binding):
+        ///   * TiltVel is Mixed — PlayerPrediction.Step adds the client's own
+        ///     copy of the impulse out of ImpactPulse.TiltImpulse, and
+        ///     SimulationWorld.DamagePlayer adds the server's;
+        ///   * Tilt is Server — Step never writes it at all. Its ONLY writer
+        ///     in the whole tree is TiltSystem's collector pass, which the
+        ///     world runs every tick on the authoritative side.
+        /// Т7 departed from its own plan here (which asked for Mixed on both)
+        /// because Mixed demands bit-equality until the second writer fires,
+        /// and a field the world steps EVERY tick would report a prediction
+        /// error that does not exist — the defect R-209 classifies against.
+        /// The spring itself (Impact.SpringStep) is the same arithmetic on
+        /// both sides; it is the OWNERSHIP that differs.
         public float Tilt, TiltVel;
     }
 
@@ -225,10 +228,15 @@ namespace Ring.Simulation.Core
         /// no branch. The return is a spring parameterized through zeta and the
         /// settle time (Impact.SpringFromSettle), UNDERDAMPED on purpose: the body
         /// rocks and comes back, and that rock is what reads as a blow.
-        /// NOT ON THE WIRE (Р383): MobRecord is exactly 9 bytes and has no room;
-        /// the client rebuilds the tilt from the hit event, which is legal because
-        /// tilt decides no game outcome -- the hit parts do not rotate with it
-        /// (Р375).
+        /// NOT ON THE WIRE (Р383): MobRecord is exactly 9 bytes and has no room.
+        /// A NETWORKED CLIENT THEREFORE SHOWS NO MOB TILT AT ALL TODAY, and saying
+        /// so in the present tense is the point: the client-side integrator that
+        /// rebuilds it from the hit event arrives with Т31 (Ф3), which widens
+        /// ProjectileEnded to carry hitDir and the victim. Until then this field
+        /// is authoritative-only and OFFLINE-only, and the В1 playtest was run
+        /// solo offline for exactly that reason. Rebuilding it there is legal
+        /// because tilt decides no game outcome -- the hit parts do not rotate
+        /// with it (Р375).
         public float Tilt, TiltVel;
     }
 

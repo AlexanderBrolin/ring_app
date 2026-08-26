@@ -546,13 +546,23 @@ namespace Ring.Networking
         /// different path entirely (`PlayerMovementSystem.UpdateDead`), and
         /// `Step`'s own doc names the caller as the one who must enforce it.
         ///
-        /// `ImpactPulse.None` UNTIL Т9, AND SAYING SO IS THE POINT (app-88jb
+        /// `ImpactPulse.None` UNTIL Ф3, AND SAYING SO IS THE POINT (app-88jb
         /// Т7): the shove of a hit reaches the client on the PlayerDamaged
-        /// event, which Т9 turns into a real pulse for the tick it belongs
-        /// to. Until then this path predicts no knockback at all and the
-        /// reconcile corrects it, which is exactly what a missing pulse is
-        /// supposed to look like — a value stated here, not a parameter
-        /// quietly defaulted at the callee.
+        /// event, and some later task turns it into a real pulse for the tick
+        /// it belongs to. Until then this path predicts no knockback at all
+        /// and the reconcile corrects it, which is exactly what a missing
+        /// pulse is supposed to look like — a value stated here, not a
+        /// parameter quietly defaulted at the callee.
+        ///
+        /// ⚠ THAT TASK IS NO LONGER Т9. Т9 built the ring
+        /// (Ring.Networking.Client.ImpactPulseLog) and proved it with six
+        /// tests, then STOPPED: the ring is addressed by tick, and the two
+        /// tick domains in this project are unrelated (finding Н-11 — the
+        /// world's tick resets to 0 per match, FishNet's is monotonic for the
+        /// process, and MatchServer.cs already carries the scar of subtracting
+        /// one from the other). Owner decision Р434 moved the wiring to Ф3 as
+        /// bd `app-7du2`, analysis first. Until it lands, this line is
+        /// correct as written and is not an omission.
         internal void Predict(in SimInput decodedInput, in SimConfig cfg)
         {
             if (!IsPredicting) return;
