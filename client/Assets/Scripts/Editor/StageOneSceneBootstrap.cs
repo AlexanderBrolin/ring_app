@@ -490,13 +490,23 @@ namespace Ring.Editor
             MobConfig gunner = GetOrCreate<MobConfig>("MobGunnerConfig", out bool gunnerCreated);
 
             // Task 17 race-order guard (QD6): snapshot whether the already-
-            // committed MobGunnerConfig.asset carries the MobConfig sync-marker
-            // key BEFORE any EnsureAssetHasKey/SetDirty/SaveAssets call below
-            // can touch it. ApplyGunnerZoneDefaults' gate needs "does this
-            // asset predate the whole Task 1 zone-field block" — independent
-            // of `gunnerCreated`, which only tells us "brand new asset this
+            // committed MobGunnerConfig.asset carries `SwingLeadMaxMeters` —
+            // MobConfig's Task 17 zone-field marker, BEFORE any
+            // EnsureAssetHasKey/SetDirty/SaveAssets call below can touch it.
+            // ApplyGunnerZoneDefaults' gate needs "does this asset predate
+            // the whole Task 1 zone-field block" — independent of
+            // `gunnerCreated`, which only tells us "brand new asset this
             // run" and says nothing about an older asset that already existed
             // but was committed before those fields existed at all.
+            //
+            // app-88jb Т11a review circle (coordinator finding F3): as of
+            // below, `SwingLeadMaxMeters` is no longer MobConfig's CURRENT
+            // sync-marker (that moved to `DownedSeconds`, the class's new
+            // last field) — this check keeps keying on the OLDER Task 17
+            // boundary deliberately, because ApplyGunnerZoneDefaults' own
+            // zone-field block predates the impact-physics block below and
+            // needs its own, earlier line in the sand, not the class's
+            // current last field.
             bool gunnerMarkerPresent = System.IO.File
                 .ReadAllText($"{DataDir}/MobGunnerConfig.asset")
                 .Contains("SwingLeadMaxMeters");
@@ -541,14 +551,36 @@ namespace Ring.Editor
             // call below can touch it" rule, and matching ApplyImpactNumbers'
             // own one-call-for-six-assets shape (stageTwoPending's "one text
             // on three assets" precedent sanctions either a shared or a
-            // per-asset gate here). OR is the only sound combinator: the
-            // gate must stay open as long as ANY of the six has not yet
-            // received the block, and re-running SetIfDifferent against an
-            // asset that already carries its number is already a no-op.
-            // "Mass:"/"ProjectileMass:" cannot appear in any of these six
-            // files before this task (verified against the committed
-            // assets: zero hits today) and is permanent once written, so the
-            // gate closes for good the run this delivers and never reopens.
+            // per-asset gate here).
+            //
+            // OR is the only sound combinator for a ONE-TIME BACKFILL, and
+            // that is the honest reason for it -- not that a closed gate is
+            // free. The gate must stay open as long as ANY of the six has
+            // not yet received the block, or that one asset never gets its
+            // numbers. But the PRICE of OR is real, coordinator review
+            // circle finding F1: because it is one shared boolean, losing
+            // the marker on ANY ONE of the six (the asset is deleted and
+            // recreated, say -- `gunnerCreated`'s own documented case a
+            // couple lines below) reopens ApplyImpactNumbers for ALL SIX,
+            // not just the one that lost it -- and that reopening is NOT
+            // free: SetIfDifferent does not "no-op" against a changed field,
+            // it OVERWRITES it, so it would silently stomp any of the other
+            // five an owner has since hand-tuned away from these literals,
+            // right back to them. SetIfDifferent is a no-op only for the
+            // asset that already carries the exact target number; making
+            // that the PERMANENT case is this gate's whole job, not a safety
+            // property SetIfDifferent supplies on its own (the identical
+            // arithmetic mistake Ruling 55 pinned on the spec's own
+            // "UNCONDITIONAL" wording above -- restating it here as a
+            // property of the gate would have been the same error one
+            // paragraph later). "Mass:"/"ProjectileMass:" cannot appear in
+            // any of these six files before this task (verified against the
+            // committed assets: zero hits today), so on THIS delivery run
+            // the gate opens exactly once and, for five of the six, closes
+            // for good. The Gunner is the one archetype this OR shape
+            // cannot protect entirely on its own -- see ApplyGunnerDefaults'
+            // own doc (coordinator finding F2) for why it now carries a
+            // second, creation-gated path independent of this boolean.
             //
             // SetDirty runs on all six below whenever ApplyImpactNumbers
             // reports a change ANYWHERE, not per-asset like
@@ -695,13 +727,19 @@ namespace Ring.Editor
             // one-time Stage 2 balance delivery Task 16 populates. Sample
             // taken from ApplyGunnerZoneDefaults' BODY only (SetIfDifferent
             // per field, see ApplyStageTwoBalance below), not its call-site
-            // gate — that gate is the EnsureAssetHasKey backfill marker
-            // (gunnerMarkerPresent above), which only proves "does this field
-            // EXIST", not "does it still hold the spec value", and which for
-            // arena would already read true on this very Apply() (Arena's own
-            // marker, PlayerSpawnRingFrac, is delivered by this same run a
-            // few lines down) — copying it literally would gate on the wrong
-            // signal on the one run that matters.
+            // gate — that gate is `gunnerMarkerPresent` above, which only
+            // proves "does this field EXIST", not "does it still hold the
+            // spec value" (before app-88jb Т11a, `gunnerMarkerPresent` and
+            // the gunner's own EnsureAssetHasKey backfill marker WERE the
+            // same string, `SwingLeadMaxMeters` — Т11a moved the latter to
+            // `DownedSeconds` for the impact-physics block below, so the two
+            // checks are no longer the same thing; `gunnerMarkerPresent`
+            // keeps keying on `SwingLeadMaxMeters` on purpose, see its own
+            // doc above, coordinator finding F3), and which for arena would
+            // already read true on this very Apply() (Arena's own marker,
+            // PlayerSpawnRingFrac, is delivered by this same run a few lines
+            // down) — copying it literally would gate on the wrong signal on
+            // the one run that matters.
             //
             // Fix-round 1 (Explore/opus review, C-1): the first draft of this
             // gate read `arena.Walls == null || arena.Walls.Length == 0` on
@@ -939,8 +977,8 @@ namespace Ring.Editor
             // to reach the file at all).
             EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "TiltGain"); // app-88jb Т11a (was MaxInventoryItems, Stage 3 Task 4)
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "ProjectileMass"); // app-88jb Т11a (was EmergencyFireInterval, Stage 3 Task 2)
-            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Stage 3 Task 12)
-            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Stage 3 Task 12)
+            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Task 17)
+            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Task 17)
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
@@ -2342,8 +2380,36 @@ namespace Ring.Editor
         /// literal that only sets the ranged-combat fields; everything it doesn't list
         /// (ContactDamage, AttackRange, TelegraphSeconds, AttackCooldown) defaults to 0
         /// for a struct, NOT to MobConfig's chaser-mirrored class field defaults — the
-        /// gunner never melees, so those must read 0 here too. Reapplied every run
-        /// (idempotent via per-field diff) so a stale asset self-heals.
+        /// gunner never melees, so those must read 0 here too.
+        ///
+        /// F-5 fix-round retired "reapplied every run so a stale asset self-heals":
+        /// this method now runs ONLY behind `gunnerCreated` at the call site (that
+        /// call's own doc has the full reasoning) — a brand-new asset gets the
+        /// gunner numbers once, and an owner hand-tune at milestone В1 survives
+        /// every later re-run, the same first-creation-only contract
+        /// ApplyEliteDefaults/ApplyDirectorDefaults carry for their own archetypes.
+        ///
+        /// app-88jb Т11a review circle (coordinator finding F2, Ruling 55 gap):
+        /// delegates to ApplyMobImpactDefaults too, `(70f, 1.78f)` — both numbers
+        /// differ from MobConfig's chaser-shaped C# class default (Mass 90,
+        /// CenterOfMassHeight 1.17), and the Gunner was the one archetype Ruling 54's
+        /// delegation stopped short of. The reason it needs its OWN path, not just
+        /// ApplyImpactNumbers/`impactNumbersPending` above: GetOrCreate's own body
+        /// calls AssetDatabase.CreateAsset the moment a `.asset` is missing, which
+        /// serializes the freshly-instantiated object's CURRENT field set —
+        /// chaser-shaped class defaults included — to disk immediately, before this
+        /// method or ApplyImpactNumbers ever runs. So a MobGunnerConfig.asset
+        /// deleted and recreated (`gunnerCreated`'s own documented case,
+        /// earlier in this file, at this method's call site) would already
+        /// read "Mass: 90" on disk the instant
+        /// `impactNumbersPending` is snapshotted, closing that OR'd gate for every
+        /// one of the six assets with the Gunner's number never corrected — see
+        /// `impactNumbersPending`'s own doc above for the shared-gate mechanics and
+        /// price. The Elite and Director never had this hole: their own
+        /// first-creation gates (`eliteCreated`/`directorCreated`) already deliver
+        /// ApplyMobImpactDefaults' numbers independently of `impactNumbersPending`.
+        /// This delegation gives the Gunner that exact same second, creation-gated
+        /// path, closing the last archetype Ruling 54 left exposed.
         static bool ApplyGunnerDefaults(MobConfig m)
         {
             bool changed = false;
@@ -2368,6 +2434,7 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.SeparationStrength, 6f);
             changed |= SetIfDifferent(ref m.AvoidLookahead, 3f);
             changed |= SetIfDifferent(ref m.AvoidMargin, 1f);
+            changed |= ApplyMobImpactDefaults(m, 70f, 1.78f);
             return changed;
         }
 
