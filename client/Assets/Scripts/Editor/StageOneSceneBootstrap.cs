@@ -72,17 +72,23 @@ namespace Ring.Editor
     /// (Task 22) makes the placeholder dummies redundant.
     /// Task 25 (spec Interfaces, Приложение П-1/П-7) adds a `GameFeelDirector`
     /// object, wired in TWO passes: an early one (right after `SimulationRunner`
-    /// itself, `_runner`/`_gameFeel` only) so the component instance already
-    /// exists by the time `CameraRig`'s own `_gameFeelDirector` slot (Task 26,
-    /// wired further down in the existing CameraRig section, still well ahead
-    /// of the second pass below) and `SimEventRouter`'s fan-out need to
-    /// reference it, and a second pass in the Task 17 views section once
-    /// `ViewRegistry` and the new full-screen `Vignette` `Image` (added to the
-    /// `HUD` canvas, Task 14 section) both exist. ⚠ A THIRD REASON USED TO
-    /// STAND HERE: `DeathOverlayController`'s own `_gameFeelDirector` slot,
-    /// retired by app-88jb Т11 (bd `app-bavi`) once its last reader left with
-    /// Т10's hitstop removal — the early pass no longer owes it anything, but
-    /// still owes `CameraRig` and the router above.
+    /// itself, `_runner`/`_gameFeel` only, creation `:1073`, `SetRef`s
+    /// `:1087-1088`) so the component instance already exists by `:1163`,
+    /// where `CameraRig`'s own `_gameFeelDirector` slot (Task 26, wired
+    /// further down in the existing CameraRig section) reads it — `:1163`
+    /// sits strictly between this early pass and the second one below
+    /// (`:1888-1891`), which is what actually forces the split, and a second
+    /// pass in the Task 17 views section once `ViewRegistry` and the new
+    /// full-screen `Vignette` `Image` (added to the `HUD` canvas, Task 14
+    /// section) both exist. ⚠ `SimEventRouter`'s fan-out needs only a
+    /// non-null reference, NOT this early split: its own `SetRef` is at
+    /// `:2182`, after BOTH passes (Ruling 53, coordinator finding — an
+    /// earlier wording here named it as a second reason for the early pass,
+    /// which the line numbers do not support). ⚠ A THIRD REASON USED TO
+    /// STAND HERE TOO: `DeathOverlayController`'s own `_gameFeelDirector`
+    /// slot, retired by app-88jb Т11 (bd `app-bavi`) once its last reader
+    /// left with Т10's hitstop removal — the early pass owes nothing to
+    /// either of those two now, only to `CameraRig`.
     /// Task 26 (spec Interfaces, this task's resolution П-3) wires `CameraRig`'s
     /// new `_gameFeelDirector` slot (it reads `GameFeelDirector.ShakeOffset`
     /// directly every `LateUpdate` — no event/`SimulationRunner` indirection) in
@@ -1049,14 +1055,18 @@ namespace Ring.Editor
             }
 
             // Task 25 (Приложение П-1/П-7): `GameFeelDirector` object, created
-            // (first wiring pass) here rather than down in the Task 17 views
-            // section — `CameraRig`'s `_gameFeelDirector` slot (Task 26, wired
-            // further down but still ahead of the second pass below) and
-            // `SimEventRouter`'s fan-out both need the component INSTANCE to
-            // already exist well before `ViewRegistry`/the HUD's `Vignette`
-            // `Image` are built, even though this pass only wires the two refs
-            // (`_runner`, `_gameFeel`) already available this early. The second
-            // pass (`_viewRegistry`, `_vignette`) runs later, once those exist.
+            // (first wiring pass, `:1073`) here rather than down in the Task
+            // 17 views section, because `CameraRig`'s `_gameFeelDirector`
+            // slot (Task 26, `SetRef` at `:1163`) needs the component
+            // INSTANCE to already exist by then — `:1163` sits strictly
+            // between this early pass (`SetRef`s `:1087-1088`) and the second
+            // pass below (`:1888-1891`), which is what actually forces this
+            // pass to run first rather than fold into the second one.
+            // ⚠ `SimEventRouter`'s fan-out needs only a non-null reference,
+            // NOT this early split: its own `SetRef` is at `:2182`, AFTER
+            // both passes (Ruling 53, coordinator finding — an earlier
+            // wording here named it as a second reason for the early pass,
+            // which the line numbers do not support).
             // ⚠ `DeathOverlayController`'s own `_gameFeelDirector` slot used to
             // be named here too — retired by app-88jb Т11 (bd `app-bavi`), its
             // last reader having left with Т10's hitstop removal.

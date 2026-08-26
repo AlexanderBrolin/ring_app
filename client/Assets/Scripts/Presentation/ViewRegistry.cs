@@ -27,9 +27,11 @@ namespace Ring.Presentation
     ///    entity's terminal event fires (MobDied for mobs; ProjectileBlocked /
     ///    ProjectileExpired and — Stage 2 Task 45c — ProjectileHitPlayer for
     ///    projectiles, the last one off `SecondaryEntityId` because its
-    ///    `EntityId` is the victim's slot; NOT ProjectileHit, see that method's
-    ///    own doc for why, which is not the reason this paragraph used to
-    ///    give), ahead of that frame's `LateUpdate`
+    ///    `EntityId` is the victim's slot; NOT ProjectileHit, which retires
+    ///    nothing at all — since app-88jb Т11 (Ruling 48) that kind instead
+    ///    forwards the hit event's direction to a STILL-LIVE mob's `Visual`,
+    ///    see that method's own doc for the whole reasoning, fuller than the
+    ///    one this paragraph used to give), ahead of that frame's `LateUpdate`
     ///    diff. This is redundant with the diff on a normal frame (the Id is
     ///    already gone from `Curr` by then too) — it exists so retirement is
     ///    explicit and immediate rather than only an incidental side effect of

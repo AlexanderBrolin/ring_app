@@ -52,7 +52,7 @@ namespace Ring.Presentation
     /// one-shot block, the added `|| m.Ai == MobAiState.Downed`).
     ///
     /// ⚠ NAMED HONESTLY: a networked client sees `Ai == Downed` (Т6 rides
-    /// the wire) but never a nonzero `Tilt`, so until Т31 it shows an
+    /// the wire) but never a nonzero `Tilt`, so until Т31 it shows a
     /// downed mob only through the swing-cancel above and the stopped
     /// locomotion Downed already implies — no visible lean. Offline shows
     /// the whole thing. Same boundary the class doc's own paragraph above
