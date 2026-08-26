@@ -1,4 +1,5 @@
 using Ring.Simulation.Core;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace Ring.Presentation
@@ -12,6 +13,50 @@ namespace Ring.Presentation
     /// (SetActive(false) rewinds the state machine — the cache must follow,
     /// Б5); one-shot triggers land their state the same frame via Update(0f)
     /// (ПБ1 — a same-frame state check would otherwise cancel them).
+    ///
+    /// Body tilt (app-88jb Т11, spec §3.2's Presentation half, coordinator
+    /// Rulings 45-49) composes on TOP of the facing rotation, on `_visual`
+    /// ONLY — never on this component's own root transform, because that
+    /// root also parents the three `AimProxy_*` colliders
+    /// (`Prefabs/MobChaserView.prefab`: the root's `m_Children` list is
+    /// exactly four entries, the three proxies plus this stripped `_visual`)
+    /// and Р375 requires them to stay upright regardless of what the model
+    /// does (Ruling 46, witness `TiltedMob_KeepsItsUprightParts`, Т14).
+    /// `m.Tilt` is the AUTHORITATIVE signed magnitude in radians
+    /// (`MobState.Tilt`'s own doc, Core/SimStates.cs) — real offline, where
+    /// `RenderSnapshot.Mobs` copies `MobState` whole; always zero over the
+    /// wire until Т31 gives the network path its own integrator
+    /// (`NetworkSimBackend.cs:2176-2183` sends `Id/Type/Ai/Pos/Hp` only, no
+    /// `Tilt`, Р383's 9-byte `MobRecord`). The AXIS the scalar has no room
+    /// for arrives separately, from the hit event:
+    /// `ViewRegistry.HandleEvent`'s `ProjectileHit` branch calls `SetHitDir`
+    /// with `SimEvent.HitDir` the instant a blow lands (Ruling 48), and this
+    /// class turns that into the horizontal perpendicular a body tips
+    /// around (see `SetHitDir`'s own doc for the arithmetic). Facing is kept
+    /// in its own field, `_facing`, rather than read back off
+    /// `_visual.rotation` (Ruling 47) — the transform now holds
+    /// `tilt * _facing`, and reading a composed value back out as if it
+    /// were pure facing would fold the tilt into every subsequent turn. A
+    /// mob with no axis yet (`_tiltAxis` still `Vector3.zero`, `Bind`'s
+    /// reset) composes to `Quaternion.identity` through an explicit guard
+    /// in `Sync`, not through any assumed `Quaternion.AngleAxis` behavior on
+    /// a degenerate axis — Unity's own docs say nothing about that case
+    /// either way (Ruling 49, coordinator finding via Context7).
+    ///
+    /// `Downed` gets no clip of its own (Ruling 45 — no pack ships a
+    /// fall/get-up take, and `Death`/`TurnOff` are `CorpseView`'s alone,
+    /// `CorpseView.cs:133`): the physical fall IS the tilt spring above.
+    /// The one thing this class does for the state is cut short whatever
+    /// one-shot Melee/Ranged take was still mid-flight when the body went
+    /// over, so a downed mob does not keep swinging lying down (`Sync`'s
+    /// one-shot block, the added `|| m.Ai == MobAiState.Downed`).
+    ///
+    /// ⚠ NAMED HONESTLY: a networked client sees `Ai == Downed` (Т6 rides
+    /// the wire) but never a nonzero `Tilt`, so until Т31 it shows an
+    /// downed mob only through the swing-cancel above and the stopped
+    /// locomotion Downed already implies — no visible lean. Offline shows
+    /// the whole thing. Same boundary the class doc's own paragraph above
+    /// already draws for the scalar.
     public sealed class MobVisual : MonoBehaviour
     {
         [SerializeField] Animator _animator;
@@ -39,13 +84,43 @@ namespace Ring.Presentation
         bool _hasPrevPos;
         bool _statesChecked;
 
+        /// Facing alone, WITHOUT the tilt composed on top of it (Ruling 47,
+        /// app-88jb Т11). `_visual.rotation` now holds `tilt * _facing`, so
+        /// this field is the only thing `RotateTowards` in `Sync` has left
+        /// to turn that is not itself already leaning.
+        Quaternion _facing;
+
+        /// Horizontal perpendicular to the last hit's `HitDir`, set by
+        /// `SetHitDir` from `ViewRegistry.HandleEvent`'s `ProjectileHit`
+        /// branch (Ruling 48). Default `Vector3.zero` reads as "no axis
+        /// yet" — a freshly pooled instance genuinely has none until its
+        /// first hit, and `Sync` (Ruling 49) tests this field explicitly
+        /// before ever calling `Quaternion.AngleAxis`, rather than handing
+        /// that call a possibly zero-length axis and hoping: Unity's own
+        /// API documentation is silent on what it does with one (checked
+        /// directly against the docs, not assumed — neither a
+        /// normalize-to-zero nor a NaN is documented either way), and this
+        /// line runs for every live mob every frame. An undocumented
+        /// degenerate case is not a bet worth taking on a hot path this epic
+        /// has already paid for guessing on three times (lessons 512/530).
+        Vector3 _tiltAxis;
+
         public void Bind(in MobState m, float visualScale)
         {
             if (_visual.localScale != Vector3.one * visualScale)
                 _visual.localScale = Vector3.one * visualScale;
-            // Pool-rebind hygiene: the previous life's facing must not leak
-            // into a fresh spawn (audit fix ПБ19).
+            // Pool-rebind hygiene: the previous life's facing, tilt axis and
+            // composed rotation must not leak into a fresh spawn (audit fix
+            // ПБ19, extended by Ruling 47/48's two new fields — the same
+            // hygiene the comment already named, twice the state to reset).
+            // The direct transform reset stays defensive rather than relied
+            // upon: the Bind/Sync contract (Task 21) guarantees a same-frame
+            // Sync always follows this call and would overwrite it anyway
+            // (`ViewRegistry.SyncMobs`' rent branch, `:1253`/`:1259`), but
+            // nothing enforces that contract at compile time.
             _visual.localRotation = Quaternion.identity;
+            _facing = Quaternion.identity;
+            _tiltAxis = Vector3.zero;
             _loco = Locomotion.Idle;
             _holdTimer = 0f;
             _lastAi = m.Ai;
@@ -105,6 +180,13 @@ namespace Ring.Presentation
             // fighting at range right now". Elite and the Director reuse both
             // procedures wholesale, picked by distance — so keying on the type
             // would have left a kiting Elite staring at its own path.
+            //
+            // WRITES `_facing`, NOT THE TRANSFORM (Ruling 47, app-88jb Т11):
+            // the block below composes tilt on top of whatever this settles
+            // on, and a facing update landing straight on `_visual.rotation`
+            // would overwrite the previous frame's tilt the instant the mob
+            // turns — kneeling would read as "tilted only while standing
+            // still", exactly the defect Ruling 47 exists to avoid.
             bool faceTarget = m.Ai == MobAiState.Reposition || m.Ai == MobAiState.Fire;
             Vector3 faceDir = faceTarget ? p.PlayerPos - pos : moveDelta;
             faceDir.y = 0f;
@@ -113,9 +195,38 @@ namespace Ring.Presentation
             {
                 Quaternion target = Quaternion.LookRotation(faceDir.normalized, Vector3.up)
                     * Quaternion.AngleAxis(p.YawOffsetDeg, Vector3.up);
-                _visual.rotation = Quaternion.RotateTowards(
-                    _visual.rotation, target, p.TurnDegPerSec * p.DeltaTime);
+                _facing = Quaternion.RotateTowards(
+                    _facing, target, p.TurnDegPerSec * p.DeltaTime);
             }
+
+            // Body tilt (Ruling 46/47, app-88jb Т11): written EVERY Sync,
+            // never gated behind the facing `if` above, because `m.Tilt`
+            // walks every tick (Combat/TiltSystem.cs) regardless of whether
+            // this mob happens to be turning this frame — a stationary mob
+            // that just got knocked down must fall on the tick it happened,
+            // not wait for its next turn. `m.Tilt` is radians (`MobState.
+            // Tilt`'s own doc); `Quaternion.AngleAxis` wants degrees, hence
+            // the one `Mathf.Rad2Deg` in this class — Presentation's first
+            // read of `Tilt` at all (class doc). Composition order is
+            // `tilt * _facing`, tilt OUTERMOST: `_tiltAxis` is a fixed WORLD
+            // axis (`SetHitDir` builds it through `SimSpace.ToWorld`), not
+            // one relative to whichever way the model currently faces, so it
+            // has to apply in world space on top of the facing rotation
+            // rather than compose inside it.
+            //
+            // THE GUARD BELOW IS CONTENT, NOT DEFENSE (Ruling 49): a mob
+            // that has not been hit yet genuinely has no axis —
+            // `_tiltAxis` reads `Vector3.zero` straight out of `Bind`'s
+            // reset — and `Quaternion.AngleAxis`'s own documentation says
+            // nothing about a zero-length axis in either direction (no
+            // normalize-to-zero, no NaN; checked against the API docs, not
+            // assumed). This line runs for every live mob every frame, so
+            // the explicit branch is the honest answer rather than a guess
+            // dressed as a fact.
+            Quaternion tilt = _tiltAxis.sqrMagnitude > 0f
+                ? Quaternion.AngleAxis(m.Tilt * Mathf.Rad2Deg, _tiltAxis)
+                : Quaternion.identity;
+            _visual.rotation = tilt * _facing;
 
             // One-shot triggers on Ai transitions (Б9: ProjectileFired carries
             // the projectile's id — entry to Fire is the only reliable hook).
@@ -136,7 +247,17 @@ namespace Ring.Presentation
                     || st.shortNameHash == _clips.Ranged;
                 bool finished = oneShotState && st.normalizedTime >= 1f
                     && !_animator.IsInTransition(0);
-                if (!oneShotState || finished)
+                // `|| m.Ai == MobAiState.Downed` (Ruling 45, app-88jb Т11):
+                // TiltSystem (Combat/TiltSystem.cs:87-91) can flip a mob's Ai
+                // to Downed on ANY tick, including one where this mob is
+                // still mid-swing — without this extra condition, a downed
+                // body keeps playing its Melee/Ranged take out to
+                // `normalizedTime >= 1f` while already lying on the ground.
+                // Reuses the SAME two-line cancel path the one-shot's own
+                // natural completion already performs below (coordinator
+                // instruction: one path, not a second) — this OR-clause is
+                // the entire change, not a new branch of its own.
+                if (!oneShotState || finished || m.Ai == MobAiState.Downed)
                 {
                     _inOneShot = false;
                     CrossFadeLocomotion(in p, force: true);
@@ -148,6 +269,41 @@ namespace Ring.Presentation
             }
 
             UpdateLocomotion(speed, in p);
+        }
+
+        /// Hands over the horizontal axis a positive `m.Tilt` rotates around
+        /// in the next `Sync` (Ruling 46/47/48, app-88jb Т11). Called by
+        /// `ViewRegistry.HandleEvent`'s `ProjectileHit` branch with the
+        /// event's own `HitDir` the instant a blow lands, because
+        /// `MobState.Tilt` is a signed SCALAR with no direction of its own
+        /// (its own doc, Core/SimStates.cs) and this is the only source of
+        /// one on this side of the wire (offline only until Т31 — see the
+        /// class doc's own network-boundary paragraph).
+        ///
+        /// THE AXIS, NOT THE DIRECTION ITSELF: `hitDir` is the shot's unit
+        /// direction of travel in the sim plane (`SimEvent.HitDir`'s own
+        /// doc, Core/SimEvents.cs:198); the body does not spin around that
+        /// vector, it tips OVER it, around the horizontal line
+        /// perpendicular to it. `Vector3.Cross(Vector3.up, worldDir)` is
+        /// that perpendicular, and its sign is not arbitrary: it is the one
+        /// that makes a positive `m.Tilt` rotate `_visual`'s top ALONG
+        /// `worldDir` — the same "along the shot" arm `MobState.Tilt`'s own
+        /// doc names for a hit above `MobSimConfig.CenterOfMassHeight`
+        /// (`Impact.AngularImpulse`'s formula, `SimulationWorld.cs:1671`).
+        /// `SimSpace.ToWorld` is the sole sim→world seam (class doc,
+        /// `SimSpace.cs:12`) — no inline `new Vector3(x, 0f, y)` here.
+        ///
+        /// `Cross(up, worldDir)` is already unit length without an explicit
+        /// `.normalized`: `hitDir` is a unit vector by construction
+        /// (`ProjectileSystem.cs:260`'s `math.normalizesafe`), `ToWorld`
+        /// preserves that length (a lossless axis swap, no scaling), and
+        /// `Vector3.up` is always perpendicular to a vector confined to the
+        /// horizontal plane it maps into — so the cross product's magnitude
+        /// is `1 * 1 * sin(90°) = 1` by construction, every time.
+        public void SetHitDir(float2 hitDir)
+        {
+            Vector3 worldDir = SimSpace.ToWorld(hitDir);
+            _tiltAxis = Vector3.Cross(Vector3.up, worldDir);
         }
 
         void RequireState(int stateHash)

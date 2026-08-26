@@ -71,7 +71,6 @@ namespace Ring.Presentation
         const float InputDelaySeconds = 0.5f;
 
         [SerializeField] SimulationRunner _runner;
-        [SerializeField] GameFeelDirector _gameFeelDirector;
         [SerializeField] GameObject _panel;
         /// The panel's headline (bd `app-qz30`) — see TitleFor. Wired by
         /// StageOneSceneBootstrap like every other reference here; NULL-GUARDED

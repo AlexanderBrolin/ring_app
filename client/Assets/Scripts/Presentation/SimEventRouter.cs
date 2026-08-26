@@ -17,7 +17,9 @@ namespace Ring.Presentation
     ///   `PlayerVisual` reference — the doll is pooled per slot now, so the
     ///   event has to be routed to ONE of several dolls, and Р98 requires the
     ///   relative order of every other slot to stay exactly as it was) →
-    ///   ViewRegistry (retire only) → DeathOverlayController → HudController.
+    ///   ViewRegistry (retirement, plus a live-mob hit-direction forward since
+    ///   app-88jb Т11 — see `ViewRegistry.HandleEvent`'s own doc) →
+    ///   DeathOverlayController → HudController.
     /// `AudioDirector`, `MuzzleFlashView` and `ViewRegistry` exist as of Task 17;
     /// `DeathOverlayController` (Task 24) slots in last; `GameFeelDirector`
     /// (Task 25, Приложение П-1) slots in FIRST — its hit-flash/shake/vignette
@@ -72,7 +74,7 @@ namespace Ring.Presentation
                 _audioDirector.HandleEvent(in e);
                 _muzzleFlash.HandleEvent(in e); // shot feedback, same pass (П-2)
                 _viewRegistry.HandlePlayerEvent(in e); // doll animation retrigger/death (phase B; per slot since Task 45a)
-                _viewRegistry.HandleEvent(in e); // retire only — mapping/lerp is ViewRegistry's own LateUpdate
+                _viewRegistry.HandleEvent(in e); // retirement, plus (app-88jb Т11, Ruling 48) a live hit's direction forwarded to MobVisual — see ViewRegistry.HandleEvent's own doc for the reasoning
                 _deathOverlay.HandleEvent(in e); // death-screen show, last slot (Task 24, П-1)
                 _hud.HandleEvent(in e); // stamina-denied pulse, last slot (Task 22)
             }

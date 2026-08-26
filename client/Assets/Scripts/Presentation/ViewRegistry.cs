@@ -411,7 +411,8 @@ namespace Ring.Presentation
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer
-        /// (П-1 fan-out) — retirement only, see class doc.
+        /// (П-1 fan-out) — retirement for most kinds (see class doc), plus, since
+        /// app-88jb Т11 (Ruling 48), one branch that retires nothing at all.
         ///
         /// TWO KINDS PUT THE ROUND IN `EntityId` AND ONE PUTS IT ELSEWHERE.
         /// `ProjectileBlocked`/`ProjectileExpired` name the round directly, so
@@ -422,22 +423,36 @@ namespace Ring.Presentation
         /// `EntityId` would delete whichever projectile view happens to share a
         /// number with a player slot.
         ///
-        /// `ProjectileHit` stays absent, and the reason is no longer the one
-        /// this doc used to give. It said the round's id is simply not on the
-        /// event; that stopped being true in Stage 2 Task 28, which added
-        /// `SecondaryEntityId` and wrote it from the ONE hit branch that existed
-        /// then — the second branch, and the kind it belongs to, arrived in
-        /// Stage 2 Task 44a (fix-round 1, G-5 item 7: the earlier wording here
-        /// credited Task 28 with both). Either way a precise
-        /// retirement is available there too. What is actually true is that
-        /// nothing needs it: this whole method is an early, explicit version of
+        /// `ProjectileHit` USED TO stay wholly absent, and this paragraph used
+        /// to explain why: the round's id used to be missing from the event
+        /// (Stage 2 Task 28 fixed that), and even after it wasn't, nothing
+        /// needed it here — this whole method is an early, explicit version of
         /// a retirement the next `LateUpdate` diff performs anyway (class doc),
-        /// and a round that ended on a mob leaves `Curr` on the same tick as one
-        /// that ended on a player. `ProjectileHitPlayer` is wired here because
-        /// this task was already opening the PvP hit's whole feedback path
-        /// (`app-aq9`) and the immediacy is worth having on the one hit a player
-        /// watches most closely; extending the same line to `ProjectileHit` is a
-        /// change of behavior for PvE and belongs to whoever wants it.
+        /// so a THIRD retiring branch would only have duplicated that diff.
+        /// THAT REASONING STILL HOLDS FOR RETIREMENT, and is why the branch
+        /// below does none: app-88jb Т11 (Ruling 48, coordinator) needed
+        /// `EntityId` for something this method had never done for any kind
+        /// before — reaching a STILL-LIVE mob rather than retiring one. Body
+        /// tilt (`MobVisual.Sync`, Ruling 46/47) reads its magnitude straight
+        /// off the authoritative `MobState.Tilt`, but the axis lives only on
+        /// this event's `HitDir` (`MobState.Tilt`'s own doc: the field is a
+        /// signed scalar with no direction of its own), and `_activeMobs` is
+        /// the one place in Presentation that knows `id -> MobView` at all
+        /// (class doc). So the branch below is a forward, not a retirement: it
+        /// looks the mob up by `EntityId` and hands its `Visual` the hit
+        /// direction. The lookup is not a guard against a race — `ProjectileHit`
+        /// is always emitted before the `DamageMob` call that can end in
+        /// `MobDied` for the very same blow (`ProjectileSystem.cs`'s `HitMob`
+        /// branch, the emit ahead of the `DamageMob` call in program order),
+        /// and `MobDied` is what retires a `MobView` here — so offline this
+        /// lookup practically always finds its mob, killing blow included. It
+        /// is there for the OTHER side: on a networked client `EntityId` is
+        /// always the wire's safe zero for this kind (`ClientEventDecoder.cs`'s
+        /// own doc on `HitMob`), so the branch is a no-op on every single
+        /// `ProjectileHit` a networked client ever sees — `_activeMobs` never
+        /// holds key 0 (entity ids start at 1) — which is exactly the Т31
+        /// boundary `MobVisual`'s own class doc already draws for the scalar
+        /// half of this.
         public void HandleEvent(in SimEvent e)
         {
             switch (e.Kind)
@@ -451,6 +466,16 @@ namespace Ring.Presentation
                     break;
                 case SimEventKind.ProjectileHitPlayer:
                     RetireProjectile(e.SecondaryEntityId);
+                    break;
+                case SimEventKind.ProjectileHit:
+                    // Ruling 48 (app-88jb Т11) — see this method's own doc for
+                    // the full reasoning. `TryGetValue` rather than an indexer:
+                    // a miss is the expected, silent shape on a networked
+                    // client (EntityId 0 never matches a real mob) and no
+                    // louder than that offline either — nothing here is worth
+                    // logging over.
+                    if (_activeMobs.TryGetValue(e.EntityId, out MobView hitMobView))
+                        hitMobView.Visual?.SetHitDir(e.HitDir);
                     break;
             }
         }

@@ -73,11 +73,16 @@ namespace Ring.Editor
     /// Task 25 (spec Interfaces, Приложение П-1/П-7) adds a `GameFeelDirector`
     /// object, wired in TWO passes: an early one (right after `SimulationRunner`
     /// itself, `_runner`/`_gameFeel` only) so the component instance already
-    /// exists by the time `DeathOverlayController`'s own `_gameFeelDirector`
-    /// slot and `SimEventRouter`'s fan-out need to reference it, and a second
-    /// pass in the Task 17 views section once `ViewRegistry` and the new
-    /// full-screen `Vignette` `Image` (added to the `HUD` canvas, Task 14
-    /// section) both exist.
+    /// exists by the time `CameraRig`'s own `_gameFeelDirector` slot (Task 26,
+    /// wired further down in the existing CameraRig section, still well ahead
+    /// of the second pass below) and `SimEventRouter`'s fan-out need to
+    /// reference it, and a second pass in the Task 17 views section once
+    /// `ViewRegistry` and the new full-screen `Vignette` `Image` (added to the
+    /// `HUD` canvas, Task 14 section) both exist. ⚠ A THIRD REASON USED TO
+    /// STAND HERE: `DeathOverlayController`'s own `_gameFeelDirector` slot,
+    /// retired by app-88jb Т11 (bd `app-bavi`) once its last reader left with
+    /// Т10's hitstop removal — the early pass no longer owes it anything, but
+    /// still owes `CameraRig` and the router above.
     /// Task 26 (spec Interfaces, this task's resolution П-3) wires `CameraRig`'s
     /// new `_gameFeelDirector` slot (it reads `GameFeelDirector.ShakeOffset`
     /// directly every `LateUpdate` — no event/`SimulationRunner` indirection) in
@@ -1045,12 +1050,16 @@ namespace Ring.Editor
 
             // Task 25 (Приложение П-1/П-7): `GameFeelDirector` object, created
             // (first wiring pass) here rather than down in the Task 17 views
-            // section — `DeathOverlayController`'s `_gameFeelDirector` slot and
+            // section — `CameraRig`'s `_gameFeelDirector` slot (Task 26, wired
+            // further down but still ahead of the second pass below) and
             // `SimEventRouter`'s fan-out both need the component INSTANCE to
             // already exist well before `ViewRegistry`/the HUD's `Vignette`
             // `Image` are built, even though this pass only wires the two refs
             // (`_runner`, `_gameFeel`) already available this early. The second
             // pass (`_viewRegistry`, `_vignette`) runs later, once those exist.
+            // ⚠ `DeathOverlayController`'s own `_gameFeelDirector` slot used to
+            // be named here too — retired by app-88jb Т11 (bd `app-bavi`), its
+            // last reader having left with Т10's hitstop removal.
             GameObject gameFeelDirectorGo = EditorBootstrapUtils.FindRootObject(scene, GameFeelDirectorObjectName);
             if (gameFeelDirectorGo == null)
             {
@@ -1617,7 +1626,6 @@ namespace Ring.Editor
             var deathOverlaySo = new SerializedObject(deathOverlay);
             bool deathOverlayRefsChanged = false;
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_runner", runner);
-            deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_gameFeelDirector", gameFeelDirector);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_panel", deathPanelGo);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_titleText", deathTitle);
             deathOverlayRefsChanged |= EditorBootstrapUtils.SetRef(deathOverlaySo, "_metricsText", deathMetrics);
