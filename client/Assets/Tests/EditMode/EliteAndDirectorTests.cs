@@ -284,6 +284,39 @@ namespace Ring.Simulation.Tests
                 MaxHp = 58f, Radius = 2.6f,
                 LegsTop = 0.60f, BodyTop = 1.45f, HeadTop = 1.85f, // Chaser's own zone bounds
                 LegsDamageMult = 1f, BodyDamageMult = 1f, HeadDamageMult = 0f,
+                // app-88jb T14 (coordinator Ruling 74): THE SAME THREE BANDS AND
+                // THE SAME THREE MULTIPLIERS, EXPRESSED AS PARTS. From T14 on,
+                // ProjectileSystem resolves a blow against Parts and not against
+                // the column beside them, and a hand-built body that carries no
+                // Parts presents no hit volume at all (HitZones.Resolve's own
+                // contract, and SimConfigBuilder's own words: "a body with no
+                // parts cannot be hit at all"). Without this the round below
+                // simply misses and the assertion reads red for a reason that
+                // has nothing to do with what it measures.
+                //
+                // THE COLUMN ABOVE STAYS — it lives until T15, and this fixture
+                // is one of the places that needs both sets of numbers at once.
+                // The bands are copied from it verbatim so the arithmetic in
+                // this test's own doc (hEnter 1.3742 -> Body -> mult 1 -> 10
+                // damage) holds term for term.
+                //
+                // THE RADII ARE THE SHIPPED ELITE'S PROPORTIONS, not invented:
+                // TestConfigs' Elite carries 0.56 / 0.80 / 0.28 against a Radius
+                // of 0.80, i.e. 0.7 / 1.0 / 0.35 of it. Applied to this
+                // fixture's own Radius of 2.6 they give 1.82 / 2.6 / 0.91, and
+                // the torso's equals Radius exactly — which is what keeps the
+                // doc's chord (r = 2.6 + 0.1 = 2.7) the chord that actually
+                // resolves. Validation rule 4 (no part wider than the body) is
+                // satisfied with the torso exactly at the limit.
+                Parts = new[]
+                {
+                    new HitPart { Radius = 0.7f * 2.6f, Bottom = 0f, Top = 0.60f,
+                        Zone = HitZone.Legs, DamageMult = 1f },
+                    new HitPart { Radius = 2.6f, Bottom = 0.60f, Top = 1.45f,
+                        Zone = HitZone.Body, DamageMult = 1f },
+                    new HitPart { Radius = 0.35f * 2.6f, Bottom = 1.45f, Top = 1.85f,
+                        Zone = HitZone.Head, DamageMult = 0f },
+                },
             };
             // MaxSpeed/Accel left at 0 (deliberate freeze, same idiom
             // Chaser_Standing_FarPlayer_NoTelegraph in MobAiTests.cs uses):

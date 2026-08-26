@@ -35,6 +35,26 @@ namespace Ring.Simulation.Tests
             return found;
         }
 
+        /// app-88jb T14: the middle of a body's HEAD, read off the body's own
+        /// ORDERED STACK OF PARTS instead of off the LegsTop/BodyTop/HeadTop
+        /// column. Written once here because three fixtures below need exactly
+        /// this expression, and three copies of it is the shape rule 2 removes.
+        ///
+        /// WHY IT IS NOT `0.5f * (BodyTop + HeadTop)` ANY MORE. That was the
+        /// same aim point expressed through the column, and until T14 the two
+        /// agreed. They do not agree now, and the difference is the whole task:
+        /// the column stopped at the chaser's 1.85 m while the model stands
+        /// 2.70 m tall (measured, session 43), so `0.5 * (1.45 + 1.85)` = 1.65
+        /// lands squarely in the TORSO part [0.88, 2.12) and the fixture would
+        /// be asking for a headshot while shooting the chest. Read off the part,
+        /// the aim is 2.41 m for a chaser and 3.72 m for a gunner -- inside the
+        /// head belts [2.12, 2.70] and [3.24, 4.20] the bodies actually carry.
+        static float HeadBandOf(HitPart[] parts)
+        {
+            HitPart head = parts[parts.Length - 1];
+            return 0.5f * (head.Bottom + head.Top);
+        }
+
         [Test]
         public void Zones_ClassifyLegsBodyHead_AtBoundaries()
         {
@@ -87,12 +107,16 @@ namespace Ring.Simulation.Tests
         public void GunnerHeadshot_IsOneshot()
         {
             var cfg = Range();
+            // app-88jb T14: the multiplier premise is read off the HEAD PART,
+            // the same place the hit itself is now resolved from -- one source
+            // for the aim and for the number it is expected to produce.
+            HitPart gunnerHead = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
             // the balance premise this fixture rests on, asserted not assumed
-            Assert.GreaterOrEqual(cfg.Weapon.Damage * cfg.Gunner.HeadDamageMult, cfg.Gunner.MaxHp);
+            Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp);
 
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Gunner, new float2(TargetX, 0f)));
-            float headBand = 0.5f * (cfg.Gunner.BodyTop + cfg.Gunner.HeadTop);
+            float headBand = HeadBandOf(cfg.Gunner.Parts);
             TestWorlds.FireAimed3D(w, float2.zero, headBand, new float2(TargetX, 0f), headBand);
 
             w.ClearEvents();
@@ -109,13 +133,15 @@ namespace Ring.Simulation.Tests
         public void ChaserHeadshot_TwoShots()
         {
             var cfg = Range();
-            float headshot = cfg.Weapon.Damage * cfg.Chaser.HeadDamageMult;
+            // app-88jb T14: off the head PART, as GunnerHeadshot_IsOneshot above.
+            HitPart chaserHead = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
+            float headshot = cfg.Weapon.Damage * chaserHead.DamageMult;
             Assert.Less(headshot, cfg.Chaser.MaxHp);                 // one is not enough
             Assert.GreaterOrEqual(2f * headshot, cfg.Chaser.MaxHp);   // two are
 
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(TargetX, 0f)));
-            float headBand = 0.5f * (cfg.Chaser.BodyTop + cfg.Chaser.HeadTop);
+            float headBand = HeadBandOf(cfg.Chaser.Parts);
 
             TestWorlds.FireAimed3D(w, float2.zero, headBand, new float2(TargetX, 0f), headBand);
             w.Tick(default);
@@ -185,7 +211,9 @@ namespace Ring.Simulation.Tests
             var cfg = Range();
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(TargetX, 0f)));
-            float headBand = 0.5f * (cfg.Chaser.BodyTop + cfg.Chaser.HeadTop);
+            // app-88jb T14: aim AND expectation both off the head PART.
+            HitPart chaserHead = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
+            float headBand = HeadBandOf(cfg.Chaser.Parts);
             TestWorlds.FireAimed3D(w, float2.zero, headBand, new float2(TargetX, 0f), headBand);
 
             w.ClearEvents();
@@ -194,7 +222,7 @@ namespace Ring.Simulation.Tests
             SimEvent hit = Blow(w, SimEventKind.ProjectileHit);
             Assert.AreEqual(HitZone.Head, hit.Zone);
             Assert.AreNotEqual(cfg.Weapon.Damage, hit.Amount); // NOT the projectile's base damage
-            Assert.AreEqual(cfg.Weapon.Damage * cfg.Chaser.HeadDamageMult, hit.Amount, 1e-4f);
+            Assert.AreEqual(cfg.Weapon.Damage * chaserHead.DamageMult, hit.Amount, 1e-4f);
             // and the Hp the mob actually lost is that same post-multiplier number
             Assert.AreEqual(cfg.Chaser.MaxHp - hit.Amount, w.Mobs[0].Hp, 1e-4f);
             Assert.AreEqual(1f, hit.HitDir.x, 1e-4f); // travelling +X
@@ -247,7 +275,24 @@ namespace Ring.Simulation.Tests
                 ownerIndex: ProjectileIds.NoOwner); // Stage 2 Task 10: see the sibling fixture above
 
             w.ClearEvents();
-            w.Tick(default);
+            // app-88jb T14: THE ROUND IS FLOWN TO ITS END INSTEAD OF BEING
+            // JUDGED AFTER EXACTLY ONE TICK, and the reason is arithmetic
+            // rather than taste. A NARROW PART IS ENTERED LATER THAN THE BODY,
+            // by (body radius - part radius) along the ray: this collector's
+            // legs are 0.32 wide against a body of 0.45, so with the round's
+            // own 0.15 the two circles are entered at x = 0.47 and x = 0.60.
+            // A gunner's round covers 14 / 30 = 0.4667 m per tick from
+            // TargetX = 1 m, so tick one spans x: 1.0 -> 0.5333 -- it reaches
+            // the BODY circle and stops short of the LEGS one, which is the
+            // part this shot is actually aimed at. Under the column that
+            // distinction did not exist (one half-width for the whole body) and
+            // one tick was enough; under parts the blow simply lands on tick
+            // two. WHAT THE TEST CLAIMS IS UNCHANGED -- a sliding collector is
+            // hit BELOW his profile and the blow reads Legs -- and no
+            // expectation was relaxed to make it pass: had the round missed
+            // outright, RunUntilProjectilesDie would fly it past and the
+            // PlayerDamaged lookup below would fail exactly as it should.
+            TestWorlds.RunUntilProjectilesDie(w);
 
             SimEvent damaged = Blow(w, SimEventKind.PlayerDamaged);
             Assert.AreEqual(HitZone.Legs, damaged.Zone);

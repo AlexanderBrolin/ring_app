@@ -10,11 +10,13 @@ namespace Ring.Simulation.Tests
     /// is the subject, so it has to be readable in the same screen as the
     /// assertion (precedent DashRicochetTests.Fixture()).
     ///
-    /// SEVEN TESTS GO THROUGH THE WORLD, and they break that sentence on
+    /// EIGHT TESTS GO THROUGH THE WORLD, and they break that sentence on
     /// purpose: Т5's three (spec §4.3 tests 6/7/9, from
     /// HitAboveCenterOfMass_TipsAlongTheShot_BelowUndercutsIt on), Т6's two
-    /// tilt-threshold witnesses (spec tests 8/10) and Т13's two playtest debts
-    /// (app-hoe6 and app-mhw3, the last two tests in this file). What they witness is that the
+    /// tilt-threshold witnesses (spec tests 8/10), Т13's two playtest debts
+    /// (app-hoe6 and app-mhw3), and T14's flying-round half of the first of
+    /// those two (WorldHeadshot_FromARoundInFlight_..., the last test in this
+    /// file). What they witness is that the
     /// moment reaches MobState.TiltVel and that TickAll steps the spring --
     /// properties of the WIRING, which no pure function can show. They still
     /// state no literal of their own: every number they need is READ OFF the
@@ -22,7 +24,7 @@ namespace Ring.Simulation.Tests
     /// cfg.Weapon.ProjectileSpeed), so the two-sources-of-numbers rule holds
     /// and no value from the shipped .asset appears here.
     ///
-    /// THE VERY LAST TEST, ProtocolVersion_IsPinnedToFour, GOES THROUGH NEITHER
+    /// ProtocolVersion_IsPinnedToFour GOES THROUGH NEITHER
     /// (Т6). It is a wire-domain sentinel, not impact arithmetic: a new
     /// MobAiState enlarges the Mobs block's nibble domain, and a peer speaking
     /// the older version refuses the WHOLE block as MalformedContent
@@ -53,6 +55,13 @@ namespace Ring.Simulation.Tests
     /// and at MaxSpeed 5.2 the longest test here (300 ticks = 10 s) covers
     /// ~52 m of that 153 m gap. Zeroing MaxSpeed/Accel would be an edit
     /// without a cause (coordinator R-Т5-1).
+    ///
+    /// T14'S OWN ADDITION IS THE THIRD, AND IT IS THE ONLY WORLD TEST HERE
+    /// THAT PUTS A ROUND IN FLIGHT (app-hoe6's second half, Rulings 65/69).
+    /// It freezes the chaser for the same reason the two below do, and it
+    /// carries the arithmetic of WHY its aim sits above the middle of the
+    /// head belt in its own doc -- the contact is the entry into the part's
+    /// circle and therefore lower than the aim.
     ///
     /// Т13'S TWO ARE THE SECOND DELIBERATE EXCEPTION TO THAT PARAGRAPH: they
     /// DO zero MaxSpeed/Accel, and they have the cause the sentence above asks
@@ -596,6 +605,118 @@ namespace Ring.Simulation.Tests
                 "фикстура: попадание в ноги не качнуло тело вовсе — сравнивать нечего");
             Assert.Greater(head, legs,
                 "выстрел в ноги качает сильнее, чем в голову — пропорция тела не починена");
+        }
+
+        [Test]
+        public void WorldHeadshot_FromARoundInFlight_KnocksTheChaserDown_BodyDoesNot()
+        {
+            // THE SECOND HALF OF DEBT app-hoe6 (coordinator Rulings 65/68/69),
+            // and the one the milestone criterion actually asks for: the blow
+            // arrives as a ROUND IN FLIGHT, not through the DamageMob seam its
+            // sibling above uses. The difference is the whole point. The seam
+            // hands the contact height in by hand, so it can only show that the
+            // spring and the proportions agree; only a round that has to REACH
+            // the head part can show that the hit gate lets it. Before app-88jb
+            // T14 it could not: AcceptCandidate took `overlapTop` from
+            // cfg.HeadTop -- 1.85 m for the chaser -- and every shot aimed at
+            // the [2.12, 2.70] head belt passed clean over the body. T14
+            // repoints that gate at the parts themselves (top of the last part,
+            // 2.70), which is what makes this witness expressible at all.
+            //
+            // ⚠ THE CONTACT IS LOWER THAN THE AIM, AND AIMING AT THE MIDDLE OF
+            // THE HEAD WOULD BE RED ON CORRECT CODE (coordinator Ruling 69,
+            // recomputed independently in float32 by the implementer). The
+            // contact is the ENTRY into the PART's circle, i.e. a point that
+            // stops (head.Radius + ProjectileRadius) = 0.29 m short of the
+            // body's axis, so on a climbing shot it sits BELOW the aim:
+            //
+            //   enterX  = 6 - (0.17 + 0.12)               = 5.71 m
+            //   contact = 1.0 + (aim - 1.0) * 5.71 / 6
+            //   knockdown line (Ruling 61)                = 2.3486 m
+            //     [arm 1.1786 = 0.9 rad / (dv 1.51667 * TiltGain 10.5 *
+            //      0.0479508 rad of peak per unit impulse) + CoM 1.17]
+            //
+            // Aiming at the MIDDLE of the belt, 2.41 m, therefore lands the
+            // contact at 2.3419 m and peaks at 0.8948 rad against the 0.9 rad
+            // threshold -- 0.0067 m short, red on entirely correct code, the
+            // exact class of fixture Ruling 60 exists to catch. The aim taken
+            // here is 80 % of the way up the belt: 2.5840 m, contact 2.5074 m,
+            // arm 1.3374, peak 1.0213 rad -- 13.5 % of margin over the
+            // threshold, and 0.1588 m of margin in the contact height itself.
+            // The whole legal window is an aim of [2.4172, 2.70]; this sits
+            // comfortably inside its upper half.
+            //
+            // TWO EXPLICIT FIXTURES, both load-bearing, both the sibling's:
+            //  1. ProjectileSpeed 52.5, THE GAME's number, not the shared
+            //     fixture's 35 -- at 35 the peak would be 0.6810 rad against
+            //     the 0.9 threshold and the criterion would read RED on
+            //     correct code. FireAimed3D reads the speed off
+            //     world.Config.Weapon, so it is set BEFORE the constructor.
+            //  2. MaxSpeed/Accel zeroed (Ruling 17): a walking chaser would
+            //     change the entry point of the round between the two halves,
+            //     and with it the very contact height this test is about.
+            //     OpenField(), not Open(), puts the collector at the origin
+            //     the shot starts from -- harmless, because a round's own
+            //     owner is never gathered as a target.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Weapon.ProjectileSpeed = 52.5f;   // explicit fixture, see (1)
+            cfg.Chaser.MaxSpeed = 0f;             // explicit fixture, see (2)
+            cfg.Chaser.Accel = 0f;
+            // The premise pins the GAME's number, not "differs from the shared
+            // fixture" (review finding B-6), exactly as the sibling above.
+            Assert.AreEqual(52.5f, cfg.Weapon.ProjectileSpeed, 1e-4f,
+                "фикстура: скорость снаряда обязана быть ИГРОВОЙ (52.5), иначе тест красен на верном коде");
+
+            var w = new SimulationWorld(7, cfg);
+            PlayerState hero = w.Player; hero.Hp = 1e6f; w.SetPlayerForTest(hero);
+            var mobPos = new float2(6f, 0f);
+            w.SpawnMobForTest(MobType.Chaser, mobPos);
+
+            HitPart[] parts = cfg.Chaser.Parts;
+            HitPart head = parts[parts.Length - 1];
+            HitPart body = parts[parts.Length - 2];
+
+            // One round fired at `aimH`, then as many ticks as the spring needs
+            // to reach its peak. Pos and Vel are restated along with the tilt:
+            // DamageMob's linear shove lands in the SAME Vel, and with Accel
+            // zeroed nothing bleeds it off, so the body would stand 1.37 m
+            // further out by the time the second half fires.
+            //
+            // THE ZONE IS A PREMISE, NOT THE CLAIM. Without it the negative
+            // half would read green off a MISS -- a round that never connected
+            // knocks nothing over either, which is the false green this pair
+            // exists to exclude.
+            bool KnocksDown(float aimH, HitZone expectedZone, string premise)
+            {
+                MobState m = w.Mobs[0];
+                m.Pos = mobPos; m.Vel = float2.zero;
+                m.Hp = 1e6f; m.Ai = MobAiState.Idle;
+                m.Tilt = 0f; m.TiltVel = 0f; m.StateTimer = 0f;
+                w.SetMobForTest(0, m);
+
+                w.ClearEvents();
+                TestWorlds.FireAimed3D(w, float2.zero, muzzleH: cfg.Hero.MuzzleHeight,
+                    targetXY: mobPos, targetH: aimH);
+                TestWorlds.RunUntilProjectilesDie(w);
+                Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),
+                    premise);
+                Assert.AreEqual(expectedZone, e.Zone, premise);
+
+                int budget = SimulationWorld.TicksFromSeconds(cfg.Chaser.TiltSettleSeconds);
+                for (int i = 0; i < budget && w.Mobs[0].Ai != MobAiState.Downed; i++)
+                    w.Tick(default);
+                return w.Mobs[0].Ai == MobAiState.Downed;
+            }
+
+            float headAim = head.Bottom + 0.8f * (head.Top - head.Bottom);
+            float bodyAim = 0.5f * (body.Bottom + body.Top);
+
+            Assert.IsTrue(KnocksDown(headAim, HitZone.Head,
+                    "фикстура: летящий снаряд не пришёл в ГОЛОВУ — мерить нечего"),
+                "летящий снаряд в голову не валит чейзера — вторая половина критерия вехи В1 не наблюдается");
+            Assert.IsFalse(KnocksDown(bodyAim, HitZone.Body,
+                    "фикстура: летящий снаряд не пришёл в КОРПУС — отрицательная половина пуста"),
+                "летящий снаряд в корпус валит — хедшот перестал быть особенным");
         }
     }
 }

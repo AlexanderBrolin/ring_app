@@ -883,11 +883,28 @@ namespace Ring.Simulation.Tests
 
             // A Gunner one-shot at head height: ProjectileHit and MobDied land
             // in the SAME tick, which is exactly the pairing under test.
-            Assert.GreaterOrEqual(cfg.Weapon.Damage * cfg.Gunner.HeadDamageMult, cfg.Gunner.MaxHp,
+            //
+            // app-88jb T14 (coordinator Ruling 75): BOTH THE AIM AND THE
+            // MULTIPLIER ARE READ OFF THE GUNNER'S HEAD PART, not off the
+            // LegsTop/BodyTop/HeadTop column beside it. From T14 on a blow is
+            // resolved against Parts, and `0.5 * (BodyTop + HeadTop)` = 3.10 m
+            // is no longer this body's head at all — the gunner's head belt is
+            // [3.24, 4.20] and 3.10 sits inside his TORSO [1.32, 3.24). The
+            // consequence is not cosmetic and it is what made this test red:
+            // a torso hit is 12 damage against MaxHp 20, the mob SURVIVES, and
+            // the premise two asserts down ("the mob must have died from that
+            // same round") fails — taking with it the ProjectileHit/MobDied
+            // pairing this test exists to pin. Off the part the aim is 3.72 m
+            // and the blow is 12 * 1.7 = 20.4 >= 20, a one-shot again.
+            //
+            // THE COLUMN IS NOT REMOVED ANYWHERE — it lives until T15; this
+            // fixture simply stopped reading its own aim out of it.
+            HitPart gunnerHead = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
+            Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp,
                 "fixture premise: this must be a one-shot kill, so both events land in one tick");
             var targetPos = new float2(1f, 0f); // under one tick of travel — the round lands next tick
             TestWorlds.SpawnMobsAt(w, (MobType.Gunner, targetPos));
-            float headBand = 0.5f * (cfg.Gunner.BodyTop + cfg.Gunner.HeadTop);
+            float headBand = 0.5f * (gunnerHead.Bottom + gunnerHead.Top);
             int projectileId = TestWorlds.FireAimed3D(w, float2.zero, headBand, targetPos, headBand);
             Assert.Greater(projectileId, 0, "fixture premise: the round must actually have spawned");
             int mobId = w.Mobs[0].Id;

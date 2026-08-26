@@ -6,12 +6,39 @@ namespace Ring.Simulation.Tests
 {
     public class ProjectileHeightTests
     {
-        /// D15 shot geometry — normative fixture numbers, not derived here: the
-        /// hero fires from muzzle height at a point in the Gunner's head band 9 m
-        /// out, which puts the straight trajectory over a Chaser's crown at 6.5 m
-        /// and under it at 2 m. Their relation to the config is asserted in the
-        /// fixtures below rather than assumed.
-        const float MuzzleH = 1f, AimH = 3.1f, GunnerX = 9f;
+        /// D15 shot geometry — the hero fires from muzzle height at a point in
+        /// the Gunner's head band 9 m out, which puts the straight trajectory
+        /// over a Chaser's crown at 6.5 m and under it at 2 m. Their relation to
+        /// the config is asserted in the fixtures below rather than assumed.
+        ///
+        /// app-88jb T14 (coordinator Ruling 74): `AimH` IS NO LONGER A LITERAL
+        /// AND NO LONGER 3.1. It is read off the Gunner's own HEAD PART, because
+        /// the column this fixture was written against is not what resolves a
+        /// hit any more, and 3.1 m stopped meaning "the gunner's head" the day
+        /// the parts landed: the gunner's head belt is [3.24, 4.20] and 3.1 is
+        /// his TORSO. The number also has to clear a taller chaser — the model
+        /// is 2.70 m where the column ended at 1.85 — so the aim is taken at
+        /// 80 % of the way up the belt rather than at its middle. Measured: at
+        /// 4.008 m the trajectory stands at 2.965 m where it enters the
+        /// screening chaser's torso circle (x = 5.88), which clears his crown
+        /// plus the round's own radius, 2.70 + 0.12 = 2.82, by 0.145 m. The
+        /// middle of the belt (3.72) would leave only 2.777 there — INSIDE the
+        /// graze forgiveness, i.e. the screen would eat the round and the test
+        /// would witness nothing. Both users of this constant are checked
+        /// against it by their own premises below.
+        const float MuzzleH = 1f, GunnerX = 9f;
+        static readonly float AimH = AimAtTheGunnersHead();
+
+        /// 80 % of the way up the Gunner's head part — see AimH's own note for
+        /// why the middle of the belt is not enough. A static helper rather than
+        /// an initializer expression so the derivation is readable, and so it
+        /// reads the SAME fixture the tests build (TestConfigs.OpenField's
+        /// Gunner is TestConfigs.Default's Gunner — SpawnPair only zeroes speeds).
+        static float AimAtTheGunnersHead()
+        {
+            HitPart head = TestConfigs.Default().Gunner.Parts[^1];
+            return head.Bottom + 0.8f * (head.Top - head.Bottom);
+        }
 
         /// A Chaser screening the line of fire plus the Gunner behind it, both
         /// frozen where they spawn: this pair measures the height gate, so a
@@ -46,14 +73,36 @@ namespace Ring.Simulation.Tests
         [Test]
         public void GunnerHeadOverCrowd_HitFromFarChaser()
         {
-            // D15 + M5: the trajectory clears the Chaser at 6.5 m (sweep entry
-            // x = 5.88 sits at h = 2.37, above HeadTop + ProjectileRadius = 1.97),
-            // so that candidate is rejected on height and the scan carries on to
-            // the Gunner at 9 m, whose head band [BodyTop, HeadTop] the shot is
-            // aimed into.
+            // D15 + M5: the trajectory clears the Chaser at 6.5 m, so that
+            // candidate is rejected on height and the scan carries on to the
+            // Gunner at 9 m, whose head band the shot is aimed into.
+            //
+            // app-88jb T14 (Ruling 74): BOTH NUMBERS IN THAT SENTENCE MOVED, and
+            // the premises below now read them off the PARTS instead of the
+            // LegsTop/BodyTop/HeadTop column. What is cleared is the chaser's
+            // own crown, 2.70 m (his model, measured in session 43) rather than
+            // his column's 1.85 m, and the entry height that clears it is
+            // 2.965 m rather than the 2.37 m this comment used to quote. The
+            // subject is untouched: a screening body is REJECTED ON HEIGHT and
+            // the min-scan carries on to the target behind it — the M5 rescan
+            // branch, which nothing else in the suite drives.
             var w = SpawnPair(6.5f, GunnerX, out SimConfig cfg);
-            Assert.That(AimH, Is.InRange(cfg.Gunner.BodyTop, cfg.Gunner.HeadTop));
-            Assert.GreaterOrEqual(cfg.Weapon.Damage * cfg.Gunner.HeadDamageMult, cfg.Gunner.MaxHp);
+            HitPart gunnerHead = cfg.Gunner.Parts[^1];
+            HitPart chaserCrown = cfg.Chaser.Parts[^1];
+            Assert.That(AimH, Is.InRange(gunnerHead.Bottom, gunnerHead.Top),
+                "фикстура: прицел обязан лежать в поясе ГОЛОВЫ ганнера, иначе тест не о хедшоте");
+            // THE CLEARANCE, STATED AS GEOMETRY RATHER THAN AS PROSE (the old
+            // comment asserted it in words and went stale the moment the bodies
+            // grew). The height where the round enters the screening chaser's
+            // widest circle must stand above his crown plus the round's own
+            // radius — that sum is exactly what HitZones.Resolve forgives.
+            const float screenX = 6.5f;
+            float screenEntryX = screenX - (cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius);
+            float screenEntryH = MuzzleH + (AimH - MuzzleH) * screenEntryX / GunnerX;
+            Assert.Greater(screenEntryH, chaserCrown.Top + cfg.Weapon.ProjectileRadius,
+                "фикстура: трасса не проходит над экранирующим чейзером — рескан по высоте нечем показать");
+            Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp,
+                "фикстура: один хедшот обязан быть смертельным, иначе «достал ганнера» не читается смертью");
 
             TestWorlds.FireAimed3D(w, float2.zero, MuzzleH, new float2(GunnerX, 0f), AimH);
             TestWorlds.RunUntilProjectilesDie(w);
@@ -77,10 +126,22 @@ namespace Ring.Simulation.Tests
         [Test]
         public void CloseChaser_ScreensGunnerHead()
         {
-            // the same shot 4.5 m earlier: at the Chaser's sweep entry x = 1.38 the
-            // trajectory is only h = 1.32, inside the Chaser's column — it eats the
-            // round and the Gunner behind it is never reached.
+            // the same shot 4.5 m earlier: at the Chaser's sweep entry x = 1.38
+            // the trajectory is still low — inside the Chaser's body — so it
+            // eats the round and the Gunner behind it is never reached.
+            // app-88jb T14 (Ruling 74): with AimH read off the gunner's head
+            // part the entry height here is 1.461 m rather than the 1.32 m this
+            // comment used to quote, and it lands in the chaser's TORSO part
+            // [0.88, 2.12) — the same Body zone and the same BodyDamageMult the
+            // expectation below has always been written from. The premise makes
+            // that explicit instead of leaving it to the prose.
             var w = SpawnPair(2f, GunnerX, out SimConfig cfg);
+            HitPart torso = cfg.Chaser.Parts[^2];
+            const float screenX = 2f;
+            float screenEntryH = MuzzleH + (AimH - MuzzleH)
+                * (screenX - (cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius)) / GunnerX;
+            Assert.That(screenEntryH, Is.InRange(torso.Bottom, torso.Top),
+                "фикстура: экран ловит раунд не КОРПУСОМ — множитель ниже посчитан не от той части");
             TestWorlds.FireAimed3D(w, float2.zero, MuzzleH, new float2(GunnerX, 0f), AimH);
             TestWorlds.RunUntilProjectilesDie(w);
 
@@ -105,7 +166,17 @@ namespace Ring.Simulation.Tests
         {
             var cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
-            float column = cfg.Chaser.HeadTop + cfg.Weapon.ProjectileRadius;
+            // app-88jb T14 (Ruling 74): THE CROWN IS THE MODEL'S, NOT THE
+            // COLUMN'S. `cfg.Chaser.HeadTop` is 1.85 and after this task that
+            // height is the middle of the chaser's TORSO — a shot there is an
+            // ordinary body hit, not a graze, and the test would have been
+            // asserting Head on a chest shot. The part's own Top is 2.70, so the
+            // grazing line is 2.82 and the clearing line just above it. What the
+            // test witnesses is unchanged and is the only witness of it in the
+            // suite: the edge forgiveness HitZones.Resolve inherited from
+            // Classify, which pulls a round grazing the crown back ONTO the
+            // crown instead of dropping it off the table.
+            float column = cfg.Chaser.Parts[^1].Top + cfg.Weapon.ProjectileRadius;
 
             var grazing = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(grazing, (MobType.Chaser, new float2(5f, 0f)));

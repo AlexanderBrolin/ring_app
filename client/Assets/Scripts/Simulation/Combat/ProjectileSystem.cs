@@ -170,6 +170,16 @@ namespace Ring.Simulation.Combat
                 // parameter, same "never read on a HitNone/rejected verdict"
                 // contract as hitZone/hitMult above.
                 float hitHeight = 0f;
+                // The fraction of the step the CONTACT sits at (app-88jb T14,
+                // coordinator Ruling 73). For a body it is the entry into the
+                // WINNING PART's circle, which is a later point than `bestT`
+                // (the entry into the whole body's circle) whenever the part
+                // struck is narrower than the body -- 0.33 m later on a chaser
+                // headshot. For every other kind it IS `bestT`, and
+                // AcceptCandidate says so by initializing it to exactly that.
+                // Same "never read on a HitNone/rejected verdict" contract as
+                // its three neighbors.
+                float hitContactT = 0f;
                 while (candCount > 0)
                 {
                     int bestSlot = -1;
@@ -196,7 +206,8 @@ namespace Ring.Simulation.Combat
                     hitTargetIndex = candidates[bestSlot].index;
 
                     if (AcceptCandidate(w, in config, in proj, startPos, target, bestT,
-                            hitKind, hitTargetIndex, out hitZone, out hitMult, out hitHeight))
+                            hitKind, hitTargetIndex, out hitZone, out hitMult, out hitHeight,
+                            out hitContactT))
                     {
                         break;
                     }
@@ -256,7 +267,13 @@ namespace Ring.Simulation.Combat
                     }
                     case HitMob:
                     {
-                        float2 contact = math.lerp(startPos, target, bestT);
+                        // app-88jb T14 (Ruling 73): the contact is the winning
+                        // PART's entry, not the body circle's. `bestT` is
+                        // untouched and stays what it has always been -- the
+                        // min-scan's own answer to WHICH candidate won; this
+                        // line asks the different question of WHERE on the step
+                        // the blow landed, and only the resolver knows that.
+                        float2 contact = math.lerp(startPos, target, hitContactT);
                         float2 hitDir = math.normalizesafe(proj.Vel, new float2(1f, 0f));
                         // Multiplier applies BEFORE the event: Amount is the
                         // damage actually dealt, so Presentation never has to
@@ -300,7 +317,9 @@ namespace Ring.Simulation.Combat
                     }
                     case HitPlayer:
                     {
-                        float2 contact = math.lerp(startPos, target, bestT);
+                        // app-88jb T14 (Ruling 73): the winning PART's entry,
+                        // exactly as the HitMob branch above -- see its note.
+                        float2 contact = math.lerp(startPos, target, hitContactT);
                         float2 hitDir = math.normalizesafe(proj.Vel, new float2(1f, 0f));
                         // Multiplier applies BEFORE both the event and the blow,
                         // exactly as in the HitMob branch above.
@@ -412,14 +431,21 @@ namespace Ring.Simulation.Combat
 
         /// Height gate + zone resolution for the candidate the min-scan just
         /// picked (Task 6). Returns false when the shot passes clear over (or
-        /// under) the target's column, which sends the scan back for the next
+        /// under) the target's body, which sends the scan back for the next
         /// candidate; on true, `zone`/`mult`/`hitHeight` describe the blow.
         ///
         /// The projectile's height is not a point: it moves by VelZ·dt across the
         /// step, so the test uses the height at BOTH ends of the chord through
-        /// the target — hence Geometry.SegmentCircleInterval rather than the
-        /// gather phase's entry-only SegmentCircle. The zone itself is read at
-        /// the ENTRY height: that is where the round first touches the body.
+        /// the target rather than the gather phase's entry-only SegmentCircle.
+        /// The zone itself is read at the ENTRY height: that is where the round
+        /// first touches the body.
+        ///
+        /// app-88jb T14: for the two DAMAGEABLE kinds that whole judgement now
+        /// lives in HitZones.Resolve, over the body's ORDERED STACK OF PARTS,
+        /// and this method only assembles its inputs -- which body, its parts,
+        /// the height span of the step and the overlap ceiling. The barrier,
+        /// ring-wall and floor branches below are untouched: they have no parts
+        /// and never had a zone.
         ///
         /// `targetIndex` (Stage 2 Task 17: was `mobIndex`) is the winning
         /// candidate's own index — a mob index under HitMob, a player index under
@@ -434,39 +460,60 @@ namespace Ring.Simulation.Combat
         /// candidate lands at — every branch below fills it with the height
         /// arithmetic it already had to compute for its own gate (or, for
         /// the ring wall and an un-topped barrier, the same formula a gated
-        /// branch would have used). Initialized up front so an early
-        /// `return false` (the body-height gate further down) still leaves
-        /// it definitely assigned, as C# requires — a rejected candidate's
-        /// height is never read by the caller, only its true/false verdict.
+        /// branch would have used); for the two damageable kinds it is the
+        /// winning PART's own entry height, which HitZones.Resolve hands back.
+        /// Initialized up front so an early `return false` (the body branch's
+        /// own gate further down) still leaves it definitely assigned, as C#
+        /// requires — a rejected candidate's height is never read by the
+        /// caller, only its true/false verdict.
         static bool AcceptCandidate(SimulationWorld w, in SimConfig config, in ProjectileState proj,
             float2 p0, float2 p1, float t, int kind, int targetIndex, out HitZone zone, out float mult,
-            out float hitHeight)
+            out float hitHeight, out float contactT)
         {
             zone = HitZone.None;
             mult = 1f;
             hitHeight = 0f;
+            // Defaults to the min-scan's own fraction, which is what every
+            // NON-body branch below means by "the contact": a barrier, the ring
+            // wall and the floor have no parts, and the point the scan already
+            // found IS their contact. Only the two damageable kinds overwrite
+            // it, with the winning part's own entry (Ruling 73).
+            contactT = t;
 
             // The round's height AT the contact the min-scan handed down (app-88jb
             // Т3). One home, not four: every non-body branch below answers the
             // contact height with exactly this expression, and the gated barrier
             // branch needs it as its own gate input as well. Bodies do NOT use it
-            // -- their contact is the ENTRY into the target circle (hEnter, far
-            // below), which is a different point on the same step.
+            // -- their contact is the ENTRY into the winning PART's own circle
+            // (HitZones.Resolve, far below), which is a different point on the
+            // same step.
             float contactHeight = proj.Height + proj.VelZ * SimulationWorld.TickDt * t;
 
             float2 targetPos;
-            float targetRadius, legsTop, bodyTop, headTop, overlapTop, legsMult, bodyMult, headMult;
+            float overlapTop;
+            // app-88jb T14: the body arrives as its ORDERED STACK OF PARTS,
+            // not as the LegsTop/BodyTop/HeadTop column plus three
+            // multipliers -- HitZones.Resolve reads every number it needs
+            // (each part's radius, its height band, its zone and its own
+            // multiplier) off this one array. The array is a DIRECT ALIAS of
+            // the config's, never copied: Resolve only reads it.
+            HitPart[] parts;
             if (kind == HitMob)
             {
                 MobState mob = w.Mobs[targetIndex];
                 MobSimConfig cfg = w.MobConfigFor(mob.Type);
                 targetPos = mob.Pos;
-                targetRadius = cfg.Radius;
-                legsTop = cfg.LegsTop; bodyTop = cfg.BodyTop; headTop = cfg.HeadTop;
-                overlapTop = headTop;
-                legsMult = cfg.LegsDamageMult;
-                bodyMult = cfg.BodyDamageMult;
-                headMult = cfg.HeadDamageMult;
+                parts = cfg.Parts;
+                // THE CROWN OF THE MODEL, NOT OF THE COLUMN (app-88jb T14 Step
+                // 4, coordinator Ruling 68). This read was cfg.HeadTop, i.e.
+                // 1.85 m for a chaser whose model is 2.70 m tall -- measured in
+                // session 43, the bodies stand 1.46/1.20/1.37 times higher than
+                // the column that gated them, so the top third of every mob was
+                // not shootable at all. Repointing it at the last part's Top is
+                // the single move that closes the flying half of playtest debt
+                // app-hoe6: a round aimed into the chaser's head belt
+                // [2.12, 2.70] used to pass clean over the body.
+                overlapTop = HitZones.StackTop(parts);
             }
             else if (kind == HitPlayer)
             {
@@ -478,21 +525,30 @@ namespace Ring.Simulation.Combat
                 // the struct is also one fewer indexer call on the hot path.
                 PlayerState target = w.PlayerAt(targetIndex);
                 targetPos = target.Pos;
-                targetRadius = cfg.Radius;
-                legsTop = cfg.LegsTop; bodyTop = cfg.BodyTop; headTop = cfg.HeadTop;
+                parts = cfg.Parts;
                 // Task 11: mid-slide, the hero presents a lower profile — the
                 // OVERLAP gate caps at SlideProfileTop instead of the standing
                 // HeadTop, so a shot on a high horizontal line (e.g. a
                 // Gunner's muzzle height) passes clean over a sliding target.
-                // Zone CLASSIFICATION below is untouched: Classify still reads
-                // the standing legs/body/head table, so a shot that DOES
-                // connect while sliding resolves to whatever zone its entry
-                // height actually falls in (Legs, or low Body, since
-                // SlideProfileTop sits below BodyTop).
-                overlapTop = target.SlideTimer > 0f ? cfg.SlideProfileTop : headTop;
-                legsMult = cfg.LegsDamageMult;
-                bodyMult = cfg.BodyDamageMult;
-                headMult = cfg.HeadDamageMult;
+                // Which PART a shot that DOES connect resolves onto is a
+                // separate decision and stays untouched by the profile: the
+                // parts are the standing ones either way, so a low round reads
+                // as Legs (or as low Body, since SlideProfileTop sits below the
+                // body part's top).
+                // The standing arm follows the mob branch onto the parts
+                // (T14 Step 4); the SLIDING arm does not move at all, and the
+                // reason it does not have to is a RULE rather than a
+                // coincidence: T13's validation rule 5 requires
+                // Hero.SlideProfileTop to COINCIDE with a part boundary
+                // (SimConfigBuilder.cs:634), so the profile the slide presents
+                // is expressible in the new model exactly as it was in the old
+                // one. For the collector this repointing moves no number at
+                // all -- his parts end at 1.75, which is his HeadTop -- and
+                // that is measured, not assumed: only his RADII differ from the
+                // column (0.32 / 0.45 / 0.16 against one body radius of 0.45).
+                overlapTop = target.SlideTimer > 0f
+                    ? cfg.SlideProfileTop
+                    : HitZones.StackTop(parts);
             }
             else if (kind == HitRingWall)
             {
@@ -588,31 +644,36 @@ namespace Ring.Simulation.Combat
 
             float hStart = proj.Height;
             float hEnd = hStart + proj.VelZ * SimulationWorld.TickDt;
-            // Fallback [0,1] = the step's full height span. Unreachable for a
-            // gathered candidate (both solvers answer the same quadratic, and the
-            // gather phase already found this circle on this segment); keeping it
-            // conservative means a hypothetical disagreement can only ever let a
-            // hit through, never silently swallow one.
-            float tEnter = 0f, tExit = 1f;
-            if (Geometry.SegmentCircleInterval(p0, p1, proj.Radius, targetPos, targetRadius,
-                    out float chordEnter, out float chordExit))
-            {
-                tEnter = chordEnter;
-                tExit = chordExit;
-            }
-            float hEnter = math.lerp(hStart, hEnd, tEnter);
-            float hExit = math.lerp(hStart, hEnd, tExit);
-            // Height (app-88jb Т3): the ENTRY height, the same point Zone
-            // classification below reads — "where the round first touches
-            // the body" (this method's own doc above). Assigned before the
-            // overlap gate: a rejected candidate's height is never read by
-            // the caller, same contract as every branch above.
-            hitHeight = hEnter;
-
-            if (!HitZones.Overlaps(hEnter, hExit, proj.Radius, overlapTop)) return false;
-            zone = HitZones.Classify(hEnter, legsTop, bodyTop, headTop);
-            mult = HitZones.MultFor(zone, legsMult, bodyMult, headMult);
-            return true;
+            // app-88jb T14: ONE call answers all three questions -- does the
+            // round connect with any part at all, which one, and where. The
+            // pair it replaces (HitZones.Overlaps against the column, then
+            // HitZones.Classify/MultFor at the entry height into the BODY
+            // circle) could not: the column has one radius for the whole body,
+            // so a shoulder-wide head was the only shape it could express, and
+            // the contact it measured belonged to the body circle rather than
+            // to the part that was actually struck (findings B-I6/D-I2).
+            //
+            // The sweep interval this used to solve here moves INSIDE Resolve,
+            // where it is solved once PER PART at that part's own radius --
+            // the whole point of the change. The height span of the step,
+            // [hStart, hEnd], still comes from here, because only this method
+            // knows the round.
+            //
+            // `false` still means "rejected, rescan": the caller's min-scan
+            // drops this candidate and looks at the next one, so a target
+            // behind a screening body stays reachable (M5).
+            //
+            // AND THE WINNING PART'S `t` TRAVELS OUT (coordinator Ruling 73,
+            // which overrules Ruling 67). Its reader is the TWO-DIMENSIONAL
+            // contact of a body hit: Update used to build it from the
+            // min-scan's `bestT`, the entry into the BODY circle, and leaving
+            // XY there while the HEIGHT moved to the part would have left the
+            // event carrying a point that disagrees with itself by (body radius
+            // - part radius) -- 0.33 m on a chaser headshot. `contactT` is in
+            // the caller's own [p0, p1] parameterization, the same one `bestT`
+            // is in, so those two branches lerp it with no conversion.
+            return HitZones.Resolve(parts, p0, p1, proj.Radius, targetPos, hStart, hEnd,
+                overlapTop, out zone, out mult, out hitHeight, out contactT);
         }
     }
 }

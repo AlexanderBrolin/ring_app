@@ -90,6 +90,14 @@ namespace Ring.Simulation.Tests
         /// this. An expression, never a number copied out of a fixture.
         static float CrownReach(in SimConfig c) => c.Arena.BarrierTop + c.Weapon.ProjectileRadius;
 
+        /// app-88jb T14 (Ruling 74): the Gunner's HEAD PART, the one number the
+        /// flight height above is derived from. Read off TestConfigs.Default
+        /// rather than off the per-test config because it is needed to BUILD
+        /// that config's flight, before Field() has returned one — and the two
+        /// carry the same archetype either way (Field only zeroes speeds and
+        /// sets BarrierTop).
+        static HitPart GunnerHead() => TestConfigs.Default().Gunner.Parts[^1];
+
         [Test]
         public void NoModelledTop_IsWhatTheSharedBaselineAndTheGoldensRunOn()
         {
@@ -129,7 +137,18 @@ namespace Ring.Simulation.Tests
             // resumes over what is left, and the mob behind it still resolves on
             // the very same tick.
             const float obstacleX = 5f, obstacleRadius = 1.5f, mobX = 7f;
-            const float top = 2f, flightHeight = 3f;
+            const float top = 2f;
+            // app-88jb T14 (coordinator Ruling 74): THE FLIGHT HEIGHT IS READ
+            // OFF THE GUNNER'S HEAD PART, not stated as 3 m. The literal was
+            // chosen against the LegsTop/BodyTop/HeadTop column, where 3 m sat
+            // above BodyTop 2.70 and therefore read as Head; the gunner's head
+            // belt is [3.24, 4.20] now, so 3 m is his TORSO, one body hit is 12
+            // damage against 20 Hp, and "reached the mob" would stop reading as
+            // a kill — the premise three lines down says so in as many words.
+            // Nothing about the SUBJECT moves: a round whose remaining step
+            // stands above Arena.BarrierTop is handed back by the barrier and
+            // resolves onto what stands behind it, on the same tick.
+            float flightHeight = 0.5f * (GunnerHead().Bottom + GunnerHead().Top);
 
             SimulationWorld Shoot(float barrierTop, out SimConfig cfg)
             {
@@ -155,9 +174,15 @@ namespace Ring.Simulation.Tests
                 + "so barrier and mob really do tie");
             Assert.Greater(flightHeight, CrownReach(in c),
                 "fixture premise: the flight clears the crown");
-            Assert.LessOrEqual(flightHeight, c.Gunner.HeadTop + c.Weapon.ProjectileRadius,
-                "fixture premise: and still falls inside the mob's own column");
-            Assert.GreaterOrEqual(c.Weapon.Damage * c.Gunner.HeadDamageMult, c.Gunner.MaxHp,
+            // app-88jb T14 (Ruling 74): both premises read the PART. The first
+            // one used to say "inside the mob's own column"; the column is not
+            // what resolves a hit any more, so it says "inside the model" and
+            // measures it against the crown the silhouette actually presents.
+            Assert.LessOrEqual(flightHeight, c.Gunner.Parts[^1].Top + c.Weapon.ProjectileRadius,
+                "fixture premise: and still falls inside the mob's own model");
+            Assert.That(flightHeight, Is.InRange(GunnerHead().Bottom, GunnerHead().Top),
+                "fixture premise: the flight must land in the HEAD part, or the kill below is not a headshot");
+            Assert.GreaterOrEqual(c.Weapon.Damage * GunnerHead().DamageMult, c.Gunner.MaxHp,
                 "fixture premise: one head hit is lethal, so 'reached the mob' reads as a kill");
 
             Assert.AreEqual(0, TestEvents.CountOf(cleared, SimEventKind.ProjectileBlocked),
