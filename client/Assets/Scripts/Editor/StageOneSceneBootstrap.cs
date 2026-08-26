@@ -2905,12 +2905,17 @@ namespace Ring.Editor
         /// from a constraint into a leftover. The old reasoning was "Hero.
         /// MaxAimHeight is 3.8, so a taller silhouette would put the
         /// Director's head above anything a collector can aim at" -- true
-        /// while the column WAS the hit volume. Т13 moved the hit volume into
-        /// `Parts`, whose last part ends at 4.80, and raised MaxAimHeight to
-        /// 4.9 in the same task precisely so that crown stays reachable
-        /// (validation rule 14 now enforces it across all five bodies). The
-        /// three column scalars survive only until Т15 takes their last
-        /// consumer; nothing reads them for aiming any more. Model scale
+        /// while the column WAS the hit volume. Т13 DECLARED the parts, whose
+        /// last one ends at 4.80, and raised MaxAimHeight to 4.9 in the same
+        /// task precisely so that crown stays reachable (validation rule 14
+        /// now enforces it across all five bodies).
+        /// ⚠ THE COLUMN IS STILL THE HIT VOLUME AS THIS IS WRITTEN, and the
+        /// review that caught this doc caught it for a reason: resolving a hit
+        /// against `Parts` is Т14 (`AcceptCandidate` reads `overlapTop` off
+        /// cfg.HeadTop until then), the aim proxies are rebuilt from parts in
+        /// Т17, and the three column scalars are removed in Т15 together with
+        /// their fold into the hash. So for three more tasks BOTH exist, and
+        /// the column is what decides a shot. Model scale
         /// (ASSETS-001 §2.3, x1.5-2) is Presentation's own number and does not
         /// touch either one.
         ///

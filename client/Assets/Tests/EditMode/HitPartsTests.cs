@@ -91,9 +91,10 @@ namespace Ring.Simulation.Tests
             // ⭐ THE GUARD OVER THE PHASE'S MAIN NUMBER (finding C-C3): the head
             // is obliged to take 18-26 % of the body's height. v1 gave 36-46 %
             // and turned a shot to the chest into a headshot.
-            // ⚠ A GUARD, NOT A WITNESS (lesson 427): today's columns are scaled
-            // WHOLE, so all five bodies already sit at 21.6-22.9 % and this
-            // reads green before Т13 moves a number. What it catches is the
+            // ⚠ A GUARD, NOT A WITNESS (lesson 427): the columns are scaled
+            // WHOLE, so all five bodies already sit inside the band — 21.48 %
+            // (chaser), 22.86 % (collector and gunner), 22.91 % (elite),
+            // 22.92 % (director) — and this reads green on the shipped numbers. What it catches is the
             // v1-shaped mistake — one Top raised on its own — whenever it is
             // made, which is the only thing it was ever asked to catch.
             SimConfig cfg = TestConfigs.Default();

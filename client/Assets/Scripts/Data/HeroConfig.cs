@@ -147,10 +147,16 @@ namespace Ring.Data
         /// NO [Range]: the attribute is not expressible per element of an
         /// array, so the gate is SimConfigBuilder.Validate's six rules, the
         /// same place ArenaConfig's Obstacle/Wall structs are gated.
-        /// THE COLLECTOR IS THE ONE BODY WHOSE HEIGHTS DO NOT MOVE (spec §3.3,
-        /// evidence Т12): the scale factor between his model and his column is
-        /// 1.0 — he is not from the mech pack the four archetypes come from,
-        /// and his silhouette already matched. So the three heights are the
+        /// THE COLLECTOR IS THE ONE BODY WHOSE HEIGHTS DO NOT MOVE, and that
+        /// is the SPEC's decision (§3.3), not a measurement: he is not from the
+        /// mech pack the four archetypes come from, so the spec gives him k = 1
+        /// and leaves his column alone.
+        /// ⚠ Т12 DID measure him, and the number is 1.0481, not 1.0 — his drawn
+        /// crown is 1.8342 m against a 1.75 m column (evidence
+        /// task-88jb-12-elite-measurement.md). The top ~8 cm of the model
+        /// therefore stay outside the hit column, exactly the mismatch this
+        /// phase closes for the other four. Left as the spec has it, and
+        /// written down rather than rounded away. So the three heights are the
         /// same 0.55/1.35/1.75 LegsTop/BodyTop/HeadTop carry above, and only
         /// the per-part RADII are new. They are 0.7 / 1.0 / 0.35 of Radius —
         /// one named humanoid proportion, applied to all five bodies alike

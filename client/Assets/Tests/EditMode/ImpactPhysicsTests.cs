@@ -498,9 +498,14 @@ namespace Ring.Simulation.Tests
             cfg.Weapon.ProjectileSpeed = 52.5f;   // explicit fixture, see (1)
             cfg.Chaser.MaxSpeed = 0f;             // explicit fixture, see (2)
             cfg.Chaser.Accel = 0f;
-            Assert.AreNotEqual(TestConfigs.Default().Weapon.ProjectileSpeed,
-                cfg.Weapon.ProjectileSpeed,
-                "фикстура: скорость снаряда обязана быть игровой, иначе тест красен на верном коде");
+            // The premise pins the GAME's number, not "differs from the shared
+            // fixture" (review finding B-6): the shared fixture is free to
+            // change, and what this test needs is the 52.5 m/s the shipped
+            // WeaponConfig fires at -- at the fixture's 35 the peak is 36.2 deg
+            // against a 51.6 deg threshold and the criterion reads red on
+            // entirely correct code.
+            Assert.AreEqual(52.5f, cfg.Weapon.ProjectileSpeed, 1e-4f,
+                "фикстура: скорость снаряда обязана быть ИГРОВОЙ (52.5), иначе тест красен на верном коде");
 
             var w = new SimulationWorld(7, cfg);
             PlayerState hero = w.Player; hero.Hp = 1e6f; w.SetPlayerForTest(hero);
