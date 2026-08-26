@@ -15,7 +15,11 @@ namespace Ring.Simulation.Tests
                     LegsTop = 0.55f, BodyTop = 1.35f, HeadTop = 1.75f,
                     LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
                     SlideProfileTop = 0.55f, MuzzleHeight = 1.0f, SlideMuzzleHeight = 0.45f,
-                    MaxAimHeight = 3.8f,
+                    // app-88jb Т13: mirrors HeroConfig's own C# default, which
+                    // moved 3.8 -> 4.9 in this task so validation rule 14 can
+                    // reach the Director's crown (HeroConfig.MaxAimHeight's own
+                    // comment carries the ordering argument).
+                    MaxAimHeight = 4.9f,
                     StaminaMax = 100f, DashStaminaCost = 40f, SlideStaminaCost = 30f,
                     StaminaRegenPerSec = 20f, StaminaRegenDelay = 0.8f, LinkRefund = 10f,
                     SlideSpeed = 13.5f, SlideDuration = 0.52f, SlideSteerRadPerSec = 1.2f,
@@ -38,7 +42,22 @@ namespace Ring.Simulation.Tests
                     // (two-sources-of-numbers discipline — test/code-default side).
                     Mass = 120f, ImpactSpeedCap = 6f, CocoonDamping = 3f,
                     CenterOfMassHeight = 0.95f, TiltDampingRatio = 0.55f,
-                    TiltSettleSeconds = 0.9f, TiltGain = 10.5f },
+                    TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
+                    // app-88jb Т13 (spec §3.3): the collector's hit parts —
+                    // mirrors HeroConfig's C# default array (two-sources-of-
+                    // numbers discipline — test/code-default side). His scale
+                    // factor is 1.0, so his heights are the only ones that did
+                    // not move; Parts[0].Top is SlideProfileTop, which
+                    // validation rule 5 requires.
+                    Parts = new[]
+                    {
+                        new HitPart { Radius = 0.32f, Bottom = 0f, Top = 0.55f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f },
+                        new HitPart { Radius = 0.45f, Bottom = 0.55f, Top = 1.35f,
+                            Zone = HitZone.Body, DamageMult = 1.0f },
+                        new HitPart { Radius = 0.16f, Bottom = 1.35f, Top = 1.75f,
+                            Zone = HitZone.Head, DamageMult = 1.7f },
+                    } },
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
                     ProjectileRadius = 0.12f, ProjectileLifetime = 1.5f, Damage = 12f,
                     SpreadRad = 0.026f, RecoilPerShotRad = 0.006f,
@@ -80,7 +99,20 @@ namespace Ring.Simulation.Tests
                     Mass = 90f, ImpactSpeedCap = 6f, ProjectileMass = 3.0f,
                     CenterOfMassHeight = 1.17f, TiltDampingRatio = 0.55f,
                     TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
-                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f },
+                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f,
+                    // app-88jb Т13 (spec §3.3): the chaser's hit parts —
+                    // mirrors MobConfig's C# default array (two-sources
+                    // discipline). Heights are the old column x 1.46, the
+                    // measured ratio of this model's crown (2.6996) to it.
+                    Parts = new[]
+                    {
+                        new HitPart { Radius = 0.35f, Bottom = 0f, Top = 0.88f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f },
+                        new HitPart { Radius = 0.50f, Bottom = 0.88f, Top = 2.12f,
+                            Zone = HitZone.Body, DamageMult = 1.0f },
+                        new HitPart { Radius = 0.17f, Bottom = 2.12f, Top = 2.70f,
+                            Zone = HitZone.Head, DamageMult = 1.7f },
+                    } },
                 // Gunner's LegsTop/BodyTop/HeadTop already carry the taller ranged-mech
                 // tower (Task 17 ships the same numbers into the real .asset via the
                 // marker mechanism, ahead of that this baseline is the source of truth,
@@ -103,7 +135,22 @@ namespace Ring.Simulation.Tests
                     Mass = 70f, ImpactSpeedCap = 6f, ProjectileMass = 3.0f,
                     CenterOfMassHeight = 1.78f, TiltDampingRatio = 0.55f,
                     TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
-                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f },
+                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f,
+                    // app-88jb Т13 (spec §3.3): the gunner's hit parts.
+                    // Heights are the old column x 1.20 (crown 4.2063 against
+                    // 3.50). The shipped .asset gets them through the marker
+                    // mechanism in Т16, exactly as its LegsTop/BodyTop/HeadTop
+                    // did in Task 17 — ahead of that, this is the source of
+                    // truth (same note as the tower column above).
+                    Parts = new[]
+                    {
+                        new HitPart { Radius = 0.35f, Bottom = 0f, Top = 1.32f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f },
+                        new HitPart { Radius = 0.50f, Bottom = 1.32f, Top = 3.24f,
+                            Zone = HitZone.Body, DamageMult = 1.0f },
+                        new HitPart { Radius = 0.17f, Bottom = 3.24f, Top = 4.20f,
+                            Zone = HitZone.Head, DamageMult = 1.7f },
+                    } },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f,
                     // Task Т6 (app-ggvz, owner decision К5/spec Р325):
@@ -241,7 +288,24 @@ namespace Ring.Simulation.Tests
                     Mass = 260f, ImpactSpeedCap = 6f, ProjectileMass = 3.0f,
                     CenterOfMassHeight = 1.78f, TiltDampingRatio = 0.55f,
                     TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
-                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f },
+                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f,
+                    // app-88jb Т13 (spec §3.3, evidence Т12): the elite's hit
+                    // parts. ⚠ HER FACTOR IS 1.0216, NOT THE GUNNER'S 1.20 the
+                    // spec's own table assumed — she is the ONE archetype whose
+                    // model scale was already fitted to her column (app-oxyo
+                    // took EliteVisualScale 0.75 -> 1.5, crown 3.5756 against
+                    // 3.50). At 1.20 her head belt would have been [3.24, 4.20]
+                    // with 0.62 m of it hanging in open air above the model —
+                    // a partial rerun of the very defect app-oxyo closed.
+                    Parts = new[]
+                    {
+                        new HitPart { Radius = 0.56f, Bottom = 0f, Top = 1.12f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f },
+                        new HitPart { Radius = 0.80f, Bottom = 1.12f, Top = 2.76f,
+                            Zone = HitZone.Body, DamageMult = 1.0f },
+                        new HitPart { Radius = 0.28f, Bottom = 2.76f, Top = 3.58f,
+                            Zone = HitZone.Head, DamageMult = 1.7f },
+                    } },
                 Director = new MobSimConfig { MaxSpeed = 3.0f, Accel = 30f, Radius = 2.2f,
                     MaxHp = 2500f, ContactDamage = 45f, AttackRange = 2.8f,
                     TelegraphSeconds = 1.1f, AttackCooldown = 0.9f,
@@ -259,7 +323,23 @@ namespace Ring.Simulation.Tests
                     Mass = 4000f, ImpactSpeedCap = 6f, ProjectileMass = 3.0f,
                     CenterOfMassHeight = 2.31f, TiltDampingRatio = 0.55f,
                     TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
-                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f },
+                    TiltFallAngle = 0.9f, DownedSeconds = 1.2f,
+                    // app-88jb Т13 (spec §3.3): the Director's hit parts.
+                    // Heights are the old column x 1.37 (crown 4.7903 against
+                    // 3.50), and his 4.80 crown is what sets Hero.MaxAimHeight
+                    // 4.9 (validation rule 14). ⚠ Legs stay [0, 1.51): the
+                    // owner decided in bd app-50db that a slide does NOT open a
+                    // passage under him, so this height is a DECISION, not a
+                    // number to round to something more convenient.
+                    Parts = new[]
+                    {
+                        new HitPart { Radius = 1.54f, Bottom = 0f, Top = 1.51f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f },
+                        new HitPart { Radius = 2.20f, Bottom = 1.51f, Top = 3.70f,
+                            Zone = HitZone.Body, DamageMult = 1.0f },
+                        new HitPart { Radius = 0.77f, Bottom = 3.70f, Top = 4.80f,
+                            Zone = HitZone.Head, DamageMult = 1.7f },
+                    } },
                 // Stage 3 Task 12 (errata E-2): mirrors MatchFlowConfig's C#
                 // defaults, same two-sources discipline as every section
                 // above. Inert in both golden scenarios — nothing reads Flow

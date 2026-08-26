@@ -161,6 +161,14 @@ namespace Ring.Simulation.Tests
             target.TiltGain = source.TiltGain;
             target.TiltFallAngle = source.TiltFallAngle;
             target.DownedSeconds = source.DownedSeconds;
+            // app-88jb Т13 (coordinator Ruling 63): a DEEP copy, never the
+            // reference. Aliasing would make the archetype SO and the shared
+            // TestConfigs baseline hold ONE array, so a rule test that bumps a
+            // single element (HitPartsTests does exactly that:
+            // `g.Parts[1].Radius = ...`) would leak the mutation into both
+            // sides of its own comparison. Same strictness the hash suite
+            // already demands of arrays — ArrayContentsNotIdentity_DecideTheHash.
+            target.Parts = (HitPart[])source.Parts.Clone();
         }
 
         /// Builds a SimConfig from a caller-supplied hero and default everything else —
@@ -520,9 +528,17 @@ namespace Ring.Simulation.Tests
             // NB (QA2/QD3): a fresh MobConfig has ProjectileRadius = 0 (chaser
             // defaults), so 1.0 is used: 1.0 + 0 >= MuzzleHeight(0.95) — rule D5
             // violated, while 1.0 <= Hero.BodyTop (1.35) — the other rules stay quiet.
+            // ⚠ app-88jb Т13 TIGHTENED THE ASSERTION, and the reason is this
+            // test's own: 1.0 is not a boundary of any collector part either,
+            // so Т13's rule 5 now ALSO refuses this value and its message also
+            // carries the words "Hero.SlideProfileTop". On the old assertion
+            // this witness would have survived the deletion of rule D5 outright
+            // — green for the wrong rule. The gunner's muzzle is what D5 is
+            // about, so that is what the message must name.
             hero.SlideProfileTop = 1.0f;
             var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
             Assert.That(ex.Message, Does.Contain("SlideProfileTop"));
+            Assert.That(ex.Message, Does.Contain("Gunner.MuzzleHeight"));
         }
 
         [Test]
@@ -1552,6 +1568,10 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.TiltDampingRatio, a.TiltDampingRatio, Eps);
             Assert.AreEqual(e.TiltSettleSeconds, a.TiltSettleSeconds, Eps);
             Assert.AreEqual(e.TiltGain, a.TiltGain, Eps);
+            // app-88jb Т13: same documented-deviation category as the fields
+            // above — Parts flows SO -> builder -> SimConfig too, and without
+            // this the whole array would drop out of this test's coverage.
+            AssertPartsEqual(e.Parts, a.Parts, "Hero");
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)
@@ -1623,6 +1643,8 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.TiltGain, a.TiltGain, Eps);
             Assert.AreEqual(e.TiltFallAngle, a.TiltFallAngle, Eps);
             Assert.AreEqual(e.DownedSeconds, a.DownedSeconds, Eps);
+            // app-88jb Т13: the hit parts, same reasoning as AssertHeroEqual's.
+            AssertPartsEqual(e.Parts, a.Parts, "Mob");
         }
 
         static void AssertWaveEqual(WaveSimConfig e, WaveSimConfig a)
@@ -1730,6 +1752,25 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual(e[i].SlotCost, a[i].SlotCost, $"Items[{i}].SlotCost");
                 Assert.AreEqual(e[i].CreditValue, a[i].CreditValue, $"Items[{i}].CreditValue");
                 Assert.AreEqual(e[i].Kind, a[i].Kind, $"Items[{i}].Kind");
+            }
+        }
+
+        /// app-88jb Т13: element-wise, exactly the shape AssertItemsEqual above
+        /// uses and for the same reason — a `HitPart[]` compared by reference
+        /// would pass on any two arrays the builder happened to alias, and a
+        /// length check first because an index-out-of-range on a short array
+        /// diagnoses nothing.
+        static void AssertPartsEqual(HitPart[] e, HitPart[] a, string owner)
+        {
+            Assert.AreEqual(e.Length, a.Length,
+                $"{owner}.Parts.Length must reach the SimConfig section");
+            for (int i = 0; i < e.Length; i++)
+            {
+                Assert.AreEqual(e[i].Radius, a[i].Radius, Eps, $"{owner}.Parts[{i}].Radius");
+                Assert.AreEqual(e[i].Bottom, a[i].Bottom, Eps, $"{owner}.Parts[{i}].Bottom");
+                Assert.AreEqual(e[i].Top, a[i].Top, Eps, $"{owner}.Parts[{i}].Top");
+                Assert.AreEqual(e[i].Zone, a[i].Zone, $"{owner}.Parts[{i}].Zone");
+                Assert.AreEqual(e[i].DamageMult, a[i].DamageMult, Eps, $"{owner}.Parts[{i}].DamageMult");
             }
         }
 

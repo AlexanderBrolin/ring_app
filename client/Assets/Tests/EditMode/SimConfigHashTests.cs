@@ -32,17 +32,37 @@ namespace Ring.Simulation.Tests
         // both, hashed by nothing and caught by nothing (fix-round finding
         // of the coordinator; the field-count guard below only watches the
         // top level).
+        // app-88jb Т13 (coordinator Ruling 59): `Parts` is skip-listed for the
+        // scalar sweep and covered instead by AssertHitPartArrayFieldAffects
+        // Hash below, which bumps all FIVE fields of every part plus the
+        // length — the same split every other array in this file already uses.
+        // The name must be in the skip-set from the moment the field exists,
+        // or the sweep dies on a NotSupportedException instead of asserting
+        // anything (a raised exception is not a RED). Five bodies carry one:
+        // Hero, Chaser, Gunner, Elite, Director.
         [Test]
-        public void EveryConfigNumberAffectsHash_Hero() => AssertSectionAffectsHash("Hero");
+        public void EveryConfigNumberAffectsHash_Hero()
+        {
+            AssertSectionAffectsHash("Hero", "Parts");
+            AssertHitPartArrayFieldAffectsHash("Hero", "Parts");
+        }
 
         [Test]
         public void EveryConfigNumberAffectsHash_Weapon() => AssertSectionAffectsHash("Weapon");
 
         [Test]
-        public void EveryConfigNumberAffectsHash_Chaser() => AssertSectionAffectsHash("Chaser");
+        public void EveryConfigNumberAffectsHash_Chaser()
+        {
+            AssertSectionAffectsHash("Chaser", "Parts");
+            AssertHitPartArrayFieldAffectsHash("Chaser", "Parts");
+        }
 
         [Test]
-        public void EveryConfigNumberAffectsHash_Gunner() => AssertSectionAffectsHash("Gunner");
+        public void EveryConfigNumberAffectsHash_Gunner()
+        {
+            AssertSectionAffectsHash("Gunner", "Parts");
+            AssertHitPartArrayFieldAffectsHash("Gunner", "Parts");
+        }
 
         [Test]
         public void EveryConfigNumberAffectsHash_Wave()
@@ -115,10 +135,18 @@ namespace Ring.Simulation.Tests
         // AssertSectionAffectsHash mutates ONE named section's own copy of
         // TestConfigs.Default() per call, never Chaser's/Gunner's.
         [Test]
-        public void EveryConfigNumberAffectsHash_Elite() => AssertSectionAffectsHash("Elite");
+        public void EveryConfigNumberAffectsHash_Elite()
+        {
+            AssertSectionAffectsHash("Elite", "Parts");
+            AssertHitPartArrayFieldAffectsHash("Elite", "Parts");
+        }
 
         [Test]
-        public void EveryConfigNumberAffectsHash_Director() => AssertSectionAffectsHash("Director");
+        public void EveryConfigNumberAffectsHash_Director()
+        {
+            AssertSectionAffectsHash("Director", "Parts");
+            AssertHitPartArrayFieldAffectsHash("Director", "Parts");
+        }
 
         [Test]
         public void EveryConfigNumberAffectsHash_Loot()
@@ -296,8 +324,17 @@ namespace Ring.Simulation.Tests
                 // any element type). Recorded in skippedArrayFields exactly
                 // like float2[]/float[] — the CollectionAssert below still
                 // catches an unlisted array field by name.
+                // app-88jb Т13 (coordinator Ruling 59): HitPart[] joins the
+                // four above, and the list is NOT decoration — the guard is
+                // what routes an array into skippedArrayFields. A field type
+                // missing from it falls through to Bump(object), whose switch
+                // understands boxed float/int/bool only, and the section test
+                // dies with NotSupportedException. A raised exception is not a
+                // RED (332/498): it hides which fields the sweep did reach and
+                // makes the run's own prediction unverifiable.
                 if (field.FieldType == typeof(float2[]) || field.FieldType == typeof(float[])
-                    || field.FieldType == typeof(int[]) || field.FieldType == typeof(byte[]))
+                    || field.FieldType == typeof(int[]) || field.FieldType == typeof(byte[])
+                    || field.FieldType == typeof(HitPart[]))
                 {
                     skippedArrayFields.Add(field.Name);
                     continue;
@@ -517,6 +554,71 @@ namespace Ring.Simulation.Tests
                 { Id = 250, Tier = 1, SlotCost = 1, CreditValue = 1, Kind = ItemKind.Trophy };
             lenCfg.Items = extended;
             Assert.AreNotEqual(baseline, SimConfigHash.Compute(in lenCfg), "Items.Length is not in the hash");
+        }
+
+        /// app-88jb Т13: `HitPart[]` — every one of the FIVE fields of every
+        /// part, plus the length. Same shape and same reason as
+        /// AssertItemsArrayAffectsHash above: the scalar sweep cannot bump an
+        /// array in place, so an array's coverage has to be spelled out field
+        /// by field, or a fold that quietly drops one of them — DamageMult is
+        /// the easiest to forget, being the only one no geometry reads — is
+        /// pinned by nothing at all.
+        static void AssertHitPartArrayFieldAffectsHash(string sectionName, string fieldName)
+        {
+            var baselineCfg = TestConfigs.Default();
+            ulong baseline = SimConfigHash.Compute(in baselineCfg);
+            FieldInfo sectionField = Section(sectionName);
+            FieldInfo arrayField = sectionField.FieldType.GetField(fieldName);
+
+            object probeCfg = TestConfigs.Default();
+            int length = ((HitPart[])arrayField.GetValue(sectionField.GetValue(probeCfg))).Length;
+            Assert.GreaterOrEqual(length, 2,
+                $"premise: {sectionName}.{fieldName} must carry at least two parts, or the " +
+                "second-element convention (lesson 227) has nowhere to put a violation");
+
+            for (int i = 0; i < length; i++)
+            {
+                AssertFieldBump(i, "Radius", part => { part.Radius += 1f; return part; });
+                AssertFieldBump(i, "Bottom", part => { part.Bottom += 1f; return part; });
+                AssertFieldBump(i, "Top", part => { part.Top += 1f; return part; });
+                // Rotated inside the enum's own domain rather than incremented
+                // past it: a value outside HitZone would test the hash against
+                // a body no config can express.
+                AssertFieldBump(i, "Zone",
+                    part => { part.Zone = (HitZone)(((byte)part.Zone + 1) % 4); return part; });
+                AssertFieldBump(i, "DamageMult", part => { part.DamageMult += 1f; return part; });
+            }
+
+            // Length: appending a part must move the hash too — the mutation
+            // this guards is a fold that walks a fixed three parts instead of
+            // the array's real length.
+            object lenCfg = TestConfigs.Default();
+            object lenSection = sectionField.GetValue(lenCfg);
+            var original = (HitPart[])arrayField.GetValue(lenSection);
+            var extended = new HitPart[original.Length + 1];
+            Array.Copy(original, extended, original.Length);
+            extended[original.Length] = new HitPart
+            {
+                Radius = 1f, Bottom = 90f, Top = 91f, Zone = HitZone.None, DamageMult = 1f
+            };
+            arrayField.SetValue(lenSection, extended);
+            sectionField.SetValue(lenCfg, lenSection);
+            var mutatedLen = (SimConfig)lenCfg;
+            Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutatedLen),
+                $"{sectionName}.{fieldName}.Length is not in the hash");
+
+            void AssertFieldBump(int index, string fieldLabel, Func<HitPart, HitPart> bump)
+            {
+                object cfg = TestConfigs.Default();
+                object section = sectionField.GetValue(cfg);
+                var clone = (HitPart[])((HitPart[])arrayField.GetValue(section)).Clone();
+                clone[index] = bump(clone[index]);
+                arrayField.SetValue(section, clone);
+                sectionField.SetValue(cfg, section);
+                var mutated = (SimConfig)cfg;
+                Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
+                    $"{sectionName}.{fieldName}[{index}].{fieldLabel} is not in the hash");
+            }
         }
 
         static object Bump(object v) => v switch

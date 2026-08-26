@@ -78,6 +78,19 @@ namespace Ring.Simulation.Core
         /// tuning stiffness and damping by eye is not possible, and the spec got
         /// it wrong twice before this shape existed (finding C-I2).
         public float CenterOfMassHeight, TiltDampingRatio, TiltSettleSeconds, TiltGain;
+
+        /// app-88jb Т13 (spec §3.3, owner decision Н8): the body as an ORDERED
+        /// stack of parts, bottom to top -- the shape that replaces the three
+        /// LegsTop/BodyTop/HeadTop scalars above. Those scalars and their three
+        /// multipliers STAY here through this task and keep being hashed: their
+        /// last consumers (ProjectileSystem, the muzzle rule, both aim-proxy
+        /// points) are rewritten by Т14/Т15, and removing the column ahead of
+        /// them would simply not compile. SimConfigBuilder.Validate is what
+        /// gates this array's shape; the array is a DIRECT ALIAS of HeroConfig's
+        /// own Inspector array, the same convention Wave's per-zone arrays
+        /// follow (balance data, not topology -- nothing in SimulationWorld's
+        /// constructor sizes an array off it).
+        public HitPart[] Parts;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).
@@ -174,6 +187,13 @@ namespace Ring.Simulation.Core
         /// Knockdown (owner decision Н23, variant 3a): above this tilt the mob
         /// goes down for DownedSeconds and neither shoots nor strikes. Radians.
         public float TiltFallAngle, DownedSeconds;
+
+        /// app-88jb Т13 (spec §3.3, owner decision Н8): this archetype's body as
+        /// an ORDERED stack of parts, bottom to top -- same field, same
+        /// contract and same reason as HeroSimConfig.Parts above, which carries
+        /// the full account of why the LegsTop/BodyTop/HeadTop column beside it
+        /// stays until Т15.
+        public HitPart[] Parts;
     }
 
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).
@@ -501,6 +521,34 @@ namespace Ring.Simulation.Core
         public int RetinueCount;
         public float RetinueRespawnSeconds;
         public int DirectorReserveSlots;
+    }
+
+    /// One coaxial slice of a body's hit volume (app-88jb Т13, owner decision
+    /// Н8). PUBLIC because Ring.Data builds the arrays from ScriptableObjects
+    /// (HeroConfig/MobConfig hold `HitPart[]` as their own Inspector array) and
+    /// Ring.Editor rebuilds the aim proxy from them (finding B-I7 asked for this
+    /// reason to be written down, and this is it).
+    ///
+    /// [System.Serializable] AND MUTABLE FIELDS, both deliberate and both by the
+    /// precedent of ItemDef right below in this same file: Unity does not
+    /// serialize readonly fields, so a `readonly struct` would leave every array
+    /// empty in the Inspector and no number would ever reach the .asset (CR 6).
+    /// The attribute is plain BCL, not UnityEngine, so it stays legal in an
+    /// asmdef with `noEngineReferences` (CRITICAL RULE 1) -- ItemDef's own doc
+    /// carries that argument verbatim. Per-element [Range] is not expressible on
+    /// an array member either; SimConfigBuilder.Validate is the real gate,
+    /// exactly as ArenaConfig's Obstacle/Wall structs already document.
+    ///
+    /// Ranges are HALF-OPEN [Bottom, Top) except for the topmost part, whose
+    /// Top is INCLUSIVE -- exactly what HitZones.Classify does today. A hit
+    /// landing exactly on a boundary belongs to the UPPER part.
+    [System.Serializable]
+    public struct HitPart
+    {
+        public float Radius;      // the part's half-width in plan view
+        public float Bottom, Top; // its height bounds above the ground
+        public HitZone Zone;
+        public float DamageMult;
     }
 
     /// Stage 3 Task 13 (spec §3.7): what one catalog entry IS — the ONLY

@@ -1,3 +1,4 @@
+using Ring.Simulation.Core;
 using UnityEngine;
 
 namespace Ring.Data
@@ -33,7 +34,15 @@ namespace Ring.Data
         [Range(0.05f, 5f)] public float SlideProfileTop = 0.55f;
         [Range(0f, 5f)] public float MuzzleHeight = 1.0f;
         [Range(0f, 5f)] public float SlideMuzzleHeight = 0.45f;
-        [Range(1f, 6f)] public float MaxAimHeight = 3.8f;
+        // app-88jb Т13 (plan's own ordering rule 1, review findings A-C6/D-C1):
+        // 3.8 -> 4.9 IN THIS TASK, not in Т16. Validation rule 14 grows to
+        // "MaxAimHeight >= the top of every archetype's last part", and the
+        // tallest of those is the Director's 4.80 — introduce the rule with the
+        // number still at 3.8 and every BuildShipped in the suite throws. The
+        // shipped .asset deliberately stays at its old value until Т16 delivers
+        // it through the bootstrap, which is what Т16's gate-on-the-old-value
+        // exists for.
+        [Range(1f, 6f)] public float MaxAimHeight = 4.9f;
 
         // Task 2 (spec stamina/slide/aim): stamina pool, per-action costs and regen —
         // stamina drains on Dash/Slide and regenerates after a delay once no action
@@ -128,7 +137,36 @@ namespace Ring.Data
         [Range(0f, 6f)] public float CenterOfMassHeight = 0.95f;
         [Range(0.05f, 0.95f)] public float TiltDampingRatio = 0.55f;
         [Range(0.15f, 5f)] public float TiltSettleSeconds = 0.9f;
-        [Range(0f, 50f)] public float TiltGain = 10.5f; // sync-marker key — keep LAST (was MaxInventoryItems, app-88jb)
+        [Range(0f, 50f)] public float TiltGain = 10.5f; // Was the sync-marker key until app-88jb Т13.
+
+        /// app-88jb Т13 (spec §3.3, owner decision Н8): the collector's body as
+        /// an ORDERED stack of parts, bottom to top. Held here as the Inspector
+        /// array itself — no parallel Data-side DTO — exactly the way
+        /// ItemCatalog holds `ItemDef[]` (HitPart's own doc in SimConfig.cs
+        /// carries the [System.Serializable]/mutable-fields argument).
+        /// NO [Range]: the attribute is not expressible per element of an
+        /// array, so the gate is SimConfigBuilder.Validate's six rules, the
+        /// same place ArenaConfig's Obstacle/Wall structs are gated.
+        /// THE COLLECTOR IS THE ONE BODY WHOSE HEIGHTS DO NOT MOVE (spec §3.3,
+        /// evidence Т12): the scale factor between his model and his column is
+        /// 1.0 — he is not from the mech pack the four archetypes come from,
+        /// and his silhouette already matched. So the three heights are the
+        /// same 0.55/1.35/1.75 LegsTop/BodyTop/HeadTop carry above, and only
+        /// the per-part RADII are new. They are 0.7 / 1.0 / 0.35 of Radius —
+        /// one named humanoid proportion, applied to all five bodies alike
+        /// (0.315 and 0.1575 rounded to the centimeter the Inspector shows).
+        /// ⚠ Parts[0].Top IS SlideProfileTop: validation rule 5 requires the
+        /// slide profile to land exactly on a part boundary, which is what
+        /// keeps the slide equivalent to what it was before parts existed.
+        public HitPart[] Parts =
+        {
+            new HitPart { Radius = 0.32f, Bottom = 0f, Top = 0.55f,
+                Zone = HitZone.Legs, DamageMult = 0.75f },
+            new HitPart { Radius = 0.45f, Bottom = 0.55f, Top = 1.35f,
+                Zone = HitZone.Body, DamageMult = 1.0f },
+            new HitPart { Radius = 0.16f, Bottom = 1.35f, Top = 1.75f,
+                Zone = HitZone.Head, DamageMult = 1.7f },
+        }; // sync-marker key — keep LAST (was TiltGain, app-88jb)
 
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a

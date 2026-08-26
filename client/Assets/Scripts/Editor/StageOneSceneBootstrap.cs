@@ -2861,6 +2861,31 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.SwingLeadFactor, 1.0f);
             changed |= SetIfDifferent(ref m.SwingLeadMaxMeters, 2.0f);
             changed |= ApplyMobImpactDefaults(m, 260f, 1.78f);
+            // app-88jb Т13 (coordinator Ruling 64, precedent Ruling 5): the hit
+            // parts, sourced the same way as everything above. WHY THEY ARE
+            // HERE AT ALL: a freshly created MobEliteConfig.asset takes its
+            // unset fields from MobConfig's C# initializers, and those are the
+            // CHASER's -- so without this line the Elite would ship a body
+            // 2.70 m tall and 0.5 m wide instead of 3.58 x 0.8, silently, in
+            // exactly the shape finding Н-23 already cost this epic once. It is
+            // also what ConfigTests.BootstrapArchetypeSeeds_MatchTheTestConfigs
+            // Baseline binds: the same array has to appear in TestConfigs.
+            // Default().Elite, or that test says so.
+            // ⚠ THE FACTOR IS 1.0216, NOT THE GUNNER'S 1.20 (evidence Т12):
+            // this archetype's model scale was already fitted to its column by
+            // app-oxyo (EliteVisualScale 0.75 -> 1.5, crown 3.5756 against
+            // 3.50), and it is the only one of the four for which that is true.
+            // Radii are 0.7 / 1.0 / 0.35 of Radius 0.8, the shared humanoid
+            // proportion.
+            changed |= SetIfDifferent(ref m.Parts, new[]
+            {
+                new HitPart { Radius = 0.56f, Bottom = 0f, Top = 1.12f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f },
+                new HitPart { Radius = 0.80f, Bottom = 1.12f, Top = 2.76f,
+                    Zone = HitZone.Body, DamageMult = 1.0f },
+                new HitPart { Radius = 0.28f, Bottom = 2.76f, Top = 3.58f,
+                    Zone = HitZone.Head, DamageMult = 1.7f },
+            });
             return changed;
         }
 
@@ -2876,11 +2901,18 @@ namespace Ring.Editor
         /// Calling ApplyEliteDefaults first is the point (rule 2): the shared
         /// profile has ONE home, and only the differences are written here.
         ///
-        /// HeadTop stays at the Gunner's 3.50 deliberately, tall as this
-        /// archetype is: Hero.MaxAimHeight is 3.8, so a taller silhouette
-        /// would put the Director's head above anything a collector can aim
-        /// at. Model scale (ASSETS-001 §2.3, x1.5-2) is Presentation's own
-        /// number and does not touch this one.
+        /// HeadTop stays at the Gunner's 3.50, and app-88jb Т13 turned that
+        /// from a constraint into a leftover. The old reasoning was "Hero.
+        /// MaxAimHeight is 3.8, so a taller silhouette would put the
+        /// Director's head above anything a collector can aim at" -- true
+        /// while the column WAS the hit volume. Т13 moved the hit volume into
+        /// `Parts`, whose last part ends at 4.80, and raised MaxAimHeight to
+        /// 4.9 in the same task precisely so that crown stays reachable
+        /// (validation rule 14 now enforces it across all five bodies). The
+        /// three column scalars survive only until Т15 takes their last
+        /// consumer; nothing reads them for aiming any more. Model scale
+        /// (ASSETS-001 §2.3, x1.5-2) is Presentation's own number and does not
+        /// touch either one.
         ///
         /// app-88jb Т1 (Ruling 5): two more overrides join the five above —
         /// Mass 4000 kg (spec §3.2, by RATIO to the 120 kg collector, same
@@ -2910,6 +2942,22 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.AttackRange, 2.8f);
             changed |= SetIfDifferent(ref m.PreferredRange, 9f);
             changed |= ApplyMobImpactDefaults(m, 4000f, 2.31f);
+            // app-88jb Т13 (Ruling 64): his own hit parts override the Elite's,
+            // same "only the differences are written here" rule as the seven
+            // scalars above. Heights are the old column x 1.37 (crown 4.7903
+            // against 3.50), radii 0.7 / 1.0 / 0.35 of Radius 2.2.
+            // ⚠ THE LEGS END AT 1.51 BY OWNER DECISION, NOT BY ARITHMETIC
+            // CONVENIENCE (bd app-50db): a slide does NOT open a passage under
+            // the Director. Raising that number would open one silently.
+            changed |= SetIfDifferent(ref m.Parts, new[]
+            {
+                new HitPart { Radius = 1.54f, Bottom = 0f, Top = 1.51f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f },
+                new HitPart { Radius = 2.20f, Bottom = 1.51f, Top = 3.70f,
+                    Zone = HitZone.Body, DamageMult = 1.0f },
+                new HitPart { Radius = 0.77f, Bottom = 3.70f, Top = 4.80f,
+                    Zone = HitZone.Head, DamageMult = 1.7f },
+            });
             return changed;
         }
 

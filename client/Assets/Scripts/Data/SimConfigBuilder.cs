@@ -113,7 +113,16 @@ namespace Ring.Data
                     CenterOfMassHeight = hero.CenterOfMassHeight,
                     TiltDampingRatio = hero.TiltDampingRatio,
                     TiltSettleSeconds = hero.TiltSettleSeconds,
-                    TiltGain = hero.TiltGain
+                    TiltGain = hero.TiltGain,
+                    // app-88jb Т13 (spec §3.3): the collector's hit parts.
+                    // A DIRECT ALIAS of the SO's own array, not a clone — the
+                    // same convention Wave.WavePauseByZone and Loot's three
+                    // arrays already follow, because this is balance data
+                    // rather than topology: nothing in SimulationWorld's
+                    // constructor sizes an array off it, so no stable
+                    // snapshot is owed (SimConfig.Items, which IS topology, is
+                    // the one array that clones — see its own note below).
+                    Parts = hero.Parts
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -309,7 +318,12 @@ namespace Ring.Data
             TiltSettleSeconds = m.TiltSettleSeconds,
             TiltGain = m.TiltGain,
             TiltFallAngle = m.TiltFallAngle,
-            DownedSeconds = m.DownedSeconds
+            DownedSeconds = m.DownedSeconds,
+            // app-88jb Т13 (spec §3.3): this archetype's hit parts — direct
+            // alias, same reasoning as the hero's own mapping above. ONE
+            // mapping serves all four mob sections, because Chaser/Gunner/
+            // Elite/Director all come through this method.
+            Parts = m.Parts
         };
 
         static ArenaSimConfig ToArenaSimConfig(ArenaConfig a)
@@ -607,11 +621,64 @@ namespace Ring.Data
                     $"SlideProfileTop={cfg.Hero.SlideProfileTop:F3}).");
             }
 
-            float maxHeadTop = math.max(cfg.Hero.HeadTop, math.max(cfg.Chaser.HeadTop, cfg.Gunner.HeadTop));
-            if (cfg.Hero.MaxAimHeight < maxHeadTop)
+            // app-88jb Т13 (spec §3.10 rule 5, finding C-M3): the slide profile
+            // must land EXACTLY on a boundary of one of the collector's own
+            // parts. Before parts existed the profile was equivalent to the
+            // legs band because both numbers happened to read 0.55; that is
+            // data agreeing with itself, not a rule, and the day one of them
+            // moved the slide would have silently stopped being a crouch under
+            // anything. EXACT equality, no tolerance: both numbers are authored
+            // as the same decimal literal and decimal -> float is
+            // deterministic, while a tolerance would legalize a thin band that
+            // is inside the profile and outside every part at once.
+            if (cfg.Hero.Parts != null && cfg.Hero.Parts.Length > 0
+                && !IsPartBoundary(cfg.Hero.Parts, cfg.Hero.SlideProfileTop))
             {
-                errors.Add("Hero.MaxAimHeight must be >= max(Hero.HeadTop, Chaser.HeadTop, Gunner.HeadTop) " +
-                    $"(got MaxAimHeight={cfg.Hero.MaxAimHeight:F3}, max HeadTop={maxHeadTop:F3}).");
+                errors.Add("Hero.SlideProfileTop must coincide with a part boundary of the " +
+                    $"collector's own body (got {cfg.Hero.SlideProfileTop:F3}, boundaries " +
+                    $"{PartBoundaryList(cfg.Hero.Parts)}).");
+            }
+
+            // app-88jb Т13 (spec §3.10 rule 14, finding C-I1): REWRITTEN from
+            // "max of three HeadTops" to "the crown of every body there is."
+            // Two things were wrong with the old form and only one of them was
+            // the arithmetic: it knew three bodies out of five, so the
+            // Director's head — the tallest thing in the game — sat above
+            // anything a collector could aim at, and nothing said so.
+            // The list below is ONE collection used for BOTH the maximum and
+            // the diagnostic, deliberately: a body dropped from it disappears
+            // from the refusal message at the same moment it stops being
+            // checked, so the message can never claim a coverage the rule does
+            // not have.
+            (string name, float top)[] crowns =
+            {
+                ("Hero", PartsTop(cfg.Hero.Parts)),
+                ("Chaser", PartsTop(cfg.Chaser.Parts)),
+                ("Gunner", PartsTop(cfg.Gunner.Parts)),
+                ("Elite", PartsTop(cfg.Elite.Parts)),
+                ("Director", PartsTop(cfg.Director.Parts)),
+            };
+            string tallestName = null;
+            float tallestTop = float.NegativeInfinity;
+            var crownList = new List<string>(crowns.Length);
+            for (int i = 0; i < crowns.Length; i++)
+            {
+                // NaN means "this body's stack is unusable" — ValidateParts has
+                // already said so by name, and a second complaint derived from
+                // it would quote a number nobody authored.
+                if (float.IsNaN(crowns[i].top)) continue;
+                crownList.Add($"{crowns[i].name} {crowns[i].top:F3}");
+                if (crowns[i].top > tallestTop)
+                {
+                    tallestTop = crowns[i].top;
+                    tallestName = crowns[i].name;
+                }
+            }
+            if (tallestName != null && cfg.Hero.MaxAimHeight < tallestTop)
+            {
+                errors.Add("Hero.MaxAimHeight must be >= the top of every body's last part — " +
+                    $"the tallest is {tallestName} at {tallestTop:F3} (got " +
+                    $"MaxAimHeight={cfg.Hero.MaxAimHeight:F3}; crowns: {string.Join(", ", crownList)}).");
             }
 
             ReqNonNegative(errors, "Wave.FirstWaveDelay", cfg.Wave.FirstWaveDelay);
@@ -758,10 +825,20 @@ namespace Ring.Data
             // it (lore A1) — >= 1, not > 1 (Validate_CocoonDampingExactlyOne_IsLegal
             // is the witness for that boundary).
             ReqAtLeast(errors, "Hero.CocoonDamping", cfg.Hero.CocoonDamping, 1f);
-            // Rule 6: the center of mass cannot sit above the body it belongs
-            // to (Т13 rewrites the upper bound to the tallest PART's own top
-            // once parts exist — see SimConfig.HeroSimConfig's own doc).
-            ReqInRange(errors, "Hero.CenterOfMassHeight", cfg.Hero.CenterOfMassHeight, 0f, cfg.Hero.HeadTop);
+            // app-88jb Т13 (spec §3.10 rules 2/3/4): the collector's own stack
+            // of parts. Same helper the four archetypes go through in
+            // ValidateMob — one body, every caller.
+            ValidateParts(errors, "Hero", cfg.Hero.Parts, cfg.Hero.Radius);
+            // Rule 6, REWRITTEN BY Т13 exactly as its Т1 form promised: the
+            // center of mass cannot sit above the body it belongs to, and the
+            // body is now the stack of parts rather than HeadTop. The
+            // difference is not cosmetic — for the four archetypes the parts
+            // reach far higher than the old column did, so the Т1 bound would
+            // have kept rejecting centers of mass that are perfectly legal on
+            // the real silhouette.
+            float heroTop = PartsTop(cfg.Hero.Parts);
+            if (!float.IsNaN(heroTop))
+                ReqInRange(errors, "Hero.CenterOfMassHeight", cfg.Hero.CenterOfMassHeight, 0f, heroTop);
             // Rule 7: the tilt spring's damping ratio is open on BOTH ends —
             // zeta = 1 is critical damping, no overshoot at all, so it is
             // rejected exactly like zeta = 0 would be.
@@ -1807,7 +1884,14 @@ namespace Ring.Data
             // own in this task, same as Hero's.
             ReqPositive(errors, $"{name}.Mass", m.Mass);
             ReqPositive(errors, $"{name}.ProjectileMass", m.ProjectileMass);
-            ReqInRange(errors, $"{name}.CenterOfMassHeight", m.CenterOfMassHeight, 0f, m.HeadTop);
+            // app-88jb Т13 (spec §3.10 rules 2/3/4/6): this archetype's stack of
+            // parts, and the center of mass measured against IT rather than
+            // against the old HeadTop — see the Hero block's own note for why
+            // the rewrite is load-bearing rather than cosmetic.
+            ValidateParts(errors, name, m.Parts, m.Radius);
+            float top = PartsTop(m.Parts);
+            if (!float.IsNaN(top))
+                ReqInRange(errors, $"{name}.CenterOfMassHeight", m.CenterOfMassHeight, 0f, top);
             ReqInRange(errors, $"{name}.TiltDampingRatio", m.TiltDampingRatio, 0f, 1f,
                 minExclusive: true, maxExclusive: true);
             ReqPositive(errors, $"{name}.TiltSettleSeconds", m.TiltSettleSeconds);
@@ -1815,6 +1899,121 @@ namespace Ring.Data
             ReqPositive(errors, $"{name}.DownedSeconds", m.DownedSeconds);
             // Rule 8 (ReqStableSpring's own doc carries the rationale).
             ReqStableSpring(errors, name, m.TiltDampingRatio, m.TiltSettleSeconds);
+        }
+
+        /// app-88jb Т13 (spec §3.10 rules 2/3/4): the shape a body's stack of
+        /// hit parts has to have. ONE home for all five bodies — the
+        /// collector's call site is in the Hero block, the four archetypes come
+        /// through ValidateMob.
+        ///
+        /// RULE 2 IS ONE COMPARISON DOING THREE JOBS. `Parts[i].Bottom ==
+        /// Parts[i-1].Top` rejects a gap, an overlap AND an out-of-order pair
+        /// at once, because only a sorted, contiguous stack can satisfy it.
+        /// Written as three separate scans it would be three chances to
+        /// disagree with itself, and the disagreement would show up as a body
+        /// with a band nobody owns.
+        ///
+        /// WHY EACH RULE EXISTS, not merely what it says:
+        ///  - a GAP is a band of the body no part owns, so a shot through it
+        ///    resolves to no zone at all — a miss on a body that is visibly there;
+        ///  - a REPEATED zone makes "which multiplier applies" ambiguous, and
+        ///    whichever reader looks first wins, silently;
+        ///  - a part WIDER than its body is never gathered as a candidate at
+        ///    all (the sweep tests the body's own Radius first), so the extra
+        ///    width is invisible rather than generous — findings B-I6/D-I2, and
+        ///    the reason this is the most expensive of the three.
+        ///
+        /// Exact float equality on the contiguity check, no tolerance: every
+        /// boundary is authored ONCE and read twice (as one part's Top and the
+        /// next part's Bottom), so the two are the same literal by construction
+        /// — while a tolerance would legalize a band thinner than it that
+        /// belongs to nobody.
+        static void ValidateParts(List<string> errors, string name, HitPart[] parts, float bodyRadius)
+        {
+            if (parts == null || parts.Length == 0)
+            {
+                errors.Add($"{name}.Parts must not be empty — a body with no parts cannot be hit at all.");
+                return;
+            }
+
+            if (parts[0].Bottom != 0f)
+            {
+                errors.Add($"{name}.Parts[0].Bottom must be 0 — the stack starts at the ground " +
+                    $"(got {parts[0].Bottom:F3}).");
+            }
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                ReqPositive(errors, $"{name}.Parts[{i}].Radius", parts[i].Radius);
+                ReqFinite(errors, $"{name}.Parts[{i}].Bottom", parts[i].Bottom);
+                ReqFinite(errors, $"{name}.Parts[{i}].Top", parts[i].Top);
+                ReqNonNegative(errors, $"{name}.Parts[{i}].DamageMult", parts[i].DamageMult);
+
+                if (parts[i].Top <= parts[i].Bottom)
+                {
+                    errors.Add($"{name}.Parts[{i}] must have Top > Bottom — a part of zero or " +
+                        $"negative height owns no band at all (got Bottom={parts[i].Bottom:F3}, " +
+                        $"Top={parts[i].Top:F3}).");
+                }
+
+                // Rule 4.
+                if (parts[i].Radius > bodyRadius)
+                {
+                    errors.Add($"{name}.Parts[{i}].Radius must not exceed {name}.Radius — a part " +
+                        $"wider than its body never enters the candidate gather, so the extra width " +
+                        $"is lost silently (got {parts[i].Radius:F3}, Radius={bodyRadius:F3}).");
+                }
+
+                // Rule 2, the contiguity half (see this method's own doc).
+                if (i > 0 && parts[i].Bottom != parts[i - 1].Top)
+                {
+                    errors.Add($"{name}.Parts must be contiguous and sorted by Bottom — " +
+                        $"Parts[{i}].Bottom must equal Parts[{i - 1}].Top (got {parts[i].Bottom:F3} " +
+                        $"against {parts[i - 1].Top:F3}).");
+                }
+
+                // Rule 3.
+                for (int j = 0; j < i; j++)
+                {
+                    if (parts[j].Zone == parts[i].Zone)
+                    {
+                        errors.Add($"{name}.Parts: zone {parts[i].Zone} appears twice " +
+                            $"(Parts[{j}] and Parts[{i}]) — which damage multiplier applies would " +
+                            $"be settled by whichever reader looks first.");
+                    }
+                }
+            }
+        }
+
+        /// The crown of a body: the top of its LAST part. NaN when the stack is
+        /// unusable (null or empty), which is a refusal ValidateParts has
+        /// already made by name — callers skip their own rule rather than
+        /// quoting a number nobody authored. "Last" is meaningful only because
+        /// rule 2 above rejects an unsorted stack.
+        static float PartsTop(HitPart[] parts)
+            => parts == null || parts.Length == 0 ? float.NaN : parts[parts.Length - 1].Top;
+
+        /// app-88jb Т13 (rule 5): is `h` one of the heights this stack is cut
+        /// at? The ground (Parts[0].Bottom) counts — a slide profile of 0 is a
+        /// degenerate authoring choice, not a broken one, and refusing it here
+        /// would be this rule inventing a second opinion about a number
+        /// ReqPositive already owns.
+        static bool IsPartBoundary(HitPart[] parts, float h)
+        {
+            if (parts[0].Bottom == h) return true;
+            for (int i = 0; i < parts.Length; i++)
+                if (parts[i].Top == h) return true;
+            return false;
+        }
+
+        /// The same boundaries as text, for the refusal message — a reader who
+        /// has to fix SlideProfileTop needs the list of values it could have
+        /// been, not just the one it was.
+        static string PartBoundaryList(HitPart[] parts)
+        {
+            var b = new List<string>(parts.Length + 1) { $"{parts[0].Bottom:F3}" };
+            for (int i = 0; i < parts.Length; i++) b.Add($"{parts[i].Top:F3}");
+            return string.Join("/", b);
         }
 
         static void ReqFinite(List<string> errors, string name, float value)

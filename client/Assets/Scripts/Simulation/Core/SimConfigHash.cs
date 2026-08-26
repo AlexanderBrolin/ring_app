@@ -91,6 +91,8 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.CocoonDamping);
             h = StateHash64.Add(h, c.CenterOfMassHeight); h = StateHash64.Add(h, c.TiltDampingRatio);
             h = StateHash64.Add(h, c.TiltSettleSeconds); h = StateHash64.Add(h, c.TiltGain);
+            // app-88jb Т13 (spec §3.3): the collector's hit parts.
+            h = HashHitPartArray(h, c.Parts);
             return h;
         }
 
@@ -140,6 +142,8 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.CenterOfMassHeight); h = StateHash64.Add(h, c.TiltDampingRatio);
             h = StateHash64.Add(h, c.TiltSettleSeconds); h = StateHash64.Add(h, c.TiltGain);
             h = StateHash64.Add(h, c.TiltFallAngle); h = StateHash64.Add(h, c.DownedSeconds);
+            // app-88jb Т13 (spec §3.3): this archetype's hit parts.
+            h = HashHitPartArray(h, c.Parts);
             return h;
         }
 
@@ -253,6 +257,34 @@ namespace Ring.Simulation.Core
                 h = StateHash64.Add(h, a[i].SlotCost);
                 h = StateHash64.Add(h, a[i].CreditValue);
                 h = StateHash64.Add(h, (int)a[i].Kind);
+            }
+            return h;
+        }
+
+        /// app-88jb Т13: one HitPart's worth per element, in the struct's own
+        /// declared field order — the same "length + every element" shape as
+        /// HashItemArray above, so a body that grows only a TAIL part still
+        /// moves the hash.
+        ///
+        /// ⚠ THE SIX COLUMN SCALARS BESIDE THIS ARRAY ARE STILL HASHED, AND
+        /// THAT IS NOT AN OVERSIGHT: LegsTop/BodyTop/HeadTop and the three
+        /// multipliers keep their last consumers until Т15, and they leave the
+        /// struct and this digest together, in that one step. Dropping them
+        /// from the hash while they are still fields would redden
+        /// SimConfigHashTests' reflective sweep on every one of them at once —
+        /// fields present in the struct and absent from the digest is exactly
+        /// what that sweep exists to catch.
+        static ulong HashHitPartArray(ulong h, HitPart[] a)
+        {
+            h = StateHash64.Add(h, a == null ? -1 : a.Length);
+            if (a == null) return h;
+            for (int i = 0; i < a.Length; i++)
+            {
+                h = StateHash64.Add(h, a[i].Radius);
+                h = StateHash64.Add(h, a[i].Bottom);
+                h = StateHash64.Add(h, a[i].Top);
+                h = StateHash64.Add(h, (int)a[i].Zone);
+                h = StateHash64.Add(h, a[i].DamageMult);
             }
             return h;
         }

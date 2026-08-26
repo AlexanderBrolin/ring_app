@@ -1,3 +1,4 @@
+using Ring.Simulation.Core;
 using UnityEngine;
 
 namespace Ring.Data
@@ -80,7 +81,33 @@ namespace Ring.Data
         /// Knockdown (owner decision Н23, variant 3a): above TiltFallAngle
         /// the mob goes down for DownedSeconds and neither shoots nor strikes.
         [Range(0.1f, 3.14f)] public float TiltFallAngle = 0.9f;
-        [Range(0.1f, 10f)] public float DownedSeconds = 1.2f; // sync-marker key — keep LAST (was SwingLeadMaxMeters, app-88jb)
+        [Range(0.1f, 10f)] public float DownedSeconds = 1.2f; // Was the sync-marker key until app-88jb Т13.
+
+        /// app-88jb Т13 (spec §3.3, owner decision Н8): this archetype's body as
+        /// an ORDERED stack of parts, bottom to top — same field and same
+        /// contract as HeroConfig.Parts, whose doc carries the reasoning
+        /// (Inspector array held directly, no [Range] on an array, gated by
+        /// SimConfigBuilder.Validate). Defaults below are the CHASER's, this
+        /// class's shape (see the class doc); the Gunner/Elite/Director .assets
+        /// get their own arrays from the bootstrap in Т16, and the test-side
+        /// archetype fixtures from ConfigTests.SeedMob.
+        /// THE HEIGHTS ARE THE MODEL'S, NOT THE OLD COLUMN'S (spec §3.3,
+        /// evidence Т12): the chaser's crown measures 2.6996 m against a
+        /// column of 1.85, i.e. a scale factor of 1.46, and every height here
+        /// is the old one multiplied by it. That is the whole point of the
+        /// change — the old column ended 0.85 m below the visible head, so a
+        /// shot at what the player SAW as the head passed over an empty
+        /// number. Radii are 0.7 / 1.0 / 0.35 of Radius, the same humanoid
+        /// proportion all five bodies use.
+        public HitPart[] Parts =
+        {
+            new HitPart { Radius = 0.35f, Bottom = 0f, Top = 0.88f,
+                Zone = HitZone.Legs, DamageMult = 0.75f },
+            new HitPart { Radius = 0.50f, Bottom = 0.88f, Top = 2.12f,
+                Zone = HitZone.Body, DamageMult = 1.0f },
+            new HitPart { Radius = 0.17f, Bottom = 2.12f, Top = 2.70f,
+                Zone = HitZone.Head, DamageMult = 1.7f },
+        }; // sync-marker key — keep LAST (was DownedSeconds, app-88jb)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

@@ -10,10 +10,11 @@ namespace Ring.Simulation.Tests
     /// is the subject, so it has to be readable in the same screen as the
     /// assertion (precedent DashRicochetTests.Fixture()).
     ///
-    /// FIVE TESTS GO THROUGH THE WORLD, and they break that sentence on
+    /// SEVEN TESTS GO THROUGH THE WORLD, and they break that sentence on
     /// purpose: Т5's three (spec §4.3 tests 6/7/9, from
-    /// HitAboveCenterOfMass_TipsAlongTheShot_BelowUndercutsIt on) and Т6's two
-    /// tilt-threshold witnesses (spec tests 8/10). What they witness is that the
+    /// HitAboveCenterOfMass_TipsAlongTheShot_BelowUndercutsIt on), Т6's two
+    /// tilt-threshold witnesses (spec tests 8/10) and Т13's two playtest debts
+    /// (app-hoe6 and app-mhw3, the last two tests in this file). What they witness is that the
     /// moment reaches MobState.TiltVel and that TickAll steps the spring --
     /// properties of the WIRING, which no pure function can show. They still
     /// state no literal of their own: every number they need is READ OFF the
@@ -52,6 +53,16 @@ namespace Ring.Simulation.Tests
     /// and at MaxSpeed 5.2 the longest test here (300 ticks = 10 s) covers
     /// ~52 m of that 153 m gap. Zeroing MaxSpeed/Accel would be an edit
     /// without a cause (coordinator R-Т5-1).
+    ///
+    /// Т13'S TWO ARE THE SECOND DELIBERATE EXCEPTION TO THAT PARAGRAPH: they
+    /// DO zero MaxSpeed/Accel, and they have the cause the sentence above asks
+    /// for. Both stand a chaser at a fixed distance and hit the SAME body twice
+    /// at heights read off its own parts, so the two blows must be told apart
+    /// by the arm alone; a body that walked between them would be answering a
+    /// different question each time. Both also replace the fixture's 35 m/s
+    /// with the game's 52.5 (each states why in its own doc) — an explicit
+    /// in-test fixture, which is what the first paragraph of this doc asks of
+    /// any test whose arithmetic is the subject.
     ///
     /// Т6's TiltAboveTheThreshold_PutsTheMobDown_AndItGetsUpOnItsOwn IS THE
     /// DELIBERATE EXCEPTION TO BOTH SENTENCES ABOVE: it takes OpenField()
@@ -204,6 +215,17 @@ namespace Ring.Simulation.Tests
             // Director 0.033 -- numbers run through python over the very
             // step SpringStep executes. ⚠ The number itself is the owner's
             // taste and sits in milestone В1's tuning list.
+            // ⚠⚠ app-88jb Т13 (coordinator Ruling 60): THE ARM HERE IS HANDED
+            // IN BY HAND, and that is now stated instead of implied. 1.24 m
+            // over a ZERO center of mass is a number this test chooses;
+            // whether the game's own geometry ever produces such an arm is a
+            // DIFFERENT question, and playtest В1 answered it with "no" — on
+            // today's column the chaser's head sits at [1.45, 1.85] against a
+            // center of mass of 1.17, i.e. an arm of 0.48. This test keeps the
+            // half it is good for, the FORMULA; the world half is held by
+            // WorldHeadshot_OnTheChasersOwnHeadPart_KnocksItDown_BodyDoesNot
+            // below, which reads the contact height off the chaser's own head
+            // part and watches for MobAiState.Downed.
             const float Gain = 10.5f;
             float dt = SimulationWorld.TickDt;
             float dv = Impact.VelocityDelta(2.6f, 52.5f, 90f, 6f, 1f);
@@ -427,6 +449,148 @@ namespace Ring.Simulation.Tests
             // and an older peer would refuse the whole Mobs block as
             // MalformedContent.
             Assert.AreEqual(4, Ring.Networking.Protocol.ProtocolVersion.Current);
+        }
+
+        [Test]
+        public void WorldHeadshot_OnTheChasersOwnHeadPart_KnocksItDown_BodyDoesNot()
+        {
+            // ⭐ THE MILESTONE В1 CRITERION, THIS TIME THROUGH THE WORLD (debt
+            // app-hoe6, coordinator Rulings 60/61). The formula witness above
+            // hands the arm in by hand and therefore cannot see whether the
+            // game's geometry can produce it -- playtest В1 found it could not.
+            // Here the contact height is READ OFF the chaser's own head part
+            // and the fall is OBSERVED as MobAiState.Downed through TiltSystem,
+            // so what is under test is the body's proportions, not the spring.
+            //
+            // ⚠ THIS IS THE FIRST OF TWO HALVES (coordinator Ruling 65). A
+            // witness that puts a ROUND in flight cannot exist yet: the hit
+            // gate still reads the old column (ProjectileSystem's
+            // AcceptCandidate takes `overlapTop` from cfg.HeadTop, 1.85 for the
+            // chaser), which Т13 does not move — a shot aimed at 2.41 m simply
+            // passes over the body. Т14 repoints that gate at these very parts
+            // and lands the flying half of the same criterion; debt app-hoe6
+            // closes there, not here.
+            //
+            // TWO EXPLICIT FIXTURES, both load-bearing (Global Constraints: a
+            // test whose arithmetic is the subject builds its own fixture --
+            // precedent DashRicochetTests.Fixture):
+            //  1. ProjectileSpeed 52.5, THE GAME's number, not the shared
+            //     fixture's 35. At 35 m/s dv = 2.6*35/90 = 1.0111 and an arm of
+            //     1.24 peaks at 0.6313 rad (36.2 deg) against the 0.9 rad
+            //     (51.6 deg) threshold -- the criterion would read RED on
+            //     entirely correct code. At 52.5 dv = 1.5167 and the peak is
+            //     0.9469 rad (54.25 deg).
+            //  2. MaxSpeed/Accel zeroed: the mob is FROZEN, so its own
+            //     locomotion cannot mix into the measurement (finding Н-5's
+            //     lesson, applied on purpose here). OpenField(), not Open(),
+            //     puts the collector at the origin instead of 159.16 m out on
+            //     the spawn ring.
+            //
+            // ⚠ THE MARGIN IS THIN AND IS THEREFORE NAMED (Ruling 61). The
+            // threshold is reached at an arm of 1.1786 m, i.e. at a contact
+            // height of 2.349 m. Once this task's data step lands, the head
+            // belt is [2.12, 2.70] and only its UPPER 60 % knocks the chaser
+            // over; the middle of the belt, 2.41 m, clears that line by 0.061 m
+            // and that is the whole of the margin. A hit to the LOWER third of
+            // the head leaves the chaser standing -- arithmetic of the arm, not
+            // a defect, and it belongs on milestone В2's tuning list.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Weapon.ProjectileSpeed = 52.5f;   // explicit fixture, see (1)
+            cfg.Chaser.MaxSpeed = 0f;             // explicit fixture, see (2)
+            cfg.Chaser.Accel = 0f;
+            Assert.AreNotEqual(TestConfigs.Default().Weapon.ProjectileSpeed,
+                cfg.Weapon.ProjectileSpeed,
+                "фикстура: скорость снаряда обязана быть игровой, иначе тест красен на верном коде");
+
+            var w = new SimulationWorld(7, cfg);
+            PlayerState hero = w.Player; hero.Hp = 1e6f; w.SetPlayerForTest(hero);
+            var mobPos = new float2(6f, 0f);
+            w.SpawnMobForTest(MobType.Chaser, mobPos);
+
+            // One blow at the MIDDLE of the named part, then as many ticks as
+            // the spring needs to reach its peak (it peaks on step 4; the
+            // budget is one settle time, and the Downed window of 1.2 s is
+            // longer than that, so a body that fell is still down when the loop
+            // ends). The threshold is tested BEFORE the step, so the fall lands
+            // one tick after the peak -- TiltSystem's own documented order.
+            bool KnocksDown(HitPart part)
+            {
+                MobState m = w.Mobs[0];
+                m.Hp = 1e6f; m.Ai = MobAiState.Idle;
+                m.Tilt = 0f; m.TiltVel = 0f; m.StateTimer = 0f;
+                w.SetMobForTest(0, m);
+                w.DamageMob(0, 1f, mobPos, part.Zone, new float2(1f, 0f), ownerIndex: 0,
+                    hitHeight: 0.5f * (part.Bottom + part.Top),
+                    projectileMass: cfg.Weapon.ProjectileMass,
+                    projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
+                int budget = SimulationWorld.TicksFromSeconds(cfg.Chaser.TiltSettleSeconds);
+                for (int i = 0; i < budget && w.Mobs[0].Ai != MobAiState.Downed; i++)
+                    w.Tick(default);
+                return w.Mobs[0].Ai == MobAiState.Downed;
+            }
+
+            HitPart[] parts = cfg.Chaser.Parts;
+            Assert.IsTrue(KnocksDown(parts[parts.Length - 1]),
+                "выстрел в середину головы не валит чейзера — критерий вехи В1 миром не наблюдается");
+            Assert.IsFalse(KnocksDown(parts[parts.Length - 2]),
+                "попадание в корпус валит — хедшот перестал быть особенным");
+        }
+
+        [Test]
+        public void TiltImpulse_TheHeadRocksTheChaserHarderThanTheLegs()
+        {
+            // ⭐ THE SECOND PLAYTEST DEBT (app-mhw3, coordinator Ruling 62), and
+            // today the proportion is INVERTED. The chaser's center of mass sits
+            // at 1.17 m of a 1.85 m column -- 63 % of the way up -- so the legs
+            // (middle 0.30, arm 0.87) out-rock the head (middle 1.65, arm 0.48):
+            // 38.1 deg against 21.0 deg at the game's projectile speed. After
+            // this task's data step the column is [0, 0.88) / [0.88, 2.12) /
+            // [2.12, 2.70], the same center of mass sits at 43 % of it, and the
+            // head's arm of 1.24 beats the legs' 0.73 -- the head rocks 1.70x
+            // HARDER, which is what a body is supposed to do.
+            //
+            // ⚠ IT GUARDS THE NUMBERS, NOT THE FORMULA: roll the column back to
+            // 1.85 and the ratio flips, so this dies with the DATA. The formula
+            // half is already held by HitAboveCenterOfMass_TipsAlongTheShot_
+            // BelowUndercutsIt, which places its two heights SYMMETRICALLY
+            // around the center of mass on purpose -- and symmetry is exactly
+            // what cannot show a body whose proportions are wrong.
+            //
+            // |TiltVel| is read IMMEDIATELY after the blow, with no tick in
+            // between, so the two readings are the two angular impulses and
+            // nothing else; the tilt and the angular velocity are zeroed
+            // through the seam between them.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Weapon.ProjectileSpeed = 52.5f;   // the game's number, as above
+            cfg.Chaser.MaxSpeed = 0f;
+            cfg.Chaser.Accel = 0f;
+            var w = new SimulationWorld(7, cfg);
+            var mobPos = new float2(6f, 0f);
+            w.SpawnMobForTest(MobType.Chaser, mobPos);
+
+            float RockOf(HitPart part)
+            {
+                MobState m = w.Mobs[0];
+                m.Hp = 1e6f; m.Ai = MobAiState.Idle;
+                m.Tilt = 0f; m.TiltVel = 0f; m.StateTimer = 0f;
+                w.SetMobForTest(0, m);
+                w.DamageMob(0, 1f, mobPos, part.Zone, new float2(1f, 0f), ownerIndex: 0,
+                    hitHeight: 0.5f * (part.Bottom + part.Top),
+                    projectileMass: cfg.Weapon.ProjectileMass,
+                    projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
+                return math.abs(w.Mobs[0].TiltVel);
+            }
+
+            HitPart[] parts = cfg.Chaser.Parts;
+            float legs = RockOf(parts[0]);
+            float head = RockOf(parts[parts.Length - 1]);
+
+            // Premise: without it a mutation that zeroes the legs' impulse would
+            // satisfy the comparison below while proving nothing at all.
+            Assert.Greater(legs, 0f,
+                "фикстура: попадание в ноги не качнуло тело вовсе — сравнивать нечего");
+            Assert.Greater(head, legs,
+                "выстрел в ноги качает сильнее, чем в голову — пропорция тела не починена");
         }
     }
 }
