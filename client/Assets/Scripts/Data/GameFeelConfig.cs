@@ -100,11 +100,11 @@ namespace Ring.Data
         [Range(0.1f, 3f)] public float PlayerVisualScale = 1f;
         [Range(0.05f, 2f)] public float ChaserVisualScale = 0.4f;
         // I5 reviewer rec #5 (final review wave, app-n6g): this scale is NOT
-        // auto-coupled to MobGunnerConfig's zone-top geometry (LegsTop/
-        // BodyTop/HeadTop) or the AimProxy_Legs/Body/Head belts sized from
-        // those tops (StageOneSceneBootstrap.EnsureAimProxyChildren) — a
-        // retune of one alone silently desyncs the visible model from its
-        // hittable silhouette. A GunnerVisualScale change must move both.
+        // auto-coupled to MobGunnerConfig's hit parts, nor to the AimProxy_*
+        // belts built from them (StageOneSceneBootstrap.
+        // EnsureAimProxyChildren) — a retune of one alone silently desyncs the
+        // visible model from its hittable silhouette. A GunnerVisualScale
+        // change must move both.
         [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
         [Range(0f, 0.5f)] public float SpeedDampTime = 0.1f;
         [Range(0f, 1f)] public float PlayerMoveThreshold01 = 0.05f;
@@ -191,16 +191,14 @@ namespace Ring.Data
         // game-feel numbers for the combat-depth Presentation work later in
         // this phase (tracer visuals, slide dust, stamina bar, headshot
         // pitch, gib pooling, aim-proxy ray). Consumers wired
-        // incrementally as Г5 progressed, not all at once: `AimProxyHeadRadiusFrac`
-        // → `StageOneSceneBootstrap` (Task 19); `AimRayAlpha`/`AimRayWidth` →
-        // `AimRayView` and `AimDotScale` → `CrosshairView` (both Task 20);
-        // `TracerScale` → `ViewRegistry`/`ProjectileView` (Task 21). The rest
-        // (`SlideDustBurstCount`, `StaminaBar*`,
+        // incrementally as Г5 progressed, not all at once: `AimRayAlpha`/
+        // `AimRayWidth` → `AimRayView` and `AimDotScale` → `CrosshairView`
+        // (both Task 20); `TracerScale` → `ViewRegistry`/`ProjectileView`
+        // (Task 21). The rest (`SlideDustBurstCount`, `StaminaBar*`,
         // `ZoneHitPitchOffset`, `Gib*`) still await their own later Г5 tasks.
-        // `RicochetSparkCount` and
-        // `SlideWallSparkBurstCount` are deliberately NOT added here: ricochet
-        // sparks reuse the baked `BlockSparkBurstCount` prefab, and neither
-        // has a consumer.
+        // `RicochetSparkCount` and `SlideWallSparkBurstCount` are
+        // deliberately NOT added here: ricochet sparks reuse the baked
+        // `BlockSparkBurstCount` prefab, and neither has a consumer.
         [Range(0.1f, 3f)] public float TracerScale = 0.7f;
         [Range(1, 64)] public int SlideDustBurstCount = 14;
         public Color StaminaBarFullColor = new Color(0.15f, 0.95f, 0.85f);
@@ -212,7 +210,6 @@ namespace Ring.Data
         [Range(0f, 20f)] public float GibExplosionSpeed = 4f;
         [Range(1, 512)] public int GibPartsFifoLimit = 24;
         [Range(0f, 10f)] public float GibPhysicsSeconds = 3f;
-        [Range(0f, 1f)] public float AimProxyHeadRadiusFrac = 0.5f;
         [Range(0f, 1f)] public float AimRayAlpha = 0.35f;
         [Range(0f, 0.5f)] public float AimRayWidth = 0.03f;
         [Range(0f, 2f)] public float AimDotScale = 0.15f;

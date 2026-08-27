@@ -248,9 +248,10 @@ namespace Ring.Presentation
         ///
         /// В1/В2 fix-wave 2 (app-n6g item 3): also resolves WHICH belt was hit
         /// (`zone`, via the collider's own bootstrap-assigned name —
-        /// `StageOneSceneBootstrap.EnsureAimProxyCapsule` names the three
-        /// GameObjects "AimProxy_Legs"/"AimProxy_Body"/"AimProxy_Head"
-        /// literally, no extra marker component needed) and, if the hit
+        /// `StageOneSceneBootstrap.EnsureAimProxyChildren` names each belt
+        /// `AimProxy_` + its part's zone, so the three names it can produce are
+        /// exactly the three `ClassifyProxyZone` below compares against, with
+        /// no extra marker component needed) and, if the hit
         /// collider belongs to a live mob, that mob's own `MobView`
         /// (`GetComponentInParent` — the proxy is a direct child of the same
         /// root `MobView` sits on, `EnsureAimProxyChildren`'s own call sites).

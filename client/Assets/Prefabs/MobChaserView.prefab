@@ -63,6 +63,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Ring.Presentation::Ring.Presentation.MobVisual
   _animator: {fileID: 9215367125872865716}
   _visual: {fileID: 6856174884167428205}
+  _clipFamily: 0
 --- !u!1 &6273050816752354106
 GameObject:
   m_ObjectHideFlags: 0
@@ -114,10 +115,10 @@ CapsuleCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 2
-  m_Radius: 0.5
-  m_Height: 0.6
+  m_Radius: 0.35
+  m_Height: 0.88
   m_Direction: 1
-  m_Center: {x: 0, y: 0.3, z: 0}
+  m_Center: {x: 0, y: 0.44, z: 0}
 --- !u!1 &7204630567699708577
 GameObject:
   m_ObjectHideFlags: 0
@@ -170,9 +171,9 @@ CapsuleCollider:
   m_Enabled: 1
   serializedVersion: 2
   m_Radius: 0.5
-  m_Height: 0.85
+  m_Height: 1.2399999
   m_Direction: 1
-  m_Center: {x: 0, y: 1.0250001, z: 0}
+  m_Center: {x: 0, y: 1.5, z: 0}
 --- !u!1 &8562317675075984979
 GameObject:
   m_ObjectHideFlags: 0
@@ -224,10 +225,10 @@ CapsuleCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 2
-  m_Radius: 0.4
-  m_Height: 0.39999998
+  m_Radius: 0.17
+  m_Height: 0.58000016
   m_Direction: 1
-  m_Center: {x: 0, y: 1.6500001, z: 0}
+  m_Center: {x: 0, y: 2.4099998, z: 0}
 --- !u!1001 &6389692829370437510
 PrefabInstance:
   m_ObjectHideFlags: 0

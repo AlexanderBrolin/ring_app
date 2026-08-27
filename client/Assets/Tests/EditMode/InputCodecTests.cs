@@ -43,9 +43,9 @@ namespace Ring.Simulation.Tests
         // MuzzleHeight fixture: the sanitizer's non-finite AimHeight
         // fallback (SimInputSanitizer.cs:31). Checked by grep against every
         // client/Assets/Data/*.asset — 1.37 appears in none of them. (The
-        // first draft used 1.35, which is HeroConfig.asset BodyTop — the
-        // third fixture in a row this trap has caught, so the value is now checked
-        // by command, not by eye.)
+        // first draft used 1.35, which is the top of the collector's own torso
+        // part in HeroConfig.asset — the third fixture in a row this trap has
+        // caught, so the value is now checked by command, not by eye.)
         const float MuzzleA = 1.37f;
         const float RadiusB = 15f;
         const float HeightB = 2f;

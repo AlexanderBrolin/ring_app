@@ -19,16 +19,6 @@ namespace Ring.Data
         [Range(0f, 1f)] public float DashIframes = 0.2f;
         [Range(0f, 0.5f)] public float DashBufferWindow = 0.15f;
 
-        // Task 1 (spec hit-zone geometry): vertical hit-zone bounds (metres above
-        // ground) and per-zone damage multipliers used by the raycast aim system
-        // (Task 4+) to resolve which body zone a shot lands in.
-        [Range(0.05f, 5f)] public float LegsTop = 0.55f;
-        [Range(0.05f, 5f)] public float BodyTop = 1.35f;
-        [Range(0.05f, 5f)] public float HeadTop = 1.75f;
-        [Range(0f, 5f)] public float LegsDamageMult = 0.75f;
-        [Range(0f, 5f)] public float BodyDamageMult = 1.0f;
-        [Range(0f, 5f)] public float HeadDamageMult = 1.7f;
-
         // Task 1: slide stamina-movement profile height and the hero's own weapon
         // muzzle heights (standing / mid-slide), consumed by the aim-ray system (Task 4+).
         [Range(0.05f, 5f)] public float SlideProfileTop = 0.55f;
@@ -150,17 +140,18 @@ namespace Ring.Data
         /// THE COLLECTOR IS THE ONE BODY WHOSE HEIGHTS DO NOT MOVE, and that
         /// is the SPEC's decision (§3.3), not a measurement: he is not from the
         /// mech pack the four archetypes come from, so the spec gives him k = 1
-        /// and leaves his column alone.
+        /// and leaves his heights alone.
         /// ⚠ Т12 DID measure him, and the number is 1.0481, not 1.0 — his drawn
         /// crown is 1.8342 m against a 1.75 m column (evidence
         /// task-88jb-12-elite-measurement.md). The top ~8 cm of the model
-        /// therefore stay outside the hit column, exactly the mismatch this
+        /// therefore stay outside his hit volume, exactly the mismatch this
         /// phase closes for the other four. Left as the spec has it, and
         /// written down rather than rounded away. So the three heights are the
-        /// same 0.55/1.35/1.75 LegsTop/BodyTop/HeadTop carry above, and only
-        /// the per-part RADII are new. They are 0.7 / 1.0 / 0.35 of Radius —
-        /// one named humanoid proportion, applied to all five bodies alike
-        /// (0.315 and 0.1575 rounded to the centimeter the Inspector shows).
+        /// same 0.55/1.35/1.75 the collector has been hittable at since Task
+        /// 1, and only the per-part RADII are new. They are 0.7 / 1.0 / 0.35
+        /// of Radius — one named humanoid proportion, applied to all five
+        /// bodies alike (0.315 and 0.1575 rounded to the centimeter the
+        /// Inspector shows).
         /// ⚠ Parts[0].Top IS SlideProfileTop: validation rule 5 requires the
         /// slide profile to land exactly on a part boundary, which is what
         /// keeps the slide equivalent to what it was before parts existed.

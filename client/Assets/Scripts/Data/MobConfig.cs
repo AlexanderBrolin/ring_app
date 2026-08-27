@@ -38,18 +38,6 @@ namespace Ring.Data
         [Range(0f, 10f)] public float AvoidLookahead = 3f;
         [Range(0f, 5f)] public float AvoidMargin = 1f;
 
-        // Task 1 (spec hit-zone geometry): vertical hit-zone bounds and per-zone
-        // damage multipliers, same shape as HeroConfig — consumed by the raycast aim
-        // system (Task 4+). Defaults below are the chaser archetype (this class's shape,
-        // see class doc); the Gunner .asset overrides LegsTop/BodyTop/HeadTop to the
-        // taller ranged-mech silhouette (Task 7/17).
-        [Range(0.05f, 5f)] public float LegsTop = 0.60f;
-        [Range(0.05f, 5f)] public float BodyTop = 1.45f;
-        [Range(0.05f, 5f)] public float HeadTop = 1.85f;
-        [Range(0f, 5f)] public float LegsDamageMult = 0.75f;
-        [Range(0f, 5f)] public float BodyDamageMult = 1.0f;
-        [Range(0f, 5f)] public float HeadDamageMult = 1.7f;
-
         // Task 1: muzzle height for ranged mobs (Gunner); the chaser (this class's
         // default shape) never reads it, but it must stay a plausible in-zone value
         // (not 0) — the Gunner slot's SimConfigBuilder.Validate rule D5 checks

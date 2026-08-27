@@ -796,17 +796,17 @@ namespace Ring.Editor
             // default and genuinely needs the gunner numbers seeded once.
             bool gunnerChanged = gunnerCreated && ApplyGunnerDefaults(gunner);
 
-            // Task 17: the Task 1 hit-zone-geometry block (LegsTop/BodyTop/
-            // HeadTop/*DamageMult/MuzzleHeight) never got a gunner-archetype
-            // override — ApplyGunnerDefaults above only covers the older
-            // chaser-mirrored field block, so a committed MobGunnerConfig.asset
-            // still carries the chaser's shorter silhouette. Same first-
-            // creation contract as ApplyGunnerDefaults (F-5 regression guard —
-            // PA4/PB2/PC3), PLUS a one-time backfill when the committed asset
-            // predates the whole block (`gunnerMarkerPresent`, snapshotted
-            // above before this run could change it). `SwingLead*` is
-            // deliberately left untouched — the gunner archetype ignores melee
-            // swing lead entirely (A15).
+            // Task 17: the Task 1 hit-zone-geometry block (the archetype's
+            // own vertical body geometry plus MuzzleHeight) never got a
+            // gunner-archetype override — ApplyGunnerDefaults above only
+            // covers the older chaser-mirrored field block, so a committed
+            // MobGunnerConfig.asset still carries the chaser's shorter
+            // silhouette. Same first-creation contract as ApplyGunnerDefaults
+            // (F-5 regression guard — PA4/PB2/PC3), PLUS a one-time backfill
+            // when the committed asset predates the whole block
+            // (`gunnerMarkerPresent`, snapshotted above before this run could
+            // change it). `SwingLead*` is deliberately left untouched — the
+            // gunner archetype ignores melee swing lead entirely (A15).
             gunnerChanged |= (gunnerCreated || !gunnerMarkerPresent) && ApplyGunnerZoneDefaults(gunner);
             if (gunnerChanged) EditorUtility.SetDirty(gunner);
 
@@ -2017,12 +2017,10 @@ namespace Ring.Editor
             // the mapping above ever changes.
             MobView chaserPrefab = GetOrCreateMobArchetypePrefab(
                 MobChaserPrefabPath, ChaserModelPath, gameFeel.ChaserVisualScale,
-                chaser.LegsTop, chaser.BodyTop, chaser.HeadTop, chaser.Radius,
-                gameFeel.AimProxyHeadRadiusFrac);
+                chaser.Parts);
             MobView gunnerPrefab = GetOrCreateMobArchetypePrefab(
                 MobGunnerPrefabPath, GunnerModelPath, gameFeel.GunnerVisualScale,
-                gunner.LegsTop, gunner.BodyTop, gunner.HeadTop, gunner.Radius,
-                gameFeel.AimProxyHeadRadiusFrac);
+                gunner.Parts);
             // Stage 3 Task 31: the two archetypes that used to be rented out of
             // the Gunner's pool. Their belts come from their OWN MobConfigs, so
             // the Director's aim proxies are the Director's size — a boss you
@@ -2031,13 +2029,10 @@ namespace Ring.Editor
             Material directorSkin = AssetPreviewSceneBootstrap.GetOrCreateDirectorSkin();
             MobView elitePrefab = GetOrCreateMobArchetypePrefab(
                 MobElitePrefabPath, EliteModelPath, gameFeel.EliteVisualScale,
-                elite.LegsTop, elite.BodyTop, elite.HeadTop, elite.Radius,
-                gameFeel.AimProxyHeadRadiusFrac, AnimIds.MobClipFamily.SciFiEnemy);
+                elite.Parts, AnimIds.MobClipFamily.SciFiEnemy);
             MobView directorPrefab = GetOrCreateMobArchetypePrefab(
                 MobDirectorPrefabPath, DirectorModelPath, gameFeel.DirectorVisualScale,
-                director.LegsTop, director.BodyTop, director.HeadTop, director.Radius,
-                gameFeel.AimProxyHeadRadiusFrac, AnimIds.MobClipFamily.SciFiEnemy,
-                directorSkin);
+                director.Parts, AnimIds.MobClipFamily.SciFiEnemy, directorSkin);
             ProjectileView projectilePrefab =
                 GetOrCreateProjectilePrefab(projectileMat, tracerMat, gameFeel.TracerFadeSeconds);
             // Stage 3 Task 31 (spec §3.11): the cell and the four container
@@ -2064,9 +2059,7 @@ namespace Ring.Editor
             // two mech archetypes above — it is a POOLED prefab now, one
             // instance per player slot, and no longer a scene object.
             PlayerView playerDollPrefab = GetOrCreatePlayerDollPrefab(
-                PlayerDollPrefabPath, gameFeel.PlayerVisualScale,
-                hero.LegsTop, hero.BodyTop, hero.HeadTop, hero.Radius,
-                gameFeel.AimProxyHeadRadiusFrac, gameFeel);
+                PlayerDollPrefabPath, gameFeel.PlayerVisualScale, hero.Parts, gameFeel);
 
             GameObject viewsGo = EditorBootstrapUtils.FindRootObject(scene, ViewsObjectName);
             if (viewsGo == null)
@@ -2547,31 +2540,29 @@ namespace Ring.Editor
 
         /// Task 17 (spec §3.6/§3.7, hit-zone geometry): the gunner archetype's
         /// silhouette is the taller ranged mech, not the chaser's — overrides
-        /// the Task 1 zone-field block (LegsTop/BodyTop/HeadTop/*DamageMult/
-        /// MuzzleHeight) that ApplyGunnerDefaults above never touches. Same
-        /// first-creation/backfill-only contract as ApplyGunnerDefaults (see
-        /// its own doc + the call site's gate) — never reapplied
-        /// unconditionally, so an owner hand-tweak of these fields survives a
-        /// re-run. `SwingLead*` is deliberately absent: the gunner archetype
-        /// never melees, so it ignores swing lead entirely (A15).
+        /// the Task 1 zone-field block (the archetype's own vertical body
+        /// geometry plus MuzzleHeight) that ApplyGunnerDefaults above never
+        /// touches. Same first-creation/backfill-only contract as
+        /// ApplyGunnerDefaults (see its own doc + the call site's gate) — never
+        /// reapplied unconditionally, so an owner hand-tweak of these fields
+        /// survives a re-run. `SwingLead*` is deliberately absent: the gunner
+        /// archetype never melees, so it ignores swing lead entirely (A15).
         ///
         /// app-88jb Т16 (coordinator Ruling 83): the archetype's hit PARTS join
-        /// the column below -- see the call to ApplyGunnerPartsDefaults at the
-        /// end of the body for why they belong to THIS method and not only to
+        /// that block -- see the call to ApplyGunnerPartsDefaults at the end of
+        /// the body for why they belong to THIS method and not only to
         /// ApplyPartsNumbers' backfill.
+        /// app-88jb Т17 (Ruling 76): the six vertical scalars this method used
+        /// to seed alongside them left MobConfig for good, so the parts array
+        /// IS this archetype's hit geometry now and MuzzleHeight is all that
+        /// survives of the original block.
         static bool ApplyGunnerZoneDefaults(MobConfig m)
         {
             bool changed = false;
-            changed |= SetIfDifferent(ref m.LegsTop, 1.10f);
-            changed |= SetIfDifferent(ref m.BodyTop, 2.70f);
-            changed |= SetIfDifferent(ref m.HeadTop, 3.50f);
-            changed |= SetIfDifferent(ref m.LegsDamageMult, 0.75f);
-            changed |= SetIfDifferent(ref m.BodyDamageMult, 1.0f);
-            changed |= SetIfDifferent(ref m.HeadDamageMult, 1.7f);
             changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
             // app-88jb Т16 (coordinator Ruling 83): the gunner's hit PARTS --
-            // the successor of the very column the seven lines above set, and
-            // the last archetype in this file to get production numbers for
+            // the successor of the vertical geometry this method once seeded,
+            // and the last archetype in this file to get production numbers for
             // them at all (audit finding Н-34). THE `created` LEG IS WHAT THIS
             // CALL SITE CLOSES, and only this one can: a MobGunnerConfig.asset
             // that does not exist yet is written whole by
@@ -2583,10 +2574,9 @@ namespace Ring.Editor
             // `(gunnerCreated || !gunnerMarkerPresent)`, is already exactly the
             // shape that needs, so closing the leg costs no new condition.
             //
-            // The zone column stays beside the parts rather than being replaced
-            // by them: it is still a live Inspector field of MobConfig until Т17
-            // removes it (Ruling 76), and a seeding method that filled one and
-            // not the other would leave a brand-new asset half-described.
+            // app-88jb Т17 (Ruling 76): the vertical scalars that used to stand
+            // beside this call are gone from MobConfig, so it is no longer one
+            // half of a body description -- it is the whole of one.
             changed |= ApplyGunnerPartsDefaults(m);
             return changed;
         }
@@ -2938,9 +2928,10 @@ namespace Ring.Editor
         /// collector (finding Р371), the same convention HeroConfig.Mass
         /// follows. CenterOfMassHeight 1.78 is derived BACKWARDS from spec
         /// §3.2's own per-archetype tilt table (finding D2-I2 — against
-        /// today's HeadTop, not a future body part). TiltGain 10.5 is the
-        /// CIRCLE-3 recalibration, owner-approved (was 6.5): the v2 closed
-        /// form dropped a sin(phi) factor and never described the real
+        /// the crown this archetype carried when the number was taken, which
+        /// was the vertical geometry of the day, not a body part). TiltGain
+        /// 10.5 is the CIRCLE-3 recalibration, owner-approved (was 6.5): the
+        /// v2 closed form dropped a sin(phi) factor and never described the real
         /// per-tick explicit-integrator step, so the milestone В1 rule ("a
         /// headshot drops a Chaser") would not have been observable at all
         /// under the old number (finding C-C1). ImpactSpeedCap 6,
@@ -2982,12 +2973,6 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.SeparationStrength, 6f);
             changed |= SetIfDifferent(ref m.AvoidLookahead, 3f);
             changed |= SetIfDifferent(ref m.AvoidMargin, 1f);
-            changed |= SetIfDifferent(ref m.LegsTop, 1.10f);
-            changed |= SetIfDifferent(ref m.BodyTop, 2.70f);
-            changed |= SetIfDifferent(ref m.HeadTop, 3.50f);
-            changed |= SetIfDifferent(ref m.LegsDamageMult, 0.75f);
-            changed |= SetIfDifferent(ref m.BodyDamageMult, 1.0f);
-            changed |= SetIfDifferent(ref m.HeadDamageMult, 1.7f);
             changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
             changed |= SetIfDifferent(ref m.SwingLeadFactor, 1.0f);
             changed |= SetIfDifferent(ref m.SwingLeadMaxMeters, 2.0f);
@@ -3017,24 +3002,6 @@ namespace Ring.Editor
         /// залп на Reposition/Fire") and Р248 keeps it inside the core anyway.
         /// Calling ApplyEliteDefaults first is the point (rule 2): the shared
         /// profile has ONE home, and only the differences are written here.
-        ///
-        /// HeadTop stays at the Gunner's 3.50, and app-88jb Т13 turned that
-        /// from a constraint into a leftover. The old reasoning was "Hero.
-        /// MaxAimHeight is 3.8, so a taller silhouette would put the
-        /// Director's head above anything a collector can aim at" -- true
-        /// while the column WAS the hit volume. Т13 DECLARED the parts, whose
-        /// last one ends at 4.80, and raised MaxAimHeight to 4.9 in the same
-        /// task precisely so that crown stays reachable (validation rule 14
-        /// now enforces it across all five bodies).
-        /// ⚠ THE COLUMN IS STILL THE HIT VOLUME AS THIS IS WRITTEN, and the
-        /// review that caught this doc caught it for a reason: resolving a hit
-        /// against `Parts` is Т14 (`AcceptCandidate` reads `overlapTop` off
-        /// cfg.HeadTop until then), the aim proxies are rebuilt from parts in
-        /// Т17, and the three column scalars are removed in Т15 together with
-        /// their fold into the hash. So for three more tasks BOTH exist, and
-        /// the column is what decides a shot. Model scale
-        /// (ASSETS-001 §2.3, x1.5-2) is Presentation's own number and does not
-        /// touch either one.
         ///
         /// app-88jb Т1 (Ruling 5): two more overrides join the five above —
         /// Mass 4000 kg (spec §3.2, by RATIO to the 120 kg collector, same
@@ -3452,9 +3419,10 @@ namespace Ring.Editor
         /// is never re-authored UNLESS the mapping at the top of this file
         /// picks a different model — then the stale prefab is deleted and
         /// rebuilt so an owner's pair swap actually takes effect.
-        /// Task 19 (spec QA7/QD1) adds `legsTop`/`bodyTop`/`headTop`/
-        /// `bodyRadius`/`headRadiusFrac`: the archetype's zone-geometry SO
-        /// fields, used to size the `AimProxy_*` belts (`EnsureAimProxyChildren`).
+        /// Task 19 (spec QA7/QD1) adds the geometry the `AimProxy_*` belts are
+        /// sized from (`EnsureAimProxyChildren`); app-88jb Т17 turned that into
+        /// a single argument — the archetype's own `HitPart[]`, the very array
+        /// the simulation resolves a hit against.
         /// The self-heal reaches BOTH paths — an already-committed prefab
         /// whose visuals already match (`SelfHealAimProxyOnPrefab`, UNDER the
         /// `PrefabVisualsMatch` early return, PC2) and a freshly-built one
@@ -3472,8 +3440,7 @@ namespace Ring.Editor
         /// milestone 3. `null` leaves the model's own materials alone, which is
         /// what all three of the other archetypes pass.
         static MobView GetOrCreateMobArchetypePrefab(string prefabPath, string modelPath,
-            float visualScale, float legsTop, float bodyTop, float headTop,
-            float bodyRadius, float headRadiusFrac,
+            float visualScale, HitPart[] parts,
             AnimIds.MobClipFamily clipFamily = AnimIds.MobClipFamily.Mech,
             Material skin = null)
         {
@@ -3481,8 +3448,7 @@ namespace Ring.Editor
             {
                 if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath, ("Visual", modelPath)))
                 {
-                    SelfHealAimProxyOnPrefab(prefabPath, legsTop, bodyTop, headTop,
-                        bodyRadius, headRadiusFrac);
+                    SelfHealAimProxyOnPrefab(prefabPath, parts);
                     SelfHealVisualScaleOnPrefab(prefabPath, "Visual", visualScale);
                     return AssetDatabase.LoadAssetAtPath<MobView>(prefabPath);
                 }
@@ -3503,10 +3469,9 @@ namespace Ring.Editor
                 EditorBootstrapUtils.SetRef(so, "_visual", visual.transform);
                 so.FindProperty("_clipFamily").enumValueIndex = (int)clipFamily;
                 so.ApplyModifiedPropertiesWithoutUndo();
-                // Task 19: AimProxy_Legs/Body/Head siblings of Visual, at
+                // Task 19: one AimProxy_* sibling of Visual per body part, at
                 // prefab-root local space (EnsureAimProxyChildren's own doc).
-                EnsureAimProxyChildren(go.transform, legsTop, bodyTop, headTop,
-                    bodyRadius, headRadiusFrac);
+                EnsureAimProxyChildren(go.transform, parts);
                 return go;
             });
         }
@@ -3514,11 +3479,11 @@ namespace Ring.Editor
         /// Stage 2 Task 45a (spec §3.12): the collector doll prefab — the same
         /// hierarchy the scene's retired `Player` object carried
         /// (`PlayerView`/`PlayerVisual` on the root, a named `Visual` child off
-        /// the UAL1 doll FBX with its generated controller, the
-        /// `AimProxy_Legs/Body/Head` belts sized from `HeroConfig`'s own
-        /// zone geometry, and the pistol parented into the doll's `RightHand`
-        /// bone), plus the editor-only `PlayerGunTuner` that inherited the
-        /// owner's PlayMode gun workflow (Р97).
+        /// the UAL1 doll FBX with its generated controller, the `AimProxy_*`
+        /// belts sized from `HeroConfig`'s own hit parts, and the pistol
+        /// parented into the doll's `RightHand` bone), plus the editor-only
+        /// `PlayerGunTuner` that inherited the owner's PlayMode gun workflow
+        /// (Р97).
         ///
         /// Guarded by `PrefabVisualsMatch` (Б11) and self-healed on the
         /// early-return path exactly like `GetOrCreateMobArchetypePrefab` above,
@@ -3528,16 +3493,14 @@ namespace Ring.Editor
         /// what a BUILD ships is the pose baked into this prefab, while
         /// `PlayerGunTuner`'s live push only exists in the Editor.
         static PlayerView GetOrCreatePlayerDollPrefab(string prefabPath, float visualScale,
-            float legsTop, float bodyTop, float headTop, float bodyRadius,
-            float headRadiusFrac, GameFeelConfig gameFeel)
+            HitPart[] parts, GameFeelConfig gameFeel)
         {
             if (AssetDatabase.LoadAssetAtPath<PlayerView>(prefabPath) != null)
             {
                 if (EditorBootstrapUtils.PrefabVisualsMatch(prefabPath,
                         ("Visual", ThirdPartyAssetPostprocessor.DollPath)))
                 {
-                    SelfHealAimProxyOnPrefab(prefabPath, legsTop, bodyTop, headTop,
-                        bodyRadius, headRadiusFrac);
+                    SelfHealAimProxyOnPrefab(prefabPath, parts);
                     SelfHealVisualScaleOnPrefab(prefabPath, "Visual", visualScale);
                     SelfHealGunPoseOnPrefab(prefabPath, gameFeel);
                     SelfHealGunSocketsOnPrefab(prefabPath, gameFeel); // Stage 2 Task 45b
@@ -3558,12 +3521,11 @@ namespace Ring.Editor
                 EditorBootstrapUtils.SetRef(visualSo, "_animator", visual.GetComponent<Animator>());
                 EditorBootstrapUtils.SetRef(visualSo, "_visual", visual.transform);
                 visualSo.ApplyModifiedPropertiesWithoutUndo();
-                // Task 19: AimProxy_Legs/Body/Head siblings of Visual, at
+                // Task 19: one AimProxy_* sibling of Visual per body part, at
                 // prefab-root local space (EnsureAimProxyChildren's own doc).
                 // Every doll carries them now, which is what lets a player be
                 // aimed AT — see AimProvider.TryAimProxy's own doc.
-                EnsureAimProxyChildren(go.transform, legsTop, bodyTop, headTop,
-                    bodyRadius, headRadiusFrac);
+                EnsureAimProxyChildren(go.transform, parts);
 
                 Transform hand = visual.GetComponent<Animator>()
                     .GetBoneTransform(HumanBodyBones.RightHand);
@@ -4035,26 +3997,36 @@ namespace Ring.Editor
             return true;
         }
 
-        /// Task 19 (spec QA7/QD1): three `CapsuleCollider` triggers on
-        /// `AimProvider.AimProxyLayer` — Legs/Body/Head belts sized from the
-        /// archetype's own zone-geometry SO fields (`LegsTop`/`BodyTop`/
-        /// `HeadTop`, the exact numbers `SimulationWorld`'s zone-damage
-        /// lookup already keys off — this proxy is a SEPARATE, purely-visual
-        /// raycast target that Simulation never touches; "no sim changes").
-        /// Head radius is scaled by `GameFeelConfig.AimProxyHeadRadiusFrac`
-        /// for a narrower headshot volume than the body/legs. Attached at
-        /// ROOT local space, unscaled — same convention the zone-geometry
-        /// fields themselves assume (mirrors `Visual`'s own un-scaled
-        /// parent). Idempotent per-field diff, like every other self-heal in
-        /// this file. Returns whether anything changed.
-        static bool EnsureAimProxyChildren(Transform root, float legsTop, float bodyTop,
-            float headTop, float bodyRadius, float headRadiusFrac)
+        /// Task 19 (spec QA7/QD1): one `CapsuleCollider` trigger on
+        /// `AimProvider.AimProxyLayer` per body part — a belt spanning that
+        /// part's own bounds at that part's own radius. This proxy is a
+        /// SEPARATE, purely-visual raycast target that Simulation never
+        /// touches ("no sim changes"): it decides where the cursor is, never
+        /// what a round did.
+        ///
+        /// app-88jb Т17 (Ruling 87): the belts are built from the archetype's
+        /// `HitPart[]` — THE SAME ARRAY `HitZones.Resolve` walks to decide
+        /// which part a shot landed in. One array, one silhouette, and that
+        /// is the whole point of the task: before it, the proxy offered a
+        /// head the simulation had stopped scoring, and a player could aim at
+        /// a volume that no longer existed on the server.
+        ///
+        /// Each child is named `AimProxy_` + its part's zone, which is exactly
+        /// the set of names `AimProvider.ClassifyProxyZone` compares against —
+        /// the zone travels with the part instead of being spelled out twice.
+        /// Attached at ROOT local space, unscaled (mirrors `Visual`'s own
+        /// un-scaled parent), because part bounds are meters above the ground.
+        /// Idempotent per-field diff, like every other self-heal in this file.
+        /// Returns whether anything changed.
+        static bool EnsureAimProxyChildren(Transform root, HitPart[] parts)
         {
             bool changed = false;
-            changed |= EnsureAimProxyCapsule(root, "AimProxy_Legs", 0f, legsTop, bodyRadius);
-            changed |= EnsureAimProxyCapsule(root, "AimProxy_Body", legsTop, bodyTop, bodyRadius);
-            changed |= EnsureAimProxyCapsule(root, "AimProxy_Head", bodyTop, headTop,
-                bodyRadius * headRadiusFrac);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                HitPart p = parts[i];
+                changed |= EnsureAimProxyCapsule(root, "AimProxy_" + p.Zone,
+                    p.Bottom, p.Top, p.Radius);
+            }
             return changed;
         }
 
@@ -4118,14 +4090,12 @@ namespace Ring.Editor
         /// closure handles the fresh-build case inline instead. Same
         /// `LoadPrefabContents`/`SaveAsPrefabAsset`/`UnloadPrefabContents`
         /// shape as `EditorBootstrapUtils.PrefabVisualsMatch`.
-        static void SelfHealAimProxyOnPrefab(string prefabPath, float legsTop, float bodyTop,
-            float headTop, float bodyRadius, float headRadiusFrac)
+        static void SelfHealAimProxyOnPrefab(string prefabPath, HitPart[] parts)
         {
             GameObject contents = PrefabUtility.LoadPrefabContents(prefabPath);
             try
             {
-                bool changed = EnsureAimProxyChildren(contents.transform,
-                    legsTop, bodyTop, headTop, bodyRadius, headRadiusFrac);
+                bool changed = EnsureAimProxyChildren(contents.transform, parts);
                 if (changed) PrefabUtility.SaveAsPrefabAsset(contents, prefabPath);
             }
             finally
