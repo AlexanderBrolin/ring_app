@@ -33,9 +33,15 @@ namespace Ring.Simulation.Tests
     // FIXTURE NUMBERS. Every DATA fixture below (epoch, tick, flags, block
     // kinds, payload bytes, payload lengths) was checked by grep against
     // client/Assets/Data/*.asset and appears in none of them — the trap that
-    // caught three fixtures earlier in this phase (3.8 = MaxAimHeight,
-    // 100 = MaxHp, 1.35 = HeroConfig.asset's own BodyTop, an Inspector field
-    // that outlives the simulation column it belonged to — see Т15/Т17).
+    // caught three fixtures earlier in this phase (HeroConfig.asset's aim
+    // ceiling, 100 = MaxHp, 1.35 = HeroConfig.asset's own BodyTop, an
+    // Inspector field that outlives the simulation column it belonged to —
+    // see Т15/Т17). ⚠ THE FIRST OF THE THREE IS NAMED BY FIELD, NOT BY VALUE,
+    // BECAUSE ITS VALUE MOVED: app-88jb Т16 delivered a new ceiling into
+    // HeroConfig.asset, so the literal that used to stand here stopped being
+    // a number to avoid at that commit — the same moral as the paragraph
+    // below, one level up: a claim about what a balance sheet holds is only
+    // as good as the moment it was checked.
     // VERIFIED STATEMENT, third attempt — the
     // history is the lesson. The first note said "19, 22 and 14 all occur in
     // ArenaConfig.asset"; a fix-round "corrected" it to "none of the three

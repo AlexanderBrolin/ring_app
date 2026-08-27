@@ -51,3 +51,19 @@ MonoBehaviour:
   TiltGain: 10.5
   TiltFallAngle: 0.9
   DownedSeconds: 1.2
+  Parts:
+  - Radius: 0.56
+    Bottom: 0
+    Top: 1.12
+    Zone: 1
+    DamageMult: 0.75
+  - Radius: 0.8
+    Bottom: 1.12
+    Top: 2.76
+    Zone: 2
+    DamageMult: 1
+  - Radius: 0.28
+    Bottom: 2.76
+    Top: 3.58
+    Zone: 3
+    DamageMult: 1.7

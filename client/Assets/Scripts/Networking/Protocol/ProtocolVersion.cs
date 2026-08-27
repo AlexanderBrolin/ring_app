@@ -82,15 +82,35 @@ namespace Ring.Networking.Protocol
     ///   and then lose the Mobs block. The bump is what turns that into an
     ///   honest `HandshakeRefusal.ProtocolVersionMismatch`.
     ///
-    ///   3 → 4, SECOND REASON RESERVED (app-88jb Т16): the `MaxAimHeight`
+    ///   3 → 4, SECOND REASON (app-88jb Т16): the `MaxAimHeight`
     ///   scale is retuned there, which changes the MEANING of the aim-height
     ///   byte already on the wire — by the rule above that is a break of its
-    ///   own. It will ride THIS same 4 and needs no second bump, for the
+    ///   own. It rides THIS same 4 and needs no second bump, for the
     ///   reason the 2 → 3 SECOND REASON entry states in full: both breaks land
     ///   inside one unreleased epic, and there is no peer that ever spoke "4
     ///   with the old MaxAimHeight scale". ⚠ When Т16 lands, it appends its
     ///   sentence to THIS entry rather than bumping — that is the whole point
     ///   of reserving the place here.
+    ///
+    ///   THAT SENTENCE, now that Т16 has landed: the shipped HeroConfig.asset
+    ///   carries `MaxAimHeight: 4.9` where it carried `3.8`, so the same wire
+    ///   code now decodes to a DIFFERENT height in meters than it did one
+    ///   commit ago — on InputCodec's byte [6] (`Quantize.Unit(AimHeight,
+    ///   cfg.Hero.MaxAimHeight)`) and on the three event heights riding the
+    ///   same scale (SnapshotEvents.WriteProjectileSpawned's byte [7],
+    ///   WriteProjectileEnded's [4], WritePlayerDamaged's [5], and their
+    ///   readers). Nothing about the FORMAT moved: no block kind was added, no
+    ///   field changed width, and every peer built from this commit agrees
+    ///   with itself — which is exactly why the reservation above is the whole
+    ///   fix and `Current` stays 4.
+    ///   ⚠ THE C# SIDE MOVED EARLIER, IN Т13, AND DELIBERATELY: validation
+    ///   rule 14 refuses any SimConfig whose ceiling sits below the tallest
+    ///   body's crown, and the Director's is 4.80, so the C# default had to
+    ///   rise in the same task that declared the parts (HeroConfig.
+    ///   MaxAimHeight's own doc says so). Between Т13 and Т16 the test
+    ///   fixtures therefore spoke the new scale while the shipped asset still
+    ///   spoke the old one — one of the two halves issue app-f6yp required to
+    ///   travel together, and Т16 is where the shipped half arrived.
     public static class ProtocolVersion
     {
         public const byte Current = 4;

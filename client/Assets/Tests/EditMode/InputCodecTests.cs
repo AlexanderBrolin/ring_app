@@ -24,9 +24,17 @@ namespace Ring.Simulation.Tests
     public class InputCodecTests
     {
         // Fixture configs deliberately avoid every number tracked by an
-        // .asset: ArenaConfig.asset's Radius is 65, HeroConfig.asset's
-        // MaxAimHeight is 3.8 (T24 fix-round finding F7 hit exactly this
-        // trap with 3.8f). Two DIFFERENT non-default pairs, not one, so a
+        // .asset: ArenaConfig.asset's Radius is 65, and HeroConfig.asset's
+        // MaxAimHeight is whatever the bootstrap has most recently delivered
+        // there (T24 fix-round finding F7 sprang exactly this trap by taking
+        // the value that asset carried at the time). ⚠ THE FIELD IS NAMED
+        // HERE AND THE NUMBER IS NOT, ON PURPOSE: app-88jb Т16 delivered a new
+        // ceiling into HeroConfig.asset, so the literal this note used to
+        // quote stopped being the number to avoid the moment it landed — and
+        // any replacement literal would go stale at the next tune just as
+        // quietly. The fixtures below are unaffected and still legal: neither
+        // 4.25 nor 2.0 has ever been the shipped ceiling, before Т16 or after
+        // it. Two DIFFERENT non-default pairs, not one, so a
         // mutation hardcoding either real number fails on at least one of
         // them (task-25-brief §3 item 9, lesson 93) — see
         // DifferentConfigs_ReadRadiusAndMaxAimHeightFromCfg_NotHardcoded.

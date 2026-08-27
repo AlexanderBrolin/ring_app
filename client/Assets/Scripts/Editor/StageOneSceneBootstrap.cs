@@ -599,6 +599,76 @@ namespace Ring.Editor
                 !System.IO.File.ReadAllText($"{DataDir}/MobGunnerConfig.asset").Contains("Mass:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobEliteConfig.asset").Contains("Mass:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobDirectorConfig.asset").Contains("Mass:");
+
+            // app-88jb Т16 (issue app-f6yp, spec §3.3): the epic's SECOND
+            // balance sheet -- the hit-part geometry Т13 appended to
+            // HeroConfig/MobConfig, and the aim ceiling that geometry forces.
+            // Both texts are read HERE, in the same read-before-mutate window
+            // as impactNumbersPending directly above and gunnerMarkerPresent one
+            // screen up, BEFORE any EnsureAssetHasKey/SetDirty/SaveAssets call
+            // below can touch these files.
+            //
+            // TWO GATES, NOT ONE SHARED BOOLEAN (coordinator Ruling 84). Both
+            // are open on this delivery run, so the choice changes nothing
+            // today -- it changes what happens in a year, and the two prices
+            // are not symmetric. One shared OR'd boolean would mean that losing
+            // the "Parts" key on ANY ONE of the five assets (deleted and
+            // recreated, `gunnerCreated`'s own documented case) reopens the
+            // MaxAimHeight half for everyone -- and SetIfDifferent OVERWRITES
+            // rather than no-ops, so an owner hand-tune of the aim ceiling
+            // would be silently stomped back to the shipped number. That is
+            // literally finding Н-19 / Ruling 55, which impactNumbersPending's
+            // own doc above records this file paying for once already. With two
+            // gates there is no silent failure in any branch: a half delivery
+            // is only reachable if the owner has himself moved MaxAimHeight,
+            // and then either his value already clears every crown or
+            // validation rule 14 refuses BY NAME, printing the number and the
+            // full crown list (SimConfigBuilder). app-f6yp's "one delivery" is
+            // not weakened by this: it asks for one task, one commit, one
+            // Apply, and both gates are open on this Apply -- which its diff
+            // shows, not the shape of a boolean.
+            //
+            // partsPending: OR across the FIVE assets that have parts.
+            // WeaponConfig is deliberately not among them -- a weapon has no
+            // body (its class's last field is still ProjectileMass), so it has
+            // no key to wait for and no marker to move.
+            //
+            // OR carries the SAME price impactNumbersPending's own doc prices
+            // out one screen up, and it is accepted here for the same reason:
+            // a one-time backfill must stay open while ANY sheet still lacks
+            // the block, or that one sheet never gets its numbers, and the
+            // cost -- one asset losing the key reopens the write for all three
+            // that ApplyPartsNumbers touches -- is bounded by the fact that
+            // "Parts:" cannot appear in any of these five files before this
+            // task (verified against the committed assets: zero hits today).
+            // Note also which assets are gated versus written: Hero and Chaser
+            // are read by this gate but never written by ApplyPartsNumbers,
+            // because the marker key is what carries THEIR arrays (that
+            // method's own doc).
+            bool partsPending =
+                !System.IO.File.ReadAllText($"{DataDir}/HeroConfig.asset").Contains("Parts:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobChaserConfig.asset").Contains("Parts:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobGunnerConfig.asset").Contains("Parts:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobEliteConfig.asset").Contains("Parts:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobDirectorConfig.asset").Contains("Parts:");
+
+            // maxAimHeightPending is keyed on the value being REPLACED, not on
+            // a key's arrival: MaxAimHeight has been on disk since Stage 1, so
+            // no key can date this delivery -- only the departure of the old
+            // number can. Same shape, and the same reasoning, as
+            // gunnerShareRetunePending below.
+            //
+            // ⚠ THE SURROUNDING NEWLINES ARE LOAD-BEARING (rule 413 / Р319).
+            // "MaxAimHeight: 3.8" without them is also a prefix of
+            // "MaxAimHeight: 3.85", so the owner's very first retune into that
+            // range would re-fire this gate and stomp his number back. With the
+            // newlines the match is the whole serialized line; Unity writes
+            // this file LF-terminated and the string occurs exactly once
+            // (verified on the committed asset).
+            bool maxAimHeightPending = System.IO.File
+                .ReadAllText($"{DataDir}/HeroConfig.asset")
+                .Contains("\n  MaxAimHeight: 3.8\n");
+
             if (impactNumbersPending && ApplyImpactNumbers(hero, weapon, chaser, gunner, elite, director))
             {
                 EditorUtility.SetDirty(hero);
@@ -608,6 +678,23 @@ namespace Ring.Editor
                 EditorUtility.SetDirty(elite);
                 EditorUtility.SetDirty(director);
             }
+
+            // app-88jb Т16: the parts half. Only the three archetypes whose
+            // target array differs from the class default are dirtied here --
+            // Hero and Chaser hold their targets already and reach the YAML
+            // through the marker key instead (ApplyPartsNumbers' own doc).
+            if (partsPending && ApplyPartsNumbers(gunner, elite, director))
+            {
+                EditorUtility.SetDirty(gunner);
+                EditorUtility.SetDirty(elite);
+                EditorUtility.SetDirty(director);
+            }
+
+            // app-88jb Т16: the aim-ceiling half, under its own gate for the
+            // reason above. On THIS run both halves land in this one Apply(),
+            // which is what app-f6yp requires; keeping the conditions apart is
+            // what keeps a later re-run from stomping a hand-tune.
+            if (maxAimHeightPending && ApplyMaxAimHeight(hero)) EditorUtility.SetDirty(hero);
 
             WaveConfig wave = GetOrCreate<WaveConfig>("WaveConfig");
             ArenaConfig arena = GetOrCreate<ArenaConfig>("ArenaConfig");
@@ -938,11 +1025,15 @@ namespace Ring.Editor
             // `AimHoverGlowBoost` (В1/В2 fix-wave 2) before THAT, and
             // `LinkWindowFlashBoost` (В1 fix-wave 1) before THAT, see the
             // field's own doc for the fuller history; HeroConfig's marker is
-            // `TiltGain` as of app-88jb Т11a (owner decision Р432, the
-            // impact-physics block Т1 appended to the class — see
-            // TiltGain's own sync-marker comment) — was `MaxInventoryItems`
+            // `Parts` as of app-88jb Т16 (the hit-part array Т13 appended as
+            // the class's new last field — see Parts' own sync-marker comment;
+            // the marker argument is what moves HERE, in the task that
+            // delivers the field, per owner decision R-4's rule below) — was
+            // `TiltGain` (app-88jb Т11a, owner decision Р432, the
+            // impact-physics block Т1 appended to the class) before that,
+            // `MaxInventoryItems`
             // (Stage 3 Task 4, the backpack's two capacity numbers) before
-            // that, `PickupRadius` (Stage 3 Task 3, auto-pickup collection
+            // THAT, `PickupRadius` (Stage 3 Task 3, auto-pickup collection
             // radius) before THAT, `EdgeRequestMinTicks` (Stage 2 Task 8/9,
             // edge-request rate limiting) before THAT, `LinkRefund` (В1
             // fix-wave 3, owner economy rework) before THAT,
@@ -959,12 +1050,19 @@ namespace Ring.Editor
             // fail to reach a committed `.asset` even with every test green
             // (the errata E-7 precedent for Т3/Т4/Т8's own marker moves) —
             // Т12 stayed a values-only delivery task, and Т11a follows the
-            // same rule for the impact-physics block below. MobConfig's
-            // marker is `DownedSeconds` as of the SAME app-88jb Т11a (its
-            // own class's new last field) — was unchanged since Task 17
-            // (`SwingLeadMaxMeters`) until Т1's nine impact-physics fields
-            // landed after it, so every MobConfig asset committed before
-            // Т11a predates the marker and self-heals on this Apply;
+            // same rule for the impact-physics block below, and Т16 follows
+            // it once more for the hit-part array. MobConfig's
+            // marker is `Parts` as of app-88jb Т16 (Т13 appended the array
+            // as the class's new last field; Т16 is the task that delivers it,
+            // so the argument moves here) — was `DownedSeconds` (app-88jb
+            // Т11a, that class's last field at the time) before that, and
+            // unchanged since Task 17 (`SwingLeadMaxMeters`) until Т1's nine
+            // impact-physics fields landed after it. ⚠ THE MARKER IS NOT
+            // REDUNDANT WITH ApplyPartsNumbers ABOVE, and Т11a measured why:
+            // the Hero's and the Chaser's target arrays EQUAL their classes'
+            // C# initializers, so SetIfDifferent writes nothing, the asset
+            // never goes dirty, and without this line the `Parts` key would
+            // never appear in their YAML at all;
             // ArenaConfig's marker is `MaxContainerSlots` as of Stage 3 Task 8
             // (per-match container-slot cap, the class's new last field) —
             // was `MaxPickups` (Stage 3 Task 3, per-match pickup cap) before
@@ -975,10 +1073,10 @@ namespace Ring.Editor
             // asset carries each superseded key already, so leaving the
             // marker on any of them would have left the newer field unable
             // to reach the file at all).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "TiltGain"); // app-88jb Т11a (was MaxInventoryItems, Stage 3 Task 4)
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "Parts"); // app-88jb Т16 (was TiltGain, app-88jb Т11a)
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "ProjectileMass"); // app-88jb Т11a (was EmergencyFireInterval, Stage 3 Task 2)
-            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Task 17)
-            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Task 17)
+            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "Parts"); // app-88jb Т16 (was DownedSeconds, app-88jb Т11a)
+            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "Parts"); // app-88jb Т16 (was DownedSeconds, app-88jb Т11a)
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
@@ -1018,14 +1116,23 @@ namespace Ring.Editor
             // 2026-08-24, and Т1 appended nine impact-physics fields after
             // SwingLeadMaxMeters in MobConfig, so DownedSeconds (the class's
             // new last field, same rename Chaser/Gunner's own calls above
-            // get) replaces it here too — same "append, don't reshuffle"
+            // get) replaced it here too — same "append, don't reshuffle"
             // migration lesson 40 has already cost this codebase four times
             // (VisibilityConfig's own comment just above has the fuller
             // account).
+            //
+            // app-88jb Т16: the same migration once more, and for the same
+            // reason — Т13 appended `Parts` after DownedSeconds, making it
+            // MobConfig's new last field, and this is the task that puts its
+            // numbers on disk. All four MobConfig assets move together
+            // (Chaser/Gunner's calls above, Elite/Director's just below);
+            // HeroConfig moves off TiltGain in the same breath. WeaponConfig
+            // does NOT move: it has no parts, and ProjectileMass is still its
+            // class's last field.
             EditorBootstrapUtils.EnsureAssetHasKey(elite, $"{DataDir}/MobEliteConfig.asset",
-                "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Stage 3 Task 12)
+                "Parts"); // app-88jb Т16 (was DownedSeconds, app-88jb Т11a)
             EditorBootstrapUtils.EnsureAssetHasKey(director, $"{DataDir}/MobDirectorConfig.asset",
-                "DownedSeconds"); // app-88jb Т11a (was SwingLeadMaxMeters, Stage 3 Task 12)
+                "Parts"); // app-88jb Т16 (was DownedSeconds, app-88jb Т11a)
             EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
                 "DirectorReserveSlots"); // Stage 3 Task 12
             // Stage 3 Task 13: the item catalog and loot balance sheet join
@@ -2447,6 +2554,11 @@ namespace Ring.Editor
         /// unconditionally, so an owner hand-tweak of these fields survives a
         /// re-run. `SwingLead*` is deliberately absent: the gunner archetype
         /// never melees, so it ignores swing lead entirely (A15).
+        ///
+        /// app-88jb Т16 (coordinator Ruling 83): the archetype's hit PARTS join
+        /// the column below -- see the call to ApplyGunnerPartsDefaults at the
+        /// end of the body for why they belong to THIS method and not only to
+        /// ApplyPartsNumbers' backfill.
         static bool ApplyGunnerZoneDefaults(MobConfig m)
         {
             bool changed = false;
@@ -2457,6 +2569,25 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.BodyDamageMult, 1.0f);
             changed |= SetIfDifferent(ref m.HeadDamageMult, 1.7f);
             changed |= SetIfDifferent(ref m.MuzzleHeight, 0.95f);
+            // app-88jb Т16 (coordinator Ruling 83): the gunner's hit PARTS --
+            // the successor of the very column the seven lines above set, and
+            // the last archetype in this file to get production numbers for
+            // them at all (audit finding Н-34). THE `created` LEG IS WHAT THIS
+            // CALL SITE CLOSES, and only this one can: a MobGunnerConfig.asset
+            // that does not exist yet is written whole by
+            // AssetDatabase.CreateAsset before ApplyPartsNumbers' gate is even
+            // read, so that gate sees a "Parts:" key already present and stays
+            // shut -- ApplyGunnerPartsDefaults' own doc has the full mechanics,
+            // and ApplyGunnerDefaults' doc records the identical hole the
+            // impact block paid for on Т11a (Ruling 56). This method's gate,
+            // `(gunnerCreated || !gunnerMarkerPresent)`, is already exactly the
+            // shape that needs, so closing the leg costs no new condition.
+            //
+            // The zone column stays beside the parts rather than being replaced
+            // by them: it is still a live Inspector field of MobConfig until Т17
+            // removes it (Ruling 76), and a seeding method that filled one and
+            // not the other would leave a brand-new asset half-described.
+            changed |= ApplyGunnerPartsDefaults(m);
             return changed;
         }
 
@@ -2862,30 +2993,16 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.SwingLeadMaxMeters, 2.0f);
             changed |= ApplyMobImpactDefaults(m, 260f, 1.78f);
             // app-88jb Т13 (coordinator Ruling 64, precedent Ruling 5): the hit
-            // parts, sourced the same way as everything above. WHY THEY ARE
-            // HERE AT ALL: a freshly created MobEliteConfig.asset takes its
-            // unset fields from MobConfig's C# initializers, and those are the
-            // CHASER's -- so without this line the Elite would ship a body
-            // 2.70 m tall and 0.5 m wide instead of 3.58 x 0.8, silently, in
-            // exactly the shape finding Н-23 already cost this epic once. It is
-            // also what ConfigTests.BootstrapArchetypeSeeds_MatchTheTestConfigs
-            // Baseline binds: the same array has to appear in TestConfigs.
-            // Default().Elite, or that test says so.
-            // ⚠ THE FACTOR IS 1.0216, NOT THE GUNNER'S 1.20 (evidence Т12):
-            // this archetype's model scale was already fitted to its column by
-            // app-oxyo (EliteVisualScale 0.75 -> 1.5, crown 3.5756 against
-            // 3.50), and it is the only one of the four for which that is true.
-            // Radii are 0.7 / 1.0 / 0.35 of Radius 0.8, the shared humanoid
-            // proportion.
-            changed |= SetIfDifferent(ref m.Parts, new[]
-            {
-                new HitPart { Radius = 0.56f, Bottom = 0f, Top = 1.12f,
-                    Zone = HitZone.Legs, DamageMult = 0.75f },
-                new HitPart { Radius = 0.80f, Bottom = 1.12f, Top = 2.76f,
-                    Zone = HitZone.Body, DamageMult = 1.0f },
-                new HitPart { Radius = 0.28f, Bottom = 2.76f, Top = 3.58f,
-                    Zone = HitZone.Head, DamageMult = 1.7f },
-            });
+            // parts, sourced the same way as everything above. app-88jb Т16
+            // moved the array itself one level down, into
+            // ApplyElitePartsDefaults (which carries its full sourcing) -- the
+            // same "the shared profile has ONE home" move ApplyMobImpactDefaults
+            // got on Т11a, and for the same reason: Т16's ApplyPartsNumbers has
+            // to deliver this exact array to an ALREADY-COMMITTED
+            // MobEliteConfig.asset, which this first-creation-only method can
+            // never reach, and restating fifteen numbers over there would have
+            // been a second place to keep them in sync.
+            changed |= ApplyElitePartsDefaults(m);
             return changed;
         }
 
@@ -2949,20 +3066,11 @@ namespace Ring.Editor
             changed |= ApplyMobImpactDefaults(m, 4000f, 2.31f);
             // app-88jb Т13 (Ruling 64): his own hit parts override the Elite's,
             // same "only the differences are written here" rule as the seven
-            // scalars above. Heights are the old column x 1.37 (crown 4.7903
-            // against 3.50), radii 0.7 / 1.0 / 0.35 of Radius 2.2.
-            // ⚠ THE LEGS END AT 1.51 BY OWNER DECISION, NOT BY ARITHMETIC
-            // CONVENIENCE (bd app-50db): a slide does NOT open a passage under
-            // the Director. Raising that number would open one silently.
-            changed |= SetIfDifferent(ref m.Parts, new[]
-            {
-                new HitPart { Radius = 1.54f, Bottom = 0f, Top = 1.51f,
-                    Zone = HitZone.Legs, DamageMult = 0.75f },
-                new HitPart { Radius = 2.20f, Bottom = 1.51f, Top = 3.70f,
-                    Zone = HitZone.Body, DamageMult = 1.0f },
-                new HitPart { Radius = 0.77f, Bottom = 3.70f, Top = 4.80f,
-                    Zone = HitZone.Head, DamageMult = 1.7f },
-            });
+            // scalars above. app-88jb Т16 moved the array into
+            // ApplyDirectorPartsDefaults for the reason ApplyEliteDefaults' own
+            // line above carries -- ApplyPartsNumbers needs the same fifteen
+            // numbers and must not own a second copy of them.
+            changed |= ApplyDirectorPartsDefaults(m);
             return changed;
         }
 
@@ -2994,6 +3102,133 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.TiltFallAngle, 0.9f);
             changed |= SetIfDifferent(ref m.DownedSeconds, 1.2f);
             return changed;
+        }
+
+        // app-88jb Т16: the ONE home for a mob archetype's hit parts, one
+        // method per body, mirroring ApplyMobImpactDefaults' own "one home for
+        // the block every archetype shares" shape directly above. WHY THE
+        // SPLIT EXISTS AT ALL: each of these arrays has TWO callers that
+        // cannot be merged into one. The first is the archetype's own
+        // first-creation seeding method (ApplyGunnerZoneDefaults /
+        // ApplyEliteDefaults / ApplyDirectorDefaults), which by contract only
+        // ever runs on a brand-new `.asset` and therefore can never reach the
+        // sheets already committed to this repository. The second is
+        // ApplyPartsNumbers below, which backfills exactly those committed
+        // sheets and can never be allowed to re-run the other ~30 fields
+        // those seeding methods set (SetIfDifferent OVERWRITES, it does not
+        // no-op against a hand-tune -- Ruling 55 / finding Н-19, the mistake
+        // this file has already paid for once). A literal copy of the fifteen
+        // numbers in the second caller would have been a second place to keep
+        // them in sync -- the exact THIRD-PLACE shape ApplyStageTwoBalance's
+        // and ApplyMobImpactDefaults' own docs both warn against.
+        //
+        // THE HERO AND THE CHASER GET NO METHOD HERE, ON PURPOSE: their target
+        // arrays ARE their own classes' C# field initializers
+        // (HeroConfig.Parts, MobConfig.Parts -- the latter is the chaser's
+        // shape by construction, see that class's own doc), so a copy here
+        // would be a second home for numbers that already have one, and
+        // SetIfDifferent would compare equal and write nothing anyway. What
+        // actually carries their arrays to disk is the sync-marker key
+        // (EnsureAssetHasKey with "Parts", one screen up), which dirties the
+        // asset so Unity re-serializes the field set it already holds. The two
+        // mechanisms are NOT interchangeable and neither substitutes for the
+        // other -- Т11a proved that by number on the impact block.
+
+        /// The gunner's silhouette as parts (coordinator Ruling 83). Heights
+        /// are the old zone column x 1.20, the measured ratio of this model's
+        /// crown (4.2063) to the 3.50 it was drawn against (evidence Т12);
+        /// radii are 0.7 / 1.0 / 0.35 of Radius 0.5 (ApplyGunnerDefaults' own
+        /// number), the shared humanoid proportion, with 0.175 rounded to the
+        /// centimeter the Inspector shows exactly as the chaser's 0.17 is. The
+        /// same array lives in TestConfigs.Default().Gunner -- spec §0's
+        /// two-sources discipline, test/code-default side.
+        ///
+        /// ⚠ THIS ARCHETYPE HAD NO PRODUCTION NUMBERS AT ALL BEFORE THIS TASK
+        /// (audit finding Н-34, and it is the third time in this epic that the
+        /// gunner is the archetype left out): Ruling 64 gave the Elite and the
+        /// Director their own first-creation arrays and left the gunner reading
+        /// MobConfig's C# initializers, which are the CHASER's -- a 2.70 m body
+        /// where 4.20 was decided, silently, with validation rule 14 passing
+        /// (3.8 >= 2.70) and no EditMode test able to see it.
+        ///
+        /// ⚠ AND IT IS CALLED FROM ApplyGunnerZoneDefaults, NOT ONLY FROM
+        /// ApplyPartsNumbers, for the reason ApplyGunnerDefaults' own doc spells
+        /// out for the impact block: GetOrCreate calls
+        /// AssetDatabase.CreateAsset the moment a `.asset` is missing, and that
+        /// serializes the freshly instantiated object's CURRENT field set --
+        /// chaser-shaped defaults included -- to disk immediately. So on a fresh
+        /// clone MobGunnerConfig.asset already reads "Parts:" before
+        /// `partsPending` is even snapshotted, that gate is CLOSED, and without
+        /// this second creation-gated path the gunner would keep the chaser's
+        /// body forever. ApplyGunnerZoneDefaults is where it belongs because
+        /// that method IS the gunner silhouette -- it already carries the very
+        /// zone column these parts replace -- and its call site already has the
+        /// right gate, `(gunnerCreated || !gunnerMarkerPresent)`.
+        static bool ApplyGunnerPartsDefaults(MobConfig m)
+        {
+            return SetIfDifferent(ref m.Parts, new[]
+            {
+                new HitPart { Radius = 0.35f, Bottom = 0f, Top = 1.32f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f },
+                new HitPart { Radius = 0.50f, Bottom = 1.32f, Top = 3.24f,
+                    Zone = HitZone.Body, DamageMult = 1.0f },
+                new HitPart { Radius = 0.17f, Bottom = 3.24f, Top = 4.20f,
+                    Zone = HitZone.Head, DamageMult = 1.7f },
+            });
+        }
+
+        /// The elite's parts (app-88jb Т13, coordinator Ruling 64, precedent
+        /// Ruling 5) -- the array itself, unchanged; only its home moved here
+        /// in Т16 (see the block comment above). WHY THEY EXIST AT ALL: a
+        /// freshly created MobEliteConfig.asset takes its unset fields from
+        /// MobConfig's C# initializers, and those are the CHASER's -- so
+        /// without them the Elite would ship a body 2.70 m tall and 0.5 m wide
+        /// instead of 3.58 x 0.8, silently, in exactly the shape finding Н-23
+        /// already cost this epic once. It is also what
+        /// ConfigTests.BootstrapArchetypeSeeds_MatchTheTestConfigsBaseline
+        /// binds: the same array has to appear in TestConfigs.Default().Elite,
+        /// or that test says so.
+        /// ⚠ THE FACTOR IS 1.0216, NOT THE GUNNER'S 1.20 (evidence Т12): this
+        /// archetype's model scale was already fitted to its column by app-oxyo
+        /// (EliteVisualScale 0.75 -> 1.5, crown 3.5756 against 3.50), and it is
+        /// the only one of the four for which that is true. Radii are
+        /// 0.7 / 1.0 / 0.35 of Radius 0.8, the shared humanoid proportion.
+        static bool ApplyElitePartsDefaults(MobConfig m)
+        {
+            return SetIfDifferent(ref m.Parts, new[]
+            {
+                new HitPart { Radius = 0.56f, Bottom = 0f, Top = 1.12f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f },
+                new HitPart { Radius = 0.80f, Bottom = 1.12f, Top = 2.76f,
+                    Zone = HitZone.Body, DamageMult = 1.0f },
+                new HitPart { Radius = 0.28f, Bottom = 2.76f, Top = 3.58f,
+                    Zone = HitZone.Head, DamageMult = 1.7f },
+            });
+        }
+
+        /// The Director's parts (app-88jb Т13, Ruling 64) -- they override the
+        /// Elite's, same "only the differences are written here" rule
+        /// ApplyDirectorDefaults applies to every other field. Heights are the
+        /// old column x 1.37 (crown 4.7903 against 3.50), radii
+        /// 0.7 / 1.0 / 0.35 of Radius 2.2.
+        /// ⚠ THE LEGS END AT 1.51 BY OWNER DECISION, NOT BY ARITHMETIC
+        /// CONVENIENCE (bd app-50db): a slide does NOT open a passage under the
+        /// Director. Raising that number would open one silently.
+        /// ⚠ 4.80 IS THE TALLEST CROWN IN THE GAME, and validation rule 14
+        /// (SimConfigBuilder) refuses any SimConfig whose Hero.MaxAimHeight
+        /// sits below it -- which is why ApplyMaxAimHeight below has to land in
+        /// the SAME Apply() run as this array and not one task later.
+        static bool ApplyDirectorPartsDefaults(MobConfig m)
+        {
+            return SetIfDifferent(ref m.Parts, new[]
+            {
+                new HitPart { Radius = 1.54f, Bottom = 0f, Top = 1.51f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f },
+                new HitPart { Radius = 2.20f, Bottom = 1.51f, Top = 3.70f,
+                    Zone = HitZone.Body, DamageMult = 1.0f },
+                new HitPart { Radius = 0.77f, Bottom = 3.70f, Top = 4.80f,
+                    Zone = HitZone.Head, DamageMult = 1.7f },
+            });
         }
 
         /// app-88jb Т11a (owner decision Р432, spec §3.2): delivers the
@@ -3042,6 +3277,88 @@ namespace Ring.Editor
             changed |= ApplyMobImpactDefaults(elite, 260f, 1.78f);
             changed |= ApplyMobImpactDefaults(director, 4000f, 2.31f);
             return changed;
+        }
+
+        /// app-88jb Т16 (issue app-f6yp, spec §3.3): delivers the hit-part
+        /// geometry to the shipped balance sheets that predate the field. Т13
+        /// declared `Parts` on HeroConfig/MobConfig and put the numbers in
+        /// their C# initializers, but nothing carried them to disk -- and
+        /// because MobConfig's initializers are the CHASER's, every committed
+        /// Mob*Config.asset loads today with the chaser's body: the Director
+        /// stands 2.70 m instead of 4.80, the gunner 2.70 instead of 4.20, and
+        /// validation rule 14 passes (3.8 >= 2.70) while no EditMode test can
+        /// see any of it, because no test reads a live `.asset`.
+        ///
+        /// ONLY THE THREE ARCHETYPES WHOSE TARGET DIFFERS FROM THE CLASS
+        /// DEFAULT ARE HERE. Hero and Chaser are absent by construction, not by
+        /// omission: their target arrays ARE their classes' own initializers,
+        /// so SetIfDifferent would compare equal and write nothing, and naming
+        /// the arrays here would be a second home for numbers that already have
+        /// one. Their keys reach the YAML through the OTHER mechanism -- the
+        /// sync-marker key, which dirties the asset so Unity re-serializes the
+        /// field set it already holds. Two mechanisms, neither replaceable by
+        /// the other; Т11a's delivery proved that by number on the impact
+        /// block, where Hero/Weapon/Chaser moved no field and still gained
+        /// their keys.
+        ///
+        /// WeaponConfig is not a parameter either: it has no parts at all
+        /// (`ProjectileMass` is still its last field), which is also why it is
+        /// absent from `partsPending` and keeps its own marker key untouched.
+        ///
+        /// Each archetype's numbers stay in the per-archetype
+        /// Apply*PartsDefaults helper above -- see the block comment there for
+        /// why the split is what keeps this backfill from becoming a second
+        /// home for them, and why it must NOT simply call the seeding methods
+        /// (ApplyEliteDefaults and friends set ~30 more fields, and
+        /// SetIfDifferent overwrites a hand-tune rather than accepting it).
+        ///
+        /// Returns whether anything changed -- the caller owns SetDirty/
+        /// SaveAssets, like every other Apply* in this file.
+        static bool ApplyPartsNumbers(MobConfig gunner, MobConfig elite, MobConfig director)
+        {
+            bool changed = false;
+            changed |= ApplyGunnerPartsDefaults(gunner);
+            changed |= ApplyElitePartsDefaults(elite);
+            changed |= ApplyDirectorPartsDefaults(director);
+            return changed;
+        }
+
+        /// app-88jb Т16 (issue app-f6yp): the OTHER half of the same delivery
+        /// -- the aim ceiling the part geometry forces. Т13 raised
+        /// HeroConfig.MaxAimHeight from 3.8 to 4.9 in C# and deliberately left
+        /// the shipped `.asset` alone (that field's own doc says so in as many
+        /// words); this is where the shipped number catches up.
+        ///
+        /// IT MUST LAND IN THE SAME Apply() RUN AS ApplyPartsNumbers ABOVE, and
+        /// the reason is validation rule 14 (SimConfigBuilder): Hero.
+        /// MaxAimHeight must be >= the top of every body's last part, and the
+        /// tallest of those is the Director's 4.80. Deliver the parts without
+        /// this and BuildShipped throws on the shipped assets -- the game
+        /// cannot assemble a SimConfig at all -- while EditMode stays green,
+        /// because the fixtures read the C# side where 4.9 has been true since
+        /// Т13. Deliver this without the parts and the ceiling simply sits
+        /// higher than anything that needs it. Neither half is safe alone,
+        /// which is the whole of issue app-f6yp.
+        ///
+        /// THE NUMBER IS NOT RESTATED HERE. Same shape as ApplyWaveCadence and
+        /// ApplyGunnerShareRetune above -- a pristine CreateInstance supplies
+        /// it, destroyed in a `finally` -- so the shipped value stays owned by
+        /// HeroConfig.cs's own field initializer (spec §0's two-sources
+        /// discipline) and this method only decides WHICH field is sanctioned
+        /// to move. The OLD value, 3.8, is named exactly once, at the call
+        /// site's gate, because that is where "has this delivery happened yet"
+        /// is asked.
+        static bool ApplyMaxAimHeight(HeroConfig hero)
+        {
+            var heroDefaults = ScriptableObject.CreateInstance<HeroConfig>();
+            try
+            {
+                return SetIfDifferent(ref hero.MaxAimHeight, heroDefaults.MaxAimHeight);
+            }
+            finally
+            {
+                Object.DestroyImmediate(heroDefaults);
+            }
         }
 
         static bool SetIfDifferent(ref float field, float value)

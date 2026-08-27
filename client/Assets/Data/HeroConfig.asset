@@ -31,7 +31,7 @@ MonoBehaviour:
   SlideProfileTop: 0.55
   MuzzleHeight: 1
   SlideMuzzleHeight: 0.45
-  MaxAimHeight: 3.8
+  MaxAimHeight: 4.9
   StaminaMax: 100
   DashStaminaCost: 40
   SlideStaminaCost: 30
@@ -63,3 +63,19 @@ MonoBehaviour:
   TiltDampingRatio: 0.55
   TiltSettleSeconds: 0.9
   TiltGain: 10.5
+  Parts:
+  - Radius: 0.32
+    Bottom: 0
+    Top: 0.55
+    Zone: 1
+    DamageMult: 0.75
+  - Radius: 0.45
+    Bottom: 0.55
+    Top: 1.35
+    Zone: 2
+    DamageMult: 1
+  - Radius: 0.16
+    Bottom: 1.35
+    Top: 1.75
+    Zone: 3
+    DamageMult: 1.7
