@@ -150,9 +150,9 @@ namespace Ring.Simulation.Tests
             //   PlayerState 34 x 2 players = 68
             //   MatchStats 10 x 2 players  = 20
             //   WaveState 7 x 3 zones      = 21
-            //   WorldStats 5, MobState 12, ProjectileState 13, PickupState 5,
-            //   MatchState 2, ContainerState 5 = 42
-            //   -> 151 bumps swept, ALL asserted NOT to equal baseline.
+            //   WorldStats 5, MobState 12, ProjectileState 14, PickupState 5,
+            //   MatchState 2, ContainerState 5 = 43
+            //   -> 152 bumps swept, ALL asserted NOT to equal baseline.
             //
             // Stage 3 Task 11 (coordinator R-50/R-51): WaveState grew from
             // 6 fields to 13 (two named Pending counters -> nine, one per
@@ -206,6 +206,19 @@ namespace Ring.Simulation.Tests
             // sums move -- and the player line moves by FOUR, not two, because
             // it carries the "x 2 players" multiplier the mob line does not:
             // 147 -> 151.
+            // app-88jb Т19: ProjectileState grew from 13 fields to 14 --
+            // Ricochets, how many times a round has already reflected off
+            // static geometry (spec §3.4, SimStates.cs' own field doc) --
+            // folded into HashProjectile at the END, mirroring the end of the
+            // struct exactly as Т5 folded the mob's tilt pair. The tally is
+            // re-derived one more time from fresh typeof(X).GetFields()
+            // readings of ALL NINE structs rather than adjusted from 151, and
+            // every other count came back unchanged (PlayerState 34,
+            // MatchStats 10, WaveState 7, WorldStats 5, MobState 12,
+            // PickupState 5, MatchState 2, ContainerState 5), so only the
+            // projectile line and the two sums move: 151 -> 152. The round is
+            // counted ONCE, like the mob and unlike PlayerState/MatchStats:
+            // the pass below bumps w.Projectiles[0] and nothing else.
             // ⚠ THE RECEIPT IS NOT WHAT MAKES THIS TEST PASS OR FAIL, and Т7
             // is where that was measured rather than assumed (coordinator
             // errata 12): the two new fields turned this test red through the

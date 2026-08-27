@@ -155,5 +155,56 @@ namespace Ring.Simulation.Combat
         /// written out twice". This is the same rule for the same pair of callers.
         public static float ProjectileMassFor(byte ownerIndex, in SimConfig cfg)
             => ownerIndex == ProjectileIds.NoOwner ? cfg.Gunner.ProjectileMass : cfg.Weapon.ProjectileMass;
+
+        /// The three numbers one ricochet is judged by, answered TOGETHER
+        /// (app-88jb Т19, coordinator Ruling 97). A struct rather than three
+        /// `…For` helpers because three helpers would be the SAME owner branch
+        /// written three times, which is the defect this whole family exists to
+        /// prevent -- see ProjectileMassFor's own doc above and
+        /// SnapshotEvents.SpeedCapFor's ("ONE home for the rule, called by both
+        /// sides"). readonly struct, never a class: this is read on the
+        /// projectile path, where allocations are forbidden
+        /// (AllocationTests.Tick_DoesNotAllocateGC).
+        public readonly struct RicochetNumbers
+        {
+            /// How many times one round may reflect at all.
+            public readonly int Max;
+            /// The share of 3D speed a reflection keeps -- applied to `Vel` and
+            /// `VelZ` alike, so the direction survives and only the magnitude
+            /// falls.
+            public readonly float Retention;
+            /// The floor the DAMPED speed must still clear for the reflection
+            /// to happen; below it the round is extinguished instead.
+            public readonly float MinSpeed;
+
+            public RicochetNumbers(int max, float retention, float minSpeed)
+            {
+                Max = max;
+                Retention = retention;
+                MinSpeed = minSpeed;
+            }
+        }
+
+        /// The ONE home of the "who fired it" fork over the ricochet numbers,
+        /// keyed exactly the way ProjectileMassFor above is keyed and for
+        /// exactly its reasons (app-88jb Т19, Ruling 97). Its readers are
+        /// ProjectileFlight.TryRicochet on the server and, from Т32, the
+        /// client's tracer through that same method -- a fork written out twice
+        /// is a fork that drifts.
+        ///
+        /// A MOB-OWNED ROUND READS THE GUNNER ARCHETYPE'S NUMBERS, not its own
+        /// shooter's, and that is this family's existing rule rather than a new
+        /// simplification: ProjectileMassFor and SnapshotEvents.SpeedCapFor
+        /// both answer `cfg.Gunner` for every mob-owned round. The other three
+        /// archetypes carry the fields (MobConfig is one class behind four
+        /// assets) and nothing reads them today, exactly as they carry
+        /// ProjectileMass and nothing reads that either -- the gunner is the
+        /// only archetype that shoots.
+        public static RicochetNumbers RicochetNumbersFor(byte ownerIndex, in SimConfig cfg)
+            => ownerIndex == ProjectileIds.NoOwner
+                ? new RicochetNumbers(cfg.Gunner.MaxRicochets, cfg.Gunner.RicochetRetention,
+                    cfg.Gunner.RicochetMinSpeed)
+                : new RicochetNumbers(cfg.Weapon.MaxRicochets, cfg.Weapon.RicochetRetention,
+                    cfg.Weapon.RicochetMinSpeed);
     }
 }

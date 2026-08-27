@@ -37,10 +37,23 @@ namespace Ring.Simulation.Combat
         /// of the line, which is 0.8 m short at 10 m and 1.6 m short at 20 m.
         ///
         /// Straight line, no gravity: `ProjectileState.VelZ` is set once at
-        /// spawn (`SimulationWorld.SpawnProjectile`) and no system changes it,
-        /// so height falls at a constant rate against horizontal travel and the
-        /// share of the line is a ratio of two heights — the DISTANCE downrange
-        /// never enters it, which is why this method does not take one.
+        /// spawn (`SimulationWorld.SpawnProjectile`), so height falls at a
+        /// constant rate against horizontal travel and the share of the line is
+        /// a ratio of two heights — the DISTANCE downrange never enters it,
+        /// which is why this method does not take one.
+        ///
+        /// THAT PREMISE HOLDS ONLY UNTIL THE FIRST CONTACT, and it is written
+        /// narrowly on purpose (app-88jb Т19, spec §3.4). Until this task the
+        /// sentence above ended "and no system changes it", which was true of
+        /// the whole flight; a round that ricochets off static geometry has its
+        /// VelZ damped by `WeaponSimConfig.RicochetRetention` at that moment,
+        /// so the constant-rate descent is a fact about the LEG the round is
+        /// on, not about the flight. Nothing here breaks, because every caller
+        /// of this method asks about the FIRST leg — the picture wants the end
+        /// of the shot as it leaves the muzzle, before any geometry has been
+        /// met — but the closed form stops being a description of the whole
+        /// flight, and a reader who took the old wording literally would build
+        /// a tracer that disagrees with the server on the second leg.
         ///
         /// THREE ANSWERS, AND EACH ONE MATCHES A GATE THE SIMULATION ITSELF
         /// HAS:

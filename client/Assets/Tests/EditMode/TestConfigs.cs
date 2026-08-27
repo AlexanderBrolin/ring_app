@@ -82,7 +82,34 @@ namespace Ring.Simulation.Tests
                     ShotsPerCell = 10, AmmoStart = 400, AmmoMax = 400,
                     EmergencyFireInterval = 1.25f,
                     // app-88jb Т1 (spec §3.2): mirrors WeaponConfig's C# default.
-                    ProjectileMass = 2.6f },
+                    ProjectileMass = 2.6f,
+                    // app-88jb Т19 (spec §3.4). Retention and the speed floor
+                    // MIRROR WeaponConfig's C# defaults field for field, like
+                    // every line above.
+                    //
+                    // ⚠ MaxRicochets DOES NOT, AND THE SPEC IS WHAT SAYS SO
+                    // (§4.3, spec line 1633, R-173/351/355): the fixture
+                    // numbers are the MODEST ones, and that line names this
+                    // field by name -- an 18 000-tick extraction golden must
+                    // not turn into a load test of bounces. The GAME number
+                    // is 2 (spec's own starting-
+                    // numbers table, line 297) and WeaponConfig.cs carries it;
+                    // the fixture deliberately carries ONE. Same
+                    // documented-deviation category as AmmoStart above and
+                    // ArenaConfig.BarrierTop below — and, like those two, it is
+                    // guarded rather than merely written down:
+                    // ConfigTests.Build_DefaultAssets_MatchesTestConfigsBaseline
+                    // asserts the divergence itself, so the day the two sources
+                    // agree again, something moved and this reason is stale.
+                    //
+                    // Not zero, either. A fixture that silently disabled the
+                    // mechanic would leave the golden scenarios never
+                    // exercising it, and Т34's coverage guard is written
+                    // against exactly that loss. A test whose SUBJECT is "the
+                    // round dies on a barrier" states MaxRicochets = 0 in its
+                    // own fixture instead, and three of them now do
+                    // (coordinator Ruling 94).
+                    MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f },
                 Chaser = new MobSimConfig { MaxSpeed = 5.2f, Accel = 30f, Radius = 0.5f,
                     MaxHp = 30f, ContactDamage = 15f, AttackRange = 1.1f,
                     TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,
@@ -96,6 +123,17 @@ namespace Ring.Simulation.Tests
                     CenterOfMassHeight = 1.17f, TiltDampingRatio = 0.55f,
                     TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
                     TiltFallAngle = 0.9f, DownedSeconds = 1.2f,
+                    // app-88jb Т19 (spec §3.4): Retention and the speed floor
+                    // mirror MobConfig's C# defaults; MaxRicochets is the
+                    // fixture's MODEST 1 against the game's 2, for the reason
+                    // the Weapon block above states in full (spec line 1633,
+                    // R-173). Same three numbers on every archetype because
+                    // MobConfig is one class behind four assets. Only the
+                    // gunner's are ever read today (Impact.RicochetNumbersFor
+                    // answers cfg.Gunner for every mob-owned round, the same
+                    // way ProjectileMass above is read) — the other three carry
+                    // them for the same reason they carry ProjectileMass.
+                    MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f,
                     // app-88jb Т13 (spec §3.3): the chaser's hit parts —
                     // mirrors MobConfig's C# default array (two-sources
                     // discipline). Heights are the old column x 1.46, the
@@ -130,6 +168,17 @@ namespace Ring.Simulation.Tests
                     CenterOfMassHeight = 1.78f, TiltDampingRatio = 0.55f,
                     TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
                     TiltFallAngle = 0.9f, DownedSeconds = 1.2f,
+                    // app-88jb Т19 (spec §3.4): Retention and the speed floor
+                    // mirror MobConfig's C# defaults; MaxRicochets is the
+                    // fixture's MODEST 1 against the game's 2, for the reason
+                    // the Weapon block above states in full (spec line 1633,
+                    // R-173). Same three numbers on every archetype because
+                    // MobConfig is one class behind four assets. Only the
+                    // gunner's are ever read today (Impact.RicochetNumbersFor
+                    // answers cfg.Gunner for every mob-owned round, the same
+                    // way ProjectileMass above is read) — the other three carry
+                    // them for the same reason they carry ProjectileMass.
+                    MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f,
                     // app-88jb Т13 (spec §3.3): the gunner's hit parts.
                     // Heights are the old zone column x 1.20 (crown 4.2063
                     // against 3.50). The shipped .asset gets them through the
@@ -281,6 +330,17 @@ namespace Ring.Simulation.Tests
                     CenterOfMassHeight = 1.78f, TiltDampingRatio = 0.55f,
                     TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
                     TiltFallAngle = 0.9f, DownedSeconds = 1.2f,
+                    // app-88jb Т19 (spec §3.4): Retention and the speed floor
+                    // mirror MobConfig's C# defaults; MaxRicochets is the
+                    // fixture's MODEST 1 against the game's 2, for the reason
+                    // the Weapon block above states in full (spec line 1633,
+                    // R-173). Same three numbers on every archetype because
+                    // MobConfig is one class behind four assets. Only the
+                    // gunner's are ever read today (Impact.RicochetNumbersFor
+                    // answers cfg.Gunner for every mob-owned round, the same
+                    // way ProjectileMass above is read) — the other three carry
+                    // them for the same reason they carry ProjectileMass.
+                    MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f,
                     // app-88jb Т13 (spec §3.3, evidence Т12): the elite's hit
                     // parts. ⚠ HER FACTOR IS 1.0216, NOT THE GUNNER'S 1.20 the
                     // spec's own table assumed — she is the ONE archetype whose
@@ -314,6 +374,17 @@ namespace Ring.Simulation.Tests
                     CenterOfMassHeight = 2.31f, TiltDampingRatio = 0.55f,
                     TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
                     TiltFallAngle = 0.9f, DownedSeconds = 1.2f,
+                    // app-88jb Т19 (spec §3.4): Retention and the speed floor
+                    // mirror MobConfig's C# defaults; MaxRicochets is the
+                    // fixture's MODEST 1 against the game's 2, for the reason
+                    // the Weapon block above states in full (spec line 1633,
+                    // R-173). Same three numbers on every archetype because
+                    // MobConfig is one class behind four assets. Only the
+                    // gunner's are ever read today (Impact.RicochetNumbersFor
+                    // answers cfg.Gunner for every mob-owned round, the same
+                    // way ProjectileMass above is read) — the other three carry
+                    // them for the same reason they carry ProjectileMass.
+                    MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f,
                     // app-88jb Т13 (spec §3.3): the Director's hit parts.
                     // Heights are the old column x 1.37 (crown 4.7903 against
                     // 3.50), and his 4.80 crown is what sets Hero.MaxAimHeight

@@ -170,5 +170,94 @@ namespace Ring.Simulation.Combat
             return new StepResult(target, hasBarrier, barrierT, barrierNormal,
                 hasRingWall, ringWallT, hasFloor, floorT);
         }
+
+        /// THE RICOCHET, AND THE SECOND PUBLIC MEMBER OF THIS CLASS (app-88jb
+        /// Т19, spec §3.4, owner decision Н19, coordinator Ruling 92). The
+        /// round repeats the dash's own rule off a wall one for one
+        /// (PlayerMovementSystem.cs:349-351): reflect about the surface normal,
+        /// keep `RicochetRetention` of the speed.
+        ///
+        /// WHY IT IS NOT PART OF `Step`, stated here because the temptation is
+        /// obvious and the cost is not: `Step`'s three contract points above
+        /// are each broken by a ricochet -- it picks a winner (there is nothing
+        /// to reflect off until the min-scan has chosen AND AcceptCandidate has
+        /// accepted), it refuses (the gates below are refusals), and it mutates
+        /// (`p` travels into `Step` by `in`, and this writes four fields). So
+        /// `Step` is untouched and this stands beside it, sharing only the
+        /// class -- which is the point: the client's tracer (Т32) cranks BOTH
+        /// of these, and a second copy of this arithmetic in the presentation
+        /// layer would have nothing to check itself against.
+        ///
+        /// `true` means the round REFLECTED, and then this has written `Vel`,
+        /// `VelZ`, `Pos`, `PrevHeight`, `Height` and `Ricochets`. `false` means
+        /// it did not, and then this has written NOTHING and the caller does
+        /// what it has always done with a resolved contact -- emit
+        /// ProjectileBlocked and retire the round (owner decision Р439: a
+        /// contact this gate refuses is not left unresolved, it ends exactly as
+        /// it ended before this task existed).
+        ///
+        /// FOUR GATES, IN THIS ORDER, and each one is a witness in
+        /// ProjectileFlightTests:
+        ///  1. the LIFETIME. `Ttl` is decremented at the top of the movement
+        ///     step and tested at the bottom (TtlDecay's own idiom, quoted in
+        ///     this class's doc above), and until this task the only test was
+        ///     in the "nothing was hit" arm (ProjectileSystem.cs:393). A
+        ///     reflection is a second way to leave a tick alive, so an expired
+        ///     round must not take it -- otherwise it lives one tick past its
+        ///     own lifetime and reports its ending in the wrong place;
+        ///  2. the COUNTER, which with the speed floor below is the whole of
+        ///     what bounds a chain of weak ricochets. THERE IS NO ANGLE
+        ///     THRESHOLD (finding C-C4): v1 had one and it cut off exactly the
+        ///     grazing hits it was introduced for;
+        ///  3. `dot(Vel, normal) < 0`, which means no more than "flying INTO
+        ///     the wall" -- the dash's own condition, verbatim;
+        ///  4. the DAMPED speed against `RicochetMinSpeed`. Measured on the
+        ///     full 3D velocity, because `ProjectileSpeed` is itself a 3D
+        ///     magnitude in this project (spec §3.2) and a horizontal-only test
+        ///     would let a steep shot ricochet below the floor the number names.
+        ///
+        /// WHERE THE ROUND LANDS IS THE CONTACT PLUS ONE SKIN ALONG THE NORMAL
+        /// (coordinator Ruling 96), never the bare contact, and the reason is
+        /// float rather than taste: Geometry.SegmentCircle's start-inside test
+        /// is a strict `<` (Geometry.cs:26), so a point exactly on the padded
+        /// circle counts as outside -- but a lerped contact does not land on
+        /// "exactly", and a landing a ULP inside would answer `t = 0` on the
+        /// very next tick with the OUTWARD normal, fail gate 3, and extinguish
+        /// the round on its own touchdown point. `Geometry.PushOutOfCircle`
+        /// already spells the same idiom for the same reason
+        /// (`pos = c + normal * (r + Skin)`, Geometry.cs:593; the stadium's
+        /// twin at :627).
+        ///
+        /// THE HEIGHT LANDS TOO, and it is the vertical twin of `Pos` rather
+        /// than an extra: the round really did travel `VelZ * dt * t` before it
+        /// met the wall, so leaving `Height` at its pre-step value would stall
+        /// the round vertically for one tick per ricochet and drift a
+        /// descending round upward over a chain. `contactHeight` is the number
+        /// AcceptCandidate already computed for its own height gate
+        /// (ProjectileSystem.cs:504) and hands back, so the formula keeps one
+        /// home instead of being restated here. `PrevHeight` moves with it, the
+        /// same way the caller has already moved `PrevPos` to the step's start.
+        ///
+        /// NO EVENT IS EMITTED HERE. `ProjectileRicocheted` is Т30's, and this
+        /// method has no world to emit into by construction -- which is also
+        /// what lets the tracer call it.
+        public static bool TryRicochet(ref ProjectileState p, in SimConfig cfg,
+            float2 normal, float2 contact, float contactHeight)
+        {
+            if (p.Ttl <= 0f) return false;
+
+            Impact.RicochetNumbers n = Impact.RicochetNumbersFor(p.OwnerIndex, in cfg);
+            if (p.Ricochets >= n.Max) return false;
+            if (math.dot(p.Vel, normal) >= 0f) return false;
+            if (math.length(new float3(p.Vel, p.VelZ)) * n.Retention < n.MinSpeed) return false;
+
+            p.Vel = math.reflect(p.Vel, normal) * n.Retention;
+            p.VelZ *= n.Retention;
+            p.Pos = contact + normal * Geometry.Skin;
+            p.PrevHeight = p.Height;
+            p.Height = contactHeight;
+            p.Ricochets++;
+            return true;
+        }
     }
 }

@@ -121,6 +121,34 @@ namespace Ring.Simulation.Core
         public int AmmoMax;
         public float EmergencyFireInterval;
         public float ProjectileMass;
+
+        /// app-88jb Т19 (spec §3.4, owner decision N19): the round's ricochet,
+        /// which repeats the dash's own rule off a wall one for one --
+        /// PlayerMovementSystem's `math.reflect(DashDir, hitNormal)` under
+        /// `dot(DashDir, hitNormal) < 0` and `DashSpeedCur *= RicochetRetention`.
+        ///
+        /// THERE IS NO ANGLE THRESHOLD, and its absence is the decision rather
+        /// than an omission (spec §3.4, finding C-C4): v1's angle threshold of 0.35
+        /// cut off exactly the ricochets it was introduced for -- shooting
+        /// around a corner is a GRAZING blow by definition, and the threshold
+        /// extinguished a 10-degree graze while reflecting a head-on hit. What
+        /// bounds an endless chain of weak ricochets is this pair instead:
+        /// `MaxRicochets`, the count a single round may spend, and
+        /// `RicochetMinSpeed`, the floor the DAMPED 3D speed must still clear
+        /// for the next one to happen at all.
+        ///
+        /// `RicochetRetention` multiplies BOTH `Vel` and `VelZ`, so the
+        /// direction of the 3D velocity survives the horizontal reflection and
+        /// only its magnitude falls.
+        ///
+        /// The floor never ricochets (it has no modelled normal) and bodies
+        /// never do (the client's tracer cannot reproduce a reflection off a
+        /// moving body) -- spec §3.4. Damage is NOT lost on a ricochet, and that
+        /// knob is deliberately absent: the shove falls on its own with the
+        /// speed, and `PierceDamageLoss` is the growth epic's one damage knob.
+        public int MaxRicochets;
+        public float RicochetRetention;
+        public float RicochetMinSpeed;
     }
 
     /// Balance numbers shared by all mob archetypes (chaser/gunner use the same shape).
@@ -188,6 +216,16 @@ namespace Ring.Simulation.Core
         /// contract and same reason as HeroSimConfig.Parts above, which carries
         /// the full account of what it replaced.
         public HitPart[] Parts;
+
+        /// app-88jb Т19 (spec §3.4): this archetype's own ricochet numbers, the
+        /// mob-side twin of WeaponSimConfig's three -- see that doc for the
+        /// rule and for why there is no angle threshold. Split per archetype
+        /// for the same reason `ProjectileMass` above is: whose weapon fired
+        /// the round decides which numbers it flies by, and
+        /// Impact.ProjectileMassFor is the one home of that fork already.
+        public int MaxRicochets;
+        public float RicochetRetention;
+        public float RicochetMinSpeed;
     }
 
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).

@@ -253,6 +253,32 @@ namespace Ring.Simulation.Combat
                         float2 blockedNormal = hitKind == HitRingWall
                             ? Geometry.RingWallNormal(contact)
                             : step.BarrierNormal;
+                        // app-88jb Т19 (spec §3.4, owner decision Н19): the
+                        // ricochet gets FIRST refusal on this contact, and only
+                        // this one -- the floor below has no modelled normal
+                        // and bodies are not static geometry, so neither of the
+                        // other retiring arms offers it. The arithmetic lives
+                        // in ProjectileFlight beside Step (Ruling 92), because
+                        // the client's tracer cranks the same function; what is
+                        // decided HERE is only which contact gets offered.
+                        //
+                        // A REFUSAL CHANGES NOTHING (owner decision Р439): the
+                        // round falls through to the two lines below, which are
+                        // the two lines that have always ended a blocked round,
+                        // byte for byte. So every contact this task does not
+                        // reflect ends exactly as it ended before it existed --
+                        // which is why the barrier suite stays green on any
+                        // fixture that states MaxRicochets = 0.
+                        //
+                        // NO EVENT ON SUCCESS. `ProjectileRicocheted` is Т30's;
+                        // until then a reflection is silent on the wire, and
+                        // Presentation sees only the round's own moved Pos.
+                        if (ProjectileFlight.TryRicochet(ref proj, in config, blockedNormal,
+                                contact, hitHeight))
+                        {
+                            break;
+                        }
+
                         // Amount (app-88jb Т3, finding D-C4): 0f — a blocked
                         // round deals no damage, and Amount is spent on
                         // damage everywhere else in this struct. The contact

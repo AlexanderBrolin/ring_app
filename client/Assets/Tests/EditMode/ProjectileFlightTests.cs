@@ -1,0 +1,393 @@
+using NUnit.Framework;
+using Ring.Simulation.Core;
+using Unity.Mathematics;
+
+namespace Ring.Simulation.Tests
+{
+    /// app-88jb Т19 (spec §3.4, owner decision Н19): the round's ricochet off
+    /// STATIC geometry, which repeats the dash's own rule off a wall one for
+    /// one (PlayerMovementSystem.cs:349-351).
+    ///
+    /// THERE IS NO ANGLE THRESHOLD ANYWHERE IN THIS FILE, and that is the
+    /// subject rather than an omission (finding C-C4): `dot(Vel, normal) < 0`
+    /// means no more than "flying INTO the wall", exactly as it does for the
+    /// dash. What bounds a chain of weak ricochets is the pair `MaxRicochets`
+    /// and `RicochetMinSpeed`, and each has a test of its own below.
+    ///
+    /// A CONTACT THE RICOCHET GATE REFUSES STILL EXTINGUISHES THE ROUND
+    /// (owner decision Р439). `dot(Vel, normal) < 0` is a condition INSIDE the
+    /// gate and nowhere else: fail it — or the counter, or the speed floor —
+    /// and the round falls into the same `ProjectileBlocked` arm it has always
+    /// fallen into. Today's behavior is not changed by this task for any
+    /// contact that does not reflect, which is why three of the eight tests
+    /// below are green before the ricochet exists at all.
+    ///
+    /// THREE OF THE EIGHT ARE GUARDS, NOT WITNESSES, and they say so in their
+    /// own names or docs (lesson 427) — each name whole, on its own line, so a
+    /// sweep by name finds them:
+    ///   `ProjectileFlyingAwayFromTheWall_DoesNotReflect`
+    ///   `FloorDoesNotRicochet_Guard`
+    ///   `ExpiredRoundDoesNotLiveOneExtraTickByRicocheting`
+    /// All three are green on today's code, because today every contact
+    /// extinguishes the round and that is exactly what they demand. They earn
+    /// their place against the MUTANT, not against the stub.
+    ///
+    /// WHERE A REFLECTED ROUND LANDS IS THE CONTACT PLUS ONE SKIN ALONG THE
+    /// NORMAL (coordinator Ruling 96), never the bare contact — see
+    /// `RicochetedRound_DoesNotSinkThroughTheWall`, which states the arithmetic
+    /// with the addresses of the idiom it follows.
+    public class ProjectileFlightTests
+    {
+        /// EXPLICIT fixture, built from `Quiet()` rather than from `Open()` or
+        /// from `Default()`, and both exclusions are facts about those two
+        /// rather than taste:
+        ///
+        ///  - `TestConfigs.Open()` (:537) sets `ObstacleCount = 0` and
+        ///    `ObstaclePos = Array.Empty<float2>()` (:540-541), so the
+        ///    `cfg.Arena.ObstaclePos[0]` every test below reads would throw
+        ///    IndexOutOfRangeException — the fixture could not state a barrier
+        ///    at all (finding A-C5);
+        ///  - `TestConfigs.Default()` keeps its waves, and a gunner's rounds
+        ///    land in the very `w.ProjectileCount` the loops below exit on, so
+        ///    `ThirdContact…`'s bound would stop being about the ricochet
+        ///    counter and start being about the wave schedule (finding Г-I1).
+        ///
+        /// `Quiet()` (:522-527) is exactly `Default()` with
+        /// `FirstWaveDelay = 1e6f`: the whole of `DefaultArena()` — twenty
+        /// obstacles, the interior walls, the two zone-wall arcs and the rim —
+        /// with no waves at all.
+        ///
+        /// The three numbers are stated HERE, in the fixture, and not taken
+        /// from `TestConfigs.Default()`: the shipped value of
+        /// `Default().Weapon.MaxRicochets` is a separate decision with an
+        /// inventory of its own behind it, and no test in this file may depend
+        /// on which way it goes.
+        static SimConfig Fixture(int maxRicochets = 2, float minSpeed = 6f)
+        {
+            SimConfig cfg = TestConfigs.Quiet();
+            cfg.Weapon.MaxRicochets = maxRicochets;
+            cfg.Weapon.RicochetRetention = 0.8f;
+            cfg.Weapon.RicochetMinSpeed = minSpeed;
+            return cfg;
+        }
+
+        [Test]
+        public void ProjectileFlyingAwayFromTheWall_DoesNotReflect()
+        {
+            // The condition `dot(Vel, normal) < 0` means no more than "flying
+            // INTO the wall", and under Р439 it lives INSIDE the ricochet gate
+            // and nowhere else: a contact that fails it is not "unresolved", it
+            // is extinguished exactly as it has always been. So the ending this
+            // test demands is today's ending — the round is GONE and one
+            // ProjectileBlocked stands for it.
+            //
+            // A GUARD ON THE STUB, A WITNESS ON THE MUTANT, and the two are not
+            // the same claim (lesson 427): with no ricochet in the code at all
+            // this passes, because the stub extinguishes every contact. Its
+            // whole worth is against mutation M14, "reflect with no `dot < 0`
+            // test", and against that mutant it is decisive — see the
+            // arithmetic below.
+            //
+            // THE FIXTURE MUST CONTAIN A CONTACT (finding D-C4): a first draft
+            // fired into an EMPTY FIELD, where M14 changes nothing at all —
+            // there is no contact point to reflect at, and the test was green
+            // on the mutant and on the stub alike. Here the round is born
+            // INSIDE the obstacle's padded circle and flies AWAY from it:
+            // Geometry.SegmentCircle's own start-inside branch
+            // (Geometry.cs:26) answers `t = 0` and SweepArena takes the outward
+            // radial at the birth point as the normal (Geometry.cs:786-789), so
+            // the contact is real and its `dot` is POSITIVE.
+            //
+            // WHY M14 SURVIVES HERE AND IS CAUGHT BY THE FIRST ASSERT, in the
+            // fixture's own numbers: the birth point stands 2.26 m from the
+            // obstacle's center against a padded radius of 2.32 (2.2 + 0.12),
+            // so `t = 0`; the normal is (+1, 0) and `dot(Vel, normal) = +35`.
+            // Strike the `dot < 0` test and the two REMAINING gates both pass —
+            // `Ricochets 0 < MaxRicochets 2`, and the damped speed
+            // 35 x 0.8 = 28 clears `RicochetMinSpeed 6` with room to spare — so
+            // the mutant reflects, lands at the contact plus a skin
+            // (Ruling 96), and the round SURVIVES the tick with Vel (-28, 0).
+            // `AreEqual(0, w.ProjectileCount)` is what dies on it.
+            SimConfig cfg = Fixture();
+            var w = new SimulationWorld(7, cfg);
+            float2 obstacle = cfg.Arena.ObstaclePos[0];
+            float r = cfg.Arena.ObstacleRadius[0];
+            float2 birth = obstacle + new float2(r + cfg.Weapon.ProjectileRadius * 0.5f, 0f);
+            Assert.Less(math.distance(birth, obstacle), r + cfg.Weapon.ProjectileRadius,
+                "fixture premise: the round is born INSIDE the obstacle's padded circle (t = 0)");
+            // The two gates M14 does NOT touch have to be open, or the mutant
+            // would be stopped by one of them and this test would pin nothing.
+            Assert.GreaterOrEqual(cfg.Weapon.ProjectileSpeed * cfg.Weapon.RicochetRetention,
+                cfg.Weapon.RicochetMinSpeed,
+                "fixture premise: the speed floor does not stop the mutant, so only dot does");
+            Assert.Greater(cfg.Weapon.MaxRicochets, 0,
+                "fixture premise: the counter does not stop the mutant either");
+            w.SpawnProjectileForTest(ProjectileOwner.Player, birth,
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), height: 1f, velZ: 0f,
+                damage: 1f, radius: cfg.Weapon.ProjectileRadius, ttl: 0.5f);
+
+            w.Tick(default);
+
+            Assert.AreEqual(0, w.ProjectileCount,
+                "снаряд, летящий ОТ стены, отразился и выжил — условие dot < 0 снято");
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked),
+                "контакт, отвергнутый гейтом рикошета, обязан гасить снаряд, как и до Т19 (Р439)");
+        }
+
+        [Test]
+        public void SpeedAfterRicochet_IsMultipliedByRetention()
+        {
+            // The expectation is a NUMBER out of the fixture, never "roughly
+            // slower": the damped 3D speed is the shot's own speed times
+            // `RicochetRetention`, and `VelZ` is damped by the same factor so
+            // the 3D direction survives the horizontal reflection.
+            SimConfig cfg = Fixture();
+            var w = new SimulationWorld(7, cfg);
+            float2 obstacle = cfg.Arena.ObstaclePos[0];
+            float r = cfg.Arena.ObstacleRadius[0];
+            float2 from = obstacle - new float2(r + 3f, 0f);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, from,
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), height: 1f, velZ: 0f,
+                damage: 1f, radius: cfg.Weapon.ProjectileRadius, ttl: 1f);
+            for (int i = 0; i < 6 && w.ProjectileCount > 0
+                 && w.Projectiles[0].Ricochets == 0; i++) w.Tick(default);
+
+            Assert.AreEqual(1, w.Projectiles[0].Ricochets, "отскока не случилось");
+            Assert.AreEqual(cfg.Weapon.ProjectileSpeed * cfg.Weapon.RicochetRetention,
+                math.length(new float3(w.Projectiles[0].Vel, w.Projectiles[0].VelZ)), 0.05f,
+                "скорость после отскока не умножена на RicochetRetention");
+            Assert.Less(w.Projectiles[0].Vel.x, 0f, "снаряд не развернулся");
+        }
+
+        [Test]
+        public void ThirdContact_ExtinguishesTheRound_WhenMaxRicochetsIsTwo()
+        {
+            // The COUNTER is what bounds the chain, not an angle. The round is
+            // handed a spent counter through the seam rather than made to earn
+            // it, so this test states one thing only: at `Ricochets ==
+            // MaxRicochets` the next contact extinguishes.
+            SimConfig cfg = Fixture(maxRicochets: 2);
+            var w = new SimulationWorld(7, cfg);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), height: 1f, velZ: 0f,
+                damage: 1f, radius: cfg.Weapon.ProjectileRadius, ttl: 30f);
+            var p = w.Projectiles[0]; p.Ricochets = 2; w.SetProjectileForTest(0, p);
+            for (int i = 0; i < 400 && w.ProjectileCount > 0; i++) w.Tick(default);
+            Assert.AreEqual(0, w.ProjectileCount,
+                "снаряд с исчерпанным счётчиком отскочил третий раз");
+        }
+
+        [Test]
+        public void SlowRound_Extinguishes_InsteadOfRicocheting()
+        {
+            // `RicochetMinSpeed`, the other half of the bound. The threshold is
+            // set deliberately ABOVE any speed the damping could leave, so the
+            // difference this test measures is structural rather than an edge
+            // case one rounding decision away.
+            SimConfig cfg = Fixture(minSpeed: 1e6f);
+            var w = new SimulationWorld(7, cfg);
+            float2 obstacle = cfg.Arena.ObstaclePos[0];
+            float2 from = obstacle - new float2(cfg.Arena.ObstacleRadius[0] + 3f, 0f);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, from,
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), height: 1f, velZ: 0f,
+                damage: 1f, radius: cfg.Weapon.ProjectileRadius, ttl: 1f);
+            for (int i = 0; i < 6 && w.ProjectileCount > 0; i++) w.Tick(default);
+            Assert.AreEqual(0, w.ProjectileCount, "медленный снаряд отскочил, а не погас");
+        }
+
+        [Test]
+        public void FloorDoesNotRicochet_Guard()
+        {
+            // A GUARD, GREEN ON TODAY'S CODE (lesson 427), and named one rather
+            // than passed off as a witness: the floor has no modelled normal,
+            // so it must go on extinguishing the round after the ricochet
+            // lands. It earns its place against the mutant that reflects off
+            // every contact, not against the stub.
+            SimConfig cfg = Fixture();
+            var w = new SimulationWorld(7, cfg);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
+                new float2(5f, 0f), height: 1f, velZ: -20f,
+                damage: 1f, radius: cfg.Weapon.ProjectileRadius, ttl: 1f);
+            for (int i = 0; i < 10 && w.ProjectileCount > 0; i++) w.Tick(default);
+            Assert.AreEqual(0, w.ProjectileCount, "снаряд отскочил от пола");
+        }
+
+        [Test]
+        public void RicochetedRound_DoesNotSinkThroughTheWall()
+        {
+            // WHERE the ricocheted round stands, which is a different question
+            // from how fast it travels. The reflected velocity applies from the
+            // NEXT tick (decision Р376), so the position this tick ends at is
+            // built from the CONTACT and not from the step's own end, which
+            // lies inside the obstacle's body.
+            //
+            // AND IT IS THE CONTACT PLUS ONE SKIN ALONG THE NORMAL, not the
+            // bare contact (coordinator Ruling 96). The reason is float, not
+            // taste: Geometry.SegmentCircle's start-inside test is a STRICT
+            // `<` (Geometry.cs:26), so a point exactly on the padded circle
+            // counts as outside — but a lerped contact does not land on
+            // "exactly", and a landing a ULP inside would answer `t = 0` on the
+            // very next tick with the OUTWARD normal. Under Р439 such a contact
+            // is not left unresolved: it fails the `dot < 0` gate and
+            // EXTINGUISHES the round, so a skinless landing would kill the
+            // round on its own touchdown point. The idiom is this project's
+            // own, in the very file the arithmetic comes from:
+            // `pos = c + normal * (r + Skin)` (Geometry.PushOutOfCircle,
+            // Geometry.cs:593) and the same line for the stadium shape
+            // (Geometry.cs:627); `Skin = 1e-3f` (Geometry.cs:8).
+            //
+            // So the assertion is the distance to the obstacle's center against
+            // the PADDED radius — that is what "did not sink into the wall"
+            // means with no dependence on which direction the round left in —
+            // and a second tick follows it, because "landed clear" and "still
+            // alive a tick later" are two different claims and only the pair
+            // covers the skin.
+            SimConfig cfg = Fixture();
+            var w = new SimulationWorld(7, cfg);
+            float2 obstacle = cfg.Arena.ObstaclePos[0];
+            float r = cfg.Arena.ObstacleRadius[0];
+            float pr = cfg.Weapon.ProjectileRadius;
+            float2 from = obstacle - new float2(r + 3f, 0f);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, from,
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), height: 1f, velZ: 0f,
+                damage: 1f, radius: pr, ttl: 1f);
+            // The step is longer than the gap the contact leaves, which is what
+            // makes "the step's end" and "the contact" two different points at
+            // all — stated rather than assumed, off the fixture's own numbers.
+            float stepLength = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
+            Assert.Greater(stepLength, pr,
+                "fixture premise: a tick's step is long enough for the step's end to sit "
+                + "measurably deeper than the contact");
+            for (int i = 0; i < 6 && w.ProjectileCount > 0
+                 && w.Projectiles[0].Ricochets == 0; i++) w.Tick(default);
+
+            Assert.AreEqual(1, w.Projectiles[0].Ricochets, "отскока не случилось");
+            Assert.GreaterOrEqual(math.distance(w.Projectiles[0].Pos, obstacle), r + pr,
+                "отскочивший снаряд утонул в барьере — позиция взята с конца шага, а не с контакта");
+
+            w.Tick(default);
+
+            Assert.AreEqual(1, w.ProjectileCount,
+                "снаряд погиб о собственную точку посадки — контакт не отодвинут на Geometry.Skin");
+        }
+
+        /// THE ONE TEST THAT EARNS A SECOND RICOCHET RATHER THAN STATING IT.
+        /// `ThirdContact_ExtinguishesTheRound_WhenMaxRicochetsIsTwo` above
+        /// hands the counter a spent value through the seam and never executes
+        /// an increment at all (the plan's own finding D-I5), so without this
+        /// one nothing in the suite would show the counter climbing 0 -> 1 -> 2
+        /// off real contacts, and nothing would show that a round which has
+        /// already ricocheted is still an ordinary round to the next barrier.
+        ///
+        /// IT REPLACED A "CORNER" TEST, AND THE REPLACEMENT IS A RULING, NOT A
+        /// RETREAT (coordinator Ruling 95). The corner this file was asked for
+        /// — two barriers tight enough that the ricochet's own contact point
+        /// lands INSIDE the second one — is not constructible, and the
+        /// arithmetic says so rather than the author: the gather holds ONE
+        /// interior-barrier slot, filled by SweepArena's MINIMUM `t` over every
+        /// obstacle, wall and arc (Geometry.cs:779-861), so a second barrier
+        /// whose padded circle contains a point of the step is entered no LATER
+        /// than that point and would have won the slot — the first ricochet
+        /// would never have happened. Only exact equality is left, and Р376
+        /// keeps the reflected velocity for the NEXT tick, so the round does
+        /// not travel into the second barrier during this one either. The
+        /// "contact inside another barrier" check therefore has no reachable
+        /// case and is NOT written; a branch with no witness is what this epic
+        /// has now refused three times (M-guard Т15, Ruling 88 Т17, app-rahx
+        /// Т18). What survives of the fixture is the reachable half, below.
+        [Test]
+        public void SecondRicochet_IsEarned_AndNeitherBarrierIsLeakedThrough()
+        {
+            // Two barriers facing each other across the round's own line. The
+            // round ricochets off the FAR one, travels back into the NEAR one,
+            // ricochets off that, and is extinguished on its third contact with
+            // the counter spent. Two claims, both stated:
+            //   - the counter reached TWO off real contacts, not off a seam;
+            //   - at no point did the round stand deeper than a barrier's own
+            //     surface, which is what "leaked through" would look like as a
+            //     POSITION rather than as an event.
+            SimConfig cfg = Fixture(maxRicochets: 2);
+            float pr = cfg.Weapon.ProjectileRadius;
+            float2 far = cfg.Arena.ObstaclePos[0];
+            float rFar = cfg.Arena.ObstacleRadius[0];
+            float2 launch = far - new float2(rFar + 3f, 0f);
+            // The near barrier is stated off the launch point, so the clearance
+            // in front of it is a fixture number rather than a coordinate: the
+            // round must start OUTSIDE it, or the round would resolve against
+            // it on tick one and never reach the far barrier at all.
+            float rNear = rFar;
+            const float clearance = 0.5f;
+            float2 near = launch - new float2(rNear + pr + clearance, 0f);
+            // Two obstacles and nothing else of DefaultArena's twenty: the
+            // remaining eighteen stand tens of meters away and would only make
+            // the premises below harder to read. The walls, the arcs and the
+            // rim are left exactly as they are.
+            cfg.Arena.ObstacleCount = 2;
+            cfg.Arena.ObstaclePos = new[] { far, near };
+            cfg.Arena.ObstacleRadius = new[] { rFar, rNear };
+
+            Assert.Greater(math.distance(launch, near), rNear + pr,
+                "fixture premise: the round starts clear of the near barrier");
+            Assert.Greater(math.distance(launch, far), rFar + pr,
+                "fixture premise: and clear of the far one, so the first contact is a real sweep");
+
+            var w = new SimulationWorld(7, cfg);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, launch,
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), height: 1f, velZ: 0f,
+                damage: 1f, radius: pr, ttl: 1f);
+
+            int ricochetsSeen = 0;
+            float deepestX = launch.x;
+            for (int i = 0; i < 20 && w.ProjectileCount > 0; i++)
+            {
+                w.Tick(default);
+                if (w.ProjectileCount == 0) break;
+                ricochetsSeen = math.max(ricochetsSeen, w.Projectiles[0].Ricochets);
+                deepestX = math.min(deepestX, w.Projectiles[0].Pos.x);
+            }
+
+            Assert.AreEqual(2, ricochetsSeen,
+                "счётчик не набрал два отскока на настоящих контактах");
+            Assert.AreEqual(0, w.ProjectileCount,
+                "третий контакт с исчерпанным счётчиком не погасил снаряд");
+            Assert.GreaterOrEqual(deepestX, near.x + rNear,
+                "отражённый раунд ушёл сквозь второй барьер");
+        }
+
+        [Test]
+        public void ExpiredRoundDoesNotLiveOneExtraTickByRicocheting()
+        {
+            // A GUARD ON TODAY'S CODE, like FloorDoesNotRicochet_Guard above,
+            // and for the same reason: today EVERY contact extinguishes the
+            // round, so "an expired round does not survive the tick it ricochets
+            // on" is already true. It earns its place against the mutant that
+            // reflects without testing the lifetime — today `Ttl <= 0` is read
+            // in the "nothing was hit" arm alone (ProjectileSystem.cs:393), and
+            // the ricochet arm is a second place a round can leave a tick alive.
+            //
+            // The lifetime is stated in TICKS off the tick length, so it
+            // expires ON the tick the contact falls on and not one either side.
+            SimConfig cfg = Fixture();
+            var w = new SimulationWorld(7, cfg);
+            float2 obstacle = cfg.Arena.ObstaclePos[0];
+            float r = cfg.Arena.ObstacleRadius[0];
+            float2 from = obstacle - new float2(r + 3f, 0f);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, from,
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), height: 1f, velZ: 0f,
+                damage: 1f, radius: cfg.Weapon.ProjectileRadius,
+                ttl: 2.5f * SimulationWorld.TickDt);
+
+            w.Tick(default);
+            w.Tick(default);
+            Assert.AreEqual(1, w.ProjectileCount,
+                "fixture premise: the round is still alive going into the tick it meets the barrier on");
+            Assert.Less(w.Projectiles[0].Pos.x, obstacle.x - r - cfg.Weapon.ProjectileRadius,
+                "fixture premise: and has not reached the barrier yet");
+
+            w.Tick(default);
+
+            Assert.AreEqual(0, w.ProjectileCount,
+                "снаряд с истёкшим TTL прожил лишний тик, отскочив");
+        }
+    }
+}

@@ -155,6 +155,18 @@ namespace Ring.Simulation.Tests
             target.TiltGain = source.TiltGain;
             target.TiltFallAngle = source.TiltFallAngle;
             target.DownedSeconds = source.DownedSeconds;
+            // app-88jb Т19 (spec §3.4): the ricochet numbers join the copier
+            // for the reason the block above gives about the impact fields —
+            // without them SeedMob's Elite/Director callers would leave the
+            // three at MobConfig's chaser-shaped C# default instead of the
+            // archetype's own numbers, silently. It copies MaxRicochets too,
+            // even though the fixture and the SO deliberately disagree on it
+            // (TestConfigs' own Weapon note): this method's contract is "make
+            // the SO say what the fixture says", and the divergence is guarded
+            // where it is DECLARED, on the CHASER, whose SO nobody seeds.
+            target.MaxRicochets = source.MaxRicochets;
+            target.RicochetRetention = source.RicochetRetention;
+            target.RicochetMinSpeed = source.RicochetMinSpeed;
             // app-88jb Т13 (coordinator Ruling 63): a DEEP copy, never the
             // reference. Aliasing would make the archetype SO and the shared
             // TestConfigs baseline hold ONE array, so a rule test that bumps a
@@ -315,8 +327,35 @@ namespace Ring.Simulation.Tests
             Assert.AreNotEqual(expected.Weapon.AmmoStart, w.AmmoStart,
                 "and the divergence is deliberate — if these ever agree, one of the two "
                 + "sources moved and the reason above no longer holds");
+            // app-88jb Т19 (spec §3.4): MaxRicochets is the SECOND Weapon field
+            // where the two number sources disagree on purpose — same
+            // documented-deviation category as AmmoStart above, and guarded the
+            // same three ways rather than merely narrated. The SO's C# default
+            // (2, the shipped game number, spec's starting-numbers table) has
+            // to reach the builder untouched; the shared TestConfigs baseline
+            // deliberately carries 1, because spec §4.3 (line 1633, R-173/351/
+            // 355) assigns the FIXTURES a modest value so the 18 000-tick
+            // extraction golden does not turn into a load test of ricochets.
+            Assert.AreEqual(w.MaxRicochets, cfg.Weapon.MaxRicochets,
+                "WeaponConfig.MaxRicochets must reach WeaponSimConfig through the builder");
+            Assert.AreEqual(1, expected.Weapon.MaxRicochets,
+                "the TestConfigs baseline must stay at its modest fixture value (spec §4.3)");
+            Assert.AreNotEqual(expected.Weapon.MaxRicochets, w.MaxRicochets,
+                "and the divergence is deliberate — if these ever agree, one of the two "
+                + "sources moved and the reason above no longer holds");
             AssertMobEqual(expected.Chaser, cfg.Chaser);
             AssertMobEqual(expected.Gunner, cfg.Gunner);
+            // The same divergence on the mob side, declared on the CHASER
+            // because his SO is the one nobody seeds: SeedMob copies the
+            // fixture's own numbers into the GUNNER's SO a few lines up (that
+            // is what keeps the archetype fixtures in step), so the gunner
+            // cannot witness a divergence between the two sources at all.
+            Assert.AreEqual(c.MaxRicochets, cfg.Chaser.MaxRicochets,
+                "MobConfig.MaxRicochets must reach MobSimConfig through the builder");
+            Assert.AreEqual(1, expected.Chaser.MaxRicochets,
+                "the TestConfigs baseline must stay at its modest fixture value (spec §4.3)");
+            Assert.AreNotEqual(expected.Chaser.MaxRicochets, c.MaxRicochets,
+                "and the divergence is deliberate — same guard as the Weapon's above");
             AssertWaveEqual(expected.Wave, cfg.Wave);
             // Task Т2 (app-ggvz, spec §3.8 Р337), Task Т6 (app-ggvz, owner
             // decisions К5/Р311) and task app-jmb2 (owner decision Р347):
@@ -1580,6 +1619,18 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.EmergencyFireInterval, a.EmergencyFireInterval, Eps);
             // app-88jb Т1: impact physics.
             Assert.AreEqual(e.ProjectileMass, a.ProjectileMass, Eps);
+            // app-88jb Т19 (spec §3.4): the two ricochet numbers that DO
+            // mirror. Added in the same step that shipped them, and the pairing
+            // is the point rather than tidiness: this list is HAND-WRITTEN, so
+            // a field absent from it is a field whose mirror between
+            // WeaponConfig's C# defaults and the fixture is pinned by nothing.
+            // ⚠ MaxRicochets is EXCLUDED here on purpose — the SO ships 2 and
+            // the fixture deliberately carries 1 (spec §4.3 line 1633, R-173),
+            // exactly the AmmoStart case one block up, so it cannot live inside
+            // a shared equality helper. Its own three-way guard is in
+            // Build_DefaultAssets_MatchesTestConfigsBaseline.
+            Assert.AreEqual(e.RicochetRetention, a.RicochetRetention, Eps);
+            Assert.AreEqual(e.RicochetMinSpeed, a.RicochetMinSpeed, Eps);
         }
 
         static void AssertMobEqual(MobSimConfig e, MobSimConfig a)
@@ -1620,6 +1671,17 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.DownedSeconds, a.DownedSeconds, Eps);
             // app-88jb Т13: the hit parts, same reasoning as AssertHeroEqual's.
             AssertPartsEqual(e.Parts, a.Parts, "Mob");
+            // app-88jb Т19 (spec §3.4): the two that mirror — see
+            // AssertWeaponEqual's own note for why a hand-written list has to
+            // be extended in the same step the numbers ship, and for why
+            // MaxRicochets is excluded from it. ⚠ The exclusion matters MORE
+            // here than it does there: this helper serves four archetypes, and
+            // the Gunner's SO is seeded from the fixture by SeedMob (so the two
+            // would agree) while the Chaser's keeps its own C# default (so they
+            // would not). A field that passes for one caller and fails for
+            // another has no business in a shared assertion.
+            Assert.AreEqual(e.RicochetRetention, a.RicochetRetention, Eps);
+            Assert.AreEqual(e.RicochetMinSpeed, a.RicochetMinSpeed, Eps);
         }
 
         static void AssertWaveEqual(WaveSimConfig e, WaveSimConfig a)

@@ -108,6 +108,18 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.AmmoMax); h = StateHash64.Add(h, c.EmergencyFireInterval);
             // app-88jb Т1 (spec §3.2): impact physics.
             h = StateHash64.Add(h, c.ProjectileMass);
+            // app-88jb Т19 (spec §3.4): the ricochet numbers, in the section's
+            // own declaration order. They join the digest IN THE STEP THAT
+            // DECLARES THEM, not later, and that is a rule rather than a
+            // preference: Stage 3 Task 13 (owner decision R-17) deleted the
+            // flat PENDING skip-set SimConfigHashTests used to consult, so
+            // there is no third case left besides "wired" and "an array the
+            // caller listed" -- a scalar declared here and left out of this
+            // fold is red in EveryConfigNumberAffectsHash_Weapon on sight
+            // (SimConfigHashTests.cs:304-316, its own doc says so).
+            h = StateHash64.Add(h, c.MaxRicochets);
+            h = StateHash64.Add(h, c.RicochetRetention);
+            h = StateHash64.Add(h, c.RicochetMinSpeed);
             return h;
         }
 
@@ -138,6 +150,12 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.TiltFallAngle); h = StateHash64.Add(h, c.DownedSeconds);
             // app-88jb Т13 (spec §3.3): this archetype's hit parts.
             h = HashHitPartArray(h, c.Parts);
+            // app-88jb Т19 (spec §3.4): this archetype's ricochet numbers,
+            // wired in the same step that declares them for the reason
+            // HashWeapon's own note above gives (R-17 left no skip-set).
+            h = StateHash64.Add(h, c.MaxRicochets);
+            h = StateHash64.Add(h, c.RicochetRetention);
+            h = StateHash64.Add(h, c.RicochetMinSpeed);
             return h;
         }
 

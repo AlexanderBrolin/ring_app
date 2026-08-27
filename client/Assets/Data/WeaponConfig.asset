@@ -32,3 +32,6 @@ MonoBehaviour:
   AmmoMax: 400
   EmergencyFireInterval: 1.25
   ProjectileMass: 2.6
+  MaxRicochets: 2
+  RicochetRetention: 0.8
+  RicochetMinSpeed: 6

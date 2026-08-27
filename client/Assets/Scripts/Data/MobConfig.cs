@@ -95,7 +95,16 @@ namespace Ring.Data
                 Zone = HitZone.Body, DamageMult = 1.0f },
             new HitPart { Radius = 0.17f, Bottom = 2.12f, Top = 2.70f,
                 Zone = HitZone.Head, DamageMult = 1.7f },
-        }; // sync-marker key — keep LAST (was DownedSeconds, app-88jb)
+        }; // Was the sync-marker key until app-88jb Т19.
+
+        /// app-88jb Т19 (spec §3.4): this archetype's own ricochet numbers,
+        /// the mob-side twin of WeaponConfig's three — same fields, same
+        /// ranges, same reasoning (see WeaponConfig's own doc). Defaults below
+        /// are the CHASER's, this class's shape; the Gunner/Elite/Director
+        /// .assets take their own through the bootstrap.
+        [Range(0, 8)] public int MaxRicochets = 2;
+        [Range(0.05f, 1f)] public float RicochetRetention = 0.8f;
+        [Range(0.1f, 100f)] public float RicochetMinSpeed = 6f; // sync-marker key — keep LAST (was Parts, app-88jb)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

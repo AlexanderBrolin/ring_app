@@ -100,6 +100,38 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("explicit integrator"));
         }
 
+        /// app-88jb Т19 (spec §3.10 rule 9): `MaxRicochets >= 0`,
+        /// `RicochetRetention` in (0, 1], `RicochetMinSpeed > 0`. Two of the
+        /// three bounds get a witness here; the pair chosen is the pair whose
+        /// violation is SILENT rather than loud.
+        [Test]
+        public void Validate_RicochetRetentionAboveOne_Throws()
+        {
+            // Retention above one would mean the ricochet ACCELERATES the
+            // round — a perpetual chain that not even MaxRicochets stops,
+            // because the counter bounds how MANY times a round may reflect
+            // while the speed floor never trips on one that keeps gaining
+            // speed.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            w.RicochetRetention = 1.01f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.RicochetRetention"));
+        }
+
+        [Test]
+        public void Validate_ZeroRicochetMinSpeed_Throws()
+        {
+            // A zero floor is the same defect from the other end: no damped
+            // speed is ever below it, so the only bound left on the chain is
+            // the counter, and the speed half of the pair is silently dead.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            w.RicochetMinSpeed = 0f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.RicochetMinSpeed"));
+        }
+
         [Test]
         public void Validate_ShippedDefaults_AreStable()
         {

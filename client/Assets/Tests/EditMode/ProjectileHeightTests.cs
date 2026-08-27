@@ -244,6 +244,27 @@ namespace Ring.Simulation.Tests
             // not. Half the reach is comfortably inside it; expressed off the
             // weapon's own numbers, never as a literal.
             cfg.Arena.Radius = 0.5f * cfg.Weapon.ProjectileSpeed * cfg.Weapon.ProjectileLifetime;
+            // app-88jb Т19 (coordinator Ruling 94): this test's subject is the
+            // NORMAL and the HEIGHT a wall block reports, so the round has to
+            // actually die on the rim. At the shipped MaxRicochets 2 it
+            // reflects off the boundary instead and no ProjectileBlocked is
+            // emitted at all. Stated right here, beside the other thing this
+            // fixture states about itself (the shrunk radius one line up) —
+            // the rest of this file never reaches a barrier, so the number is
+            // deliberately NOT pushed into a shared helper.
+            //
+            // ⚠ ONLY THE WEAPON'S NUMBER, AND THE MOB'S IS LEFT ALONE ON
+            // PURPOSE (coordinator Ruling 99). A mob-owned round reads the
+            // Gunner archetype's own MaxRicochets (Impact.RicochetNumbersFor),
+            // so this fixture would owe that number too IF a mob-owned round
+            // could reach the rim here. None can: the fixture is
+            // TestConfigs.OpenField() (TestConfigs.cs:674) — Open() (:607) off
+            // Quiet() (:592), whose own `c.Wave.FirstWaveDelay = 1e6f` (:595)
+            // means no waves and therefore no gunner. A second zero would be a
+            // line with no reader.
+            // THE RULE: a fixture here that spawns a LIVE gunner must state its
+            // own Gunner.MaxRicochets.
+            cfg.Weapon.MaxRicochets = 0;
             var w = new SimulationWorld(1, cfg);
             TestWorlds.FireAimed3D(w, float2.zero, MuzzleH,
                 new float2(cfg.Arena.Radius, 0f), MuzzleH);

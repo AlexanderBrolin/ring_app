@@ -314,6 +314,23 @@ namespace Ring.Simulation.Core
         /// StateHash since Т6, hashed right after the two owner fields it
         /// completes.
         public int OwnerEntityId;
+
+        /// app-88jb Т19 (spec §3.4): how many times this round has already
+        /// ricocheted off STATIC geometry. The counter, not an angle
+        /// threshold, is what bounds a chain of weak ones -- see
+        /// WeaponSimConfig.MaxRicochets' own doc for why v1's angle threshold
+        /// was dropped instead of retuned.
+        ///
+        /// DECLARED INERT IN THIS STEP (errata E-1's "structural rebuild"
+        /// discipline, the same way OwnerEntityId above landed in Stage 3 Task
+        /// 5): nothing increments it yet, and it does NOT join HashProjectile
+        /// until the ricochet branch itself lands. WorldLifecycleTests'
+        /// reflective sweep over this struct
+        /// (WorldLifecycleTests.cs:236-242) is what says so out loud in the
+        /// meantime -- it turns red the moment this field is declared and
+        /// green again only on the fold, which is exactly the receipt that
+        /// discipline is for.
+        public int Ricochets;
     }
 
     /// Stage 3 Task 3 (spec §3.6): the one kind of pickup that exists today —

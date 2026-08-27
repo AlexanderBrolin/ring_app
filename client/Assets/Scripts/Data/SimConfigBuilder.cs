@@ -141,7 +141,11 @@ namespace Ring.Data
                     AmmoMax = weapon.AmmoMax,
                     EmergencyFireInterval = weapon.EmergencyFireInterval,
                     // app-88jb Т1 (spec §3.2): impact physics mapping.
-                    ProjectileMass = weapon.ProjectileMass
+                    ProjectileMass = weapon.ProjectileMass,
+                    // app-88jb Т19 (spec §3.4): ricochet mapping.
+                    MaxRicochets = weapon.MaxRicochets,
+                    RicochetRetention = weapon.RicochetRetention,
+                    RicochetMinSpeed = weapon.RicochetMinSpeed
                 },
                 Chaser = ToMobSimConfig(chaser),
                 Gunner = ToMobSimConfig(gunner),
@@ -311,7 +315,12 @@ namespace Ring.Data
             // alias, same reasoning as the hero's own mapping above. ONE
             // mapping serves all four mob sections, because Chaser/Gunner/
             // Elite/Director all come through this method.
-            Parts = m.Parts
+            Parts = m.Parts,
+            // app-88jb Т19 (spec §3.4): this archetype's ricochet mapping,
+            // through the same one method, for the same reason.
+            MaxRicochets = m.MaxRicochets,
+            RicochetRetention = m.RicochetRetention,
+            RicochetMinSpeed = m.RicochetMinSpeed
         };
 
         static ArenaSimConfig ToArenaSimConfig(ArenaConfig a)
@@ -436,6 +445,23 @@ namespace Ring.Data
             // backwards from the desired delta-v, not a physical bullet mass
             // — see SimConfig.HeroSimConfig's own doc.
             ReqPositive(errors, "Weapon.ProjectileMass", cfg.Weapon.ProjectileMass);
+            // app-88jb Т19 (spec §3.10 rule 9): the ricochet's three numbers.
+            // Each bound is the one whose violation is SILENT rather than loud.
+            // Retention ABOVE ONE would mean a reflection ACCELERATES the round
+            // — a chain no counter can stop, because MaxRicochets bounds how
+            // many times a round may reflect while the speed floor never trips
+            // on one that keeps gaining speed; AT one it is merely lossless,
+            // which is legal, so the upper end is INCLUSIVE and the lower is
+            // not. A MinSpeed of zero is the same defect from the other end:
+            // no damped speed is ever below it, so the speed half of the pair
+            // is silently dead and only the counter is left. MaxRicochets is
+            // allowed to be zero — that is "this weapon does not ricochet",
+            // which is a balance choice and what a barrier fixture states about
+            // itself — but never negative.
+            ReqNonNegative(errors, "Weapon.MaxRicochets", cfg.Weapon.MaxRicochets);
+            ReqInRange(errors, "Weapon.RicochetRetention", cfg.Weapon.RicochetRetention,
+                0f, 1f, minExclusive: true);
+            ReqPositive(errors, "Weapon.RicochetMinSpeed", cfg.Weapon.RicochetMinSpeed);
 
             // Task 2 (spec stamina/slide/aim): stamina pool + action costs/regen.
             ReqPositive(errors, "Hero.StaminaMax", cfg.Hero.StaminaMax);
@@ -1888,6 +1914,14 @@ namespace Ring.Data
             // own in this task, same as Hero's.
             ReqPositive(errors, $"{name}.Mass", m.Mass);
             ReqPositive(errors, $"{name}.ProjectileMass", m.ProjectileMass);
+            // app-88jb Т19 (spec §3.10 rule 9): the same three bounds as the
+            // Weapon block's, on every archetype — see that block's own note
+            // for why each end is open or closed. One rule, both sides of the
+            // damage matrix, exactly as ProjectileMass above.
+            ReqNonNegative(errors, $"{name}.MaxRicochets", m.MaxRicochets);
+            ReqInRange(errors, $"{name}.RicochetRetention", m.RicochetRetention,
+                0f, 1f, minExclusive: true);
+            ReqPositive(errors, $"{name}.RicochetMinSpeed", m.RicochetMinSpeed);
             // app-88jb Т13 (spec §3.10 rules 2/3/4/6): this archetype's stack of
             // parts, and the center of mass measured against IT rather than
             // against the old zone column — see the Hero block's own note for why

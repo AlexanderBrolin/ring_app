@@ -2976,6 +2976,28 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.Radius); h = StateHash64.Add(h, p.Ttl);
             h = StateHash64.Add(h, p.Height); h = StateHash64.Add(h, p.PrevHeight);
             h = StateHash64.Add(h, p.VelZ);
+            // app-88jb Т19 (spec §3.4): the ricochet counter CLOSES the fold,
+            // mirroring the end of the struct — the same placement rule Т5 used
+            // for the mob's tilt pair (HashMob's own note above): it qualifies
+            // no other field, so there is none for it to sit beside.
+            //
+            // ⚠ THE PLAN SAID "RIGHT AFTER OwnerEntityId", AND THAT READS TWO
+            // WAYS, which is why the choice is written down. `OwnerEntityId` is
+            // the LAST field of the struct but the FOURTH of this fold: it was
+            // deliberately hoisted up beside the two owner fields it completes
+            // (its own note, twelve lines up). "After OwnerEntityId" in
+            // DECLARATION order is exactly here, at the end; "after
+            // OwnerEntityId" in FOLD order would bury the counter among the
+            // ownership fields, where it qualifies nothing. The stated reason —
+            // end of struct = end of fold, Т5's idiom — picks this one.
+            //
+            // HASHED, not skipped, and the argument is Т5's third one verbatim:
+            // this is canonical state that SURVIVES A TICK and rides
+            // SaveState/RestoreState, so a rollback that dropped it would
+            // resume a round with a spent counter refilled — and the counter
+            // decides whether the next contact reflects or retires the round,
+            // which is a game outcome by any reading.
+            h = StateHash64.Add(h, p.Ricochets);
             return h;
         }
 

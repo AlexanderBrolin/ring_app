@@ -40,7 +40,20 @@ namespace Ring.Data
         /// app-88jb Т1 (spec §3.2): impact physics — a GAME quantity
         /// calibrated backwards from the desired delta-v, NOT a physical
         /// bullet mass (see SimConfig.HeroSimConfig's own doc for why).
-        [Range(0.01f, 100f)] public float ProjectileMass = 2.6f; // sync-marker key — keep LAST (was EmergencyFireInterval, app-88jb)
+        [Range(0.01f, 100f)] public float ProjectileMass = 2.6f; // Was the sync-marker key until app-88jb Т19.
+
+        /// app-88jb Т19 (spec §3.4, owner decision Н19): the ricochet — the
+        /// round repeats the dash's rule off a wall one for one. See
+        /// WeaponSimConfig's own doc for the rule and for why there is no
+        /// angle threshold: `MaxRicochets` and `RicochetMinSpeed` are what
+        /// bound a chain of weak ricochets, an angle threshold is not.
+        /// `RicochetRetention` is declared over (0, 1] by validation rule 9
+        /// (spec §3.10): at 1 a ricochet is lossless, above 1 it would ACCELERATE
+        /// the round and no counter could stop it, so the attribute's ceiling
+        /// and the rule agree on the same number rather than only nearly.
+        [Range(0, 8)] public int MaxRicochets = 2;
+        [Range(0.05f, 1f)] public float RicochetRetention = 0.8f;
+        [Range(0.1f, 100f)] public float RicochetMinSpeed = 6f; // sync-marker key — keep LAST (was ProjectileMass, app-88jb)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

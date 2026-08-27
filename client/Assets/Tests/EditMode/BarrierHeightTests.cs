@@ -29,6 +29,35 @@ namespace Ring.Simulation.Tests
             c.Gunner.StrafeSpeed = 0f;
             c.Gunner.FireInterval = 1e6f;
             c.Arena.BarrierTop = barrierTop;
+            // app-88jb Т19 (coordinator Ruling 94): THIS CLASS'S SUBJECT IS A
+            // ROUND DYING ON A BARRIER, so it states MaxRicochets = 0 the same
+            // way it states its own BarrierTop one line up — the idiom this
+            // file's own header already names ("Every fixture here states its
+            // own BarrierTop in the test body"). TestConfigs.Default() carries
+            // the SHIPPED 2 (invariant Р117), and at any value above zero every
+            // fixture here would measure a reflection instead of the height
+            // gate: eleven of these fourteen tests assert the round is GONE, or
+            // that exactly one ProjectileBlocked fired, and a reflected round
+            // is neither. Zero is not a workaround, it is what this fixture
+            // means — these tests are about the barrier stopping a round, and
+            // a weapon that ricochets is a different fixture.
+            //
+            // ⚠ ONLY THE WEAPON'S NUMBER IS STATED, AND THE MOB'S IS LEFT
+            // ALONE ON PURPOSE (coordinator Ruling 99). A mob-owned round
+            // carries the Gunner archetype's own MaxRicochets
+            // (Impact.RicochetNumbersFor), so this fixture would need to state
+            // that one too IF a mob-owned round could ever fly here. None can:
+            // the gunner's weapon is pushed out of reach four lines above,
+            // `c.Gunner.FireInterval = 1e6f`, which is why the doc at the top
+            // of this method says "their weapon pushed out of reach" and why
+            // "the only round in flight in these fixtures is the one the test
+            // itself states". A second zero here would be a line with no
+            // reader, and this epic has spent the whole way removing those.
+            // THE RULE THIS LEAVES BEHIND, stated so the next author does not
+            // have to re-derive it: a fixture that gives this file a LIVE
+            // gunner must state its own Gunner.MaxRicochets, exactly as every
+            // fixture here already states its own BarrierTop.
+            c.Weapon.MaxRicochets = 0;
             return c;
         }
 

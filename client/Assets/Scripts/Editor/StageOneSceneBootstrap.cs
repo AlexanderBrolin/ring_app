@@ -1074,9 +1074,9 @@ namespace Ring.Editor
             // marker on any of them would have left the newer field unable
             // to reach the file at all).
             EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "Parts"); // app-88jb Т16 (was TiltGain, app-88jb Т11a)
-            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "ProjectileMass"); // app-88jb Т11a (was EmergencyFireInterval, Stage 3 Task 2)
-            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "Parts"); // app-88jb Т16 (was DownedSeconds, app-88jb Т11a)
-            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "Parts"); // app-88jb Т16 (was DownedSeconds, app-88jb Т11a)
+            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RicochetMinSpeed"); // app-88jb Т19 (was ProjectileMass, app-88jb Т11a)
+            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "RicochetMinSpeed"); // app-88jb Т19 (was Parts, app-88jb Т16)
+            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "RicochetMinSpeed"); // app-88jb Т19 (was Parts, app-88jb Т16)
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
@@ -1127,12 +1127,24 @@ namespace Ring.Editor
             // numbers on disk. All four MobConfig assets move together
             // (Chaser/Gunner's calls above, Elite/Director's just below);
             // HeroConfig moves off TiltGain in the same breath. WeaponConfig
-            // does NOT move: it has no parts, and ProjectileMass is still its
-            // class's last field.
+            // did NOT move then: it has no parts, and ProjectileMass was still
+            // its class's last field.
+            //
+            // app-88jb Т19 MOVES ALL FIVE OF THEM AT ONCE, WeaponConfig
+            // included, and the count is the point: the ricochet numbers are
+            // appended to WeaponConfig AND to MobConfig, so the key moves on
+            // one weapon asset and on all four MobConfig assets, to
+            // `RicochetMinSpeed` — each class's new last field. Missing any
+            // ONE of the five leaves that asset's new keys unable to reach the
+            // file at all, and NO gate goes red for it: R-IDEM stays green (a
+            // no-op is idempotent) and EditMode stays green (the tests read
+            // the C# defaults, never the .asset). That silence is the whole
+            // reason this comment counts the call sites instead of describing
+            // them.
             EditorBootstrapUtils.EnsureAssetHasKey(elite, $"{DataDir}/MobEliteConfig.asset",
-                "Parts"); // app-88jb Т16 (was DownedSeconds, app-88jb Т11a)
+                "RicochetMinSpeed"); // app-88jb Т19 (was Parts, app-88jb Т16)
             EditorBootstrapUtils.EnsureAssetHasKey(director, $"{DataDir}/MobDirectorConfig.asset",
-                "Parts"); // app-88jb Т16 (was DownedSeconds, app-88jb Т11a)
+                "RicochetMinSpeed"); // app-88jb Т19 (was Parts, app-88jb Т16)
             EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
                 "DirectorReserveSlots"); // Stage 3 Task 12
             // Stage 3 Task 13: the item catalog and loot balance sheet join
