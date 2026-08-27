@@ -36,7 +36,6 @@ namespace Ring.Simulation.Combat
         {
             float dt = SimulationWorld.TickDt;
             SimConfig config = w.Config;
-            ArenaSimConfig arena = config.Arena;
             float heroRadius = config.Hero.Radius;
             (float t, int kind, int index)[] candidates = w.ProjCandidates;
 
@@ -44,7 +43,17 @@ namespace Ring.Simulation.Combat
             {
                 ref ProjectileState proj = ref w.Projectiles[i];
                 float2 startPos = proj.Pos;
-                float2 target = startPos + proj.Vel * dt;
+                // app-88jb Т18: the step itself -- where this tick ends and
+                // what STATIC geometry stands along the way -- comes from the
+                // one public home the client's tracer cranks too
+                // (ProjectileFlight's own doc). It picks no winner and refuses
+                // nothing: its three candidates arrive side by side and are
+                // packed into the canonical slots below, around the bodies.
+                // The round travels there by `in`: everything that MUTATES it
+                // stays here, on the two lines under this call and in the
+                // `default:` arm at the bottom.
+                ProjectileFlight.StepResult step = ProjectileFlight.Step(in proj, in config, dt);
+                float2 target = step.Target;
                 proj.PrevPos = startPos;
                 proj.Ttl -= dt;
 
@@ -57,28 +66,28 @@ namespace Ring.Simulation.Combat
                 // packed array's index order doubles as the tie-break order
                 // below, matching Task 1's original streaming-min bit-for-bit.
                 //
-                // Stage 2 Task 46 splits Task 5's single barrier slot in two,
-                // and the split is arithmetically identical to the one call it
-                // replaces: SweepArena consults the interior circles and walls
-                // first and only then lets the ring boundary win with a strict
-                // `tw < t` (its own doc), so packing the interior sweep FIRST
-                // and the ring SECOND reproduces both the same minimum and the
-                // same "interior takes an exact tie" rule through the min-scan
-                // below, which also breaks ties by lowest packed slot. The ring
-                // is asked with the same Geometry.SegmentRingWall call and the
-                // same arguments SweepArena itself would have used, so the `t`
-                // is the same number, not merely the same rule.
+                // app-88jb Т18: the three STATIC slots are filled off the
+                // step above instead of from solver calls written out here,
+                // and not one index moved — the ORDER is this file's business
+                // and nobody else's, because it is what the min-scan's
+                // tie-break means. Stage 2 Task 46's split of the single
+                // barrier slot in two survives the move for exactly the reason
+                // it was made: the interior barrier and the ring boundary are
+                // two flags on the step and never one candidate, so refusing
+                // the barrier on its height cannot throw away a boundary the
+                // round has NOT cleared. Why the two are arithmetically the
+                // same as the one SweepArena call they replaced, and why the
+                // interior sweep is asked first, is stated once, in
+                // ProjectileFlight.Step beside the calls themselves.
                 int candCount = 0;
-                if (Geometry.SweepArena(startPos, target, proj.Radius, in arena, false,
-                        out float tBarrier, out float2 barrierNormal))
+                if (step.HasBarrier)
                 {
-                    candidates[candCount++] = (tBarrier, HitBarrier, -1);
+                    candidates[candCount++] = (step.BarrierT, HitBarrier, -1);
                 }
 
-                if (Geometry.SegmentRingWall(startPos, target, proj.Radius, arena.Radius,
-                        out float tRing))
+                if (step.HasRingWall)
                 {
-                    candidates[candCount++] = (tRing, HitRingWall, -1);
+                    candidates[candCount++] = (step.RingWallT, HitRingWall, -1);
                 }
 
                 // Stage 3 Task 5 (spec Р252): the gate that used to read
@@ -129,22 +138,22 @@ namespace Ring.Simulation.Combat
                     }
                 }
 
-                // Floor candidate (Task 7): a descending shot (VelZ < 0) crosses
-                // the ground when its center height reaches Radius (the sphere's
-                // underside at z = 0). t_floor solves proj.Height + t*VelZ*dt =
-                // Radius for t; only gathered when that crossing genuinely falls
-                // within THIS tick's step — clipped to [0,1] the same way
-                // SegmentCircle/SegmentRingWall reject an out-of-range root above,
-                // rather than forcing a distant crossing to register early.
+                // Floor candidate (Task 7): a descending shot crosses the
+                // ground when its center height reaches Radius (the sphere's
+                // underside at z = 0). The crossing itself, its VelZ gate and
+                // its [0,1] clip are solved in ProjectileFlight.Step — same
+                // arithmetic, same comparisons, one home (app-88jb Т18); what
+                // is decided HERE is the slot the answer lands in.
                 // Packed LAST (canonical slot order, M5): a barrier/mob/player tie
-                // at the same t always outranks the floor.
-                if (proj.VelZ < 0f)
+                // at the same t always outranks the floor. That is also why the
+                // step hands the floor back behind a flag of ITS OWN instead of
+                // folded in with the two barrier candidates — those two are
+                // packed before the bodies and this one after them, so no
+                // single candidate could ever stand for both sides of the
+                // array.
+                if (step.HasFloor)
                 {
-                    float tFloor = (proj.Radius - proj.Height) / (proj.VelZ * dt);
-                    if (tFloor >= 0f && tFloor <= 1f)
-                    {
-                        candidates[candCount++] = (tFloor, HitFloor, -1);
-                    }
+                    candidates[candCount++] = (step.FloorT, HitFloor, -1);
                 }
 
                 // Repeated min-scan, no sort/delegates (AllocationTests): picks
@@ -236,10 +245,14 @@ namespace Ring.Simulation.Combat
                         // kinds share this branch because the ENDING is the
                         // same event either way: only the normal's source
                         // differs, and Presentation never had a way to tell an
-                        // obstacle from the rim to begin with.
+                        // obstacle from the rim to begin with. app-88jb Т18:
+                        // the obstacle's normal rides here on the step, the
+                        // only one of its three candidates that carries one —
+                        // the ring's is still derived from the contact right
+                        // here, exactly as it was.
                         float2 blockedNormal = hitKind == HitRingWall
                             ? Geometry.RingWallNormal(contact)
-                            : barrierNormal;
+                            : step.BarrierNormal;
                         // Amount (app-88jb Т3, finding D-C4): 0f — a blocked
                         // round deals no damage, and Amount is spent on
                         // damage everywhere else in this struct. The contact
@@ -573,7 +586,9 @@ namespace Ring.Simulation.Combat
                 // правило на все внутренние барьеры" held transitively but was
                 // executed by no test until BarrierHeightTests grew its two arc
                 // cases). All three arrive through the one SweepArena call
-                // above as the one HitBarrier candidate, so there is no
+                // ProjectileFlight.Step makes as the one HitBarrier candidate
+                // (app-88jb Т18 moved that call out of the gather phase; the
+                // candidate it answers with did not change), so there is no
                 // per-shape height branch here and none is wanted
                 // (Stage 2 Task 46, bd app-r8x). They share one modelled top,
                 // Arena.BarrierTop; a non-positive value means there is none,
@@ -630,15 +645,16 @@ namespace Ring.Simulation.Combat
             }
             else // HitFloor
             {
-                // Floor (Task 7): the gather phase already solved the exact
-                // within-tick height crossing, so every gathered floor
+                // Floor (Task 7): ProjectileFlight.Step already solved the
+                // exact within-tick height crossing — it was the gather phase
+                // itself until app-88jb Т18 — so every gathered floor
                 // candidate is a genuine contact — nothing further to test.
                 // Not a damageable body: no zone (zone/mult already default to
                 // None/1 at the top of this function).
                 // Height (app-88jb Т3): same contact-height formula as every
                 // other branch above — for a genuine floor candidate this
                 // equals proj.Radius by construction (t_floor's own defining
-                // equation, gather phase above: the sphere's underside
+                // equation, ProjectileFlight.Step: the sphere's underside
                 // touching the ground plane).
                 hitHeight = contactHeight;
                 return true;
