@@ -249,9 +249,14 @@ namespace Ring.Presentation
         /// В1/В2 fix-wave 2 (app-n6g item 3): also resolves WHICH belt was hit
         /// (`zone`, via the collider's own bootstrap-assigned name —
         /// `StageOneSceneBootstrap.EnsureAimProxyChildren` names each belt
-        /// `AimProxy_` + its part's zone, so the three names it can produce are
-        /// exactly the three `ClassifyProxyZone` below compares against, with
-        /// no extra marker component needed) and, if the hit
+        /// `AimProxy_` + its part's zone, so every shipped body produces exactly
+        /// the three names `ClassifyProxyZone` below compares against, with no
+        /// extra marker component needed. ⚠ It is the DATA that keeps that true,
+        /// not the naming: `SimConfigBuilder.ValidateParts` refuses a repeated
+        /// zone but does not refuse `HitZone.None`, so a hand-authored part
+        /// carrying it would raise a belt this method classifies as no zone at
+        /// all. That is bd `app-fedg`, and the rule that closes it belongs in
+        /// the validator, not here) and, if the hit
         /// collider belongs to a live mob, that mob's own `MobView`
         /// (`GetComponentInParent` — the proxy is a direct child of the same
         /// root `MobView` sits on, `EnsureAimProxyChildren`'s own call sites).

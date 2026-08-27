@@ -500,22 +500,33 @@ namespace Ring.Data
         // `app-oxyo`), on the owner's call — "the elite has to be at least twice
         // as big" — and the MEASUREMENT that call turned out to agree with. The
         // drawn crown of every archetype was measured against the `AimProxy_Head`
-        // belt its own SO builds (renderer AABB of the prefab's `Visual`
-        // subtree): Chaser 2.70 m against a 1.85 m column, Gunner 4.21 against
-        // 3.5, Director 4.79 against 3.5 — and ELITE 1.79 against 3.5, the only
-        // archetype drawn SHORTER than its own hittable column, at barely half
-        // of it. The Head band is 2.7-3.5 m, so it stood entirely in the air
-        // ABOVE the model: an elite could not be headshot at the head a player
-        // could see, and the visible head read as body. 1.5 puts the crown at
-        // 3.58 m against the column's 3.5 — the paragraph above's warning
-        // ("a retune of one alone silently desyncs the visible model from its
-        // hittable silhouette") answered rather than repeated.
+        // belt its own SO built at the time (renderer AABB of the prefab's
+        // `Visual` subtree): Chaser 2.70 m against a 1.85 m hittable top,
+        // Gunner 4.21 against 3.5, Director 4.79 against 3.5 — and ELITE 1.79
+        // against 3.5, the only archetype drawn SHORTER than what could be shot
+        // at, at barely half of it. Its head belt ran 2.7-3.5 m back then, so it
+        // stood entirely in the air ABOVE the model: an elite could not be
+        // headshot at the head a player could see, and the visible head read as
+        // body. 1.5 puts the drawn crown at 3.58 m — the paragraph above's
+        // warning ("a retune of one alone silently desyncs the visible model
+        // from its hittable silhouette") answered rather than repeated.
         //
-        // The other three keep their measured mismatch (1.46 / 1.20 / 1.37 — the
-        // drawn model is TALLER than the column, so the top of it cannot be
-        // shot). That is bd `app-1cst`, and it is not a retune: the owner's
-        // decision is that hits should be resolved against the MODEL rather than
-        // a capsule, together with the projectile/mob physics of `app-afaz`.
+        // ⚠ THE MISMATCH THOSE MEASUREMENTS RECORD IS CLOSED, AND app-88jb IS
+        // WHAT CLOSED IT — this paragraph used to say the other three KEEP it
+        // (1.46 / 1.20 / 1.37, "the top of the model cannot be shot"), which
+        // stopped being true in two halves. Т13 declared per-part hit volumes
+        // whose crowns ARE those measured heights and Т16 delivered them into
+        // the `.asset`s, so the SIMULATION scores the top of the model; Т17
+        // rebuilt these very `AimProxy_*` belts from the same arrays, so the
+        // CROSSHAIR agrees with it. Crowns now: 2.70 / 4.20 / 3.58 / 4.80 for
+        // the four archetypes. That was bd `app-1cst`, and it was never a
+        // retune: the owner's decision is that hits resolve against the MODEL
+        // rather than a capsule, together with the projectile/mob physics of
+        // `app-afaz`.
+        // ⚠ ONE BODY STILL CARRIES A GAP AND IT IS DELIBERATE: the collector's
+        // heights are the spec's own k = 1 (§3.3), not a measurement, so the top
+        // ~8 cm of his doll stay outside what can be shot. Written down in
+        // `HeroConfig.Parts`' own doc rather than rounded away.
         [Range(0.05f, 6f)] public float EliteVisualScale = 1.5f;
         [Range(0.05f, 6f)] public float DirectorVisualScale = 3.5f;
 

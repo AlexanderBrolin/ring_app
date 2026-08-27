@@ -3128,9 +3128,11 @@ namespace Ring.Editor
         /// `partsPending` is even snapshotted, that gate is CLOSED, and without
         /// this second creation-gated path the gunner would keep the chaser's
         /// body forever. ApplyGunnerZoneDefaults is where it belongs because
-        /// that method IS the gunner silhouette -- it already carries the very
-        /// zone column these parts replace -- and its call site already has the
-        /// right gate, `(gunnerCreated || !gunnerMarkerPresent)`.
+        /// that method IS the gunner silhouette -- it carried the very vertical
+        /// geometry these parts succeeded, until app-88jb Т17 (Ruling 76)
+        /// removed the last of it and left this call as the whole of the
+        /// archetype's body -- and its call site already has the right gate,
+        /// `(gunnerCreated || !gunnerMarkerPresent)`.
         static bool ApplyGunnerPartsDefaults(MobConfig m)
         {
             return SetIfDifferent(ref m.Parts, new[]
