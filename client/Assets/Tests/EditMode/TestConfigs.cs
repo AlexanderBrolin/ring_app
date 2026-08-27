@@ -12,8 +12,6 @@ namespace Ring.Simulation.Tests
                 Hero = new HeroSimConfig { MaxSpeed = 7f, Accel = 40f, Friction = 30f,
                     Radius = 0.45f, MaxHp = 100f, DashSpeed = 22f, DashDuration = 0.15f,
                     DashCooldown = 1.2f, DashIframes = 0.2f, DashBufferWindow = 0.15f,
-                    LegsTop = 0.55f, BodyTop = 1.35f, HeadTop = 1.75f,
-                    LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
                     SlideProfileTop = 0.55f, MuzzleHeight = 1.0f, SlideMuzzleHeight = 0.45f,
                     // app-88jb Т13: mirrors HeroConfig's own C# default, which
                     // moved 3.8 -> 4.9 in this task so validation rule 14 can
@@ -90,8 +88,6 @@ namespace Ring.Simulation.Tests
                     TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,
                     SeparationRadius = 1.2f, SeparationStrength = 6f, AvoidLookahead = 3f,
                     AvoidMargin = 1f,
-                    LegsTop = 0.60f, BodyTop = 1.45f, HeadTop = 1.85f,
-                    LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
                     MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
                     // app-88jb Т1 (spec §3.2): impact physics — chaser numbers,
                     // mirrors MobConfig's C# defaults (two-sources-of-numbers
@@ -113,9 +109,9 @@ namespace Ring.Simulation.Tests
                         new HitPart { Radius = 0.17f, Bottom = 2.12f, Top = 2.70f,
                             Zone = HitZone.Head, DamageMult = 1.7f },
                     } },
-                // Gunner's LegsTop/BodyTop/HeadTop already carry the taller ranged-mech
-                // tower (Task 17 ships the same numbers into the real .asset via the
-                // marker mechanism, ahead of that this baseline is the source of truth,
+                // Gunner's Parts already carry the taller ranged-mech tower
+                // (Т16 ships the same numbers into the real .asset via the marker
+                // mechanism; ahead of that this baseline is the source of truth,
                 // QA4). SwingLeadFactor/SwingLeadMaxMeters are melee-only (Chaser) and
                 // simply keep the MobConfig class default here, unused by Gunner.
                 Gunner = new MobSimConfig { MaxSpeed = 4f, Accel = 25f, Radius = 0.5f,
@@ -124,8 +120,6 @@ namespace Ring.Simulation.Tests
                     ProjectileLifetime = 3f, ProjectileDamage = 8f, LeadFactor = 0.8f,
                     SeparationRadius = 1.2f, SeparationStrength = 6f, AvoidLookahead = 3f,
                     AvoidMargin = 1f,
-                    LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
-                    LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
                     MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
                     // app-88jb Т1 (spec §3.2): impact physics — gunner numbers
                     // (owner Ruling 3: differentiated per-archetype numbers
@@ -137,11 +131,11 @@ namespace Ring.Simulation.Tests
                     TiltSettleSeconds = 0.9f, TiltGain = 10.5f,
                     TiltFallAngle = 0.9f, DownedSeconds = 1.2f,
                     // app-88jb Т13 (spec §3.3): the gunner's hit parts.
-                    // Heights are the old column x 1.20 (crown 4.2063 against
-                    // 3.50). The shipped .asset gets them through the marker
-                    // mechanism in Т16, exactly as its LegsTop/BodyTop/HeadTop
+                    // Heights are the old zone column x 1.20 (crown 4.2063
+                    // against 3.50). The shipped .asset gets them through the
+                    // marker mechanism in Т16, exactly as that column itself
                     // did in Task 17 — ahead of that, this is the source of
-                    // truth (same note as the tower column above).
+                    // truth (same note as the tower above).
                     Parts = new[]
                     {
                         new HitPart { Radius = 0.35f, Bottom = 0f, Top = 1.32f,
@@ -279,8 +273,6 @@ namespace Ring.Simulation.Tests
                     ProjectileLifetime = 3f, ProjectileDamage = 8f, LeadFactor = 0.8f,
                     SeparationRadius = 1.2f, SeparationStrength = 6f, AvoidLookahead = 3f,
                     AvoidMargin = 1f,
-                    LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
-                    LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
                     MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
                     // app-88jb Т1 (spec §3.2): impact physics — Elite numbers
                     // (owner Ruling 3: reach the shipped .asset only via
@@ -314,8 +306,6 @@ namespace Ring.Simulation.Tests
                     ProjectileLifetime = 3f, ProjectileDamage = 8f, LeadFactor = 0.8f,
                     SeparationRadius = 1.2f, SeparationStrength = 6f, AvoidLookahead = 3f,
                     AvoidMargin = 1f,
-                    LegsTop = 1.10f, BodyTop = 2.70f, HeadTop = 3.50f,
-                    LegsDamageMult = 0.75f, BodyDamageMult = 1.0f, HeadDamageMult = 1.7f,
                     MuzzleHeight = 0.95f, SwingLeadFactor = 1.0f, SwingLeadMaxMeters = 2.0f,
                     // app-88jb Т1 (spec §3.2): impact physics — Director
                     // numbers (owner Ruling 3: reach the shipped .asset only

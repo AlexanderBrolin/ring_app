@@ -4,53 +4,28 @@ using Unity.Mathematics;
 namespace Ring.Simulation.Combat
 {
     /// Vertical hit-volume maths shared by every damageable body (Task 6): the
-    /// hero and both mob archetypes carry the same LegsTop/BodyTop/HeadTop +
-    /// per-zone multiplier shape, so these are scalar helpers taking the four
-    /// numbers directly rather than an overload per config struct — one body,
-    /// every caller.
+    /// collector and all four mob archetypes present the same shape — an
+    /// ORDERED STACK OF PARTS — so these are helpers taking that array (or the
+    /// bare heights) directly rather than an overload per config struct: one
+    /// body, every caller.
+    ///
+    /// ⚠ THE CLASS IS NO LONGER THE ARITHMETIC OF A THREE-BAND COLUMN
+    /// (app-88jb Т15). `Classify` and `MultFor` — the pair that read a zone and
+    /// a multiplier off six scalars — were deleted together with those scalars;
+    /// what a shot lands on is decided by `Resolve` over the parts, and the two
+    /// survivors beside it are the silhouette gate (`Overlaps`, which the
+    /// barrier and the floor need and which knows nothing of parts) and the
+    /// crown of a stack (`StackTop`).
     ///
     /// Internal on purpose: nothing outside the simulation assembly needs to
     /// re-derive a zone. Presentation reads the resolved `SimEvent.Zone`.
     internal static class HitZones
     {
-        /// Zone of a hit landing at height `h`, in half-open bands
-        /// [0, legsTop) → Legs, [legsTop, bodyTop) → Body, [bodyTop, headTop] → Head.
-        ///
-        /// `h` is CLAMPED into [0, headTop] first, which is what makes the edges
-        /// forgiving: a round that only grazes the crown (h slightly above
-        /// headTop, still inside the projectile's own radius — see Overlaps)
-        /// reads as Head rather than falling off the table, and one that cuts in
-        /// just under the floor line reads as Legs. Clamping and hit/no-hit are
-        /// deliberately separate decisions: Overlaps below decides IF the shot
-        /// connects at all, this only decides WHERE.
-        public static HitZone Classify(float h, float legsTop, float bodyTop, float headTop)
-        {
-            float clamped = math.clamp(h, 0f, headTop);
-            if (clamped < legsTop) return HitZone.Legs;
-            if (clamped < bodyTop) return HitZone.Body;
-            return HitZone.Head;
-        }
-
-        /// Damage multiplier for a zone. HitZone.None is neutral (1) — a blow
-        /// with no zone behind it (melee, any future zone-less source) deals
-        /// exactly what it says.
-        public static float MultFor(HitZone zone, float legsMult, float bodyMult, float headMult)
-        {
-            switch (zone)
-            {
-                case HitZone.Legs: return legsMult;
-                case HitZone.Body: return bodyMult;
-                case HitZone.Head: return headMult;
-                default: return 1f;
-            }
-        }
-
         /// app-88jb T14 (spec 3.3, plan Task T14): which PART of a body a shot
-        /// entered, and where. Replaces the Classify/MultFor pair AT THE CALL
-        /// SITE (ProjectileSystem.AcceptCandidate) for the two damageable
-        /// kinds; those two stay below because the LegsTop/BodyTop/HeadTop
-        /// column they are the arithmetic of lives until T15, and their own
-        /// unit tests are written on it (coordinator Ruling 66).
+        /// entered, and where. It replaced the Classify/MultFor pair at the call
+        /// site (ProjectileSystem.AcceptCandidate) for the two damageable kinds
+        /// in T14, and T15 deleted that pair outright once the six column
+        /// scalars it was the arithmetic of left SimConfig.
         ///
         /// Returns false when the shot passes clear over or under every part
         /// (the caller then rejects the candidate and rescans -- a target
@@ -105,7 +80,7 @@ namespace Ring.Simulation.Combat
         /// a body that declares no hit volume presents nothing to hit, which is
         /// SimConfigBuilder's own wording for the same rule ("Parts must not be
         /// empty -- a body with no parts cannot be hit at all",
-        /// SimConfigBuilder.cs:1935). Every config that went through the
+        /// SimConfigBuilder.cs:1898). Every config that went through the
         /// builder is non-empty by validation, so this arm is unreachable in
         /// the game and reachable only from a fixture.
         public static float StackTop(HitPart[] parts)
@@ -124,7 +99,7 @@ namespace Ring.Simulation.Combat
         ///      rather than being read off `parts` here.
         ///   2. EDGE FORGIVENESS, per part and only once that part is known to
         ///      be met rather than cleared: the heights are CLAMPED into
-        ///      [0, ceiling]. This is Classify's own clamp into [0, headTop],
+        ///      [0, ceiling]. This is the column-era clamp into [0, headTop],
         ///      moved here -- a round grazing the crown sits above every band,
         ///      and gating on the raw height would turn the graze step 1 just
         ///      accepted into a miss.
@@ -166,7 +141,7 @@ namespace Ring.Simulation.Combat
         /// only answer that cannot invent a hit volume nobody configured. It is
         /// unreachable for any config that went through SimConfigBuilder, whose
         /// own rule says so in the same words ("Parts must not be empty -- a
-        /// body with no parts cannot be hit at all", SimConfigBuilder.cs:1935);
+        /// body with no parts cannot be hit at all", SimConfigBuilder.cs:1898);
         /// what it covers is a hand-built fixture, and for one of those a miss
         /// is the honest answer rather than a NullReferenceException.
         public static bool Resolve(HitPart[] parts, float2 p0, float2 p1, float projRadius,
@@ -185,7 +160,7 @@ namespace Ring.Simulation.Combat
             // collector mid-slide shows SlideProfileTop instead, and T13's
             // validation rule 5 is what makes that expressible here: the
             // profile is required to COINCIDE with a part boundary
-            // (SimConfigBuilder.cs:634), so capping at it hides whole parts
+            // (SimConfigBuilder.cs:620), so capping at it hides whole parts
             // rather than slicing one in half.
             float ceiling = math.min(parts[last].Top, overlapTop);
             // Cheap necessary condition on the step, before any quadratic: a
@@ -217,7 +192,7 @@ namespace Ring.Simulation.Combat
                 if (!Overlaps(hIn, hOut, projRadius, ceiling)) continue;
 
                 // EDGE FORGIVENESS, and only now that the round is known to be
-                // against the body rather than clear of it: Classify's own
+                // against the body rather than clear of it: the column-era
                 // clamp into [0, headTop], moved here. A round grazing the
                 // crown sits above every band, and gating on the raw height
                 // would turn the graze the line above just accepted into a

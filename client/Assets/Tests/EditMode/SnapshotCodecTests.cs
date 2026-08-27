@@ -34,7 +34,9 @@ namespace Ring.Simulation.Tests
     // kinds, payload bytes, payload lengths) was checked by grep against
     // client/Assets/Data/*.asset and appears in none of them — the trap that
     // caught three fixtures earlier in this phase (3.8 = MaxAimHeight,
-    // 100 = MaxHp, 1.35 = BodyTop). VERIFIED STATEMENT, third attempt — the
+    // 100 = MaxHp, 1.35 = HeroConfig.asset's own BodyTop, an Inspector field
+    // that outlives the simulation column it belonged to — see Т15/Т17).
+    // VERIFIED STATEMENT, third attempt — the
     // history is the lesson. The first note said "19, 22 and 14 all occur in
     // ArenaConfig.asset"; a fix-round "corrected" it to "none of the three
     // lives in ArenaConfig", which was WORSE: that grep matched only

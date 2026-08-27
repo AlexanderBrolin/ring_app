@@ -92,7 +92,11 @@ namespace Ring.Simulation.Tests
         {
             var c = Range();
             float h = c.Hero.MuzzleHeight;
-            float aim = c.Chaser.HeadTop; // a mob's head — above the hero's muzzle
+            // app-88jb Т15: a mob's CROWN, above the collector's muzzle. It
+            // was the chaser's zone-column top (1.85) and is now the top of his
+            // last part (2.70) — the premise "above the muzzle" only gets stronger, and
+            // the number itself is a fixture height, not this test's subject.
+            float aim = HitZones.StackTop(c.Chaser.Parts);
             Assert.Greater(aim, h, "fixture premise: the aimed point is ABOVE the muzzle");
 
             Assert.AreEqual(1f, Trajectory.FloorCutFraction(h, aim, c.Weapon.ProjectileRadius), 1e-6f,

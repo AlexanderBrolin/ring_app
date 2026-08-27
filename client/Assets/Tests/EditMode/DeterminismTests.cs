@@ -319,7 +319,7 @@ namespace Ring.Simulation.Tests
         static void BudgetHpForTheWholeRun(SimulationWorld world, in SimConfig cfg, int ticks)
         {
             float totalSeconds = ticks * SimulationWorld.TickDt;
-            float shotDps = cfg.Hero.HeadDamageMult * cfg.Weapon.Damage / cfg.Weapon.FireInterval;
+            float shotDps = TestWorlds.MaxPartDamageMult(cfg.Hero.Parts) * cfg.Weapon.Damage / cfg.Weapon.FireInterval;
             float mobDps = cfg.Arena.MaxMobs * cfg.Chaser.ContactDamage / cfg.Chaser.AttackCooldown;
             float hpBudget = totalSeconds * (shotDps + mobDps);
             for (int p = 0; p < world.PlayerCount; p++)

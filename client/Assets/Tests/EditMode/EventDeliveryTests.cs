@@ -886,9 +886,9 @@ namespace Ring.Simulation.Tests
             //
             // app-88jb T14 (coordinator Ruling 75): BOTH THE AIM AND THE
             // MULTIPLIER ARE READ OFF THE GUNNER'S HEAD PART, not off the
-            // LegsTop/BodyTop/HeadTop column beside it. From T14 on a blow is
-            // resolved against Parts, and `0.5 * (BodyTop + HeadTop)` = 3.10 m
-            // is no longer this body's head at all — the gunner's head belt is
+            // vertical zone column that used to stand beside it. From T14 on a
+            // blow is resolved against Parts, and the column's own head band
+            // midpoint, 3.10 m, is no longer this body's head at all — the gunner's head belt is
             // [3.24, 4.20] and 3.10 sits inside his TORSO [1.32, 3.24). The
             // consequence is not cosmetic and it is what made this test red:
             // a torso hit is 12 damage against MaxHp 20, the mob SURVIVES, and
@@ -897,8 +897,8 @@ namespace Ring.Simulation.Tests
             // pairing this test exists to pin. Off the part the aim is 3.72 m
             // and the blow is 12 * 1.7 = 20.4 >= 20, a one-shot again.
             //
-            // THE COLUMN IS NOT REMOVED ANYWHERE — it lives until T15; this
-            // fixture simply stopped reading its own aim out of it.
+            // T15 REMOVED THAT COLUMN FROM THE SIMULATION OUTRIGHT; this
+            // fixture had already stopped reading its own aim out of it.
             HitPart gunnerHead = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
             Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp,
                 "fixture premise: this must be a one-shot kill, so both events land in one tick");
@@ -1138,7 +1138,7 @@ namespace Ring.Simulation.Tests
 
             w.ClearEvents();
             w.Emit(SimEventKind.ProjectileHitPlayer, new float2(30f, 0f), victimSlot, default,
-                cfg.Weapon.Damage * cfg.Hero.HeadDamageMult, zone: HitZone.Head,
+                cfg.Weapon.Damage * cfg.Hero.Parts[^1].DamageMult, zone: HitZone.Head,
                 hitDir: new float2(1f, 0f), playerIndex: 0, secondaryEntityId: roundId);
 
             asm.BeginTick(w);

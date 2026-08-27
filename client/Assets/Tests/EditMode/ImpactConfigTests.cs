@@ -68,14 +68,15 @@ namespace Ring.Simulation.Tests
         public void Validate_CenterOfMassAboveTheTallestPart_Throws()
         {
             // ⚠ RENAMED AND REPOINTED BY app-88jb Т13, because the rule it
-            // witnesses moved: rule 6's upper bound was HeadTop and is now the
-            // top of the body's LAST PART (the plan says outright that Т13
-            // rewrites this Т1 rule). Left driving off `g.HeadTop`, this test
-            // would have gone green on a violation the rule no longer sees —
-            // the gunner's parts reach 2.70 against a HeadTop of 1.85, so
-            // HeadTop + 0.01 is now a perfectly legal center of mass. The
-            // driver is the bound itself, so the witness cannot drift from the
-            // rule again.
+            // witnesses moved: rule 6's upper bound was the top of the vertical
+            // zone column and is now the top of the body's LAST PART (the plan
+            // says outright that Т13 rewrites this Т1 rule; Т15 then removed
+            // that column from SimConfig altogether). Left driving off the old
+            // scalar, this test would have gone green on a violation the rule
+            // no longer sees — a fresh MobConfig's parts reach 2.70 against a
+            // column top of 1.85, so column-top + 0.01 is now a perfectly legal
+            // center of mass. The driver is the bound itself, so the witness
+            // cannot drift from the rule again.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             HitPart[] parts = g.Parts;                     // SECOND archetype
             g.CenterOfMassHeight = parts[parts.Length - 1].Top + 0.01f;

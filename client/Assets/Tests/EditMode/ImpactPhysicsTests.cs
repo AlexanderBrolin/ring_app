@@ -474,8 +474,8 @@ namespace Ring.Simulation.Tests
             // ⚠ THIS IS THE FIRST OF TWO HALVES (coordinator Ruling 65). A
             // witness that puts a ROUND in flight cannot exist yet: the hit
             // gate still reads the old column (ProjectileSystem's
-            // AcceptCandidate takes `overlapTop` from cfg.HeadTop, 1.85 for the
-            // chaser), which Т13 does not move — a shot aimed at 2.41 m simply
+            // AcceptCandidate takes `overlapTop` from the column's top, 1.85 for
+            // the chaser), which Т13 does not move — a shot aimed at 2.41 m simply
             // passes over the body. Т14 repoints that gate at these very parts
             // and lands the flying half of the same criterion; debt app-hoe6
             // closes there, not here.
@@ -617,8 +617,8 @@ namespace Ring.Simulation.Tests
             // hands the contact height in by hand, so it can only show that the
             // spring and the proportions agree; only a round that has to REACH
             // the head part can show that the hit gate lets it. Before app-88jb
-            // T14 it could not: AcceptCandidate took `overlapTop` from
-            // cfg.HeadTop -- 1.85 m for the chaser -- and every shot aimed at
+            // T14 it could not: AcceptCandidate took `overlapTop` from the
+            // vertical zone column -- 1.85 m for the chaser -- and every shot aimed at
             // the [2.12, 2.70] head belt passed clean over the body. T14
             // repoints that gate at the parts themselves (top of the last part,
             // 2.70), which is what makes this witness expressible at all.

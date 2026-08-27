@@ -138,12 +138,6 @@ namespace Ring.Simulation.Tests
             target.SeparationStrength = source.SeparationStrength;
             target.AvoidLookahead = source.AvoidLookahead;
             target.AvoidMargin = source.AvoidMargin;
-            target.LegsTop = source.LegsTop;
-            target.BodyTop = source.BodyTop;
-            target.HeadTop = source.HeadTop;
-            target.LegsDamageMult = source.LegsDamageMult;
-            target.BodyDamageMult = source.BodyDamageMult;
-            target.HeadDamageMult = source.HeadDamageMult;
             target.MuzzleHeight = source.MuzzleHeight;
             target.SwingLeadFactor = source.SwingLeadFactor;
             target.SwingLeadMaxMeters = source.SwingLeadMaxMeters;
@@ -513,21 +507,14 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Validate_ZoneOrderViolated_Throws()
-        {
-            var hero = ScriptableObject.CreateInstance<HeroConfig>();
-            hero.LegsTop = 1.0f; hero.BodyTop = 0.5f; // zone order violated
-            var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
-            Assert.That(ex.Message, Does.Contain("LegsTop"));
-        }
-
-        [Test]
         public void Validate_SlideProfileAboveGunnerMuzzle_Throws()
         {
             var hero = ScriptableObject.CreateInstance<HeroConfig>();
             // NB (QA2/QD3): a fresh MobConfig has ProjectileRadius = 0 (chaser
             // defaults), so 1.0 is used: 1.0 + 0 >= MuzzleHeight(0.95) — rule D5
-            // violated, while 1.0 <= Hero.BodyTop (1.35) — the other rules stay quiet.
+            // violated, while 1.0 is still under the bottom of the collector's
+            // head part (1.35 — the height Т15 repointed the old body-band
+            // ceiling at) — the other rules stay quiet.
             // ⚠ app-88jb Т13 TIGHTENED THE ASSERTION, and the reason is this
             // test's own: 1.0 is not a boundary of any collector part either,
             // so Т13's rule 5 now ALSO refuses this value and its message also
@@ -1507,12 +1494,6 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.DashCooldown, a.DashCooldown, Eps);
             Assert.AreEqual(e.DashIframes, a.DashIframes, Eps);
             Assert.AreEqual(e.DashBufferWindow, a.DashBufferWindow, Eps);
-            Assert.AreEqual(e.LegsTop, a.LegsTop, Eps);
-            Assert.AreEqual(e.BodyTop, a.BodyTop, Eps);
-            Assert.AreEqual(e.HeadTop, a.HeadTop, Eps);
-            Assert.AreEqual(e.LegsDamageMult, a.LegsDamageMult, Eps);
-            Assert.AreEqual(e.BodyDamageMult, a.BodyDamageMult, Eps);
-            Assert.AreEqual(e.HeadDamageMult, a.HeadDamageMult, Eps);
             Assert.AreEqual(e.SlideProfileTop, a.SlideProfileTop, Eps);
             Assert.AreEqual(e.MuzzleHeight, a.MuzzleHeight, Eps);
             Assert.AreEqual(e.SlideMuzzleHeight, a.SlideMuzzleHeight, Eps);
@@ -1624,12 +1605,6 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.SeparationStrength, a.SeparationStrength, Eps);
             Assert.AreEqual(e.AvoidLookahead, a.AvoidLookahead, Eps);
             Assert.AreEqual(e.AvoidMargin, a.AvoidMargin, Eps);
-            Assert.AreEqual(e.LegsTop, a.LegsTop, Eps);
-            Assert.AreEqual(e.BodyTop, a.BodyTop, Eps);
-            Assert.AreEqual(e.HeadTop, a.HeadTop, Eps);
-            Assert.AreEqual(e.LegsDamageMult, a.LegsDamageMult, Eps);
-            Assert.AreEqual(e.BodyDamageMult, a.BodyDamageMult, Eps);
-            Assert.AreEqual(e.HeadDamageMult, a.HeadDamageMult, Eps);
             Assert.AreEqual(e.MuzzleHeight, a.MuzzleHeight, Eps);
             Assert.AreEqual(e.SwingLeadFactor, a.SwingLeadFactor, Eps);
             Assert.AreEqual(e.SwingLeadMaxMeters, a.SwingLeadMaxMeters, Eps);
@@ -2061,18 +2036,50 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Validate_RejectsEliteHitZoneBandsOutOfOrder()
+        public void Validate_RejectsEliteSectionWithABrokenPartStack()
         {
-            // The ValidateZones half of the same debt: an elite whose leg band
-            // reaches above its body band is a hit-zone table no shot can be
-            // resolved against, and it used to reach the simulation unchecked.
+            // app-88jb Т15 (coordinator Ruling 81). THIS TEST INHERITS THE
+            // SECOND SUBJECT OF Validate_RejectsEliteHitZoneBandsOutOfOrder,
+            // which this same task deleted. That test had two subjects, not
+            // one: the zone-ORDER rule (which died together with the zone
+            // column it was the arithmetic of, and rightly), and the fact that
+            // THE ELITE SECTION REACHES ValidateMob AT ALL -- the debt its
+            // sibling right above names in as many words ("the Elite/Director
+            // sections were outside ValidateMob's sweep for two whole phases").
+            // The second subject did not die with the column.
+            //
+            // ⚠ THE MEASUREMENT, written down so the next reader does not
+            // delete this test a second time: refusals naming "Elite." in this
+            // suite went 1 -> 0 the moment the old test was removed, against
+            // Director 1, Gunner 7 and Hero 4 still standing. With none left,
+            // deleting the single line `ValidateMob(errors, "Elite", cfg.Elite);`
+            // from SimConfigBuilder.Validate reddens NOTHING in the suite.
+            //
+            // A GAP BETWEEN PARTS IS THE DRIVER, AND IT IS THE ONLY REFUSAL
+            // THIS FIXTURE PRODUCES -- established by READING SimConfigBuilder
+            // rule by rule rather than by a run, so it is a claim about the
+            // diagnostic, not about this test's color: StringAssert.Contains
+            // tolerates company, and a second refusal would leave the assertion
+            // green and only this sentence wrong. A fresh MobConfig's own defaults satisfy every other
+            // ValidateMob line (Radius 0.5, MaxHp 30, Mass 90, ProjectileMass 3,
+            // CenterOfMassHeight 1.17 against a crown of 2.70, and the shipped
+            // tilt spring 0.55/0.9); standing in for the Elite it only NARROWS
+            // the wave spawn-ring band, because MaxBodyRadius(waveArchetypesOnly)
+            // drops 0.8 -> 0.5, and a narrower forbidden band can silence a rule
+            // but never fire one; and rule 14 measures Hero.MaxAimHeight against
+            // the DIRECTOR's 4.80 crown, which this fixture leaves shipped.
+            //
+            // TWO SUBSTRINGS, NOT ONE: "Elite.Parts" alone also matches the
+            // empty-stack and the part-wider-than-the-body refusals, so the
+            // rule is named as well as the section.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             var elite = ScriptableObject.CreateInstance<MobConfig>();
-            elite.LegsTop = elite.BodyTop + 1f;
+            elite.Parts[1].Bottom = elite.Parts[0].Top + 0.1f;   // a band no part owns
 
             var ex = Assert.Throws<System.ArgumentException>(
                 () => BuildShipped(h, w, c, g, wv, a, vis, elite: elite));
-            StringAssert.Contains("Elite.LegsTop must be < Elite.BodyTop", ex.Message);
+            StringAssert.Contains("Elite.Parts", ex.Message);
+            StringAssert.Contains("contiguous", ex.Message);
         }
 
         [Test]

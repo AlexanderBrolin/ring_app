@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Simulation.Combat;   // HitZones.StackTop, for the crown premise below
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -88,10 +89,19 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < ticks; i++) w.TickAll(inputs);
         }
 
-        /// Mid-band heights of the hero's own zone table — expectations are
+        /// Mid-band heights of the collector's own body — expectations are
         /// fixture EXPRESSIONS, never numbers restated from the balance data.
-        static float BodyBand(in SimConfig c) => 0.5f * (c.Hero.LegsTop + c.Hero.BodyTop);
-        static float HeadBand(in SimConfig c) => 0.5f * (c.Hero.BodyTop + c.Hero.HeadTop);
+        ///
+        /// app-88jb Т15: read off his ORDERED STACK OF PARTS, because the six
+        /// zone scalars these were written from left SimConfig in that task.
+        /// NO NUMBER MOVES: TestConfigs builds his parts out of the very same
+        /// literals the column carried (torso [0.55, 1.35), head [1.35, 1.75]),
+        /// so the torso band is still 0.95 and the head band still 1.55. The
+        /// indices follow the convention the rest of the suite already uses —
+        /// [0] legs, [^2] torso, [^1] head.
+        static float MidOf(in HitPart p) => 0.5f * (p.Bottom + p.Top);
+        static float BodyBand(in SimConfig c) => MidOf(c.Hero.Parts[^2]);
+        static float HeadBand(in SimConfig c) => MidOf(c.Hero.Parts[^1]);
 
         [Test]
         public void PlayerShot_DamagesOtherPlayer()
@@ -103,7 +113,7 @@ namespace Ring.Simulation.Tests
             w.ClearEvents();
             TickIdle(w);
 
-            float expected = c.Weapon.Damage * c.Hero.BodyDamageMult;
+            float expected = c.Weapon.Damage * c.Hero.Parts[^2].DamageMult;
             Assert.AreEqual(c.Hero.MaxHp - expected, w.PlayerAt(1).Hp, 1e-4f,
                 "player 0's round must take the hit zone's damage off player 1");
             Assert.AreEqual(c.Hero.MaxHp, w.PlayerAt(0).Hp, 1e-4f, "the shooter must be untouched");
@@ -152,8 +162,8 @@ namespace Ring.Simulation.Tests
         public void HeadZoneOnPlayer_AppliesMultiplier()
         {
             SimulationWorld w = Duel(out SimConfig c);
-            Assert.AreNotEqual(1f, c.Hero.HeadDamageMult,
-                "fixture premise: the hero's head multiplier must not be neutral");
+            Assert.AreNotEqual(1f, c.Hero.Parts[^1].DamageMult,
+                "fixture premise: the collector's head multiplier must not be neutral");
             TestWorlds.FireAimed3D(w, float2.zero, HeadBand(c), new float2(TargetX, 0f), HeadBand(c),
                 ownerIndex: 0);
 
@@ -163,7 +173,7 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent damaged));
             Assert.AreEqual(HitZone.Head, damaged.Zone,
                 "a round on the hero's own head band reads Head");
-            float expected = c.Weapon.Damage * c.Hero.HeadDamageMult;
+            float expected = c.Weapon.Damage * c.Hero.Parts[^1].DamageMult;
             Assert.AreNotEqual(c.Weapon.Damage, damaged.Amount, "NOT the round's base damage");
             Assert.AreEqual(expected, damaged.Amount, 1e-4f, "Amount is the POST-multiplier damage");
             Assert.AreEqual(c.Hero.MaxHp - expected, w.PlayerAt(1).Hp, 1e-4f);
@@ -304,7 +314,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, TestEvents.CountOf(w, SimEventKind.ProjectileHit),
                 "a player victim must never ride the mob-hit kind — the snapshot assembler maps that "
                 + "one to a hardcoded ProjectileEndKind.HitMob");
-            Assert.AreEqual(c.Weapon.Damage * c.Hero.BodyDamageMult, hit.Amount, 1e-4f,
+            Assert.AreEqual(c.Weapon.Damage * c.Hero.Parts[^2].DamageMult, hit.Amount, 1e-4f,
                 "Amount is the post-multiplier damage, same contract as ProjectileHit");
             Assert.AreEqual(1f, hit.HitDir.x, 1e-3f,
                 "HitDir is the round's travel direction at contact — this shot flies straight down +X");
@@ -357,7 +367,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(roundId, hit.SecondaryEntityId,
                 "the event reports the ROUND ENDING, not the damage landing — a tracer whose end went "
                 + "unreported would hang on the client until its confirm timeout");
-            Assert.AreEqual(c.Weapon.Damage * c.Hero.BodyDamageMult, hit.Amount, 1e-4f,
+            Assert.AreEqual(c.Weapon.Damage * c.Hero.Parts[^2].DamageMult, hit.Amount, 1e-4f,
                 "and Amount is what the round CARRIED: DamagePlayer returns nothing, so the applied "
                 + "figure is not available at the emit site at all");
         }
@@ -501,8 +511,8 @@ namespace Ring.Simulation.Tests
 
             const float launchHeight = 2f;  // clears the crown at t = 0
             const float plungeVelZ = -60f;  // drops the full launch height across this one step
-            Assert.Greater(launchHeight, c.Hero.HeadTop,
-                "fixture premise: the round launches above the hero's crown");
+            Assert.Greater(launchHeight, HitZones.StackTop(c.Hero.Parts),
+                "fixture premise: the round launches above the collector's crown");
             w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
                 new float2(c.Weapon.ProjectileSpeed, 0f), launchHeight, plungeVelZ,
                 c.Weapon.Damage, c.Weapon.ProjectileRadius, c.Weapon.ProjectileLifetime,
@@ -514,7 +524,7 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent damaged));
             Assert.AreEqual(HitZone.Legs, damaged.Zone,
                 "the round arrives at the victim's shins, whatever height it launched at");
-            float expected = c.Weapon.Damage * c.Hero.LegsDamageMult;
+            float expected = c.Weapon.Damage * c.Hero.Parts[0].DamageMult;
             Assert.AreEqual(expected, damaged.Amount, 1e-4f);
             Assert.AreEqual(c.Hero.MaxHp - expected, w.PlayerAt(1).Hp, 1e-4f);
         }

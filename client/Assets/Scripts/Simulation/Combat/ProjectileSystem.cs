@@ -492,8 +492,9 @@ namespace Ring.Simulation.Combat
             float2 targetPos;
             float overlapTop;
             // app-88jb T14: the body arrives as its ORDERED STACK OF PARTS,
-            // not as the LegsTop/BodyTop/HeadTop column plus three
-            // multipliers -- HitZones.Resolve reads every number it needs
+            // and since T15 that array is the only hit volume there is --
+            // the three zone tops and three multipliers it replaced are gone
+            // from SimConfig entirely. HitZones.Resolve reads every number it needs
             // (each part's radius, its height band, its zone and its own
             // multiplier) off this one array. The array is a DIRECT ALIAS of
             // the config's, never copied: Resolve only reads it.
@@ -505,8 +506,8 @@ namespace Ring.Simulation.Combat
                 targetPos = mob.Pos;
                 parts = cfg.Parts;
                 // THE CROWN OF THE MODEL, NOT OF THE COLUMN (app-88jb T14 Step
-                // 4, coordinator Ruling 68). This read was cfg.HeadTop, i.e.
-                // 1.85 m for a chaser whose model is 2.70 m tall -- measured in
+                // 4, coordinator Ruling 68). This read was the column's head
+                // top, i.e. 1.85 m for a chaser whose model is 2.70 m tall -- measured in
                 // session 43, the bodies stand 1.46/1.20/1.37 times higher than
                 // the column that gated them, so the top third of every mob was
                 // not shootable at all. Repointing it at the last part's Top is
@@ -528,7 +529,7 @@ namespace Ring.Simulation.Combat
                 parts = cfg.Parts;
                 // Task 11: mid-slide, the hero presents a lower profile — the
                 // OVERLAP gate caps at SlideProfileTop instead of the standing
-                // HeadTop, so a shot on a high horizontal line (e.g. a
+                // crown, so a shot on a high horizontal line (e.g. a
                 // Gunner's muzzle height) passes clean over a sliding target.
                 // Which PART a shot that DOES connect resolves onto is a
                 // separate decision and stays untouched by the profile: the
@@ -540,12 +541,13 @@ namespace Ring.Simulation.Combat
                 // reason it does not have to is a RULE rather than a
                 // coincidence: T13's validation rule 5 requires
                 // Hero.SlideProfileTop to COINCIDE with a part boundary
-                // (SimConfigBuilder.cs:634), so the profile the slide presents
+                // (SimConfigBuilder.cs:620), so the profile the slide presents
                 // is expressible in the new model exactly as it was in the old
-                // one. For the collector this repointing moves no number at
-                // all -- his parts end at 1.75, which is his HeadTop -- and
-                // that is measured, not assumed: only his RADII differ from the
-                // column (0.32 / 0.45 / 0.16 against one body radius of 0.45).
+                // one. For the collector this repointing moved no number at
+                // all -- his parts end at 1.75, which is where his column ended
+                // too -- and that is measured, not assumed: only his RADII
+                // differed from the column (0.32 / 0.45 / 0.16 against one body
+                // radius of 0.45).
                 overlapTop = target.SlideTimer > 0f
                     ? cfg.SlideProfileTop
                     : HitZones.StackTop(parts);
@@ -646,12 +648,13 @@ namespace Ring.Simulation.Combat
             float hEnd = hStart + proj.VelZ * SimulationWorld.TickDt;
             // app-88jb T14: ONE call answers all three questions -- does the
             // round connect with any part at all, which one, and where. The
-            // pair it replaces (HitZones.Overlaps against the column, then
-            // HitZones.Classify/MultFor at the entry height into the BODY
-            // circle) could not: the column has one radius for the whole body,
-            // so a shoulder-wide head was the only shape it could express, and
-            // the contact it measured belonged to the body circle rather than
-            // to the part that was actually struck (findings B-I6/D-I2).
+            // pair it replaced (HitZones.Overlaps against the column, then a
+            // zone/multiplier lookup at the entry height into the BODY circle;
+            // both halves of that lookup were deleted in T15) could not: the
+            // column had one radius for the whole body, so a shoulder-wide head
+            // was the only shape it could express, and the contact it measured
+            // belonged to the body circle rather than to the part that was
+            // actually struck (findings B-I6/D-I2).
             //
             // The sweep interval this used to solve here moves INSIDE Resolve,
             // where it is solved once PER PART at that part's own radius --

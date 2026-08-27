@@ -36,13 +36,14 @@ namespace Ring.Simulation.Tests
         }
 
         /// app-88jb T14: the middle of a body's HEAD, read off the body's own
-        /// ORDERED STACK OF PARTS instead of off the LegsTop/BodyTop/HeadTop
-        /// column. Written once here because three fixtures below need exactly
-        /// this expression, and three copies of it is the shape rule 2 removes.
+        /// ORDERED STACK OF PARTS instead of off the vertical zone column the
+        /// stack replaced (T15 deleted that column outright). Written once here
+        /// because three fixtures below need exactly this expression, and three
+        /// copies of it is the shape rule 2 removes.
         ///
-        /// WHY IT IS NOT `0.5f * (BodyTop + HeadTop)` ANY MORE. That was the
-        /// same aim point expressed through the column, and until T14 the two
-        /// agreed. They do not agree now, and the difference is the whole task:
+        /// WHY IT IS NOT THE MIDPOINT OF THE COLUMN'S TOP TWO BOUNDS ANY MORE.
+        /// That was the same aim point expressed through the column, and until
+        /// T14 the two agreed. They do not agree now, and the difference is the whole task:
         /// the column stopped at the chaser's 1.85 m while the model stands
         /// 2.70 m tall (measured, session 43), so `0.5 * (1.45 + 1.85)` = 1.65
         /// lands squarely in the TORSO part [0.88, 2.12) and the fixture would
@@ -56,51 +57,29 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Zones_ClassifyLegsBodyHead_AtBoundaries()
-        {
-            var c = TestConfigs.Default().Chaser;
-            Assert.AreEqual(HitZone.Legs, HitZones.Classify(c.LegsTop - 1e-4f, c.LegsTop, c.BodyTop, c.HeadTop));
-            Assert.AreEqual(HitZone.Body, HitZones.Classify(c.LegsTop,         c.LegsTop, c.BodyTop, c.HeadTop));
-            Assert.AreEqual(HitZone.Body, HitZones.Classify(c.BodyTop - 1e-4f, c.LegsTop, c.BodyTop, c.HeadTop));
-            Assert.AreEqual(HitZone.Head, HitZones.Classify(c.BodyTop,         c.LegsTop, c.BodyTop, c.HeadTop));
-            // clamped: a graze over the crown still reads as Head, a cut under
-            // the floor line still reads as Legs
-            Assert.AreEqual(HitZone.Head, HitZones.Classify(c.HeadTop + 0.2f,  c.LegsTop, c.BodyTop, c.HeadTop));
-            Assert.AreEqual(HitZone.Legs, HitZones.Classify(-0.05f,            c.LegsTop, c.BodyTop, c.HeadTop));
-        }
-
-        [Test]
-        public void MultFor_PicksThePerZoneNumber_AndNoneIsNeutral()
-        {
-            var c = TestConfigs.Default().Chaser;
-            Assert.AreEqual(c.LegsDamageMult, HitZones.MultFor(HitZone.Legs,
-                c.LegsDamageMult, c.BodyDamageMult, c.HeadDamageMult), 1e-6f);
-            Assert.AreEqual(c.BodyDamageMult, HitZones.MultFor(HitZone.Body,
-                c.LegsDamageMult, c.BodyDamageMult, c.HeadDamageMult), 1e-6f);
-            Assert.AreEqual(c.HeadDamageMult, HitZones.MultFor(HitZone.Head,
-                c.LegsDamageMult, c.BodyDamageMult, c.HeadDamageMult), 1e-6f);
-            // "no zone" must never scale damage — melee and any future
-            // zone-less source deal exactly what they say
-            Assert.AreEqual(1f, HitZones.MultFor(HitZone.None,
-                c.LegsDamageMult, c.BodyDamageMult, c.HeadDamageMult), 1e-6f);
-        }
-
-        [Test]
         public void Overlaps_AcceptsInsideTheRadiusPaddedColumn_RejectsOutside()
         {
             var c = TestConfigs.Default().Chaser;
             const float r = 0.12f;
+            // app-88jb Т15: THE CEILING IS THE BODY'S CROWN, read off its stack
+            // of parts. It was the chaser's zone-column top, and that was a
+            // FIXTURE NUMBER rather than this test's subject — every assertion below is
+            // expressed RELATIVE to the ceiling, so the crown moving from 1.85
+            // to 2.70 moves nothing the test claims.
+            float top = HitZones.StackTop(c.Parts);
+            HitPart torso = c.Parts[c.Parts.Length - 2];
+            float bodyHeight = 0.5f * (torso.Bottom + torso.Top);
             // a flat pass at body height
-            Assert.IsTrue(HitZones.Overlaps(c.BodyTop, c.BodyTop, r, c.HeadTop));
+            Assert.IsTrue(HitZones.Overlaps(bodyHeight, bodyHeight, r, top));
             // grazing the crown / scraping the ground: the projectile's own
             // radius extends the column by r at both ends
-            Assert.IsTrue(HitZones.Overlaps(c.HeadTop + r - 1e-4f, c.HeadTop + r - 1e-4f, r, c.HeadTop));
-            Assert.IsTrue(HitZones.Overlaps(-r + 1e-4f, -r + 1e-4f, r, c.HeadTop));
-            Assert.IsFalse(HitZones.Overlaps(c.HeadTop + r + 1e-3f, c.HeadTop + r + 1e-3f, r, c.HeadTop));
-            Assert.IsFalse(HitZones.Overlaps(-r - 1e-3f, -r - 1e-3f, r, c.HeadTop));
+            Assert.IsTrue(HitZones.Overlaps(top + r - 1e-4f, top + r - 1e-4f, r, top));
+            Assert.IsTrue(HitZones.Overlaps(-r + 1e-4f, -r + 1e-4f, r, top));
+            Assert.IsFalse(HitZones.Overlaps(top + r + 1e-3f, top + r + 1e-3f, r, top));
+            Assert.IsFalse(HitZones.Overlaps(-r - 1e-3f, -r - 1e-3f, r, top));
             // a descending shot that only clips the column on part of the chord
             // still counts — the test is interval-vs-interval, not point-vs-interval
-            Assert.IsTrue(HitZones.Overlaps(c.HeadTop + 5f, c.BodyTop, r, c.HeadTop));
+            Assert.IsTrue(HitZones.Overlaps(top + 5f, bodyHeight, r, top));
         }
 
         [Test]
@@ -162,7 +141,10 @@ namespace Ring.Simulation.Tests
             var cfg = Range();
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(TargetX, 0f)));
-            float legsBand = 0.5f * cfg.Chaser.LegsTop;
+            // app-88jb Т15: aim AND expectation both off the legs PART, the
+            // same source the blow is resolved from since Т14.
+            HitPart chaserLegs = cfg.Chaser.Parts[0];
+            float legsBand = 0.5f * chaserLegs.Top;
             TestWorlds.FireAimed3D(w, float2.zero, legsBand, new float2(TargetX, 0f), legsBand);
 
             w.ClearEvents();
@@ -170,7 +152,7 @@ namespace Ring.Simulation.Tests
 
             SimEvent hit = Blow(w, SimEventKind.ProjectileHit);
             Assert.AreEqual(HitZone.Legs, hit.Zone);
-            float expected = cfg.Weapon.Damage * cfg.Chaser.LegsDamageMult;
+            float expected = cfg.Weapon.Damage * chaserLegs.DamageMult;
             Assert.AreEqual(expected, hit.Amount, 1e-4f);
             Assert.AreEqual(cfg.Chaser.MaxHp - expected, w.Mobs[0].Hp, 1e-4f);
         }
@@ -179,10 +161,12 @@ namespace Ring.Simulation.Tests
         public void Fist_ZoneBody_NoMult()
         {
             var cfg = Range();
-            // a deliberately non-neutral Body multiplier on the hero: if the
-            // telegraphed strike ever routed through the zone table, the damage
-            // asserted below would come out doubled
-            cfg.Hero.BodyDamageMult = 2f;
+            // a deliberately non-neutral Body multiplier on the collector: if
+            // the telegraphed strike ever routed through the per-part table,
+            // the damage asserted below would come out doubled. app-88jb Т15:
+            // set on the PART, the only place a multiplier lives now.
+            for (int i = 0; i < cfg.Hero.Parts.Length; i++)
+                if (cfg.Hero.Parts[i].Zone == HitZone.Body) cfg.Hero.Parts[i].DamageMult = 2f;
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(TargetX, 0f)));
 
@@ -268,7 +252,8 @@ namespace Ring.Simulation.Tests
             p.SlideTimer = cfg.Hero.SlideDuration; // QA1 seam
             w.SetPlayerForTest(p);
 
-            const float shotHeight = 0.3f; // below SlideProfileTop (0.55) and LegsTop (0.55)
+            // below SlideProfileTop (0.55) and the top of his legs part (0.55)
+            const float shotHeight = 0.3f;
             w.SpawnProjectileForTest(ProjectileOwner.Mob, new float2(TargetX, 0f),
                 new float2(-cfg.Gunner.ProjectileSpeed, 0f), shotHeight, 0f,
                 cfg.Gunner.ProjectileDamage, cfg.Gunner.ProjectileRadius, cfg.Gunner.ProjectileLifetime,

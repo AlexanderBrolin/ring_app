@@ -79,7 +79,7 @@ namespace Ring.Simulation.Tests
             //
             // app-88jb T14 (Ruling 74): BOTH NUMBERS IN THAT SENTENCE MOVED, and
             // the premises below now read them off the PARTS instead of the
-            // LegsTop/BodyTop/HeadTop column. What is cleared is the chaser's
+            // vertical zone column (which Т15 deleted). What is cleared is the chaser's
             // own crown, 2.70 m (his model, measured in session 43) rather than
             // his column's 1.85 m, and the entry height that clears it is
             // 2.965 m rather than the 2.37 m this comment used to quote. The
@@ -132,9 +132,9 @@ namespace Ring.Simulation.Tests
             // app-88jb T14 (Ruling 74): with AimH read off the gunner's head
             // part the entry height here is 1.461 m rather than the 1.32 m this
             // comment used to quote, and it lands in the chaser's TORSO part
-            // [0.88, 2.12) — the same Body zone and the same BodyDamageMult the
-            // expectation below has always been written from. The premise makes
-            // that explicit instead of leaving it to the prose.
+            // [0.88, 2.12) — the same Body zone and the same body multiplier
+            // the expectation below has always been written from. The premise
+            // makes that explicit instead of leaving it to the prose.
             var w = SpawnPair(2f, GunnerX, out SimConfig cfg);
             HitPart torso = cfg.Chaser.Parts[^2];
             const float screenX = 2f;
@@ -149,28 +149,31 @@ namespace Ring.Simulation.Tests
             // Stage 3 Task 5 (spec Р252, coordinator R-21 — same mechanism as
             // GunnerHeadOverCrowd_HitFromFarChaser above, reproduced
             // arithmetically): the Chaser screens the player's own round (body
-            // hit, MaxHp - Weapon.Damage * BodyDamageMult) exactly as before —
+            // hit, MaxHp - Weapon.Damage * the torso part's multiplier) exactly as before —
             // but the Gunner it shielded SURVIVES that screening (never hit by
             // the player at all) and is itself in range (9 m) with clear LoS, so
             // it fires its own round back at the player. That round's straight
             // line passes through the SAME screening Chaser (2 m out, same
             // y = 0 line) a second time, landing the Gunner's own
             // ProjectileDamage (8) on top of the player's body hit.
-            Assert.AreEqual(cfg.Chaser.MaxHp - cfg.Weapon.Damage * cfg.Chaser.BodyDamageMult
+            Assert.AreEqual(cfg.Chaser.MaxHp - cfg.Weapon.Damage * torso.DamageMult
                 - cfg.Gunner.ProjectileDamage, w.Mobs[0].Hp, 1e-4f);
             Assert.AreEqual(cfg.Gunner.MaxHp, w.Mobs[1].Hp, 1e-4f); // the Gunner is untouched
         }
 
         [Test]
-        public void Graze_AtHeadTopPlusRadius_HitsAsHead()
+        public void Graze_AtTheCrownPlusRadius_HitsAsHead()
         {
             var cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
             // app-88jb T14 (Ruling 74): THE CROWN IS THE MODEL'S, NOT THE
-            // COLUMN'S. `cfg.Chaser.HeadTop` is 1.85 and after this task that
-            // height is the middle of the chaser's TORSO — a shot there is an
+            // COLUMN'S. The chaser's old zone top was 1.85 and after this task
+            // that height is the middle of his TORSO — a shot there is an
             // ordinary body hit, not a graze, and the test would have been
-            // asserting Head on a chest shot. The part's own Top is 2.70, so the
+            // asserting Head on a chest shot. RENAMED IN Т15 for the same
+            // reason (precedent: ProtocolVersion_Current_IsPinnedToThree ->
+            // ...ToFour): the old name quoted a field that no longer exists.
+            // The part's own Top is 2.70, so the
             // grazing line is 2.82 and the clearing line just above it. What the
             // test witnesses is unchanged and is the only witness of it in the
             // suite: the edge forgiveness HitZones.Resolve inherited from

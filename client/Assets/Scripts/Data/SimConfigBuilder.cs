@@ -70,12 +70,6 @@ namespace Ring.Data
                     DashCooldown = hero.DashCooldown,
                     DashIframes = hero.DashIframes,
                     DashBufferWindow = hero.DashBufferWindow,
-                    LegsTop = hero.LegsTop,
-                    BodyTop = hero.BodyTop,
-                    HeadTop = hero.HeadTop,
-                    LegsDamageMult = hero.LegsDamageMult,
-                    BodyDamageMult = hero.BodyDamageMult,
-                    HeadDamageMult = hero.HeadDamageMult,
                     SlideProfileTop = hero.SlideProfileTop,
                     MuzzleHeight = hero.MuzzleHeight,
                     SlideMuzzleHeight = hero.SlideMuzzleHeight,
@@ -300,12 +294,6 @@ namespace Ring.Data
             SeparationStrength = m.SeparationStrength,
             AvoidLookahead = m.AvoidLookahead,
             AvoidMargin = m.AvoidMargin,
-            LegsTop = m.LegsTop,
-            BodyTop = m.BodyTop,
-            HeadTop = m.HeadTop,
-            LegsDamageMult = m.LegsDamageMult,
-            BodyDamageMult = m.BodyDamageMult,
-            HeadDamageMult = m.HeadDamageMult,
             MuzzleHeight = m.MuzzleHeight,
             SwingLeadFactor = m.SwingLeadFactor,
             SwingLeadMaxMeters = m.SwingLeadMaxMeters,
@@ -578,28 +566,43 @@ namespace Ring.Data
                     $"MaxMobs={cfg.Arena.MaxMobs}).");
             }
 
-            ValidateZones(errors, "Hero", cfg.Hero.LegsTop, cfg.Hero.BodyTop, cfg.Hero.HeadTop,
-                cfg.Hero.LegsDamageMult, cfg.Hero.BodyDamageMult, cfg.Hero.HeadDamageMult);
-            ValidateZones(errors, "Chaser", cfg.Chaser.LegsTop, cfg.Chaser.BodyTop, cfg.Chaser.HeadTop,
-                cfg.Chaser.LegsDamageMult, cfg.Chaser.BodyDamageMult, cfg.Chaser.HeadDamageMult);
-            ValidateZones(errors, "Gunner", cfg.Gunner.LegsTop, cfg.Gunner.BodyTop, cfg.Gunner.HeadTop,
-                cfg.Gunner.LegsDamageMult, cfg.Gunner.BodyDamageMult, cfg.Gunner.HeadDamageMult);
-            ValidateZones(errors, "Elite", cfg.Elite.LegsTop, cfg.Elite.BodyTop, cfg.Elite.HeadTop,
-                cfg.Elite.LegsDamageMult, cfg.Elite.BodyDamageMult, cfg.Elite.HeadDamageMult);
-            ValidateZones(errors, "Director", cfg.Director.LegsTop, cfg.Director.BodyTop,
-                cfg.Director.HeadTop, cfg.Director.LegsDamageMult, cfg.Director.BodyDamageMult,
-                cfg.Director.HeadDamageMult);
+            // app-88jb Т15: THE ONE LANDMARK TWO RULES BELOW SHARE -- the seam
+            // between the collector's head and his torso. Both the slide
+            // profile and the muzzle used to be bounded by scalars of the
+            // vertical zone column -- its torso top and its crown -- and when
+            // that column left SimConfig neither had a right-hand side left.
+            // Read ONCE here, because two rules deriving the same height
+            // separately are two chances to disagree about where a collector's
+            // head begins (rule 2 of AGENT.md, and the same discipline
+            // HitZones.StackTop already applies to a body's crown).
+            //
+            // NaN means "this body cannot express the question" (HeadPartBottom's
+            // own doc): both rules then stand down rather than invent a bound,
+            // exactly as the CenterOfMassHeight rules stand down on PartsTop's NaN.
+            float heroHeadBottom = HeadPartBottom(cfg.Hero.Parts);
 
             ReqPositive(errors, "Hero.SlideProfileTop", cfg.Hero.SlideProfileTop);
-            if (cfg.Hero.SlideProfileTop > cfg.Hero.BodyTop)
+            // The ceiling of the slide profile used to be the collector's body
+            // band top. That very height IS the bottom of the head part --
+            // validation rule 2 (parts contiguous and sorted, exact equality)
+            // makes "top of the torso" and "bottom of the head" one number --
+            // so this is a repointing and not a new bound. The rule has content
+            // and is not dropped: without it Т13's rule 5 would accept a profile
+            // sitting on the CROWN, and a slide would stop hiding anything at all.
+            //
+            // ITS FORMER LOWER TWIN (the profile had to reach at least the top
+            // of the collector's legs band) IS GONE, AND THAT IS A PROOF RATHER
+            // THAN A PREFERENCE: rule 5 requires the profile to coincide with a
+            // part boundary, rule 2 makes the boundary set {0, Parts[0].Top,
+            // Parts[1].Top, ...}, and ReqPositive right above already refuses
+            // the 0. Every value that survives those two is therefore at least
+            // Parts[0].Top -- the top of the legs part, i.e. exactly what the
+            // old rule asked for. It guarded the empty set.
+            if (!float.IsNaN(heroHeadBottom) && cfg.Hero.SlideProfileTop > heroHeadBottom)
             {
-                errors.Add("Hero.SlideProfileTop must be <= Hero.BodyTop " +
-                    $"(got SlideProfileTop={cfg.Hero.SlideProfileTop:F3}, BodyTop={cfg.Hero.BodyTop:F3}).");
-            }
-            if (cfg.Hero.LegsTop > cfg.Hero.SlideProfileTop)
-            {
-                errors.Add("Hero.SlideProfileTop must be >= Hero.LegsTop " +
-                    $"(got SlideProfileTop={cfg.Hero.SlideProfileTop:F3}, LegsTop={cfg.Hero.LegsTop:F3}).");
+                errors.Add("Hero.SlideProfileTop must be <= the bottom of the collector's head part " +
+                    $"(got SlideProfileTop={cfg.Hero.SlideProfileTop:F3}, " +
+                    $"head part bottom={heroHeadBottom:F3}).");
             }
             if (cfg.Hero.SlideProfileTop + cfg.Gunner.ProjectileRadius >= cfg.Gunner.MuzzleHeight)
             {
@@ -609,10 +612,32 @@ namespace Ring.Data
                     $"Gunner.MuzzleHeight={cfg.Gunner.MuzzleHeight:F3}).");
             }
 
-            if (cfg.Hero.MuzzleHeight > cfg.Hero.HeadTop)
+            // app-88jb Т15, GREEN half of the RED phase whose witness is
+            // HitPartsTests.Validate_MuzzleAboveTheTorso_Throws. THE MUZZLE
+            // BELONGS UNDER THE HEAD, NOT MERELY UNDER THE CROWN.
+            //
+            // The rule this replaces bounded Hero.MuzzleHeight by the top of
+            // the collector's zone column, and that scalar no longer exists.
+            // Bounding it by the CROWN instead would have been the mechanical
+            // translation and the wrong one: at the crown the rule accepts a
+            // muzzle standing INSIDE the head. That is not a "high hold", it is
+            // a data error -- WeaponSystem launches every round the collector
+            // fires from exactly this height, so a muzzle in the skull fires
+            // rounds out of it, and every height gate calibrated against a
+            // carried weapon (the slide profile above, the gunner's own muzzle
+            // line, Arena.BarrierTop) starts describing a body nobody drew.
+            // The bottom of the head is the weakest bound that still says "the
+            // weapon is carried by the body."
+            //
+            // ⚠ THE BOUND IS NOT VACUOUS AND THE MARGIN IS NAMED: the shipped
+            // collector carries MuzzleHeight 1.0 against a head bottom of 1.35,
+            // so this rule has 0.35 m of room on the data it ships with -- it
+            // refuses a change, not the status quo.
+            if (!float.IsNaN(heroHeadBottom) && cfg.Hero.MuzzleHeight > heroHeadBottom)
             {
-                errors.Add("Hero.MuzzleHeight must be <= Hero.HeadTop " +
-                    $"(got MuzzleHeight={cfg.Hero.MuzzleHeight:F3}, HeadTop={cfg.Hero.HeadTop:F3}).");
+                errors.Add("Hero.MuzzleHeight must be <= the bottom of the collector's head part " +
+                    $"(got MuzzleHeight={cfg.Hero.MuzzleHeight:F3}, " +
+                    $"head part bottom={heroHeadBottom:F3}).");
             }
             if (cfg.Hero.SlideMuzzleHeight > cfg.Hero.SlideProfileTop)
             {
@@ -640,9 +665,9 @@ namespace Ring.Data
             }
 
             // app-88jb Т13 (spec §3.10 rule 14, finding C-I1): REWRITTEN from
-            // "max of three HeadTops" to "the crown of every body there is."
-            // Two things were wrong with the old form and only one of them was
-            // the arithmetic: it knew three bodies out of five, so the
+            // "max of the three tallest zone tops" to "the crown of every body
+            // there is." Two things were wrong with the old form and only one
+            // of them was the arithmetic: it knew three bodies out of five, so the
             // Director's head — the tallest thing in the game — sat above
             // anything a collector could aim at, and nothing said so.
             // The list below is ONE collection used for BOTH the maximum and
@@ -831,7 +856,7 @@ namespace Ring.Data
             ValidateParts(errors, "Hero", cfg.Hero.Parts, cfg.Hero.Radius);
             // Rule 6, REWRITTEN BY Т13 exactly as its Т1 form promised: the
             // center of mass cannot sit above the body it belongs to, and the
-            // body is now the stack of parts rather than HeadTop. The
+            // body is now the stack of parts rather than the old zone column. The
             // difference is not cosmetic — for the four archetypes the parts
             // reach far higher than the old column did, so the Т1 bound would
             // have kept rejecting centers of mass that are perfectly legal on
@@ -1028,8 +1053,9 @@ namespace Ring.Data
         /// sites pass neither, and every one of them would start throwing on
         /// numbers that are legitimately absent today. ADDRESSEE — **Т22**,
         /// where the Director first spawns and the same task already owes
-        /// ValidateMob/ValidateZones coverage for these two sections (Т12
-        /// report's own debt list). Until then, a caller that means "the
+        /// ValidateMob coverage for these two sections (Т12 report's own debt
+        /// list; the zone-table half of that debt died with the zone table
+        /// itself in Т15). Until then, a caller that means "the
         /// shipped configuration" must pass them, which is what
         /// ConfigTests.BuildShipped exists to guarantee on the test side.
         static float MaxBodyRadius(in SimConfig cfg, bool waveArchetypesOnly = false)
@@ -1825,28 +1851,6 @@ namespace Ring.Data
         static bool RingSlotBlocked(in ArenaSimConfig arena, float2 pos, float bodyRadius)
             => SpawnPlacement.GeometryBlocked(in arena, pos, bodyRadius, doorsPassable: true);
 
-        /// Shared hit-zone body validated for Hero, Chaser and Gunner alike (PC5):
-        /// the three vertical zone tops must be strictly increasing and the per-zone
-        /// damage multipliers must be non-negative.
-        static void ValidateZones(List<string> errors, string who, float legs, float body, float head,
-            float legsMult, float bodyMult, float headMult)
-        {
-            ReqPositive(errors, $"{who}.LegsTop", legs);
-            if (legs >= body)
-            {
-                errors.Add($"{who}.LegsTop must be < {who}.BodyTop " +
-                    $"(got LegsTop={legs:F3}, BodyTop={body:F3}).");
-            }
-            if (body >= head)
-            {
-                errors.Add($"{who}.BodyTop must be < {who}.HeadTop " +
-                    $"(got BodyTop={body:F3}, HeadTop={head:F3}).");
-            }
-            ReqNonNegative(errors, $"{who}.LegsDamageMult", legsMult);
-            ReqNonNegative(errors, $"{who}.BodyDamageMult", bodyMult);
-            ReqNonNegative(errors, $"{who}.HeadDamageMult", headMult);
-        }
-
         static void ValidateMob(List<string> errors, string name, MobSimConfig m)
         {
             ReqPositive(errors, $"{name}.MaxSpeed", m.MaxSpeed);
@@ -1886,7 +1890,7 @@ namespace Ring.Data
             ReqPositive(errors, $"{name}.ProjectileMass", m.ProjectileMass);
             // app-88jb Т13 (spec §3.10 rules 2/3/4/6): this archetype's stack of
             // parts, and the center of mass measured against IT rather than
-            // against the old HeadTop — see the Hero block's own note for why
+            // against the old zone column — see the Hero block's own note for why
             // the rewrite is load-bearing rather than cosmetic.
             ValidateParts(errors, name, m.Parts, m.Radius);
             float top = PartsTop(m.Parts);
@@ -1992,6 +1996,20 @@ namespace Ring.Data
         /// rule 2 above rejects an unsorted stack.
         static float PartsTop(HitPart[] parts)
             => parts == null || parts.Length == 0 ? float.NaN : parts[parts.Length - 1].Top;
+
+        /// app-88jb Т15: the seam between a body's HEAD and whatever stands
+        /// directly under it. `Parts[last].Bottom` and "the top of the torso"
+        /// are ONE NUMBER by validation rule 2 (the stack is contiguous and
+        /// sorted), so this is one index rather than a search by zone, and it
+        /// does not care how many parts a body is cut into.
+        ///
+        /// NaN WHEN THE STACK CANNOT EXPRESS THE QUESTION: a body of a single
+        /// part has Parts[0].Bottom == 0 by rule 2, and a rule reading that
+        /// would refuse every positive height instead of refusing nothing.
+        /// Callers skip their own rule on NaN, the same convention PartsTop
+        /// above already sets.
+        static float HeadPartBottom(HitPart[] parts)
+            => parts == null || parts.Length < 2 ? float.NaN : parts[parts.Length - 1].Bottom;
 
         /// app-88jb Т13 (rule 5): is `h` one of the heights this stack is cut
         /// at? The ground (Parts[0].Bottom) counts — a slide profile of 0 is a

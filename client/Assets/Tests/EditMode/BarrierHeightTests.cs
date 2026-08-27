@@ -140,8 +140,8 @@ namespace Ring.Simulation.Tests
             const float top = 2f;
             // app-88jb T14 (coordinator Ruling 74): THE FLIGHT HEIGHT IS READ
             // OFF THE GUNNER'S HEAD PART, not stated as 3 m. The literal was
-            // chosen against the LegsTop/BodyTop/HeadTop column, where 3 m sat
-            // above BodyTop 2.70 and therefore read as Head; the gunner's head
+            // chosen against the vertical zone column, where 3 m sat above the
+            // gunner's body band (2.70) and therefore read as Head; his head
             // belt is [3.24, 4.20] now, so 3 m is his TORSO, one body hit is 12
             // damage against 20 Hp, and "reached the mob" would stop reading as
             // a kill — the premise three lines down says so in as many words.

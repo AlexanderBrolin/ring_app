@@ -31,6 +31,21 @@ namespace Ring.Simulation.Tests
     /// The eighth, SlidingCollector_IsMissedByAShotOnTheGunnerMuzzleLine,
     /// DOES move a collector into the core and therefore takes OpenField()
     /// instead -- see its own doc for the structural reason.
+    ///
+    /// app-88jb Т15 ADDS TWO, AND THEY ARE A PAIR RATHER THAN A REPETITION.
+    /// The muzzle rule lost the landmark it compared against when the six
+    /// column scalars left SimConfig, and it is re-landed here against the
+    /// collector's own parts; both new tests drive ConfigTests.BuildShipped
+    /// exactly like the five above.
+    ///  - Validate_MuzzleAboveTheTorso_Throws is the SIXTH REFUSAL WITNESS:
+    ///    a muzzle above the head is refused.
+    ///  - Validate_MuzzleExactlyAtTheHeadBottom_IsLegal is of the OTHER shape,
+    ///    the one this file did not carry before -- it witnesses that the
+    ///    boundary is ACCEPTED. A rule stated as "<=" has two branches and a
+    ///    refusal witness only ever exercises one of them (coordinator
+    ///    Ruling 82; the epic's own precedents for the pair are
+    ///    ImpactConfigTests.Validate_CocoonDampingExactlyOne_IsLegal from Т1
+    ///    and the exact-equality half of validation rule 5 from Т13).
     public class HitPartsTests
     {
         [Test]
@@ -96,6 +111,81 @@ namespace Ring.Simulation.Tests
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, elite, director));
             Assert.That(ex.Message, Does.Contain("Hero.MaxAimHeight"));
             Assert.That(ex.Message, Does.Contain("Director"));
+        }
+
+        [Test]
+        public void Validate_MuzzleAboveTheTorso_Throws()
+        {
+            // app-88jb Т15. The rule this witnesses compared Hero.MuzzleHeight
+            // against the top of the collector's zone column, and after Т15
+            // there is nothing on the right-hand side left to compare with: the six
+            // column scalars left SimConfig in that task. It moves onto the
+            // collector's own parts, at THE BOTTOM OF HIS HEAD -- validation
+            // rule 2 makes that the very same number as the top of his torso --
+            // because a muzzle inside the head is not a high hold, it is a data
+            // error.
+            //
+            // WHY 1.7 AND NOT SOMETHING TALLER: it stands above the head's
+            // bottom (1.35) and below the crown (1.75), i.e. it is exactly the
+            // value the OLD rule was silent on. A witness that violated the old
+            // bound as well could not tell "the new rule is missing" from "the
+            // old rule was deleted"; this one can, so the RED it shows is the
+            // absence of the new rule and nothing else.
+            //
+            // TWO SUBSTRINGS, NOT ONE (precedent F10 of Т13): the refusal has
+            // to name the FIELD and the LANDMARK. With only "Hero.MuzzleHeight"
+            // asserted, an adjacent rule that happens to mention the same field
+            // would hold this test green straight through the outright deletion
+            // of the rule it exists for.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            h.MuzzleHeight = 1.7f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Hero.MuzzleHeight"));
+            Assert.That(ex.Message, Does.Contain("head part"));
+        }
+
+        [Test]
+        public void Validate_MuzzleExactlyAtTheHeadBottom_IsLegal()
+        {
+            // app-88jb Т15 (coordinator Ruling 82). THE OTHER BRANCH OF THE
+            // SAME RULE, and the reason it needs its own test is that the
+            // refusal witness above cannot reach it: the rule is stated as
+            // "MuzzleHeight <= the bottom of the head part", so a muzzle
+            // standing EXACTLY on that seam is LEGAL -- a weapon held as high
+            // as the shoulders is a high hold, not a data error, and only a
+            // muzzle that has climbed INTO the head is one.
+            //
+            // ⚠ THIS TEST IS THE JURY OF MUTATION `>` -> `>=` (M-muzzle-edge),
+            // and it is the only test in the suite that is: on the shipped and
+            // fixture collector the muzzle is 1.0 against a head bottom of
+            // 1.35, i.e. 0.35 m clear of the seam, so a strictness flip is
+            // invisible everywhere else. Т15 is what creates this branch -- the
+            // rule it replaced bounded the muzzle by the crown, 1.75 -- so the
+            // gap is this task's to close and not inherited debt.
+            //
+            // THE EXPECTATION IS A FIXTURE EXPRESSION, NEVER THE NUMBER 1.35
+            // (Global Constraints, "two sources of numbers"). It is read from
+            // the very field the rule reads -- SimConfigBuilder maps
+            // HeroSimConfig.Parts as a DIRECT ALIAS of this array -- so the
+            // test compares a value against itself and stays true through any
+            // retune of the collector's proportions. Written as the literal it
+            // would silently stop testing the boundary the day the head moved,
+            // and would then be asserting that 1.35 is legal for a body whose
+            // head starts somewhere else.
+            //
+            // NO NEIGHBOR FIRES ON THIS SUBSTITUTION -- checked by enumerating
+            // every read of Hero.MuzzleHeight in SimConfigBuilder rather than
+            // by assuming. There is exactly one, and it is the rule under test:
+            // the Gunner-muzzle rule reads Hero.SlideProfileTop against
+            // Gunner.MuzzleHeight (0.55 + 0 < 0.95), the slide-muzzle rule
+            // reads Hero.SlideMuzzleHeight against Hero.SlideProfileTop
+            // (0.45 < 0.55), and neither looks at this field at all. Nothing
+            // else about the fixture moves, so a red here is the rule and
+            // nothing but the rule.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            h.MuzzleHeight = h.Parts[h.Parts.Length - 1].Bottom;   // exactly the seam
+            Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
         }
 
         [Test]

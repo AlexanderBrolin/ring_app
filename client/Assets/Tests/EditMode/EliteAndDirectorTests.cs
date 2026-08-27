@@ -103,9 +103,21 @@ namespace Ring.Simulation.Tests
         /// cannot silently desync this fixture from the two profiles it
         /// stands in for. Radius/MaxHp/ContactDamage are Elite's own
         /// (distinct from both parents, same "no accidental coincidence"
-        /// reasoning as the other tests in this file); LegsTop/BodyTop/
-        /// HeadTop/*DamageMult are set so a hit resolves cleanly (Elite has
-        /// no real hit-zone profile yet — Т12 delivers one).
+        /// reasoning as the other tests in this file).
+        ///
+        /// ⚠ THIS ELITE CARRIES NO HIT VOLUME AT ALL, and saying so is the
+        /// point of this note (app-88jb Т15). Until Т14 the fixture set the
+        /// zone column "so a hit resolves cleanly"; from Т14 on a blow is
+        /// resolved against `Parts`, this hand-built section leaves that array
+        /// null, and Т15 removed the column it used to fill instead. Nothing
+        /// here is thereby broken: its ONLY caller is the AI-state sweep
+        /// EliteUsesTheSixFightingAiStates_OverDistanceSweep (which builds two
+        /// worlds out of it), and nothing there ever resolves a round against
+        /// the Elite — the near block melees, the far block has the Elite
+        /// SHOOTING, and that round resolves against the collector's parts. A
+        /// fixture that does need a hit ON an Elite builds its own stack:
+        /// ProjectileGather_UsesEliteRadius_NotGunnerRadius below does exactly
+        /// that. Give this one Parts the day a caller needs a hit to land.
         static SimConfig EliteHybridConfig()
         {
             var c = TestConfigs.OpenField();
@@ -123,8 +135,6 @@ namespace Ring.Simulation.Tests
                 ProjectileLifetime = c.Gunner.ProjectileLifetime, ProjectileDamage = c.Gunner.ProjectileDamage,
                 LeadFactor = c.Gunner.LeadFactor, MuzzleHeight = c.Gunner.MuzzleHeight,
                 Radius = 0.65f, MaxHp = 58f, ContactDamage = c.Chaser.ContactDamage,
-                LegsTop = c.Gunner.LegsTop, BodyTop = c.Gunner.BodyTop, HeadTop = c.Gunner.HeadTop,
-                LegsDamageMult = 1f, BodyDamageMult = 1f, HeadDamageMult = 1f,
             };
             return c;
         }
@@ -252,9 +262,10 @@ namespace Ring.Simulation.Tests
             //   (both solvers — SegmentCircle for gather, SegmentCircleInterval
             //   for accept — run the identical quadratic, so this is what
             //   BOTH read when MobConfigFor is honest).
-            //   hEnter = lerp(1.5, 0.5, 0.1258) = 1.3742 -> Classify against
-            //   LegsTop 0.6/BodyTop 1.45/HeadTop 1.85 lands in Body (< 1.45).
-            //   BodyDamageMult 1f -> 10 dmg -> Hp 58 -> 48.
+            //   hEnter = lerp(1.5, 0.5, 0.1258) = 1.3742 -> against the parts
+            //   below (legs [0, 0.60), body [0.60, 1.45), head [1.45, 1.85])
+            //   that lands in the BODY part (< 1.45). Its multiplier is 1f
+            //   -> 10 dmg -> Hp 58 -> 48.
             //   Chaser/Gunner (r = 0.5+0.1 = 0.6, r^2 = 0.36): cc=11.25-0.36
             //   =10.89, disc=1296-4*36*10.89=-272.16 < 0 -> NO interval
             //   either solver's math. Gather: SegmentCircle returns false,
@@ -263,8 +274,8 @@ namespace Ring.Simulation.Tests
             //   MobConfigFor is wrongly Chaser/Gunner-sized, i.e. B1):
             //   SegmentCircleInterval also returns false -> AcceptCandidate's
             //   fallback tEnter=0,tExit=1 -> hEnter = hStart = 1.5 (UNCHANGED
-            //   — this IS the fallback's whole point) -> Classify(1.5) lands
-            //   in Head (>= 1.45, < 1.85) -> HeadDamageMult 0f -> 0 dmg ->
+            //   — this IS the fallback's whole point) -> 1.5 lands in the HEAD
+            //   part ([1.45, 1.85]), whose multiplier is 0f -> 0 dmg ->
             //   Hp stays 58. The fallback and the honest computation now
             //   resolve to DIFFERENT zones because the shot's height
             //   actually changes across the tick — that is the one thing
@@ -282,10 +293,8 @@ namespace Ring.Simulation.Tests
             c.Elite = new MobSimConfig
             {
                 MaxHp = 58f, Radius = 2.6f,
-                LegsTop = 0.60f, BodyTop = 1.45f, HeadTop = 1.85f, // Chaser's own zone bounds
-                LegsDamageMult = 1f, BodyDamageMult = 1f, HeadDamageMult = 0f,
-                // app-88jb T14 (coordinator Ruling 74): THE SAME THREE BANDS AND
-                // THE SAME THREE MULTIPLIERS, EXPRESSED AS PARTS. From T14 on,
+                // app-88jb T14 (coordinator Ruling 74): THE CHASER'S OWN THREE
+                // BANDS AND THREE MULTIPLIERS, EXPRESSED AS PARTS. From T14 on,
                 // ProjectileSystem resolves a blow against Parts and not against
                 // the column beside them, and a hand-built body that carries no
                 // Parts presents no hit volume at all (HitZones.Resolve's own
@@ -294,11 +303,11 @@ namespace Ring.Simulation.Tests
                 // simply misses and the assertion reads red for a reason that
                 // has nothing to do with what it measures.
                 //
-                // THE COLUMN ABOVE STAYS — it lives until T15, and this fixture
-                // is one of the places that needs both sets of numbers at once.
-                // The bands are copied from it verbatim so the arithmetic in
-                // this test's own doc (hEnter 1.3742 -> Body -> mult 1 -> 10
-                // damage) holds term for term.
+                // ⚠ THE COLUMN THAT STOOD BESIDE THIS ARRAY IS GONE (T15). The
+                // bands below were copied from it verbatim while both existed,
+                // so the arithmetic in this test's own doc (hEnter 1.3742 ->
+                // Body -> mult 1 -> 10 damage) still holds term for term — it
+                // simply has one source now instead of two.
                 //
                 // THE RADII ARE THE SHIPPED ELITE'S PROPORTIONS, not invented:
                 // TestConfigs' Elite carries 0.56 / 0.80 / 0.28 against a Radius

@@ -66,9 +66,6 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.MaxHp); h = StateHash64.Add(h, c.DashSpeed);
             h = StateHash64.Add(h, c.DashDuration); h = StateHash64.Add(h, c.DashCooldown);
             h = StateHash64.Add(h, c.DashIframes); h = StateHash64.Add(h, c.DashBufferWindow);
-            h = StateHash64.Add(h, c.LegsTop); h = StateHash64.Add(h, c.BodyTop);
-            h = StateHash64.Add(h, c.HeadTop); h = StateHash64.Add(h, c.LegsDamageMult);
-            h = StateHash64.Add(h, c.BodyDamageMult); h = StateHash64.Add(h, c.HeadDamageMult);
             h = StateHash64.Add(h, c.SlideProfileTop); h = StateHash64.Add(h, c.MuzzleHeight);
             h = StateHash64.Add(h, c.SlideMuzzleHeight); h = StateHash64.Add(h, c.MaxAimHeight);
             h = StateHash64.Add(h, c.StaminaMax); h = StateHash64.Add(h, c.DashStaminaCost);
@@ -129,9 +126,6 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.ProjectileLifetime); h = StateHash64.Add(h, c.ProjectileDamage);
             h = StateHash64.Add(h, c.LeadFactor); h = StateHash64.Add(h, c.SeparationRadius);
             h = StateHash64.Add(h, c.SeparationStrength); h = StateHash64.Add(h, c.AvoidLookahead);
-            h = StateHash64.Add(h, c.LegsTop); h = StateHash64.Add(h, c.BodyTop);
-            h = StateHash64.Add(h, c.HeadTop); h = StateHash64.Add(h, c.LegsDamageMult);
-            h = StateHash64.Add(h, c.BodyDamageMult); h = StateHash64.Add(h, c.HeadDamageMult);
             h = StateHash64.Add(h, c.MuzzleHeight);
             h = StateHash64.Add(h, c.SwingLeadFactor); h = StateHash64.Add(h, c.SwingLeadMaxMeters);
             h = StateHash64.Add(h, c.AvoidMargin);
@@ -266,14 +260,14 @@ namespace Ring.Simulation.Core
         /// HashItemArray above, so a body that grows only a TAIL part still
         /// moves the hash.
         ///
-        /// ⚠ THE SIX COLUMN SCALARS BESIDE THIS ARRAY ARE STILL HASHED, AND
-        /// THAT IS NOT AN OVERSIGHT: LegsTop/BodyTop/HeadTop and the three
-        /// multipliers keep their last consumers until Т15, and they leave the
-        /// struct and this digest together, in that one step. Dropping them
-        /// from the hash while they are still fields would redden
-        /// SimConfigHashTests' reflective sweep on every one of them at once —
-        /// fields present in the struct and absent from the digest is exactly
-        /// what that sweep exists to catch.
+        /// app-88jb Т15: the six column scalars that used to be hashed beside
+        /// this array — three zone tops and three per-zone multipliers — left
+        /// HeroSimConfig/MobSimConfig and this digest IN THE SAME STEP, and the
+        /// order was not a matter of taste. Dropping them from the digest while
+        /// they were still fields would have reddened SimConfigHashTests'
+        /// reflective sweep on every one of them at once: a field present in
+        /// the struct and absent from the digest is exactly what that sweep
+        /// exists to catch.
         static ulong HashHitPartArray(ulong h, HitPart[] a)
         {
             h = StateHash64.Add(h, a == null ? -1 : a.Length);

@@ -33,6 +33,33 @@ namespace Ring.Simulation.Tests
         public static int Capacity(in SimConfig cfg)
             => Visibility.VisibilitySet.CapacityFor(in cfg.Arena, Visibility.VisibilityClass.Mobs);
 
+        /// app-88jb Т15: the worst damage multiplier a body's own parts can
+        /// apply to a blow — the number a deliberately OVER-STATED Hp budget
+        /// has to assume. It used to be read off the collector's head-zone
+        /// multiplier in the TWO homes of that budget (TrioSaturated below and
+        /// DeterminismTests.BudgetHpForTheWholeRun) until that field left
+        /// SimConfig with the rest of the zone column. ONE home now: two copies
+        /// of one bound are two chances to drift apart, and this suite has paid
+        /// for that shape before (TestWorlds' own Capacity doc above records
+        /// the same lesson).
+        ///
+        /// THE MAXIMUM, NOT "THE LAST PART'S": the budget only has to be SAFE,
+        /// and the head carrying the largest multiplier is today's DATA rather
+        /// than a rule anything enforces. On the fixture bodies the two answers
+        /// coincide at 1.7, which is why replacing the old read moves no golden
+        /// digest — the Hp handed out is bit-for-bit the number it was.
+        ///
+        /// A null or empty stack answers 1, the neutral multiplier: a body with
+        /// no parts is budgeted at the weapon's own damage rather than at zero.
+        public static float MaxPartDamageMult(HitPart[] parts)
+        {
+            if (parts == null || parts.Length == 0) return 1f;
+            float worst = parts[0].DamageMult;
+            for (int i = 1; i < parts.Length; i++)
+                if (parts[i].DamageMult > worst) worst = parts[i].DamageMult;
+            return worst;
+        }
+
         /// A world with every mob slot filled (via the SpawnMobForTest seam,
         /// half Chaser/half Gunner so both fire/movement/AI paths are live) and
         /// warmed up under sustained player fire for ~100 ticks, so its
@@ -189,8 +216,8 @@ namespace Ring.Simulation.Tests
         /// and Hp is set (through the same SetPlayerForTest seam
         /// RelocatePlayerForTest below wraps) to a budget covering the WHOLE
         /// window — warm-up plus measurement — at a deliberately over-stated
-        /// combined damage rate: the duel's own worst-case zone multiplier
-        /// (Hero.HeadDamageMult) applied to Weapon.Damage / Weapon.FireInterval,
+        /// combined damage rate: the duel's own worst-case part multiplier
+        /// (MaxPartDamageMult above) applied to Weapon.Damage / Weapon.FireInterval,
         /// PLUS every single one of Arena.MaxMobs dealing Chaser.ContactDamage
         /// every Chaser.AttackCooldown at once. That second term is physically
         /// impossible on its own terms (the crowd cannot even reach the huddle
@@ -240,7 +267,7 @@ namespace Ring.Simulation.Tests
             // rate this method's own doc derives — see there for why each
             // term is safe rather than tight.
             float totalSeconds = (TrioWarmupTicks + measuredTicks) * SimulationWorld.TickDt;
-            float duelDps = config.Hero.HeadDamageMult * config.Weapon.Damage / config.Weapon.FireInterval;
+            float duelDps = MaxPartDamageMult(config.Hero.Parts) * config.Weapon.Damage / config.Weapon.FireInterval;
             float mobDps = config.Arena.MaxMobs * config.Chaser.ContactDamage / config.Chaser.AttackCooldown;
             float hpBudget = totalSeconds * (duelDps + mobDps);
 

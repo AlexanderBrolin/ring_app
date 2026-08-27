@@ -8,11 +8,6 @@ namespace Ring.Simulation.Core
         public float MaxSpeed, Accel, Friction, Radius, MaxHp,
             DashSpeed, DashDuration, DashCooldown, DashIframes, DashBufferWindow;
 
-        /// Vertical hit-zone bounds (meters above ground) and per-zone damage
-        /// multipliers for the raycast aim system (Task 4+).
-        public float LegsTop, BodyTop, HeadTop,
-            LegsDamageMult, BodyDamageMult, HeadDamageMult;
-
         /// Slide stamina-movement profile height, hero muzzle heights (standing /
         /// mid-slide), and the arena-wide aim-ray height cap.
         public float SlideProfileTop, MuzzleHeight, SlideMuzzleHeight, MaxAimHeight;
@@ -80,12 +75,13 @@ namespace Ring.Simulation.Core
         public float CenterOfMassHeight, TiltDampingRatio, TiltSettleSeconds, TiltGain;
 
         /// app-88jb Т13 (spec §3.3, owner decision Н8): the body as an ORDERED
-        /// stack of parts, bottom to top -- the shape that replaces the three
-        /// LegsTop/BodyTop/HeadTop scalars above. Those scalars and their three
-        /// multipliers STAY here through this task and keep being hashed: their
-        /// last consumers (ProjectileSystem, the muzzle rule, both aim-proxy
-        /// points) are rewritten by Т14/Т15, and removing the column ahead of
-        /// them would simply not compile. SimConfigBuilder.Validate is what
+        /// stack of parts, bottom to top -- the shape that REPLACED the three
+        /// vertical zone scalars and their three multipliers this section used
+        /// to carry. Т15 removed those six fields outright, so this array is
+        /// now the ONLY hit volume the simulation knows: a body that declares
+        /// no parts presents nothing to hit. (Their Inspector twins on
+        /// HeroConfig/MobConfig outlive them by one task -- the editor
+        /// aim-proxy still reads them until Т17.) SimConfigBuilder.Validate is what
         /// gates this array's shape; the array is a DIRECT ALIAS of HeroConfig's
         /// own Inspector array, the same convention Wave's per-zone arrays
         /// follow (balance data, not topology -- nothing in SimulationWorld's
@@ -135,11 +131,10 @@ namespace Ring.Simulation.Core
             StrafeSpeed, FireInterval, ProjectileSpeed, ProjectileRadius, ProjectileLifetime,
             ProjectileDamage, LeadFactor, SeparationRadius, SeparationStrength, AvoidLookahead;
 
-        /// Vertical hit-zone bounds (meters above ground) and per-zone damage
-        /// multipliers for the raycast aim system (Task 4+); MuzzleHeight is read for the
-        /// Gunner archetype only.
-        public float LegsTop, BodyTop, HeadTop,
-            LegsDamageMult, BodyDamageMult, HeadDamageMult, MuzzleHeight;
+        /// Muzzle height in meters above the ground, read for the Gunner
+        /// archetype only. It is what is left of the vertical hit-zone column
+        /// this section used to carry beside it (app-88jb T15).
+        public float MuzzleHeight;
 
         /// Melee swing-attack target lead (Chaser archetype, Task 15+).
         public float SwingLeadFactor, SwingLeadMaxMeters;
@@ -191,8 +186,7 @@ namespace Ring.Simulation.Core
         /// app-88jb Т13 (spec §3.3, owner decision Н8): this archetype's body as
         /// an ORDERED stack of parts, bottom to top -- same field, same
         /// contract and same reason as HeroSimConfig.Parts above, which carries
-        /// the full account of why the LegsTop/BodyTop/HeadTop column beside it
-        /// stays until Т15.
+        /// the full account of what it replaced.
         public HitPart[] Parts;
     }
 
@@ -540,7 +534,7 @@ namespace Ring.Simulation.Core
     /// exactly as ArenaConfig's Obstacle/Wall structs already document.
     ///
     /// Ranges are HALF-OPEN [Bottom, Top) except for the topmost part, whose
-    /// Top is INCLUSIVE -- exactly what HitZones.Classify does today. A hit
+    /// Top is INCLUSIVE -- exactly what HitZones.Resolve enforces. A hit
     /// landing exactly on a boundary belongs to the UPPER part.
     [System.Serializable]
     public struct HitPart

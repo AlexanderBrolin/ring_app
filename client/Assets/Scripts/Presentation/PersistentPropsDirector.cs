@@ -804,18 +804,55 @@ namespace Ring.Presentation
         /// 24's original formula), legs low (below the legs belt), torso AND
         /// arms mid (the body belt band — George's arms read the same band
         /// as its torso, task brief: "arms mid for George").
+        ///
+        /// app-88jb Т15: READ OFF THE ARCHETYPE'S STACK OF PARTS, because the
+        /// three zone scalars this used to read left MobSimConfig in that task.
+        /// ⚠ THE NUMBERS MOVE, AND THAT IS THE POINT OF THE MOVE: the parts
+        /// follow the DRAWN model, which stands 1.20-1.46 times higher than the
+        /// column that used to gate it (measured, session 43), so a chaser's
+        /// head gib now spawns at 2.41 m instead of 1.65 m — at the head it is
+        /// drawn from rather than three quarters of a meter under it, and its
+        /// legs at 0.44 m instead of 0.30 m. These are gib spawn heights:
+        /// cosmetic, judged by playtest, and read by nothing in the simulation.
+        ///
+        /// An absent or empty stack answers 0 instead of throwing. This runs on
+        /// a death event on the client, and an archetype whose Inspector array
+        /// was never filled must not take the whole burst down with it — the
+        /// same refusal shape HitZones.StackTop makes on the simulation side.
         static float PartHeight(GibPartKind kind, in MobSimConfig archetype)
         {
+            HitPart[] parts = archetype.Parts;
+            if (parts == null || parts.Length == 0) return 0f;
             switch (kind)
             {
                 case GibPartKind.Head:
-                    return (archetype.BodyTop + archetype.HeadTop) * 0.5f;
+                {
+                    // The crown belt is the LAST part, the same convention
+                    // HitZones.StackTop reads a body's crown by.
+                    HitPart head = parts[parts.Length - 1];
+                    return (head.Bottom + head.Top) * 0.5f;
+                }
                 case GibPartKind.LegL:
                 case GibPartKind.LegR:
-                    return archetype.LegsTop * 0.5f;
+                    // Half the top of the lowest part — identical to the middle
+                    // of that part for any validated body (rule 2 puts
+                    // Parts[0].Bottom on the ground), and the literal port of
+                    // what this branch read before.
+                    return parts[0].Top * 0.5f;
                 default: // Torso, ArmL, ArmR
-                    return (archetype.LegsTop + archetype.BodyTop) * 0.5f;
+                    return MidOfZone(parts, HitZone.Body);
             }
+        }
+
+        /// The middle of the band a body gives to `zone`, or 0 when its stack
+        /// names no such part. Validation rule 3 forbids a zone appearing
+        /// twice, so the first match is the only match; the 0 covers a
+        /// hand-built archetype, the same answer the empty stack gets above.
+        static float MidOfZone(HitPart[] parts, HitZone zone)
+        {
+            for (int i = 0; i < parts.Length; i++)
+                if (parts[i].Zone == zone) return (parts[i].Bottom + parts[i].Top) * 0.5f;
+            return 0f;
         }
 
         /// The authoritative mark, at the dashing player's own position on the
