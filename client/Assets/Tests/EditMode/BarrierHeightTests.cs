@@ -34,7 +34,15 @@ namespace Ring.Simulation.Tests
             // way it states its own BarrierTop one line up — the idiom this
             // file's own header already names ("Every fixture here states its
             // own BarrierTop in the test body"). TestConfigs.Default() carries
-            // the SHIPPED 2 (invariant Р117), and at any value above zero every
+            // ONE -- the fixture value spec §4.3 assigns (R-173: the 18 000-tick
+            // extraction golden must not turn into a load test of ricochets),
+            // against the GAME's 2 that WeaponConfig.cs ships; the divergence
+            // between the two sources is deliberate and guarded by
+            // ConfigTests.Build_DefaultAssets_MatchesTestConfigsBaseline. ⚠ NO
+            // Р117 HERE: "the fixture mirrors the game" is exactly what this
+            // field does NOT do, and citing the invariant at the one place it
+            // is knowingly broken would send the next reader looking for a bug.
+            // At any value above zero every
             // fixture here would measure a reflection instead of the height
             // gate: eleven of these fourteen tests assert the round is GONE, or
             // that exactly one ProjectileBlocked fired, and a reflected round

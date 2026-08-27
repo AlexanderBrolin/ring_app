@@ -246,7 +246,8 @@ namespace Ring.Simulation.Tests
             cfg.Arena.Radius = 0.5f * cfg.Weapon.ProjectileSpeed * cfg.Weapon.ProjectileLifetime;
             // app-88jb Т19 (coordinator Ruling 94): this test's subject is the
             // NORMAL and the HEIGHT a wall block reports, so the round has to
-            // actually die on the rim. At the shipped MaxRicochets 2 it
+            // actually die on the rim. At the baseline's own MaxRicochets (ONE
+            // — the fixture value spec §4.3 assigns, against the game's 2) it
             // reflects off the boundary instead and no ProjectileBlocked is
             // emitted at all. Stated right here, beside the other thing this
             // fixture states about itself (the shrunk radius one line up) —
@@ -258,10 +259,9 @@ namespace Ring.Simulation.Tests
             // Gunner archetype's own MaxRicochets (Impact.RicochetNumbersFor),
             // so this fixture would owe that number too IF a mob-owned round
             // could reach the rim here. None can: the fixture is
-            // TestConfigs.OpenField() (TestConfigs.cs:674) — Open() (:607) off
-            // Quiet() (:592), whose own `c.Wave.FirstWaveDelay = 1e6f` (:595)
-            // means no waves and therefore no gunner. A second zero would be a
-            // line with no reader.
+            // TestConfigs.OpenField() — Open() off Quiet(), whose own
+            // `Wave.FirstWaveDelay = 1e6f` means no waves and therefore no
+            // gunner. A second zero would be a line with no reader.
             // THE RULE: a fixture here that spawns a LIVE gunner must state its
             // own Gunner.MaxRicochets.
             cfg.Weapon.MaxRicochets = 0;

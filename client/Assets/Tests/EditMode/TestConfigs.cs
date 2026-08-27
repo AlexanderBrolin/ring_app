@@ -91,7 +91,7 @@ namespace Ring.Simulation.Tests
                     // (§4.3, spec line 1633, R-173/351/355): the fixture
                     // numbers are the MODEST ones, and that line names this
                     // field by name -- an 18 000-tick extraction golden must
-                    // not turn into a load test of bounces. The GAME number
+                    // not turn into a load test of ricochets. The GAME number
                     // is 2 (spec's own starting-
                     // numbers table, line 297) and WeaponConfig.cs carries it;
                     // the fixture deliberately carries ONE. Same

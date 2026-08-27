@@ -12,10 +12,21 @@ namespace Ring.Simulation.Combat
     /// Ring.Networking already references Ring.Simulation in its asmdef; no
     /// InternalsVisibleTo is added.
     ///
-    /// THREE THINGS THIS CLASS DELIBERATELY DOES NOT DO, and together they are
-    /// the whole of its contract (coordinator Ruling 91):
+    /// THREE THINGS `Step` DELIBERATELY DOES NOT DO, and together they are the
+    /// whole of ITS contract (coordinator Ruling 91):
     ///
-    ///  - IT PICKS NO WINNER. The three static candidates travel back side by
+    /// ⚠ THREE THINGS `Step`'S, NOT THE CLASS'S -- app-88jb Т19 narrowed this
+    /// heading, because until then the class had exactly one member and the two
+    /// readings could not be told apart. `TryRicochet` below is the second, and
+    /// its contract is the OPPOSITE of all three: it acts only after a winner
+    /// has been picked AND accepted, it refuses on four gates of its own, and
+    /// it takes the round by `ref` and writes six of its fields. That is not a
+    /// breach of Ruling 91 but its consequence -- the ruling put the ricochet
+    /// beside `Step` precisely so `Step` would not have to grow any of those
+    /// three behaviors, and the class is the shared home the client's tracer
+    /// cranks, not a promise about every member in it.
+    ///
+    ///  - `Step` PICKS NO WINNER. The three static candidates travel back side by
     ///    side, each behind its own flag, and the single canonical min-scan
     ///    stays in ProjectileSystem, where the bodies are. Collapsing them
     ///    into one candidate here would break the packing order that scan's
@@ -23,7 +34,7 @@ namespace Ring.Simulation.Combat
     ///    barrier/mob/player tie at the same t outranks it, while the interior
     ///    barrier and the ring boundary are packed BEFORE them.
     ///
-    ///  - IT REFUSES NOTHING. The interior barrier's height gate lives in
+    ///  - `Step` REFUSES NOTHING. The interior barrier's height gate lives in
     ///    ProjectileSystem.AcceptCandidate, because a refusal sends the scan
     ///    back over the candidates that are LEFT -- a decision only the owner
     ///    of the scratch array can make. Handing back one candidate that stood
@@ -32,7 +43,7 @@ namespace Ring.Simulation.Combat
     ///    cleared, and BarrierHeightTests.RejectedInteriorBarrier_LeavesThe
     ///    RingBoundaryStanding states that failure in its own words.
     ///
-    ///  - IT MUTATES NOTHING. The round arrives by `in`, never `ref`: its own
+    ///  - `Step` MUTATES NOTHING. The round arrives there by `in`, never `ref`: its own
     ///    advance -- Pos, PrevPos, PrevHeight, Height and the TTL -- stays in
     ///    ProjectileSystem.Update. That is not tidiness, it is arithmetic:
     ///    AcceptCandidate gates the interior barrier on the round's PRE-STEP
@@ -40,7 +51,10 @@ namespace Ring.Simulation.Combat
     ///    nothing was hit. It is also what every neighboring doc already says
     ///    about the tick (TtlDecay's "decrements at the top of the movement
     ///    step and tests the result at the BOTTOM", PickupSystem's two
-    ///    idiom notes about that same loop).
+    ///    idiom notes about that same loop). `TryRicochet` does take `ref`, and
+    ///    the arithmetic above is why it may: it runs only where nothing is
+    ///    advanced -- the branch that used to RETIRE the round -- so it never
+    ///    races the pre-step Height that gate reads.
     public static class ProjectileFlight
     {
         /// The static geometry one tick of flight meets, reported as THREE
@@ -201,7 +215,8 @@ namespace Ring.Simulation.Combat
         ///  1. the LIFETIME. `Ttl` is decremented at the top of the movement
         ///     step and tested at the bottom (TtlDecay's own idiom, quoted in
         ///     this class's doc above), and until this task the only test was
-        ///     in the "nothing was hit" arm (ProjectileSystem.cs:393). A
+        ///     in the "nothing was hit" arm -- ProjectileSystem.Update's own
+        ///     `default:` case, the one branch that advances the round. A
         ///     reflection is a second way to leave a tick alive, so an expired
         ///     round must not take it -- otherwise it lives one tick past its
         ///     own lifetime and reports its ending in the wrong place;
@@ -233,9 +248,9 @@ namespace Ring.Simulation.Combat
         /// met the wall, so leaving `Height` at its pre-step value would stall
         /// the round vertically for one tick per ricochet and drift a
         /// descending round upward over a chain. `contactHeight` is the number
-        /// AcceptCandidate already computed for its own height gate
-        /// (ProjectileSystem.cs:504) and hands back, so the formula keeps one
-        /// home instead of being restated here. `PrevHeight` moves with it, the
+        /// ProjectileSystem.AcceptCandidate already computes for its own
+        /// interior-barrier height gate and hands back through `hitHeight`, so
+        /// the formula keeps one home instead of being restated here. `PrevHeight` moves with it, the
         /// same way the caller has already moved `PrevPos` to the step's start.
         ///
         /// NO EVENT IS EMITTED HERE. `ProjectileRicocheted` is Т30's, and this

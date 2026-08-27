@@ -101,9 +101,15 @@ namespace Ring.Simulation.Tests
         }
 
         /// app-88jb Т19 (spec §3.10 rule 9): `MaxRicochets >= 0`,
-        /// `RicochetRetention` in (0, 1], `RicochetMinSpeed > 0`. Two of the
-        /// three bounds get a witness here; the pair chosen is the pair whose
-        /// violation is SILENT rather than loud.
+        /// `RicochetRetention` in (0, 1], `RicochetMinSpeed > 0`. ALL THREE
+        /// bounds are witnessed by this test and the three that follow it, and
+        /// the order they arrived in is worth keeping: the retention and the
+        /// speed floor came first, chosen because their violation is SILENT
+        /// rather than loud, and the counter got a witness only once a round of
+        /// review pointed out that it had none. Rule 9 also sweeps the FOUR MOB
+        /// ARCHETYPES, a second copy of the same three bounds, and the last of
+        /// the four tests is the first line in this file to execute that half
+        /// of the rule at all.
         [Test]
         public void Validate_RicochetRetentionAboveOne_Throws()
         {
@@ -130,6 +136,44 @@ namespace Ring.Simulation.Tests
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Weapon.RicochetMinSpeed"));
+        }
+
+        [Test]
+        public void Validate_NegativeMaxRicochets_Throws()
+        {
+            // ZERO IS A LEGAL COUNT -- "this weapon does not ricochet", which is
+            // a balance choice and exactly what the barrier fixtures in
+            // ProjectileFlightTests state about themselves -- so the bound is
+            // NOT exclusive and the boundary cannot be its witness. The rule is
+            // ReqNonNegative rather than ReqPositive, and only a NEGATIVE count
+            // tells those two apart.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            w.MaxRicochets = -1;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.MaxRicochets"));
+        }
+
+        [Test]
+        public void Validate_MobRicochetRetentionAboveOne_Throws()
+        {
+            // THE MOB SIDE OF RULE 9, EXECUTED HERE FOR THE FIRST TIME. Rule 9
+            // sweeps four archetypes, and until this test not one of its three
+            // lines over there had ever run: every witness above stands on the
+            // Weapon block, which is a separate copy of the same three bounds
+            // and proves nothing about this one. The violation goes on the
+            // SECOND archetype, this file's own convention, so the mutation
+            // "check only the first entry of the sweep" cannot survive it.
+            //
+            // The retention is the bound chosen for the same reason the Weapon
+            // block's own witness chose it: above one a reflection ACCELERATES
+            // the round, and neither the counter nor the speed floor can stop a
+            // chain that keeps gaining speed.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            g.RicochetRetention = 1.01f;                   // SECOND archetype
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Gunner.RicochetRetention"));
         }
 
         [Test]

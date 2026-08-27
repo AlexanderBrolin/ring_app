@@ -321,15 +321,19 @@ namespace Ring.Simulation.Core
         /// WeaponSimConfig.MaxRicochets' own doc for why v1's angle threshold
         /// was dropped instead of retuned.
         ///
-        /// DECLARED INERT IN THIS STEP (errata E-1's "structural rebuild"
-        /// discipline, the same way OwnerEntityId above landed in Stage 3 Task
-        /// 5): nothing increments it yet, and it does NOT join HashProjectile
-        /// until the ricochet branch itself lands. WorldLifecycleTests'
-        /// reflective sweep over this struct
-        /// (WorldLifecycleTests.cs:236-242) is what says so out loud in the
-        /// meantime -- it turns red the moment this field is declared and
-        /// green again only on the fold, which is exactly the receipt that
-        /// discipline is for.
+        /// DECLARED INERT AND WIRED IN THE SAME TASK, in that order (errata
+        /// E-1's "structural rebuild" discipline, the same way OwnerEntityId
+        /// above landed in Stage 3 Task 5): the field was declared with nothing
+        /// incrementing it and outside HashProjectile, and the ricochet branch
+        /// and the fold followed. Part of StateHash as of this task, folded at
+        /// the END of HashProjectile, mirroring the end of the struct -- see
+        /// that method's own note for why the end rather than beside the owner
+        /// fields.
+        ///
+        /// THE RECEIPT THAT DISCIPLINE EXISTS FOR was collected rather than
+        /// assumed: the ProjectileState pass of
+        /// WorldLifecycleTests.EveryPlayerAndStatsFieldAffectsHash went red the
+        /// moment this field was declared, and green again only on the fold.
         public int Ricochets;
     }
 

@@ -15,8 +15,9 @@ namespace Ring.Simulation.Tests
             c.Weapon.SpreadRad = 0f; c.Weapon.RecoilPerShotRad = 0f;
             // app-88jb Т19 (coordinator Ruling 94): ObstacleBeforeMob_BlocksShot
             // _NoDamage below is about a barrier SCREENING a mob — it waits for
-            // a ProjectileBlocked and for ShotsHit to stay 0. At the shipped
-            // MaxRicochets 2 the round reflects off the obstacle instead,
+            // a ProjectileBlocked and for ShotsHit to stay 0. At the baseline's
+            // own MaxRicochets (ONE — the fixture value spec §4.3 assigns,
+            // against the game's 2) the round reflects off the obstacle instead,
             // flies back down the +X axis it came from, and expires in open
             // field 173 m from the rim (TestConfigs.DefaultArena's Radius,
             // against a 52.5 m reach): no ProjectileBlocked is ever emitted and
@@ -27,11 +28,11 @@ namespace Ring.Simulation.Tests
             // PURPOSE (coordinator Ruling 99). A mob-owned round reads the
             // Gunner archetype's own MaxRicochets (Impact.RicochetNumbersFor),
             // so this fixture would owe that number too IF a mob-owned round
-            // could fly here. None can: this is TestConfigs.OpenField()
-            // (TestConfigs.cs:674), which is Open() (:607) off Quiet() (:592),
-            // and Quiet's whole job is `c.Wave.FirstWaveDelay = 1e6f` (:595) —
-            // there are no waves at all, so there is no gunner to fire one. A
-            // second zero would be a line with no reader.
+            // could fly here. None can: this is TestConfigs.OpenField(), which
+            // is Open() off Quiet(), and Quiet's whole job is
+            // `Wave.FirstWaveDelay = 1e6f` — there are no waves at all, so there
+            // is no gunner to fire one. A second zero would be a line with no
+            // reader.
             // THE RULE: a fixture here that spawns a LIVE gunner must state its
             // own Gunner.MaxRicochets.
             c.Weapon.MaxRicochets = 0;
