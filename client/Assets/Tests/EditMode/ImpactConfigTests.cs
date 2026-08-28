@@ -5,10 +5,11 @@ using Ring.Simulation.Core;
 namespace Ring.Simulation.Tests
 {
     /// Validation rules of the impact block (app-88jb Т1, spec §3.10 rules
-    /// 1/6/7/8/11). The violation is put on the SECOND archetype wherever a
-    /// rule sweeps several, never on the first: a loop mutated to check only
-    /// the first entry cannot pass (the rule ZoneConfigTests.cs:205-207
-    /// already carries).
+    /// 1/6/7/8/9/10/11 — rule 9 arrived with the ricochet in Т19 and rule 10
+    /// with the piercing pair in Т20). The violation is put on the SECOND
+    /// archetype wherever a rule sweeps several, never on the first: a loop
+    /// mutated to check only the first entry cannot pass (the rule
+    /// ZoneConfigTests.cs:205-207 already carries).
     public class ImpactConfigTests
     {
         [Test]
@@ -174,6 +175,61 @@ namespace Ring.Simulation.Tests
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Gunner.RicochetRetention"));
+        }
+
+        /// app-88jb Т20 (spec §3.10 rule 10): `PierceMassRatio > 0` and
+        /// `PierceDamageLoss` in [0, 1). BOTH bounds are witnessed here, and
+        /// the mob half of the rule gets its own witness immediately rather
+        /// than after a round of review — rule 9's mob half above had to be
+        /// added that way, and rule 10 sweeps the same four archetypes.
+        [Test]
+        public void Validate_ZeroPierceMassRatio_Throws()
+        {
+            // The spec names the price of zero outright: it pierces
+            // EVERYTHING, the Director included (finding C-I10 — in v1 this
+            // was a double inversion with a division by zero behind it).
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            w.PierceMassRatio = 0f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.PierceMassRatio"));
+        }
+
+        [Test]
+        public void Validate_PierceDamageLossAtOne_Throws()
+        {
+            // Exactly one would mean "a round that pierced deals no damage at
+            // all" — the range is half-open, [0, 1).
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            w.PierceDamageLoss = 1f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.PierceDamageLoss"));
+        }
+
+        [Test]
+        public void Validate_MobPierceMassRatioZero_Throws()
+        {
+            // THE MOB SIDE OF RULE 10. The two piercing numbers live in both
+            // config classes (spec's starting-numbers table names their home as
+            // "WeaponConfig + the mobs", exactly as it does for the ricochet
+            // three), so the rule sweeps four archetypes over there and every
+            // witness above stands on the Weapon block, which is a separate
+            // copy and proves nothing about this one. Rule 9 learned that the
+            // expensive way — its mob half went unwitnessed until a round of
+            // review found it — and this test is that lesson spent once.
+            //
+            // The violation goes on the SECOND archetype, this file's own
+            // convention, so the mutation "check only the first entry of the
+            // sweep" cannot survive it. The bound chosen is the ratio's zero
+            // for the same reason the Weapon witness chose it: zero is not a
+            // weak setting but the one value that pierces every body in the
+            // game, the Director included.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            g.PierceMassRatio = 0f;                        // SECOND archetype
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Gunner.PierceMassRatio"));
         }
 
         [Test]

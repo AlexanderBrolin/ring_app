@@ -1038,11 +1038,13 @@ namespace Ring.Editor
             // edge-request rate limiting) before THAT, `LinkRefund` (В1
             // fix-wave 3, owner economy rework) before THAT,
             // `AimSettleSeconds` (Task 17) before THAT;
-            // WeaponConfig's marker is `ProjectileMass` as of the SAME
-            // app-88jb Т11a (same impact-physics block, the class's new last
-            // field — see ProjectileMass's own sync-marker comment) — was
+            // WeaponConfig's marker is `PierceDamageLoss` as of app-88jb Т20
+            // (spec §3.4's piercing pair, the class's new last field — see that
+            // field's own sync-marker comment) — was `RicochetMinSpeed`
+            // (app-88jb Т19, the ricochet three) before that, `ProjectileMass`
+            // (app-88jb Т11a, the impact-physics block) before THAT,
             // `EmergencyFireInterval` (Stage 3 Task 2, spec Р261's ammo
-            // economy) before that, `RunSpreadSpeedFrac` (Task 17) before
+            // economy) before THAT, `RunSpreadSpeedFrac` (Task 17) before
             // THAT. Owner decision R-4: the plan body assigned the
             // EmergencyFireInterval relocation to Т12, but the marker is
             // always the class's LAST declared field, so it has to move in
@@ -1052,12 +1054,14 @@ namespace Ring.Editor
             // Т12 stayed a values-only delivery task, and Т11a follows the
             // same rule for the impact-physics block below, and Т16 follows
             // it once more for the hit-part array. MobConfig's
-            // marker is `Parts` as of app-88jb Т16 (Т13 appended the array
-            // as the class's new last field; Т16 is the task that delivers it,
-            // so the argument moves here) — was `DownedSeconds` (app-88jb
-            // Т11a, that class's last field at the time) before that, and
-            // unchanged since Task 17 (`SwingLeadMaxMeters`) until Т1's nine
-            // impact-physics fields landed after it. ⚠ THE MARKER IS NOT
+            // marker is `PierceDamageLoss` as of app-88jb Т20 (the piercing
+            // pair, that class's new last field, delivered in the task that
+            // appends it) — was `RicochetMinSpeed` (app-88jb Т19, the ricochet
+            // three) before that, `Parts` (app-88jb Т16, the hit-part array Т13
+            // appended and Т16 delivered) before THAT, `DownedSeconds`
+            // (app-88jb Т11a, that class's last field at the time) before THAT,
+            // and unchanged since Task 17 (`SwingLeadMaxMeters`) until Т1's
+            // nine impact-physics fields landed after it. ⚠ THE MARKER IS NOT
             // REDUNDANT WITH ApplyPartsNumbers ABOVE, and Т11a measured why:
             // the Hero's and the Chaser's target arrays EQUAL their classes'
             // C# initializers, so SetIfDifferent writes nothing, the asset
@@ -1074,9 +1078,9 @@ namespace Ring.Editor
             // marker on any of them would have left the newer field unable
             // to reach the file at all).
             EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "Parts"); // app-88jb Т16 (was TiltGain, app-88jb Т11a)
-            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "RicochetMinSpeed"); // app-88jb Т19 (was ProjectileMass, app-88jb Т11a)
-            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "RicochetMinSpeed"); // app-88jb Т19 (was Parts, app-88jb Т16)
-            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "RicochetMinSpeed"); // app-88jb Т19 (was Parts, app-88jb Т16)
+            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
+            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
+            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
@@ -1141,10 +1145,18 @@ namespace Ring.Editor
             // the C# defaults, never the .asset). That silence is the whole
             // reason this comment counts the call sites instead of describing
             // them.
+            //
+            // app-88jb Т20 MOVES THE SAME FIVE AGAIN, to `PierceDamageLoss`,
+            // and for the same reason with the same count: the piercing pair is
+            // appended to WeaponConfig AND to MobConfig, so it is one weapon
+            // asset plus all four MobConfig assets once more. The count is
+            // restated rather than assumed — the plan for this task named
+            // `WeaponConfig` alone, and the spec's own starting-numbers table
+            // names the pair's home as "WeaponConfig + the mobs".
             EditorBootstrapUtils.EnsureAssetHasKey(elite, $"{DataDir}/MobEliteConfig.asset",
-                "RicochetMinSpeed"); // app-88jb Т19 (was Parts, app-88jb Т16)
+                "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
             EditorBootstrapUtils.EnsureAssetHasKey(director, $"{DataDir}/MobDirectorConfig.asset",
-                "RicochetMinSpeed"); // app-88jb Т19 (was Parts, app-88jb Т16)
+                "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
             EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
                 "DirectorReserveSlots"); // Stage 3 Task 12
             // Stage 3 Task 13: the item catalog and loot balance sheet join
@@ -3107,9 +3119,15 @@ namespace Ring.Editor
         // shape by construction, see that class's own doc), so a copy here
         // would be a second home for numbers that already have one, and
         // SetIfDifferent would compare equal and write nothing anyway. What
-        // actually carries their arrays to disk is the sync-marker key
-        // (EnsureAssetHasKey with "Parts", one screen up), which dirties the
-        // asset so Unity re-serializes the field set it already holds. The two
+        // actually carries their arrays to disk is the sync-marker key, one
+        // screen up, which dirties the asset so Unity re-serializes the field
+        // set it already holds. ⚠ THE KEY IS NAMED NOWHERE IN THIS SENTENCE ON
+        // PURPOSE: it moves to whatever field each class most recently gained
+        // (`Parts` when this was written, `RicochetMinSpeed` after app-88jb
+        // Т19, `PierceDamageLoss` after Т20), and WHICH field it is has never
+        // mattered to this mechanism — any marker dirties the asset. Naming it
+        // here made this comment false twice before it was noticed, so the
+        // count and the names live at the call sites alone. The two
         // mechanisms are NOT interchangeable and neither substitutes for the
         // other -- Т11a proved that by number on the impact block.
 

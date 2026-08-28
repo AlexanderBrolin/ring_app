@@ -145,7 +145,10 @@ namespace Ring.Data
                     // app-88jb Т19 (spec §3.4): ricochet mapping.
                     MaxRicochets = weapon.MaxRicochets,
                     RicochetRetention = weapon.RicochetRetention,
-                    RicochetMinSpeed = weapon.RicochetMinSpeed
+                    RicochetMinSpeed = weapon.RicochetMinSpeed,
+                    // app-88jb Т20 (spec §3.4): piercing mapping.
+                    PierceMassRatio = weapon.PierceMassRatio,
+                    PierceDamageLoss = weapon.PierceDamageLoss
                 },
                 Chaser = ToMobSimConfig(chaser),
                 Gunner = ToMobSimConfig(gunner),
@@ -320,7 +323,11 @@ namespace Ring.Data
             // through the same one method, for the same reason.
             MaxRicochets = m.MaxRicochets,
             RicochetRetention = m.RicochetRetention,
-            RicochetMinSpeed = m.RicochetMinSpeed
+            RicochetMinSpeed = m.RicochetMinSpeed,
+            // app-88jb Т20 (spec §3.4): this archetype's piercing mapping,
+            // through the same one method, for the same reason.
+            PierceMassRatio = m.PierceMassRatio,
+            PierceDamageLoss = m.PierceDamageLoss
         };
 
         static ArenaSimConfig ToArenaSimConfig(ArenaConfig a)
@@ -462,6 +469,28 @@ namespace Ring.Data
             ReqInRange(errors, "Weapon.RicochetRetention", cfg.Weapon.RicochetRetention,
                 0f, 1f, minExclusive: true);
             ReqPositive(errors, "Weapon.RicochetMinSpeed", cfg.Weapon.RicochetMinSpeed);
+
+            // app-88jb Т20 (spec §3.10 rule 10): piercing.
+            // A ratio of ZERO is the one value that must never ship.
+            // ProjectileMass / TargetMass is positive for every body in the
+            // game, so at zero the MASS half of the rule is true of everything
+            // and any lethal round pierces the whole bestiary, the Director
+            // included (finding C-I10 — the price v1 paid for writing the ratio
+            // as its reciprocal, where zero also divided by zero). There is no
+            // upper bound in the rule and none is wanted: a ratio above
+            // anything reachable simply switches the mechanic off, which is a
+            // balance choice and exactly what the shipped 0.06 already does for
+            // every body today.
+            // PierceDamageLoss is HALF-OPEN, [0, 1). Zero is legal and means
+            // "piercing costs the round nothing"; exactly one would mean a
+            // pierced round carries no damage at all, so every body behind the
+            // first would be free — a silently dead mechanic rather than a
+            // setting, which is why the upper end is the excluded one. It is
+            // excluded through ReqInRange's own `maxExclusive` (added by Т1 for
+            // the tilt spring), not through a new helper.
+            ReqPositive(errors, "Weapon.PierceMassRatio", cfg.Weapon.PierceMassRatio);
+            ReqInRange(errors, "Weapon.PierceDamageLoss", cfg.Weapon.PierceDamageLoss,
+                0f, 1f, maxExclusive: true);
 
             // Task 2 (spec stamina/slide/aim): stamina pool + action costs/regen.
             ReqPositive(errors, "Hero.StaminaMax", cfg.Hero.StaminaMax);
@@ -1922,6 +1951,17 @@ namespace Ring.Data
             ReqInRange(errors, $"{name}.RicochetRetention", m.RicochetRetention,
                 0f, 1f, minExclusive: true);
             ReqPositive(errors, $"{name}.RicochetMinSpeed", m.RicochetMinSpeed);
+
+            // app-88jb Т20 (spec §3.10 rule 10): the MOB side of the same two
+            // bounds — see the Weapon block's own note for both of them. This
+            // copy sweeps all four archetypes, and
+            // ImpactConfigTests.Validate_MobPierceMassRatioZero_Throws is the
+            // first line to execute it (the rule-9 half above went unwitnessed
+            // over here until a round of review found it, which is the reason
+            // rule 10's mob witness was written in the same task as the rule).
+            ReqPositive(errors, $"{name}.PierceMassRatio", m.PierceMassRatio);
+            ReqInRange(errors, $"{name}.PierceDamageLoss", m.PierceDamageLoss,
+                0f, 1f, maxExclusive: true);
             // app-88jb Т13 (spec §3.10 rules 2/3/4/6): this archetype's stack of
             // parts, and the center of mass measured against IT rather than
             // against the old zone column — see the Hero block's own note for why

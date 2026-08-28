@@ -167,6 +167,12 @@ namespace Ring.Simulation.Tests
             target.MaxRicochets = source.MaxRicochets;
             target.RicochetRetention = source.RicochetRetention;
             target.RicochetMinSpeed = source.RicochetMinSpeed;
+            // app-88jb Т20 (spec §3.4): the piercing pair joins the copier on
+            // the block above's own reasoning — without them SeedMob's Elite/
+            // Director callers would leave the two at MobConfig's chaser-shaped
+            // C# default instead of the archetype's own numbers, silently.
+            target.PierceMassRatio = source.PierceMassRatio;
+            target.PierceDamageLoss = source.PierceDamageLoss;
             // app-88jb Т13 (coordinator Ruling 63): a DEEP copy, never the
             // reference. Aliasing would make the archetype SO and the shared
             // TestConfigs baseline hold ONE array, so a rule test that bumps a
@@ -1631,6 +1637,16 @@ namespace Ring.Simulation.Tests
             // Build_DefaultAssets_MatchesTestConfigsBaseline.
             Assert.AreEqual(e.RicochetRetention, a.RicochetRetention, Eps);
             Assert.AreEqual(e.RicochetMinSpeed, a.RicochetMinSpeed, Eps);
+            // app-88jb Т20 (spec §3.4): the piercing pair, added in the step
+            // that ships it for the reason the block above states — this list
+            // is HAND-WRITTEN, so a field absent from it is a field whose
+            // mirror between WeaponConfig's C# defaults and the fixture is
+            // pinned by nothing. BOTH belong here: unlike MaxRicochets, the two
+            // sources agree on these by construction (the shipped pair pierces
+            // nobody, so the fixture has nothing to be modest about), which is
+            // exactly the condition a shared equality helper requires.
+            Assert.AreEqual(e.PierceMassRatio, a.PierceMassRatio, Eps);
+            Assert.AreEqual(e.PierceDamageLoss, a.PierceDamageLoss, Eps);
         }
 
         static void AssertMobEqual(MobSimConfig e, MobSimConfig a)
@@ -1682,6 +1698,13 @@ namespace Ring.Simulation.Tests
             // another has no business in a shared assertion.
             Assert.AreEqual(e.RicochetRetention, a.RicochetRetention, Eps);
             Assert.AreEqual(e.RicochetMinSpeed, a.RicochetMinSpeed, Eps);
+            // app-88jb Т20 (spec §3.4): the piercing pair on the mob side, on
+            // AssertWeaponEqual's own reasoning. The exclusion that applies to
+            // MaxRicochets does NOT apply here: these two mirror, so all four
+            // archetypes — the seeded Gunner and the unseeded Chaser alike —
+            // compare equal, which is what lets them live in a shared helper.
+            Assert.AreEqual(e.PierceMassRatio, a.PierceMassRatio, Eps);
+            Assert.AreEqual(e.PierceDamageLoss, a.PierceDamageLoss, Eps);
         }
 
         static void AssertWaveEqual(WaveSimConfig e, WaveSimConfig a)

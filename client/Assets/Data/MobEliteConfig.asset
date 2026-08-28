@@ -64,3 +64,5 @@ MonoBehaviour:
   MaxRicochets: 2
   RicochetRetention: 0.8
   RicochetMinSpeed: 6
+  PierceMassRatio: 0.06
+  PierceDamageLoss: 0.5

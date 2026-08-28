@@ -1607,8 +1607,9 @@ namespace Ring.Simulation.Core
         /// ARRIVE AS PARAMETERS rather than being read off the round: this
         /// method never sees a projectile and must not start to. It is also
         /// called where no round exists at all — TestWorlds.ClearFirstWave and
-        /// its neighbors clear bodies through this same seam, and a future
-        /// piercing round will call it more than once for a single projectile
+        /// its neighbors clear bodies through this same seam, and a PIERCING
+        /// round calls it more than once for a single projectile — a future
+        /// tense here until app-88jb Т20 made it the present one
         /// — so the impact behind a blow is the CALLER's fact, not this
         /// method's to reconstruct. Both are REQUIRED, no default, for the
         /// third time in this signature and for the same reason `ownerIndex`

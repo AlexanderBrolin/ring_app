@@ -206,5 +206,94 @@ namespace Ring.Simulation.Combat
                     cfg.Gunner.RicochetMinSpeed)
                 : new RicochetNumbers(cfg.Weapon.MaxRicochets, cfg.Weapon.RicochetRetention,
                     cfg.Weapon.RicochetMinSpeed);
+
+        /// The two numbers one PIERCE is judged by, answered together (app-88jb
+        /// Т20, coordinator Ruling 101). A struct rather than two `…For` helpers
+        /// for exactly the reason RicochetNumbers above gives about three: two
+        /// helpers would be the SAME owner branch written twice, and a fork
+        /// written out twice is a fork that drifts. readonly struct, never a
+        /// class: this is read on the projectile path, where allocations are
+        /// forbidden (AllocationTests.Tick_DoesNotAllocateGC).
+        public readonly struct PierceNumbers
+        {
+            /// The DIRECT ratio of round mass to target mass a round must BEAT.
+            /// Direct rather than its reciprocal, and that is the decision
+            /// (spec §3.4, finding C-I10): v1 wrote the same rule as
+            /// `TargetMass / ProjectileMass < 1 / PierceMassRatio`, a double
+            /// inversion whose value 0 divided by zero and pierced EVERYTHING,
+            /// the Director included. Written this way round, 0 is refused by
+            /// validation rule 10 instead of being the most dangerous number in
+            /// the block.
+            public readonly float MassRatio;
+            /// The share of its damage a piercing round gives up, in [0, 1).
+            public readonly float DamageLoss;
+
+            public PierceNumbers(float massRatio, float damageLoss)
+            {
+                MassRatio = massRatio;
+                DamageLoss = damageLoss;
+            }
+        }
+
+        /// The ONE home of the "who fired it" fork over the piercing numbers,
+        /// keyed exactly the way ProjectileMassFor and RicochetNumbersFor above
+        /// are keyed and for exactly their reasons (app-88jb Т20, Ruling 101).
+        ///
+        /// A MOB-OWNED ROUND READS THE GUNNER ARCHETYPE'S NUMBERS, not its own
+        /// shooter's, and that is this family's existing rule rather than a new
+        /// simplification: ProjectileMassFor and RicochetNumbersFor above both
+        /// answer `cfg.Gunner` for every mob-owned round. The other three
+        /// archetypes carry the fields (MobConfig is one class behind four
+        /// assets) and nothing reads them today — the gunner is the only
+        /// archetype that shoots.
+        public static PierceNumbers PierceNumbersFor(byte ownerIndex, in SimConfig cfg)
+            => ownerIndex == ProjectileIds.NoOwner
+                ? new PierceNumbers(cfg.Gunner.PierceMassRatio, cfg.Gunner.PierceDamageLoss)
+                : new PierceNumbers(cfg.Weapon.PierceMassRatio, cfg.Weapon.PierceDamageLoss);
+
+        /// THE PIERCING RULE ITSELF, and its ONE home (app-88jb Т20, spec §3.4,
+        /// owner decision Н13, Ruling 101):
+        ///
+        ///   projectileMass / targetMass > MassRatio  &&  damageDealt > targetHp
+        ///
+        /// Public and written once because TWO callers ask it — ProjectileSystem's
+        /// `case HitMob` and its `case HitPlayer`, through
+        /// ProjectileFlight.TryPierce — and a RULE written out twice drifts for
+        /// the same reason a FORK written out twice does, which is what
+        /// ProjectileMassFor's own doc says one level down. Scalars only, no
+        /// owner key: the caller has already resolved the numbers, so this is
+        /// the VelocityDelta/AngularImpulse family rather than the `…For` one.
+        ///
+        /// ⚠ THE SECOND CLAUSE IS STRICT OVERKILL, NOT "THE TARGET DIES"
+        /// (coordinator Ruling 102). Death in this project is `Hp -= dmg`
+        /// followed by `Hp <= 0` — SimulationWorld.DamageMob and .DamagePlayer,
+        /// both of them — i.e. `damageDealt >= targetHp`; this rule asks for
+        /// STRICTLY more. So at exact equality the target dies and the round is
+        /// consumed anyway. That is the spec's own formula rather than an
+        /// off-by-one, it errs toward NOT piercing, and
+        /// ProjectileFlightTests.ExactlyLethalRound_DoesNotPierce_ButOnePoint
+        /// OfOverkillDoes is what keeps it a decision instead of an accident.
+        ///
+        /// ⚠ WHAT THIS DOES NOT ASK is whether the blow will LAND at all. A
+        /// collector with dash i-frames up takes no damage (DamagePlayer's own
+        /// second guard) — and that question belongs to the CALL SITE, beside
+        /// the method that owns the guard, because it is about the blow
+        /// ARRIVING and not about the round PIERCING (Ruling 101's own
+        /// boundary). Mobs have no such guard, which is why only one of the two
+        /// call sites carries the extra condition.
+        ///
+        /// `targetMass` is never zero, and that holds on BOTH sides of the
+        /// two-sources split: validation rule 1 requires a positive Mass on
+        /// every body for anything that goes through SimConfigBuilder
+        /// (ImpactConfigTests.Validate_ZeroMobMass_Throws), and the fixtures
+        /// that construct a SimConfig directly and skip that rule were swept —
+        /// TestConfigs states all five masses (120 / 90 / 70 / 260 / 4000), and
+        /// no other literal SimConfig in the suite is ever handed to a
+        /// SimulationWorld at all. So the division has no degenerate case to
+        /// defend against here, and a guard would be a branch without a
+        /// reachable input.
+        public static bool Pierces(in PierceNumbers n, float projectileMass, float targetMass,
+            float damageDealt, float targetHp)
+            => projectileMass / targetMass > n.MassRatio && damageDealt > targetHp;
     }
 }

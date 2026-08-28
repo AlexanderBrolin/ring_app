@@ -149,6 +149,41 @@ namespace Ring.Simulation.Core
         public int MaxRicochets;
         public float RicochetRetention;
         public float RicochetMinSpeed;
+
+        /// app-88jb Т20 (spec §3.4, owner decision Н13): piercing a light
+        /// body. A round whose blow would OVERKILL what it meets, and which is
+        /// heavy enough against that body, kills it and keeps flying with part
+        /// of its damage spent, instead of being consumed by the contact:
+        ///
+        ///   ProjectileMass / TargetMass > PierceMassRatio  &&  dmg > target.Hp
+        ///
+        /// THE RATIO IS DIRECT, AND THAT IS THE DECISION RATHER THAN A
+        /// FORMATTING CHOICE (spec §3.4, finding C-I10). v1 wrote the
+        /// same rule as its reciprocal, `TargetMass / ProjectileMass <
+        /// 1 / PierceMassRatio` -- a double inversion whose value 0 divided by
+        /// zero and pierced EVERYTHING, the Director included. Written this way
+        /// round, 0 is refused by validation rule 10 instead of being the most
+        /// dangerous number in the block.
+        ///
+        /// AT THE SHIPPED NUMBERS NOBODY IS PIERCED, and that is deliberate too
+        /// (spec §3.4's own table): the heaviest round in the game is
+        /// 2.6 against the lightest body's 70 kg, i.e. 0.037 under a threshold
+        /// of 0.06. The mechanic ships together with the knob that turns it on,
+        /// and what turns it on is the growth epic (app-vb5u) raising
+        /// `ProjectileMass` -- a chaser starts being pierced at about 5.4.
+        ///
+        /// `PierceDamageLoss` is the SHARE of damage a piercing round gives up,
+        /// declared over [0, 1) by validation rule 10: at 1 a pierced round
+        /// would carry no damage at all and every body behind the first would
+        /// be free, which is not a balance choice but a silently dead
+        /// mechanic.
+        ///
+        /// Split per owner exactly the way `ProjectileMass` and the three
+        /// ricochet numbers above are: whose weapon fired the round decides
+        /// which pair it flies by, and that fork has ONE home in `Impact`
+        /// beside the two forks already there.
+        public float PierceMassRatio;
+        public float PierceDamageLoss;
     }
 
     /// Balance numbers shared by all mob archetypes (chaser/gunner use the same shape).
@@ -226,6 +261,15 @@ namespace Ring.Simulation.Core
         public int MaxRicochets;
         public float RicochetRetention;
         public float RicochetMinSpeed;
+
+        /// app-88jb Т20 (spec §3.4): this archetype's own piercing
+        /// numbers, the mob-side twin of WeaponSimConfig's pair -- see that doc
+        /// for the rule, for why the ratio is direct, and for why nobody is
+        /// pierced at the shipped numbers. Split per archetype for the same
+        /// reason `ProjectileMass` and the ricochet three above are: whose
+        /// weapon fired the round decides which numbers it flies by.
+        public float PierceMassRatio;
+        public float PierceDamageLoss;
     }
 
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).

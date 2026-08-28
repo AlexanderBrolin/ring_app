@@ -104,7 +104,17 @@ namespace Ring.Data
         /// .assets take their own through the bootstrap.
         [Range(0, 8)] public int MaxRicochets = 2;
         [Range(0.05f, 1f)] public float RicochetRetention = 0.8f;
-        [Range(0.1f, 100f)] public float RicochetMinSpeed = 6f; // sync-marker key — keep LAST (was Parts, app-88jb)
+        [Range(0.1f, 100f)] public float RicochetMinSpeed = 6f; // Was the sync-marker key until app-88jb Т20.
+
+        /// app-88jb Т20 (spec §3.4): this archetype's own piercing numbers, the
+        /// mob-side twin of WeaponConfig's pair — same fields, same ranges,
+        /// same reasoning (see WeaponConfig's own doc). The two are the same on
+        /// all four archetypes today, exactly as the ricochet three above are,
+        /// so the C# defaults here ARE every archetype's numbers and the
+        /// bootstrap adds none of its own — what it does deliver is the key
+        /// itself, through the sync marker below.
+        [Range(0.001f, 1f)] public float PierceMassRatio = 0.06f;
+        [Range(0f, 0.95f)] public float PierceDamageLoss = 0.5f; // sync-marker key — keep LAST (was RicochetMinSpeed, app-88jb)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

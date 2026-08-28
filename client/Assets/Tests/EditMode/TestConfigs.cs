@@ -109,7 +109,16 @@ namespace Ring.Simulation.Tests
                     // round dies on a barrier" states MaxRicochets = 0 in its
                     // own fixture instead, and three of them now do
                     // (coordinator Ruling 94).
-                    MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f },
+                    MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f,
+                    // app-88jb Т20 (spec §3.4): the two piercing numbers,
+                    // MIRRORING WeaponConfig's C# defaults field for field.
+                    // No documented deviation here, and none is possible: at
+                    // 2.6 / 70 = 0.037 against a threshold of 0.06 the shipped
+                    // pair pierces nobody at all, so a fixture value of its own
+                    // could only make the mechanic MORE active in the goldens,
+                    // which is the very thing MaxRicochets above deviates to
+                    // avoid.
+                    PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f },
                 Chaser = new MobSimConfig { MaxSpeed = 5.2f, Accel = 30f, Radius = 0.5f,
                     MaxHp = 30f, ContactDamage = 15f, AttackRange = 1.1f,
                     TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,
@@ -134,6 +143,10 @@ namespace Ring.Simulation.Tests
                     // way ProjectileMass above is read) — the other three carry
                     // them for the same reason they carry ProjectileMass.
                     MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f,
+                    // app-88jb Т20 (spec §3.4): the piercing pair, mirroring
+                    // MobConfig's C# defaults — see the Weapon block's own note
+                    // for why no fixture deviation exists here.
+                    PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f,
                     // app-88jb Т13 (spec §3.3): the chaser's hit parts —
                     // mirrors MobConfig's C# default array (two-sources
                     // discipline). Heights are the old column x 1.46, the
@@ -179,6 +192,10 @@ namespace Ring.Simulation.Tests
                     // way ProjectileMass above is read) — the other three carry
                     // them for the same reason they carry ProjectileMass.
                     MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f,
+                    // app-88jb Т20 (spec §3.4): the piercing pair, mirroring
+                    // MobConfig's C# defaults — see the Weapon block's own note
+                    // for why no fixture deviation exists here.
+                    PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f,
                     // app-88jb Т13 (spec §3.3): the gunner's hit parts.
                     // Heights are the old zone column x 1.20 (crown 4.2063
                     // against 3.50). The shipped .asset gets them through the
@@ -341,6 +358,10 @@ namespace Ring.Simulation.Tests
                     // way ProjectileMass above is read) — the other three carry
                     // them for the same reason they carry ProjectileMass.
                     MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f,
+                    // app-88jb Т20 (spec §3.4): the piercing pair, mirroring
+                    // MobConfig's C# defaults — see the Weapon block's own note
+                    // for why no fixture deviation exists here.
+                    PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f,
                     // app-88jb Т13 (spec §3.3, evidence Т12): the elite's hit
                     // parts. ⚠ HER FACTOR IS 1.0216, NOT THE GUNNER'S 1.20 the
                     // spec's own table assumed — she is the ONE archetype whose
@@ -385,6 +406,10 @@ namespace Ring.Simulation.Tests
                     // way ProjectileMass above is read) — the other three carry
                     // them for the same reason they carry ProjectileMass.
                     MaxRicochets = 1, RicochetRetention = 0.8f, RicochetMinSpeed = 6f,
+                    // app-88jb Т20 (spec §3.4): the piercing pair, mirroring
+                    // MobConfig's C# defaults — see the Weapon block's own note
+                    // for why no fixture deviation exists here.
+                    PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f,
                     // app-88jb Т13 (spec §3.3): the Director's hit parts.
                     // Heights are the old column x 1.37 (crown 4.7903 against
                     // 3.50), and his 4.80 crown is what sets Hero.MaxAimHeight

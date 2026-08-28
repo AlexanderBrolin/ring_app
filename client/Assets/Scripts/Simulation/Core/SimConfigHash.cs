@@ -120,6 +120,10 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.MaxRicochets);
             h = StateHash64.Add(h, c.RicochetRetention);
             h = StateHash64.Add(h, c.RicochetMinSpeed);
+            // app-88jb Т20 (spec §3.4): the two piercing numbers, folded in the
+            // step that DECLARES them for the reason the note above gives.
+            h = StateHash64.Add(h, c.PierceMassRatio);
+            h = StateHash64.Add(h, c.PierceDamageLoss);
             return h;
         }
 
@@ -156,6 +160,10 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.MaxRicochets);
             h = StateHash64.Add(h, c.RicochetRetention);
             h = StateHash64.Add(h, c.RicochetMinSpeed);
+            // app-88jb Т20 (spec §3.4): this archetype's piercing numbers,
+            // wired in the same step that declares them, same reason again.
+            h = StateHash64.Add(h, c.PierceMassRatio);
+            h = StateHash64.Add(h, c.PierceDamageLoss);
             return h;
         }
 

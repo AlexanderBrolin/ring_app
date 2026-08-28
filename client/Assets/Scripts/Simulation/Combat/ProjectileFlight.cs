@@ -274,5 +274,93 @@ namespace Ring.Simulation.Combat
             p.Ricochets++;
             return true;
         }
+
+        /// THE PIERCE, AND THE THIRD PUBLIC MEMBER OF THIS CLASS (app-88jb Т20,
+        /// spec §3.4, owner decision Н13, coordinator Rulings 101/102/103). A
+        /// round whose blow OVERKILLS a light enough body kills it and keeps
+        /// flying with part of its damage spent, instead of being consumed by
+        /// the contact.
+        ///
+        /// IT STANDS HERE FOR THE SAME REASON `TryRicochet` DOES, and the split
+        /// with `Impact` is deliberate rather than arbitrary: the RULE and the
+        /// owner fork behind its numbers live in Impact (Ruling 101 —
+        /// `Impact.Pierces`, `Impact.PierceNumbersFor`), because they are
+        /// arithmetic two callers share; what lives HERE is the part that
+        /// MUTATES the round, which is this class's business and the tracer's
+        /// (Т32) to crank. Exactly the layout the ricochet already has.
+        ///
+        /// `true` means the round PIERCED, and then this has written `Damage`,
+        /// `Pos`, `PrevHeight` and `Height`. `false` means it did not, and then
+        /// this has written NOTHING and the caller does what it has always done
+        /// with a resolved body contact — deal the blow and retire the round.
+        /// Same contract, word for word, as TryRicochet above.
+        ///
+        /// TWO GATES, IN THIS ORDER:
+        ///  1. the LIFETIME, and it is here for precisely the reason gate 1 of
+        ///     TryRicochet is: `Ttl` is decremented at the top of the movement
+        ///     step and tested at the BOTTOM, in ProjectileSystem.Update's
+        ///     `default:` arm — the ONE branch that advances a round. A pierce
+        ///     is a second way to leave a tick alive, so an expired round must
+        ///     not take it, or it lives past its own lifetime and reports its
+        ///     ending in the wrong place. Neither the spec nor the plan names
+        ///     this; the ricochet's own history does
+        ///     (`ExpiredRoundDoesNotLiveOneExtraTickByPiercing` is the witness);
+        ///  2. THE RULE, asked of `Impact.Pierces` and never restated here —
+        ///     see its doc for why the mass ratio is DIRECT, why the damage
+        ///     clause is STRICT OVERKILL rather than "the target dies", and why
+        ///     the i-frame question is the caller's and not this method's.
+        ///
+        /// THE DAMAGE IS CUT AFTER THE BLOW HAS ALREADY BEEN MEASURED, and the
+        /// ordering is the caller's to keep: `damageDealt` arrives as a
+        /// parameter precisely because the victim takes the FULL blow and only
+        /// what flies on is reduced. `p.Damage` is the round's base damage, the
+        /// number before the zone multiplier — which is why the cut lands on it
+        /// and the comparison above is made on the post-multiplier `damageDealt`
+        /// the caller computed.
+        ///
+        /// WHERE IT LANDS IS THE BARE CONTACT — NO SKIN (coordinator Ruling
+        /// 103), and the asymmetry with TryRicochet above is a fact of the two
+        /// mechanics rather than an oversight. The ricochet's skin exists
+        /// because a reflection turns back INTO the circle it just met, where
+        /// Geometry.SegmentCircle's start-inside test would answer `t = 0` on
+        /// the next tick. A pierce has neither half of that: the body it went
+        /// through is gone from the next tick's candidates (a dead mob is
+        /// swap-removed, a dead collector fails the gather phase's `Alive`
+        /// gate), and a body contact carries no surface normal to offset along
+        /// — ProjectileSystem's own `hitDir` for both body arms is the round's
+        /// velocity, not a normal.
+        ///
+        /// THE HEIGHT LANDS TOO, the vertical twin of `Pos` and for the reason
+        /// TryRicochet's own doc gives about its own: the round really did
+        /// travel `VelZ * dt * t` before it met the body, so leaving `Height` at
+        /// its pre-step value would stall it vertically for one tick per pierce
+        /// and drift a descending round upward over a chain. `contactHeight` is
+        /// the number ProjectileSystem.AcceptCandidate already computes — for a
+        /// body, the height at the WINNING PART's entry, the same fraction of
+        /// the step `contact` itself is lerped at — so the formula keeps one
+        /// home instead of being restated here.
+        ///
+        /// NO EVENT IS EMITTED HERE, and none exists yet: a pierced body's death
+        /// is reported by the ordinary MobDied/PlayerDied path at the call site,
+        /// and the round's own continuation is visible only as its moved `Pos`.
+        public static bool TryPierce(ref ProjectileState p, in SimConfig cfg,
+            float targetMass, float damageDealt, float targetHp,
+            float2 contact, float contactHeight)
+        {
+            if (p.Ttl <= 0f) return false;
+
+            Impact.PierceNumbers n = Impact.PierceNumbersFor(p.OwnerIndex, in cfg);
+            if (!Impact.Pierces(in n, Impact.ProjectileMassFor(p.OwnerIndex, in cfg),
+                    targetMass, damageDealt, targetHp))
+            {
+                return false;
+            }
+
+            p.Damage *= 1f - n.DamageLoss;
+            p.Pos = contact;
+            p.PrevHeight = p.Height;
+            p.Height = contactHeight;
+            return true;
+        }
     }
 }

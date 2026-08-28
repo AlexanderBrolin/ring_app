@@ -14,8 +14,20 @@ namespace Ring.Simulation.Combat
     /// follows, the shooter's target selection is untouched) — excluding only its
     /// own shooter (mobs[m].Id == proj.OwnerEntityId, below). Player targets are
     /// gated only on Alive here — the i-frame check happens inside
-    /// SimulationWorld.DamagePlayer, not here. A projectile is single-target: it
-    /// is consumed on its first contact, no piercing.
+    /// SimulationWorld.DamagePlayer, and, since app-88jb Т20, ALSO in the
+    /// HitPlayer arm below, where it decides whether a blow that never landed
+    /// may pierce (that arm carries the full reasoning).
+    ///
+    /// A PROJECTILE IS NO LONGER SINGLE-TARGET BY CONSTRUCTION (app-88jb Т20,
+    /// spec §3.4, owner decision Н13): a round that OVERKILLS a light enough
+    /// body kills it and flies on with part of its damage spent, from the next
+    /// tick. Both body arms below offer that, through
+    /// ProjectileFlight.TryPierce. Every contact the pierce refuses ends
+    /// exactly as it always has — the blow lands and the round is retired —
+    /// and at the SHIPPED numbers the pierce refuses every body in the game
+    /// (2.6 against the lightest 70 kg is 0.037 under a threshold of 0.06),
+    /// which is deliberate: the mechanic ships with the knob that turns it on,
+    /// and the growth epic (app-vb5u) is what turns it.
     internal static class ProjectileSystem
     {
         // HitRingWall (Stage 2 Task 46) splits off the arena's outer boundary,
@@ -348,10 +360,40 @@ namespace Ring.Simulation.Combat
                         // magnitude, not length(proj.Vel): ProjectileSpeed is
                         // itself a 3D length in this project, so the flat one
                         // would under-shove every angled shot.
+                        //
+                        // app-88jb Т20 (spec §3.4, owner decision Н13,
+                        // coordinator Rulings 101/103): the PIERCE, decided
+                        // BEFORE the blow and never after it. `mob` above is
+                        // the copy taken before any damage, and this is the
+                        // second question it exists to answer: DamageMob below
+                        // swap-removes a body that dies, so the health the rule
+                        // is judged against has to be read while the body is
+                        // still standing. `dmg` is likewise already computed, so
+                        // the victim takes the FULL blow and only what flies on
+                        // is reduced -- TryPierce cuts `proj.Damage`, the base
+                        // number, not this local.
+                        //
+                        // The mass comes through SimulationWorld.MobConfigFor,
+                        // the same seam AcceptCandidate already uses on this
+                        // RESOLUTION path. The gather phase's one-float
+                        // MobRadiusFor exists because it runs once per
+                        // CANDIDATE in the hottest loop in the simulation; this
+                        // runs once per resolved hit, where the copy is what
+                        // the neighboring code already pays and a second
+                        // archetype switch would be a second place to keep in
+                        // sync (rule 2).
+                        //
+                        // On `true` the round keeps flying: TryPierce has
+                        // seated it at the contact and cut its damage, and the
+                        // removal below is skipped -- which is the whole of
+                        // "the round flies on from the NEXT tick" (Р376), since
+                        // `Pos` is advanced only by the `default:` arm.
+                        bool piercedMob = ProjectileFlight.TryPierce(ref proj, in config,
+                            w.MobConfigFor(mob.Type).Mass, dmg, mob.Hp, contact, hitHeight);
                         w.DamageMob(hitTargetIndex, dmg, contact, hitZone, hitDir, proj.OwnerIndex,
                             hitHeight, Impact.ProjectileMassFor(proj.OwnerIndex, in config),
                             math.length(new float3(proj.Vel, proj.VelZ)));
-                        w.RemoveProjectileAt(i);
+                        if (!piercedMob) w.RemoveProjectileAt(i);
                         break;
                     }
                     case HitPlayer:
@@ -405,11 +447,49 @@ namespace Ring.Simulation.Combat
                         // length(proj.Vel) -- ProjectileSpeed is itself a 3D
                         // length in this project, so the flat one would
                         // under-shove every angled shot.
+                        //
+                        // app-88jb Т20 (spec §3.4, owner decision Н13,
+                        // coordinator Rulings 101/103): the COLLECTOR's half of
+                        // the pierce, and the spec is what says there are two
+                        // halves -- its own table computes the ratio for FIVE
+                        // bodies, the collector among them, and its account of
+                        // v1's number names "the collector in PvP" as one of
+                        // the bodies that number wrongly pierced. A body the
+                        // rule is never computed for cannot be pierced at any
+                        // number.
+                        //
+                        // The victim is copied BEFORE the blow for the same
+                        // reason the mob branch copies `mob`: both questions
+                        // are about the body as it stood when the round met it.
+                        //
+                        // ⚠ THE I-FRAME CHECK IS HERE AND NOT INSIDE THE RULE,
+                        // and that boundary is the ruling's own (101): Impact
+                        // answers whether a ROUND PIERCES, this line answers
+                        // whether the BLOW ARRIVES. DamagePlayer returns without
+                        // touching Hp while a dash is up (its own second
+                        // guard), and a round allowed to "pierce" a body it
+                        // never damaged would meet that same LIVE body again on
+                        // the very next tick -- the gather phase gates on
+                        // `Alive` alone -- halving its damage once per tick
+                        // until its lifetime ran out. `&&` short-circuits, so on
+                        // an absorbed blow TryPierce is not called and writes
+                        // nothing.
+                        //
+                        // `Alive` is NOT re-checked: the gather phase above
+                        // already refused a dead player, and nothing can kill
+                        // this victim in between -- each round resolves fully
+                        // before the next is looked at, which is the same
+                        // reasoning DamagePlayer's own doc gives for calling its
+                        // matching guard defense-in-depth.
+                        PlayerState victim = w.PlayerAt(hitTargetIndex);
+                        bool piercedPlayer = victim.IframeTimer <= 0f
+                            && ProjectileFlight.TryPierce(ref proj, in config,
+                                config.Hero.Mass, dmg, victim.Hp, contact, hitHeight);
                         w.DamagePlayer(hitTargetIndex, proj.OwnerIndex, dmg,
                             contact, hitZone, hitDir, hitHeight,
                             Impact.ProjectileMassFor(proj.OwnerIndex, in config),
                             math.length(new float3(proj.Vel, proj.VelZ)));
-                        w.RemoveProjectileAt(i);
+                        if (!piercedPlayer) w.RemoveProjectileAt(i);
                         break;
                     }
                     default:
