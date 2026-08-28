@@ -36,7 +36,7 @@ namespace Ring.Simulation.Tests
     /// contact that does not reflect, which is why three of the tests below
     /// were green before the ricochet existed at all.
     ///
-    /// SEVEN OF THE TWENTY-ONE ARE GUARDS, NOT WITNESSES, and they say so in their
+    /// SEVEN OF THE TWENTY-TWO ARE GUARDS, NOT WITNESSES, and they say so in their
     /// own names or docs (lesson 427) — each name whole, on its own line, so a
     /// sweep by name finds them:
     ///   `ProjectileFlyingAwayFromTheWall_DoesNotReflect`
@@ -718,7 +718,7 @@ namespace Ring.Simulation.Tests
                 "отражённый от обода раунд не пережил следующий тик");
         }
 
-        /// THE PIERCE, AND THE FIRST OF ITS SIX TESTS (app-88jb Т20, spec §3.4,
+        /// THE PIERCE, AND THE FIRST OF ITS ELEVEN TESTS (app-88jb Т20, spec §3.4,
         /// owner decision Н13). A guard, not a witness, and named as one in the
         /// class doc above: it executes no branch at all, it pins the SHIPPED
         /// NUMBERS against the reciprocal form v1 wrote the rule in.
@@ -728,12 +728,23 @@ namespace Ring.Simulation.Tests
             // Test 23: at the shipped numbers the pierce fires for NOBODY --
             // and this is the witness against the reciprocal form (v1 pierced
             // everything but the Director, the collector in PvP included).
+            //
+            // BOTH SHOOTERS, NOT JUST THE COLLECTOR (review finding M-2). The
+            // first edition divided the five masses by `cfg.Weapon` alone, so
+            // the MOB's round -- a heavier 3.0 read together with the GUNNER's
+            // own pair, exactly as Impact.ProjectileMassFor and
+            // Impact.PierceNumbersFor answer it -- was pinned by nothing at
+            // all. A balance pass that raised Gunner.ProjectileMass past 4.2
+            // would have switched the mechanic on for the whole bestiary
+            // without a single red test.
             SimConfig cfg = TestConfigs.Default();
             foreach (float mass in new[] { cfg.Chaser.Mass, cfg.Gunner.Mass,
                 cfg.Elite.Mass, cfg.Director.Mass, cfg.Hero.Mass })
             {
                 Assert.Less(cfg.Weapon.ProjectileMass / mass, cfg.Weapon.PierceMassRatio,
-                    $"при массе {mass} стартовые числа уже пробивают");
+                    $"при массе {mass} стартовые числа уже пробивают выстрелом сборщика");
+                Assert.Less(cfg.Gunner.ProjectileMass / mass, cfg.Gunner.PierceMassRatio,
+                    $"при массе {mass} стартовые числа уже пробивают выстрелом моба");
             }
         }
 
@@ -767,7 +778,8 @@ namespace Ring.Simulation.Tests
         [Test]
         public void HeavyEnoughRound_PiercesAKillShot()
         {
-            // Tests 22 and 24: the pierce requires the target's DEATH, and the
+            // Tests 22 and 24: the pierce requires a STRICT OVERKILL of the
+            // target (Ruling 102 — not merely its death), and the
             // round flies on from the NEXT tick. The damage it gives up is
             // measured by a SEPARATE test below (51) -- this name no longer
             // promises it (review finding M-f: a name that lied).
@@ -790,11 +802,12 @@ namespace Ring.Simulation.Tests
         }
 
         /// THE THIRD GUARD: the other half of the rule, that a pierce needs a
-        /// KILLING blow and not merely a heavy round.
+        /// blow that STRICTLY OVERKILLS the body and not merely a heavy round.
         [Test]
         public void RoundThatDoesNotKill_DoesNotPierce()
         {
-            // The second half of the rule: piercing requires damage that KILLS.
+            // The second half of the rule: piercing requires damage that
+            // STRICTLY OVERKILLS (Ruling 102).
             // ⚠ THE CLAIM IS NOT ABOUT MobCount (review finding D-C5): at a
             // damage of 1 nobody dies under ANY implementation, so
             // `MobCount == 2` is true on the mutant too. What separates them is
@@ -847,6 +860,17 @@ namespace Ring.Simulation.Tests
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.AreEqual(1, w.MobCount, "снаряд не пробил первую цель");
+            // app-88jb Т20, review fix round (coordinator Ruling 106, finding
+            // C-1): ONE ending for ONE round. The near body was PIERCED, and a
+            // pierced contact reports nothing -- ProjectileHit means THE ROUND
+            // ENDED, SnapshotAssembler maps it to ProjectileEnded and the
+            // routing unsubscribes every viewer from the round's id. Two events
+            // here would mean the round announced its own end in mid-flight and
+            // addressed its real one to nobody. The far body is where it truly
+            // ends (500 against 700 is no overkill), so exactly one.
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileHit),
+                "пробитое тело сообщило о КОНЦЕ раунда — на проводе это отпишет зрителей "
+                + "от снаряда, который ещё летит");
             Assert.Greater(w.Mobs[0].Hp, 0f,
                 "пробивший снаряд убил вторую цель — урон не урезан на PierceDamageLoss");
             Assert.AreEqual(700f - 500f, w.Mobs[0].Hp, 1f,
@@ -952,12 +976,32 @@ namespace Ring.Simulation.Tests
                 + "otherwise the shot simply missed");
             Assert.AreEqual(1, control.MobCount,
                 "fixture premise: with the pierce refused the far body is untouched");
+            // The control half is the OTHER side of Ruling 106's claim: a round
+            // the pierce REFUSED ends on the collector, and an ending is exactly
+            // what must be reported -- an absorbed or refused contact that went
+            // unreported is the hanging tracer ProjectileHitPlayer exists to
+            // prevent. So this half demands ONE, and the pierced half below
+            // demands NONE; either number alone would be satisfied by a gate
+            // stuck open or stuck shut.
+            Assert.AreEqual(1, TestEvents.CountOf(control, SimEventKind.ProjectileHitPlayer),
+                "раунд, которому пробитие отказано, кончился на сборщике и не сообщил об этом");
 
             SimulationWorld pierced = Fire(pierceRatio);
             Assert.IsFalse(pierced.PlayerAt(1).Alive,
                 "смертельный выстрел не убил сборщика");
             Assert.AreEqual(0, pierced.MobCount,
                 "снаряд не пробил сборщика и не достал тело за ним — правило посчитано только по мобам");
+            // Both bodies were PIERCED here -- the collector, and then the
+            // chaser behind him (500 against a MaxHp of 30 is still a strict
+            // overkill, and 20/90 clears the ratio) -- so the round ends on
+            // NEITHER of them, and neither reports. It flies on and ends on its
+            // own lifetime instead.
+            Assert.AreEqual(0, TestEvents.CountOf(pierced, SimEventKind.ProjectileHitPlayer),
+                "пробитый сборщик сообщил о КОНЦЕ раунда — зрители отписаны от снаряда, "
+                + "который полетел дальше");
+            Assert.AreEqual(0, TestEvents.CountOf(pierced, SimEventKind.ProjectileHit),
+                "пробитое тело за сборщиком сообщило о КОНЦЕ раунда — та же отписка, "
+                + "другая ветка");
         }
 
         /// THE ONE WITNESS OF THE I-FRAME CONDITION AT THE CALL SITE, and
@@ -1269,8 +1313,8 @@ namespace Ring.Simulation.Tests
         /// review found it. `Impact.PierceNumbersFor` branches on the owner the
         /// same way `ProjectileMassFor` and `RicochetNumbersFor` do, and a
         /// version that answered the WEAPON's pair for every round would pass
-        /// every other test in this file: all five of them fire a
-        /// player-owned round.
+        /// every other piercing test in this file: all nine that fire at all
+        /// fire a player-owned round.
         ///
         /// THE TWO SOURCES ARE DRIVEN APART UNTIL NO VERDICT IS REACHABLE ON THE
         /// WRONG ONE, and BOTH numbers of the pair are driven, not just one. The

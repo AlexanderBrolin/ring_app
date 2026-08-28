@@ -796,7 +796,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(c.Hero.MaxHp, w.PlayerAt(0).Hp, 1e-4f,
                 "the shooter is never gathered by its own round");
             Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.PlayerDamaged),
-                "single-target: exactly one victim, no piercing");
+                "exactly one victim — at the shipped numbers a round pierces nobody (app-88jb Т20)");
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent damaged));
             Assert.AreEqual(1, damaged.PlayerIndex, "PlayerDamaged carries the winning victim's index");
         }

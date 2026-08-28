@@ -164,7 +164,7 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void PlayerShot_NoPiercing() // §3.5 negative case
+        public void ShippedNumbers_PlayerShotDoesNotPierce() // §3.5 negative case
         {
             // Stage 3 Task 5 (spec Р252): this test used to be named
             // DamageMatrix_MobShotIgnoresMobs_PlayerShotNoPiercing and also
@@ -173,13 +173,21 @@ namespace Ring.Simulation.Tests
             // (MobFriendlyFireTests.GunnerRound_DamagesAnotherMob covers the
             // positive case, MobRound_DoesNotDamageItsOwnShooter the one
             // exclusion — CR 2, no point duplicating that coverage here). What
-            // survives is the unrelated "no piercing" half, unaffected by this
-            // task: an overkill PLAYER round is still single-target.
+            // survives is the "no piercing" half — and app-88jb Т20 turned that
+            // from a RULE into a fact about the SHIPPED NUMBERS, which is why
+            // this test was renamed with it. A player's round now pierces a
+            // body it strictly overkills and is heavy enough for; at 2.6
+            // against a chaser's 90 kg the ratio is 0.029 against a threshold
+            // of 0.06, so it pierces nobody, and that is what this measures.
+            // The finer-grained sibling is
+            // ProjectileFlightTests.ShippedNumbers_PierceNobody_ObservedThroughTheWorld;
+            // this one is kept because it also pins the far body's exact Hp on
+            // a different fixture.
             var cfg = NoSpread();
             var w = new SimulationWorld(1, cfg);
             w.SpawnMobForTest(MobType.Chaser, new float2(5f, 0f));
             w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
-            // no piercing: an overkill player projectile only kills the nearest
+            // at the shipped numbers an overkill player round only kills the nearest
             w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(3f, 0f),
                 new float2(35f, 0f), 1f, 0f, 1000f, 0.12f, 1f);
             for (int i = 0; i < 6; i++) w.Tick(default);

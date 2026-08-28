@@ -232,6 +232,29 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("Gunner.PierceMassRatio"));
         }
 
+        /// THE MOB SIDE OF THE OTHER BOUND (review finding M-3). The test above
+        /// witnesses only `PierceMassRatio` over there, so the mob copy of
+        /// `PierceDamageLoss in [0, 1)` had no victim at all — a mutation that
+        /// dropped it, or widened it to [0, 1], survived the whole suite while
+        /// the class doc above claimed BOTH bounds were witnessed. One
+        /// mutation, one copy: rule 10 lives twice, so each half needs its own
+        /// witness, exactly as its ratio half already does.
+        ///
+        /// The violation goes on the SECOND archetype for this file's own
+        /// reason — so "check only the first entry of the sweep" cannot survive
+        /// it — and the value is EXACTLY ONE, the excluded end, because that is
+        /// the one this bound is about: a round that pierced would carry no
+        /// damage at all, so every body behind the first would be free.
+        [Test]
+        public void Validate_MobPierceDamageLossAtOne_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            g.PierceDamageLoss = 1f;                       // SECOND archetype
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Gunner.PierceDamageLoss"));
+        }
+
         [Test]
         public void Validate_ShippedDefaults_AreStable()
         {

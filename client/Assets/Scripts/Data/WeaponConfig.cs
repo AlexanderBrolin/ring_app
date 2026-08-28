@@ -56,8 +56,11 @@ namespace Ring.Data
         [Range(0.1f, 100f)] public float RicochetMinSpeed = 6f; // Was the sync-marker key until app-88jb Т20.
 
         /// app-88jb Т20 (spec §3.4, owner decision Н13): piercing a light body
-        /// — a killing blow on a light enough target kills it and the round
-        /// flies on with part of its damage spent. See WeaponSimConfig's own
+        /// — a blow that would STRICTLY OVERKILL a light enough target kills it
+        /// and the round flies on with part of its damage spent. Strictly, and
+        /// the word is load-bearing (coordinator Ruling 102): a blow that kills
+        /// EXACTLY consumes the round like any other, because the rule asks for
+        /// `dmg > Hp` while death asks only for `dmg >= Hp`. See WeaponSimConfig's own
         /// doc for the rule, for why the mass ratio is DIRECT rather than its
         /// reciprocal (v1's inversion made 0 pierce everything, the Director
         /// included), and for why nobody is pierced at the shipped numbers.

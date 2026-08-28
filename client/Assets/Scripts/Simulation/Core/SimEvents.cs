@@ -55,11 +55,17 @@ namespace Ring.Simulation.Core
         /// `SecondaryEntityId` = the ROUND's own id, since `EntityId` is spent
         /// on the victim exactly as it is for `ProjectileHit`.
         ///
-        /// EMITTED ON EVERY REMOVAL, INCLUDING AN ABSORBED ONE. It reports that
-        /// the ROUND ENDED, not that damage landed — dash i-frames make
-        /// `SimulationWorld.DamagePlayer` a no-op while the round is still
-        /// consumed, and a tracer whose end went unreported would hang until the
-        /// client's own confirm timeout. `Amount` is therefore what the round
+        /// EMITTED ON EVERY REMOVAL, INCLUDING AN ABSORBED ONE — AND ON NOTHING
+        /// ELSE. It reports that the ROUND ENDED, not that damage landed — dash
+        /// i-frames make `SimulationWorld.DamagePlayer` a no-op while the round
+        /// is still consumed, and a tracer whose end went unreported would hang
+        /// until the client's own confirm timeout.
+        /// ⚠ THE CONVERSE IS WHY app-88jb Т20 HAD TO GATE THE EMIT: since that
+        /// task a body contact does NOT always end the round — a PIERCED one
+        /// carries on — and `ProjectileSystem` therefore emits this kind only
+        /// where it removes the round, the two under one `if`. Reporting an
+        /// ending that did not happen would unsubscribe every viewer from a
+        /// round still in flight (coordinator Ruling 106). `Amount` is therefore what the round
         /// CARRIED, which is the damage actually dealt in the ordinary case and
         /// strictly more than it when the victim absorbed the hit;
         /// `DamagePlayer` returns nothing, so the applied figure is not

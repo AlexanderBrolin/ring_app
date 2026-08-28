@@ -375,7 +375,9 @@ namespace Ring.Simulation.Tests
                 cfg.Chaser.MaxHp * 10f, 0.6f, cfg.Weapon.ProjectileLifetime);
             TestWorlds.RunUntilProjectilesDie(w);
 
-            Assert.AreEqual(1, w.MobCount); // single-target: no piercing
+            // app-88jb Т20: single-target at the SHIPPED numbers, not by rule —
+            // the round is heavy enough for nobody (2.6 / 90 = 0.029 < 0.06).
+            Assert.AreEqual(1, w.MobCount);
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.MobDied, out SimEvent died));
             Assert.AreEqual(lowSlotId, died.EntityId);
         }

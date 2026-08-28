@@ -331,39 +331,10 @@ namespace Ring.Simulation.Combat
                         // re-derive it from a base value it cannot see.
                         float dmg = proj.Damage * hitMult;
                         MobState mob = mobs[hitTargetIndex];
-                        // playerIndex (Stage 2 Task 17, carryover-t17.md item 2):
-                        // the SHOOTER, so Presentation can tell its own hitmarker
-                        // from another player's in a multiplayer match.
-                        // secondaryEntityId (Stage 2 Task 28): the ROUND's own
-                        // id. EntityId is spent on the victim here — unlike the
-                        // Blocked/Expired branches above, which carry proj.Id
-                        // there — so without this the round's identity is lost
-                        // at the emit and the snapshot assembler cannot close
-                        // the per-connection spawn subscription this hit ends
-                        // (spec §3.8 ProjectileEndedNet, table Р28).
-                        w.Emit(SimEventKind.ProjectileHit, contact, mob.Id, mob.Type, dmg,
-                            zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex,
-                            secondaryEntityId: proj.Id, height: hitHeight);
-                        // ownerIndex (Stage 2 Task 7): the projectile carries its
-                        // own shooter forward into the credit routing. hitHeight
-                        // (app-88jb Т3) is AcceptCandidate's own contact height —
-                        // see DamageMob's own doc for why it accepts one.
-                        // projectileMass/projectileSpeed3D (app-88jb Т4, spec
-                        // §3.2): the impact behind this blow, which only the
-                        // caller can know — DamageMob never sees a round (its
-                        // own doc). The owner -> mass fork goes through
-                        // Impact.ProjectileMassFor and NOWHERE else (coordinator
-                        // Ruling 1, round-3 finding C-I2): a mob's round is
-                        // heavier than a collector's, and that rule has exactly
-                        // one home, the same way SnapshotEvents.SpeedCapFor is
-                        // the one home of its own fork. The speed is the FULL 3D
-                        // magnitude, not length(proj.Vel): ProjectileSpeed is
-                        // itself a 3D length in this project, so the flat one
-                        // would under-shove every angled shot.
-                        //
                         // app-88jb Т20 (spec §3.4, owner decision Н13,
-                        // coordinator Rulings 101/103): the PIERCE, decided
-                        // BEFORE the blow and never after it. `mob` above is
+                        // coordinator Rulings 101/103/106): the PIERCE, decided
+                        // BEFORE the blow AND BEFORE THE EVENT, never after
+                        // either. `mob` above is
                         // the copy taken before any damage, and this is the
                         // second question it exists to answer: DamageMob below
                         // swap-removes a body that dies, so the health the rule
@@ -384,12 +355,69 @@ namespace Ring.Simulation.Combat
                         // sync (rule 2).
                         //
                         // On `true` the round keeps flying: TryPierce has
-                        // seated it at the contact and cut its damage, and the
-                        // removal below is skipped -- which is the whole of
-                        // "the round flies on from the NEXT tick" (Р376), since
-                        // `Pos` is advanced only by the `default:` arm.
+                        // seated it at the contact and cut its damage, and BOTH
+                        // the event below AND the removal are skipped -- which
+                        // is the whole of "the round flies on from the NEXT
+                        // tick" (Р376), since `Pos` is advanced only by the
+                        // `default:` arm. On `false` TryPierce writes NOTHING
+                        // (its own contract), so every payload below is the
+                        // number it was before this line existed.
                         bool piercedMob = ProjectileFlight.TryPierce(ref proj, in config,
                             w.MobConfigFor(mob.Type).Mass, dmg, mob.Hp, contact, hitHeight);
+                        // playerIndex (Stage 2 Task 17, carryover-t17.md item 2):
+                        // the SHOOTER, so Presentation can tell its own hitmarker
+                        // from another player's in a multiplayer match.
+                        // secondaryEntityId (Stage 2 Task 28): the ROUND's own
+                        // id. EntityId is spent on the victim here — unlike the
+                        // Blocked/Expired branches above, which carry proj.Id
+                        // there — so without this the round's identity is lost
+                        // at the emit and the snapshot assembler cannot close
+                        // the per-connection spawn subscription this hit ends
+                        // (spec §3.8 ProjectileEndedNet, table Р28).
+                        //
+                        // ⚠ NOT EMITTED WHEN THE ROUND PIERCED (app-88jb Т20,
+                        // coordinator Ruling 106, review finding C-1), and the
+                        // form is TryRicochet's own one branch up -- that arm
+                        // returns BEFORE its ProjectileBlocked for exactly this
+                        // reason. THIS EVENT MEANS THE ROUND ENDED, not "a blow
+                        // landed": SnapshotAssembler maps it to
+                        // ProjectileEnded, whose routing unsubscribes every
+                        // viewer from the round's id, after which the client
+                        // retires its tracer. A pierced round that emitted here
+                        // would report its own ending in mid-flight, go
+                        // invisible, and address its REAL ending to a set that
+                        // no longer contains anybody.
+                        // What the pierced body still reports is its DEATH, and
+                        // that is not a consolation but the whole payload: the
+                        // pierce requires a STRICT overkill, so MobDied always
+                        // follows, it carries the killing blow's own amount,
+                        // and its routing unions the killing round's
+                        // subscribers -- which still exist precisely because
+                        // this line stayed silent. A mid-life event of the
+                        // pierce's own is Т30's, beside ProjectileRicocheted
+                        // (bd app-tbvg).
+                        if (!piercedMob)
+                        {
+                            w.Emit(SimEventKind.ProjectileHit, contact, mob.Id, mob.Type, dmg,
+                                zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex,
+                                secondaryEntityId: proj.Id, height: hitHeight);
+                        }
+                        // ownerIndex (Stage 2 Task 7): the projectile carries its
+                        // own shooter forward into the credit routing. hitHeight
+                        // (app-88jb Т3) is AcceptCandidate's own contact height —
+                        // see DamageMob's own doc for why it accepts one.
+                        // projectileMass/projectileSpeed3D (app-88jb Т4, spec
+                        // §3.2): the impact behind this blow, which only the
+                        // caller can know — DamageMob never sees a round (its
+                        // own doc). The owner -> mass fork goes through
+                        // Impact.ProjectileMassFor and NOWHERE else (coordinator
+                        // Ruling 1, round-3 finding C-I2): a mob's round is
+                        // heavier than a collector's, and that rule has exactly
+                        // one home, the same way SnapshotEvents.SpeedCapFor is
+                        // the one home of its own fork. The speed is the FULL 3D
+                        // magnitude, not length(proj.Vel): ProjectileSpeed is
+                        // itself a 3D length in this project, so the flat one
+                        // would under-shove every angled shot.
                         w.DamageMob(hitTargetIndex, dmg, contact, hitZone, hitDir, proj.OwnerIndex,
                             hitHeight, Impact.ProjectileMassFor(proj.OwnerIndex, in config),
                             math.length(new float3(proj.Vel, proj.VelZ)));
@@ -421,15 +449,6 @@ namespace Ring.Simulation.Combat
                         // victim here, same as in the mob branch, and without it
                         // the assembler cannot close the spawn subscription this
                         // hit ends.
-                        // EMITTED UNCONDITIONALLY, next to the removal it
-                        // describes: DamagePlayer below is a no-op while the
-                        // victim's i-frames are up, but the round is consumed
-                        // either way, and a consumed round whose end went
-                        // unreported is precisely the hanging tracer this event
-                        // exists to prevent.
-                        w.Emit(SimEventKind.ProjectileHitPlayer, contact, hitTargetIndex, default, dmg,
-                            zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex,
-                            secondaryEntityId: proj.Id, height: hitHeight);
                         // Stage 2 Task 17: victim = the player this scan actually
                         // resolved onto, attacker = the round's own shooter
                         // (ProjectileIds.NoOwner for a mob's round, which credits
@@ -449,7 +468,7 @@ namespace Ring.Simulation.Combat
                         // under-shove every angled shot.
                         //
                         // app-88jb Т20 (spec §3.4, owner decision Н13,
-                        // coordinator Rulings 101/103): the COLLECTOR's half of
+                        // coordinator Rulings 101/103/106): the COLLECTOR's half of
                         // the pierce, and the spec is what says there are two
                         // halves -- its own table computes the ratio for FIVE
                         // bodies, the collector among them, and its account of
@@ -485,6 +504,28 @@ namespace Ring.Simulation.Combat
                         bool piercedPlayer = victim.IframeTimer <= 0f
                             && ProjectileFlight.TryPierce(ref proj, in config,
                                 config.Hero.Mass, dmg, victim.Hp, contact, hitHeight);
+                        // EMITTED ON EVERY ENDING AND ONLY ON AN ENDING. An
+                        // ABSORBED blow still ends the round, so it still
+                        // reports: DamagePlayer below is a no-op while the
+                        // victim's i-frames are up, and a consumed round whose
+                        // end went unreported is precisely the hanging tracer
+                        // this event exists to prevent.
+                        // ⚠ A PIERCED blow does NOT end the round, so it does
+                        // NOT report (app-88jb Т20, coordinator Ruling 106,
+                        // review finding C-1) -- the mob branch above carries
+                        // the full reasoning, and TryRicochet's arm returns
+                        // before its own ProjectileBlocked for the same one.
+                        // The collector's damage is not lost with the silence:
+                        // PlayerDamaged is emitted by DamagePlayer itself and
+                        // is the event that means "a blow landed", while a
+                        // pierce needs a STRICT overkill, so PlayerDied follows
+                        // every one of them.
+                        if (!piercedPlayer)
+                        {
+                            w.Emit(SimEventKind.ProjectileHitPlayer, contact, hitTargetIndex, default, dmg,
+                                zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex,
+                                secondaryEntityId: proj.Id, height: hitHeight);
+                        }
                         w.DamagePlayer(hitTargetIndex, proj.OwnerIndex, dmg,
                             contact, hitZone, hitDir, hitHeight,
                             Impact.ProjectileMassFor(proj.OwnerIndex, in config),

@@ -340,9 +340,23 @@ namespace Ring.Simulation.Combat
         /// the step `contact` itself is lerped at — so the formula keeps one
         /// home instead of being restated here.
         ///
-        /// NO EVENT IS EMITTED HERE, and none exists yet: a pierced body's death
-        /// is reported by the ordinary MobDied/PlayerDied path at the call site,
-        /// and the round's own continuation is visible only as its moved `Pos`.
+        /// NO EVENT IS EMITTED HERE -- and that is only half of it, because the
+        /// CALL SITE withholds one too (app-88jb Т20's own review, coordinator
+        /// Ruling 106, finding C-1). `ProjectileHit`/`ProjectileHitPlayer` mean
+        /// THE ROUND ENDED rather than "a blow landed": SnapshotAssembler maps
+        /// both to `ProjectileEnded`, whose routing unsubscribes every viewer
+        /// from the round's id and makes the client retire its tracer. So a
+        /// PIERCED contact emits neither -- exactly as a successful ricochet
+        /// emits no `ProjectileBlocked` one method up, and for the same reason
+        /// stated there.
+        ///
+        /// What the pierced body reports instead is its DEATH, and a strict
+        /// overkill is what guarantees there is one: `MobDied` (which carries
+        /// the killing blow's own amount) or `PlayerDamaged` + `PlayerDied`.
+        /// The round's own continuation is what the client's tracer keeps
+        /// extrapolating, precisely because nothing told it to stop. A mid-life
+        /// event of the pierce's own is Т30's, beside `ProjectileRicocheted`
+        /// (bd app-tbvg).
         public static bool TryPierce(ref ProjectileState p, in SimConfig cfg,
             float targetMass, float damageDealt, float targetHp,
             float2 contact, float contactHeight)
