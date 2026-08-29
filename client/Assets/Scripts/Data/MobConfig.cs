@@ -28,7 +28,7 @@ namespace Ring.Data
         [Range(0f, 10f)] public float RangeTolerance = 0f;
         [Range(0f, 20f)] public float StrafeSpeed = 0f;
         [Range(0f, 5f)] public float FireInterval = 0f;
-        [Range(0f, 100f)] public float ProjectileSpeed = 0f;
+        [Range(0f, 300f)] public float ProjectileSpeed = 0f;
         [Range(0f, 2f)] public float ProjectileRadius = 0f;
         [Range(0f, 10f)] public float ProjectileLifetime = 0f;
         [Range(0f, 200f)] public float ProjectileDamage = 0f;

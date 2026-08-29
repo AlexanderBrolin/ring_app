@@ -5,11 +5,19 @@ using Ring.Simulation.Core;
 namespace Ring.Simulation.Tests
 {
     /// Validation rules of the impact block (app-88jb Т1, spec §3.10 rules
-    /// 1/6/7/8/9/10/11 — rule 9 arrived with the ricochet in Т19 and rule 10
-    /// with the piercing pair in Т20). The violation is put on the SECOND
-    /// archetype wherever a rule sweeps several, never on the first: a loop
-    /// mutated to check only the first entry cannot pass (the rule
-    /// ZoneConfigTests.cs:205-207 already carries).
+    /// 1/6/7/8/9/10/11/13 — rule 9 arrived with the ricochet in Т19, rule 10
+    /// with the piercing pair in Т20 and rule 13 with the speed ceiling in
+    /// Т23). The violation is put on the SECOND archetype wherever a rule
+    /// sweeps several, never on the first: a loop mutated to check only the
+    /// first entry cannot pass (the rule ZoneConfigTests.cs:205-207 already
+    /// carries).
+    ///
+    /// ⚠ Т23's plan named ZoneConfigTests as the home for rule 13 and that is
+    /// where it does NOT belong (ruling 122): that file is Stage 3 Task 8's
+    /// zone/door/portal validation suite and does not mention this epic once,
+    /// while every §3.10 rule of app-88jb has lived here since Т1 — including
+    /// the exact two-half pattern rule 13 needs, `Validate_PierceDamageLossAtOne_Throws`
+    /// plus its `…MobPierceDamageLoss…` sibling.
     public class ImpactConfigTests
     {
         [Test]
@@ -262,6 +270,55 @@ namespace Ring.Simulation.Tests
             // Witness against the "the rule always throws" mutation.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+        }
+
+        // ── Rule 13 (app-88jb Т23, spec §3.10): the projectile speed CEILING ──
+        //
+        // 300 m/s is an EDITOR limit given teeth, not a new game quantity: no
+        // field carries it (owner decision Р424 — two numbers describing
+        // one quantity is what the spec itself rejects in §3.2), so the
+        // [Range] attribute states it to the Inspector and the rule below
+        // states it to everything else. An attribute alone is enforced by the
+        // Editor UI and by nothing at runtime, which is the same gap
+        // SwingLeadFactor's own rule closes above.
+        //
+        // BOTH HALVES GET A WITNESS (ruling 120). The attribute travels to
+        // MobConfig too, so a rule that only checked the weapon would leave
+        // `cfg.Gunner.ProjectileSpeed = 500f` passing validation in silence
+        // while the weapon's own 301 throws — exactly the half-delivered rule
+        // Т20's review round found in the piercing pair.
+
+        [Test]
+        public void Validate_ProjectileSpeedAboveTheCeiling_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            w.ProjectileSpeed = 301f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.ProjectileSpeed"));
+        }
+
+        [Test]
+        public void Validate_ProjectileSpeedExactlyAtTheCeiling_IsLegal()
+        {
+            // The boundary is legal — witness for the `>` -> `>=` mutation.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            w.ProjectileSpeed = 300f;
+            Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+        }
+
+        [Test]
+        public void Validate_MobProjectileSpeedAboveTheCeiling_Throws()
+        {
+            // The mob half of rule 13, on the SECOND archetype the way this
+            // file's own doc requires: the sweep order is Chaser → Gunner →
+            // Elite → Director, so a rule applied to the first entry alone
+            // cannot pass this.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            g.ProjectileSpeed = 301f;                      // SECOND archetype
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Gunner.ProjectileSpeed"));
         }
     }
 }

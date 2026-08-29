@@ -8,7 +8,7 @@ namespace Ring.Data
     public sealed class WeaponConfig : ScriptableObject
     {
         [Range(0.01f, 5f)] public float FireInterval = 0.12f;
-        [Range(1f, 100f)] public float ProjectileSpeed = 35f;
+        [Range(1f, 300f)] public float ProjectileSpeed = 35f;
         [Range(0.01f, 2f)] public float ProjectileRadius = 0.12f;
         [Range(0.1f, 10f)] public float ProjectileLifetime = 1.5f;
         [Range(0.1f, 1000f)] public float Damage = 12f;

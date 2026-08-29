@@ -432,8 +432,41 @@ namespace Ring.Data
             ReqNonNegative(errors, "Hero.DashIframes", cfg.Hero.DashIframes);
             ReqNonNegative(errors, "Hero.DashBufferWindow", cfg.Hero.DashBufferWindow);
 
+            // ⭐ RULE 13 (app-88jb Т23, spec §3.10): THE PROJECTILE SPEED
+            // CEILING, 300 m/s, AND IT IS AN EDITOR LIMIT GIVEN TEETH RATHER
+            // THAN A NEW GAME QUANTITY.
+            //
+            // No SimConfig field carries it, deliberately (owner decision
+            // Р424): the value that actually travels is quantized against the
+            // owner's speed by SpeedCapFor (Т8), so a second number describing
+            // one quantity is exactly what the spec rejects in §3.2. What
+            // states the ceiling is the [Range] attribute on WeaponConfig and
+            // MobConfig — and an attribute is enforced by the Inspector and by
+            // NOTHING else, which is why the same number stands here as a rule.
+            // The two are tied by this comment rather than by a shared
+            // constant: every [Range] in Assets/Scripts/Data is a literal, and
+            // there is no precedent in the tree for a const read by both an
+            // attribute and a validator.
+            //
+            // ⚠ THE FLOORS ARE NOT TOUCHED, and that asymmetry is the decision
+            // (ruling 119). Т23's plan said `[Range(1f, 300f)]` for both
+            // classes; MobConfig's floor is ZERO and load-bearing — the shipped
+            // MobChaserConfig carries ProjectileSpeed 0 because a chaser is
+            // melee, and raising the floor to 1 would make the shipped value
+            // unreachable on the slider. The spec's own §3.10 table names the
+            // range change for WeaponConfig alone.
+            //
+            // ⚠ AND ONE CONSEQUENCE IS NAMED RATHER THAN DISCOVERED LATER
+            // (finding C-M9): at 300 m/s a round crosses 10 m per tick, so a
+            // 20 m fight fits in two ticks and "no more than one body pierced
+            // per tick" stops binding in practice. That is material for an
+            // ADR-001 §9 amendment at Т33, not a violation of §11: the round
+            // stays a physical body at any speed.
+
             ReqPositive(errors, "Weapon.FireInterval", cfg.Weapon.FireInterval);
             ReqPositive(errors, "Weapon.ProjectileSpeed", cfg.Weapon.ProjectileSpeed);
+            ReqAtMost(errors, "Weapon.ProjectileSpeed", cfg.Weapon.ProjectileSpeed,
+                ProjectileSpeedCeiling);
             ReqPositive(errors, "Weapon.ProjectileRadius", cfg.Weapon.ProjectileRadius);
             ReqPositive(errors, "Weapon.ProjectileLifetime", cfg.Weapon.ProjectileLifetime);
             ReqPositive(errors, "Weapon.Damage", cfg.Weapon.Damage);
@@ -1947,6 +1980,14 @@ namespace Ring.Data
             ReqNonNegative(errors, $"{name}.StrafeSpeed", m.StrafeSpeed);
             ReqNonNegative(errors, $"{name}.FireInterval", m.FireInterval);
             ReqNonNegative(errors, $"{name}.ProjectileSpeed", m.ProjectileSpeed);
+            // app-88jb Т23 (spec §3.10 rule 13): the ceiling applies to EVERY
+            // archetype, not only to the player's weapon (ruling 120). Without
+            // this line `cfg.Gunner.ProjectileSpeed = 500f` would pass in
+            // silence while the weapon's own 301 threw — the half-delivered
+            // rule this epic has now paid for three times (Т16 Н-34, Т19 M-5,
+            // Т20 M-3).
+            ReqAtMost(errors, $"{name}.ProjectileSpeed", m.ProjectileSpeed,
+                ProjectileSpeedCeiling);
             ReqNonNegative(errors, $"{name}.ProjectileRadius", m.ProjectileRadius);
             ReqNonNegative(errors, $"{name}.ProjectileLifetime", m.ProjectileLifetime);
             ReqNonNegative(errors, $"{name}.ProjectileDamage", m.ProjectileDamage);
@@ -2250,6 +2291,28 @@ namespace Ring.Data
             ReqFinite(errors, name, value);
             if (value < min)
                 errors.Add($"{name} must be >= {min} (got {value:F3}).");
+        }
+
+        /// app-88jb Т23 (spec §3.10 rule 13): the projectile speed ceiling both
+        /// halves of the rule are measured against. Class-level because
+        /// ValidateMob is a method of its own — the full account of why the
+        /// number lives here AND in two [Range] attributes, and why it is not a
+        /// SimConfig field, is at the weapon half's call site.
+        const float ProjectileSpeedCeiling = 300f;
+
+        /// app-88jb Т23: the mirror of ReqAtLeast, and it is a THIRD helper
+        /// rather than a call to ReqInRange because the two halves of rule 13
+        /// sit on fields whose FLOORS already differ and must not move —
+        /// Weapon.ProjectileSpeed is `> 0` (a weapon with no projectile speed
+        /// is a broken weapon) while a mob's is `>= 0` (zero means "melee
+        /// archetype", and the shipped chaser asset carries exactly that).
+        /// ReqInRange would have replaced both floors with one inclusive
+        /// bound and silently made the chaser's shipped 0 illegal.
+        static void ReqAtMost(List<string> errors, string name, float value, float max)
+        {
+            ReqFinite(errors, name, value);
+            if (value > max)
+                errors.Add($"{name} must be <= {max} (got {value:F3}).");
         }
 
         /// app-88jb Т1 (spec §3.10 rule 8): the tilt spring must stay inside the
